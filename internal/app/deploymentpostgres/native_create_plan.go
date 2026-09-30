@@ -804,7 +804,7 @@ func validateNativePlanInspection(request deploymentmodule.NativeDeliveryPlanReq
 	if servingDigest != inspected.Generation.ArtifactDigest || servingDigest != inspected.Artifact.ContentDigest || string(manifestJSON) != inspected.Generation.BundleManifestJSON {
 		return fmt.Errorf("%w: planned serving artifact identity does not match compiler evidence", deployment.ErrDeliveryConflict)
 	}
-	return nil
+	return validateNativeRefreshScope(inspected, request.PipelinePlan)
 }
 
 func nativePlannedServingArtifactID(digest string) string {

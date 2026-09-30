@@ -70,15 +70,16 @@ type quackIntegrationConnectionResolver struct {
 	connection semanticmodel.Connection
 }
 
-func (resolver quackIntegrationConnectionResolver) Resolve(
+func (resolver quackIntegrationConnectionResolver) WithConnection(
 	ctx context.Context,
 	_ string,
 	_ semanticmodel.Connection,
-) (semanticmodel.Connection, error) {
+	consume func(semanticmodel.Connection) error,
+) error {
 	if err := ctx.Err(); err != nil {
-		return semanticmodel.Connection{}, err
+		return err
 	}
-	return resolver.connection, nil
+	return consume(resolver.connection)
 }
 
 var _ analyticsruntime.ConnectionResolver = quackIntegrationConnectionResolver{}

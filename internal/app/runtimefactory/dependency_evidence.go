@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 const (
@@ -37,6 +39,53 @@ type ActivationEvidence struct {
 // its already-validated runtime context.
 type ActivationEvidenceSource interface {
 	ResultIdentityEvidence(context.Context, projectgraph.ServingIdentity) (ActivationEvidence, error)
+}
+
+// SealedCandidateEvidenceSource resolves non-secret result-identity evidence
+// for one verified candidate while its serving publication is being prepared.
+// The active source remains committed-only.
+type SealedCandidateEvidenceSource interface {
+	SealedCandidateResultIdentityEvidence(context.Context, projectgraph.ServingIdentity, string, string, string) (ActivationEvidence, error)
+}
+
+var errSealedCandidateEvidenceUnavailable = errors.New("sealed candidate result identity evidence is unavailable")
+
+func dependencyEvidenceForRuntimeInput(
+	ctx context.Context,
+	identity projectgraph.ServingIdentity,
+	compiled projectbundle.CompiledSourceBundleArtifact,
+	artifact projectartifact.SourceBundle,
+	managed runtimehost.ManagedDataResolution,
+	input runtimehost.RuntimeInput,
+	sealID string,
+	active ActivationEvidenceSource,
+	sealed SealedCandidateEvidenceSource,
+) (map[string]resultidentity.Evidence, error) {
+	if input.Candidate != nil && input.SealedActivationCandidate != nil {
+		return nil, errSealedCandidateEvidenceUnavailable
+	}
+	if input.SealedActivationCandidate == nil {
+		return dependencyEvidenceForRuntime(ctx, identity, compiled, artifact, managed, input.Candidate, active)
+	}
+	if ctx == nil || identity.Validate() != nil || input.State.ID != servingstate.ID(identity.GenerationID) ||
+		input.State.ProjectID != identity.ProjectID ||
+		string(servingstate.NormalizeEnvironment(input.State.Environment)) != identity.Environment {
+		return nil, errSealedCandidateEvidenceUnavailable
+	}
+	candidateID := input.SealedActivationCandidate.CandidateID
+	if candidateID == "" || candidateID != strings.TrimSpace(candidateID) ||
+		sealID == "" || sealID != strings.TrimSpace(sealID) ||
+		platformdigest.ValidateSHA256Identity(input.Artifact.Digest) != nil {
+		return nil, errSealedCandidateEvidenceUnavailable
+	}
+	if sealed == nil {
+		return nil, errSealedCandidateEvidenceUnavailable
+	}
+	activation, err := sealed.SealedCandidateResultIdentityEvidence(ctx, identity, candidateID, sealID, input.Artifact.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errSealedCandidateEvidenceUnavailable, err)
+	}
+	return buildDependencyEvidence(compiled, artifact, managed.Revisions, activation)
 }
 
 func dependencyEvidenceForRuntime(

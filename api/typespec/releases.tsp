@@ -54,6 +54,8 @@ model ReleaseBindingEvidence {
   connectorKind: string;
   revision: int64;
   validatedVersion: string;
+  @doc("Exact local customer credential version; mutually exclusive with a non-empty external validatedVersion. Publication evidence alone does not grant runtime use.")
+  credentialVersionId?: string;
   endpointConfigHash: string;
 }
 

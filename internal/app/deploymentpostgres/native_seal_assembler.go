@@ -232,7 +232,8 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 		bindings[i] = release.BindingEvidence{
 			BindingID: binding.BindingID, ConnectionID: binding.ConnectionID.String(), ConnectorKind: binding.ConnectorKind,
 			Revision: binding.Revision, ValidatedVersion: binding.ProviderVersion,
-			EndpointConfigHash: binding.EndpointConfigHash, Access: binding.Access,
+			CredentialVersionID: binding.CredentialVersionID,
+			EndpointConfigHash:  binding.EndpointConfigHash, Access: binding.Access,
 		}
 	}
 	var sourceRevision *release.SourceRevisionProvenance

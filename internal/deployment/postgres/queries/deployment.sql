@@ -243,6 +243,51 @@ SELECT p.publication_id::text FROM delivery.delivery_publication p
 WHERE p.generation_id=sqlc.arg(generation_id)::uuid AND p.state='committed'
 ORDER BY p.committed_at DESC,p.publication_id DESC LIMIT 1;
 
+-- name: GetCommittedGenerationEvidence :one
+-- This is a durable publication proof for one exact serving scope. It is
+-- deliberately independent of the current active pointer and candidate
+-- lifecycle status so retained historical generations remain provable.
+SELECT p.target_id,
+       t.project_id,
+       t.environment,
+       p.publication_id::text AS publication_id,
+       p.generation_id::text AS generation_id,
+       p.candidate_id::text AS candidate_id,
+       p.snapshot_seal_id::text AS snapshot_seal_id,
+       c.candidate_revision,
+       g.serving_artifact_digest,
+       COALESCE(s.qualification_evidence #>> '{gates,bindingGeneration}', '')::text AS binding_fingerprint
+FROM delivery.delivery_publication p
+JOIN delivery.delivery_target t
+  ON t.target_id=p.target_id
+JOIN delivery.delivery_generation g
+  ON g.generation_id=p.generation_id
+ AND g.target_id=p.target_id
+ AND g.candidate_id=p.candidate_id
+ AND g.snapshot_seal_id=p.snapshot_seal_id
+JOIN delivery.delivery_candidate c
+  ON c.candidate_id=p.candidate_id
+ AND c.target_id=p.target_id
+ AND c.snapshot_seal_id=p.snapshot_seal_id
+JOIN delivery.delivery_snapshot_seal s
+  ON s.seal_id=p.snapshot_seal_id
+ AND s.candidate_id=p.candidate_id
+JOIN delivery.delivery_plan plan
+  ON plan.plan_id=g.plan_id
+ AND plan.target_id=g.target_id
+WHERE p.target_id=sqlc.arg(target_id)
+  AND t.project_id=sqlc.arg(project_id)
+  AND t.environment=sqlc.arg(environment)
+  AND g.generation_id=sqlc.arg(generation_id)::uuid
+  AND p.state='committed'
+  AND p.result_target_revision IS NOT NULL
+  AND p.committed_at IS NOT NULL
+  AND g.serving_artifact_digest=s.serving_artifact_digest
+  AND g.serving_artifact_digest=c.artifact_digest
+  AND g.serving_artifact_digest=plan.artifact_digest
+ORDER BY p.committed_at DESC,p.publication_id DESC
+LIMIT 1;
+
 -- name: EnsureTargetFence :exec
 INSERT INTO delivery.delivery_target_fence(target_id,next_fencing_epoch)
 SELECT t.target_id,1 FROM delivery.delivery_target t WHERE t.target_id=sqlc.arg(target_id)

@@ -281,7 +281,9 @@ func TestPostgresHeartbeatRenewsRunAndAttemptForCompletion(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := r.ClaimAttempt(t.Context(), "run-heartbeat", "worker-heartbeat", 1, 40*time.Millisecond)
+	// This test verifies renewal and completion, so the initial lease must stay
+	// live through the database round trips even on a busy test runner.
+	claimed, err := r.ClaimAttempt(t.Context(), "run-heartbeat", "worker-heartbeat", 1, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,7 @@ func TestPostgresHeartbeatRenewsRunAndAttemptForCompletion(t *testing.T) {
 		WHERE r.run_id=$1 AND a.attempt_number=$2`, claimed.RunID, claimed.AttemptNumber).Scan(&beforeRun, &beforeAttempt); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.HeartbeatLease(t.Context(), claimed.RunID, claimed.OwnerID, claimed.FenceGeneration, time.Minute); err != nil {
+	if err := r.HeartbeatLease(t.Context(), claimed.RunID, claimed.OwnerID, claimed.FenceGeneration, 2*time.Minute); err != nil {
 		t.Fatalf("heartbeat error = %v", err)
 	}
 	var afterRun, afterAttempt time.Time

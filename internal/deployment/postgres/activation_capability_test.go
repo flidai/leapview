@@ -45,7 +45,7 @@ func TestPostgresActivationCapabilityRuntimeConformance(t *testing.T) {
 	input, ids := prepareLostAckActivation(t, adminRepository)
 	seedPhysicalRetentionFixture(t, admin, ids.seal)
 	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}}
-	runtimeRepository := NewWithOptions(runtime, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
+	runtimeRepository := NewWithOptions(runtime, Options{ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 
 	// A caller cannot substitute another target for the publication tuple. The
 	// capability rejects this before any serving row is mutated.

@@ -176,7 +176,7 @@ func TestWithUnpublishedTargetSerializesWithActivationTargetLock(t *testing.T) {
 func TestWithUnpublishedTargetRejectsAlreadyActiveTarget(t *testing.T) {
 	db := deliveryTestDB(t)
 	lineage := &testActivationLineage{}
-	repository := NewWithOptions(db, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
+	repository := NewWithOptions(db, Options{ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	activation, ids := prepareLostAckActivation(t, repository)
 	lineage.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}
 	seedPhysicalRetentionFixture(t, db, ids.seal)

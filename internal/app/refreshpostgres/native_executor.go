@@ -11,14 +11,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/flidai/leapview/internal/analytics/sourcework"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
 )
 
@@ -44,30 +48,63 @@ type NativeRefreshDeliveryMutations interface {
 	deploymentmodule.NativeDeliveryCommandCompleter
 }
 
+// NativeRefreshDeliveryMutationFactory creates the mutation authority scoped
+// to one captured refresh job. Implementations must bind both planning and
+// build evidence to that job; a process-wide mutation port cannot prove which
+// caller permissions authorize candidate connection acquisition.
+type NativeRefreshDeliveryMutationFactory interface {
+	ForRefresh(context.Context, refreshrun.JobRecord) (NativeRefreshDeliveryMutations, error)
+}
+
 // PostgresNativeRefreshExecutor adapts the typed native plan/build mutation
 // port to refresh/run's canonical executor callback. It is target-bound: the
 // target is process-owned and is never taken from a refresh job payload.
 type PostgresNativeRefreshExecutor struct {
-	Mutations NativeRefreshDeliveryMutations
-	Reader    NativeRefreshDeliveryReader
-	TargetID  string
+	MutationFactory      NativeRefreshDeliveryMutationFactory
+	Reader               NativeRefreshDeliveryReader
+	TargetID             string
+	AuthorityRevalidator jobs.AuthorityRevalidator
+	BaseCredentialCheck  func(context.Context, refreshrun.JobRecord) error
 }
 
 var _ NativeRefreshDeliveryReader = (deploymentmodule.NativeDeliveryReader)(nil)
 
+// ErrNativeRefreshBaseCredentialCheck marks a failed or missing exact-base
+// credential-pin preflight. The callback may return a more specific sentinel;
+// executor errors preserve errors.Is while keeping its diagnostics private.
+var ErrNativeRefreshBaseCredentialCheck = errors.New("native refresh base credential check failed")
+
+type baseCredentialCheckFailure struct{ cause error }
+
+func (failure baseCredentialCheckFailure) Error() string {
+	return ErrNativeRefreshBaseCredentialCheck.Error()
+}
+
+func (failure baseCredentialCheckFailure) Unwrap() error { return failure.cause }
+
+func (failure baseCredentialCheckFailure) Is(target error) bool {
+	return target == ErrNativeRefreshBaseCredentialCheck
+}
+
 // NewPostgresNativeRefreshExecutor validates a target-bound native executor
 // without opening a database or performing any I/O.
-func NewPostgresNativeRefreshExecutor(mutations NativeRefreshDeliveryMutations, reader NativeRefreshDeliveryReader, targetID string) (*PostgresNativeRefreshExecutor, error) {
-	if mutations == nil {
-		return nil, errors.New("native refresh delivery mutations are required")
+func NewPostgresNativeRefreshExecutor(mutationFactory NativeRefreshDeliveryMutationFactory, reader NativeRefreshDeliveryReader, targetID string, authorityRevalidator jobs.AuthorityRevalidator, baseCredentialCheck func(context.Context, refreshrun.JobRecord) error) (*PostgresNativeRefreshExecutor, error) {
+	if platformtypednil.IsNil(mutationFactory) {
+		return nil, errors.New("native refresh delivery mutation factory is required")
 	}
 	if reader == nil {
 		return nil, errors.New("native refresh delivery reader is required")
 	}
+	if platformtypednil.IsNil(authorityRevalidator) {
+		return nil, jobs.ErrAuthorityRevalidator
+	}
+	if baseCredentialCheck == nil {
+		return nil, ErrNativeRefreshBaseCredentialCheck
+	}
 	if targetID == "" || targetID != strings.TrimSpace(targetID) || len(targetID) > 255 {
 		return nil, errors.New("native refresh delivery target id must be canonical")
 	}
-	return &PostgresNativeRefreshExecutor{Mutations: mutations, Reader: reader, TargetID: targetID}, nil
+	return &PostgresNativeRefreshExecutor{MutationFactory: mutationFactory, Reader: reader, TargetID: targetID, AuthorityRevalidator: authorityRevalidator, BaseCredentialCheck: baseCredentialCheck}, nil
 }
 
 // Execute performs one idempotent native refresh restatement. The native
@@ -75,12 +112,25 @@ func NewPostgresNativeRefreshExecutor(mutations NativeRefreshDeliveryMutations, 
 // adapter only carries stable identity and verifies the resulting immutable
 // generation/seal tuple before refresh completion is attempted.
 func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error) {
-	if e == nil || e.Mutations == nil || e.Reader == nil || e.TargetID == "" {
+	if e == nil {
+		return refreshrun.CanonicalRefreshResult{}, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	if platformtypednil.IsNil(e.AuthorityRevalidator) {
+		return refreshrun.CanonicalRefreshResult{}, nativeRefreshAuthorityRequiredError("plan")
+	}
+	if e.BaseCredentialCheck == nil {
+		return refreshrun.CanonicalRefreshResult{}, ErrNativeRefreshBaseCredentialCheck
+	}
+	if platformtypednil.IsNil(e.MutationFactory) || e.Reader == nil || e.TargetID == "" {
 		return refreshrun.CanonicalRefreshResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	if err := validateNativeRefreshJob(job); err != nil {
 		return refreshrun.CanonicalRefreshResult{}, err
 	}
+	if !job.Authority.IsZero() && job.Authority.Target.InstanceID != e.TargetID {
+		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("%w: native refresh authority instance does not match executor target", deployment.ErrDeliveryInvalid)
+	}
+	job.Authority = cloneNativeRefreshAuthority(job.Authority)
 
 	snapshot, err := e.Reader.OperatorSnapshot(ctx, e.TargetID)
 	if err != nil {
@@ -140,7 +190,24 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 		canonical := job.PipelinePlan.Canonical()
 		pipelinePlan = &canonical
 	}
-	plan, err := e.Mutations.CreatePlan(ctx, deploymentmodule.NativeDeliveryPlanRequest{
+	if err := e.revalidateAuthority(ctx, job, "plan"); err != nil {
+		return refreshrun.CanonicalRefreshResult{}, err
+	}
+	// The callback reads immutable evidence for the exact committed base. Run
+	// after current job authority has been revalidated and before either native
+	// mutation can create a plan or candidate build.
+	if err := e.checkBaseCredentials(ctx, job); err != nil {
+		return refreshrun.CanonicalRefreshResult{}, err
+	}
+	mutationJob := cloneNativeRefreshMutationJob(job)
+	mutations, err := e.MutationFactory.ForRefresh(ctx, mutationJob)
+	if err != nil {
+		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("scope native refresh delivery mutations: %w", err)
+	}
+	if platformtypednil.IsNil(mutations) {
+		return refreshrun.CanonicalRefreshResult{}, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	plan, err := mutations.CreatePlan(ctx, deploymentmodule.NativeDeliveryPlanRequest{
 		ProjectID: job.Identity.ProjectID, TargetID: e.TargetID, Environment: job.Identity.Environment,
 		PrincipalID: job.PrincipalID, SourceOwnerID: sourceOwnerID,
 		Operation: string(deployment.DeliveryOperationRestatement), SourceDigest: basePlan.SourceDigest,
@@ -156,11 +223,26 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 	if err := validateNativeRefreshPlan(plan, job, e.TargetID, snapshot, basePlan.SourceDigest, attestationDigest); err != nil {
 		return refreshrun.CanonicalRefreshResult{}, err
 	}
-	if err := e.Mutations.CompleteNativePlanCommand(ctx, plan); err != nil {
+	if err := mutations.CompleteNativePlanCommand(ctx, plan); err != nil {
 		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("complete native refresh plan command: %w", err)
 	}
 
-	build, err := e.Mutations.BuildPlan(ctx, deploymentmodule.NativeDeliveryBuildRequest{
+	if err := e.revalidateAuthority(ctx, job, "build"); err != nil {
+		return refreshrun.CanonicalRefreshResult{}, err
+	}
+	// Credential evidence can change while the plan is being committed. Check
+	// the exact base again at the build boundary before candidate work starts.
+	if err := e.checkBaseCredentials(ctx, job); err != nil {
+		return refreshrun.CanonicalRefreshResult{}, err
+	}
+	// Build can wait again on source admission or connector scope locks. Carry
+	// this execution's authority revalidator to those boundaries; it confers no
+	// additional connection permissions.
+	revalidator := e.AuthorityRevalidator
+	buildCtx := sourcework.WithRevalidator(ctx, func(sourceCtx context.Context) error {
+		return revalidator.Revalidate(sourceCtx, job.Authority)
+	})
+	build, err := mutations.BuildPlan(buildCtx, deploymentmodule.NativeDeliveryBuildRequest{
 		ProjectID: job.Identity.ProjectID, TargetID: e.TargetID, Environment: job.Identity.Environment,
 		PlanID: plan.ID, PrincipalID: job.PrincipalID, IdempotencyKey: "refresh-build-" + job.RunID,
 	})
@@ -173,7 +255,7 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 	if err := validateNativeRefreshBuild(build, plan, snapshot.ActiveGenerationID); err != nil {
 		return refreshrun.CanonicalRefreshResult{}, err
 	}
-	if err := e.Mutations.CompleteNativeBuildCommand(ctx, build); err != nil {
+	if err := mutations.CompleteNativeBuildCommand(ctx, build); err != nil {
 		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("complete native refresh build command: %w", err)
 	}
 
@@ -213,6 +295,71 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 		PlanID: plan.ID.String(), ServingStateID: build.ServingStateID.String(),
 		NativeGenerationID: build.ServingStateID.String(), SnapshotID: seal.DuckLakeSnapshotID,
 	}, nil
+}
+
+func (e *PostgresNativeRefreshExecutor) checkBaseCredentials(ctx context.Context, job refreshrun.JobRecord) error {
+	if e == nil || e.BaseCredentialCheck == nil {
+		return ErrNativeRefreshBaseCredentialCheck
+	}
+	if ctx == nil {
+		return baseCredentialCheckFailure{cause: context.Canceled}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := e.BaseCredentialCheck(ctx, job); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return baseCredentialCheckFailure{cause: err}
+	}
+	return ctx.Err()
+}
+
+func nativeRefreshAuthorityRequiredError(boundary string) error {
+	return fmt.Errorf("%w: native refresh authority before %s boundary", jobs.ErrAuthorityRevalidator, boundary)
+}
+
+// Keep source-work callbacks bound to the queued evidence, independent of
+// pointer and slice aliases retained by the caller.
+func cloneNativeRefreshAuthority(authority jobs.AuthorityEnvelope) jobs.AuthorityEnvelope {
+	authority.Permissions = slices.Clone(authority.Permissions)
+	if authority.Credential != nil {
+		credential := *authority.Credential
+		authority.Credential = &credential
+	}
+	if authority.ExecutionGrant != nil {
+		grant := *authority.ExecutionGrant
+		authority.ExecutionGrant = &grant
+	}
+	return authority
+}
+
+func cloneNativeRefreshMutationJob(job refreshrun.JobRecord) refreshrun.JobRecord {
+	job.Authority = cloneNativeRefreshAuthority(job.Authority)
+	job.MatchingScheduleIDs = slices.Clone(job.MatchingScheduleIDs)
+	job.GroupIDs = slices.Clone(job.GroupIDs)
+	if job.PipelinePlan != nil {
+		plan := job.PipelinePlan.Canonical()
+		job.PipelinePlan = &plan
+	}
+	return job
+}
+
+func (e *PostgresNativeRefreshExecutor) revalidateAuthority(ctx context.Context, job refreshrun.JobRecord, boundary string) error {
+	if e == nil || platformtypednil.IsNil(e.AuthorityRevalidator) {
+		return nativeRefreshAuthorityRequiredError(boundary)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("native refresh authority before %s boundary: %w", boundary, err)
+	}
+	if err := e.AuthorityRevalidator.Revalidate(ctx, job.Authority); err != nil {
+		return fmt.Errorf("native refresh authority before %s boundary: %w", boundary, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("native refresh authority before %s boundary: %w", boundary, err)
+	}
+	return nil
 }
 
 func validateNativeRefreshJob(job refreshrun.JobRecord) error {

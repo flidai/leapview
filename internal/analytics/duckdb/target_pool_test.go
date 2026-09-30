@@ -280,29 +280,39 @@ func TestTargetRuntimePoolResolvesTargetOwnedConnectionAfterProviderSnapshotIsDe
 	if !ok {
 		t.Fatal("validated target pool does not expose an Analytics connection resolver")
 	}
-	resolved, err := resolver.Resolve(
-		t.Context(),
-		"warehouse",
-		semanticmodel.Connection{Kind: "postgres"},
+	var resolved semanticmodel.Connection
+	err = resolver.WithConnection(
+		t.Context(), "warehouse", semanticmodel.Connection{Kind: "postgres"},
+		func(connection semanticmodel.Connection) error {
+			resolved = connection
+			if connection.ResolvedHost != "10.20.30.40" {
+				t.Fatalf("resolved host = %q", connection.ResolvedHost)
+			}
+			secretParts := appendDatabaseSecretEndpoint(nil, connection)
+			require.Contains(t, secretParts, "HOSTADDR '10.20.30.40'")
+			if connection.Host != "warehouse.internal" || connection.Database != "analytics" ||
+				connection.Auth["password"] != "source-secret" {
+				t.Fatalf("target connection = %#v", connection)
+			}
+			return nil
+		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, "10.20.30.40", resolved.ResolvedHost)
-	secretParts := appendDatabaseSecretEndpoint(nil, resolved)
-	require.Contains(t, secretParts, "HOSTADDR '10.20.30.40'")
-	if resolved.Host != "warehouse.internal" || resolved.Database != "analytics" ||
-		resolved.Auth["password"] != "source-secret" {
-		t.Fatalf("resolved target connection = %#v", resolved)
-	}
-	clear(resolved.Auth)
+	require.Empty(t, resolved.Auth, "callback-owned auth must be cleared when WithConnection returns")
 	if err := pool.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolver.Resolve(
+	called := false
+	if err := resolver.WithConnection(
 		t.Context(),
 		"warehouse",
 		semanticmodel.Connection{Kind: "postgres"},
+		func(semanticmodel.Connection) error { called = true; return nil },
 	); !errors.Is(err, connectionbinding.ErrProviderUnavailable) {
-		t.Fatalf("Resolve() after pool close error = %v", err)
+		t.Fatalf("WithConnection() after pool close error = %v", err)
+	}
+	if called {
+		t.Fatal("closed target pool invoked connection consumer")
 	}
 }
 

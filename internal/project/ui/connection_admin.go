@@ -15,7 +15,6 @@ import (
 type ConnectionCommandBindings struct {
 	Create  uicommand.Binding
 	Update  uicommand.Binding
-	Test    uicommand.Binding
 	Refresh uicommand.Binding
 	Enable  uicommand.Binding
 	Disable uicommand.Binding
@@ -49,7 +48,7 @@ type ConnectionAdministrationView struct {
 	Bindings        map[string]ConnectionBindingView
 	CanCreate       bool
 	CanManage       bool
-	CanTest         bool
+	CanRefresh      bool
 	RequiresBinding map[string]bool
 	Status          uisignals.ConnectionAdministrationStatusSignal
 }
@@ -70,7 +69,7 @@ func connectionLifecycleSignal(asset projectview.DevelopAssetView, assets []proj
 		Actions:           []uisignals.ConnectionLifecycleActionSignal{},
 		AssetID:           asset.ID,
 		CanManage:         administration.CanManage,
-		CanTest:           administration.CanTest,
+		CanRefresh:        administration.CanRefresh,
 		ConnectorKind:     kind,
 		LogicalConnection: logical,
 		State:             "not_required",
@@ -144,26 +143,26 @@ func connectionLifecycleSignal(asset projectview.DevelopAssetView, assets []proj
 		lifecycle.State = "healthy"
 		lifecycle.StatusLabel = "Healthy"
 		lifecycle.Tone = "success"
-		if administration.CanTest {
+		if administration.CanRefresh {
 			lifecycle.Actions = append(lifecycle.Actions, lifecycleAction("refresh", "Refresh credentials", true, false))
 		}
-		appendEnabledSecondaryActions(&lifecycle, administration, true)
+		appendEnabledSecondaryActions(&lifecycle, administration)
 	case "degraded":
 		lifecycle.State = "degraded"
 		lifecycle.StatusLabel = "Degraded"
 		lifecycle.Tone = "danger"
-		if administration.CanTest {
+		if administration.CanRefresh {
 			lifecycle.Actions = append(lifecycle.Actions, lifecycleAction("refresh", "Refresh credentials", true, false))
 		}
-		appendEnabledSecondaryActions(&lifecycle, administration, true)
+		appendEnabledSecondaryActions(&lifecycle, administration)
 	default:
 		lifecycle.State = "pending"
-		lifecycle.StatusLabel = "Pending test"
+		lifecycle.StatusLabel = "Pending refresh"
 		lifecycle.Tone = "warning"
-		if administration.CanTest {
-			lifecycle.Actions = append(lifecycle.Actions, lifecycleAction("test", "Test connection", true, false))
+		if administration.CanRefresh {
+			lifecycle.Actions = append(lifecycle.Actions, lifecycleAction("refresh", "Refresh credentials", true, false))
 		}
-		appendEnabledSecondaryActions(&lifecycle, administration, false)
+		appendEnabledSecondaryActions(&lifecycle, administration)
 	}
 	return lifecycle
 }
@@ -172,10 +171,7 @@ func ConnectionLifecycleForAsset(asset projectview.DevelopAssetView, assets []pr
 	return connectionLifecycleSignal(asset, assets, edges, administration)
 }
 
-func appendEnabledSecondaryActions(lifecycle *uisignals.ConnectionLifecycleSignal, administration ConnectionAdministrationView, includeTest bool) {
-	if includeTest && administration.CanTest {
-		lifecycle.Actions = append(lifecycle.Actions, lifecycleAction("test", "Test connection", false, false))
-	}
+func appendEnabledSecondaryActions(lifecycle *uisignals.ConnectionLifecycleSignal, administration ConnectionAdministrationView) {
 	if administration.CanManage {
 		lifecycle.Actions = append(lifecycle.Actions,
 			lifecycleAction("edit", "Edit", false, false),

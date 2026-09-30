@@ -208,7 +208,7 @@ func (m *Module) captureAuthority(ctx context.Context, identity projectgraph.Ser
 		Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode,
 		ActorPrincipalID: principalID, ExecutionPrincipalID: principalID,
 		Credential:  &jobs.CredentialEvidence{Class: class, ID: credentialID, Fingerprint: credentialFingerprint, ExpiresAt: expiresAt.UTC()},
-		Target:      jobs.AuthorityTarget{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, ResourceKind: string(projectgraph.KindPipeline), ResourceID: pipelineID.String()},
+		Target:      jobs.AuthorityTarget{InstanceID: m.instanceID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, ResourceKind: string(projectgraph.KindPipeline), ResourceID: pipelineID.String()},
 		Permissions: []permissions.Pair{contractPair},
 	}
 	if err := authority.Validate(); err != nil {

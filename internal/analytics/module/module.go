@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/sourcework"
 	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/outbound"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -134,13 +135,17 @@ type Module struct {
 	queryAudit                   queryaudit.Store
 	connectionBindings           connectionbinding.BindingCatalog
 	credentials                  analyticsduckdb.CredentialResolver
+	extensionAdmission           extension.Admission
 	targetResolvers              connectionbinding.ResolverSet
 	targetID                     string
 	targetEnvironment            string
 	targetClass                  connectionbinding.TargetClass
+	production                   bool
 	connectionFactory            connectionbinding.RuntimePoolFactory
 	connectionPoolsMu            sync.Mutex
 	connectionPools              *connectionbinding.PoolDirectory
+	connectionPoolsClosed        bool
+	sourceWork                   sourcework.Gate
 	candidateRuntimeBindings     candidateRuntimeBindingRegistry
 	activeRuntimeBindingEvidence ActiveRuntimeBindingEvidenceSource
 	egressProxy                  *outbound.Proxy
@@ -288,8 +293,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		environment: environment, cache: cache, queryAudit: queryAudit,
 		connectionBindings: connectionBindings,
 		credentials:        credentials, targetResolvers: targetResolvers,
-		targetID: config.CredentialTargetID, targetEnvironment: config.CredentialEnvironment,
-		targetClass: targetClass, connectionFactory: connectionFactory, egressProxy: egressProxy,
+		extensionAdmission: config.ExtensionAdmission,
+		targetID:           config.CredentialTargetID, targetEnvironment: config.CredentialEnvironment,
+		targetClass: targetClass, production: config.Production, connectionFactory: connectionFactory, egressProxy: egressProxy,
 	}, nil
 }
 
@@ -400,6 +406,9 @@ func (m *Module) ensureConnectionPools(
 	}
 	m.connectionPoolsMu.Lock()
 	defer m.connectionPoolsMu.Unlock()
+	if m.connectionPoolsClosed {
+		return nil, connectionbinding.ErrProviderUnavailable
+	}
 	if m.connectionPools != nil {
 		return m.connectionPools, nil
 	}
@@ -430,7 +439,8 @@ func (m *Module) ensureConnectionPools(
 			return connectionbinding.NewPoolManager(connectionbinding.PoolManagerConfig{
 				Binding: binding, Resolver: resolver, Factory: m.connectionFactory,
 				Store: m.connectionBindings, Audit: audit,
-				Now: now, StaleAfter: 15 * time.Minute,
+				SourceWork: &m.sourceWork,
+				Now:        now, StaleAfter: 15 * time.Minute,
 			})
 		},
 		RefreshTimeout: refreshTimeout, MaxConcurrent: maxConcurrent,
@@ -540,10 +550,13 @@ func (m *Module) Close() error {
 	if m == nil {
 		return nil
 	}
+	m.sourceWork.Close()
 	var errs []error
 	m.connectionPoolsMu.Lock()
 	connectionPools := m.connectionPools
-	m.connectionPools = nil
+	// Retain ownership so another close can observe unfinished cleanup or its
+	// final error, and prevent a later caller from constructing fresh pools.
+	m.connectionPoolsClosed = true
 	m.connectionPoolsMu.Unlock()
 	if connectionPools != nil {
 		errs = append(errs, connectionPools.Close())

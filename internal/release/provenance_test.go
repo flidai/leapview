@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
@@ -28,8 +29,76 @@ func TestProvenanceRequiresPolicyEvidenceAndValidatesLegacyVersionFour(t *testin
 	legacy, err := NewLegacyProvenance(current)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Validate())
+	unsupportedVersion := legacy
+	unsupportedVersion.Version = 5
+	require.Error(t, unsupportedVersion.Validate())
 	legacy.Digest = testDigest("0")
 	require.Error(t, legacy.Validate())
+}
+
+func TestProvenancePinsLocalCredentialVersionAndIncludesItInDigest(t *testing.T) {
+	input := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000301")
+	provenance, err := NewProvenance(input)
+	require.NoError(t, err)
+	require.Equal(t, ProvenanceVersion, provenance.Version)
+	require.NoError(t, provenance.Validate())
+	require.Equal(t, input.Plan.Bindings[0].CredentialVersionID, provenance.Plan.Bindings[0].CredentialVersionID)
+
+	other := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000302")
+	otherProvenance, err := NewProvenance(other)
+	require.NoError(t, err)
+	require.NotEqual(t, provenance.PlanDigest, otherProvenance.PlanDigest)
+
+	tampered := provenance
+	tampered.Plan.Bindings = append([]BindingEvidence(nil), provenance.Plan.Bindings...)
+	tampered.Plan.Bindings[0].CredentialVersionID = other.Plan.Bindings[0].CredentialVersionID
+	require.Error(t, tampered.Validate())
+
+	encoded, err := json.Marshal(provenance.Plan.Bindings)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"credentialVersionId":"0198f2c0-7c7a-7f00-8a11-000000000301"`)
+}
+
+func TestProvenanceRejectsInvalidLocalCredentialVersionPins(t *testing.T) {
+	tests := map[string]func(*ProvenanceInput){
+		"malformed UUID": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].CredentialVersionID = "not-a-uuid"
+		},
+		"nil UUID": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].CredentialVersionID = "00000000-0000-0000-0000-000000000000"
+		},
+		"both version sources": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].ValidatedVersion = "provider:v1"
+		},
+		"non-postgres connector": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].ConnectorKind = "s3"
+		},
+		"public connection": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].Access = semanticmodel.ConnectionAccessPublic
+		},
+		"unknown access": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].Access = semanticmodel.ConnectionAccess("unknown")
+		},
+		"missing both versions": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].CredentialVersionID = ""
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			input := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000301")
+			mutate(&input)
+			_, err := NewProvenance(input)
+			require.ErrorIs(t, err, ErrProvenanceInvalid)
+		})
+	}
+}
+
+func TestLegacyProvenanceCannotCarryLocalCredentialPin(t *testing.T) {
+	input := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000301")
+	input.Plan.PolicyRevision = 0
+	input.Plan.AuthorizationDigest = ""
+	_, err := NewLegacyProvenance(input)
+	require.ErrorIs(t, err, ErrProvenanceInvalid)
 }
 
 func TestProvenanceBindsGateEvidenceAndDetectsTampering(t *testing.T) {
@@ -152,6 +221,15 @@ func testGenerationInput(t *testing.T, mode GenerationDataMode) ProvenanceInput 
 	plan := GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), PolicyRevision: 1, AuthorizationDigest: testDigest("f"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil}
 	plan.GateEvidence = testPlanGateEvidence(t, artifact, candidate, plan)
 	return ProvenanceInput{Artifact: artifact, Candidate: candidate, Plan: plan}
+}
+
+func localCredentialPinInput(t *testing.T, versionID string) ProvenanceInput {
+	t.Helper()
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	input.Plan.Bindings[0].ValidatedVersion = ""
+	input.Plan.Bindings[0].CredentialVersionID = versionID
+	input.Plan.GateEvidence = testPlanGateEvidence(t, input.Artifact, input.Candidate, input.Plan)
+	return input
 }
 
 func testPlanGateEvidence(t *testing.T, artifact ProjectArtifactProvenance, candidate CandidateProvenance, plan GenerationPlanProvenance) *GateEvidence {

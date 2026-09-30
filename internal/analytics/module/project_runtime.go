@@ -76,7 +76,9 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, Database: environment,
 		CredentialResolver: f.module.credentials,
+		ExtensionAdmission: f.module.extensionAdmission,
 		ConnectionResolver: connectionResolver,
+		SourceWork:         f.module.sourceWorkGate(),
 		ResultPartition:    partition, QueryResultCache: queryResultCache,
 		ImmutableByteCache: immutableByteCache, ResultLimits: request.ResultLimits,
 		SnapshotID: request.SnapshotID, ServingStateID: request.ServingStateID,

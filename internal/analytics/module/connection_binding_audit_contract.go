@@ -41,7 +41,7 @@ func connectionBindingAuditRequirements() (rotation, administration bool) {
 			administration = true
 		}
 		switch connectionbinding.RefreshOperation(action) {
-		case connectionbinding.RefreshRequested, connectionbinding.RefreshTest:
+		case connectionbinding.RefreshRequested:
 			rotation = true
 		}
 	}

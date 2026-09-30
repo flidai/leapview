@@ -605,6 +605,7 @@ func TestServiceQueuePipelineRefreshRejectsDelegatedEditorDrift(t *testing.T) {
 	service := canonicalQueueService(repo)
 	service.Artifacts = fakeArtifactLoader{definition: definition}
 	service.RequireAuthority = true
+	service.AuthorityRevalidator = jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error { return nil })
 	plan := testDelegatedPipelinePlan(t, repo, definition)
 	authority := testDelegatedAuthority(plan)
 	input := QueuePipelineInput{
@@ -664,10 +665,12 @@ func TestServiceQueuePipelineRefreshRejectsDelegatedBindingAndTriggerEdits(t *te
 	service := canonicalQueueService(repo)
 	service.Artifacts = fakeArtifactLoader{definition: definition}
 	service.RequireAuthority = true
+	service.AuthorityRevalidator = jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error { return nil })
 	input := QueuePipelineInput{Identity: serviceIdentity, PrincipalID: "workload:refresh", EstimatedMemoryBytes: 1, PipelineID: "sales-refresh", TriggerType: TriggerManual}
 
 	plan := testDelegatedPipelinePlan(t, repo, definition)
 	input.Authority = testDelegatedAuthority(plan)
+	input.Authority.Permissions = append(input.Authority.Permissions, connectionUsePair(t, "connection:warehouse"))
 	if _, err := service.QueuePipelineRefresh(t.Context(), input); err != nil {
 		t.Fatalf("queue baseline delegated plan: %v", err)
 	}
@@ -737,6 +740,11 @@ func TestServiceExecuteClaimedJobRejectsDelegatedClosureEditAtOutputBoundary(t *
 
 func testDelegatedPipelinePlan(t *testing.T, repo *fakeRepo, definition *artifact.Definition) projectpipelineplan.Plan {
 	t.Helper()
+	return testAuthorityPipelinePlan(t, repo, definition, "workload:refresh")
+}
+
+func testAuthorityPipelinePlan(t *testing.T, repo *fakeRepo, definition *artifact.Definition, principalID string) projectpipelineplan.Plan {
+	t.Helper()
 	base, err := refreshplan.ForPipeline(definition, serviceIdentity.ProjectID, "sales-refresh")
 	if err != nil {
 		t.Fatalf("build test refresh plan: %v", err)
@@ -745,7 +753,7 @@ func testDelegatedPipelinePlan(t *testing.T, repo *fakeRepo, definition *artifac
 	if err != nil {
 		t.Fatalf("bind test refresh plan: %v", err)
 	}
-	plan, err := bound.DeliveryPipelinePlan(refreshplan.InvocationPolicy{InvocationSource: TriggerManual, RunAsPrincipalID: "workload:refresh"})
+	plan, err := bound.DeliveryPipelinePlan(refreshplan.InvocationPolicy{InvocationSource: TriggerManual, RunAsPrincipalID: principalID})
 	if err != nil {
 		t.Fatalf("build test delivery plan: %v", err)
 	}

@@ -822,6 +822,7 @@ tasks:
     sources:
       - Taskfile.yml
       - internal/app/cli/**/*.go
+      - internal/admin/cli/**/*.go
       - internal/app/tools/clidocgen/**/*.go
     generates:
       - docs/reference/cli/catalog.json
@@ -1133,6 +1134,9 @@ tasks:
       - internal/analytics/api/gen/request_models.gen.go
       - internal/analytics/api/gen/server.apigen.gen.go
       - internal/analytics/api/gen/client.apigen.gen.go
+      - internal/credential/api/gen/request_models.gen.go
+      - internal/credential/api/gen/server.apigen.gen.go
+      - internal/credential/api/gen/client.apigen.gen.go
       - internal/dashboard/api/gen/request_models.gen.go
       - internal/dashboard/api/gen/server.apigen.gen.go
       - internal/dashboard/api/gen/client.apigen.gen.go
@@ -1779,13 +1783,13 @@ tasks:
       - task: ci:lane:frontend:shard
         vars: { SHARD: reports }
       - task: ci:lane:frontend:shard
-        vars: { SHARD: chat }
-      - task: ci:lane:frontend:shard
-        vars: { SHARD: data }
-      - task: ci:lane:frontend:shard
         vars: { SHARD: reports-viewer }
       - task: ci:lane:frontend:shard
         vars: { SHARD: reports-builder }
+      - task: ci:lane:frontend:shard
+        vars: { SHARD: chat }
+      - task: ci:lane:frontend:shard
+        vars: { SHARD: data }
       - task: ci:lane:frontend:shard
         vars: { SHARD: site }
 

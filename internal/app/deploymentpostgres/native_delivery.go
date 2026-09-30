@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 )
 
@@ -36,6 +37,35 @@ func NewNativeDeliveryCoordinator(plan nativePlanMutationCoordinator, build nati
 		return nil, errors.New("native delivery plan and build coordinators are required")
 	}
 	return &NativeDeliveryCoordinator{plan: plan, build: build}, nil
+}
+
+// WithCandidateConnectionAuthorities returns an execution-scoped coordinator
+// whose planning and build binding evidence and connection leases come from
+// the same caller-owned authorities. The coordinator structs contain only
+// immutable configuration and service dependencies; per-command state stays
+// local to their methods, so replacing these two dependencies on copies does
+// not mutate the process-wide coordinator.
+func (c *NativeDeliveryCoordinator) WithCandidateConnectionAuthorities(
+	connections deployment.CandidateConnectionLeaser,
+	evidence deployment.CandidateConnectionEvidenceResolver,
+) (*NativeDeliveryCoordinator, error) {
+	if c == nil || nativeBuildAuthorityNil(connections) || nativeBuildAuthorityNil(evidence) {
+		return nil, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	plan, ok := c.plan.(*NativeCreatePlanCoordinator)
+	if !ok || plan == nil {
+		return nil, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	build, ok := c.build.(*NativeBuildCoordinator)
+	if !ok || build == nil {
+		return nil, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	planCopy := *plan
+	planCopy.bindingEvidence = evidence
+	buildCopy := *build
+	buildCopy.connections = connections
+	buildCopy.bindingEvidence = evidence
+	return &NativeDeliveryCoordinator{plan: &planCopy, build: &buildCopy}, nil
 }
 
 func (c *NativeDeliveryCoordinator) CreatePlan(ctx context.Context, request deploymentmodule.NativeDeliveryPlanRequest) (deploymentmodule.NativeDeliveryPlan, error) {

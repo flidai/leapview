@@ -16,6 +16,7 @@ import (
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/google/uuid"
 )
 
 var (
@@ -31,6 +32,7 @@ type CandidateBindingVersion struct {
 	BindingID, LogicalConnection, ConnectorKind string
 	Revision                                    int64
 	ProviderVersion, EndpointConfigHash         string
+	CredentialVersionID                         string
 	Access                                      semanticmodel.ConnectionAccess
 }
 type CandidateRestriction struct {
@@ -113,6 +115,9 @@ type candidateRuntimeRegistry struct {
 	current map[candidateRuntimeKey]*candidateGeneration
 	retired map[*candidateGeneration]struct{}
 	closed  bool
+
+	// Keep the first cleanup failure after its generation leaves retired.
+	cleanupErr error
 }
 
 func newCandidateRuntimeRegistry(now func() time.Time) *candidateRuntimeRegistry {
@@ -351,14 +356,17 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 	bindings := append([]CandidateBindingVersion(nil), value.Bindings...)
 	for i := range bindings {
 		b := &bindings[i]
-		if b.BindingID != strings.TrimSpace(b.BindingID) || b.LogicalConnection != strings.TrimSpace(b.LogicalConnection) || b.ConnectorKind != strings.TrimSpace(b.ConnectorKind) || b.ProviderVersion != strings.TrimSpace(b.ProviderVersion) || b.EndpointConfigHash != strings.TrimSpace(b.EndpointConfigHash) {
+		if b.BindingID != strings.TrimSpace(b.BindingID) || b.LogicalConnection != strings.TrimSpace(b.LogicalConnection) || b.ConnectorKind != strings.TrimSpace(b.ConnectorKind) || b.ProviderVersion != strings.TrimSpace(b.ProviderVersion) || b.CredentialVersionID != strings.TrimSpace(b.CredentialVersionID) || b.EndpointConfigHash != strings.TrimSpace(b.EndpointConfigHash) {
 			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity must be canonical", ErrCandidateRuntimeInvalid)
 		}
 		if b.Access != "" && b.Access != semanticmodel.ConnectionAccessPublic {
 			return CandidateCompatibility{}, fmt.Errorf("%w: unsupported binding access policy", ErrCandidateRuntimeInvalid)
 		}
-		if b.BindingID == "" || b.LogicalConnection == "" || b.ConnectorKind == "" || b.Revision < 1 || b.ProviderVersion == "" {
-			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity, positive revision, and provider version are required", ErrCandidateRuntimeInvalid)
+		if b.BindingID == "" || b.LogicalConnection == "" || b.ConnectorKind == "" || b.Revision < 1 {
+			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity and positive revision are required", ErrCandidateRuntimeInvalid)
+		}
+		if err := validateCandidateCredentialVersion(b.ConnectorKind, b.Access, b.ProviderVersion, b.CredentialVersionID); err != nil {
+			return CandidateCompatibility{}, err
 		}
 		if err := platformdigest.ValidateSHA256Identity(b.EndpointConfigHash); err != nil {
 			return CandidateCompatibility{}, fmt.Errorf("%w: endpoint config hash: %v", ErrCandidateRuntimeInvalid, err)
@@ -441,21 +449,36 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 
 func fingerprintCandidateBindings(bindings []CandidateBindingVersion) string {
 	type bindingFingerprintInput struct {
-		BindingID          string                         `json:"bindingId"`
-		ConnectionID       string                         `json:"connectionId"`
-		ConnectorKind      string                         `json:"connectorKind"`
-		Revision           int64                          `json:"revision"`
-		ProviderVersion    string                         `json:"providerVersion"`
-		EndpointConfigHash string                         `json:"endpointConfigHash"`
-		Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+		BindingID           string                         `json:"bindingId"`
+		ConnectionID        string                         `json:"connectionId"`
+		ConnectorKind       string                         `json:"connectorKind"`
+		Revision            int64                          `json:"revision"`
+		ProviderVersion     string                         `json:"providerVersion"`
+		CredentialVersionID string                         `json:"credentialVersionId,omitempty"`
+		EndpointConfigHash  string                         `json:"endpointConfigHash"`
+		Access              semanticmodel.ConnectionAccess `json:"access,omitempty"`
 	}
 	preimage := make([]bindingFingerprintInput, len(bindings))
 	for i, binding := range bindings {
-		preimage[i] = bindingFingerprintInput{BindingID: binding.BindingID, ConnectionID: binding.LogicalConnection, ConnectorKind: binding.ConnectorKind, Revision: binding.Revision, ProviderVersion: binding.ProviderVersion, EndpointConfigHash: binding.EndpointConfigHash, Access: binding.Access}
+		preimage[i] = bindingFingerprintInput{BindingID: binding.BindingID, ConnectionID: binding.LogicalConnection, ConnectorKind: binding.ConnectorKind, Revision: binding.Revision, ProviderVersion: binding.ProviderVersion, CredentialVersionID: binding.CredentialVersionID, EndpointConfigHash: binding.EndpointConfigHash, Access: binding.Access}
 	}
 	data, _ := json.Marshal(preimage)
 	sum := sha256.Sum256(data)
 	return "sha256:" + fmt.Sprintf("%x", sum)
+}
+
+func validateCandidateCredentialVersion(connectorKind string, access semanticmodel.ConnectionAccess, providerVersion, credentialVersionID string) error {
+	if credentialVersionID == "" {
+		if providerVersion == "" {
+			return fmt.Errorf("%w: provider version or local credential version is required", ErrCandidateRuntimeInvalid)
+		}
+		return nil
+	}
+	versionID, err := uuid.Parse(credentialVersionID)
+	if err != nil || versionID == uuid.Nil || versionID.String() != credentialVersionID || providerVersion != "" || connectorKind != "postgres" || access != "" {
+		return fmt.Errorf("%w: local credential version is invalid for this binding", ErrCandidateRuntimeInvalid)
+	}
+	return nil
 }
 
 func validateCandidateDataMode(state servingstate.State, compatibility CandidateCompatibility, data ManagedDataResolution, requireSealedCatalog bool) error {
@@ -560,14 +583,6 @@ func (r *candidateRuntimeRegistry) resolveOwned(candidateID, ownerID string, pro
 	}
 	return OwnedCandidateView{CandidateID: g.key.candidateID, ProjectID: g.projectID, Provider: &candidateRuntimeProvider{registry: registry, candidateID: g.key.candidateID, ownerID: g.ownerID}, Restrictions: append([]CandidateRestriction(nil), g.compatibility.Restrictions...), AuthorizationFingerprint: g.compatibility.AuthorizationFingerprint}, nil, nil
 }
-func (r *candidateRuntimeRegistry) retire(id string) ([]*candidateGeneration, int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if g := r.current[candidateRuntimeKey{candidateID: id}]; g != nil {
-		return r.retireLockedList(g), 1
-	}
-	return nil, 0
-}
 func (r *candidateRuntimeRegistry) reap(now time.Time) ([]*candidateGeneration, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -610,7 +625,6 @@ func (r *candidateRuntimeRegistry) release(g *candidateGeneration) *candidateGen
 	}
 	g.refs--
 	if g.refs == 0 && g.closing {
-		delete(r.retired, g)
 		return g
 	}
 	return nil

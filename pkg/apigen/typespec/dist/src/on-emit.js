@@ -8,6 +8,7 @@ import { emitDocumentFile } from "./phase-emission.js";
 import { normalizeDocument } from "./phase-normalization.js";
 import { qualifiedNamespaceName, readPackageMetadata } from "./phase-naming.js";
 import { withSchemaConstraints } from "./schema-constraints.js";
+import { commandTransportPolicies } from "./command-idempotency.js";
 import { hasErrorDiagnostics, validateOutputFile, validateServiceCount, validateServicePresence, } from "./phase-validation.js";
 class IRBuilder {
     program;
@@ -928,19 +929,21 @@ function commandMetadata(program, builder, operation, parameters) {
             target = { parameter: parameter.name, type: parameter.name };
         }
     }
-    const hasRequiredHeader = (name) => emittedParameters.some((parameter) => parameter.in === "header" && parameter.required && parameter.name.toLowerCase() === name.toLowerCase());
     const method = operation.verb.toLowerCase();
-    const idempotency = hasRequiredHeader("Idempotency-Key") ? "required" : undefined;
-    const concurrency = hasRequiredHeader("If-Match") ? "if-match" : undefined;
-    if (method === "post" && idempotency === undefined) {
-        builder.invalidCommand("POST commands require a required Idempotency-Key header", operation.operation);
-    }
-    if (method === "patch" && concurrency === undefined) {
-        builder.invalidCommand("PATCH commands require a required If-Match header", operation.operation);
-    }
     const authz = getAuthz({ program }, operation.operation);
     const authzMode = typeof authz?.mode === "string" ? authz.mode : undefined;
     const privilege = typeof authz?.privilege === "string" ? authz.privilege : undefined;
+    const { idempotency, concurrency } = commandTransportPolicies({
+        method,
+        nonReplayable: options.nonReplayable,
+        parameters: emittedParameters,
+        requestBody: operation.parameters.body,
+        asyncExecution: executionOptions !== undefined,
+        auditRequired: options.audit.required,
+        auditGuarantee: guarantee,
+        authzMode,
+        invalidCommand: (reason) => builder.invalidCommand(reason, operation.operation),
+    });
     return prune({
         owner: namespaceName(operation.operation.namespace) ?? "",
         audit: prune({ required: options.audit.required, success_action: successAction, guarantee, payload: auditPayload }),

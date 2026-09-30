@@ -95,7 +95,8 @@ func TestCaptureAuthorityAcceptsBrowserSessionEvidence(t *testing.T) {
 	expiresAt := time.Now().UTC().Add(time.Hour)
 	identity := projectgraphIdentity("project_sales", "prod", "generation")
 	m := &Module{
-		service: refreshrun.Service{RequireAuthority: true},
+		service:    refreshrun.Service{RequireAuthority: true},
+		instanceID: "instance:direct",
 		currentSessionEvidence: func(context.Context) (access.CredentialEvidence, bool) {
 			return access.CredentialEvidence{Class: "session", ID: "session-1", Fingerprint: "fingerprint-1", PrincipalID: "principal-1", ExpiresAt: expiresAt}, true
 		},
@@ -106,6 +107,60 @@ func TestCaptureAuthorityAcceptsBrowserSessionEvidence(t *testing.T) {
 	}
 	if authority.Credential == nil || authority.Credential.Class != "session" || authority.Credential.ID != "session-1" || authority.Credential.Fingerprint != "fingerprint-1" {
 		t.Fatalf("captured browser-session evidence = %#v", authority.Credential)
+	}
+	if authority.Target.InstanceID != m.instanceID {
+		t.Fatalf("captured browser-session target instance = %q, want %q", authority.Target.InstanceID, m.instanceID)
+	}
+}
+
+func TestBuildCapturesManualAuthorityWithConfiguredInstance(t *testing.T) {
+	identity := projectgraphIdentity("project_sales", "prod", "generation")
+	pipelineID := projectgraph.ResourceID("pipeline_daily")
+	resource, err := access.NewResourceRef(pipelineID, projectgraph.KindPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionPipelineRun, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		class string
+		api   bool
+	}{
+		{name: "browser session", class: jobs.CredentialClassSession},
+		{name: "API token", class: jobs.CredentialClassAPIToken, api: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := Config{
+				Persistence:      &Persistence{Runs: &testRunPersistence{}, Schedules: &testScheduleRepository{}, Publication: testCanonicalPublication{}},
+				RequireAuthority: true, InstanceID: "instance:refresh", Authorization: testAuthorization(),
+				CurrentCredential: func(context.Context) (access.APICredential, bool) {
+					if !test.api {
+						return access.APICredential{}, false
+					}
+					return access.APICredential{Principal: access.Principal{ID: "principal-1"}, Token: access.APIToken{
+						ID: "token-1", PrincipalID: "principal-1", TokenFingerprint: "fingerprint-1",
+						PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{pair}, ExpiresAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano),
+					}}, true
+				},
+				CurrentSessionEvidence: func(context.Context) (access.CredentialEvidence, bool) {
+					return access.CredentialEvidence{Class: "session", ID: "session-1", Fingerprint: "fingerprint-session-1", PrincipalID: "principal-1", ExpiresAt: time.Now().UTC().Add(time.Hour)}, true
+				},
+			}
+			m, err := Build(t.Context(), config)
+			if err != nil {
+				t.Fatalf("build refresh module: %v", err)
+			}
+			authority, err := m.captureAuthority(t.Context(), identity, pipelineID, "principal-1")
+			if err != nil {
+				t.Fatalf("capture manual authority: %v", err)
+			}
+			if authority.Target.InstanceID != config.InstanceID || authority.Credential == nil || authority.Credential.Class != test.class {
+				t.Fatalf("captured authority target or credential = %#v", authority)
+			}
+		})
 	}
 }
 
@@ -124,6 +179,12 @@ func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
 	if _, err := Build(t.Context(), Config{}); err == nil {
 		t.Fatal("Build accepted a missing canonical authorizer")
 	}
+}
+
+type testCanonicalPublication struct{}
+
+func (testCanonicalPublication) CompleteCanonicalRefresh(context.Context, refreshrun.JobRecord, refreshrun.CanonicalRefreshResult) error {
+	return nil
 }
 func TestBuildProductionRejectsUnmarkedPersistence(t *testing.T) {
 	_, err := Build(t.Context(), Config{Persistence: &Persistence{}, Production: true, Authorization: testAuthorization()})

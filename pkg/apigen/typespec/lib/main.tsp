@@ -77,6 +77,7 @@ model CommandOptions {
   auditAction?: string;
   guarantee?: "transactional" | "best-effort";
   execution?: AsyncExecutionOptions;
+  nonReplayable?: boolean;
   failures?: CommandFailureOptions[];
   additionalExposures?: ("ui" | "agent" | "automation")[];
   targetParameter?: string;

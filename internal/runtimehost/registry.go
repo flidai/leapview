@@ -354,11 +354,16 @@ func (r *Registry) Close() error {
 	if r.manager != nil {
 		if candidateCleanupErr != nil {
 			errs = append(errs, r.manager.closeWithoutReleaseQueue())
+			r.manager.mu.RLock()
+			servingTargets := r.manager.scheduledCleanupLocked()
+			r.manager.mu.RUnlock()
 			go func() {
-				_ = r.waitForCandidateCleanup(candidateTargets)
-				if r.manager.releaseQueue != nil {
-					_ = r.manager.releaseQueue.close(r.manager.releaseShutdownTimeout)
+				// The caller's drain timeout is not cleanup completion. Both
+				// kinds of runtime can enqueue snapshot releases until closed.
+				for _, g := range candidateTargets {
+					<-g.cleanupDone
 				}
+				r.manager.closeReleaseQueueAfterCleanup(servingTargets)
 			}()
 		} else {
 			errs = append(errs, r.manager.Close())
@@ -438,16 +443,7 @@ func (r *Registry) ResolveOwnedCandidate(candidateID, ownerID string) (OwnedCand
 	}
 	return view, err
 }
-func (r *Registry) RetireCandidate(id string) int {
-	if r == nil || r.candidates == nil || id != strings.TrimSpace(id) {
-		return 0
-	}
-	retired, count := r.candidates.retire(id)
-	for _, g := range retired {
-		r.cleanupCandidateGeneration(g)
-	}
-	return count
-}
+
 func (r *Registry) ReapExpiredCandidates(now time.Time) int {
 	if r == nil || r.candidates == nil {
 		return 0
@@ -463,21 +459,39 @@ func (r *Registry) cleanupCandidateGeneration(g *candidateGeneration) {
 		return
 	}
 	g.cleanupOnce.Do(func() {
-		results := r.manager.closeManagedResources(g.managed)
-		var errs []error
-		for _, result := range results {
-			if result.err != nil {
-				errs = append(errs, result.err)
-				if r.manager.onCleanupFailure != nil {
-					r.manager.onCleanupFailure(CleanupFailure{ProjectID: r.ProjectID(), ServingStateID: g.managed.servingStateID, DuckLakeSnapshotID: g.managed.snapshotID, Resource: result.resource, Err: result.err})
-				}
-			}
-		}
-		g.cleanupErr = errors.Join(errs...)
-		close(g.cleanupDone)
+		go r.finishCandidateCleanup(g)
 	})
 }
-func (r *Registry) waitForCandidateCleanup(targets []*candidateGeneration) error {
+
+func (r *Registry) finishCandidateCleanup(g *candidateGeneration) {
+	results := r.manager.closeManagedResources(g.managed)
+	var errs []error
+	for _, result := range results {
+		if result.err != nil {
+			errs = append(errs, result.err)
+			if r.manager.onCleanupFailure != nil {
+				r.manager.onCleanupFailure(CleanupFailure{ProjectID: r.ProjectID(), ServingStateID: g.managed.servingStateID, DuckLakeSnapshotID: g.managed.snapshotID, Resource: result.resource, Err: result.err})
+			}
+		}
+	}
+	r.candidates.mu.Lock()
+	g.cleanupErr = errors.Join(errs...)
+	if g.cleanupErr != nil && r.candidates.cleanupErr == nil {
+		r.candidates.cleanupErr = g.cleanupErr
+	}
+	delete(r.candidates.retired, g)
+	close(g.cleanupDone)
+	r.candidates.mu.Unlock()
+}
+func (r *Registry) waitForCandidateCleanup(targets []*candidateGeneration) (result error) {
+	defer func() {
+		r.candidates.mu.Lock()
+		prior := r.candidates.cleanupErr
+		r.candidates.mu.Unlock()
+		if prior != nil && !errors.Is(result, prior) {
+			result = errors.Join(result, prior)
+		}
+	}()
 	if len(targets) == 0 {
 		return nil
 	}

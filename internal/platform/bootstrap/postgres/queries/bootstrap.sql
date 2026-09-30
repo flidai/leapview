@@ -19,9 +19,24 @@ SELECT instance_id, created_at
 FROM platform.instance_identity
 WHERE singleton_id = 1;
 
+-- name: GetExistingInstanceID :one
+SELECT instance_id
+FROM platform.instance_identity
+WHERE singleton_id = 1;
+
 -- name: InsertInstanceIdentity :execrows
 INSERT INTO platform.instance_identity(singleton_id, instance_id)
 VALUES (1, sqlc.arg(instance_id))
+ON CONFLICT (singleton_id) DO NOTHING;
+
+-- name: GetInstanceCustomerOwner :one
+SELECT instance_id, owner_id, declared_at
+FROM platform.instance_customer_owner
+WHERE singleton_id = 1;
+
+-- name: InsertInstanceCustomerOwner :execrows
+INSERT INTO platform.instance_customer_owner(singleton_id, instance_id, owner_id)
+VALUES (1, sqlc.arg(instance_id), sqlc.arg(owner_id))
 ON CONFLICT (singleton_id) DO NOTHING;
 
 -- name: GetInstanceEnvironment :one

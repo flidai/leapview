@@ -31,15 +31,26 @@ func ConcurrentEventPost(path string, signalPaths ...string) string {
 }
 
 func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) string {
+	if binding.ReplayForbidden() {
+		return requestWithPathExpressionAndHeadersAndOptions(
+			"post",
+			jsString(path),
+			signalPaths,
+			"window.LeapViewCommand.nonReplayableHeaders("+jsString(binding.OperationID())+")",
+			"retry: 'never', retryMaxCount: 0, openWhenHidden: true",
+		)
+	}
 	return request("post", path, signalPaths, jsString(binding.OperationID()))
 }
 
 func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths ...string) string {
+	requireReplayable(binding)
 	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+jsString(revision)+")")
 }
 
 // CommandPatchWithRevision supplies a browser signal expression as If-Match.
 func CommandPatchWithRevision(binding uicommand.Binding, path, ifMatchExpression string, signalPaths ...string) string {
+	requireReplayable(binding)
 	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+strings.TrimSpace(ifMatchExpression)+")")
 }
 
@@ -63,6 +74,7 @@ func commandPostSwitch(selectorExpression string, bindings map[string]uicommand.
 	sort.Strings(keys)
 	entries := make([]string, 0, len(keys))
 	for _, key := range keys {
+		requireReplayable(bindings[key])
 		entries = append(entries, jsString(key)+": "+jsString(bindings[key].OperationID()))
 	}
 	operationExpression := "({" + strings.Join(entries, ", ") + "})[" + strings.TrimSpace(selectorExpression) + "]"
@@ -83,10 +95,17 @@ func CommandPostConditional(conditionExpression string, ifTrue, ifFalse []uicomm
 	return request("post", path, signalPaths, operationExpression)
 }
 
+func requireReplayable(binding uicommand.Binding) {
+	if binding.ReplayForbidden() {
+		panic("non-replayable UI command requires a single-command POST")
+	}
+}
+
 func operationArrayExpression(bindings []uicommand.Binding) string {
 	operations := make([]string, 0, len(bindings))
 	seen := map[string]struct{}{}
 	for _, binding := range bindings {
+		requireReplayable(binding)
 		operationID := binding.OperationID()
 		if _, exists := seen[operationID]; exists {
 			continue
@@ -114,16 +133,24 @@ func requestWithPathExpression(method, pathExpression string, signalPaths []stri
 }
 
 func requestWithPathExpressionAndHeaders(method, pathExpression string, signalPaths []string, headers string) string {
-	options := "headers: " + headers
+	return requestWithPathExpressionAndHeadersAndOptions(method, pathExpression, signalPaths, headers, "")
+}
+
+func requestWithPathExpressionAndHeadersAndOptions(method, pathExpression string, signalPaths []string, headers, additionalOptions string) string {
+	options := make([]string, 0, 3)
+	if strings.TrimSpace(additionalOptions) != "" {
+		options = append(options, additionalOptions)
+	}
 	if len(signalPaths) > 0 {
 		patterns := make([]string, 0, len(signalPaths))
 		for _, signalPath := range signalPaths {
 			patterns = append(patterns, strings.ReplaceAll(regexp.QuoteMeta(signalPath), `\.`, `[.]`))
 		}
 		include := "/^(?:" + strings.Join(patterns, "|") + ")(?:[.]|$)/"
-		options = "filterSignals: {include: " + include + "}, " + options
+		options = append(options, "filterSignals: {include: "+include+"}")
 	}
-	return "@" + method + "(" + pathExpression + ", {" + options + "})"
+	options = append(options, "headers: "+headers)
+	return "@" + method + "(" + pathExpression + ", {" + strings.Join(options, ", ") + "})"
 }
 
 func jsSingleQuoted(value string) string {

@@ -89,6 +89,7 @@ COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/
 COPY --from=sourcegen /src/internal/project/postgres/internal/db ./internal/project/postgres/internal/db
 COPY --from=sourcegen /src/internal/project/developmentsession/postgres/internal/db ./internal/project/developmentsession/postgres/internal/db
 COPY --from=sourcegen /src/internal/access/postgres/internal/db ./internal/access/postgres/internal/db
+COPY --from=sourcegen /src/internal/credential/postgres/internal/db ./internal/credential/postgres/internal/db
 COPY --from=sourcegen /src/internal/admin/product/postgres/internal/db ./internal/admin/product/postgres/internal/db
 COPY --from=sourcegen /src/internal/agent/postgres/internal/db ./internal/agent/postgres/internal/db
 COPY --from=sourcegen /src/internal/dashboard/session/postgres/internal/db ./internal/dashboard/session/postgres/internal/db

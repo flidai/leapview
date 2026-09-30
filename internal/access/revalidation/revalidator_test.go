@@ -80,6 +80,31 @@ func testCallerAuthority(t *testing.T, expiresAt time.Time) jobs.AuthorityEnvelo
 	}
 }
 
+func callerConnectionUsePair(t *testing.T, projectID, connectionID string) permissions.Pair {
+	t.Helper()
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := projectgraph.NewResourceID(connectionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef(connection, projectgraph.KindConnection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionConnectionUse, project, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractPair, err := access.ToContractPermissionPair(pair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contractPair
+}
+
 func testAuthorityToken(t *testing.T, authority jobs.AuthorityEnvelope) access.APIToken {
 	t.Helper()
 	pairs := make([]access.PermissionPair, len(authority.Permissions))
@@ -122,6 +147,52 @@ func TestCallerAuthorityRevalidatorRejectsRevokedQueuedCredential(t *testing.T) 
 	}
 }
 
+func TestCallerAuthorityRevalidatorRejectsChangedCapturedCredentialEvidence(t *testing.T) {
+	current := func(context.Context, string, access.PermissionPair, string) (bool, error) { return true, nil }
+	t.Run("API token", func(t *testing.T) {
+		authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
+		base := testAuthorityToken(t, authority)
+		mutations := map[string]func(*access.APIToken){
+			"id":          func(token *access.APIToken) { token.ID = "token-other" },
+			"fingerprint": func(token *access.APIToken) { token.TokenFingerprint = "fingerprint-other" },
+			"expiry": func(token *access.APIToken) {
+				token.ExpiresAt = time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339Nano)
+			},
+		}
+		for name, mutate := range mutations {
+			t.Run(name, func(t *testing.T) {
+				token := base
+				mutate(&token)
+				revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: token}, nil, current)
+				if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+					t.Fatalf("changed token evidence error = %v, want authority invalid", err)
+				}
+			})
+		}
+	})
+	t.Run("browser session", func(t *testing.T) {
+		authority := browserSessionAuthority(testCallerAuthority(t, time.Now().UTC().Add(time.Hour)))
+		base := testAuthoritySession(authority)
+		mutations := map[string]func(*access.Session){
+			"id":          func(session *access.Session) { session.ID = "session-other" },
+			"fingerprint": func(session *access.Session) { session.TokenFingerprint = "fingerprint-other" },
+			"expiry": func(session *access.Session) {
+				session.ExpiresAt = time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339Nano)
+			},
+		}
+		for name, mutate := range mutations {
+			t.Run(name, func(t *testing.T) {
+				session := base
+				mutate(&session)
+				revalidator := newCallerAuthorityRevalidator(nil, jobAuthoritySessionReader{session: session}, current)
+				if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+					t.Fatalf("changed session evidence error = %v, want authority invalid", err)
+				}
+			})
+		}
+	})
+}
+
 func TestCallerAuthorityRevalidatorChecksExactPipelineResource(t *testing.T) {
 	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
 	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(_ context.Context, _ string, pair access.PermissionPair, environment string) (bool, error) {
@@ -135,6 +206,139 @@ func TestCallerAuthorityRevalidatorChecksExactPipelineResource(t *testing.T) {
 	})
 	if err := denying.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
 		t.Fatalf("unrelated-resource revalidation error = %v, want authority invalid", err)
+	}
+}
+
+func TestCallerAuthorityRevalidatorChecksRefreshConnectionDependencies(t *testing.T) {
+	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
+	authority.Permissions = append(authority.Permissions,
+		callerConnectionUsePair(t, authority.Target.ProjectID, "connection_orders"),
+		callerConnectionUsePair(t, authority.Target.ProjectID, "connection_inventory"),
+	)
+	token := testAuthorityToken(t, authority)
+	checked := make(map[string]bool, len(authority.Permissions))
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: token}, nil, func(_ context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
+		if principalID != authority.ActorPrincipalID || environment != authority.Target.Environment {
+			return false, nil
+		}
+		checked[pair.Key()] = true
+		return true, nil
+	})
+	if err := revalidator.Revalidate(t.Context(), authority); err != nil {
+		t.Fatalf("live pipeline and connection authority revalidation error = %v", err)
+	}
+	if len(checked) != len(authority.Permissions) {
+		t.Fatalf("checked %d permission pairs, want all %d", len(checked), len(authority.Permissions))
+	}
+
+	denying := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: token}, nil, func(_ context.Context, _ string, pair access.PermissionPair, _ string) (bool, error) {
+		return pair.Target.ResourceID.String() != "connection_inventory", nil
+	})
+	if err := denying.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+		t.Fatalf("denied connection authority error = %v, want authority invalid", err)
+	}
+
+	withoutConnectionCeiling := token
+	withoutConnectionCeiling.Permissions = withoutConnectionCeiling.Permissions[:1]
+	ceiling := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: withoutConnectionCeiling}, nil, func(context.Context, string, access.PermissionPair, string) (bool, error) {
+		return true, nil
+	})
+	if err := ceiling.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+		t.Fatalf("missing connection token ceiling error = %v, want authority invalid", err)
+	}
+}
+
+func TestCallerAuthorityRevalidatorRejectsInvalidRefreshConnectionDependencies(t *testing.T) {
+	base := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
+	baseToken := testAuthorityToken(t, base)
+	connection := callerConnectionUsePair(t, base.Target.ProjectID, "connection_orders")
+	otherProjectConnection := callerConnectionUsePair(t, "project_inventory", "connection_orders")
+	wrongActionResource, err := projectgraph.NewResourceID(base.Target.ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongActionRef, err := access.NewResourceRef(wrongActionResource, projectgraph.KindPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongAction, err := access.NewExactPermissionPair(access.ActionPipelineRead, projectgraph.ResourceID(base.Target.ProjectID), wrongActionRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongActionContract, err := access.ToContractPermissionPair(wrongAction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongKind := permissions.Pair{
+		Action: permissions.Action(access.ActionConnectionUse), Profile: access.PermissionCatalogProfile,
+		Target: permissions.Target{Scope: permissions.ScopeResource, ProjectID: base.Target.ProjectID, ResourceKind: permissions.Kind(projectgraph.KindPipeline), ResourceID: base.Target.ResourceID},
+	}
+	wildcard := permissions.Pair{
+		Action: permissions.Action(access.ActionConnectionUse), Profile: access.PermissionCatalogProfile,
+		Target: permissions.Target{Scope: permissions.ScopeProject, ProjectID: base.Target.ProjectID, ResourceKind: permissions.Kind(projectgraph.KindConnection), IncludeFuture: true},
+	}
+	tests := map[string]func(*jobs.AuthorityEnvelope){
+		"missing pipeline.run root": func(authority *jobs.AuthorityEnvelope) { authority.Permissions = []permissions.Pair{connection} },
+		"arbitrary extra action": func(authority *jobs.AuthorityEnvelope) {
+			authority.Permissions = append(authority.Permissions, wrongActionContract)
+		},
+		"wrong connection kind": func(authority *jobs.AuthorityEnvelope) {
+			authority.Permissions = append(authority.Permissions, wrongKind)
+		},
+		"cross project": func(authority *jobs.AuthorityEnvelope) {
+			authority.Permissions = append(authority.Permissions, otherProjectConnection)
+		},
+		"future connection wildcard": func(authority *jobs.AuthorityEnvelope) {
+			authority.Permissions = append(authority.Permissions, wildcard)
+		},
+		"duplicate connection pair": func(authority *jobs.AuthorityEnvelope) {
+			authority.Permissions = append(authority.Permissions, connection, connection)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			authority := base
+			authority.Permissions = append([]permissions.Pair(nil), base.Permissions...)
+			mutate(&authority)
+			revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: baseToken}, nil, func(context.Context, string, access.PermissionPair, string) (bool, error) {
+				return true, nil
+			})
+			if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+				t.Fatalf("invalid permission set revalidation error = %v, want authority invalid", err)
+			}
+		})
+	}
+}
+
+func TestCallerAuthorityRevalidatorDoesNotAllowConnectionDependenciesForOtherRequirements(t *testing.T) {
+	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
+	pipelineID, err := projectgraph.NewResourceID(authority.Target.ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline, err := access.NewResourceRef(pipelineID, projectgraph.KindPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := access.NewExactPermissionPair(access.ActionPipelineRead, projectgraph.ResourceID(authority.Target.ProjectID), pipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readContract, err := access.ToContractPermissionPair(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.Permissions = []permissions.Pair{readContract, callerConnectionUsePair(t, authority.Target.ProjectID, "connection_orders")}
+	token := testAuthorityToken(t, authority)
+	requirement, err := access.NewTypedOperationRequirementService().Requirement(access.ActionPipelineRead, string(access.TypedOperationResolverPipeline))
+	if err != nil {
+		t.Fatal(err)
+	}
+	revalidator := NewCallerAuthorityRevalidator(jobAuthorityTokenReader{token: token}, nil, func(context.Context, string, access.PermissionPair, string) (bool, error) {
+		return true, nil
+	}, requirement, nil)
+	if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+		t.Fatalf("unrelated typed requirement accepted connection dependency: %v", err)
 	}
 }
 

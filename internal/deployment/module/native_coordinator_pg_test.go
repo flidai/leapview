@@ -187,6 +187,10 @@ type nativePGFixture struct {
 	generation  string
 }
 
+func allowNativePGActivationAdmission(context.Context, deploymentpostgres.Tx, deploymentpostgres.DeliveryPublication) error {
+	return nil
+}
+
 func newNativePGFixture(t *testing.T) *nativePGFixture {
 	t.Helper()
 	h := postgrestest.Start(t)
@@ -221,7 +225,10 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	planID, candidateID, attemptID, sealID, generationID := ids[0], ids[1], ids[2], ids[3], ids[4]
 	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 	lineage := &nativePGActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: targetID, ProjectID: "project_sales", GenerationID: generationID, CompiledGraphDigest: digest('b')}}
-	repo := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: nativePGActivationAudit{repo: accessAudit}, Lineage: lineage})
+	repo := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{
+		ActivationAudit: nativePGActivationAudit{repo: accessAudit}, Lineage: lineage,
+		ActivationAdmission: allowNativePGActivationAdmission,
+	})
 	ctx := t.Context()
 	if _, err := repo.CreateTarget(ctx, deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)

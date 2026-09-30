@@ -25,6 +25,7 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
+	credentialmodule "github.com/flidai/leapview/internal/credential/module"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
@@ -106,6 +107,7 @@ type capabilityRoutes struct {
 
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
+	credentialDraftAPI             credentialmodule.CredentialDraftAPIGenConfig
 	profileApplications            connectionbinding.ProfileApplicationStore
 	developmentSessions            developmentsessionmodule.Store
 	metrics                        QueryMetrics
@@ -335,6 +337,7 @@ type capabilityAssemblyInputs struct {
 	Agent               *agentmodule.Service
 	ManagedDataModule   *manageddatamodule.Module
 	AnalyticsModule     *analyticsmodule.Module
+	CredentialDraftAPI  credentialmodule.CredentialDraftAPIGenConfig
 	ProfileApplications connectionbinding.ProfileApplicationStore
 	DevelopmentSessions developmentsessionmodule.Store
 	Authoring           *dashboardmodule.AuthoringApplication
@@ -769,6 +772,7 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
+	runtime.credentialDraftAPI = capabilities.CredentialDraftAPI
 	runtime.profileApplications = capabilities.ProfileApplications
 	runtime.developmentSessions = capabilities.DevelopmentSessions
 	// Development sessions exist before the first serving generation. Their
@@ -1032,7 +1036,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					switch permission {
 					case analyticsmodule.PermissionManageConnectionMetadata:
 						action = access.ActionConnectionManage
-					case analyticsmodule.PermissionTestConnection:
+					case analyticsmodule.PermissionUseConnection:
 						action = access.ActionConnectionUse
 					case analyticsmodule.PermissionViewConnectionHealth:
 						action = access.ActionConnectionRead
@@ -1087,7 +1091,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if runtime.analyticsModule != nil {
 			bindings := runtime.analyticsModule.ConnectionUICommandBindings()
 			routes.projectBrowser.ConnectionCommands = projecthttp.ConnectionCommandBindings{
-				Create: bindings.Create, Update: bindings.Update, Test: bindings.Test,
+				Create: bindings.Create, Update: bindings.Update,
 				Refresh: bindings.Refresh, Enable: bindings.Enable, Disable: bindings.Disable,
 			}
 			routes.projectBrowser.BeginConnectionCommand = func(ctx context.Context, invocation projecthttp.CreatorCommandInvocation) (context.Context, error) {
@@ -1212,6 +1216,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 		},
 		DevelopmentProfiles: developmentProfileAPI,
+	}
+	credentialAPI := runtime.credentialDraftAPI
+	credentialAPI.Environment = runtimeConfig.DefaultEnvironment
+	credentialAPI.CurrentPrincipal = func(r *http.Request) (string, bool) {
+		principal, ok := routes.accessModule.CurrentPrincipal(r)
+		return principal.ID, ok
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
@@ -2088,6 +2098,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if err != nil {
 		return fmt.Errorf("build Analytics APIGen transport: %w", err)
 	}
+	credentialAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
+		return credentialmodule.DispatchAPIGenOperation(credentialAPI, operationID, platform.logger, w, r)
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
+	if err != nil {
+		return fmt.Errorf("build Credential APIGen transport: %w", err)
+	}
 	projectAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return projecthttp.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, w, r)
 	}, apiaggregate.GetAPIGenCommandRuntimeContract)
@@ -2126,7 +2142,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	platform.apiGenServers = apiaggregate.Servers{
 		Access: accessAPIHandler, Agent: agentAPIHandler, Analytics: analyticsAPIHandler,
-		Dashboard: dashboardAPIHandler, Deployment: deploymentAPIHandler, LeapViewAPI: appAPIHandler,
+		Credential: credentialAPIHandler,
+		Dashboard:  dashboardAPIHandler, Deployment: deploymentAPIHandler, LeapViewAPI: appAPIHandler,
 		ManagedData: managedDataAPIHandler, Project: projectAPIHandler,
 		Refresh: refreshAPIHandler, Release: releaseAPIHandler,
 	}
@@ -2176,25 +2193,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if runtime.runtimeHostModule == nil {
 				return errors.New("runtime host is missing")
 			}
-			// ProjectID is configured at process startup, so it does not by
-			// itself prove that this exact project/environment has an active
-			// serving generation. Check the repository-backed scope first and
-			// only acquire a lease once one exists.
-			if _, _, err := runtime.runtimeHostModule.ActiveArtifact(ctx); err != nil {
-				if errors.Is(err, servingstate.ErrNotFound) {
-					return errNoActiveDeployment
-				}
-				return err
-			}
-			lease, err := runtime.runtimeHostModule.Acquire(ctx)
-			if err != nil {
-				return err
-			}
-			if lease == nil {
-				return errors.New("runtime host returned a nil lease")
-			}
-			lease.Release()
-			return nil
+			return checkActiveRuntimeIdentity(ctx, runtime.runtimeHostModule)
 		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})

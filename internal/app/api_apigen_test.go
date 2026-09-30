@@ -27,7 +27,7 @@ import (
 
 // Combined generated surface including target-policy and development-profile
 // operations. This count is a contract snapshot, not a feature-coverage claim.
-const expectedAPIGenAggregateOperationCount = 199
+const expectedAPIGenAggregateOperationCount = 202
 
 func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	contracts := accessAPIGenOperationContracts()
@@ -185,7 +185,7 @@ func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 
 func TestAPIGenAnalyticsCapabilityOwnsItsOperationSurface(t *testing.T) {
 	analyticsContracts := analyticsgen.GetAPIGenOperationContracts()
-	if got, want := len(analyticsContracts), 13; got != want {
+	if got, want := len(analyticsContracts), 12; got != want {
 		t.Fatalf("Analytics generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range analyticsContracts {
@@ -547,6 +547,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"BI":                  "LeapViewAPI.Dashboard",
 		"Dashboard Authoring": "LeapViewAPI.Dashboard",
 		"Connections":         "LeapViewAPI.Analytics",
+		"Credentials":         "LeapViewAPI.Credential",
 		"Publications":        "LeapViewAPI.Dashboard",
 		"Deployments":         "LeapViewAPI.Deployment",
 		"Delivery":            "LeapViewAPI.Deployment",
@@ -579,6 +580,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"LeapViewAPI.Access":      {},
 		"LeapViewAPI.Agent":       {},
 		"LeapViewAPI.Analytics":   {},
+		"LeapViewAPI.Credential":  {},
 		"LeapViewAPI.Dashboard":   {},
 		"LeapViewAPI.Deployment":  {},
 		"LeapViewAPI.ManagedData": {},
@@ -1082,8 +1084,14 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 			if command.AuthzMode != contract.AuthzMode {
 				t.Errorf("command %s authz mode %q differs from operation mode %q", operationID, command.AuthzMode, contract.AuthzMode)
 			}
-			if contract.Method == http.MethodPost && command.Idempotency != "required" {
-				t.Errorf("POST command %s idempotency = %q", operationID, command.Idempotency)
+			if contract.Method == http.MethodPost {
+				if operationID == "saveCredentialDraft" || operationID == "validateCredentialDraft" {
+					if command.Idempotency != "forbidden" || !contract.RequestBodyRequired || !command.Audit.Required || command.Audit.Guarantee != "transactional" || command.UI != nil || len(command.AdditionalExposures) != 0 {
+						t.Errorf("non-replayable credential draft POST must have a required body, forbidden idempotency, transactional audit, and no additional exposure: operation=%#v command=%#v", contract, command)
+					}
+				} else if command.Idempotency != "required" {
+					t.Errorf("POST command %s idempotency = %q", operationID, command.Idempotency)
+				}
 			}
 			if contract.Method == http.MethodPatch && command.Concurrency != "if-match" {
 				t.Errorf("PATCH command %s concurrency = %q", operationID, command.Concurrency)

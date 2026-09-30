@@ -376,9 +376,9 @@ type snapshotRejectingConnectionResolver struct {
 	calls atomic.Int32
 }
 
-func (r *snapshotRejectingConnectionResolver) Resolve(context.Context, string, semanticmodel.Connection) (semanticmodel.Connection, error) {
+func (r *snapshotRejectingConnectionResolver) WithConnection(context.Context, string, semanticmodel.Connection, func(semanticmodel.Connection) error) error {
 	r.calls.Add(1)
-	return semanticmodel.Connection{}, fmt.Errorf("external source must not be reacquired during snapshot activation")
+	return fmt.Errorf("external source must not be reacquired during snapshot activation")
 }
 
 func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
@@ -769,110 +769,72 @@ func TestCompileSourceRelation(t *testing.T) {
 	}
 }
 
-func TestRefreshCredentialResolutionUsesUniqueEphemeralConnectionNames(t *testing.T) {
-	model := &semanticmodel.Model{
-		DefaultConnection: "crm",
-		Connections:       map[string]semanticmodel.Connection{"crm": {Kind: "postgres", Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "CRM"}}},
-		Sources:           map[string]semanticmodel.Source{"accounts": {Connection: "crm", Object: "accounts"}},
-	}
-	runtime := NewSourceRuntimeWithCredentials(nil, staticCredentialResolver{auth: semanticmodel.ConnectionAuth{"password": "secret"}})
-	first, err := runtime.resolveCredentials(context.Background(), model)
-	require.NoError(t, err)
-	second, err := runtime.resolveCredentials(context.Background(), model)
-	require.NoError(t, err)
-	if first.DefaultConnection == second.DefaultConnection || first.Sources["accounts"].Connection == second.Sources["accounts"].Connection {
-		t.Fatalf("refresh connection names were reused: %q %q", first.DefaultConnection, second.DefaultConnection)
-	}
-	if len(model.Connections["crm"].Auth) != 0 {
-		t.Fatal("resolved credentials leaked into the compiled model")
-	}
-}
-
 func TestRefreshConnectionResolutionUsesTargetOwnedEndpointAndCredentials(t *testing.T) {
-	model := &semanticmodel.Model{
-		DefaultConnection: "crm",
-		Connections: map[string]semanticmodel.Connection{
-			"crm": {Kind: "postgres", Host: "artifact-host"},
-		},
-		Sources: map[string]semanticmodel.Source{
-			"accounts": {Connection: "crm", Object: "accounts"},
-		},
-	}
+	targetAuth := semanticmodel.ConnectionAuth{"password": "target-secret"}
 	runtime := NewSourceRuntimeWithConnectionResolver(nil, staticConnectionResolver{
 		connection: semanticmodel.Connection{
-			Kind: "postgres", Host: "target-host", Database: "analytics",
-			Auth: semanticmodel.ConnectionAuth{"password": "target-secret"},
+			Kind: "postgres", Host: "target-host", Database: "analytics", Auth: targetAuth,
 		},
 	})
-	resolved, err := runtime.resolveCredentials(t.Context(), model)
+	var resolved semanticmodel.Connection
+	var resolvedPassword string
+	var mutatedPassword string
+	err := runtime.withResolvedConnection(t.Context(), "crm", semanticmodel.Connection{Kind: "postgres", Host: "artifact-host"}, func(connection semanticmodel.Connection) error {
+		resolved = connection
+		resolvedPassword = connection.Auth["password"].(string)
+		connection.Auth["password"] = "consumer-mutated"
+		mutatedPassword = connection.Auth["password"].(string)
+		return nil
+	})
 	require.NoError(t, err)
-	connection := resolved.Connections[resolved.DefaultConnection]
-	if connection.Host != "target-host" || connection.Database != "analytics" ||
-		connection.Auth["password"] != "target-secret" {
-		t.Fatalf("resolved connection = %#v", connection)
+	if resolved.Host != "target-host" || resolved.Database != "analytics" ||
+		resolvedPassword != "target-secret" || mutatedPassword != "consumer-mutated" || len(resolved.Auth) != 0 {
+		t.Fatalf("resolved connection = %#v", resolved)
 	}
-	if model.Connections["crm"].Host != "artifact-host" ||
-		len(model.Connections["crm"].Auth) != 0 {
-		t.Fatalf("target connection leaked into compiled model: %#v", model.Connections["crm"])
+	if targetAuth["password"] != "target-secret" {
+		t.Fatalf("consumer mutation reached resolver-owned auth: %#v", targetAuth)
 	}
 }
 
 func TestRefreshConnectionResolutionUsesTargetOwnedScopeForPublicConnection(t *testing.T) {
-	model := &semanticmodel.Model{
-		DefaultConnection: "files",
-		Connections: map[string]semanticmodel.Connection{
-			"files": {Kind: "s3", Access: semanticmodel.ConnectionAccessPublic},
-		},
-		Sources: map[string]semanticmodel.Source{
-			"orders": {Connection: "files", Path: "orders.csv", Format: "csv", EffectivePathLocation: testPathLocation("csv", "orders.csv")},
-		},
-	}
 	runtime := NewSourceRuntimeWithConnectionResolver(nil, staticConnectionResolver{
 		connection: semanticmodel.Connection{Kind: "s3", Access: semanticmodel.ConnectionAccessPublic, Scope: "s3://public-target/"},
 	})
-	resolved, err := runtime.resolveCredentials(t.Context(), model)
+	var resolved semanticmodel.Connection
+	err := runtime.withResolvedConnection(t.Context(), "files", semanticmodel.Connection{Kind: "s3", Access: semanticmodel.ConnectionAccessPublic}, func(connection semanticmodel.Connection) error {
+		resolved = connection
+		return nil
+	})
 	require.NoError(t, err)
-	connection := resolved.Connections[resolved.DefaultConnection]
-	if connection.Scope != "s3://public-target/" || connection.Access != semanticmodel.ConnectionAccessPublic || len(connection.Auth) != 0 {
-		t.Fatalf("resolved public target connection = %#v, want target scope and no auth", connection)
+	if resolved.Scope != "s3://public-target/" || resolved.Access != semanticmodel.ConnectionAccessPublic || len(resolved.Auth) != 0 {
+		t.Fatalf("resolved public target connection = %#v, want target scope and no auth", resolved)
 	}
 }
 
 func TestRefreshConnectionResolutionKeepsTrustedManagedDataRoot(t *testing.T) {
-	model := &semanticmodel.Model{
-		DefaultConnection: "olist",
-		Connections: map[string]semanticmodel.Connection{
-			"olist": {Kind: "managed", Root: "/managed/olist"},
-		},
-		Sources: map[string]semanticmodel.Source{
-			"orders": {
-				Connection: "olist", Path: "orders.parquet", Format: "parquet",
-			},
-		},
-	}
 	runtime := NewSourceRuntimeWithConnectionResolver(
 		nil,
 		rejectingConnectionResolver{},
 	)
-	resolved, err := runtime.resolveCredentials(t.Context(), model)
+	var resolved semanticmodel.Connection
+	err := runtime.withResolvedConnection(t.Context(), "olist", semanticmodel.Connection{Kind: "managed", Root: "/managed/olist", Auth: semanticmodel.ConnectionAuth{"token": "authored"}}, func(connection semanticmodel.Connection) error {
+		resolved = connection
+		return nil
+	})
 	require.NoError(t, err)
-	connection := resolved.Connections[resolved.DefaultConnection]
-	if connection.Kind != "managed" ||
-		connection.Root != "/managed/olist" ||
-		len(connection.Auth) != 0 {
-		t.Fatalf("resolved managed connection = %#v", connection)
+	if resolved.Kind != "managed" ||
+		resolved.Root != "/managed/olist" ||
+		len(resolved.Auth) != 0 {
+		t.Fatalf("resolved managed connection = %#v", resolved)
 	}
 }
 
 func TestSecretScopeLockReportsOnlySameScopeContention(t *testing.T) {
-	model := &semanticmodel.Model{
-		Connections: map[string]semanticmodel.Connection{"source": {Kind: "s3", Scope: "s3://bucket/prefix/"}},
-		Sources:     map[string]semanticmodel.Source{"orders": {Connection: "source"}},
-	}
+	connection := semanticmodel.Connection{Kind: "s3", Scope: "s3://bucket/prefix/"}
 	observer := &recordingRefreshTelemetry{}
-	releaseFirst := lockSourceScopes(model, observer)
+	releaseFirst := lockSourceScope(connection, "source", observer)
 	acquired := make(chan func(), 1)
-	go func() { acquired <- lockSourceScopes(model, observer) }()
+	go func() { acquired <- lockSourceScope(connection, "source", observer) }()
 	deadline := time.After(time.Second)
 	for observer.contentions.Load() == 0 {
 		select {
@@ -900,22 +862,24 @@ type staticConnectionResolver struct {
 	connection semanticmodel.Connection
 }
 
-func (resolver staticConnectionResolver) Resolve(
-	context.Context,
-	string,
-	semanticmodel.Connection,
-) (semanticmodel.Connection, error) {
-	return resolver.connection, nil
+func (resolver staticConnectionResolver) WithConnection(
+	_ context.Context,
+	_ string,
+	_ semanticmodel.Connection,
+	consume func(semanticmodel.Connection) error,
+) error {
+	return consume(resolver.connection)
 }
 
 type rejectingConnectionResolver struct{}
 
-func (rejectingConnectionResolver) Resolve(
+func (rejectingConnectionResolver) WithConnection(
 	context.Context,
 	string,
 	semanticmodel.Connection,
-) (semanticmodel.Connection, error) {
-	return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
+	func(semanticmodel.Connection) error,
+) error {
+	return connectionbinding.ErrBindingNotFound
 }
 
 type recordingRefreshTelemetry struct{ contentions atomic.Uint64 }

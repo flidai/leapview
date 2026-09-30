@@ -117,7 +117,7 @@ type PostgresServingAuthorizationInput struct {
 func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.RuntimeFactory {
 	return postgresSealedFactory{
 		guardOutbound: config.GuardOutbound,
-		base:          servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence, servingArtifacts: config.ServingArtifacts},
+		base:          servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence, sealedCandidateEvidence: config.Base.SealedCandidateEvidence, servingArtifacts: config.ServingArtifacts},
 		resolve:       config.Resolve, buildRuntime: config.BuildRuntime,
 		credentialBootstrapFactory: config.CredentialBootstrapFactory, extensionAdmission: config.ExtensionAdmission,
 		duckLakeSecret: config.DuckLakeSecret, postgresSecret: config.PostgresSecret,

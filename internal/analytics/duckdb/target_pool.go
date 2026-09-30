@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	"github.com/flidai/leapview/internal/platform/outbound"
+	"github.com/flidai/leapview/internal/platform/typednil"
 )
 
 type TargetRuntimeSession interface {
@@ -24,6 +26,10 @@ type TargetRuntimeSession interface {
 }
 
 type TargetRuntimeSessionOpener func(context.Context) (TargetRuntimeSession, error)
+
+// ErrTargetPoolCleanupFailed reports that a failed target-pool preparation
+// could not confirm closure of the isolated session it opened.
+var ErrTargetPoolCleanupFailed = errors.New("target runtime pool cleanup failed")
 
 func NewIsolatedTargetRuntimeOpener() TargetRuntimeSessionOpener {
 	return func(ctx context.Context) (TargetRuntimeSession, error) {
@@ -93,6 +99,38 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	binding connectionbinding.TargetBinding,
 	snapshot connectionbinding.CredentialSnapshot,
 ) (connectionbinding.RuntimePool, error) {
+	if identity := snapshot.Identity(); identity.Validate() != nil || identity.CredentialVersionID != "" {
+		return nil, connectionbinding.ErrIncompatibleBinding
+	}
+	return factory.prepare(ctx, binding, snapshot)
+}
+
+// PrepareLocal retains a local credential version on the concrete pool. The
+// snapshot's version is an identity tag, not proof of runtime authority or
+// destination scope. The caller must obtain the exact authorized reference,
+// compare its scope to the serving identity and binding, and hold admission
+// through the pool's entire lifetime. No serving caller is wired to this path
+// until that authority and admission integration is complete.
+//
+// TargetBinding supplies endpoint policy. This path does not resolve its
+// provider reference or change its validated provider version.
+func (factory *TargetRuntimePoolFactory) PrepareLocal(
+	ctx context.Context,
+	binding connectionbinding.TargetBinding,
+	snapshot connectionbinding.CredentialSnapshot,
+) (connectionbinding.RuntimePool, error) {
+	if identity := snapshot.Identity(); identity.Validate() != nil || identity.CredentialVersionID == "" ||
+		binding.ConnectorKind != "postgres" || binding.AuthenticationMode != connectionbinding.AuthenticationExternalBundle {
+		return nil, connectionbinding.ErrIncompatibleBinding
+	}
+	return factory.prepare(ctx, binding, snapshot)
+}
+
+func (factory *TargetRuntimePoolFactory) prepare(
+	ctx context.Context,
+	binding connectionbinding.TargetBinding,
+	snapshot connectionbinding.CredentialSnapshot,
+) (pool connectionbinding.RuntimePool, resultErr error) {
 	if factory == nil || factory.open == nil {
 		return nil, connectionbinding.ErrProviderUnavailable
 	}
@@ -103,7 +141,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	if binding.AuthenticationMode == connectionbinding.AuthenticationNone {
 		logical.Access = semanticmodel.ConnectionAccessPublic
 	}
-	connection, err := ApplyTargetBinding(
+	connection, err := applyTargetBinding(
 		logical,
 		binding,
 		snapshot,
@@ -153,12 +191,23 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	}
 	session, err := factory.open(ctx)
 	if err != nil {
+		if !isNilTargetRuntimeSession(session) {
+			if session.Close() != nil {
+				return nil, errors.Join(err, ErrTargetPoolCleanupFailed)
+			}
+		}
 		return nil, err
+	}
+	if isNilTargetRuntimeSession(session) {
+		return nil, connectionbinding.ErrProviderUnavailable
 	}
 	closeOnFailure := true
 	defer func() {
 		if closeOnFailure {
-			_ = session.Close()
+			if session.Close() != nil {
+				resultErr = errors.Join(resultErr, ErrTargetPoolCleanupFailed)
+				pool = nil
+			}
 		}
 	}()
 	statements, err := (duckdbsession.ResourcePolicy{
@@ -200,6 +249,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	closeOnFailure = false
 	return &targetRuntimePool{
 		session: session, connection: cloneTargetConnection(connection), healthStatement: healthStatement,
+		credentialIdentity: snapshot.Identity(),
 	}, nil
 }
 
@@ -263,21 +313,39 @@ func secureDatabaseTLSMode(kind, mode string) bool {
 }
 
 type targetRuntimePool struct {
-	mu              sync.Mutex
-	session         TargetRuntimeSession
-	connection      semanticmodel.Connection
-	healthStatement string
-	nextOperation   uint64
-	active          map[uint64]context.CancelFunc
+	credentialIdentity connectionbinding.CredentialIdentity
+	mu                 sync.Mutex
+	session            TargetRuntimeSession
+	connection         semanticmodel.Connection
+	healthStatement    string
+	nextOperation      uint64
+	active             map[uint64]context.CancelFunc
+	activeWork         sync.WaitGroup
+	poisoned           bool
+	closeDone          chan struct{}
+	closeErr           error
 }
 
 var _ analyticsruntime.ConnectionResolver = (*targetRuntimePool)(nil)
+
+// CredentialIdentity is immutable non-secret evidence retained after Close.
+// It identifies this pool, not durable activation or retirement completion.
+func (pool *targetRuntimePool) CredentialIdentity() connectionbinding.CredentialIdentity {
+	if pool == nil {
+		return connectionbinding.CredentialIdentity{}
+	}
+	return pool.credentialIdentity
+}
 
 func (pool *targetRuntimePool) HealthCheck(ctx context.Context) error {
 	if pool == nil {
 		return connectionbinding.ErrProviderUnavailable
 	}
 	pool.mu.Lock()
+	if pool.poisoned {
+		pool.mu.Unlock()
+		return analyticsruntime.ErrConnectionCleanupFailed
+	}
 	if pool.session == nil {
 		pool.mu.Unlock()
 		return connectionbinding.ErrProviderUnavailable
@@ -294,35 +362,76 @@ func (pool *targetRuntimePool) HealthCheck(ctx context.Context) error {
 		pool.active = map[uint64]context.CancelFunc{}
 	}
 	pool.active[operationID] = cancel
+	pool.activeWork.Add(1)
 	pool.mu.Unlock()
 	defer func() {
 		cancel()
 		pool.mu.Lock()
 		delete(pool.active, operationID)
 		pool.mu.Unlock()
+		pool.activeWork.Done()
 	}()
 	_, err := session.ExecContext(operationContext, statement)
 	return err
 }
 
-func (pool *targetRuntimePool) Resolve(
+func (pool *targetRuntimePool) WithConnection(
 	ctx context.Context,
 	name string,
 	logical semanticmodel.Connection,
-) (semanticmodel.Connection, error) {
+	consume func(semanticmodel.Connection) error,
+) (resultErr error) {
+	return pool.withConnection(ctx, name, logical, nil, consume)
+}
+
+func (pool *targetRuntimePool) withLocalConnection(
+	ctx context.Context,
+	name string,
+	logical semanticmodel.Connection,
+	expected connectionbinding.CredentialIdentity,
+	consume func(semanticmodel.Connection) error,
+) error {
+	return pool.withConnection(ctx, name, logical, &expected, consume)
+}
+
+func (pool *targetRuntimePool) withConnection(
+	ctx context.Context,
+	name string,
+	logical semanticmodel.Connection,
+	expectedLocalIdentity *connectionbinding.CredentialIdentity,
+	consume func(semanticmodel.Connection) error,
+) (resultErr error) {
 	if err := ctx.Err(); err != nil {
-		return semanticmodel.Connection{}, err
+		return err
 	}
 	if pool == nil {
-		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
+		return connectionbinding.ErrProviderUnavailable
+	}
+	if consume == nil {
+		return connectionbinding.ErrIncompatibleBinding
 	}
 	pool.mu.Lock()
-	defer pool.mu.Unlock()
+	if pool.poisoned {
+		pool.mu.Unlock()
+		return analyticsruntime.ErrConnectionCleanupFailed
+	}
 	if pool.session == nil || pool.connection.Kind == "" {
-		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
+		pool.mu.Unlock()
+		return connectionbinding.ErrProviderUnavailable
+	}
+	if expectedLocalIdentity == nil {
+		if pool.credentialIdentity.CredentialVersionID != "" {
+			pool.mu.Unlock()
+			return connectionbinding.ErrProviderUnavailable
+		}
+	} else if expectedLocalIdentity.Validate() != nil || expectedLocalIdentity.CredentialVersionID == "" ||
+		pool.credentialIdentity != *expectedLocalIdentity {
+		pool.mu.Unlock()
+		return connectionbinding.ErrProviderUnavailable
 	}
 	if strings.TrimSpace(logical.Kind) != pool.connection.Kind {
-		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		pool.mu.Unlock()
+		return connectionbinding.ErrIncompatibleBinding
 	}
 	resolved := logical
 	resolved.Host = pool.connection.Host
@@ -342,11 +451,58 @@ func (pool *targetRuntimePool) Resolve(
 	}
 	resolved.Auth = maps.Clone(pool.connection.Auth)
 	validated, err := resolved.Validate(strings.TrimSpace(name))
+	// Validate builds its own auth map; wipe the intermediate before handing
+	// the validated copy to the synchronous consumer.
+	clear(resolved.Auth)
 	if err != nil {
-		clear(resolved.Auth)
-		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		clear(validated.Auth)
+		pool.mu.Unlock()
+		return connectionbinding.ErrIncompatibleBinding
 	}
-	return validated, nil
+	if err := ctx.Err(); err != nil {
+		clear(validated.Auth)
+		pool.mu.Unlock()
+		return err
+	}
+	// Close fences new operations with session=nil under this mutex. Register
+	// before unlocking so Close's Wait cannot race a later Add. The callback
+	// runs after unlocking and must finish all use before it returns.
+	pool.activeWork.Add(1)
+	pool.mu.Unlock()
+
+	defer func() {
+		clear(validated.Auth)
+		pool.activeWork.Done()
+	}()
+	resultErr, panicked := invokeTargetConnectionConsumer(consume, validated)
+	cleanupFailed := panicked || errors.Is(resultErr, analyticsruntime.ErrConnectionCleanupFailed)
+	if cleanupFailed {
+		resultErr = analyticsruntime.ErrConnectionCleanupFailed
+		pool.mu.Lock()
+		pool.poisoned = true
+		pool.mu.Unlock()
+	}
+	return resultErr
+}
+
+func invokeTargetConnectionConsumer(
+	consume func(semanticmodel.Connection) error,
+	connection semanticmodel.Connection,
+) (resultErr error, panicked bool) {
+	returned := false
+	func() {
+		defer func() {
+			if !returned {
+				// Callback panics can carry credential-bearing driver diagnostics.
+				// Retain only the fact of panic and let this frame finish unwinding.
+				_ = recover()
+				panicked = true
+			}
+		}()
+		resultErr = consume(connection)
+		returned = true
+	}()
+	return resultErr, panicked
 }
 
 func (pool *targetRuntimePool) Close() error {
@@ -361,34 +517,68 @@ func (pool *targetRuntimePool) CloseContext(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	pool.mu.Lock()
-	session := pool.session
-	pool.session = nil
-	active := make([]context.CancelFunc, 0, len(pool.active))
-	for _, cancel := range pool.active {
-		active = append(active, cancel)
+	if pool.closeDone == nil {
+		pool.closeDone = make(chan struct{})
+		session := pool.session
+		// Fence new health operations before starting the one cleanup task.
+		// Existing operations keep their accounting until they actually exit.
+		pool.session = nil
+		active := make([]context.CancelFunc, 0, len(pool.active))
+		for _, cancel := range pool.active {
+			active = append(active, cancel)
+		}
+		clear(pool.connection.Auth)
+		pool.connection = semanticmodel.Connection{}
+		pool.healthStatement = ""
+		go func() {
+			for _, cancel := range active {
+				cancel()
+			}
+			closeErr := closeTargetRuntimeSession(session)
+			pool.activeWork.Wait()
+			pool.mu.Lock()
+			if pool.poisoned {
+				closeErr = analyticsruntime.ErrConnectionCleanupFailed
+			}
+			pool.closeErr = closeErr
+			pool.mu.Unlock()
+			close(pool.closeDone)
+		}()
 	}
-	clear(pool.active)
-	clear(pool.connection.Auth)
-	pool.connection = semanticmodel.Connection{}
-	pool.healthStatement = ""
+	done := pool.closeDone
 	pool.mu.Unlock()
-	for _, cancel := range active {
-		cancel()
-	}
-	if session == nil {
-		return nil
-	}
-	closed := make(chan error, 1)
-	go func() { closed <- session.Close() }()
+	// A caller's deadline bounds only its wait. Keep the final driver result
+	// and completion signal available to concurrent callers and later retries.
 	select {
-	case err := <-closed:
-		return err
+	case <-done:
+		return pool.closeErr
+	default:
+	}
+	select {
+	case <-done:
+		return pool.closeErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
+func closeTargetRuntimeSession(session TargetRuntimeSession) (closeErr error) {
+	if isNilTargetRuntimeSession(session) {
+		return nil
+	}
+	defer func() {
+		if recover() != nil {
+			closeErr = ErrTargetPoolCleanupFailed
+		}
+	}()
+	return session.Close()
+}
+
 func cloneTargetConnection(connection semanticmodel.Connection) semanticmodel.Connection {
 	connection.Auth = maps.Clone(connection.Auth)
 	return connection
+}
+
+func isNilTargetRuntimeSession(session TargetRuntimeSession) bool {
+	return typednil.IsNil(session)
 }

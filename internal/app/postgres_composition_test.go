@@ -272,9 +272,9 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 		"rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()",
 		"SecurityHeaders: apihttpmiddleware.SecurityHeaders(cfg.HSTSEnabled(cookieSecure))",
 		"DesktopDiscovery: desktopdiscovery.Config",
-		"nativeDeliveryReader.LoadGeneration(completionCtx, result.NativeGenerationID)",
-		"runtimeHost.PrepareSealedActivation(completionCtx, result.ServingStateID, generation.CandidateID)",
-		"runtimeHost.ActivatePreparedContext(completionCtx, prepared, complete)",
+		"apprefreshpostgres.NewNativeCanonicalCompletionCoordinator(",
+		"instanceID, nativeDeliveryReader,",
+		"}, runtimeHost,",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("PostgreSQL composition is missing %q", required)
@@ -282,11 +282,6 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 	}
 	if strings.Contains(source, "runtimeHost.ReconcileSealed(reconcileCtx, servingstate.ID(target.ActiveGenerationID))") {
 		t.Fatal("PostgreSQL refresh reconciliation still performs a post-commit runtime cutover")
-	}
-	validation := strings.Index(source, "reconciler.Reconcile(completionCtx, graph.ServingState, candidate)")
-	activation := strings.Index(source, "runtimeHost.ActivatePreparedContext(completionCtx, prepared, complete)")
-	if validation < 0 || activation < 0 || validation > activation {
-		t.Fatal("canonical refresh activation does not validate publication ownership before durable activation")
 	}
 	if strings.Contains(source, "CanonicalResultReconciler: canonicalResultReconciler") {
 		t.Fatal("canonical refresh retains post-commit publication ownership rejection")

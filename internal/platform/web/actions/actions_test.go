@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"strings"
 	"testing"
 
 	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
@@ -57,6 +58,53 @@ func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
 	wantConditional := `@post('/widgets', {headers: window.LeapViewCommand.headers(($widget.id ? ['runWidget'] : ['createWidget', 'runWidget']))})`
 	if conditional != wantConditional {
 		t.Fatalf("CommandPostConditional() = %q, want %q", conditional, wantConditional)
+	}
+}
+
+func TestNonReplayableCommandUsesSinglePostAndDedicatedHeaders(t *testing.T) {
+	binding := apigenui.MustNonReplayableAction("credential.create", "createCredential")
+	got := CommandPost(binding, "/credentials", "credentialDraft")
+	want := `@post('/credentials', {retry: 'never', retryMaxCount: 0, openWhenHidden: true, filterSignals: {include: /^(?:credentialDraft)(?:[.]|$)/}, headers: window.LeapViewCommand.nonReplayableHeaders('createCredential')})`
+	if got != want {
+		t.Fatalf("CommandPost() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "Idempotency-Key") || strings.Contains(got, "window.LeapViewCommand.headers") {
+		t.Fatalf("CommandPost() exposed replayable command headers: %q", got)
+	}
+}
+
+func TestNonReplayableCommandIsRejectedByOtherCommandBuilders(t *testing.T) {
+	forbidden := apigenui.MustNonReplayableAction("credential.create", "createCredential")
+	ordinary := apigenui.MustAction("credential.rotate", "rotateCredential")
+	cases := []struct {
+		name  string
+		build func()
+	}{
+		{"patch", func() { CommandPatch(forbidden, "/credentials", `"revision"`) }},
+		{"patch-with-revision", func() { CommandPatchWithRevision(forbidden, "/credentials", `signal.revision`) }},
+		{"switch", func() {
+			CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{"create": forbidden, "rotate": ordinary}, "/credentials")
+		}},
+		{"switch-with-revision", func() {
+			CommandPostSwitchWithRevision("evt.detail.action", map[string]uicommand.Binding{"create": forbidden}, "/credentials", `signal.revision`)
+		}},
+		{"sequence", func() { CommandPostSequence([]uicommand.Binding{ordinary, forbidden}, "/credentials") }},
+		{"conditional-true", func() {
+			CommandPostConditional("signal.create", []uicommand.Binding{forbidden}, []uicommand.Binding{ordinary}, "/credentials")
+		}},
+		{"conditional-false", func() {
+			CommandPostConditional("signal.create", []uicommand.Binding{ordinary}, []uicommand.Binding{forbidden}, "/credentials")
+		}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected non-replayable binding to be rejected")
+				}
+			}()
+			testCase.build()
+		})
 	}
 }
 

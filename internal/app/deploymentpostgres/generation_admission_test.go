@@ -499,12 +499,10 @@ func seedGenerationAdmissionWithPlan(t *testing.T, repo *deploymentnative.Reposi
 	ctx := t.Context()
 	leaseExpiresAt := timeNowPlusHour().Truncate(time.Microsecond)
 	const sessionIdentity = "duckdb-session-admission"
-	targetCreated := false
 	if _, err := repo.Target(ctx, input.Generation.TargetID); errors.Is(err, deploymentnative.ErrNotFound) {
 		if _, err := repo.CreateTarget(ctx, deploymentnative.TargetInput{TargetID: input.Generation.TargetID, ProjectID: input.Bundle.ProjectID.String(), Environment: string(input.Bundle.Environment)}); err != nil {
 			t.Fatal(err)
 		}
-		targetCreated = true
 	} else if err != nil {
 		t.Fatal(err)
 	}
@@ -518,9 +516,20 @@ func seedGenerationAdmissionWithPlan(t *testing.T, repo *deploymentnative.Reposi
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	candidateRevision := int64(2)
-	if targetCreated {
-		candidateRevision = 1
+	revisionTx, err := repo.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var candidateRevision int64
+	if err := revisionTx.QueryRow(ctx, `SELECT next_candidate_revision FROM delivery.delivery_target_revision WHERE target_id=$1`, input.Generation.TargetID).Scan(&candidateRevision); err != nil {
+		_ = revisionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := revisionTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if candidateRevision <= 0 {
+		t.Fatalf("next candidate revision = %d", candidateRevision)
 	}
 	if _, err := repo.CreateCandidate(ctx, deploymentnative.CandidateInput{CandidateID: input.Generation.CandidateID, TargetID: input.Generation.TargetID, PlanID: input.Generation.PlanID, CandidateRevision: candidateRevision, ArtifactDigest: input.Generation.ServingArtifactDigest}); err != nil {
 		t.Fatal(err)

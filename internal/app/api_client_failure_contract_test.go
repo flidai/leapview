@@ -33,6 +33,7 @@ func TestEveryCommandFailureVocabularyGeneratesTypedClientContracts(t *testing.T
 		"LeapViewAPI.Access":      "internal/access/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.Agent":       "internal/agent/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.Analytics":   "internal/analytics/api/gen/client.apigen.gen.go",
+		"LeapViewAPI.Credential":  "internal/credential/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.Dashboard":   "internal/dashboard/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.Deployment":  "internal/deployment/api/gen/client.apigen.gen.go",
 		"LeapViewAPI.ManagedData": "internal/manageddata/api/gen/client.apigen.gen.go",

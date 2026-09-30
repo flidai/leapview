@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	"github.com/flidai/leapview/internal/analytics/duckdbsession"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/stretchr/testify/require"
 )
@@ -59,7 +60,7 @@ func TestLiveQuackTargetRuntimePool(t *testing.T) {
 
 	prepared, ok := pool.(*targetRuntimePool)
 	require.True(t, ok)
-	session, ok := prepared.session.(*isolatedTargetRuntimeSession)
+	session, ok := prepared.session.(*duckdbsession.PinnedSession)
 	require.True(t, ok)
 	model := &semanticmodel.Model{Connections: map[string]semanticmodel.Connection{
 		"lakehouse": prepared.connection,
@@ -69,7 +70,7 @@ func TestLiveQuackTargetRuntimePool(t *testing.T) {
 	})
 	require.NoError(t, err)
 	var rowCount int64
-	require.NoError(t, session.connection.QueryRowContext(
+	require.NoError(t, session.QueryRowContext(
 		context.Background(), "SELECT count(*) FROM ("+relation+")",
 	).Scan(&rowCount))
 	if rowCount <= 0 {

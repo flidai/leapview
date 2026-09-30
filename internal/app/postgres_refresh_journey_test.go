@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -101,8 +102,17 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 		artifact: servingstate.Artifact{ID: "artifact-journey", ServingStateID: servingstate.ID(identity.GenerationID), Digest: postgresRefreshJourneyArtifact, Format: "journey"},
 	}
 	definition := journeyRefreshDefinition()
+	currentPermission := func(authCtx context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
+		return authorizeCurrentTypedPermission(authCtx, fixture.AccessModule, runtime, principalID, pair, environment)
+	}
+	authorityRevalidator := newAuthorityRevalidator(
+		fixture.Graph.Access, fixture.Graph.Access, fixture.Graph.Access,
+		currentPermission, currentPermission, postgresRefreshJourneyInstance, identity.Environment,
+	)
 	module, err := refreshmodule.Build(t.Context(), refreshmodule.Config{
 		Persistence: fixture.RefreshPersistence, Production: true,
+		AuthorityRevalidator: authorityRevalidator,
+		CurrentCredential:    accessmodule.APICredentialFromContext,
 		Service: refreshrun.Service{
 			ServingStates:         state,
 			ResolveTargetRevision: func(context.Context, projectgraph.ServingIdentity) (int64, error) { return 1, nil },

@@ -7,8 +7,8 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
+	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
-	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -18,8 +18,13 @@ type servingStateProvenanceReader interface {
 	ProvenanceForServingState(context.Context, projectgraph.ServingIdentity) (releasemodule.Provenance, error)
 }
 
+type committedGenerationReader interface {
+	CommittedGeneration(context.Context, string, projectgraph.ServingIdentity) (appdeploymentpostgres.CommittedGenerationEvidence, error)
+}
+
 type activeConnectionEvidenceSource struct {
 	releases    servingStateProvenanceReader
+	commitments committedGenerationReader
 	targetID    string
 	environment string
 }
@@ -44,6 +49,7 @@ func (source activeConnectionEvidenceSource) BindingEvidence(
 			BindingID: bindingID, ConnectionID: connectionID,
 			ConnectorKind: evidence.ConnectorKind, Revision: evidence.Revision,
 			ValidatedVersion: evidence.ValidatedVersion, EndpointConfigHash: evidence.EndpointConfigHash, Access: evidence.Access,
+			CredentialVersionID: evidence.CredentialVersionID,
 		}
 	}
 	return result, nil
@@ -60,22 +66,7 @@ func (source activeConnectionEvidenceSource) ResultIdentityEvidence(
 	if err != nil {
 		return appruntimefactory.ActivationEvidence{}, err
 	}
-	kinds := make(map[string]string, len(provenance.Plan.Bindings)+len(provenance.Plan.AuthoredConnections)+len(provenance.Plan.ManagedDataPins))
-	for _, binding := range provenance.Plan.Bindings {
-		kinds[binding.ConnectionID] = binding.ConnectorKind
-	}
-	for _, authored := range provenance.Plan.AuthoredConnections {
-		kinds[authored.ConnectionID] = authored.ConnectorKind
-	}
-	for _, managed := range provenance.Plan.ManagedDataPins {
-		kinds[managed.ConnectionID] = "managed"
-	}
-	return appruntimefactory.ActivationEvidence{
-		RuntimeVersion:     provenance.Plan.RuntimeVersion,
-		BindingFingerprint: release.BindingFingerprint(provenance.Plan.Bindings),
-		BindingKinds:       kinds,
-		Capabilities:       deployment.RuntimeCapabilityEvidence(provenance.Plan.Extensions),
-	}, nil
+	return resultIdentityEvidenceFromProvenance(provenance), nil
 }
 
 func (source activeConnectionEvidenceSource) provenance(
@@ -98,5 +89,39 @@ func (source activeConnectionEvidenceSource) provenance(
 		provenance.Plan.Identity != identity {
 		return releasemodule.Provenance{}, fmt.Errorf("%w: release target does not match runtime target", releasemodule.ErrProvenanceInvalid)
 	}
+	if err := source.verifyCredentialPinCommitment(ctx, provenance); err != nil {
+		return releasemodule.Provenance{}, err
+	}
 	return provenance, nil
+}
+
+// Candidate provenance is useful during preparation but cannot prove a local
+// credential was committed. This check binds pins to delivery's exact sealed
+// generation. Current workload authority and admission remain separate gates.
+func (source activeConnectionEvidenceSource) verifyCredentialPinCommitment(ctx context.Context, provenance releasemodule.Provenance) error {
+	hasLocalPin := false
+	for _, binding := range provenance.Plan.Bindings {
+		hasLocalPin = hasLocalPin || binding.CredentialVersionID != ""
+	}
+	if !hasLocalPin {
+		return nil
+	}
+	if provenance.Version != release.ProvenanceVersion || provenance.Validate() != nil {
+		return releasemodule.ErrProvenanceInvalid
+	}
+	if source.commitments == nil {
+		return releasemodule.ErrNotFound
+	}
+	proof, err := source.commitments.CommittedGeneration(ctx, source.targetID, provenance.Plan.Identity)
+	if err != nil {
+		return releasemodule.ErrNotFound
+	}
+	if proof.Identity != provenance.Plan.Identity || proof.TargetID != source.targetID ||
+		proof.PublicationID == "" || proof.SnapshotSealID == "" ||
+		proof.CandidateID != provenance.Candidate.ID || proof.CandidateRevision != provenance.Candidate.Revision ||
+		proof.ServingArtifactDigest != provenance.Artifact.ContentDigest ||
+		proof.BindingFingerprint != release.BindingFingerprint(provenance.Plan.Bindings) {
+		return releasemodule.ErrProvenanceInvalid
+	}
+	return nil
 }

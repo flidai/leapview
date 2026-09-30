@@ -40,14 +40,27 @@ export function headers(operation?: CommandOperation, ifMatch?: string): Command
   }
 }
 
+// Non-replayable actions carry request identity and an operation claim without
+// requesting durable replay. Authorization remains a server-side check.
+export function nonReplayableHeaders(operation: string): CommandHeaders {
+  if (!operation.trim()) throw new Error('operation identity is required')
+  const token = csrfToken()
+  return {
+    ...(token ? { 'X-CSRF-Token': token } : {}),
+    'X-Request-ID': uuidv7(),
+    'X-LeapView-Operation-ID': operation,
+  }
+}
+
 declare global {
   interface Window {
     LeapViewCommand: {
       headers(operation?: CommandOperation, ifMatch?: string): CommandHeaders
+      nonReplayableHeaders(operation: string): CommandHeaders
     }
   }
 }
 
-if (typeof window !== 'undefined') window.LeapViewCommand = { headers }
+if (typeof window !== 'undefined') window.LeapViewCommand = { headers, nonReplayableHeaders }
 
 export {}

@@ -226,6 +226,27 @@ func TestEmitYAMLIncludesAsyncExecutionMetadata(t *testing.T) {
 	}, command["execution"])
 }
 
+func TestEmitYAMLPreservesForbiddenIdempotencyPolicy(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Credentials", Version: "1"},
+		Endpoints: []ir.Endpoint{{
+			Method: "post", Path: "/credential-drafts", OperationID: "createCredentialDraft", Kind: "command",
+			Command:   &ir.Command{Owner: "CredentialAPI", Idempotency: "forbidden", Audit: ir.AuditPolicy{Required: true, SuccessAction: "credential_draft.created", Guarantee: "transactional"}, Failures: []ir.CommandFailure{}},
+			Responses: []ir.Response{{StatusCode: 201, Description: "created"}},
+		}},
+	}
+
+	content, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(content, &raw))
+	operation := raw["paths"].(map[string]any)["/credential-drafts"].(map[string]any)["post"].(map[string]any)
+	command := operation["x-apigen-command"].(map[string]any)
+	require.Equal(t, "forbidden", command["idempotency"])
+}
+
 func TestEmitYAML_EmitsMultipleContentKinds(t *testing.T) {
 	t.Helper()
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/flidai/leapview/internal/analytics/sourcework"
 )
 
 type PoolManagerBuilder func(TargetBinding) (*PoolManager, error)
@@ -97,6 +99,12 @@ func (directory *PoolDirectory) AcquireValidated(
 	binding TargetBinding,
 	actor string,
 ) (ValidatedPoolLease, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := sourcework.Revalidate(ctx); err != nil {
+		return nil, err
+	}
 	request := RefreshRequest{Actor: actor, Operation: RefreshRuntime}
 	if !request.valid() {
 		return nil, fmt.Errorf("%w: runtime acquisition actor is required", ErrInvalidBinding)
@@ -111,6 +119,10 @@ func (directory *PoolDirectory) AcquireValidated(
 	}
 	lease, err := pool.manager.Lease()
 	if err == nil {
+		if revalidationErr := sourcework.Revalidate(ctx); revalidationErr != nil {
+			lease.Release()
+			return nil, revalidationErr
+		}
 		return lease, nil
 	}
 	if !errors.Is(err, ErrCredentialNotFound) {
@@ -119,7 +131,15 @@ func (directory *PoolDirectory) AcquireValidated(
 	if err := pool.Refresh(ctx, request); err != nil {
 		return nil, err
 	}
-	return pool.manager.Lease()
+	lease, err = pool.manager.Lease()
+	if err != nil {
+		return nil, err
+	}
+	if revalidationErr := sourcework.Revalidate(ctx); revalidationErr != nil {
+		lease.Release()
+		return nil, revalidationErr
+	}
+	return lease, nil
 }
 
 func (directory *PoolDirectory) Close() error {
@@ -127,21 +147,22 @@ func (directory *PoolDirectory) Close() error {
 		return nil
 	}
 	directory.mu.Lock()
-	if directory.closed {
-		directory.mu.Unlock()
-		return nil
-	}
 	directory.closed = true
 	pools := make([]*boundedAdministrationPool, 0, len(directory.pools))
 	for _, pool := range directory.pools {
 		pools = append(pools, pool)
 	}
-	clear(directory.pools)
 	directory.mu.Unlock()
 
+	// Fence every manager before waiting on any one pool's physical close.
+	for _, pool := range pools {
+		pool.manager.beginRetirement()
+	}
+
+	deadline := time.Now().Add(directory.refreshTimeout)
 	var errs []error
 	for _, pool := range pools {
-		errs = append(errs, pool.manager.RetireBounded(context.Background(), time.Now().Add(directory.refreshTimeout)))
+		errs = append(errs, pool.manager.RetireBounded(context.Background(), deadline))
 	}
 	return errors.Join(errs...)
 }

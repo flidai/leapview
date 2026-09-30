@@ -12,6 +12,17 @@ func ApplyTargetBinding(
 	binding connectionbinding.TargetBinding,
 	snapshot connectionbinding.CredentialSnapshot,
 ) (semanticmodel.Connection, error) {
+	if identity := snapshot.Identity(); identity.Validate() != nil || identity.CredentialVersionID != "" {
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+	}
+	return applyTargetBinding(logical, binding, snapshot)
+}
+
+func applyTargetBinding(
+	logical semanticmodel.Connection,
+	binding connectionbinding.TargetBinding,
+	snapshot connectionbinding.CredentialSnapshot,
+) (semanticmodel.Connection, error) {
 	if err := binding.Validate(); err != nil || !binding.Enabled ||
 		strings.TrimSpace(logical.Kind) != binding.ConnectorKind ||
 		binding.AuthenticationMode != connectionbinding.AuthenticationExternalBundle &&

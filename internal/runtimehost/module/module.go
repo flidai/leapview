@@ -262,7 +262,12 @@ func (m *Module) AcquireCandidate(ctx context.Context, request runtimehost.Candi
 func (m *Module) ResolveOwnedCandidate(candidateID, ownerID string) (runtimehost.OwnedCandidateView, error) {
 	return m.registry.ResolveOwnedCandidate(candidateID, ownerID)
 }
-func (m *Module) RetireCandidate(id string) int { return m.registry.RetireCandidate(id) }
+func (m *Module) RetireCandidate(request runtimehost.CandidateRetirementRequest) (*runtimehost.CandidateRetirement, error) {
+	if m == nil || m.registry == nil {
+		return nil, runtimehost.ErrCandidateRuntimeClosed
+	}
+	return m.registry.RetireCandidate(request)
+}
 func (m *Module) ReapExpiredCandidates(now time.Time) int {
 	return m.registry.ReapExpiredCandidates(now)
 }
@@ -377,6 +382,15 @@ func (m *Module) AcquireCutoverFence(ctx context.Context) (func(), error) {
 		return nil, runtimehost.ErrRegistryClosed
 	}
 	return m.registry.AcquireCutoverFence(ctx)
+}
+
+// WithRetiredRuntimeCleanup is the serving-runtime cleanup prerequisite for a
+// coordinator-owned completion write; it does not establish live readiness.
+func (m *Module) WithRetiredRuntimeCleanup(ctx context.Context, expected projectgraph.ServingIdentity, complete func() error) error {
+	if m == nil || m.registry == nil {
+		return runtimehost.ErrRegistryClosed
+	}
+	return m.registry.WithRetiredRuntimeCleanup(ctx, expected, complete)
 }
 func (m *Module) LeasedSnapshots() []int64 { return m.registry.LeasedSnapshots() }
 func (m *Module) LeaseRenewalError() error {

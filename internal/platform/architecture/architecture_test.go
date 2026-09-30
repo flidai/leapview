@@ -33,7 +33,7 @@ var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
 	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "semanticvalue": {}, "platform": {},
-	"recoveryset": {},
+	"recoveryset": {}, "credential": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
@@ -41,7 +41,7 @@ var approvedInternalRoots = map[string]struct{}{
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
 	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
-	"recoveryset": {},
+	"recoveryset": {}, "credential": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -1048,7 +1048,7 @@ func TestRefreshOwnsDurableRunState(t *testing.T) {
 
 func TestCapabilityModuleSurfacesExist(t *testing.T) {
 	root := repoRoot(t)
-	for _, capability := range []string{"access", "analytics", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin"} {
+	for _, capability := range []string{"access", "analytics", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin", "credential"} {
 		dir := "internal/" + capability + "/module"
 		if !packageDirExists(root, dir) {
 			t.Errorf("capability composition package %s does not exist", dir)
@@ -2954,7 +2954,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	for _, want := range []string{
 		"name: Frontend tests (merge queue, ${{ matrix.shard }})",
 		"fail-fast: false",
-		"shard: [core, reports, chat, data, site]",
+		"shard: [core, reports, reports-viewer, reports-builder, chat, data, site]",
 		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 	} {
 		if !strings.Contains(mergeFrontendCI, want) {
@@ -3419,7 +3419,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		}
 
 		frontend := workflowJobBlock(t, text, "frontend-validation")
-		matrix := "shard: [core, reports, chat, data, site]"
+		matrix := "shard: [core, reports, reports-viewer, reports-builder, chat, data, site]"
 		if workflow == "ci.yml" {
 			matrix = "matrix: ${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}"
 		}
@@ -3440,7 +3440,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	require.NoError(t, err)
 	frontendShard := taskfileTaskBlock(t, string(taskfile), "ci:lane:frontend:shard")
 	for _, want := range []string{
-		"enum: [core, reports, chat, data, site]",
+		"enum: [core, reports, reports-viewer, reports-builder, chat, data, site]",
 		"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}",
 	} {
 		if !strings.Contains(frontendShard, want) {
