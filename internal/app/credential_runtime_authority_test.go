@@ -281,10 +281,10 @@ func newForegroundRuntimeCredentialAuthorityFixture(
 ) (foregroundRuntimeCredentialAuthority, context.Context, projectgraph.ServingIdentity, credentialmodule.RuntimeResource, connectionbinding.TargetBinding, credentialmodule.RuntimeCredentialReference) {
 	t.Helper()
 	const (
-		instanceID  = "instance_credential"
 		principalID = "principal_credential"
 		ownerID     = "customer_credential"
 	)
+	instanceID := "lvinst_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	identity, err := projectgraph.NewServingIdentity("project_credential", "prod", uuid.Must(uuid.NewV7()).String())
 	if err != nil {
 		t.Fatal(err)

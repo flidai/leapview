@@ -1817,9 +1817,37 @@ Credential metadata, record storage, keyring and artifact/plan identities remain
 fixture inputs, and the test owns candidate-registration sequencing. It does not
 establish immutable artifact provenance. A successful `NativeBuildCoordinator`
 journey with immutable artifact/policy evidence and transactional generation
-admission remains the next gap before joining publication and activation.
+admission is covered separately below before joining publication and activation.
 Production local-credential preflight remains closed and is asserted separately.
 
 Astra reviewed this boundary against PR #744's credential-lifecycle requirements.
 Flid's Rill acquisition/release pairing supplies lifetime precedent; the existing
 LeapView physical-build and qualification factories provide the implementation.
+
+### Local credential native build and generation admission
+
+An integration qualification joins the existing native source synchronizer,
+release artifact phases, physical build, snapshot qualification and generation
+admission. Authored source bytes are retained through the PostgreSQL source
+repository and an immutable memory object store. The release module compiles the
+retained project and produces the serving artifact against a persisted target
+authorization-policy revision. The coordinator owns candidate connection lifetime,
+source-observation capture and the transaction that completes the operation and
+admits its sealed generation.
+
+The test checks the exact local credential version and destination in retained
+provenance, the admitted artifact and snapshot identities, and source-connection
+cleanup. Repeating the completed request after revoking the fixture source token
+and removing the upstream relation must return the same sealed result without
+another credential read or materialization. The target remains unpublished:
+sealed generation admission is not runtime activation or permission to revoke an
+old external credential.
+
+This remains a direct first-delivery coordinator qualification. Credential record
+storage, keyring and captured job authority use the existing test fixture, and
+the immutable object store is in memory. The direct planner and build coordinator
+do not enable production compound authorization; persisted policy identity is
+still checked. This does not establish the generation-bound
+refresh pipeline, crash recovery during an incomplete build, publication or
+consumer activation. Production local-credential preflight remains closed and is
+asserted separately. Those boundaries must be joined before enabling local pins.
