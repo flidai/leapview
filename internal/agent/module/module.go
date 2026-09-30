@@ -313,7 +313,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return agenthttp.Principal{ID: principal.ID, DevAuthBypass: principal.DevAuthBypass}, ok
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
-		Service: service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
+		DashboardAuthoring:     config.DashboardAuthoring,
+		AuthorizeSemanticModel: m.authorizeChatVisualModel,
+		Service:                service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
 		PlatformAdmin:    config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
 		ResolveGroupIDs: config.HTTP.ResolveGroupIDs,
@@ -375,4 +377,21 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		w,
 		r,
 	)
+}
+
+// authorizeChatVisualModel repeats the source query's resource-use decision
+// before a persisted chat artifact can be imported into an editable dashboard.
+func (m *Module) authorizeChatVisualModel(ctx context.Context, scope agent.Scope, id string) error {
+	if m == nil || m.resolveResource == nil {
+		return agent.ErrNotFound
+	}
+	modelID := projectgraph.ResourceID(id)
+	if err := modelID.Validate(); err != nil {
+		return agent.ErrNotFound
+	}
+	resolved, err := m.resolveResource(ctx, scopeFromAgent(scope), modelID, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
+	if err != nil || resolved != modelID {
+		return agent.ErrNotFound
+	}
+	return nil
 }

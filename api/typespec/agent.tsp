@@ -46,6 +46,63 @@ model AgentRunNotFoundFailure {}
 @apigen.failureDefinition(#{ kind: "not_cancellable", statusCode: 409, code: "AGENT_RUN_NOT_CANCELLABLE", publicDetail: "The agent run cannot be cancelled in its current state." })
 model AgentRunNotCancellableFailure {}
 
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "INVALID_CHAT_VISUAL_DASHBOARD", publicDetail: "The visual or dashboard selection is invalid." })
+model InvalidChatVisualDashboardFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "CHAT_VISUAL_DASHBOARD_NOT_FOUND", publicDetail: "The visual or dashboard is unavailable." })
+model ChatVisualDashboardNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "forbidden", statusCode: 403, code: "CHAT_VISUAL_DASHBOARD_FORBIDDEN", publicDetail: "You cannot add this visual to this dashboard." })
+model ChatVisualDashboardForbiddenFailure {}
+
+@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "CHAT_VISUAL_DASHBOARD_CONFLICT", publicDetail: "The dashboard changed. Reopen the picker and try again." })
+model ChatVisualDashboardConflictFailure {}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ChatVisualDashboardCommandAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+  @apigen.auditInternal
+  projectId: ResourceId;
+  @apigen.auditInternal
+  dashboardId: ResourceId;
+  @apigen.auditInternal
+  draftId: string;
+  @apigen.auditPublic
+  origin: "ui" | "file" | "agent";
+}
+
+model ChatVisualDashboardPage {
+  id: string;
+  title: string;
+}
+
+model ChatVisualDashboardDestination {
+  id: string;
+  title: string;
+  createsCopy?: boolean;
+  pages: ChatVisualDashboardPage[];
+}
+
+model ChatVisualDashboardOptions {
+  dashboards: ChatVisualDashboardDestination[];
+  canCreate: boolean;
+}
+
+model AddChatVisualToDashboardRequest {
+  dashboardId?: string;
+  pageId?: string;
+  @minLength(1) @maxLength(255)
+  title?: string;
+}
+
+model AddChatVisualToDashboardResponse {
+  dashboardId: string;
+  title: string;
+  href: string;
+  pageId: string;
+}
+
 model AgentConversationCreateRequest {
   title?: string;
 }
@@ -265,6 +322,27 @@ interface AgentConversations {
   @apigen.failsWith(InvalidAgentConversationFailure)
   @apigen.command(#{ auditAction: "agent.conversation.updated" })
   updateAgentConversation(@path @apigen.target conversation: string, @header("If-Match") ifMatch: string, @body body: AgentConversationPatchRequest): UpdateAgentConversationOK | CommonErrors;
+
+  @summary("List dashboard destinations for an owned chat visual")
+  @route("/{conversation}/visuals/{artifact}/dashboards")
+  @get
+  @apigen.authz(#{ mode: "authenticated" })
+  listChatVisualDashboards(@path conversation: string, @path artifact: string): OkJson<ChatVisualDashboardOptions> | CommonErrors;
+
+  @summary("Add an owned chat visual to an editable dashboard")
+  @doc("Imports the persisted query_visual definition into an editable draft or a new private dashboard. Published destinations create an editable copy. Conversation ownership, source semantic-model use, and target edit or create authority are rechecked.")
+  @route("/{conversation}/visuals/{artifact}/dashboards")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.ui("agent.visual.dashboard.add")
+  @apigen.auditPayload(ChatVisualDashboardCommandAuditPayload)
+  @apigen.failsWith(InvalidChatVisualDashboardFailure)
+  @apigen.failsWith(ChatVisualDashboardNotFoundFailure)
+  @apigen.failsWith(ChatVisualDashboardForbiddenFailure)
+  @apigen.failsWith(ChatVisualDashboardConflictFailure)
+  @apigen.failsWith(AgentServiceUnavailableFailure)
+  @apigen.command(#{ auditAction: "agent.visual.dashboard.added", guarantee: "transactional" })
+  addChatVisualToDashboard(@path @apigen.target conversation: string, @path artifact: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AddChatVisualToDashboardRequest): OkJson<AddChatVisualToDashboardResponse> | CommonErrors;
 
   @summary("List agent messages")
   @route("/{conversation}/messages")

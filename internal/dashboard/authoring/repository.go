@@ -99,6 +99,14 @@ type CommandResult struct {
 	Revision RevisionToken
 }
 
+// CommandReplayRepository is an optional read port for transports that need
+// to validate a durable operation retry against the command's immutable
+// result document. Ordinary authoring commands should continue to use
+// LookupCommandResult, which checks the complete fingerprint.
+type CommandReplayRepository interface {
+	LookupCommandReplay(context.Context, graph.ResourceID, DashboardID, CommandID) (CommandResult, bool, error)
+}
+
 type PublishInput struct {
 	ProjectID             graph.ResourceID
 	DashboardID           DashboardID

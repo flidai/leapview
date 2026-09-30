@@ -99,7 +99,11 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (hierarchySeries !== undefined) patch.series = hierarchySeries
   if (treeSeries !== undefined) patch.series = treeSeries
   if (gaugeGraphic !== undefined) patch.graphic = gaugeGraphic
-  if (movedSide && option.graphic !== undefined) patch.graphic = compactProportionalLegendTitle(option.graphic, movedSide)
+  if (option.graphic !== undefined) {
+    const graphic = movedSide ? compactProportionalLegendTitle(option.graphic, movedSide) : option.graphic
+    const centeredGraphic = responsiveProportionalCenterGraphic(graphic, proportionalSeries ?? option.series, height)
+    if (movedSide || centeredGraphic !== option.graphic) patch.graphic = centeredGraphic
+  }
   if (option.legend !== undefined) {
     patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(responsiveLegend, hasPieSeries(option.series))
   }
@@ -366,6 +370,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     return {
       ...source,
       ...pieLayout,
+      ...(bottomLegend && source.bottom === undefined ? { bottom: '12%' } : {}),
       ...(reservedRadius ? { radius: reservedRadius } : {}),
       label: {
         ...labelOption,
@@ -387,6 +392,63 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
   })
   return hasResponsiveSeries ? series : undefined
+}
+
+function responsiveProportionalCenterGraphic(graphic: unknown, series: unknown, height: number): unknown {
+  const seriesItems = Array.isArray(series) ? series : [series]
+  const pie = seriesItems.find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && (entry as Record<string, unknown>).type === 'pie') as Record<string, unknown> | undefined
+  if (!pie || (pie.top === undefined && pie.bottom === undefined)) return graphic
+  const top = pie.top === undefined ? 0 : proportionalInsetPixels(pie.top, height)
+  const bottom = pie.bottom === undefined ? 0 : proportionalInsetPixels(pie.bottom, height)
+  if (top === undefined || bottom === undefined || top === 0 && bottom === 0) return graphic
+  const center = top + (height - top - bottom) / 2
+  const items = Array.isArray(graphic) ? graphic : [graphic]
+  let changed = false
+  const responsive = items.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, unknown>
+    if (source.id !== 'graphic:proportional:center' || source.type !== 'text') return entry
+    // ECharts positions the text origin at `top`; subtract half its rendered line height.
+    const textOffset = proportionalGraphicVerticalCenterOffset(source.style)
+    const textTop = `${Math.round((center - textOffset) / height * 10_000) / 100}%`
+    changed = true
+    return { ...source, top: textTop }
+  })
+  if (!changed) return graphic
+  return Array.isArray(graphic) ? responsive : responsive[0]
+}
+
+function proportionalInsetPixels(value: unknown, dimension: number): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return undefined
+  const match = /^(-?(?:\d+\.?\d*|\.\d+))(%)?$/.exec(value.trim())
+  if (!match) return undefined
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount)) return undefined
+  return match[2] === '%' ? amount * dimension / 100 : amount
+}
+
+function proportionalGraphicVerticalCenterOffset(value: unknown): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0
+  const style = value as Record<string, unknown>
+  if (typeof style.text !== 'string') return 0
+  const baseLineHeight = finiteNumber(style.lineHeight) ?? finiteNumber(style.fontSize) ?? 12
+  const rich = style.rich && typeof style.rich === 'object' && !Array.isArray(style.rich)
+    ? style.rich as Record<string, unknown>
+    : {}
+  const height = style.text.split('\n').reduce((total, line) => {
+    const runs = [...line.matchAll(/\{([\w-]+)\|/g)]
+    const lineHeight = runs.reduce((maximum, run) => {
+      const runStyle = rich[run[1] ?? '']
+      const runLineHeight = runStyle && typeof runStyle === 'object' && !Array.isArray(runStyle)
+        ? finiteNumber((runStyle as Record<string, unknown>).lineHeight)
+        : undefined
+      return Math.max(maximum, runLineHeight ?? baseLineHeight)
+    }, baseLineHeight)
+    return total + lineHeight
+  }, 0)
+  return height / 2
 }
 
 function compactProportionalRadius(value: unknown, cap: number): string[] | undefined {

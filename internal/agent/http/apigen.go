@@ -93,3 +93,12 @@ func (d *APIGenDispatcher) ListAgentEvents(w stdhttp.ResponseWriter, r *stdhttp.
 func (d *APIGenDispatcher) CancelAgentRun(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, _ agentgen.GenCancelAgentRunHeaders) {
 	d.handler.CancelRun(w, r)
 }
+
+func (d *APIGenDispatcher) ListChatVisualDashboards(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ string) {
+	d.handler.ListChatVisualDashboards(w, r)
+}
+
+func (d *APIGenDispatcher) AddChatVisualToDashboard(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ string, headers agentgen.GenAddChatVisualToDashboardHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.AddChatVisualToDashboard(w, r)
+}

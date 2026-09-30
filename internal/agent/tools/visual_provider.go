@@ -456,6 +456,16 @@ func normalizeAgentVisualInput(input agentVisualInput) (agentVisualInput, error)
 	return input, nil
 }
 
+// NormalizeChatVisualDefinition applies the same row-budget and query-limit
+// defaults used by query_visual before its authored definition is persisted.
+func NormalizeChatVisualDefinition(visual dashboarddocument.DashboardVisual) (dashboarddocument.DashboardVisual, error) {
+	input, err := normalizeAgentVisualInput(agentVisualInput{SemanticModelID: "semantic_model", Visual: visual})
+	if err != nil {
+		return dashboarddocument.DashboardVisual{}, err
+	}
+	return input.Visual, nil
+}
+
 func agentVisualQueryWithDefaultLimit(query dashboarddocument.DashboardQuery, budget int32, path string) (dashboarddocument.DashboardQuery, error) {
 	check := func(limit int32, field string) error {
 		if limit <= 0 {

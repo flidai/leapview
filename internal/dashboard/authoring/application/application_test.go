@@ -154,6 +154,10 @@ func (r *applicationRepository) LookupCommandResult(_ context.Context, _ graph.R
 	}
 	return result, true, nil
 }
+func (r *applicationRepository) LookupCommandReplay(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, id authoring.CommandID) (authoring.CommandResult, bool, error) {
+	result, ok := r.commands[id]
+	return result, ok, nil
+}
 func (*applicationRepository) LookupCreateOperation(context.Context, authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
 	return authoring.CreateOperationResult{}, false, nil
 }

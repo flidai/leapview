@@ -215,10 +215,11 @@ test('donut outside labels stay clear of bottom and compact side legends', () =>
     ['United States of America', 25_000_000], ['Canada', 24_900_000],
     ['France', 24_400_000], ['Germany', 23_500_000], ['Mexico', 20_900_000],
   ]
-  for (const [legend, width, height] of [['bottom', 480, 250], ['bottom', 465, 409], ['bottom', 635, 520], ['right', 465, 409]] as const) {
+  for (const [legend, width, height] of [['bottom', 480, 250], ['bottom', 465, 409], ['bottom', 635, 520], ['bottom', 800, 400], ['right', 465, 409]] as const) {
     envelope.spec.presentation.legend = legend
     const option = echartsOption(envelope, defaultRendererContext) as any
     const patch = responsiveEChartsPatch(option, width, height)
+    if (legend === 'bottom') expect(patch.series[0].bottom).toBe('12%')
     if (legend === 'right') {
       expect(patch.legend).toMatchObject({ orient: 'horizontal', bottom: 0, left: 'center', right: 'auto' })
       expect(responsiveEChartsPatch(option, 800, 500).legend).toMatchObject({ orient: 'vertical', right: 0, left: 'auto', height: 'auto' })
@@ -235,13 +236,21 @@ test('donut outside labels stay clear of bottom and compact side legends', () =>
         if (transform) box.applyTransform(transform)
         return box
       }
-      const legendItem = labels.find((item: any) => item.style.text === 'Germany')
-      const outsideLabel = labels.find((item: any) => item.style.text.startsWith('Ge') && item.style.text !== 'Germany')
-      expect(outsideLabel).toBeDefined()
-      expect(legendItem).toBeDefined()
-      const outsideBox = bounds(outsideLabel)
-      const legendBox = bounds(legendItem)
-      expect(outsideBox.y + outsideBox.height).toBeLessThan(legendBox.y)
+      const legendItems = labels.filter((item: any) => ['United States of America', 'Canada', 'France', 'Germany', 'Mexico'].includes(item.style.text))
+      const outsideLabels = labels.filter((item: any) => item.style.text.includes(': '))
+      expect(outsideLabels.length).toBeGreaterThan(0)
+      expect(legendItems.length).toBeGreaterThan(0)
+      for (const outsideLabel of outsideLabels) {
+        for (const legendItem of legendItems) {
+          expect(labelBoxesOverlap(transformedLabelBox(outsideLabel), transformedLabelBox(legendItem)), `${outsideLabel.style.text} overlaps ${legendItem.style.text}`).toBe(false)
+        }
+      }
+      const centerText = labels.filter((item: any) => item.style.text === 'Total' || item.style.text.startsWith('$'))
+      expect(centerText).toHaveLength(2)
+      const centerTextBounds = centerText.map(bounds)
+      const textCenterY = (Math.min(...centerTextBounds.map((box: any) => box.y)) + Math.max(...centerTextBounds.map((box: any) => box.y + box.height))) / 2
+      const donutCenterY = (chart as any).getModel().getSeriesByIndex(0).getData().getItemLayout(0).cy
+      expect(textCenterY).toBeCloseTo(donutCenterY, 0)
     } finally {
       chart.dispose()
     }
