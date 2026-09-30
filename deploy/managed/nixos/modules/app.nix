@@ -19,10 +19,21 @@
   };
   config = lib.mkMerge [
     {
+      assertions = [
+        {
+          assertion = !config.networking.nftables.enable;
+          message = "The managed Docker ingress policy requires the iptables firewall backend.";
+        }
+      ];
       virtualisation.docker = {
         enable = true;
         autoPrune.enable = false; # Keep images required by the qualified rollback window.
         daemon.settings = {
+          "firewall-backend" = "iptables";
+          iptables = true;
+          ip6tables = true;
+          # A userspace IPv6-to-IPv4 proxy would bypass DOCKER-USER filtering.
+          "userland-proxy" = false;
           "log-driver" = "local";
           "log-opts" = {
             "max-size" = "20m";
@@ -30,10 +41,18 @@
           };
         };
       };
-      networking.firewall.allowedTCPPorts = [
+      networking.firewall.interfaces.${config.leapview.publicInterface}.allowedTCPPorts = [
         80
         443
       ];
+      networking.firewall.extraCommands = lib.mkAfter ''
+        ${pkgs.runtimeShell} ${./docker-firewall.sh} ${lib.escapeShellArg config.leapview.publicInterface}
+      '';
+      systemd.services.docker = {
+        requires = [ "firewall.service" ];
+        after = [ "firewall.service" ];
+        partOf = [ "firewall.service" ];
+      };
       # UID/GID are the public release image's persistent-volume contract.
       systemd.tmpfiles.rules = [
         "d /var/lib/leapview 0750 999 999 -"

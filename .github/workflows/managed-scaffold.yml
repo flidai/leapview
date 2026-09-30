@@ -6,12 +6,19 @@ on:
     paths:
       - deploy/managed/**
       - .github/workflows/managed-scaffold.yml
+      - Taskfile.yml
   push:
     branches: [main]
     paths:
       - deploy/managed/**
       - .github/workflows/managed-scaffold.yml
+      - Taskfile.yml
   workflow_dispatch:
+    inputs:
+      boot_test:
+        description: Also run the isolated host network and reboot qualification
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,14 +48,28 @@ jobs:
   hosts:
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: cachix/install-nix-action@b85815f71a6de0ddee80b8a80a98d43f4bcc66c7 # v31
-      - name: Evaluate locked host and deploy-rs configurations
-        run: nix flake check path:./deploy/managed/nixos --no-build --no-update-lock-file
-      - name: Check host-role contracts
-        run: nix build path:./deploy/managed/nixos#checks.x86_64-linux.host-contracts --no-link --no-update-lock-file
+      - name: Exercise container ingress policy in isolated kernel namespaces
+        run: sudo unshare --mount --net --fork python3 deploy/managed/nixos/tests/docker_firewall_test.py
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Check Nix formatting
+        working-directory: deploy/managed/nixos
+        run: nix fmt -- --check flake.nix inventory.example.nix modules/*.nix tests/*.nix
+      - name: Build both locked host closures and deploy-rs checks
+        working-directory: deploy/managed/nixos
+        run: |
+          nix build .#nixosConfigurations.example-app.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+          nix build .#nixosConfigurations.example-database.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+          nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - name: Qualify isolated guest networking and reboot persistence
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
+        run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
   application-template:
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04

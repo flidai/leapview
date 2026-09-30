@@ -1,9 +1,21 @@
 { pkgs, modules }:
+let
+  portProbe = pkgs.dockerTools.buildLayeredImage {
+    name = "managed-port-probe";
+    tag = "fixture";
+    contents = [ pkgs.busybox ];
+    config.Cmd = [
+      "${pkgs.busybox}/bin/sh"
+      "-c"
+      "httpd -p 80; exec httpd -f -p 8080"
+    ];
+  };
+in
 pkgs.testers.runNixOSTest {
   name = "leapview-managed-host-boot";
   requiredFeatures.kvm = false; # Also runnable with QEMU software emulation.
   defaults = {
-    virtualisation.memorySize = 2048;
+    virtualisation.memorySize = pkgs.lib.mkDefault 1024;
     virtualisation.graphics = false;
     system.stateVersion = "26.05";
   };
@@ -13,16 +25,25 @@ pkgs.testers.runNixOSTest {
       leapview = {
         operatorKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyNotAnOperatorKey" ];
         operatorCIDRs = [ "192.168.1.0/24" ];
-        publicInterface = "eth0";
+        publicInterface = "eth2";
         privateInterface = "eth1";
         privateAddress = "192.168.1.1";
       };
       boot.loader.grub.enable = lib.mkForce false;
       # The test network supplies a static private interface, not Hetzner DHCP.
-      systemd.network.networks."10-public".linkConfig.RequiredForOnline = lib.mkForce false;
+      virtualisation.vlans = [
+        1
+        2
+      ];
+      systemd.network.networks."10-public" = {
+        networkConfig.DHCP = lib.mkForce "no";
+        address = [ "192.168.2.1/24" ];
+        linkConfig.RequiredForOnline = lib.mkForce "degraded";
+      };
       systemd.network.networks."20-private" = {
         networkConfig.DHCP = lib.mkForce "no";
         address = [ "192.168.1.1/24" ];
+        linkConfig.RequiredForOnline = lib.mkForce "degraded";
       };
       # TCG can exceed dockerd's internal containerd startup deadline. Start the
       # same daemon as a separate unit for this emulated test only.
@@ -35,6 +56,7 @@ pkgs.testers.runNixOSTest {
       };
       systemd.services.containerd.serviceConfig.TimeoutStartSec = 300;
       environment.systemPackages = [ pkgs.postgresql_18 ];
+      virtualisation.additionalPaths = [ portProbe ];
     };
     database = { lib, ... }: {
       imports = [ modules.database ];
@@ -57,11 +79,20 @@ pkgs.testers.runNixOSTest {
       systemd.network.networks."20-private" = {
         networkConfig.DHCP = lib.mkForce "no";
         address = [ "192.168.1.2/24" ];
+        linkConfig.RequiredForOnline = lib.mkForce "degraded";
       };
       environment.systemPackages = [ pkgs.openssl ];
     };
     outsider = {
-      environment.systemPackages = [ pkgs.netcat-openbsd ];
+      virtualisation.memorySize = 256;
+      virtualisation.vlans = [
+        1
+        2
+      ];
+      environment.systemPackages = [
+        pkgs.netcat-openbsd
+        pkgs.curl
+      ];
     };
   };
   testScript = ''
@@ -72,6 +103,34 @@ pkgs.testers.runNixOSTest {
     app.wait_for_unit("sshd.service")
     database.wait_for_unit("sshd.service", timeout=600)
     outsider.wait_for_unit("multi-user.target", timeout=600)
+
+    with subtest("Docker publications cannot bypass ingress policy"):
+        app.succeed("docker load -i ${portProbe}")
+        app.succeed("docker network create probe")
+        # Test translated ports: public 80/443 reach container 8080, while
+        # publishing a container's port 80 as 9090 must still be denied.
+        app.succeed("docker run -d --name port-probe --restart always --network probe -p 80:8080 -p 443:8080 -p 8080:8080 -p 9090:80 managed-port-probe:fixture")
+        app.wait_until_succeeds("curl -s -o /dev/null http://127.0.0.1:8080")
+        outsider.succeed("nc -z -w 3 192.168.2.1 80")
+        outsider.succeed("nc -z -w 3 192.168.2.1 443")
+        outsider.fail("nc -z -w 3 192.168.2.1 8080")
+        outsider.fail("nc -z -w 3 192.168.2.1 9090")
+        outsider.fail("nc -z -w 3 192.168.1.1 80")
+        outsider.fail("nc -z -w 3 192.168.1.1 443")
+        outsider.fail("nc -z -w 3 192.168.1.1 8080")
+        outsider.fail("nc -z -w 3 192.168.1.1 9090")
+        app.succeed("systemctl reload firewall")
+        outsider.succeed("nc -z -w 3 192.168.2.1 80")
+        outsider.fail("nc -z -w 3 192.168.1.1 8080")
+        app.succeed("systemctl restart firewall")
+        app.wait_for_unit("docker.service", timeout=600)
+        app.wait_until_succeeds("curl -s -o /dev/null http://127.0.0.1:8080")
+        outsider.succeed("nc -z -w 3 192.168.2.1 80")
+        outsider.fail("nc -z -w 3 192.168.1.1 9090")
+        app.succeed("systemctl restart docker")
+        app.wait_until_succeeds("curl -s -o /dev/null http://127.0.0.1:8080")
+        outsider.succeed("nc -z -w 3 192.168.2.1 443")
+        outsider.fail("nc -z -w 3 192.168.1.1 9090")
 
     with subtest("runtime TLS material is required and stays outside the store"):
         database.fail("test -f /var/lib/leapview-postgres-tls/server.key")
@@ -99,5 +158,8 @@ pkgs.testers.runNixOSTest {
         app.reboot()
         app.wait_for_unit("docker.service", timeout=600)
         app.wait_for_unit("sshd.service")
+        app.wait_until_succeeds("curl -s -o /dev/null http://127.0.0.1:8080")
+        outsider.succeed("nc -z -w 3 192.168.2.1 80")
+        outsider.fail("nc -z -w 3 192.168.1.1 8080")
   '';
 }

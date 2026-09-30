@@ -29,7 +29,9 @@ availability promises. Both tiers have one host and no automatic failover.
 
 Use OpenTofu 1.12.6, Nix with flakes enabled and Ruby 3.4. The Nix flake also exposes
 an operator development shell. Lockfiles belong in source control. After installing
-the locked Kamal bundle, `task managed:check` runs the same checks below.
+the locked Kamal bundle, `task managed:check` runs infrastructure, host-build and
+Kamal checks. The isolated kernel regression additionally requires root namespace
+creation and can be run separately as shown below.
 
 ```sh
 tofu -chdir=deploy/managed/hetzner init -backend=false -lockfile=readonly
@@ -37,8 +39,10 @@ tofu -chdir=deploy/managed/hetzner fmt -check -recursive
 tofu -chdir=deploy/managed/hetzner validate
 tofu -chdir=deploy/managed/hetzner test
 
-nix flake check path:./deploy/managed/nixos --no-build
-nix build path:./deploy/managed/nixos#checks.x86_64-linux.host-contracts --no-link
+task managed:hosts:check
+
+# Isolated kernel-level ingress regression (Linux; no Docker daemon required).
+task managed:hosts:network-test
 
 cd deploy/managed/kamal
 bundle install
@@ -46,10 +50,12 @@ bundle exec ruby config_test.rb
 ```
 
 The provider tests use mocks: they do not require a Hetzner token or create servers.
-Nix evaluation checks complete host configurations and deploy-rs definitions. The
-small host-contract build checks role separation and service settings. A full
-`nix flake check` also builds deploy-rs activation closures; neither evaluation nor
-build proves that the target machine boots or restores successfully.
+The host lane now builds both complete host closures, deploy-rs activation checks
+and role assertions from the lockfile. It also tests IPv4/IPv6 forwarding, original
+published ports, private-network isolation and outbound responses in fresh kernel
+namespaces. Neither a closure build nor that network fixture proves that a host
+boots or restores successfully. The workflow's optional `boot_test` input runs
+the slower real-Docker guest test on the selected revision.
 
 A subsequent [remote component rehearsal](rehearsal-2026-09-28.md) built both
 complete host configurations and exercised database/file recovery and proxy
@@ -63,7 +69,8 @@ isolated app/database/outsider guests:
 nix build path:./deploy/managed/nixos#boot-test --no-link -L
 ```
 
-It tests TLS, private-interface filtering and service persistence across guest
+It tests TLS, public proxy ingress, private-interface filtering, bypass/metrics-port
+denial, firewall reload/restart, Docker restart and persistence across guest
 reboots. KVM is optional; software emulation is much slower. The emulated fixture
 starts containerd separately to avoid dockerd's short internal startup deadline.
 It does not exercise Disko, firmware boot or Hetzner networking.
@@ -117,8 +124,21 @@ For a disposable first-host rehearsal:
    Do not rerun installation/disk formatting as an update operation.
 
 NixOS provisions Docker before Kamal is used. Do not run a second host bootstrap
-or declare Kamal-managed containers as NixOS OCI units. Docker and host firewall
-rules need an external exposure test, not just configuration inspection.
+or declare Kamal-managed containers as NixOS OCI units. The application module
+installs a forwarding policy before Docker starts: new external connections to
+Docker bridges are denied except DNAT to originally published TCP ports 80/443 on
+the declared public interface. Private, Tailscale and additional interfaces cannot
+reach published container ports. Established responses and traffic from Docker
+bridges continue through Docker's own rules. Userland port proxies are disabled
+to prevent IPv6-to-IPv4 forwarding around this policy. The policy is replaced
+atomically on reload and remains installed when the host INPUT firewall stops;
+Docker follows firewall restarts. The managed module requires the iptables
+backend and standard `docker0`/`br-*` Docker bridge names. Custom bridge interface
+names require separate policy coverage and qualification. Root/Docker operators
+can still change this configuration.
+
+The kernel fixture and real-Docker guests complement an external exposure test
+on the provisioned host; they do not qualify Hetzner or Tailscale network paths.
 
 Host auto-upgrades, Docker auto-pruning and Nix garbage collection are disabled in
 this scaffold. Establish reviewed update schedules, overdue-security alerts and
@@ -203,9 +223,11 @@ publication and a switch to `/readyz`. A private rehearsal can temporarily use
 
 The current shared application home permits one process owner. Ordinary Kamal
 replacement starts another container before stopping the old one; it is not a
-safe zero-downtime strategy for this layout. A lifecycle adapter must drain and
-stop the old application before starting its replacement, and retain a restart
-rollback path. Plan for downtime. An old image is usable only while database and
+qualified strategy for this layout. The roadmap requires resolving shared-home,
+storage and mutating-worker ownership before enabling Kamal's normal
+candidate → readiness → traffic switch → drain/stop sequence. The previous
+stop-first rehearsal does not qualify that sequence. Preserve a restart rollback
+path and measure interruption. An old image is usable only while database and
 application-state compatibility still permits it; container retention is not a
 database downgrade mechanism.
 
@@ -223,6 +245,10 @@ uploads and rollback after writes still need end-to-end qualification. The scaff
 qualify and security-review this pair before enabling releases.
 
 ## Next delivery slices
+
+The [takeover review and completion plan](completion-plan.md) maps the remaining
+work to the broader Nix roadmap and distinguishes existing rehearsal evidence
+from qualification still required.
 
 - Resolve the first-reviewer credential issuance blocker recorded in the
   [application rehearsal](rehearsal-application-2026-09-28.md), then qualify a

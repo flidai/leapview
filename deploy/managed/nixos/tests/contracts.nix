@@ -27,6 +27,18 @@ let
     (!restic.services.restic.backups.retained-files.initialize)
 
     app.virtualisation.docker.enable
+    (app.virtualisation.docker.daemon.settings."firewall-backend" == "iptables")
+    (!app.virtualisation.docker.daemon.settings."userland-proxy")
+    (builtins.elem "firewall.service" app.systemd.services.docker.requires)
+    (builtins.elem "firewall.service" app.systemd.services.docker.after)
+    (builtins.elem "firewall.service" app.systemd.services.docker.partOf)
+    (app.networking.firewall.allowedTCPPorts == [ ])
+    (
+      app.networking.firewall.interfaces.${app.leapview.publicInterface}.allowedTCPPorts == [
+        80
+        443
+      ]
+    )
     (!db.virtualisation.docker.enable)
     (app.virtualisation.oci-containers.containers == { })
     (db.services.postgresql.package.psqlSchema == "18")
