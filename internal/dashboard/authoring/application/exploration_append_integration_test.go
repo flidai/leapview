@@ -90,6 +90,64 @@ func TestAppendExplorationCreatesIndependentTileAndChecksSameModel(t *testing.T)
 	}
 }
 
+func TestAppendCategoryRevenueHandoffSpecToEditableSalesDraft(t *testing.T) {
+	app, repo, _, lease, initial := newExplorationAppendApplicationForModel(t, nil, explorationAppendSalesOrdersModel())
+	target, err := app.ExplorationTarget(t.Context(), application.ExplorationTargetRequest{
+		ProjectID: "sales", ActorID: "actor", SourceModelID: "semantic-model:sales", DashboardID: initial.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	category, revenue := "category", "revenue"
+	dataset := "sales_orders"
+	request := explorationAppendRequest(target, initial.ID, exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: &dataset,
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "sales_orders.category", Alias: &category}},
+		Metrics:    []exploration.ExplorationMetricRef{{Field: "revenue", Alias: &revenue}},
+		Filters:    []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{{Field: "revenue", Direction: exploration.ExplorationSortDirectionDesc}}, Limit: 10,
+	})
+	result, err := app.AppendExploration(t.Context(), request)
+	if err != nil {
+		t.Fatalf("append category_revenue handoff spec: %v", err)
+	}
+	if repo.appendCalls != 1 || result.Revision.Number != 2 || lease.releases != 1 {
+		t.Fatalf("append/revision/lease = %d/%d/%d, want 1/2/1", repo.appendCalls, result.Revision.Number, lease.releases)
+	}
+	stored := repo.revisions[result.Revision.RevisionID]
+	visual := stored.Document.Spec.Pages[0].Components[0].Value.(*document.VisualDashboardPageComponent).Visual
+	query, ok := stored.Document.Spec.Visuals[visual].Query.Value.(*document.AggregateDashboardQuery)
+	if !ok {
+		t.Fatalf("appended query type = %T, want aggregate", stored.Document.Spec.Visuals[visual].Query.Value)
+	}
+	dimensionOutput := ""
+	if len(query.Dimensions) == 1 {
+		selection := query.Dimensions[0]
+		if selection.String != nil {
+			dimensionOutput = *selection.String
+		} else if selection.Reference != nil {
+			dimensionOutput = selection.Reference.Dimension
+			if selection.Reference.Alias != nil {
+				dimensionOutput = *selection.Reference.Alias
+			}
+		}
+	}
+	metricOutput := ""
+	if len(query.Metrics) == 1 {
+		selection := query.Metrics[0]
+		if selection.String != nil {
+			metricOutput = *selection.String
+		} else if selection.Reference != nil {
+			metricOutput = selection.Reference.Metric
+			if selection.Reference.Alias != nil {
+				metricOutput = *selection.Reference.Alias
+			}
+		}
+	}
+	if dimensionOutput != "category" || metricOutput != "revenue" || query.Sort == nil || len(*query.Sort) != 1 || (*query.Sort)[0].Field != "revenue" || (*query.Sort)[0].Direction != document.DashboardSortDirectionDesc || query.Limit == nil || *query.Limit != 10 {
+		t.Fatalf("category_revenue dashboard query = %#v", stored.Document.Spec.Visuals[visual].Query.Value)
+	}
+}
+
 func TestAppendExplorationRejectsNonNativeIdempotencyKeyBeforeRepositoryWrite(t *testing.T) {
 	app, repo, _, _, initial := newExplorationAppendApplication(t, nil)
 	target, err := app.ExplorationTarget(t.Context(), application.ExplorationTargetRequest{
@@ -221,12 +279,15 @@ func explorationAppendRequest(target application.ExplorationTarget, dashboardID 
 }
 
 func newExplorationAppendApplication(t *testing.T, beforeAppend func()) (*application.Application, *applicationRepository, *applicationAuthorizer, *explorationAppendLease, authoring.DashboardLifecycle) {
+	return newExplorationAppendApplicationForModel(t, beforeAppend, explorationAppendModel())
+}
+
+func newExplorationAppendApplicationForModel(t *testing.T, beforeAppend func(), model *semanticmodel.Model) (*application.Application, *applicationRepository, *applicationAuthorizer, *explorationAppendLease, authoring.DashboardLifecycle) {
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("sales", "development", "generation-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := explorationAppendModel()
 	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatalf("compile semantic model: %v", err)
@@ -274,6 +335,33 @@ func newExplorationAppendApplication(t *testing.T, beforeAppend func()) (*applic
 		t.Fatal(err)
 	}
 	return app, repo, auth, lease, lifecycle
+}
+
+func explorationAppendSalesOrdersModel() *semanticmodel.Model {
+	fields := map[string]semanticmodel.MetricDimension{
+		"id":       {Field: "sales_orders.id", Table: "sales_orders", Name: "id", Type: "number", Datatype: semanticmodel.DataTypeInteger},
+		"category": {Field: "sales_orders.category", Table: "sales_orders", Name: "category", Type: "string", Datatype: semanticmodel.DataTypeString},
+		"revenue":  {Field: "sales_orders.revenue", Table: "sales_orders", Name: "revenue", Type: "number", Datatype: semanticmodel.DataTypeDecimal},
+	}
+	columns := make(map[string]semanticmodel.ModelColumn, len(fields))
+	for name, field := range fields {
+		columns[name] = semanticmodel.ModelColumn{Name: name, SourceField: name, Type: field.Type, Datatype: field.Datatype}
+	}
+	return &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{"sales_orders": {
+			ModelName: "sales_orders_model", GrainEntity: "order",
+			Entities:   map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"id"}}},
+			Dimensions: fields, Columns: columns,
+		}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"sales_orders": {Model: "sales_orders_model"}},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"category": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"sales_orders": {Field: "sales_orders.category"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue": {Type: "aggregate", Dataset: "sales_orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "sales_orders.revenue"}},
+		},
+	}
 }
 
 func explorationAppendModel() *semanticmodel.Model {

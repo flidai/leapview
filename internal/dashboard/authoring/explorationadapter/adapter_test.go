@@ -161,6 +161,20 @@ func TestConvertRejectsUnboundPhysicalFieldsAndUnrepresentableFormats(t *testing
 	}
 }
 
+func TestConvertRejectsRowsOnlyExplorationWithoutMetric(t *testing.T) {
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales",
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "category"}},
+		Metrics:    []exploration.ExplorationMetricRef{},
+		Filters:    []exploration.ExplorationFilter{},
+		Sort:       []exploration.ExplorationSort{},
+		Limit:      10,
+	}
+	if _, err := Convert(spec, Options{}); err == nil || !strings.Contains(err.Error(), "exploration requires at least one metric") {
+		t.Fatalf("rows-only conversion error = %v, want missing metric validation", err)
+	}
+}
+
 func TestConvertPivotAppliesTimeToExistingRowAndDateRangeFilter(t *testing.T) {
 	rowAlias := "month"
 	lower := "2026-01-01"

@@ -170,6 +170,11 @@ export class DashboardAppendController {
   }
 
   async append(spec: ExplorationSpec): Promise<void> {
+    if (!spec.metrics.length && !spec.pivot?.metrics.length) {
+      this.status = 'Add at least one metric before adding an exploration to a dashboard.'
+      this.refresh()
+      return
+    }
     const target = this.targets.find((item) => item.id === this.selectedDashboardID)
     const operationID = this.attribute('data-dashboard-append-operation-id')
     const endpoint = this.attribute('data-dashboard-append-url')
@@ -195,6 +200,7 @@ export class DashboardAppendController {
           return
         }
         if (response.status === 403) throw new Error('You no longer have access to this dashboard or model.')
+        if (response.status === 422) throw new Error('The selected fields or display settings are not supported for dashboard tiles. Review the exploration and try again.')
         throw new Error('Could not add this exploration to the selected dashboard.')
       }
       const result = await response.json() as { dashboardId?: string }

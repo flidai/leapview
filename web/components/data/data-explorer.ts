@@ -17,6 +17,7 @@ import type { ExplorationSpec } from '../../generated/exploration'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { dataExplorerResultStyles } from './data-explorer-result-styles'
+import { dataExplorerHandoffStyles } from './data-explorer-handoff-styles'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { agentIcon } from '../chat/agent-icon'
 import { fieldTypeIcon } from '../shared/field-type-icon'
@@ -230,14 +231,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-app);
     }
 
-    .header-title { display: flex; min-width: 0; align-items: center; gap: var(--base-size-8); }
-    .return-link {
-      display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--base-size-4);
-      color: var(--lv-fg-muted); text-decoration: none; font: var(--lv-type-caption);
-    }
-    .return-link:hover, .return-link:focus-visible { color: var(--lv-fg-link); }
-    .return-link svg { width: var(--base-size-16); height: var(--base-size-16); }
-    .header-divider { flex: 0 0 auto; color: var(--lv-fg-muted); }
+    ${dataExplorerHandoffStyles}
 
     .header-actions,
     .query-actions,

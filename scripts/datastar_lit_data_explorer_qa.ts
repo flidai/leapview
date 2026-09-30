@@ -106,7 +106,10 @@ async function enterDataExplorerAnalyzeMode(page: Page): Promise<{ explorer: Loc
   await explorer.waitFor()
   const analyze = explorer.getByRole('button', { name: 'Analyze', exact: true })
   if (await analyze.count() === 0) {
+    const openBrowser = explorer.getByRole('button', { name: 'Open data browser' })
+    if (await openBrowser.count() > 0) await openBrowser.click()
     const firstGroup = explorer.locator('details.resource-group').first()
+    await firstGroup.waitFor({ state: 'visible' })
     if (await firstGroup.getAttribute('open') === null) {
       await firstGroup.locator(':scope > summary').click()
     }
@@ -231,6 +234,7 @@ export async function verifyDataExplorerResponsiveLayout({
       const root = document.querySelector('lv-data-explorer') as HTMLElement & { shadowRoot: ShadowRoot }
       const route = root.shadowRoot?.querySelector('.route') as HTMLElement | null
       const explorer = root.shadowRoot?.querySelector('.explorer') as HTMLElement | null
+      const browser = root.shadowRoot?.querySelector('.browser') as HTMLElement | null
       const browserResizer = root.shadowRoot?.querySelector('.browser-resizer') as HTMLElement | null
       const controls = root.shadowRoot?.querySelector('.semantic-filter-dock lv-data-explorer-query-controls[filtereditoronly]') as HTMLElement & { shadowRoot: ShadowRoot } | null
       const filterEditor = controls?.shadowRoot?.querySelector('.filter-editor') as HTMLElement | null
@@ -245,7 +249,9 @@ export async function verifyDataExplorerResponsiveLayout({
         documentScrollWidth: document.documentElement.scrollWidth,
         routeWidth: route?.getBoundingClientRect().width ?? 0,
         explorerWidth: explorer?.getBoundingClientRect().width ?? 0,
-        explorerTracks: explorer ? getComputedStyle(explorer).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length : 0,
+        explorerDisplay: explorer ? getComputedStyle(explorer).display : '',
+        browserCollapsed: explorer?.classList.contains('browser-collapsed') ?? false,
+        browserWidth: browser?.getBoundingClientRect().width ?? 0,
         browserResizerDisplay: browserResizer ? getComputedStyle(browserResizer).display : '',
         controlsWidth: controls?.getBoundingClientRect().width ?? 0,
         filterEditorWidth: filterEditor?.getBoundingClientRect().width ?? 0,
@@ -259,7 +265,7 @@ export async function verifyDataExplorerResponsiveLayout({
     if (layout.routeWidth > layout.viewportWidth + 1 || layout.explorerWidth > layout.viewportWidth + 1) {
       throw new Error(`/explore responsive route exceeds viewport: ${JSON.stringify(layout)}`)
     }
-    if (layout.explorerTracks !== 1 || layout.browserResizerDisplay !== 'none') {
+    if (layout.explorerDisplay !== 'block' || !layout.browserCollapsed || layout.browserWidth > 45 || layout.browserResizerDisplay !== 'none') {
       throw new Error(`/explore responsive layout did not collapse the browser rail: ${JSON.stringify(layout)}`)
     }
     if (layout.controlsWidth <= 0 || layout.filterEditorWidth > layout.controlsWidth + 1 || layout.filterEditorTracks !== 1) {
