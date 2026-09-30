@@ -1,12 +1,60 @@
 import { expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { blockingAxeViolations, formatAxeViolations, type AxeViolation } from './axe_accessibility'
+import { appendCapturedOutput, drainProcessOutput, formatManagedStartupFailure } from './qa_ui_framework_process'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
-test('UI framework QA gives the managed dev task its full readiness budget', async () => {
+test('managed startup failures show a bounded task log tail with credentials redacted', () => {
+  const output = appendCapturedOutput(
+    'older log lines\n',
+    'PMTiles extraction failed: unexpected EOF\npublisher token: lv_pat_example123\nraw credential lv_pat_other456\nPGPASSWORD=db-password\nLEAPVIEW_DEV_API_TOKEN=api-token-value\nLEAPVIEW_DEV_BOOTSTRAP_TOKEN=bootstrap-token-value\nAWS_SECRET_ACCESS_KEY=aws-secret-value\n\"client_secret\": \"oauth-secret-value\"\nordinary_status=500\npostgres://qa-user:db-secret@localhost/qa\n',
+  )
+  const message = formatManagedStartupFailure('task dev exited with status 201', output)
+
+  expect(message).toContain('PMTiles extraction failed: unexpected EOF')
+  expect(message).toContain('publisher token: [REDACTED]')
+  expect(message).toContain('raw credential lv_pat_[REDACTED]')
+  expect(message).toContain('postgres://qa-user:[REDACTED]@localhost/qa')
+  expect(message).not.toContain('lv_pat_example123')
+  expect(message).not.toContain('lv_pat_other456')
+  expect(message).not.toContain('db-secret')
+  expect(message).not.toContain('db-password')
+  expect(message).not.toContain('api-token-value')
+  expect(message).not.toContain('bootstrap-token-value')
+  expect(message).not.toContain('aws-secret-value')
+  expect(message).not.toContain('oauth-secret-value')
+  expect(message).toContain('ordinary_status=500')
+  expect(appendCapturedOutput('123456', '7890', 6)).toBe('567890')
+})
+
+test('managed startup output draining cancels readers that outlive the task', async () => {
+  let cancelled = false
+  const completion = drainProcessOutput(
+    [new Promise<void>(() => {})],
+    async () => { cancelled = true },
+    5,
+    5,
+  )
+  const outcome = await new Promise<'completed' | 'hung'>((resolve) => {
+    const timer = setTimeout(() => resolve('hung'), 500)
+    void completion.then(() => {
+      clearTimeout(timer)
+      resolve('completed')
+    })
+  })
+
+  expect(outcome).toBe('completed')
+  expect(cancelled).toBe(true)
+})
+
+test('UI framework QA separates bounded task startup from server readiness budgets', async () => {
   const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
 
+  expect(source).toContain('const managedServerReadyAttempts = 1800')
+  expect(source).toContain('const managedTaskStartupAttempts = 9_000')
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
+  expect(source).toMatch(/async function waitForManagedServer\(\): Promise<string> \{[\s\S]*?attempt < managedTaskStartupAttempts/)
+  expect(source).toMatch(/async function waitForProjectReady\(baseURL: string\): Promise<void> \{[\s\S]*?attempt < managedServerReadyAttempts/)
 })
 
 test('UI framework QA owns an isolated disposable PostgreSQL topology', async () => {
