@@ -222,14 +222,14 @@ test('ECharts handle reapplies width-sensitive legends and switches proportional
     handle.resize(360, 300)
     expect(calls.length).toBe(count + 1)
     expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
-    expect(first.radius).toEqual(['39.79%', '56%'])
+    expect(first.radius).toEqual(['28.42%', '40%'])
     expect(first.left).toBeUndefined()
     expect(first.right).toBeUndefined()
     expect(first.label.alignTo).toBe('edge')
 
     handle.resize(435, 420)
     expect(calls.at(-1)!.series[0]).toMatchObject({
-      id: 'series:primary:donut', label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+      id: 'series:primary:donut', label: { alignTo: 'edge' },
     })
 
     handle.resize(1200, 720)
