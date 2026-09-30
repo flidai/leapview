@@ -115,6 +115,7 @@ export function removeEChartsRendererFrame(container: ParentNode, frame: HTMLEle
 export class EChartsHandle implements RendererHandle {
   private envelope?: VisualizationEnvelope
   private context?: RendererContext
+  private responsiveOption?: Record<string, any>
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
@@ -141,6 +142,7 @@ export class EChartsHandle implements RendererHandle {
     this.readinessAbort = new AbortController()
     this.readiness = waitForEChartsFrame(this.chart, 5_000, this.readinessAbort.signal)
     const option = echartsOption(envelope, context, this.categoryColors)
+    this.responsiveOption = option as Record<string, any>
     this.dataZoomInitialized = hasEChartsDataZoom(option)
     this.chart.setOption(option, { notMerge: true, lazyUpdate: false })
   }
@@ -154,6 +156,7 @@ export class EChartsHandle implements RendererHandle {
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
+    this.responsiveOption = option as Record<string, any>
     const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
     const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
@@ -189,10 +192,12 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
-    const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight)
+    const focused = visualizationHostIsFocused(this.container)
+    const option = this.responsiveOption ?? echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>
+    const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight, focused, option)
     const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
-    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    const patch = responsiveEChartsPatch(option, this.lastWidth, this.lastHeight, focused)
     // Exact compact widths only affect scroll legends. Avoid reapplying an
     // unchanged proportional series while a card is continuously resized.
     if (!force && compact && sameLayout && patch.legend === undefined) {
@@ -364,8 +369,8 @@ export function heatmapFocusDataZoom(focused: boolean, compactRange: HeatmapZoom
 }
 
 function visualizationHostIsFocused(container: HTMLElement): boolean {
-  const root = container.getRootNode()
-  return root instanceof ShadowRoot && root.host.getAttribute('slot') === 'focus-visual'
+  const root = container.getRootNode?.()
+  return typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot && root.host.getAttribute('slot') === 'focus-visual'
 }
 
 export function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {

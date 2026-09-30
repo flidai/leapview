@@ -8,7 +8,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
 import { catalogColumns } from './catalog-columns'
-import { dashboardIsPinned, nextDashboardPins, scopedCatalogPinsStorageKey, syncPinnedDashboardLinks } from './catalog-pins'
+import { catalogPinsChangedEvent, dashboardIsPinned, nextDashboardPins, scopedCatalogPinsStorageKey, syncPinnedDashboardLinks } from './catalog-pins'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 import { showToast } from '../shared/toast'
@@ -229,11 +229,13 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 	this.reloadDiscoveryPreferences()
     window.addEventListener('keydown', this.handleGlobalKeydown)
     window.addEventListener('storage', this.handlePreferencesStorage)
+    window.addEventListener(catalogPinsChangedEvent, this.refreshDashboardPins)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('keydown', this.handleGlobalKeydown)
     window.removeEventListener('storage', this.handlePreferencesStorage)
+    window.removeEventListener(catalogPinsChangedEvent, this.refreshDashboardPins)
     super.disconnectedCallback()
   }
 
@@ -467,6 +469,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
   private handlePreferencesStorage = (event: StorageEvent): void => {
     if (event.key === scopedCatalogPinsStorageKey(this.principalID) || event.key === null) this.pinnedDashboardIDs = this.principalID ? readStringList(scopedCatalogPinsStorageKey(this.principalID)) : []
+  }
+
+  private refreshDashboardPins = (): void => {
+    if (this.principalID) this.pinnedDashboardIDs = readStringList(scopedCatalogPinsStorageKey(this.principalID))
   }
 
   private toggleDashboardPin = (event: CustomEvent<{ item?: { dashboardId?: string } }>): void => {

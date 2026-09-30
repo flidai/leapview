@@ -24,15 +24,15 @@ import (
 )
 
 const (
-	planetURL                = "https://build.protomaps.com/20260720.pmtiles"
-	archiveDigest            = visualizationmapasset.ArchiveSHA256
-	globalArchiveDigest      = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
-	regionalBounds           = "-82,-56,-30,14"
-	regionalMinimumZoom      = "7"
-	regionalMaximumZoom      = "10"
-	archiveDownloadThreads   = "2"
-	pmtilesRateLimitAttempts = 3
-	basemapAssetsSHA         = visualizationmapasset.BasemapAssetsRevision
+	planetURL              = "https://build.protomaps.com/20260720.pmtiles"
+	archiveDigest          = visualizationmapasset.ArchiveSHA256
+	globalArchiveDigest    = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
+	regionalBounds         = "-82,-56,-30,14"
+	regionalMinimumZoom    = "7"
+	regionalMaximumZoom    = "10"
+	archiveDownloadThreads = "2"
+	pmtilesMaxAttempts     = 3
+	basemapAssetsSHA       = visualizationmapasset.BasemapAssetsRevision
 )
 
 var glyphRanges = []string{
@@ -292,17 +292,37 @@ func reuseVerifiedArchive(primary, legacy, digest, target string) error {
 }
 
 func runPMTiles(ctx context.Context, arguments ...string) error {
+	return runPMTilesWithRetry(ctx, arguments, func(ctx context.Context, arguments ...string) (string, error) {
+		return runPMTilesCommand(pmtilesCommand(ctx, arguments...))
+	})
+}
+
+func runPMTilesCommand(command *exec.Cmd) (string, error) {
+	// The PMTiles logger writes extraction failures to stdout; the Go launcher
+	// reports its exit status on stderr. Capture both using separate buffers,
+	// since os/exec drains the two streams concurrently.
+	var stdout, stderr strings.Builder
+	command.Stdout = io.MultiWriter(os.Stdout, &stdout)
+	command.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	err := command.Run()
+	return stdout.String() + "\n" + stderr.String(), err
+}
+
+func runPMTilesWithRetry(ctx context.Context, arguments []string, run func(context.Context, ...string) (string, error)) error {
 	var lastErr error
-	for attempt := 1; attempt <= pmtilesRateLimitAttempts; attempt++ {
-		var stderr strings.Builder
-		command := pmtilesCommand(ctx, arguments...)
-		command.Stderr = io.MultiWriter(os.Stderr, &stderr)
-		err := command.Run()
+	for attempt := 1; attempt <= pmtilesMaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		stderr, err := run(ctx, arguments...)
 		if err == nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		lastErr = err
-		if !isPMTilesRateLimit(stderr.String()) || attempt == pmtilesRateLimitAttempts {
+		if !isPMTilesTransientFailure(stderr) || attempt == pmtilesMaxAttempts {
 			return err
 		}
 		if len(arguments) >= 3 && arguments[0] == "extract" {
@@ -311,7 +331,7 @@ func runPMTiles(ctx context.Context, arguments ...string) error {
 			}
 		}
 		delay := time.Duration(attempt*5) * time.Second
-		fmt.Fprintf(os.Stderr, "PMTiles source rate limited; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesRateLimitAttempts)
+		fmt.Fprintf(os.Stderr, "PMTiles source request failed transiently; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesMaxAttempts)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -323,8 +343,29 @@ func runPMTiles(ctx context.Context, arguments ...string) error {
 	return lastErr
 }
 
-func isPMTilesRateLimit(stderr string) bool {
-	return strings.Contains(stderr, "HTTP error: 429")
+func isPMTilesTransientFailure(stderr string) bool {
+	for _, line := range strings.Split(stderr, "\n") {
+		_, failure, found := strings.Cut(line, "Failed to extract, ")
+		if !found {
+			continue
+		}
+		if status, found := strings.CutPrefix(failure, "HTTP error: "); found {
+			fields := strings.Fields(status)
+			if len(fields) > 0 {
+				switch fields[0] {
+				case "429", "500", "502", "503", "504":
+					return true
+				}
+			}
+			continue
+		}
+		for _, transportError := range []string{"unexpected EOF", "connection reset by peer", "i/o timeout"} {
+			if strings.Contains(failure, transportError) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func pmtilesCommand(ctx context.Context, arguments ...string) *exec.Cmd {

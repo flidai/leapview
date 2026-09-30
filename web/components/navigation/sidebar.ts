@@ -34,7 +34,8 @@ import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
 import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
-import { renderSidebarChatHistory, renderSidebarChatHistoryItem, sidebarChatHistoryStyles, sidebarPinnedChats, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
+import { renderSidebarChatHistory, sidebarChatHistoryStyles, sidebarPinnedChats, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
+import { renderSidebarPinnedItems, sidebarPinnedDashboardStyles, unpinSidebarDashboard } from './sidebar-pinned-dashboards'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
 import { catalogPinsChangedEvent, readPinnedDashboardLinks, scopedCatalogPinLinksStorageKey, scopedCatalogPinsStorageKey, type PinnedDashboardLink } from '../app/catalog-pins'
 import { readStringList } from '../app/catalog-preferences'
@@ -192,7 +193,7 @@ class LeapViewSidebar extends LitElement {
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
-  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, sidebarAccountStyles, css`
+  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, sidebarPinnedDashboardStyles, sidebarAccountStyles, css`
     :host {
       --lv-sidebar-width-default: var(--lv-sidebar-width-expanded);
       --lv-sidebar-width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
@@ -1650,22 +1651,15 @@ class LeapViewSidebar extends LitElement {
     if (principalID && (event.key === scopedCatalogPinLinksStorageKey(principalID) || event.key === scopedCatalogPinsStorageKey(principalID) || event.key === null)) this.refreshPinnedDashboards()
   }
 
+  private unpinDashboard(event: MouseEvent, dashboard: PinnedDashboardLink): void {
+    event.stopPropagation()
+    unpinSidebarDashboard(this.config.principalId?.trim() ?? '', dashboard.id)
+    this.refreshPinnedDashboards()
+  }
+
   private renderPinnedItems() {
     if (this.config.admin) return null
-    const chats = sidebarPinnedChats(this.config.history, this.pendingRemovalIds)
-    if (!this.pinnedDashboardLinks.length && !chats.length) return null
-    return html`
-      <section class="nav-group pinned-items" aria-label="Pinned">
-        <strong class="nav-group-label" role="heading" aria-level="2">Pinned</strong>
-        ${this.pinnedDashboardLinks.map(dashboard => html`
-          <a class="nav-item" href=${dashboard.href} aria-label=${dashboard.title} aria-current=${this.config.dashboardId === dashboard.id ? 'page' : 'false'} title=${dashboard.title} @click=${(event: MouseEvent) => this.followInternalLink(event, dashboard.href)}>
-            <span class="nav-icon">${lucideIcon(lucideIconByCanonicalName(dashboard.icon || 'layout-dashboard'))}</span>
-            <span class="nav-text"><strong>${dashboard.title}</strong></span>
-          </a>
-        `)}
-        ${chats.map(chat => renderSidebarChatHistoryItem(chat, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item)))}
-      </section>
-    `
+    return renderSidebarPinnedItems(this.pinnedDashboardLinks, sidebarPinnedChats(this.config.history, this.pendingRemovalIds), this.config.dashboardId, (event, href) => this.followInternalLink(event, href), (event, link) => this.unpinDashboard(event, link), (action, item) => this.chatAction(action, item))
   }
 
   private chatAction(action: string, item: SidebarHistoryItem) {

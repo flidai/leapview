@@ -16,6 +16,7 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 		guarantee   string
 		ui          bool
 	}{
+		"addChatVisualToDashboard": {audit: "agent.visual.dashboard.added", target: "conversation", idempotency: "required", guarantee: "transactional", ui: true},
 		"createAgentConversation":  {audit: "agent.conversation.created", idempotency: "required", guarantee: "transactional", ui: true},
 		"archiveAgentConversation": {audit: "agent.conversation.archived", target: "conversation", guarantee: "transactional"},
 		"updateAgentConversation":  {audit: "agent.conversation.updated", target: "conversation", concurrency: "if-match", guarantee: "transactional"},
@@ -62,7 +63,7 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 
 	for _, operationID := range []string{
 		"listAgentConversations", "getAgentConversation", "listAgentMessages",
-		"listAgentRuns", "getAgentRun", "listAgentEvents",
+		"listAgentRuns", "getAgentRun", "listAgentEvents", "listChatVisualDashboards",
 	} {
 		if contract := contracts[operationID]; contract.Command != nil {
 			t.Errorf("query %s has command contract %#v", operationID, contract.Command)

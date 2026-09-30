@@ -27,7 +27,7 @@ import (
 
 // Combined generated surface including target-policy and development-profile
 // operations. This count is a contract snapshot, not a feature-coverage claim.
-const expectedAPIGenAggregateOperationCount = 199
+const expectedAPIGenAggregateOperationCount = 201
 
 func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	contracts := accessAPIGenOperationContracts()
@@ -106,7 +106,7 @@ func TestAPIGenAgentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAgentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	agentContracts := agentgen.GetAPIGenOperationContracts()
-	if got, want := len(agentContracts), 15; got != want {
+	if got, want := len(agentContracts), 17; got != want {
 		t.Fatalf("Agent generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range agentContracts {
@@ -897,6 +897,8 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"getInstance": true,
 	}
 	authenticatedOperations := map[string]bool{
+		"addChatVisualToDashboard":         true,
+		"listChatVisualDashboards":         true,
 		"archiveAgentConversation":         true,
 		"cancelAgentRun":                   true,
 		"cancelRefreshRun":                 true,

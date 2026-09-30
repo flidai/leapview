@@ -197,18 +197,10 @@ export const chatThreadStyles = css`
       display: grid;
       gap: var(--lv-space-xs);
       margin: var(--lv-space-sm) 0 0;
-      padding: 0 0 0 var(--lv-space-lg);
-      list-style: decimal;
     }
 
     .run-step {
-      padding-left: var(--lv-space-xs);
       overflow-wrap: anywhere;
-    }
-
-    .run-step-status {
-      margin-left: var(--lv-space-sm);
-      color: var(--lv-fg-muted);
     }
 
     .run-steps .agent-markdown {

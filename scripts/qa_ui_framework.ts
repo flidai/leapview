@@ -1,5 +1,6 @@
 import { chmod, mkdir, open, readFile, rm } from 'node:fs/promises'
 import { chromium } from '@playwright/test'
+import { appendCapturedOutput, drainProcessOutput, formatManagedStartupFailure } from './qa_ui_framework_process'
 
 const portFile = '.tmp/dev-server.port'
 const qaHome = '.tmp/qa-ui-framework/home'
@@ -14,11 +15,18 @@ const qaRuntimeEnv = {
   LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
   LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
 }
+// `task dev` installs and may extract pinned map assets before it can start
+// the server. Give that full task startup its own bounded budget while keeping
+// the server's readiness and publication waits at their existing limits.
 const managedServerReadyAttempts = 1800
+const managedTaskStartupAttempts = 9_000
 let startedServer = false
 let cleanedUp = false
 let devTask: Bun.Subprocess | null = null
 let devTaskExitCode: number | null = null
+let devTaskOutput = ''
+let devTaskOutputReaders: Promise<void>[] = []
+let devTaskOutputReaderHandles: ReadableStreamDefaultReader<Uint8Array>[] = []
 let createdSessionState = false
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -126,7 +134,11 @@ async function resolveBaseURL(): Promise<string> {
     LEAPVIEW_DEV_LOG_LINES: '0',
     LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts),
     LEAPVIEW_DEV_SKIP_PUBLISH: '1',
-  }, 'ignore')
+  }, 'pipe')
+  devTaskOutputReaders = [
+    captureProcessOutput(readableProcessOutput(devTask.stdout)),
+    captureProcessOutput(readableProcessOutput(devTask.stderr)),
+  ]
   void devTask.exited.then((code) => {
     devTaskExitCode = code
   })
@@ -171,7 +183,7 @@ async function deployManagedProject(): Promise<void> {
 }
 
 async function waitForManagedServer(): Promise<string> {
-  for (let attempt = 0; attempt < managedServerReadyAttempts; attempt++) {
+  for (let attempt = 0; attempt < managedTaskStartupAttempts; attempt++) {
     const baseURL = await managedBaseURL()
     if (baseURL) {
       // The application root intentionally remains unavailable until a
@@ -182,11 +194,11 @@ async function waitForManagedServer(): Promise<string> {
       if (await reachable(healthURL)) return baseURL
     }
     if (devTaskExitCode !== null) {
-      throw new Error(`task dev exited before the managed server became reachable with status ${devTaskExitCode}`)
+      throw await exitedManagedStartupFailure(`task dev exited before the managed server became reachable with status ${devTaskExitCode}`)
     }
     await sleep(200)
   }
-  throw new Error('managed dev server did not become reachable')
+  throw managedStartupFailure('managed dev server did not become reachable')
 }
 
 async function waitForProjectReady(baseURL: string): Promise<void> {
@@ -194,11 +206,51 @@ async function waitForProjectReady(baseURL: string): Promise<void> {
   for (let attempt = 0; attempt < managedServerReadyAttempts; attempt++) {
     if (await reachable(exploreURL)) return
     if (devTaskExitCode !== null) {
-      throw new Error(`task dev exited before the published project became reachable with status ${devTaskExitCode}`)
+      throw await exitedManagedStartupFailure(`task dev exited before the published project became reachable with status ${devTaskExitCode}`)
     }
     await sleep(200)
   }
-  throw new Error('published project did not become reachable')
+  throw managedStartupFailure('published project did not become reachable')
+}
+
+async function exitedManagedStartupFailure(message: string): Promise<Error> {
+  await drainProcessOutput(devTaskOutputReaders, async () => {
+    await Promise.all(devTaskOutputReaderHandles.map(async (reader) => {
+      try {
+        await reader.cancel()
+      } catch {
+        // The stream may have closed while the drain deadline elapsed.
+      }
+    }))
+  })
+  return managedStartupFailure(message)
+}
+
+function managedStartupFailure(message: string): Error {
+  return new Error(formatManagedStartupFailure(message, devTaskOutput))
+}
+
+async function captureProcessOutput(stream: ReadableStream<Uint8Array> | null): Promise<void> {
+  if (!stream) return
+  const reader = stream.getReader()
+  devTaskOutputReaderHandles.push(reader)
+  const decoder = new TextDecoder()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      devTaskOutput = appendCapturedOutput(devTaskOutput, decoder.decode(value, { stream: true }))
+    }
+    devTaskOutput = appendCapturedOutput(devTaskOutput, decoder.decode())
+  } catch {
+    devTaskOutput = appendCapturedOutput(devTaskOutput, '\n[task dev output capture stopped unexpectedly]\n')
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function readableProcessOutput(stream: Bun.Subprocess['stdout']): ReadableStream<Uint8Array> | null {
+  return stream !== undefined && typeof stream !== 'number' ? stream : null
 }
 
 async function managedBaseURL(): Promise<string | null> {
@@ -259,7 +311,7 @@ async function run(command: string[], extraEnv: Record<string, string> = {}): Pr
   }
 }
 
-function spawn(command: string[], extraEnv: Record<string, string> = {}, stdio: 'inherit' | 'ignore'): Bun.Subprocess {
+function spawn(command: string[], extraEnv: Record<string, string> = {}, stdio: 'inherit' | 'ignore' | 'pipe'): Bun.Subprocess {
   return Bun.spawn(command, {
     cwd: process.cwd(),
     env: { ...Bun.env, ...extraEnv },

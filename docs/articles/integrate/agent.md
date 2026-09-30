@@ -18,6 +18,14 @@ Catalog search and list silently omit inaccessible resources. Exact lookup retur
 
 See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, pagination, shared-resource locations, tool-selection guidance, and stable error behavior. Use the generated [Agent tool reference](/docs/agent-tools) for exact schemas and metadata.
 
+## Keep a chat visual
+
+Open a visual card in chat to inspect its chart. **Save** keeps it as a saved exploration.
+
+For a visual created by the agent, choose **Add to dashboard** to select an editable dashboard and page or create a new private dashboard. The picker shows compatible dashboards that you can edit or copy. Published dashboards use **Create copy and add**, which creates a private editable copy containing the visual. The visual retains its semantic query and filters.
+
+After adding the visual, choose **Open dashboard** to inspect it in the editor, or **Add another visual** to return to chat. The next dashboard picker remembers the dashboard and page you selected.
+
 ## Product documentation tools
 
 The built-in agent and deployment MCP catalog expose `docs_search` and `docs_read`. Documentation search returns ranked, bounded matches from the immutable documentation index embedded in the running LeapView release. Each page reports `count` and `hasMore`; continue with its opaque, snapshot-bound `nextCursor` when needed. Each match includes a stable `doc:` ID, documentation path, public URL, summary, and focused excerpt.

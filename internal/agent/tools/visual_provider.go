@@ -456,6 +456,16 @@ func normalizeAgentVisualInput(input agentVisualInput) (agentVisualInput, error)
 	return input, nil
 }
 
+// NormalizeChatVisualDefinition applies the same row-budget and query-limit
+// defaults used by query_visual before its authored definition is persisted.
+func NormalizeChatVisualDefinition(visual dashboarddocument.DashboardVisual) (dashboarddocument.DashboardVisual, error) {
+	input, err := normalizeAgentVisualInput(agentVisualInput{SemanticModelID: "semantic_model", Visual: visual})
+	if err != nil {
+		return dashboarddocument.DashboardVisual{}, err
+	}
+	return input.Visual, nil
+}
+
 func agentVisualQueryWithDefaultLimit(query dashboarddocument.DashboardQuery, budget int32, path string) (dashboarddocument.DashboardQuery, error) {
 	check := func(limit int32, field string) error {
 		if limit <= 0 {
@@ -802,8 +812,8 @@ func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model
 		usage.Label = firstNonEmpty(dimension.Label, ref.Field)
 		usage.DataType = optionalString(dimension.Type)
 		if role == "dimension" {
-			if binding, ok := dimension.Bindings[rootDataset]; ok && len(binding.Path) == 0 {
-				usage.ExplorerFieldID = optionalString(agentExplorerDimensionField(model, rootDataset, binding.Field))
+			if binding, ok := dimension.Bindings[rootDataset]; ok {
+				usage.ExplorerFieldID = optionalString(agentExplorerSemanticDimensionField(model, rootDataset, binding))
 			}
 		}
 		return usage
@@ -814,6 +824,29 @@ func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model
 		usage.Format = optionalString(metric.Format)
 	}
 	return usage
+}
+
+func agentExplorerSemanticDimensionField(model *semanticmodel.Model, rootDataset string, binding semanticmodel.DimensionBinding) string {
+	if len(binding.Path) == 0 {
+		return agentExplorerDimensionField(model, rootDataset, binding.Field)
+	}
+	dimension, err := model.ResolveDimension(binding.Field)
+	if err != nil {
+		return ""
+	}
+	if _, ok := model.Datasets[dimension.Table]; !ok {
+		return ""
+	}
+	path, err := model.SafeRelationshipPath(rootDataset, dimension.Table)
+	if err != nil || len(path) != len(binding.Path) {
+		return ""
+	}
+	for index, relationship := range path {
+		if relationship.ID != binding.Path[index] {
+			return ""
+		}
+	}
+	return dimension.Table + "." + dimension.Name
 }
 
 func agentExplorerDimensionField(model *semanticmodel.Model, rootDataset, field string) string {

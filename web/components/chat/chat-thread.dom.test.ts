@@ -508,7 +508,7 @@ test('chat thread expands completed steps with an elapsed label while keeping an
   await details.locator('summary').click()
   expect(await details.getAttribute('open')).not.toBeNull()
   const steps = await details.locator('.run-step').allTextContents()
-  expect(steps).toEqual(['Catalog SearchCompleted', 'Looking for the model.', 'Query VisualCompleted'])
+  expect(steps).toEqual(['Looking for the model.'])
   expect((await details.textContent()) || '').not.toContain('secret')
   await page.close()
 })
@@ -587,6 +587,84 @@ test('chat thread keeps an error when a different request to the same tool succe
   await page.close()
 })
 
+test('chat thread keeps a repaired visual presentation error inside Worked', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const state = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    const query = { type: 'aggregate', metrics: [{ metric: 'net_sales' }], dimensions: [{ dimension: 'country' }] }
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show net sales by country' },
+      { id: 'failed', kind: 'tool', name: 'query_visual', status: 'error', error: 'Unsupported orientation.', argumentsJson: JSON.stringify({ semanticModelId: 'semantic-model:finance', visual: { type: 'bar', query, presentation: { orientation: 'horizontal' } } }) },
+      { id: 'fixed', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'bar', id: 'by-country', summary: 'Net sales by country' }, argumentsJson: JSON.stringify({ semanticModelId: 'semantic-model:finance', visual: { type: 'bar', query } }) },
+    ]
+    await thread.updateComplete
+    return {
+      visibleErrors: thread.shadowRoot.querySelectorAll('.message.error').length,
+      steps: thread.shadowRoot.querySelector('.run-step-list')?.textContent?.replace(/\s+/g, ' ').trim(),
+      visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
+    }
+  })
+  expect(state).toEqual({ visibleErrors: 0, steps: undefined, visual: true })
+  await page.close()
+})
+
+test('chat thread does not treat different visual filters or datasets as retries', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const errors = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-thread')
+      const thread = document.querySelector('lv-chat-thread') as any
+      const query = { type: 'aggregate', metrics: [{ metric: 'net_sales' }], dimensions: [{ dimension: 'country' }] }
+      const visual = { type: 'bar', query }
+      const input = (extra: Record<string, unknown>, visualExtra: Record<string, unknown> = {}) => JSON.stringify({ semanticModelId: 'semantic-model:finance', ...extra, visual: { ...visual, ...visualExtra } })
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [
+        { id: 'user', kind: 'user', text: 'Compare revenue charts' },
+        { id: 'filtered-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Filtered chart failed.', argumentsJson: input({ filters: [{ id: 'region', dimension: 'region', default: { type: 'text', value: 'west' } }] }) },
+        { id: 'filtered-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: input({ filters: [{ id: 'region', dimension: 'region', default: { type: 'text', value: 'east' } }] }) },
+        { id: 'dataset-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Comparison dataset failed.', argumentsJson: input({}, { datasets: { comparison: { type: 'aggregate', metrics: ['gross_sales'] } } }) },
+        { id: 'dataset-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: input({}, { datasets: { comparison: { type: 'aggregate', metrics: ['net_sales'] } } }) },
+      ]
+      await thread.updateComplete
+      return Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
+    })
+    expect(errors).toEqual(['Filtered chart failed.', 'Comparison dataset failed.'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat thread hides failed tool lookups once the turn produces a visual', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const state = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show net sales by country' },
+      { id: 'failed', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Catalog resource not found.', argumentsJson: '{"ref":"unknown"}' },
+      { id: 'found', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":"finance"}' },
+      { id: 'visual', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'donut', id: 'by-country', summary: 'Net sales by country' } },
+      { id: 'answer', kind: 'assistant', markdown: 'Visual' },
+    ]
+    await thread.updateComplete
+    return {
+      topLevelErrors: thread.shadowRoot.querySelectorAll('.agent-stack > .message.error').length,
+      workedErrors: Array.from(thread.shadowRoot.querySelectorAll('.run-steps .message.error')).map((node: any) => node.textContent?.trim()),
+      numberedSteps: thread.shadowRoot.querySelectorAll('.run-steps ol').length,
+      toolLabels: thread.shadowRoot.querySelector('.run-steps')?.textContent?.includes('Catalog Get'),
+      visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
+    }
+  })
+  expect(state).toEqual({ topLevelErrors: 0, workedErrors: [], numberedSteps: 0, toolLabels: false, visual: true })
+  await page.close()
+})
+
 test('chat thread waits until the active run ends before showing unresolved errors', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
@@ -622,9 +700,9 @@ test('chat thread waits until the active run ends before showing unresolved erro
     return { running, failed, recovered: visible() }
   })
   expect(states).toEqual({
-    running: { errors: ['Earlier failure.'], answers: [], stepsLabel: 'Working', stepsText: 'Retrying the visual.Query VisualFailed' },
-    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'], stepsLabel: 'View steps', stepsText: 'Query VisualFailed' },
-    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'], stepsLabel: 'View steps', stepsText: 'Retrying the visual.Query VisualFailedQuery VisualCompleted' },
+    running: { errors: ['Earlier failure.'], answers: [], stepsLabel: 'Working', stepsText: 'Retrying the visual.' },
+    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'], stepsLabel: undefined, stepsText: undefined },
+    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'], stepsLabel: 'View steps', stepsText: 'Retrying the visual.' },
   })
   await page.close()
 })
@@ -738,9 +816,8 @@ test('chat thread keeps structured tool history when durable history replaces li
     { name: 'catalog_search', status: 'complete', resultJson: 'items[1]{id}: sales' },
     { name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
   ])
-  expect(state.stepsOpen).toBe(false)
-  expect(state.stepText).toContain('Catalog Search')
-  expect(state.stepText).toContain('Catalog List')
+  expect(state.stepsOpen).toBeUndefined()
+  expect(state.stepText).toBeUndefined()
   await page.close()
 })
 

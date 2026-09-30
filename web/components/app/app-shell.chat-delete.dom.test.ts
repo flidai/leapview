@@ -357,3 +357,35 @@ test('pinned dashboard shortcuts appear only while dashboards are pinned', async
     await page.close()
   }
 })
+
+test('pinned dashboard unpin action appears on hover and removes only that shortcut', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => {
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1:current-user', JSON.stringify(['sales', 'operations']))
+      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1:current-user', JSON.stringify([
+        { id: 'sales', title: 'Sales report', href: '/dashboards/sales' },
+        { id: 'operations', title: 'Operations report', href: '/dashboards/operations' },
+      ]))
+      window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
+    })
+    const row = page.locator('lv-sidebar .pinned-dashboard-row').filter({ has: page.getByRole('link', { name: 'Sales report' }) })
+    await row.waitFor()
+    const actions = row.locator('.history-actions')
+    expect(await actions.evaluate(element => getComputedStyle(element).opacity)).toBe('0')
+    await row.hover()
+    expect(await actions.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+    await row.getByRole('button', { name: 'Unpin Sales report' }).click()
+    await row.waitFor({ state: 'detached' })
+    expect(await page.locator('lv-sidebar').getByRole('link', { name: 'Operations report' }).count()).toBe(1)
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1:current-user') ?? '[]'))).toEqual(['operations'])
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:current-user') ?? '[]').map((link: { id: string }) => link.id))).toEqual(['operations'])
+    expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+    await page.reload()
+    expect(await page.locator('lv-sidebar').getByRole('link', { name: 'Sales report' }).count()).toBe(0)
+    expect(await page.locator('lv-sidebar').getByRole('link', { name: 'Operations report' }).count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
