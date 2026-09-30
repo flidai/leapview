@@ -6,6 +6,27 @@
 }:
 let
   cfg = config.leapview;
+  restrictedCIDR =
+    cidr:
+    let
+      parts = builtins.match "([0-9a-fA-F:.]+)/([1-9][0-9]{0,2})" cidr;
+      ipv6 = parts != null && lib.hasInfix ":" (builtins.elemAt parts 0);
+      addressValid = builtins.tryEval (
+        if ipv6 then
+          builtins.deepSeq (lib.network.ipv6.fromString cidr) true
+        else
+          let
+            octets = builtins.match "([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})" (
+              builtins.elemAt parts 0
+            );
+          in
+          octets != null && builtins.all (octet: lib.toInt octet <= 255) octets
+      );
+    in
+    parts != null
+    && lib.toInt (builtins.elemAt parts 1) <= (if ipv6 then 128 else 32)
+    && addressValid.success
+    && addressValid.value;
 in
 {
   options.leapview = {
@@ -38,11 +59,7 @@ in
         message = "At least one operator public key is required.";
       }
       {
-        assertion =
-          cfg.operatorCIDRs != [ ]
-          && builtins.all (
-            cidr: builtins.match "[0-9a-fA-F:./]+" cidr != null && !(lib.hasSuffix "/0" cidr)
-          ) cfg.operatorCIDRs;
+        assertion = cfg.operatorCIDRs != [ ] && builtins.all restrictedCIDR cfg.operatorCIDRs;
         message = "Use restricted operator CIDRs for SSH.";
       }
     ];

@@ -18,8 +18,39 @@ let
     (hosts.example-app.extendModules {
       modules = [ ({ lib, ... }: { leapview.operatorKeys = lib.mkForce [ ]; }) ];
     }).config;
+  rejectedOperatorCIDRs =
+    builtins.all
+      (
+        cidr:
+        let
+          invalid =
+            (hosts.example-app.extendModules {
+              modules = [ ({ lib, ... }: { leapview.operatorCIDRs = lib.mkForce [ cidr ]; }) ];
+            }).config;
+        in
+        !(builtins.all (item: item.assertion) invalid.assertions)
+      )
+      [
+        "0.0.0.0/0"
+        "0.0.0.0/00"
+        "::/0"
+        "::/000"
+        "203.0.113.10/33"
+        "2001:db8::1/129"
+        "203.0.113.10"
+        "999.0.113.10/32"
+        "203.0.113/24"
+        "203.000.113.10/32"
+        ":::1/128"
+      ];
+  validIPv6Operator =
+    (hosts.example-app.extendModules {
+      modules = [ ({ lib, ... }: { leapview.operatorCIDRs = lib.mkForce [ "2001:db8::42/128" ]; }) ];
+    }).config;
   checks = [
     (!(builtins.all (item: item.assertion) noOperator.assertions))
+    rejectedOperatorCIDRs
+    (builtins.all (item: item.assertion) validIPv6Operator.assertions)
     (
       restic.services.restic.backups.retained-files.passwordFile
       == "/var/lib/leapview-secrets/restic-password"
