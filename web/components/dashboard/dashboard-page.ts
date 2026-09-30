@@ -910,7 +910,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       activeId: page.pageId,
       backAction: this.presentation === 'app' ? { label: 'Back', href: '/', title: 'Back to dashboards' } : undefined,
       searchable: this.presentation === 'app',
-      searchPlaceholder: 'Search pages',
+      searchLabel: 'Search pages',
+      searchPlaceholder: 'Search',
       items: page.pages.map((item: DashboardPageNavSignal) => ({
         id: item.id,
         title: item.title,
