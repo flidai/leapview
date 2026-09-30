@@ -292,8 +292,12 @@ Caddy recreation passed, and the real host reboot recovered the intended topolog
   unexpected restarts, persistent image growth or reserve breaches. Notify on a
   meaningful failure/change; healthy repeated samples need no user notification.
 - [ ] Require a complete 24-hour stable period with no unresolved failure. Restart
-  the period after a deployment, rollback or corrective production mutation;
-  an unobserved interval does not count as successful monitoring.
+  the period after a failed/interrupted observation, or a deployment, rollback or
+  corrective production mutation. Preserve and investigate a failed/interrupted
+  one-shot acceptance attempt. A replacement bundle requires an unchanged observer
+  still running; if it has finished, start a new full interval.
+  A rejected setup/preflight check may be corrected while an unchanged observer
+  is still running; an unobserved interval does not count as successful monitoring.
 - [ ] After the full 24-hour period completes, run the end public adoption smoke
   and finish the final acceptance receipt.
 - [ ] After the observation and end smoke pass, perform the post-observation

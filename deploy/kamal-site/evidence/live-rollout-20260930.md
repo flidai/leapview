@@ -62,8 +62,9 @@ job is scheduled for 10:31 UTC (16:01 IST).
 
 The frozen observer preflight passed with start-smoke evidence bound by hash.
 The observer itself does not write the end smoke or final acceptance receipt.
-Those, the post-observation image-retention audit, completion of the full
-24-hour interval, and closure of PR #748 remain outstanding. Automatic VPS
+Completion of the full 24-hour interval remains outstanding, followed by the
+end adoption smoke and observation acceptance receipt, then the post-observation
+image-retention/recovery audit, and finally closure of PR #748. Automatic VPS
 activation remains disabled.
 
 The JSON receipt indexes protected inputs by SHA-256; raw receipts stay in
