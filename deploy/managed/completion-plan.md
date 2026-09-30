@@ -43,6 +43,26 @@ their limits visible is part of the delivery contract.
    serving snapshot, which does not exist at first publication. Nomination alone
    does not supply a pre-activation credential. Widening the general resolver to
    current database policy would change runtime authority and is not a safe fix.
+5. **The native fixture did not verify mount isolation.** Its invocation supplied
+   a mount namespace, but its guard checked only PID 1 and an empty network. The
+   reviewed fixture now creates its own namespaces and checks mount/network/PID
+   identities against the parent before mutation. Four safety tests cover shared
+   namespaces, privileges and entrypoint refusal before system commands. The
+   network regressions additionally cover direct container routes and real Docker
+   IPv6, not only translated IPv4 host ports.
+   Root-owned daemon state now uses a temporary directory outside the checkout;
+   the previous `.tmp` location made concurrent contract generation fail while
+   recursively walking the repository.
+6. **A port allowlist does not make metrics private.** `/metrics` shares the
+   application listener. The current public proxy routes that path with bearer
+   authentication; the network fixtures do not enforce path restrictions. Private
+   collection/exposure and external denial remain part of monitoring qualification.
+7. **SSH CIDR validation accepted default-route aliases.** The host module rejected
+   `/0` but accepted `/00` and malformed addresses, allowing unexpectedly broad
+   rules or firewall startup failures. It now requires explicit positive,
+   bounded masks and valid unambiguous addresses before generating rules. Eleven
+   invalid-input cases and a valid IPv6 operator case cover the boundary; both
+   role builds and deploy-rs contracts pass with the stricter validation.
 
 The forwarding test uses generated, disposable data and isolated network/mount
 namespaces. It creates no provider resources and changes no existing host
@@ -53,11 +73,13 @@ it does not download an application or exercise application release compatibilit
 
 | Roadmap gate | Next implementation and acceptance evidence |
 | --- | --- |
+| Stage 1: Linux tool adoption (separate track) | Merged Nix candidates exist; prove fresh-environment contracts with the locked tools as defaults, migrate callers, preserve generation/browser ordering and supported non-Linux paths before removing duplicate installers. This PR does not complete that adoption. |
+| Stage 2: release adoption (separate track) | Unchanged supported-host compatibility matrix, artifact/architecture qualification, exact-digest protected security admission including native dependencies, inventory/provenance and immutable promotion. Candidate availability does not establish production admission. |
 | Stage 3: host updates/recovery | Private reviewed inventory and state ownership; disposable fresh install; deploy-rs failed activation/connectivity recovery; retained known-good boot generations; rescue access; separate host-role reboot; mount/secret ownership; external port checks; disk pressure, GC and cache-outage exercises. Updates must never execute installation formatting. |
 | Stage 4: first publication | Extend the fenced, audited bootstrap contract to issue a bounded independent reviewer credential before activation. Bind exact target/project/environment and policy revision. Nominate before planning. Test publisher self-approval, foreign scope, expired authority, widening, concurrent activation and rollback of failed issuance. Qualify roles/schema/pool → private bootstrap → publisher/reviewer credentials → plan/approve/publish → `/readyz` → public traffic without development credentials or SQL bypasses. |
 | Stage 4: shared lifecycle | Extract reusable lifecycle admission from Compose without adding a second container owner. Enforce compatible release pairs, preflight/migration boundaries, serialized mutations and exact approved artifact identity. Resolve shared-home ownership and worker/publication fencing before ordinary Kamal overlap. Exercise candidate failure, interrupted switch, drain, SSE/uploads/jobs and rollback after writes with retained configuration/secrets and offline images. |
 | Credential prerequisite | Review the focused credential-lifecycle ADR before implementing customer credential formats, activation or rotation. Host provisioning remains independent. |
-| Stage 5: complete managed qualification | Two real hosts; protected keys; pgBackRest PITR and file-consistent recovery; replacement/fencing of each host; fresh-pool analytical rebuild; actionable off-host monitoring; operator revocation; measured downtime, recovery, write-loss and manual work. Record exact images, configuration and host generations. |
+| Stage 5: complete managed qualification | Two real hosts; protected keys; pgBackRest PITR and file-consistent recovery; replacement/fencing of each host; fresh-pool analytical rebuild; private metrics collection/exposure and actionable off-host monitoring; operator revocation; measured downtime, recovery, write-loss and manual work. Record exact images, configuration and host generations. |
 | Stage 6: adoption/retirement | Internal handover, scoped customer eligibility, observation criteria and recovery acceptance. Retire each old script only after its callers and recovery responsibilities migrate. |
 
 This PR remains a scaffold. It does not adopt Nix-built release images, qualify

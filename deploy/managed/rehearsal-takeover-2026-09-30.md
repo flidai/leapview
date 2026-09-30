@@ -9,7 +9,7 @@ Status: local scaffold validation; production qualification remains incomplete.
 - Preserved upstream PR merge: `d51bb364983e177066f3abdd00a2c6e153f02806`.
 - Main: `ac1433754574d9f210c2705f3ba207aabbc097cf`.
 - Initial managed NixOS source tree: `ed77c9fe043c0054e6f6dfe78d594fa8e1789a29`.
-- Final managed NixOS source tree: `95ba43eaf0d1dcf544c253b83928fb601b714e07`.
+- Original continuation NixOS source tree: `95ba43eaf0d1dcf544c253b83928fb601b714e07`.
   The subsequent revision changes validation assets and flake exports; the
   host-role modules remain unchanged.
 - Host lockfile SHA-256:
@@ -100,3 +100,68 @@ and application rehearsals retain their original source identities and limits.
 Successful build/network checks do not establish production readiness. Follow the
 [completion plan](completion-plan.md) for the remaining Stage 3–6 qualification
 and keep Nix release compatibility/security admission independent.
+
+## Follow-up review against the revised roadmap
+
+Review baseline: `f38f9539afc8174dea4fd2ec1be5c80308aab519`.
+Fixture isolation fixes: `e7235af93c77e88bcd8a198a450e2b6657164b9e`.
+Bounded direct-route readiness: `55d9171b54d02d5bf55ba3e05b5d2d66d6b60b69`.
+SSH CIDR validation: `507fb30b8b7b21cc3333a1f7cff60fdc41b44d70`.
+Reviewed NixOS source tree: `00176feb34fb1d1eba80de7e6cee270e798a6c13`.
+Locked inputs, Docker package and probe image are unchanged. The common host
+module now rejects ambiguous or invalid SSH networks at evaluation time.
+Main and proposed ADR revisions were refreshed and remain as recorded above.
+
+The native fixture's original invocation provided mount isolation, but the guard
+did not verify it. It now launches its own mount/network/PID namespaces and checks
+their identities against the parent before any mutation. Four safety tests pass,
+including entrypoint rejection before running system commands when mounts are
+shared. These regressions require no root privileges themselves.
+
+Running generation alongside the original fixture reproduced a permission failure:
+the generator encountered its root-owned daemon data under `.tmp/managed-docker`.
+The fixture now puts disposable state outside the checkout. Generation ran past
+that previously failing step while the corrected Docker fixture was running.
+
+The expanded real-Docker test passed on the isolation-fix revision with Docker
+29.8.0: both IPv4 and IPv6 public ports, denied bypass/private/direct-container
+ingress, policy reapplication, daemon restart and outbound responses. The kernel
+test passed twice on the readiness revision. It first proves direct IPv4/IPv6
+routes reach both container listeners without the policy, then requires new
+connections to be denied with the policy. Baseline readiness is bounded to ten
+seconds so fixture reachability can converge without relaxing denial checks.
+Both host closures, formatting and host/deploy-rs contracts also passed again.
+
+The SSH validation regression failed against the old module, which rejected `/0`
+but accepted `/00`. An isolated kernel reproduction confirmed `0.0.0.0/00` and
+`::/000` produce INPUT accept rules with no source restriction. The revised host
+contract rejects eleven invalid inputs, including those aliases, oversized masks
+and malformed addresses; it also accepts a valid IPv6 operator address. Both
+complete host builds, formatting and deploy-rs checks passed again on the CIDR
+validation revision. This change affects input validation; ordinary valid
+inventory produces the same host artifacts listed above.
+
+The follow-up PR contract completed through resumed lanes, rather than a single
+successful `task ci` process. After fixing the checkout-state collision, one
+attempt exhausted shared `/tmp` during native linking. A disk-backed attempt
+passed preparation, Go/PostgreSQL and frontend core checks, then the browser
+closed during dashboard-builder previews. The complete reports shard passed on
+rerun without source changes. Chat passed; the data shard later hit a full
+checkout disk while generating code-editor assets. Its remaining declared tests,
+the site shard and final `task generated:check` passed with browser scratch in a
+task-owned memory-backed directory. No assertions or thresholds were changed.
+No tracked generated artifacts drifted. The Go/frontend/Taskfile sources used by
+these checks are unchanged by the Nix-only CIDR validation follow-up, which was
+verified separately through the complete host lane. Focused Go CI-policy,
+production-configuration and metrics-authentication tests also passed.
+
+The review distinguishes port filtering from HTTP path exposure: `/metrics`
+shares the public application listener and is bearer-protected by the current
+template. Production validates a token of at least 32 characters. Private metrics
+collection/exposure remains a qualification requirement; these network tests do
+not establish it. No product route or authorization behavior was changed here.
+
+No additional VM attempt was made. The prior guest/reboot OOM limitation, real
+fresh-install/rescue/update recovery, first publication, Kamal overlap and full
+two-host recovery remain unqualified. No customer adoption or script retirement
+is authorized by the passing component results.

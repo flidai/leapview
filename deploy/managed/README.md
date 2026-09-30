@@ -57,10 +57,14 @@ published ports, private-network isolation and outbound responses in fresh kerne
 namespaces. Neither a closure build nor that network fixture proves that a host
 boots or restores successfully. A second isolated test runs the exact locked
 Docker package with a private daemon/configuration/data directory and a local
-probe image; it checks generated Docker bridges through policy reapplication and
-daemon restart without accessing the operator's existing daemon. Both regressions
-run in CI. The workflow's optional `boot_test` input runs
-the slower real-Docker guest test on the selected revision.
+probe image; it checks IPv4/IPv6 generated Docker bridges and direct container
+routes through policy reapplication and daemon restart without accessing the
+operator's existing daemon. The real-Docker fixture creates its own namespaces
+and checks their identities against the parent before changing mounts or
+networking.
+Its root-owned temporary state stays outside the checkout so repository generation
+can run concurrently. Both regressions run in CI. The workflow's optional
+`boot_test` input runs the slower real-Docker guest test on the selected revision.
 
 A subsequent [remote component rehearsal](rehearsal-2026-09-28.md) built both
 complete host configurations and exercised database/file recovery and proxy
@@ -74,7 +78,7 @@ isolated app/database/outsider guests:
 nix build path:./deploy/managed/nixos#boot-test --no-link -L
 ```
 
-It tests TLS, public proxy ingress, private-interface filtering, bypass/metrics-port
+It tests TLS, public proxy ingress, private-interface filtering, bypass-port
 denial, firewall reload/restart, Docker restart and persistence across guest
 reboots. KVM is optional; software emulation is much slower. The emulated fixture
 starts containerd separately to avoid dockerd's short internal startup deadline.
@@ -115,6 +119,11 @@ pinned revision. Import disko and `modules/disk.nix` for installation, or provid
 appropriate customer-owned hardware configuration. Keep a separate stateVersion
 for each installed host; updating nixpkgs is not a stateVersion bump.
 
+Operator SSH networks require explicit positive prefixes: 1–32 for canonical
+dotted-decimal IPv4 and 1–128 for IPv6 hexadecimal notation. Default routes,
+zero-padded masks/octets and malformed addresses fail evaluation before host
+activation. The IPv6 parser does not accept IPv4-embedded notation.
+
 For a disposable first-host rehearsal:
 
 1. Review the provisioned host identity, SSH fingerprint, disk and interface names.
@@ -141,6 +150,13 @@ Docker follows firewall restarts. The managed module requires the iptables
 backend and standard `docker0`/`br-*` Docker bridge names. Custom bridge interface
 names require separate policy coverage and qualification. Root/Docker operators
 can still change this configuration.
+
+These are port-level checks. The application serves `/metrics` on the same
+listener as its pages; the current Kamal template therefore routes that path
+through the public proxy, with bearer-token protection. This does not qualify
+private metrics collection. Select and test a private collection/exposure contract
+before production acceptance; blocking published bypass ports does not restrict
+paths carried over allowed HTTP ingress.
 
 The kernel fixture and real-Docker guests complement an external exposure test
 on the provisioned host; they do not qualify Hetzner or Tailscale network paths.
