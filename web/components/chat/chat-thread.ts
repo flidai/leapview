@@ -159,9 +159,9 @@ class ChatThread extends LitElement {
 
   private renderUnit(unit: ChatRenderUnit, visibleItems: Set<ChatTranscriptItemSignal>, earlierAssistantMessages: Set<ChatTranscriptItemSignal>, latest: boolean) {
     if (unit.kind === 'user') return this.renderUserTurn(unit.item)
-    const items = unit.items.filter(item => visibleItems.has(item))
+    const items = unit.items.filter(item => visibleItems.has(item) && (item.kind !== 'tool' || this.toolStatus(item) === 'error' || (this.toolStatus(item) === 'complete' && Boolean(item.artifact))))
     const running = this.status.running && latest && (!this.status.runId || unit.items.some(item => item.runId === this.status.runId))
-    const steps = unit.items.filter(item => item.kind === 'tool' || earlierAssistantMessages.has(item) || (running && (item.kind === 'assistant' || item.kind === 'summary')))
+    const steps = unit.items.filter(item => earlierAssistantMessages.has(item) || (running && (item.kind === 'assistant' || item.kind === 'summary')))
     if (items.length === 0 && steps.length === 0) return nothing
     return this.renderAgentTurn(items, steps, unit.prompt, unit.items, running)
   }
@@ -199,7 +199,7 @@ class ChatThread extends LitElement {
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
-          ${steps.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context) : nothing}
+          ${steps.length > 0 || context.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context) : nothing}
           ${items.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item))}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
@@ -214,10 +214,7 @@ class ChatThread extends LitElement {
     const label = running ? 'Working' : elapsed ? `Worked for ${elapsed}` : 'View steps'
     return html`<details class="run-steps">
       <summary>${label}${lucideIcon(ChevronRight, { size: 16 })}</summary>
-      <ol class="run-step-list">
-        ${steps.map(item => item.kind === 'tool' ? html`<li class="run-step"><span>${toolStepName(item)}</span><span class="run-step-status">${toolStepStatus(this.toolStatus(item))}</span></li>`
-          : html`<li class="run-step">${item.markdown || item.text || ''}</li>`)}
-      </ol>
+      ${steps.length > 0 ? html`<div class="run-step-list">${steps.map(item => html`<div class="run-step">${item.markdown || item.text || ''}</div>`)}</div>` : nothing}
       ${context.map(item => this.renderAgentItem(item))}
     </details>`
   }
@@ -512,10 +509,6 @@ function formatElapsed(milliseconds: number): string {
   return `${seconds}s`
 }
 
-function toolStepName(item: ChatTranscriptItemSignal): string {
-  return item.title?.trim() || (item.name || 'Tool').replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase())
-}
-
 function toolRequestKey(item: ChatTranscriptItemSignal): string | undefined {
   const argumentsJSON = item.argumentsJson?.trim()
   if (!item.name || !argumentsJSON) return undefined
@@ -529,13 +522,6 @@ function toolRequestKey(item: ChatTranscriptItemSignal): string | undefined {
     } catch { /* Preserve exact matching for malformed arguments. */ }
   }
   return `${item.name}\u0000${argumentsJSON}`
-}
-
-function toolStepStatus(status: string): string {
-  if (status === 'complete') return 'Completed'
-  if (status === 'error') return 'Failed'
-  if (status === 'interrupted') return 'Interrupted'
-  return 'Working'
 }
 
 if (!customElements.get('lv-chat-thread')) customElements.define('lv-chat-thread', ChatThread)

@@ -508,7 +508,7 @@ test('chat thread expands completed steps with an elapsed label while keeping an
   await details.locator('summary').click()
   expect(await details.getAttribute('open')).not.toBeNull()
   const steps = await details.locator('.run-step').allTextContents()
-  expect(steps).toEqual(['Catalog SearchCompleted', 'Looking for the model.', 'Query VisualCompleted'])
+  expect(steps).toEqual(['Looking for the model.'])
   expect((await details.textContent()) || '').not.toContain('secret')
   await page.close()
 })
@@ -607,7 +607,7 @@ test('chat thread keeps a repaired visual presentation error inside Worked', asy
       visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
     }
   })
-  expect(state).toEqual({ visibleErrors: 0, steps: 'Query VisualFailedQuery VisualCompleted', visual: true })
+  expect(state).toEqual({ visibleErrors: 0, steps: undefined, visual: true })
   await page.close()
 })
 
@@ -628,10 +628,12 @@ test('chat thread keeps an unrelated failed lookup inside Worked when the turn p
     return {
       topLevelErrors: thread.shadowRoot.querySelectorAll('.agent-stack > .message.error').length,
       workedErrors: Array.from(thread.shadowRoot.querySelectorAll('.run-steps .message.error')).map((node: any) => node.textContent?.trim()),
+      numberedSteps: thread.shadowRoot.querySelectorAll('.run-steps ol').length,
+      toolLabels: thread.shadowRoot.querySelector('.run-steps')?.textContent?.includes('Catalog Get'),
       visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
     }
   })
-  expect(state).toEqual({ topLevelErrors: 0, workedErrors: ['Catalog resource not found.'], visual: true })
+  expect(state).toEqual({ topLevelErrors: 0, workedErrors: ['Catalog resource not found.'], numberedSteps: 0, toolLabels: false, visual: true })
   await page.close()
 })
 
@@ -670,9 +672,9 @@ test('chat thread waits until the active run ends before showing unresolved erro
     return { running, failed, recovered: visible() }
   })
   expect(states).toEqual({
-    running: { errors: ['Earlier failure.'], answers: [], stepsLabel: 'Working', stepsText: 'Retrying the visual.Query VisualFailed' },
-    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'], stepsLabel: 'View steps', stepsText: 'Query VisualFailed' },
-    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'], stepsLabel: 'View steps', stepsText: 'Retrying the visual.Query VisualFailedQuery VisualCompleted' },
+    running: { errors: ['Earlier failure.'], answers: [], stepsLabel: 'Working', stepsText: 'Retrying the visual.' },
+    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'], stepsLabel: undefined, stepsText: undefined },
+    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'], stepsLabel: 'View steps', stepsText: 'Retrying the visual.' },
   })
   await page.close()
 })
@@ -786,9 +788,8 @@ test('chat thread keeps structured tool history when durable history replaces li
     { name: 'catalog_search', status: 'complete', resultJson: 'items[1]{id}: sales' },
     { name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
   ])
-  expect(state.stepsOpen).toBe(false)
-  expect(state.stepText).toContain('Catalog Search')
-  expect(state.stepText).toContain('Catalog List')
+  expect(state.stepsOpen).toBeUndefined()
+  expect(state.stepText).toBeUndefined()
   await page.close()
 })
 

@@ -52,6 +52,7 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
     return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}:focus-${focused}`
   }
   const bounded = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
+    || (envelope.spec.presentation.legend === 'hidden' && width < 600)
   return bounded
     ? `${compact ? 'compact' : 'roomy'}:outside-bounded:focus-${focused}`
     : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}:focus-${focused}`
@@ -63,7 +64,8 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const movedSide = (compact || focused) && hasPieSeries(option.series) ? proportionalSideLegend(option.legend) : undefined
   const responsiveLegend = movedSide ? compactProportionalSideLegend(option.legend) : option.legend
   const bottomLegend = (compact || focused) && hasBottomLegend(responsiveLegend)
-  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, bottomLegend, movedSide, focused && !compact ? 66 : 56)
+  const narrowWithoutLegend = option.legend === undefined && width < 600 && hasPieSeries(option.series)
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, bottomLegend, movedSide, focused && !compact ? 66 : 56, narrowWithoutLegend)
   const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
   const graphSeries = responsiveGraphSeries(option.series, width, compact)
   const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
@@ -289,9 +291,9 @@ function wrapWords(value: string, maxCharacters: number): string {
   return lines.join('\n')
 }
 
-function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right', radiusCap = 56): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right', radiusCap = 56, narrowWithoutLegend = false): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
-  const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
+  const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT || narrowWithoutLegend
   let hasResponsiveLabels = false
   const series = value.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
@@ -356,7 +358,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
     if (labelOption.position !== 'outside') return entry
     hasResponsiveLabels = true
-    const reservedRadius = bottomLegend ? compactProportionalRadius(source.radius, radiusCap) : undefined
+    const reservedRadius = bottomLegend || narrowWithoutLegend ? compactProportionalRadius(source.radius, narrowWithoutLegend ? 40 : radiusCap) : undefined
     return {
       ...source,
       ...pieLayout,

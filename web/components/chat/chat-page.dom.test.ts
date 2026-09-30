@@ -245,6 +245,34 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
   }
 })
 
+test('chat donut panel keeps outside value labels without duplicating the side legend', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const state = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-visual-panel')
+      const panel = document.createElement('lv-chat-visual-panel') as any
+      panel.payload = {
+        spec: { kind: 'proportional', mark: 'donut', presentation: { legend: 'right', labelPosition: 'outside' } },
+      }
+      document.body.append(panel)
+      await panel.updateComplete
+      const displayed = panel.shadowRoot.querySelector('lv-visual-artifact')?.payload
+      panel.saving = true
+      await panel.updateComplete
+      return {
+        savedLegend: panel.payload.spec.presentation.legend,
+        displayedLegend: panel.shadowRoot.querySelector('lv-visual-artifact')?.payload?.spec.presentation.legend,
+        displayedLabels: panel.shadowRoot.querySelector('lv-visual-artifact')?.payload?.spec.presentation.labelPosition,
+        stablePayload: displayed === panel.shadowRoot.querySelector('lv-visual-artifact')?.payload,
+      }
+    })
+    expect(state).toEqual({ savedLegend: 'right', displayedLegend: 'hidden', displayedLabels: 'outside', stablePayload: true })
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 820, expectedSurfaceWidth: 760 },
   { name: 'narrow desktop', width: 700, height: 820, expectedSurfaceWidth: 668 },

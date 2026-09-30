@@ -14,6 +14,8 @@ export class ChatVisualPanel extends LitElement {
   @property({ type: Boolean }) saved = false
   @property({ type: Boolean }) modal = false
   @property() saveError = ''
+  private displaySource?: VisualizationEnvelope
+  private displayVisual?: VisualizationEnvelope
 
   static styles = css`
     :host {
@@ -108,12 +110,21 @@ export class ChatVisualPanel extends LitElement {
           </div>
         </div>
         <div class="content">
-          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.payload}></lv-visual-artifact>
+          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()}></lv-visual-artifact>
           ${this.saveError ? html`<p class="feedback error" role="alert">${this.saveError}</p>` : nothing}
           ${this.saved ? html`<p class="feedback" role="status">Saved to Data Explorer.</p>` : nothing}
         </div>
       </aside>
     `
+  }
+
+  private visualDisplayPayload(): VisualizationEnvelope | undefined {
+    if (this.payload === this.displaySource) return this.displayVisual
+    this.displaySource = this.payload
+    this.displayVisual = this.payload?.spec.kind === 'proportional'
+      ? { ...this.payload, spec: { ...this.payload.spec, presentation: { ...this.payload.spec.presentation, legend: 'hidden' } } }
+      : this.payload
+    return this.displayVisual
   }
 
   focusClose(): void {

@@ -175,6 +175,19 @@ test('focused donuts center side legends below the chart without changing the re
   expect(responsiveEChartsLayoutKey(envelope, 1384, 844)).not.toBe(responsiveEChartsLayoutKey(envelope, 1384, 844, true))
 })
 
+test('compact donuts without a legend reserve space for outside value labels', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.legend = 'hidden'
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(option, 468, 410)
+  expect(option.legend).toBeUndefined()
+  expect(compact.series[0].label.alignTo).toBe('edge')
+  expect(compact.series[0].radius).toEqual(['28.42%', '40%'])
+  expect(responsiveEChartsPatch(option, 560, 410).series[0].radius).toEqual(['28.42%', '40%'])
+  expect(responsiveEChartsPatch(option, 640, 410).series[0].radius).toEqual(['54%', '76%'])
+})
+
 test('donut outside labels stay clear of bottom and compact side legends', () => {
   const envelope = proportionalFixture('donut')
   if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected inline donut fixture')
