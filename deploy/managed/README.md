@@ -43,6 +43,7 @@ task managed:hosts:check
 
 # Isolated kernel-level ingress regression (Linux; no Docker daemon required).
 task managed:hosts:network-test
+task managed:hosts:docker-test
 
 cd deploy/managed/kamal
 bundle install
@@ -54,7 +55,11 @@ The host lane now builds both complete host closures, deploy-rs activation check
 and role assertions from the lockfile. It also tests IPv4/IPv6 forwarding, original
 published ports, private-network isolation and outbound responses in fresh kernel
 namespaces. Neither a closure build nor that network fixture proves that a host
-boots or restores successfully. The workflow's optional `boot_test` input runs
+boots or restores successfully. A second isolated test runs the exact locked
+Docker package with a private daemon/configuration/data directory and a local
+probe image; it checks generated Docker bridges through policy reapplication and
+daemon restart without accessing the operator's existing daemon. Both regressions
+run in CI. The workflow's optional `boot_test` input runs
 the slower real-Docker guest test on the selected revision.
 
 A subsequent [remote component rehearsal](rehearsal-2026-09-28.md) built both

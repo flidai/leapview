@@ -67,6 +67,12 @@ jobs:
           nix build .#nixosConfigurations.example-app.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
           nix build .#nixosConfigurations.example-database.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
           nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - name: Exercise real Docker forwarding and daemon restart
+        run: |
+          probe_image="$(nix build path:./deploy/managed/nixos#port-probe --no-link --no-update-lock-file --print-out-paths)"
+          docker_package="$(nix build path:./deploy/managed/nixos#nixosConfigurations.example-app.config.virtualisation.docker.package --no-link --no-update-lock-file --print-out-paths)"
+          mkdir -p .tmp/managed-docker
+          sudo unshare --mount --net --pid --fork --mount-proc python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package" --workdir .tmp/managed-docker
       - name: Qualify isolated guest networking and reboot persistence
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
         run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L

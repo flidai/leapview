@@ -31,7 +31,8 @@ their limits visible is part of the delivery contract.
    replacement avoids flushing Docker's rules. Userland proxies are disabled.
 2. **Routine CI did not build the hosts.** The host job previously evaluated the
    flake and built assertion output only. It now builds both host closures and
-   deploy-rs checks, checks formatting and executes the kernel regression.
+   deploy-rs checks, checks formatting and executes the kernel regression plus
+   the isolated real-Docker test using the host's locked Docker package.
    Manual runs can additionally select the real-Docker reboot fixture.
 3. **The README prescribed stop-first replacement.** That historical workaround
    conflicts with Stage 4's required normal Kamal sequence. The README now records
