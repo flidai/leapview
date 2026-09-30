@@ -1,6 +1,6 @@
 # Live public-website Kamal rollout: remaining plan
 
-Updated: 29 September 2026.
+Updated: 30 September 2026.
 Scope: `leapview.dev` and its `www` redirect. The product demo/NixOS deployment is separate.
 
 ## Objective
@@ -15,7 +15,7 @@ bounded image retention, and 24 hours of recorded healthy operation.
 Automatic VPS activation remains disabled. Merging code or publishing an image
 alone does not complete the live migration.
 
-## Verified starting point
+## Verified starting point — 29 September baseline
 
 | Item | Status / evidence |
 | --- | --- |
@@ -23,62 +23,88 @@ alone does not complete the live migration.
 | Trial and failure qualification, #751 | Merged as `efefe8178e6fd78498c3f4cb52a379658f67618d`. Final [merge validation](https://github.com/flidai/leapview/actions/runs/36556552195), security and Electron checks passed. |
 | Undo-test reliability, #770 | Merged as `bc07df37e6041b07558f1e0e06a41cb8ba966102`. |
 | Failure testing | 39 operator tests and expanded disposable lifecycle qualification passed. Real interrupted pulls/switches, lost responses and offline recovery were exercised. These are not production cutover or host-reboot results. |
-| Image A | Production workflow [36538460625](https://github.com/flidai/leapview/actions/runs/36538460625) passed; independent operator `prepare` passed. Source: `bc07df37e6041b07558f1e0e06a41cb8ba966102`. |
-| Image B | Post-#751 workflow [36558423631](https://github.com/flidai/leapview/actions/runs/36558423631) succeeded, and independent operator `prepare` passed. Source: `efefe8178e6fd78498c3f4cb52a379658f67618d`. |
+| Pre-correction Image A | Production workflow [36538460625](https://github.com/flidai/leapview/actions/runs/36538460625) passed; independent operator `prepare` passed. Source: `bc07df37e6041b07558f1e0e06a41cb8ba966102`. |
+| Pre-correction Image B | Post-#751 workflow [36558423631](https://github.com/flidai/leapview/actions/runs/36558423631) succeeded, and independent operator `prepare` passed. Source: `efefe8178e6fd78498c3f4cb52a379658f67618d`. |
 | Live website | No production migration was performed during this work. Fresh 29 September inventory: Ubuntu 24.04.4, original Compose/Caddy, Docker 29.1.3/containerd 2.2.1 on shared ext4, updater inactive/disabled. About 32.3 GiB free. Public checks passed around 11:18 UTC: health/readiness, build/release metadata, docs, 16 assets, eight server-release download/checksum links and the www redirect. Protected backup completed at 11:28 UTC; an empty protected Kamal directory was created, with no ready/state marker or app/proxy changes. |
-| Full adoption smoke | Failed on the existing desktop download: the advertised `desktop-v0.1.0-alpha.1` macOS arm64 asset returns HTTP 404 and GitHub reports that release absent. Original, A, B and current main advertise it. This is separate from successful server-release download checks; do not report the complete adoption smoke as passing. User approved including the website status correction; [#776](https://github.com/flidai/leapview/pull/776) withdraws the broken listing and corrects the availability copy. |
+| Full adoption smoke (29 September baseline) | Failed on the existing desktop download: the advertised `desktop-v0.1.0-alpha.1` macOS arm64 asset returned HTTP 404 and GitHub reported that release absent. The focused correction in [#776](https://github.com/flidai/leapview/pull/776) subsequently withdrew the broken listing and corrected the availability copy before the live A/B images were selected. |
 | Demo | Latest reviewed [demo deployment](https://github.com/flidai/leapview/actions/runs/36553961368) passed. User reports NixOS rollout; leave the demo untouched. |
 | #748 | Open, uninstalled old Compose/updater fallback. Do not merge/install it alongside Kamal; close only after final migration acceptance. |
+
+## Live rollout status — 30 September 2026
+
+The production handover and recovery gates are complete. The current live
+identities and sanitized evidence are in the [rollout receipt](deploy/kamal-site/evidence/live-rollout-20260930.md)
+and its [JSON index](deploy/kamal-site/evidence/live-rollout-20260930.json).
+This status supersedes the 29 September baseline and the older pre-correction
+image identities below; those remain historical records.
+
+| Role | Live site image | Service source revision | State |
+| --- | --- | --- | --- |
+| A | `ghcr.io/flidai/leapview-site@sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec` | `aa823506bf7916f051083cab56dd015cbcadac0d` | Verified prior and offline rollback target |
+| B | `ghcr.io/flidai/leapview-site@sha256:acc225d4526738b4a7b55609b1a643e31fdbc034dca305f17ca952a973f16e87` | `0f25215ceb1cc7331701d2f3120da47b66a88714` | Active |
+
+Both images passed real-image lifecycle qualification. The measured peak was
+1,269,440,512 bytes and 3,787 inodes; required headroom plus reserve is
+5,900,624,282 bytes and 13,787 inodes. At qualification, the mapped live
+filesystem had 33,906,552,832 bytes and 2,398,341 inodes available. The separate
+receipt records the calculation and qualified image digests.
+
+Original Compose restoration was publicly accepted at 07:34:25 UTC (13:04:25
+IST). A bootstrap acceptance, B-to-A offline rollback, restoration of B, Caddy
+recreation, and a real host reboot all passed. Post-boot acceptance completed at
+08:56:31 UTC (14:26:31 IST). During the 08:46–08:56 UTC cutover/reboot window,
+25 endpoint samples failed across 13 sampled seconds. This does not establish a
+continuous outage duration; zero downtime is not claimed.
+
+The v4 public-health observer started at 10:28:20 UTC (15:58:20 IST) and is
+still running. Its latest recorded sample is 11:17:20 UTC (16:47:20 IST): 50
+public samples and four host samples, with no recorded public-sample failures
+through that point. The 24-hour window is due to complete at 10:28:20 UTC on
+1 October (15:58:20 IST); its separate acceptance job is queued for 10:31 UTC
+(16:01 IST).
+The end adoption smoke and final acceptance receipt, post-observation retention
+audit, completion of the full interval, and closure of #748 remain pending.
+Automatic VPS activation remains disabled.
 
 The local aggregate `task ci` reports watchdog limitation remains historical
 validation evidence; it was not turned into a local pass. The PRs were approved
 and merged after the limitation was disclosed and required hosted checks passed.
 See [the receipt](deploy/kamal-site/evidence/local-ci-20260929.md).
 
-Image A's immutable reference:
+Pre-correction Image A's immutable reference (historical; superseded by the live
+Image A in the status above):
 
 ```text
 ghcr.io/flidai/leapview-site@sha256:cced827fce58ebbccc2c293da65741c08e0108cbd017d46841f7ea87dcf78387
 ```
 
-Its mode-0600 record and evidence are saved locally under
-`/home/codex/tmp/leapview-kamal-study/production-image-a-36538460625/`:
-`site-a-record.json`, workflow metadata/artifact, prepare log and checksums.
-A/B records and evidence have also been copied to durable protected operator
-storage at `/home/codex/.local/state/leapview-site-migration/20260929/`
-(`image-a/`, `image-b/`, and independently saved checksum manifests).
-The temporary workspace copies are not the sole recovery store.
-The same protected directory records the operator source hashes and the exact
-public/desktop release manifests from each selected source revision. Both A and
-B publish product release `0.3.0-alpha.1`; use these saved manifests for the
-installation smoke check, not whatever a later checkout happens to contain.
+Its admission record and evidence remain in protected operator storage. The
+temporary working copies are not the sole recovery store. The protected records
+also bind operator source hashes and the public/desktop release manifests for
+the selected source revisions.
 
-Image B: `ghcr.io/flidai/leapview-site@sha256:093b718bcb51bd23e334497cc279f09367a26bbce0126956377d3ba5f612c14c`.
-Its protected record and admission evidence are under
-`/home/codex/tmp/leapview-kamal-study/production-image-b-36558423631/`.
-Both images are admitted, but both retain the unavailable desktop download links
-found by the full adoption smoke. A website-only manifest correction is being
-reviewed in [#776](https://github.com/flidai/leapview/pull/776). After it merges, select
-and admit corrected replacement images before final capacity qualification;
-keep the previous records as historical evidence. Do not silently reuse their
-capacity results for new digests. Real-image storage qualification and live migration
-remain pending. The reviewed restore-B command below uses the recorded rollback
-path rather than trying to redeploy the recorded prior version.
+Pre-correction Image B was
+`ghcr.io/flidai/leapview-site@sha256:093b718bcb51bd23e334497cc279f09367a26bbce0126956377d3ba5f612c14c`.
+Its admission record and evidence remain in protected operator storage. These
+pre-correction images retain the broken desktop download links found by the full
+adoption smoke and are historical only. The website correction in [#776](https://github.com/flidai/leapview/pull/776)
+was applied before selecting and qualifying the live A/B digests above.
 
 ## Execution flow
 
 ```mermaid
 flowchart TD
-    A[Done: merged tooling and disposable tests] --> B[Admit distinct production image B]
-    B --> C[Refresh live inventory and protect original recovery material]
-    C --> D[Measure real A/B storage and rehearse handover]
-    D --> E[Switch live website to Kamal A]
-    E --> F[Prove original Compose restoration, then return to A]
-    F --> G[Deploy B, roll back offline to A, restore B]
-    G --> H[Recreate Caddy and reboot the real host]
-    H --> I[Verify current plus previous image retention]
-    I --> J[Observe health and storage for 24 hours]
-    J --> K[Finalize runbook and close fallback 748]
+    A[Done: merged tooling and disposable tests] --> B[Done: admit corrected production A and B]
+    B --> C[Done: refresh live inventory and protect recovery material]
+    C --> D[Done: qualify real-image capacity and rehearse handover]
+    D --> E[Done: switch live website to Kamal A]
+    E --> F[Done: prove original Compose restoration and return to A]
+    F --> G[Done: deploy B, roll back offline to A, restore B]
+    G --> H[Done: recreate Caddy and reboot the real host]
+    H --> I[In progress: complete 24-hour health and storage observation]
+    I --> J[Pending: end public adoption smoke and final acceptance receipt]
+    J --> K[Pending: post-observation image-retention audit]
+    K --> L[Pending: final closeout and fallback 748 closure]
 ```
 
 Proceed in order. A failed exit check blocks the next phase. Existing approval
@@ -96,12 +122,16 @@ new code fixes. Do not substitute an image or expand scope to bypass a failed ga
   admission for a distinct image B. Do not use a trial-package image or mutable tag.
 - [x] Confirm A and B are distinct immutable production images with the required
   service ownership label and source-specific release/download metadata.
-- [ ] Resolve the unavailable desktop download status through a focused website
-  change, then select two corrected successful production builds and repeat
-  admission. Verify all advertised download links before freezing their identities.
-- [ ] Pin the tested operator checkout and locked tooling. Recheck admission and
+- [x] Resolve the unavailable desktop download status through the focused website
+  correction in #776; select corrected production builds and repeat admission.
+  Verify all advertised download links before freezing their identities.
+- [x] Pin the tested operator checkout and locked tooling. Recheck admission and
   policy freshness before deployment; preserve records for both selected images.
   If an image must be replaced, repeat its storage qualification too.
+
+The admitted images listed in the 30 September live status supersede the two
+pre-correction digests recorded below. Both current digests have their own
+production admission and capacity evidence.
 
 From a checkout containing the merged operator, with the documented pinned tools
 and existing authenticated GitHub CLI:
@@ -132,17 +162,20 @@ production workflows, with all referenced artifacts retained.
 - [x] Preserve protected original Compose, Caddyfile, deployment environment,
   exact image identities and container inspections outside the routine deployment
   directory. Preserve certificates/config volumes and required local images.
-  Captured under both locks at
-  `/var/lib/leapview-site/migration-original-20260929T112827Z-a919bd09`.
-  Original files/inspections and Caddy data/config were copied to the protected
-  operator store above; file contents were checked against the backup manifest.
-  Original image IDs remain cached on the live host. No restoration was performed.
-- [ ] Write and verify exact restoration commands, including how to regain SSH
+  Captured under both locks. Original files/inspections and Caddy data/config
+  were copied to the protected operator store; file contents were checked
+  against the backup manifest.
+- [x] Write and verify exact restoration commands, including how to regain SSH
   after a reboot. Keep secret-bearing material out of Git, PRs and public logs.
 
-The old snapshot showed live release `0.2.0-rc.1` while main expected
-`0.3.0-alpha.1`. Refresh both values; validate against the selected image's actual
-release metadata rather than treating either historical value as the target.
+That 29 September inventory was read-only. On 30 September the protected
+original Compose configuration was restored and publicly accepted at 07:34:25
+UTC (13:04:25 IST); the runbook's restoration commands were exercised. No Kamal
+ready/state marker was written during the original-site restoration.
+
+The 29 September snapshot showed live release `0.2.0-rc.1` while main expected
+`0.3.0-alpha.1`. Live acceptance checked the admitted images' release metadata;
+the release and build-identity checks passed.
 
 **Exit:** timestamped live baseline and usable protected original-site recovery
 material. Any unexpected host change is understood before mutation.
@@ -152,30 +185,32 @@ material. Any unexpected host change is understood before mutation.
 Storage here means the website server's Docker image/container disk usage and
 file-count capacity (inodes), not customer datasets or demo storage.
 
-- [ ] Use disposable storage/runtime matching the refreshed production setup.
+- [x] Use disposable storage/runtime matching the refreshed production setup.
   Exercise the actual admitted A/B images, including cold pulls, shared layers,
   extraction, boot, acceptance, rollback and cleanup.
-- [ ] Measure peak incremental bytes/inodes for each distinct Docker/containerd
+- [x] Measure peak incremental bytes/inodes for each distinct Docker/containerd
   filesystem. Include temporary overlap with the original Compose recovery image,
   A, B, proxy and Caddy; measure both cold and warm-cache cases.
-- [ ] Save raw samples, filesystem identity/capacity, exact image identities,
+- [x] Save raw samples, filesystem identity/capacity, exact image identities,
   runtime/tool versions, commands and outcomes. Synthetic fixture measurements
-  and compressed download sizes alone are insufficient.
-- [ ] Populate each capacity record's `paths`, `qualified_images`, measured peaks,
+  and compressed download sizes alone are insufficient; the raw qualification
+  remains in protected operator storage, with safe results indexed in the
+  [live receipt](deploy/kamal-site/evidence/live-rollout-20260930.json).
+- [x] Populate each capacity record's `paths`, `qualified_images`, measured peaks,
   compressed-size envelope and derived margins:
   - Candidate byte headroom: at least `ceil(1.5 × measured_peak_bytes)`.
   - Byte reserve: at least `max(2 GiB, ceil(10% × filesystem capacity))`.
   - Inode reserve: at least `max(10,000, 2 × measured_peak_inodes)`.
   - Before pulling: free bytes must cover headroom plus reserve, and free inodes
     must cover the measured incremental peak plus inode reserve.
-- [ ] Rehearse the exact bootstrap, timed restoration safeguard, Caddy switch,
+- [x] Rehearse the exact bootstrap, timed restoration safeguard, Caddy switch,
   public acceptance and original-Compose restoration sequence. Choose and record
   the safeguard deadline from the measured rehearsal before touching production.
   The safeguard must defer if either deployment lock is held or an unresolved
   owner journal exists. It must record that deferral, never clear ownership, and
   require the documented ownership audit before restoration can resume. A timer
   alone does not guarantee recovery after a controller disconnect.
-- [ ] Verify sufficient live capacity with recovery images retained. If it does
+- [x] Verify sufficient live capacity with recovery images retained. If it does
   not fit, stop and revise the plan; do not prune the only rollback or expand disks
   as an unreviewed shortcut.
 
@@ -188,42 +223,42 @@ Bootstrap is a separate migration step: routine `deploy` expects valid permanent
 readiness/state. Do not fabricate `ready.json` or mark handover complete just to
 make the normal deploy command run.
 
-- [ ] Under exclusive ownership, bootstrap the persistent Kamal network and the
+- [x] Under exclusive ownership, bootstrap the persistent Kamal network and the
   runbook's pinned private proxy with its restart policy and no public proxy ports.
-- [ ] Start admitted A privately and verify its actual runtime/build identity.
+- [x] Start admitted A privately and verify its actual runtime/build identity.
   Keep the original Compose application and image available for restoration.
-- [ ] Install the guarded legacy entrypoints and active Caddy-only Compose/Caddy
+- [x] Install the guarded legacy entrypoints and active Caddy-only Compose/Caddy
   configuration, preserving public ports, certificates and persistent mounts.
-- [ ] Arm the rehearsed timed restoration safeguard, switch Caddy to Kamal, and
+- [x] Arm the rehearsed timed restoration safeguard, switch Caddy to Kamal, and
   continuously probe public availability. Record start/end and any interruption;
   zero downtime is not assumed.
-- [ ] Validate HTTPS, health/readiness, image/build identity, docs, release metadata,
+- [x] Validate HTTPS, health/readiness, image/build identity, docs, release metadata,
   download URLs, assets and `www`. Run the public installation smoke check against
   the intended release metadata without weakening version comparisons.
-- [ ] Demonstrate restoration to the protected original Compose configuration,
+- [x] Demonstrate restoration to the protected original Compose configuration,
   verify it publicly, then return to A and repeat acceptance checks.
-- [ ] Only after success, persist verified topology hashes, capacity qualification,
+- [x] Only after success, persist verified topology hashes, capacity qualification,
   active record and permanent handover state. Confirm the updater remains disabled.
 
-**Exit:** A serves publicly through persistent Caddy/Kamal, original-site
-restoration has succeeded, and permanent state reflects verified reality.
+**Exit passed:** A served publicly through persistent Caddy/Kamal, original-site
+restoration was publicly accepted, and permanent state reflected verified reality.
 
 ## 5. Prove deployment, rollback and host restart
 
-- [ ] Deploy B through the operator and save public acceptance evidence.
-- [ ] From a fresh operator session, block registry access for the tested path,
+- [x] Deploy B through the operator and save public acceptance evidence.
+- [x] From a fresh operator session, block registry access for the tested path,
   roll back locally to retained A, and verify it publicly. Scope the block so SSH,
   public probes and unrelated services remain available; remove it afterward.
-- [ ] Confirm the recorded state is active=A and prior=B, then run `rollback`
+- [x] Confirm the recorded state is active=A and prior=B, then run `rollback`
   again to restore B. Repeat public acceptance and verify active=B, prior=A.
   Do not use `deploy --record B` while B is the recorded prior version: the
   operator rejects that path and requires the recorded rollback operation.
-- [ ] Confirm the final tool/source hashes still match the tested interrupted-work
+- [x] Confirm the final tool/source hashes still match the tested interrupted-work
   and broken-current recovery evidence. Repeat affected disposable scenarios if
   tooling changed; do not add unnecessary destructive live failure injection.
-- [ ] Recreate Caddy using the active Caddy-only Compose definition. Verify HTTPS,
+- [x] Recreate Caddy using the active Caddy-only Compose definition. Verify HTTPS,
   persistent certificates, topology and absence of a recreated legacy app.
-- [ ] Reboot the real website host in the controlled rollout window. Verify SSH
+- [x] Reboot the real website host in the controlled rollout window. Verify SSH
   recovery, application/proxy identity, restart policies, network, public checks,
   state records and updater inactivity. A Docker restart does not satisfy this.
 
@@ -240,41 +275,50 @@ task site:deploy -- rollback
 task site:deploy -- status
 ```
 
-**Exit:** B is serving, A is locally recoverable, offline rollback and Caddy
-recreation passed, and a real host reboot recovered the intended topology.
+**Exit passed:** B is serving, A is locally recoverable, offline rollback and
+Caddy recreation passed, and the real host reboot recovered the intended topology.
 
 ## 6. Settle image retention and observe for 24 hours
 
-- [ ] After restoration/restart acceptance, remove only verified migration-only
-  application resources. Preserve unrelated images/containers, Caddy data and
-  protected configuration/audit records. Do not use blanket system/volume pruning.
-- [ ] Run operator maintenance and verify its owned application image set is
-  exactly current B plus distinct verified prior A, with required recovery material.
-- [ ] Record final capacity, digests, retained resources and baseline disk/inodes.
-- [ ] Start a timestamped 24-hour observation after the final planned mutation.
-  Probe public HTTPS/health/readiness every minute; sample disk/inodes, service
-  health and restart counts every 15 minutes. Check build identity and release/
-  download smoke behavior at the start and end and after any recovery action.
-- [ ] Preserve timestamped results and monitoring gaps. Investigate failed probes,
+- [x] Complete the recorded operator maintenance with B active, A as the distinct
+  verified prior, and no pending operation or maintenance. Preserve unrelated
+  images/containers, Caddy data and protected configuration/audit records.
+- [x] Record the live capacity policy, A/B digests and observer-start baseline.
+- [x] Start a timestamped 24-hour observation after the final planned mutation.
+  Its frozen preflight passed with start-smoke evidence bound by hash. The monitor
+  probes public HTTPS/health/readiness every minute and samples disk/inodes,
+  service health and restart counts every 15 minutes.
+- [ ] Preserve the complete timestamped results and investigate any failed probes,
   unexpected restarts, persistent image growth or reserve breaches. Notify on a
   meaningful failure/change; healthy repeated samples need no user notification.
 - [ ] Require a complete 24-hour stable period with no unresolved failure. Restart
-  the period after a deployment, rollback or corrective production mutation;
-  an unobserved interval does not count as successful monitoring.
+  the period after a failed/interrupted observation, or a deployment, rollback or
+  corrective production mutation. Preserve and investigate a failed/interrupted
+  one-shot acceptance attempt. A replacement bundle requires an unchanged observer
+  still running; if it has finished, start a new full interval.
+  A rejected setup/preflight check may be corrected while an unchanged observer
+  is still running; an unobserved interval does not count as successful monitoring.
+- [ ] After the full 24-hour period completes, run the end public adoption smoke
+  and finish the final acceptance receipt.
+- [ ] After the observation and end smoke pass, perform the post-observation
+  image-retention audit. Keep #748 open until this audit passes.
 
 **Exit:** recorded 24-hour health/storage acceptance with no unresolved deployment
 or maintenance problem and adequate measured capacity margins.
 
 ## 7. Close out
 
-- [ ] Update the operator runbook and this plan to match the actual host. Record
-  A/B identities, source revisions, release versions, tooling, protected recovery
-  locations, capacity margins, commands and observed interruption durations.
-- [ ] Attach sanitized qualification, cutover, rollback, reboot and observation
-  evidence; preserve secret-bearing originals only in protected operator storage.
-- [ ] Close [#748](https://github.com/flidai/leapview/pull/748) as superseded,
-  linking the merged replacement and successful live acceptance evidence.
-- [ ] State explicitly that deployment remains operator-controlled. Treat any
+- [x] Update the operator runbook and this plan to match the actual host. Record
+  A/B identities, source revisions, release-check results, tooling, capacity margins,
+  commands and observed interruption durations. Keep protected recovery-location
+  details in the protected operator store, outside repository documentation.
+- [x] Attach sanitized qualification, cutover, rollback, reboot and ongoing
+  observation evidence; preserve secret-bearing originals only in protected operator storage.
+- [ ] After the 24-hour observation, end adoption smoke, final acceptance receipt
+  and post-observation retention audit pass, close
+  [#748](https://github.com/flidai/leapview/pull/748) as superseded, linking the
+  merged replacement and successful live acceptance evidence.
+- [x] State explicitly that deployment remains operator-controlled. Treat any
   future automatic deployment proposal as separate work.
 
 ## Failure handling and scope boundaries
@@ -301,6 +345,7 @@ re-enable the retired updater. Use the existing pinned access path and the
 - [Merged operator PR #752](https://github.com/flidai/leapview/pull/752)
 - [Merged trial PR #751](https://github.com/flidai/leapview/pull/751)
 - [Merged Undo-test fix #770](https://github.com/flidai/leapview/pull/770)
+- [Portable observation and acceptance tools PR #782](https://github.com/flidai/leapview/pull/782)
 
 Earlier runbooks can retain historical draft/pre-merge wording. The verified
 starting-point table above supersedes those stale status statements; their

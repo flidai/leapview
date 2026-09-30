@@ -1,5 +1,26 @@
 # Manual operator qualification — 29 September 2026
 
+## Live production rollout — 30 September 2026
+
+The public website now serves through the manually managed Kamal deployment.
+Production A/B admission and capacity qualification, original Compose
+restoration, B-to-A offline rollback and return to B, Caddy recreation, and a
+real host reboot all passed. Image B is active and A is the verified prior.
+The 24-hour observer is still running. Completion requires the full interval,
+then its end adoption smoke and observation acceptance receipt, then the final
+retention/recovery audit, and finally closure of fallback PR #748.
+
+See the [sanitized rollout report](live-rollout-20260930.md) and
+[machine-readable receipt](live-rollout-20260930.json). They preserve UTC and
+IST event times, admitted image/source identities, capacity margins, observer
+status, and hashes of protected source receipts. Raw protected receipts and
+their locations are not published. The v3 observer's failed sample is retained
+as a monitoring-tool limitation, separate from the accepted v4 observation.
+
+The operator and disposable lifecycle results below remain historical synthetic
+qualification. They are not production migration, real-image capacity, or host
+reboot evidence; the live receipt supplies those separate results.
+
 The final operator passed the disposable lifecycle run recorded in
 [operator-qualification-20260929.json](operator-qualification-20260929.json)
 and its [transcript](operator-qualification-20260929.log). The JSON binds the
@@ -39,10 +60,10 @@ configuration-drift checks were exercised. The proxy archive preserves the
 pinned OCI digest.
 
 These are synthetic results. Their capacity peaks must not be used as production
-capacity qualification. Every real image digest needs measured byte/inode
-qualification on matching storage/runtime. Docker/containerd restart is not a
-real VPS reboot. Production admission and the real-image A/B migration remain
-separate acceptance gates in [the completion plan](../completion-plan.md).
+capacity qualification. The two live image digests later received their own
+measured byte/inode qualification on matching storage/runtime. Docker/containerd
+restart is not a real VPS reboot; the separate live-host reboot result is recorded
+in the 30 September receipt.
 
 All [39 Python operator regression tests](operator-tests-20260929.log) passed
 against operator commit `21907af07` using `python3 -m unittest discover -v -s
@@ -59,12 +80,14 @@ The [28 September report](operator-qualification-20260928.json) and
 their recorded source hashes.
 
 [Production inventory](production-inventory-20260928.json) was read-only. The
-29 September 03:53 UTC reassessment in the remaining plan confirmed the original
-Compose site, inactive updater and absence of permanent Kamal handover records.
+29 September reassessment in the remaining plan confirmed the original Compose
+site, inactive updater and absence of permanent Kamal handover records.
 Approximately 32.3 GiB was available on the shared Docker/containerd filesystem.
-No production handover or cleanup was performed by this implementation.
+That inventory preceded the separately recorded 30 September live migration.
 
-Review and final checks precede merge. Two eligible main production images,
-real-image capacity measurement, controlled handover/restoration, real host
-restart and 24 hours of observation remain required before retiring fallback
-PR #748. Automatic VPS activation remains deferred.
+The live evidence completes production admission, real-image capacity
+qualification, controlled handover/restoration, offline rollback, Caddy
+recreation and real host restart. Completion still requires a full 24-hour
+observation, the end adoption smoke and final receipt, a post-observation image
+retention audit, and then retirement of fallback PR #748. Automatic VPS
+activation remains deferred.

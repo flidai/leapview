@@ -1,10 +1,15 @@
 # Manual public-site Kamal deployment
 
-Implementation and qualification are in progress. **Production remains on
-Compose/Caddy. Do not write a handover marker from synthetic test evidence.**
-The [accepted completion plan](completion-plan.md) defines the remaining gates.
-Automatic VPS activation is deferred; `site-deploy.yml` only publishes and
-qualifies production images. No registry deployment tags or credentials are used.
+The operator-controlled production rollout moved the public site to Kamal on
+30 September 2026. Image B is active through Caddy; original Compose restoration,
+offline rollback, Caddy recreation, and real host reboot acceptance passed. The
+24-hour observation is still running, so final acceptance and fallback PR #748
+closure remain pending. See the [sanitized live rollout evidence](evidence/live-rollout-20260930.md).
+
+Do not write a handover marker from synthetic test evidence. The [accepted
+completion plan](completion-plan.md) defines the remaining gates. Automatic VPS
+activation is deferred; `site-deploy.yml` only publishes and qualifies production
+images. No registry deployment tags or credentials are used.
 
 ## Operator commands
 

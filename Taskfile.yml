@@ -514,6 +514,7 @@ tasks:
           schemas/desktop \
           schemas/json \
           -- task --force docs:generate
+      - task: site:observation:test
       - task: docs:check
       - task: site:build
       - bun run test:docs-diagrams
@@ -2163,6 +2164,22 @@ tasks:
     desc: Inspect the public-site host over the operator's pinned SSH connection
     cmds:
       - python3 -B deploy/kamal-site/deploy.py status
+
+  site:observe:
+    desc: Run or inspect the read-only public-site observation
+    cmds:
+      - python3 -B deploy/kamal-site/observe.py {{.CLI_ARGS}}
+
+  site:acceptance:
+    desc: Freeze or verify observation and public adoption smoke evidence
+    cmds:
+      - python3 -B deploy/kamal-site/acceptance.py {{.CLI_ARGS}}
+
+  site:observation:test:
+    desc: Test the public-site observer and acceptance gates with local fixtures
+    cmds:
+      - python3 -B -m unittest discover -s deploy/kamal-site -p 'test_observe.py'
+      - python3 -B -m unittest discover -s deploy/kamal-site -p 'test_acceptance.py'
 
   node:audit:
     desc: Scan JavaScript dependencies for known vulnerabilities
