@@ -640,7 +640,7 @@ func (r *Repository) LookupCreateOperation(ctx context.Context, operation author
 	if !operation.Enabled() {
 		return authoring.CreateOperationResult{}, false, nil
 	}
-	if err := validateCreateOperationKey(operation); err != nil {
+	if err := operation.ValidateKey(); err != nil {
 		return authoring.CreateOperationResult{}, false, err
 	}
 	row, err := dashboarddb.New(r.db).GetCreateOperation(ctx, dashboarddb.GetCreateOperationParams{ProjectID: operation.ProjectID.String(), ActorID: operation.ActorID, OperationKind: operation.Kind, IdempotencyKey: operation.IdempotencyKey})

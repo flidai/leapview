@@ -168,6 +168,19 @@ func (h *Handler) addChatVisualToDashboard(w stdhttp.ResponseWriter, r *stdhttp.
 			return
 		}
 	} else {
+		replay, found, err := h.options.DashboardAuthoring.LookupChatVisualCopyReplay(r.Context(), application.AddChatVisualRequest{
+			ProjectID: projectID, ActorID: scope.PrincipalID, DashboardID: authoring.DashboardID(input.DashboardID), PageID: input.PageID,
+			Source: imported, CommandID: commandID,
+			Provenance: authoring.Provenance{Origin: authoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: conversationID, ToolCallID: artifact.ToolCallID},
+		})
+		if err != nil {
+			h.writeChatVisualCommandError(w, r, err)
+			return
+		}
+		if found {
+			h.writeChatVisualDashboardResult(w, r, scope, replay.Lifecycle.ID, replay.Lifecycle.Title, input.PageID)
+			return
+		}
 		item, err := h.findChatVisualDashboard(r.Context(), projectID, scope.PrincipalID, input.DashboardID)
 		if err != nil {
 			h.writeChatVisualCommandError(w, r, err)
@@ -243,6 +256,10 @@ func (h *Handler) addChatVisualToDashboard(w stdhttp.ResponseWriter, r *stdhttp.
 	if targetID == "" {
 		targetID = lifecycle.Lifecycle.ID
 	}
+	h.writeChatVisualDashboardResult(w, r, scope, targetID, targetTitle, pageID)
+}
+
+func (h *Handler) writeChatVisualDashboardResult(w stdhttp.ResponseWriter, r *stdhttp.Request, scope agent.Scope, targetID authoring.DashboardID, targetTitle, pageID string) {
 	result := agentgen.AddChatVisualToDashboardResponse{DashboardId: targetID.String(), Title: targetTitle, PageId: pageID, Href: chatDashboardHref(targetID.String(), pageID)}
 	h.recordLegacyCommandAudit(r, addChatVisualToDashboardOperation, scope, "dashboard", targetID.String())
 	writeJSON(w, stdhttp.StatusOK, result)

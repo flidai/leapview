@@ -51,12 +51,20 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
   if (envelope.spec.presentation.labelPosition === 'inside') {
     return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}:focus-${focused}`
   }
+  // Focus moves authored side legends to the bottom, so use their responsive
+  // position for both outside-label bounds and bottom-legend radius breakpoints.
+  const authoredSideLegendMovesBottom = focused
+    && (envelope.spec.presentation.legend === 'left' || envelope.spec.presentation.legend === 'right')
+  const responsiveBottomLegend = envelope.spec.presentation.legend === 'bottom' || authoredSideLegendMovesBottom
   const bounded = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
     || (envelope.spec.presentation.legend === 'hidden' && width < 600)
-    || (envelope.spec.presentation.legend === 'bottom' && width < 800)
+    || (responsiveBottomLegend && width < 800)
+  const narrowBottomLegendRadius = !compact && width < 600 && responsiveBottomLegend
+    && (envelope.spec.mark === 'pie' || envelope.spec.mark === 'donut')
+  const bottomRadiusLayout = narrowBottomLegendRadius ? ':bottom-radius-narrow' : ''
   return bounded
-    ? `${compact ? 'compact' : 'roomy'}:outside-bounded:focus-${focused}`
-    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}:focus-${focused}`
+    ? `${compact ? 'compact' : 'roomy'}:outside-bounded${bottomRadiusLayout}:focus-${focused}`
+    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}${bottomRadiusLayout}:focus-${focused}`
 }
 
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number, focused = false): Record<string, any> {

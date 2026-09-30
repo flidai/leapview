@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -111,7 +112,10 @@ func chatVisualReplayMatches(value document.DashboardDocument, pageID string, so
 	if value.Spec.SemanticModel != string(source.SemanticModelID) {
 		return false
 	}
-	visualID := importedChatVisualID(source.ArtifactID, commandID)
+	visualID, err := importedChatVisualID(source, commandID)
+	if err != nil {
+		return false
+	}
 	visual, exists := value.Spec.Visuals[visualID]
 	if !exists || !reflect.DeepEqual(visual, source.Visual) {
 		return false
@@ -161,7 +165,15 @@ func AddChatVisualToDocument(value *document.DashboardDocument, pageID string, s
 	if pageIndex < 0 {
 		return false, fmt.Errorf("%w: dashboard page %q was not found", authoring.ErrNotFound, pageID)
 	}
-	visualID := importedChatVisualID(source.ArtifactID, commandID)
+	visualID, err := importedChatVisualID(source, commandID)
+	if err != nil {
+		return false, err
+	}
+	for existingID := range value.Spec.Visuals {
+		if strings.HasPrefix(existingID, chatVisualImportPrefix(source.ArtifactID, commandID)+"_") && existingID != visualID {
+			return false, fmt.Errorf("%w: imported filter intent changed during retry", authoring.ErrCommandReuse)
+		}
+	}
 	componentID := visualID + "_component"
 	if existing, exists := value.Spec.Visuals[visualID]; exists && reflect.DeepEqual(existing, source.Visual) {
 		for pageNumber := range value.Spec.Pages {
@@ -202,8 +214,28 @@ func AddChatVisualToDocument(value *document.DashboardDocument, pageID string, s
 	return false, nil
 }
 
-func importedChatVisualID(artifactID string, commandID authoring.CommandID) string {
-	artifact := safeObjectIDSuffix(artifactID, 48)
+// The original filter declarations are part of the retained visual identity.
+// Destination ID/URL remapping is lossy, so comparing only the imported filters
+// cannot distinguish a retry from source arguments that changed to those aliases.
+func importedChatVisualID(source ChatVisualImport, commandID authoring.CommandID) (string, error) {
+	intent := struct {
+		ArtifactID      string
+		ToolCallID      string
+		SemanticModelID projectgraph.ResourceID
+		Filters         []document.DashboardFilter
+	}{source.ArtifactID, source.ToolCallID, source.SemanticModelID, source.Filters}
+	encoded, err := json.Marshal(intent)
+	if err != nil {
+		return "", fmt.Errorf("%w: encode chat visual filter intent: %v", authoring.ErrInvalidPayload, err)
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%s_%x", chatVisualImportPrefix(source.ArtifactID, commandID), digest[:16]), nil
+}
+
+func chatVisualImportPrefix(artifactID string, commandID authoring.CommandID) string {
+	// Leave room for the digest and the page component's _component suffix
+	// under the canonical dashboard object's 128-character identity limit.
+	artifact := safeObjectIDSuffix(artifactID, 32)
 	command := safeObjectIDSuffix(commandID.String(), 36)
 	if artifact == "" {
 		artifact = "artifact"
@@ -268,6 +300,15 @@ func chatVisualPlacementSize(visualType document.DashboardVisualType) (int32, in
 }
 
 func appendChatVisualFilters(value *document.DashboardDocument, filters []document.DashboardFilter, sourceVisualID, importedVisualID string) error {
+	type importedFilter struct {
+		sourceID string
+		filter   document.DashboardFilter
+	}
+	imports := make([]importedFilter, 0, len(filters))
+	sourceIDs := make(map[string]struct{}, len(filters))
+	for _, filter := range filters {
+		sourceIDs[filter.ID] = struct{}{}
+	}
 	for _, filter := range filters {
 		copy, err := cloneChatFilter(filter)
 		if err != nil {
@@ -283,7 +324,7 @@ func appendChatVisualFilters(value *document.DashboardDocument, filters []docume
 			targets := append([]string(nil), (*copy.Targets)...)
 			appliesToSource := false
 			for index := range targets {
-				if targets[index] == sourceVisualID {
+				if targets[index] == sourceVisualID || targets[index] == "page/visual" {
 					targets[index] = importedVisualID
 					appliesToSource = true
 				}
@@ -293,36 +334,332 @@ func appendChatVisualFilters(value *document.DashboardDocument, filters []docume
 				// visual by not importing the inapplicable filter.
 				continue
 			}
-			copy.Targets = &targets
+			copy.Targets = stringSlicePointer(uniqueStrings(targets))
 		}
-		copy.ID = uniqueChatFilterID(*value, copy)
+		imports = append(imports, importedFilter{sourceID: filter.ID, filter: copy})
+	}
+	if len(imports) == 0 {
+		return nil
+	}
+
+	// A filter whose options depend on a source filter that is out of scope
+	// cannot retain its source behavior. Drop it and any cascading dependents.
+	eligible := make(map[string]bool, len(imports))
+	for _, imported := range imports {
+		eligible[imported.sourceID] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, imported := range imports {
+			if !eligible[imported.sourceID] {
+				continue
+			}
+			for _, dependency := range chatFilterOptionDependencies(imported.filter) {
+				if _, known := sourceIDs[dependency]; !known {
+					return fmt.Errorf("%w: imported filter %q depends on unknown filter %q", authoring.ErrInvalidPayload, imported.sourceID, dependency)
+				}
+				if !eligible[dependency] {
+					eligible[imported.sourceID] = false
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	filtered := imports[:0]
+	for _, imported := range imports {
+		if eligible[imported.sourceID] {
+			filtered = append(filtered, imported)
+		}
+	}
+	imports = filtered
+	if len(imports) == 0 {
+		return nil
+	}
+
+	// First map every source ID, recognizing an earlier import of this same
+	// scoped filter before allocating a collision suffix. Repeating the pass
+	// resolves dependencies even when their parent filter appears later.
+	filterIDs := make(map[string]string, len(imports))
+	for _, imported := range imports {
+		filterIDs[imported.sourceID] = safeChatFilterID(imported.filter.ID)
+	}
+	for pass := 0; pass <= len(imports); pass++ {
+		changed := false
+		claimed := make(map[string]struct{}, len(imports))
+		for _, imported := range imports {
+			candidate, err := remapChatFilterDependencies(imported.filter, filterIDs)
+			if err != nil {
+				return fmt.Errorf("clone imported dashboard filter dependencies: %w", err)
+			}
+			var matched *document.DashboardFilter
+			for index := range value.Spec.Filters {
+				existing := &value.Spec.Filters[index]
+				if _, used := claimed[existing.ID]; used || !chatFilterIDDerivedFromSource(existing.ID, imported.sourceID) {
+					continue
+				}
+				equivalent, err := chatFilterImportShapeEquivalent(*existing, candidate)
+				if err != nil {
+					return fmt.Errorf("compare imported dashboard filter identity: %w", err)
+				}
+				if !equivalent {
+					continue
+				}
+				matched = existing
+				break
+			}
+			if matched != nil {
+				if filterIDs[imported.sourceID] != matched.ID {
+					filterIDs[imported.sourceID] = matched.ID
+					changed = true
+				}
+				claimed[matched.ID] = struct{}{}
+				continue
+			}
+
+			id := filterIDs[imported.sourceID]
+			if _, alreadyClaimed := claimed[id]; chatFilterIDExists(value.Spec.Filters, id) || alreadyClaimed {
+				id = availableChatFilterID(value.Spec.Filters, claimed, sourceIDs, imported.filter.ID)
+				if filterIDs[imported.sourceID] != id {
+					filterIDs[imported.sourceID] = id
+					changed = true
+				}
+			}
+			claimed[id] = struct{}{}
+		}
+		if !changed {
+			break
+		}
+	}
+
+	usedURLParameters := make(map[string]int, len(value.Spec.Filters)+len(imports))
+	for _, filter := range value.Spec.Filters {
+		if filter.URLParameter != nil {
+			usedURLParameters[*filter.URLParameter]++
+		}
+	}
+	for _, page := range value.Spec.Pages {
+		if page.FilterBindings == nil {
+			continue
+		}
+		for _, binding := range *page.FilterBindings {
+			if binding.URLParameter != nil {
+				usedURLParameters[*binding.URLParameter]++
+			}
+		}
+	}
+	for _, imported := range imports {
+		copy, err := remapChatFilterDependencies(imported.filter, filterIDs)
+		if err != nil {
+			return fmt.Errorf("clone imported dashboard filter dependencies: %w", err)
+		}
+		copy.ID = filterIDs[imported.sourceID]
+		existing := chatFilterByID(value.Spec.Filters, copy.ID)
+		if existing != nil && chatFilterImportEquivalent(*existing, copy) && copy.URLParameter != nil {
+			// Recompute the URL parameter with this retained import's existing
+			// value removed. That keeps a retry deterministic while still making
+			// a changed source URL parameter fail replay matching.
+			usedWithoutExisting := copyChatURLParameterCounts(usedURLParameters)
+			if existing.URLParameter != nil {
+				usedWithoutExisting[*existing.URLParameter]--
+			}
+			parameter := uniqueChatURLParameter(usedWithoutExisting, *copy.URLParameter, copy.ID)
+			copy.URLParameter = &parameter
+		} else if copy.URLParameter != nil {
+			parameter := uniqueChatURLParameter(usedURLParameters, *copy.URLParameter, copy.ID)
+			copy.URLParameter = &parameter
+		}
 		if chatFilterPresent(value.Spec.Filters, copy) {
 			continue
+		}
+		if copy.URLParameter != nil {
+			usedURLParameters[*copy.URLParameter]++
 		}
 		value.Spec.Filters = append(value.Spec.Filters, copy)
 	}
 	return nil
 }
 
-func uniqueChatFilterID(value document.DashboardDocument, filter document.DashboardFilter) string {
-	base := safeObjectIDSuffix(filter.ID, 96)
+func safeChatFilterID(value string) string {
+	base := safeObjectIDSuffix(value, 96)
 	if base == "" {
 		base = "chat_filter"
 	}
-	for suffix := 0; suffix < 10000; suffix++ {
-		candidate := base
-		if suffix > 0 {
-			candidate = fmt.Sprintf("%.110s_%d", base, suffix)
+	return base
+}
+
+func availableChatFilterID(filters []document.DashboardFilter, claimed, sourceIDs map[string]struct{}, sourceID string) string {
+	base := safeChatFilterID(sourceID)
+	for suffix := 1; suffix < 10000; suffix++ {
+		candidate := fmt.Sprintf("%.110s_%d", base, suffix)
+		if _, reserved := sourceIDs[candidate]; reserved {
+			continue
 		}
-		filter.ID = candidate
-		if chatFilterPresent(value.Spec.Filters, filter) {
-			return candidate
+		if !chatFilterIDExists(filters, candidate) {
+			if _, exists := claimed[candidate]; !exists {
+				return candidate
+			}
 		}
-		if !chatFilterIDExists(value.Spec.Filters, candidate) {
+	}
+	return fmt.Sprintf("%.96s_imported", base)
+}
+
+func chatFilterImportEquivalent(existing, candidate document.DashboardFilter) bool {
+	existing.ID, candidate.ID = "", ""
+	existing.URLParameter, candidate.URLParameter = nil, nil
+	return reflect.DeepEqual(existing, candidate)
+}
+
+func chatFilterImportShapeEquivalent(existing, candidate document.DashboardFilter) (bool, error) {
+	existing, err := cloneChatFilter(existing)
+	if err != nil {
+		return false, err
+	}
+	candidate, err = cloneChatFilter(candidate)
+	if err != nil {
+		return false, err
+	}
+	for _, filter := range []*document.DashboardFilter{&existing, &candidate} {
+		for _, options := range chatFilterOptions(*filter) {
+			options.DependsOn = nil
+		}
+	}
+	return chatFilterImportEquivalent(existing, candidate), nil
+}
+
+func chatFilterIDDerivedFromSource(candidateID, sourceID string) bool {
+	base := safeChatFilterID(sourceID)
+	if candidateID == base {
+		return true
+	}
+	suffix, found := strings.CutPrefix(candidateID, base+"_")
+	if !found || suffix == "" {
+		return false
+	}
+	for _, character := range suffix {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func chatFilterByID(filters []document.DashboardFilter, id string) *document.DashboardFilter {
+	for index := range filters {
+		if filters[index].ID == id {
+			return &filters[index]
+		}
+	}
+	return nil
+}
+
+func remapChatFilterDependencies(filter document.DashboardFilter, ids map[string]string) (document.DashboardFilter, error) {
+	copy, err := cloneChatFilter(filter)
+	if err != nil {
+		return document.DashboardFilter{}, err
+	}
+	for _, options := range chatFilterOptions(copy) {
+		if options == nil || options.DependsOn == nil {
+			continue
+		}
+		dependencies := append([]string(nil), (*options.DependsOn)...)
+		for index, dependency := range dependencies {
+			if mapped, exists := ids[dependency]; exists {
+				dependencies[index] = mapped
+			}
+		}
+		options.DependsOn = &dependencies
+	}
+	return copy, nil
+}
+
+func chatFilterOptions(filter document.DashboardFilter) []*document.DistinctDashboardFilterOptions {
+	var result []*document.DistinctDashboardFilterOptions
+	switch control := filter.Control.Value.(type) {
+	case *document.SingleSelectDashboardFilterControl:
+		if control.Options != nil {
+			if options, ok := control.Options.Value.(*document.DistinctDashboardFilterOptions); ok {
+				result = append(result, options)
+			}
+		}
+	case *document.MultiSelectDashboardFilterControl:
+		if control.Options != nil {
+			if options, ok := control.Options.Value.(*document.DistinctDashboardFilterOptions); ok {
+				result = append(result, options)
+			}
+		}
+	}
+	return result
+}
+
+func chatFilterOptionDependencies(filter document.DashboardFilter) []string {
+	var dependencies []string
+	for _, options := range chatFilterOptions(filter) {
+		if options != nil && options.DependsOn != nil {
+			dependencies = append(dependencies, (*options.DependsOn)...)
+		}
+	}
+	return dependencies
+}
+
+func uniqueChatURLParameter(used map[string]int, requested, filterID string) string {
+	if used[requested] <= 0 {
+		return requested
+	}
+	suffix := safeObjectIDSuffix(filterID, 28)
+	if suffix == "" {
+		suffix = "chat_filter"
+	}
+	for index := 0; index < 10000; index++ {
+		discriminator := "_" + suffix
+		if index > 0 {
+			discriminator += fmt.Sprintf("_%d", index)
+		}
+		prefix := requested
+		if len(prefix)+len(discriminator) > 64 {
+			prefix = prefix[:64-len(discriminator)]
+		}
+		prefix = strings.TrimRight(prefix, "-_")
+		if prefix == "" {
+			prefix = "filter"
+		}
+		candidate := prefix + discriminator
+		if candidate[0] < 'A' || (candidate[0] > 'Z' && candidate[0] < 'a') || candidate[0] > 'z' {
+			candidate = "filter_" + candidate
+			if len(candidate) > 64 {
+				candidate = candidate[:64]
+			}
+		}
+		if used[candidate] <= 0 {
 			return candidate
 		}
 	}
-	return base + "_imported"
+	return fmt.Sprintf("filter_%s", safeObjectIDSuffix(filterID, 32))
+}
+
+func copyChatURLParameterCounts(value map[string]int) map[string]int {
+	copy := make(map[string]int, len(value))
+	for parameter, count := range value {
+		copy[parameter] = count
+	}
+	return copy
+}
+
+func stringSlicePointer(value []string) *[]string {
+	return &value
+}
+
+func uniqueStrings(value []string) []string {
+	seen := make(map[string]struct{}, len(value))
+	result := make([]string, 0, len(value))
+	for _, item := range value {
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		result = append(result, item)
+	}
+	return result
 }
 
 func chatFilterIDExists(filters []document.DashboardFilter, id string) bool {
