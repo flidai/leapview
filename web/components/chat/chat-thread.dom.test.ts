@@ -611,6 +611,30 @@ test('chat thread keeps a repaired visual presentation error inside Worked', asy
   await page.close()
 })
 
+test('chat thread keeps an unrelated failed lookup inside Worked when the turn produces a visual', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const state = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show net sales by country' },
+      { id: 'failed', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Catalog resource not found.', argumentsJson: '{"ref":"unknown"}' },
+      { id: 'found', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":"finance"}' },
+      { id: 'visual', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'donut', id: 'by-country', summary: 'Net sales by country' } },
+    ]
+    await thread.updateComplete
+    return {
+      topLevelErrors: thread.shadowRoot.querySelectorAll('.agent-stack > .message.error').length,
+      workedErrors: Array.from(thread.shadowRoot.querySelectorAll('.run-steps .message.error')).map((node: any) => node.textContent?.trim()),
+      visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
+    }
+  })
+  expect(state).toEqual({ topLevelErrors: 0, workedErrors: ['Catalog resource not found.'], visual: true })
+  await page.close()
+})
+
 test('chat thread waits until the active run ends before showing unresolved errors', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

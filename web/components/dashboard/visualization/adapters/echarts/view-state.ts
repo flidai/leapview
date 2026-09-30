@@ -60,14 +60,16 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
-  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, compact && hasBottomLegend(option.legend))
+  const movedSide = compact && hasPieSeries(option.series) ? proportionalSideLegend(option.legend) : undefined
+  const responsiveLegend = movedSide ? compactProportionalSideLegend(option.legend) : option.legend
+  const bottomLegend = compact && hasBottomLegend(responsiveLegend)
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, bottomLegend, movedSide)
   const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
   const graphSeries = responsiveGraphSeries(option.series, width, compact)
   const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
   const treeSeries = responsiveSingleNodeTreeSeries(option.series, width, height)
   const gaugeGraphic = responsiveGaugeGraphic(option.graphic, width)
   const patch: Record<string, any> = {}
-  const bottomLegend = compact && hasBottomLegend(option.legend)
   if (option.grid !== undefined) {
     const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
     const slider = compact && hasSliderDataZoom(option.dataZoom)
@@ -92,8 +94,9 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (hierarchySeries !== undefined) patch.series = hierarchySeries
   if (treeSeries !== undefined) patch.series = treeSeries
   if (gaugeGraphic !== undefined) patch.graphic = gaugeGraphic
+  if (movedSide && option.graphic !== undefined) patch.graphic = compactProportionalLegendTitle(option.graphic, movedSide)
   if (option.legend !== undefined) {
-    patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
+    patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(option.legend)
   }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
@@ -286,13 +289,14 @@ function wrapWords(value: string, maxCharacters: number): string {
   return lines.join('\n')
 }
 
-function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right'): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
   let hasResponsiveLabels = false
   const series = value.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
     const source = entry as Record<string, unknown>
+    const pieLayout = source.type === 'pie' && movedSide && source[movedSide] === '12%' ? { [movedSide]: 0 } : undefined
     const label = source.label
     if (source.type === 'funnel') {
       const labelOption = label && typeof label === 'object' && !Array.isArray(label) ? label as Record<string, unknown> : undefined
@@ -321,7 +325,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       source.type !== 'pie'
       || !label || typeof label !== 'object' || Array.isArray(label)
       || (label as Record<string, unknown>).show === false
-    ) return entry
+    ) return pieLayout ? { ...source, ...pieLayout } : entry
     const labelOption = label as Record<string, unknown>
     if (labelOption.position === 'inside') {
       const crowded = width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT
@@ -329,11 +333,13 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       if (!crowded) {
         return {
           ...source,
+          ...pieLayout,
           label: { ...labelOption, rotate: null },
         }
       }
       return {
         ...source,
+        ...pieLayout,
         label: {
           ...labelOption,
           // Horizontal labels near the centre of neighbouring sectors can
@@ -350,9 +356,10 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
     if (labelOption.position !== 'outside') return entry
     hasResponsiveLabels = true
-    const reservedRadius = bottomLegend && height < COMPACT_HEIGHT ? compactProportionalRadius(source.radius) : undefined
+    const reservedRadius = bottomLegend ? compactProportionalRadius(source.radius) : undefined
     return {
       ...source,
+      ...pieLayout,
       ...(reservedRadius ? { radius: reservedRadius } : {}),
       label: {
         ...labelOption,
@@ -380,11 +387,11 @@ function compactProportionalRadius(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || value.length !== 2) return undefined
   const inner = percentNumber(value[0])
   const outer = percentNumber(value[1])
-  if (inner === undefined || outer === undefined || outer <= 66) return undefined
-  // Outside pie labels can reach the bottom scroll legend in short chat cards.
+  if (inner === undefined || outer === undefined || outer <= 56) return undefined
+  // Outside pie labels can reach the bottom scroll legend in narrow chat cards.
   // Scale both radii so the donut ring keeps its authored thickness ratio.
-  const scale = 66 / outer
-  return [`${Math.round(inner * scale * 100) / 100}%`, '66%']
+  const scale = 56 / outer
+  return [`${Math.round(inner * scale * 100) / 100}%`, '56%']
 }
 
 function wrapFunnelOutsideLabel(value: string, width: number, fontSize: number): string {
@@ -443,6 +450,42 @@ function isHorizontalBottomLegend(value: unknown): value is Record<string, unkno
     && (value as Record<string, unknown>).bottom !== undefined)
 }
 
+function hasPieSeries(series: unknown): boolean {
+  const entries = Array.isArray(series) ? series : [series]
+  return entries.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'pie')
+}
+
+function proportionalSideLegend(legend: unknown): 'left' | 'right' | undefined {
+  const entries = Array.isArray(legend) ? legend : [legend]
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || entry.orient !== 'vertical') continue
+    if (entry.left !== undefined) return 'left'
+    if (entry.right !== undefined) return 'right'
+  }
+  return undefined
+}
+
+function compactProportionalSideLegend(legend: unknown): unknown {
+  const legends = Array.isArray(legend) ? legend : [legend]
+  const result = legends.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, unknown>
+    if (source.orient !== 'vertical' || (source.left === undefined && source.right === undefined)) return entry
+    return { ...source, orient: 'horizontal', top: 'auto', bottom: 0, left: 'center', right: 'auto' }
+  })
+  return Array.isArray(legend) ? result : result[0]
+}
+
+function compactProportionalLegendTitle(graphic: unknown, movedSide: 'left' | 'right'): unknown {
+  if (!Array.isArray(graphic)) return graphic
+  return graphic.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const title = entry as Record<string, unknown>
+    if (title.type !== 'text' || title.top !== 4 || title[movedSide] !== 8) return entry
+    return { ...title, top: 'auto', bottom: 28, left: 8, right: 'auto' }
+  })
+}
+
 function hasSliderDataZoom(value: unknown): boolean {
   if (!Array.isArray(value)) return false
   return value.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'slider')
@@ -451,6 +494,9 @@ function hasSliderDataZoom(value: unknown): boolean {
 function desktopLegend(value: unknown): unknown {
   const legends = Array.isArray(value) ? value : [value]
   const result = legends.map((entry) => {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry) && entry.orient === 'vertical' && (entry.left !== undefined || entry.right !== undefined)) {
+      return { ...entry, left: entry.left ?? 'auto', right: entry.right ?? 'auto', height: 'auto' }
+    }
     if (!isHorizontalBottomLegend(entry)) return entry
     const legend = entry
     // Clear compact sizing, retaining the scroll component and its selection state.

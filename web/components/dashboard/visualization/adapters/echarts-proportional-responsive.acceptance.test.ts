@@ -109,7 +109,7 @@ test('proportional responsive sizing preserves roomy radii and reserves the comp
   ] as const) {
     const patch = responsiveEChartsPatch(option, width, height)
     expect(patch.series[0].id).toBe('series:primary:donut')
-    expect(patch.series[0].radius).toEqual(height < 280 ? ['46.89%', '66%'] : ['54%', '76%'])
+    expect(patch.series[0].radius).toEqual(width < 480 || height < 280 ? ['39.79%', '56%'] : ['54%', '76%'])
     expect(patch.series[0].label.alignTo).toBe(alignTo)
     if (alignTo === 'labelLine') {
       expect(patch.series[0].label).toMatchObject({ distanceToLabelLine: 12 })
@@ -140,10 +140,26 @@ test('proportional responsive helper keeps compact labels bounded and expanded l
   }
 })
 
-test('compact donut outside labels stay clear of the bottom legend', () => {
+test('compact side legends move their title and donut inset with the legend', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.legend = 'right'
+  envelope.spec.presentation.legendTitle = 'Country'
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(option, 465, 409)
+  expect(compact.series[0].right).toBe(0)
+  expect(compact.legend).toMatchObject({ orient: 'horizontal', bottom: 0 })
+  expect(compact.graphic).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'text', top: 'auto', bottom: 28, left: 8, right: 'auto', style: expect.objectContaining({ text: 'Country' }) }),
+  ]))
+  const roomy = responsiveEChartsPatch(option, 800, 500)
+  expect(roomy.series[0].right).toBe('12%')
+  expect(roomy.legend).toMatchObject({ orient: 'vertical', right: 0 })
+})
+
+test('donut outside labels stay clear of bottom and compact side legends', () => {
   const envelope = proportionalFixture('donut')
   if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected inline donut fixture')
-  envelope.spec.presentation.legend = 'bottom'
   envelope.spec.presentation.rose = false
   envelope.spec.presentation.centerLabel = undefined
   envelope.spec.datasets[0]!.fields[1]!.format = { kind: 'currency', currency: 'USD' }
@@ -151,28 +167,36 @@ test('compact donut outside labels stay clear of the bottom legend', () => {
     ['United States of America', 25_000_000], ['Canada', 24_900_000],
     ['France', 24_400_000], ['Germany', 23_500_000], ['Mexico', 20_900_000],
   ]
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 480, height: 250 })
-  try {
-    chart.setOption({ ...option, ...responsiveEChartsPatch(option, 480, 250), animation: false })
-    chart.renderToSVGString()
-    const labels = chart.getZr().storage.getDisplayList()
-      .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
-    const bounds = (item: any) => {
-      const box = item.getBoundingRect().clone()
-      const transform = item.getComputedTransform?.() ?? item.transform
-      if (transform) box.applyTransform(transform)
-      return box
+  for (const [legend, width, height] of [['bottom', 480, 250], ['bottom', 465, 409], ['bottom', 635, 520], ['right', 465, 409]] as const) {
+    envelope.spec.presentation.legend = legend
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    const patch = responsiveEChartsPatch(option, width, height)
+    if (legend === 'right') {
+      expect(patch.legend).toMatchObject({ orient: 'horizontal', bottom: 0, left: 'center', right: 'auto' })
+      expect(responsiveEChartsPatch(option, 800, 500).legend).toMatchObject({ orient: 'vertical', right: 0, left: 'auto', height: 'auto' })
     }
-    const franceOutside = labels.find((item: any) => item.style.text === 'France: $24.4M')
-    const legendItem = labels.find((item: any) => item.style.text === 'France')
-    expect(franceOutside).toBeDefined()
-    expect(legendItem).toBeDefined()
-    const outsideBox = bounds(franceOutside)
-    const legendBox = bounds(legendItem)
-    expect(outsideBox.y + outsideBox.height).toBeLessThan(legendBox.y)
-  } finally {
-    chart.dispose()
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+    try {
+      chart.setOption({ ...option, ...patch, animation: false })
+      chart.renderToSVGString()
+      const labels = chart.getZr().storage.getDisplayList()
+        .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+      const bounds = (item: any) => {
+        const box = item.getBoundingRect().clone()
+        const transform = item.getComputedTransform?.() ?? item.transform
+        if (transform) box.applyTransform(transform)
+        return box
+      }
+      const legendItem = labels.find((item: any) => item.style.text === 'Germany')
+      const outsideLabel = labels.find((item: any) => item.style.text.startsWith('Ge') && item.style.text !== 'Germany')
+      expect(outsideLabel).toBeDefined()
+      expect(legendItem).toBeDefined()
+      const outsideBox = bounds(outsideLabel)
+      const legendBox = bounds(legendItem)
+      expect(outsideBox.y + outsideBox.height).toBeLessThan(legendBox.y)
+    } finally {
+      chart.dispose()
+    }
   }
 })
 

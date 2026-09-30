@@ -195,7 +195,7 @@ class ChatThread extends LitElement {
   private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
     const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
     const hasVisualResult = !running && items.some(item => item.kind === 'tool' && this.toolStatus(item) === 'complete' && Boolean(item.artifact))
-    const context = hasVisualResult ? items.filter(item => item.kind === 'assistant' || item.kind === 'summary') : []
+    const context = hasVisualResult ? items.filter(item => item.kind === 'assistant' || item.kind === 'summary' || (item.kind === 'tool' && this.toolStatus(item) === 'error')) : []
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
