@@ -16,6 +16,7 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 		guarantee   string
 		ui          bool
 	}{
+		"saveChatDashboardDraft":   {audit: "agent.dashboard.saved", target: "conversation", idempotency: "required", guarantee: "transactional", ui: true},
 		"addChatVisualToDashboard": {audit: "agent.visual.dashboard.added", target: "conversation", idempotency: "required", guarantee: "transactional", ui: true},
 		"createAgentConversation":  {audit: "agent.conversation.created", idempotency: "required", guarantee: "transactional", ui: true},
 		"archiveAgentConversation": {audit: "agent.conversation.archived", target: "conversation", guarantee: "transactional"},

@@ -119,6 +119,49 @@ model QueryVisualInput {
   filters?: LeapViewDashboard.DashboardFilter[];
 }
 
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "compose", "visual"] })
+model ChatDashboardVisualInput {
+  @doc("Stable visual identity within this draft. Preserve it when updating an existing visual.")
+  @minLength(1)
+  @maxLength(128)
+  id: string;
+  @doc("Canonical dashboard visual query and presentation definition. Set visual.title to a clear human-readable chart title. Data is always loaded through the governed semantic runtime.")
+  visual: LeapViewDashboard.DashboardVisual;
+  @doc("Canonical typed dashboard filters used by this visual.")
+  @maxItems(100)
+  filters?: LeapViewDashboard.DashboardFilter[];
+}
+
+@apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "compose"] })
+model ComposeChatDashboardInput {
+  @doc("Human-readable title for the current dashboard draft.")
+  @minLength(1)
+  @maxLength(255)
+  title: string;
+  @doc("Exact semantic_model resource ID returned by the governed catalog tools.")
+  @minLength(1)
+  semanticModelId: string;
+  @doc("The complete ordered visual set for this draft. Each successful call replaces the prior draft snapshot.")
+  @maxItems(12)
+  visuals: ChatDashboardVisualInput[];
+}
+
+model ChatDashboardVisualArtifact {
+  id: string;
+  artifactId: string;
+  title: string;
+}
+
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "compose"] })
+model ComposeChatDashboardResult {
+  id: string;
+  revision: string;
+  title: string;
+  semanticModelId: string;
+  visuals: ChatDashboardVisualArtifact[];
+  summary: string;
+}
+
 model QueryVisualFieldUsage {
   fieldId: string;
   role: "dimension" | "series" | "metric" | "table_field" | "table_row";

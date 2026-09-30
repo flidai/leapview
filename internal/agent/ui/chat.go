@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 
@@ -46,9 +47,27 @@ func ChatBootstrapSignals(projectID, view string, state ChatViewState, providers
 
 func ChatSignalPatch(state ChatViewState) pagestream.SignalPatch {
 	patch := ChatConversationsPatch(state.Agent.Conversations, state.Agent.ActiveConversationID)
-	patch["agent"] = state.Agent
+	patch["agent"] = chatSignalPatchValue(state.Agent)
 	patch["visuals"] = state.Visuals
 	return patch
+}
+
+func chatSignalPatchValue(signal ChatSignal) map[string]any {
+	encoded, err := json.Marshal(signal)
+	if err != nil {
+		return map[string]any{}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		return map[string]any{}
+	}
+	// Datastar merges nested signal objects. A nil optional field would
+	// otherwise be omitted by encoding/json and leave the previous successful
+	// draft visible after editing the transcript back to a branch without one.
+	if signal.DashboardDraft == nil {
+		payload["dashboardDraft"] = nil
+	}
+	return payload
 }
 
 func ChatConversationsPatch(conversations []ChatConversationSummary, activeConversationID string) pagestream.SignalPatch {

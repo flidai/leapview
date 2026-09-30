@@ -1,10 +1,27 @@
 package module
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/flidai/leapview/internal/agent"
+	"github.com/flidai/leapview/internal/agent/ui"
 )
+
+func TestAsyncChatSignalPatchTombstonesAbsentDashboardDraft(t *testing.T) {
+	patch, err := json.Marshal(chatSignalPatch(ui.ChatViewState{Agent: ui.ChatSignal{Transcript: []ui.ChatTranscriptItemSignal{}}}))
+	if err != nil {
+		t.Fatalf("marshal async chat patch: %v", err)
+	}
+	var decoded map[string]map[string]any
+	if err := json.Unmarshal(patch, &decoded); err != nil {
+		t.Fatalf("decode async chat patch: %v", err)
+	}
+	value, exists := decoded["agent"]["dashboardDraft"]
+	if !exists || value != nil {
+		t.Fatalf("async agent.dashboardDraft = %#v (exists %t), want explicit null tombstone", value, exists)
+	}
+}
 
 func TestChatSignalWithDerivesRunningFromDurableRun(t *testing.T) {
 	fixture := newModuleJobFixture(t)

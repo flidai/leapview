@@ -12,13 +12,33 @@ Built-in chat, MCP discovery, and `leapview agent tools` expose one governed cat
 - `query_semantic_model` executes governed semantic queries.
 - `query_dashboard_visual` queries one existing dashboard visual.
 - `query_visual` creates a read-only visualization from governed semantic fields.
+- In the built-in main chat, `compose_chat_dashboard` queries a complete dashboard preview owned by that conversation. Saving the preview is a separate user action.
 - `docs_search` and `docs_read` search and read the version-matched product documentation.
 
 Catalog search and list silently omit inaccessible resources. Exact lookup returns the same not-found result for missing and inaccessible refs. These discovery/query/documentation tools are read-only, idempotent, non-destructive, and closed-world. Dashboard authoring is the explicit exception: its twelve tools can create private drafts and apply the four bounded intents or lifecycle commands, while still enforcing project-resource grants, governed fields, exact revisions, and no access to connections, raw sources, lineage, refresh runs, raw SQL, credentials, semantic-model mutation, or data mutation.
 
 See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, pagination, shared-resource locations, tool-selection guidance, and stable error behavior. Use the generated [Agent tool reference](/docs/agent-tools) for exact schemas and metadata.
 
-## Keep a chat visual
+## Build a dashboard in chat
+
+Ask the agent to build a dashboard and describe the charts you need. A dashboard
+draft appears beside the conversation. Continue chatting to add a chart, change
+one, or apply a filter. Select **Ask about visual** on a chart to put its identity
+in the composer, then describe the change before sending.
+
+The draft belongs to the conversation and is restored when you reopen the chat.
+It uses governed semantic-model queries, and each successful update replaces the
+complete preview. A failed update leaves the last successful draft available.
+Charts in one draft use the same semantic model; the agent can compose up to
+twelve charts. On a narrow screen, use **Dashboard draft** to switch to the preview.
+
+Choose **Save dashboard**, give it a name, and confirm to create a private
+dashboard containing all the preview's charts and their filters. The saved
+dashboard is available from **Open dashboard** for manual editing. Further chat
+changes update the conversation draft; saving that changed draft creates a new
+copy. Sharing or publishing uses the dashboard's normal controls.
+
+## Keep an individual chat visual
 
 Open a visual card in chat to inspect its chart. **Save** keeps it as a saved exploration.
 

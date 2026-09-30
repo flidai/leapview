@@ -32,6 +32,11 @@
       "summary": "Search authorized project resources by stable ID, name, description, semantic metric or dimension names and labels, or domain metadata."
     },
     {
+      "slug": "compose_chat_dashboard",
+      "title": "compose_chat_dashboard",
+      "summary": "Compose or update the complete dashboard draft in this conversation."
+    },
+    {
       "slug": "create_dashboard_draft",
       "title": "create_dashboard_draft",
       "summary": "Create a private dashboard draft owned by the authenticated principal."

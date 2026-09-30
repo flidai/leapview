@@ -23,6 +23,13 @@ export const chatPageStyles = css`
       overflow: hidden;
     }
     lv-chat-visual-panel { min-width: 0; min-height: 0; }
+    .route.dashboard-open {
+      display: grid;
+      height: 100svh;
+      grid-template-columns: minmax(22rem, .9fr) minmax(0, 1.1fr);
+      overflow: hidden;
+    }
+    lv-chat-dashboard-draft { min-width: 0; min-height: 0; }
     .main {
       display: grid;
       min-width: 0;
@@ -56,6 +63,32 @@ export const chatPageStyles = css`
       min-width: 0;
       grid-template-columns: minmax(0, 1fr);
       padding: 14px var(--base-size-16) var(--base-size-8);
+    }
+
+    .mobile-dashboard-toggle {
+      display: none;
+      min-height: var(--lv-control-medium);
+      align-items: center;
+      justify-self: start;
+      gap: var(--base-size-8);
+      border: var(--lv-border-muted);
+      border-radius: 999px;
+      background: var(--lv-bg-panel);
+      padding: 0 var(--base-size-12);
+      color: var(--lv-fg-default);
+      cursor: pointer;
+      font: var(--lv-type-secondary);
+    }
+
+    .mobile-dashboard-count {
+      display: inline-grid;
+      min-width: 1.25rem;
+      min-height: 1.25rem;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--lv-bg-accent-muted);
+      color: var(--lv-fg-accent);
+      font: var(--lv-type-caption);
     }
 
     h1 {
@@ -274,6 +307,15 @@ export const chatPageStyles = css`
         inset: 0;
         background: var(--lv-bg-panel);
       }
+      .route.dashboard-open { grid-template-columns: minmax(0, 1fr); }
+      .route.dashboard-open lv-chat-dashboard-draft {
+        position: fixed;
+        z-index: 20;
+        inset: 0;
+        background: var(--lv-bg-panel);
+      }
+      .conversation-titlebar:has(.mobile-dashboard-toggle) { gap: var(--base-size-8); }
+      .mobile-dashboard-toggle { display: inline-flex; }
       .main.new-main {
         height: 100svh;
       }

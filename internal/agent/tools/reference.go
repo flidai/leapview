@@ -15,6 +15,7 @@ type ProviderSet struct {
 	Docs      DocsProvider
 	Catalog   CatalogProvider
 	Visual    VisualProvider
+	Compose   DashboardComposeProvider
 	APIGen    APIGenProvider
 	Authoring DashboardAuthoringProvider
 }
@@ -23,6 +24,7 @@ func (p ProviderSet) Definitions(scope Scope) []agentcore.ToolDefinition {
 	definitions := p.Docs.Definitions()
 	definitions = append(definitions, p.Catalog.Definitions(scope)...)
 	definitions = append(definitions, p.Visual.Definitions(scope)...)
+	definitions = append(definitions, p.Compose.Definitions(scope)...)
 	definitions = append(definitions, p.APIGen.Definitions(scope)...)
 	definitions = append(definitions, p.Authoring.Definitions(scope)...)
 	sort.Slice(definitions, func(i, j int) bool {
@@ -39,6 +41,7 @@ func (p ProviderSet) referenceDefinitions(scope Scope) []agentcore.ToolDefinitio
 	definitions := p.Docs.Definitions()
 	definitions = append(definitions, p.Catalog.Definitions(scope)...)
 	definitions = append(definitions, p.Visual.Definitions(scope)...)
+	definitions = append(definitions, p.Compose.contractDefinitions()...)
 	definitions = append(definitions, p.APIGen.Definitions(scope)...)
 	definitions = append(definitions, p.Authoring.contractDefinitions(scope)...)
 	sort.Slice(definitions, func(i, j int) bool {
@@ -141,6 +144,7 @@ func referenceMetadata(operations []APIGenOperation) map[string]toolReferenceMet
 		AddDashboardVisualToolName:      {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
 		AssignDashboardFieldToolName:    {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
 		CatalogSearchToolName:           {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogSearchLimit}},
+		ComposeChatDashboardToolName:     {authzMode: "privilege", privilege: "RESOURCE_USE", operationID: "manual", defaults: map[string]any{}},
 		CatalogListToolName:             {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{"limit": DefaultCatalogListLimit}},
 		CatalogGetToolName:              {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
 		CreateDashboardDraftToolName:    {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},

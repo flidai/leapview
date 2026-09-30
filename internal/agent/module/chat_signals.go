@@ -26,6 +26,7 @@ func chatSignalWithConversations(conversations []ui.ChatConversationSummary, act
 		Agent: ui.ChatSignal{
 			Conversations:        conversations,
 			ActiveConversationID: activeID,
+			DashboardDraft:       chatDashboardDraftSignal(artifacts.DashboardDraft),
 			Transcript:           ui.ChatTranscriptItems(transcript),
 			Status:               status,
 			Composer: ui.ComposerSignal{
@@ -80,6 +81,7 @@ func (m *Module) ChatSignalWith(ctx context.Context, scope agent.Scope, activeID
 		Agent: ui.ChatSignal{
 			Conversations:        conversations,
 			ActiveConversationID: activeID,
+			DashboardDraft:       chatDashboardDraftSignal(artifacts.DashboardDraft),
 			Transcript:           ui.ChatTranscriptItems(transcript),
 			Status:               status,
 			Composer: ui.ComposerSignal{
@@ -89,6 +91,17 @@ func (m *Module) ChatSignalWith(ctx context.Context, scope agent.Scope, activeID
 			},
 		},
 	}
+}
+
+func chatDashboardDraftSignal(draft *agent.ChatDashboardDraftArtifact) *ui.ChatDashboardDraftSignal {
+	if draft == nil {
+		return nil
+	}
+	visuals := make([]ui.ChatDashboardDraftVisualSignal, 0, len(draft.Visuals))
+	for _, visual := range draft.Visuals {
+		visuals = append(visuals, ui.ChatDashboardDraftVisualSignal{ID: visual.ID, ArtifactID: visual.ArtifactID, Title: visual.Title})
+	}
+	return &ui.ChatDashboardDraftSignal{Revision: draft.Revision, Title: draft.Title, Visuals: visuals}
 }
 
 func normalizeChatArtifacts(artifacts agent.ChatArtifactSignals) agent.ChatArtifactSignals {
@@ -116,7 +129,7 @@ func TypedChatArtifacts(artifacts agent.ChatArtifactSignals) map[string]visualiz
 }
 
 func chatSignalPatch(signal ui.ChatViewState) map[string]any {
-	return map[string]any{"agent": signal.Agent, "visuals": signal.Visuals}
+	return map[string]any(ui.ChatSignalPatch(signal))
 }
 
 func (m *Module) chatConversations(ctx context.Context, scope agent.Scope) []ui.ChatConversationSummary {

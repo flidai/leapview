@@ -75,6 +75,33 @@ const (
 	CatalogTypeDashboard     CatalogType = "dashboard"
 )
 
+type ChatDashboardVisualArtifact struct {
+	ID         string `json:"id" yaml:"id"`
+	ArtifactID string `json:"artifactId" yaml:"artifactId"`
+	Title      string `json:"title" yaml:"title"`
+}
+
+type ChatDashboardVisualInput struct {
+	ID      string                               `json:"id" yaml:"id"`
+	Visual  dashboarddocument.DashboardVisual    `json:"visual" yaml:"visual"`
+	Filters *[]dashboarddocument.DashboardFilter `json:"filters,omitempty" yaml:"filters,omitempty"`
+}
+
+type ComposeChatDashboardInput struct {
+	Title           string                     `json:"title" yaml:"title"`
+	SemanticModelID string                     `json:"semanticModelId" yaml:"semanticModelId"`
+	Visuals         []ChatDashboardVisualInput `json:"visuals" yaml:"visuals"`
+}
+
+type ComposeChatDashboardResult struct {
+	ID              string                        `json:"id" yaml:"id"`
+	Revision        string                        `json:"revision" yaml:"revision"`
+	Title           string                        `json:"title" yaml:"title"`
+	SemanticModelID string                        `json:"semanticModelId" yaml:"semanticModelId"`
+	Visuals         []ChatDashboardVisualArtifact `json:"visuals" yaml:"visuals"`
+	Summary         string                        `json:"summary" yaml:"summary"`
+}
+
 type DashboardAppliedFilters struct {
 	Controls          map[string]dashboarddocument.DashboardFilterControl `json:"controls" yaml:"controls"`
 	Selections        []map[string]any                                    `json:"selections" yaml:"selections"`

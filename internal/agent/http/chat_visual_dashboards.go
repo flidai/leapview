@@ -299,10 +299,10 @@ func normalizeImportedChatLegend(visual document.DashboardVisual) document.Dashb
 		return visual
 	}
 	presentation, ok := visual.Presentation.Value.(*document.ProportionalDashboardPresentation)
-	if !ok || presentation == nil || presentation.Legend == nil {
+	if !ok || presentation == nil {
 		return visual
 	}
-	if *presentation.Legend != document.DashboardLegendPositionLeft && *presentation.Legend != document.DashboardLegendPositionRight {
+	if presentation.Legend != nil && (*presentation.Legend == document.DashboardLegendPositionNone || *presentation.Legend == document.DashboardLegendPositionBottom) {
 		return visual
 	}
 	copy := *presentation

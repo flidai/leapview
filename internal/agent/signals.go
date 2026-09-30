@@ -34,7 +34,8 @@ type ChatArtifact struct {
 }
 
 type ChatArtifactSignals struct {
-	Visuals map[string]any `json:"visuals"`
+	Visuals        map[string]any             `json:"visuals"`
+	DashboardDraft *ChatDashboardDraftArtifact `json:"dashboardDraft,omitempty"`
 }
 
 type ChatTranscriptState struct {

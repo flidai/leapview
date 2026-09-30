@@ -3003,6 +3003,341 @@ paths:
         target:
           parameter: conversation
           type: conversation
+  /api/v1/agent/conversations/{conversation}/dashboard:
+    post:
+      operationId: saveChatDashboardDraft
+      summary: Save an owned conversation dashboard preview
+      description: Creates one private dashboard from the latest successful persisted
+        compose_chat_dashboard result. All visual definitions and filters are resolved
+        from the owned conversation and imported atomically. The supplied revision
+        must match the preview; rendered client data is never accepted as source.
+      parameters:
+        - name: conversation
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddChatVisualToDashboardResponse'
+              example:
+                dashboardId: example
+                href: example
+                pageId: example
+                title: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveChatDashboardDraftRequest'
+            example:
+              revision: example
+              title: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: dashboardId
+                sensitivity: internal
+              - name: draftId
+                sensitivity: internal
+              - name: operationId
+                sensitivity: internal
+              - name: origin
+                sensitivity: public
+              - name: projectId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ChatVisualDashboardCommandAuditPayload
+            schema_version: 1
+          required: true
+          success_action: agent.dashboard.saved
+        authz_mode: authenticated
+        failures:
+          - code: CHAT_DASHBOARD_DRAFT_CHANGED
+            kind: conflict
+            public_detail: The dashboard preview changed. Review the latest preview
+              and save again.
+            status_code: 409
+          - code: CHAT_DASHBOARD_DRAFT_FORBIDDEN
+            kind: forbidden
+            public_detail: You do not have permission to save this dashboard.
+            status_code: 403
+          - code: INVALID_CHAT_DASHBOARD_DRAFT
+            kind: invalid
+            public_detail: A complete dashboard preview and a valid title are required.
+            status_code: 422
+          - code: CHAT_DASHBOARD_DRAFT_NOT_FOUND
+            kind: not_found
+            public_detail: The dashboard preview is unavailable.
+            status_code: 404
+          - code: AGENT_SERVICE_UNAVAILABLE
+            kind: unavailable
+            public_detail: Agent service is unavailable.
+            status_code: 503
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        target:
+          parameter: conversation
+          type: conversation
+        ui:
+          action_id: agent.dashboard.save
   /api/v1/agent/conversations/{conversation}/messages:
     get:
       operationId: listAgentMessages
@@ -84739,6 +85074,27 @@ components:
               color: accent
               icon: circle
             value: 1
+    SaveChatDashboardDraftRequest:
+      type: object
+      required:
+        - revision
+        - title
+      properties:
+        revision:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: The server-issued revision of the complete dashboard preview
+            being saved.
+          example: example
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: example
+      example:
+        revision: example
+        title: example
     SearchKind:
       type: string
       enum:

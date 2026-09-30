@@ -255,6 +255,9 @@ class ChatThread extends LitElement {
   }
 
   private renderAgentItem(item: ChatTranscriptItemSignal) {
+    // Dashboard compositions update the live draft canvas. Their artifact is a
+    // snapshot of the whole draft, not a single chart to render in the thread.
+    if (this.isDashboardDraftArtifact(item)) return nothing
     switch (item.kind) {
       case 'tool':
         return this.renderToolOutcome(item)
@@ -292,6 +295,10 @@ class ChatThread extends LitElement {
     if (status === 'complete' && item.artifact) return this.renderArtifact(item.artifact, item)
     if (status === 'error') return this.renderMessage('error', item.error?.trim() || 'A requested operation failed.', false, true)
     return nothing
+  }
+
+  private isDashboardDraftArtifact(item: ChatTranscriptItemSignal): boolean {
+    return item.kind === 'tool' && this.toolStatus(item) === 'complete' && item.artifact?.type === 'dashboard_draft'
   }
 
   private renderArtifact(artifact: ChatArtifactSignal, item?: ChatTranscriptItemSignal) {

@@ -5,6 +5,27 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/visual-artifact'
 
+export function normalizeChatVisualDisplayPayload(payload: VisualizationEnvelope | undefined, hideTitle = false): VisualizationEnvelope | undefined {
+  if (!payload) return undefined
+  const spec = payload.spec
+  const hideChartTitle = hideTitle && spec.titleVisible !== false
+  if (spec.kind === 'proportional') {
+    const legendPosition = spec.presentation.legend as string | undefined
+    if (legendPosition !== 'hidden' && legendPosition !== 'none') {
+      return {
+        ...payload,
+        spec: {
+          ...spec,
+          ...(hideChartTitle ? { titleVisible: false } : {}),
+          presentation: { ...spec.presentation, legend: 'bottom' },
+        },
+      }
+    }
+  }
+  if (!hideChartTitle) return payload
+  return { ...payload, spec: { ...spec, titleVisible: false } }
+}
+
 export class ChatVisualPanel extends LitElement {
   @property() title = ''
   @property({ attribute: 'artifact-id' }) artifactId = ''
@@ -122,18 +143,7 @@ export class ChatVisualPanel extends LitElement {
   private visualDisplayPayload(): VisualizationEnvelope | undefined {
     if (this.payload === this.displaySource) return this.displayVisual
     this.displaySource = this.payload
-    const payload = this.payload
-    if (!payload) {
-      this.displayVisual = undefined
-      return this.displayVisual
-    }
-    const spec = payload.spec
-    if (spec.kind === 'proportional' && (spec.presentation.legend === 'left' || spec.presentation.legend === 'right')) {
-      const titleHiddenSpec = spec.titleVisible === false ? spec : { ...spec, titleVisible: false }
-      this.displayVisual = { ...payload, spec: { ...titleHiddenSpec, presentation: { ...spec.presentation, legend: 'bottom' } } }
-    } else {
-      this.displayVisual = spec.titleVisible === false ? payload : { ...payload, spec: { ...spec, titleVisible: false } }
-    }
+    this.displayVisual = normalizeChatVisualDisplayPayload(this.payload, true)
     return this.displayVisual
   }
 

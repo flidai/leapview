@@ -56,6 +56,7 @@ func ManualToolNames() []string {
 		CatalogGetToolName,
 		CatalogListToolName,
 		CatalogSearchToolName,
+		ComposeChatDashboardToolName,
 		CreateDashboardDraftToolName,
 		DocsReadToolName,
 		DocsSearchToolName,

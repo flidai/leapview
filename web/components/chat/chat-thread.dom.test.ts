@@ -560,6 +560,34 @@ test('chat thread hides recovered tool errors only within the same user turn', a
   await page.close()
 })
 
+test('chat thread treats a dashboard draft as a result without rendering it as a chart', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const state = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Build a dashboard' },
+      { id: 'lookup-error', kind: 'tool', name: 'catalog_search', status: 'error', error: 'A lookup did not find anything.' },
+      { id: 'compose', kind: 'tool', name: 'compose_chat_dashboard', status: 'complete', artifact: { type: 'dashboard_draft', id: 'compose-call', summary: 'Dashboard composed.' } },
+      { id: 'answer', kind: 'assistant', markdown: 'I added the requested visual to the live dashboard draft.' },
+    ]
+    await thread.updateComplete
+    return {
+      errors: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
+      chartArtifacts: thread.shadowRoot.querySelectorAll('lv-visual-artifact').length,
+      answer: thread.shadowRoot.querySelector('.agent-markdown')?.value,
+    }
+  })
+  expect(state).toEqual({
+    errors: [],
+    chartArtifacts: 0,
+    answer: 'I added the requested visual to the live dashboard draft.',
+  })
+  await page.close()
+})
+
 test('chat thread keeps an error when a different request to the same tool succeeds', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

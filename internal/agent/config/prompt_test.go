@@ -11,7 +11,11 @@ func TestDefaultSystemPromptUsesCompleteDataBeforeExploration(t *testing.T) {
 		"When query results and available definitions cover the user's requested metrics, dates, and comparisons",
 		"answer without exporting a dashboard or searching documentation",
 		"search documentation only when that definition is absent",
-		"On the dashboard_builder surface, edit the exact dashboardId and draftId supplied in context",
+		"When a user asks to build a dashboard in main chat, use compose_chat_dashboard",
+		"use it with its ordered external_leapview_dashboard_visual_NN source items as the latest successful draft baseline",
+		"Set a clear human-readable visual.title for each chart",
+		"The live draft remains a conversation artifact until the user explicitly chooses Save",
+		"Dashboard Builder tools can edit only the exact dashboardId and draftId supplied in dashboard_builder context",
 	} {
 		if !strings.Contains(DefaultSystemPrompt, want) {
 			t.Fatalf("DefaultSystemPrompt does not contain %q", want)

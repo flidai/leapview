@@ -161,10 +161,23 @@ type ChatConversationSummary struct {
 	UpdatedAt       string  `json:"updatedAt" yaml:"updatedAt"`
 }
 
+type ChatDashboardDraftSignal struct {
+	Revision string                           `json:"revision" yaml:"revision"`
+	Title    string                           `json:"title" yaml:"title"`
+	Visuals  []ChatDashboardDraftVisualSignal `json:"visuals" yaml:"visuals"`
+}
+
+type ChatDashboardDraftVisualSignal struct {
+	ID         string `json:"id" yaml:"id"`
+	ArtifactID string `json:"artifactId" yaml:"artifactId"`
+	Title      string `json:"title" yaml:"title"`
+}
+
 type ChatSignal struct {
 	ActiveConversationID string                     `json:"activeConversationId" yaml:"activeConversationId"`
 	Composer             ComposerSignal             `json:"composer" yaml:"composer"`
 	Conversations        []ChatConversationSummary  `json:"conversations" yaml:"conversations"`
+	DashboardDraft       *ChatDashboardDraftSignal  `json:"dashboardDraft,omitempty" yaml:"dashboardDraft,omitempty"`
 	Status               ChatStatus                 `json:"status" yaml:"status"`
 	Transcript           []ChatTranscriptItemSignal `json:"transcript" yaml:"transcript"`
 }
