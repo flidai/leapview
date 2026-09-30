@@ -15,6 +15,7 @@ import {
   MessagesSquare,
 	Monitor,
 	PanelLeft,
+	PinOff,
 	Plus,
 	Plug,
 	Search,
@@ -36,8 +37,8 @@ import { sidebarControlStyles } from './sidebar-controls'
 import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
 import { renderSidebarChatHistory, renderSidebarChatHistoryItem, sidebarChatHistoryStyles, sidebarPinnedChats, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
-import { catalogPinsChangedEvent, readPinnedDashboardLinks, scopedCatalogPinLinksStorageKey, scopedCatalogPinsStorageKey, type PinnedDashboardLink } from '../app/catalog-pins'
-import { readStringList } from '../app/catalog-preferences'
+import { catalogPinsChangedEvent, readPinnedDashboardLinks, scopedCatalogPinLinksStorageKey, scopedCatalogPinsStorageKey, syncPinnedDashboardLinks, type PinnedDashboardLink } from '../app/catalog-pins'
+import { readStringList, writeStorage } from '../app/catalog-preferences'
 
 type NavItem = {
   id: string
@@ -690,6 +691,23 @@ class LeapViewSidebar extends LitElement {
     .nav-item.disabled {
       cursor: not-allowed;
       opacity: var(--opacity-disabled);
+    }
+
+    .pinned-dashboard-row > .nav-item {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .pinned-dashboard-row:hover > .nav-item,
+    .pinned-dashboard-row:focus-within > .nav-item {
+      padding-right: calc(var(--control-small-size) + var(--base-size-8));
+      background: transparent;
+    }
+
+    @media (hover: none) {
+      .pinned-dashboard-row > .nav-item {
+        padding-right: calc(var(--control-small-size) + var(--base-size-8));
+      }
     }
 
     .nav-icon {
@@ -1650,6 +1668,19 @@ class LeapViewSidebar extends LitElement {
     if (principalID && (event.key === scopedCatalogPinLinksStorageKey(principalID) || event.key === scopedCatalogPinsStorageKey(principalID) || event.key === null)) this.refreshPinnedDashboards()
   }
 
+  private unpinDashboard(event: MouseEvent, dashboard: PinnedDashboardLink): void {
+    event.stopPropagation()
+    const principalID = this.config.principalId?.trim()
+    if (!principalID) return
+    const key = scopedCatalogPinsStorageKey(principalID)
+    const pinnedIDs = readStringList(key)
+    const remaining = pinnedIDs.filter(id => id !== dashboard.id && !id.endsWith(`:${dashboard.id}`))
+    if (remaining.length === pinnedIDs.length) return
+    writeStorage(key, remaining)
+    syncPinnedDashboardLinks(principalID, remaining, [], true)
+    this.refreshPinnedDashboards()
+  }
+
   private renderPinnedItems() {
     if (this.config.admin) return null
     const chats = sidebarPinnedChats(this.config.history, this.pendingRemovalIds)
@@ -1658,10 +1689,15 @@ class LeapViewSidebar extends LitElement {
       <section class="nav-group pinned-items" aria-label="Pinned">
         <strong class="nav-group-label" role="heading" aria-level="2">Pinned</strong>
         ${this.pinnedDashboardLinks.map(dashboard => html`
-          <a class="nav-item" href=${dashboard.href} aria-label=${dashboard.title} aria-current=${this.config.dashboardId === dashboard.id ? 'page' : 'false'} title=${dashboard.title} @click=${(event: MouseEvent) => this.followInternalLink(event, dashboard.href)}>
-            <span class="nav-icon">${lucideIcon(lucideIconByCanonicalName(dashboard.icon || 'layout-dashboard'))}</span>
-            <span class="nav-text"><strong>${dashboard.title}</strong></span>
-          </a>
+          <div class="history-row pinned-dashboard-row">
+            <a class="nav-item" href=${dashboard.href} aria-label=${dashboard.title} aria-current=${this.config.dashboardId === dashboard.id ? 'page' : 'false'} title=${dashboard.title} @click=${(event: MouseEvent) => this.followInternalLink(event, dashboard.href)}>
+              <span class="nav-icon">${lucideIcon(lucideIconByCanonicalName(dashboard.icon || 'layout-dashboard'))}</span>
+              <span class="nav-text"><strong>${dashboard.title}</strong></span>
+            </a>
+            <div class="history-actions" aria-label=${`Quick actions for ${dashboard.title}`}>
+              <button class="history-action" type="button" aria-label=${`Unpin ${dashboard.title}`} title="Unpin dashboard" @click=${(event: MouseEvent) => this.unpinDashboard(event, dashboard)}>${lucideIcon(PinOff, { size: 16 })}</button>
+            </div>
+          </div>
         `)}
         ${chats.map(chat => renderSidebarChatHistoryItem(chat, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item)))}
       </section>
