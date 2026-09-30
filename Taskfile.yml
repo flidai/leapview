@@ -499,7 +499,6 @@ tasks:
   ci:test:docs-site:
     desc: Validate authored documentation and the independently deployable public site
     cmds:
-      - task: site:observation:test
       - |
         bash scripts/check_generated_snapshots.sh \
           .env.example \
@@ -515,6 +514,7 @@ tasks:
           schemas/desktop \
           schemas/json \
           -- task --force docs:generate
+      - task: site:observation:test
       - task: docs:check
       - task: site:build
       - bun run test:docs-diagrams

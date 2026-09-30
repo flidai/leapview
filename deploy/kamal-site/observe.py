@@ -121,7 +121,7 @@ def ssh_environment():
 
 
 def explicit_ssh_identity_paths(config_path, target):
-    paths=[]
+    paths={'identityfile':set(), 'userknownhostsfile':set()}
     target=validate_target(target)
     host_patterns=None
     active=True
@@ -144,15 +144,21 @@ def explicit_ssh_identity_paths(config_path, target):
         if option=='include':
             raise ValueError('SSH config must be self-contained; Include is not allowed')
         if option=='match': raise ValueError('SSH Match blocks are not allowed in the pinned observer config')
-        if option!='identityfile' or not active: continue
-        if len(fields)!=2 or '$' in fields[1] or '%' in fields[1]:
-            raise ValueError('SSH IdentityFile must be an explicit literal path')
-        path=Path(fields[1]).expanduser()
-        if not path.is_absolute(): path=Path.cwd()/path
-        paths.append(str(path.resolve()))
-    if not paths:
+        if option not in paths or not active: continue
+        if len(fields)<2:
+            raise ValueError('SSH ' + ('IdentityFile' if option=='identityfile' else 'UserKnownHostsFile')
+                             + ' must be an explicit absolute path')
+        for value in fields[1:]:
+            path=Path(value)
+            if not path.is_absolute() or '$' in value or '%' in value or value.lower()=='none':
+                raise ValueError('SSH ' + ('IdentityFile' if option=='identityfile' else 'UserKnownHostsFile')
+                                 + ' must be an explicit absolute path')
+            paths[option].add(str(path))
+    if not paths['identityfile']:
         raise ValueError('SSH config must explicitly provide an IdentityFile')
-    return set(paths)
+    if not paths['userknownhostsfile']:
+        raise ValueError('SSH config must explicitly provide a UserKnownHostsFile')
+    return paths
 
 
 def read_json_file(path):
@@ -318,7 +324,7 @@ def verify_ssh_config(config_path, fingerprint_path, target):
     pinned = fp.read_text().strip()
     if not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', pinned):
         raise ValueError('invalid pinned host fingerprint')
-    explicit_identities=explicit_ssh_identity_paths(cfg,target)
+    explicit_paths=explicit_ssh_identity_paths(cfg,target)
     p = subprocess.run(['ssh', '-G', '-F', str(cfg), target], capture_output=True, text=True,
                        timeout=10,env=ssh_environment())
     if p.returncode:
@@ -342,11 +348,21 @@ def verify_ssh_config(config_path, fingerprint_path, target):
         raise ValueError('SSH config must pin direct root access without a proxy')
     kh_values = resolved.get('userknownhostsfile', [])
     if not kh_values: raise ValueError('pinned known-hosts file missing from SSH config')
+    known_hosts_paths=set()
+    for raw in kh_values:
+        for hostfile in raw.split():
+            if hostfile.lower()=='none': continue
+            if not Path(hostfile).is_absolute():
+                raise ValueError('resolved UserKnownHostsFile must be absolute')
+            known_hosts_paths.add(str(Path(hostfile)))
+    if (not known_hosts_paths
+            or not known_hosts_paths.issubset(explicit_paths['userknownhostsfile'])):
+        raise ValueError('resolved known-host files must be explicit absolute paths')
     matched = False; host_fingerprints=set()
     for raw in kh_values:
         for hostfile in raw.split():
             if hostfile.lower() == 'none': continue
-            kh = Path(hostfile).expanduser()
+            kh = Path(hostfile)
             if not kh.is_file(): continue
             found = subprocess.run(['ssh-keygen', '-F', target, '-f', str(kh)], capture_output=True, text=True, timeout=10)
             if found.returncode: continue
@@ -357,9 +373,10 @@ def verify_ssh_config(config_path, fingerprint_path, target):
                 matched=True; host_fingerprints.update(seen)
     if not matched or host_fingerprints != {pinned}:
         raise ValueError('known-host entry does not match the reviewed fingerprint')
-    identity_paths={str(Path(value).expanduser().resolve()) for value in resolved.get('identityfile', [])}
-    if not identity_paths or not identity_paths.issubset(explicit_identities):
-        raise ValueError('resolved SSH identities must all be explicit in the supplied SSH config')
+    identity_paths={str(Path(value)) for value in resolved.get('identityfile', [])}
+    if (not identity_paths or any(not Path(value).is_absolute() for value in identity_paths)
+            or not identity_paths.issubset(explicit_paths['identityfile'])):
+        raise ValueError('resolved SSH identities must be explicit absolute paths in the supplied SSH config')
     for value in identity_paths:
         key = Path(value)
         if not key.is_file(): raise ValueError('SSH identity file is unavailable')
@@ -610,12 +627,14 @@ def _append_jsonl(path,value):
     finally: os.close(fd)
 
 
-def _initial_summary(config, start_wall):
+def _initial_summary(config, start_wall, clock_tolerance):
     return {'schema':1,'status':'running','scope':'health_and_storage_observation_only',
             'rollout_acceptance':'incomplete_public_adoption_smoke_required',
             'required_external_gates':{'public_adoption_smoke_at_start':'required_not_recorded_by_observer',
                                        'public_adoption_smoke_at_end':'required_not_recorded_by_observer'},
             'started_at':utc(start_wall),'duration_seconds':config['duration_seconds'],
+            'clock_origin_wall_unix_seconds':start_wall,
+            'clock_tolerance_seconds':clock_tolerance,
             'probe_interval_seconds':config['probe_interval_seconds'],'host_interval_seconds':config['host_interval_seconds'],
             'target':config['target'],'base_url':config['base_url'],
             'identity':config['identity'],'prior_version':config['prior_version'],
@@ -646,7 +665,7 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
     out=_ensure_protected_dir(output_dir)
     event_path=out/'samples.jsonl'; summary_path=out/'summary.json'
     start_m=monotonic(); start_w=wall_time(); wall_mono_offset=start_w-start_m
-    summary=_initial_summary(config,start_w)
+    summary=_initial_summary(config,start_w,clock_tolerance)
     _write_json_atomic(summary_path,summary)
     _write_json_atomic(out/'process.json',{'pid':os.getpid(),'start_ticks':proc_identity(os.getpid())['start_ticks'],
                                            'boot_id':proc_boot_id(),'observer_sha256':source_sha})
@@ -654,6 +673,7 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
     baseline=None; failure=None; index=0; next_deadline=start_m
     def reject(reason, observed_m, observed_w):
         _append_jsonl(event_path,{'type':'rejected','observed_at':utc(observed_w),
+                                  'observed_wall_unix_seconds':observed_w,
                                   'elapsed_seconds':round(observed_m-start_m,3),'failure':reason})
     def stop_handler(signum, frame):
         raise ObservationFailure('received stop signal ' + str(signum))
@@ -692,6 +712,7 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
             if end_m>next_deadline+gap_grace: failures.append('sample execution caused a monitoring gap')
             event={'type':'sample','index':index,'scheduled_at':utc(start_w+index*config['probe_interval_seconds']),
                    'observed_at':utc(sample_w),'elapsed_seconds':round(elapsed,3),
+                   'observed_wall_unix_seconds':sample_w,
                    'public_probe_duration_ms':http_duration_ms,
                    'sample_execution_ms':int(round(max(0.0,end_m-sample_m)*1000)),'http':http,
                    'host':host,'host_error':host_error,'failures':failures}
@@ -706,7 +727,9 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
                 expected_host_count=config['duration_seconds']//config['host_interval_seconds']+1
                 if summary['samples']<expected_probe_count or summary['host_samples']<expected_host_count:
                     failure='required full-duration samples are incomplete'; break
-                summary['status']='health_storage_passed'; summary['ended_at']=utc(end_w); summary['elapsed_seconds']=round(end_m-start_m,3)
+                summary['status']='health_storage_passed'; summary['ended_at']=utc(end_w)
+                summary['elapsed_seconds']=round(end_m-start_m,3)
+                summary['ended_wall_unix_seconds']=end_w
                 break
             index+=1; next_deadline=start_m+index*config['probe_interval_seconds']
         if failure:

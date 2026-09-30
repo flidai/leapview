@@ -4,6 +4,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,7 @@ DURATION = 86400
 PROBE_INTERVAL = 60
 HOST_INTERVAL = 900
 GAP_GRACE = 15
+CLOCK_TOLERANCE = 5
 PUBLIC_SAMPLES = 1441
 HOST_SAMPLES = 97
 
@@ -104,7 +106,14 @@ def expected_config(summary):
         raise ValueError('observer does not implement the full health/storage contract')
     result = {key: summary[key] for key in ('identity', 'prior_version', 'active_image_id',
                                           'prior_image_id', 'min_free_bytes', 'min_free_inodes',
-                                          'input_files', 'target', 'base_url', 'observer_sha256')}
+                                          'input_files', 'target', 'base_url', 'observer_sha256',
+                                          'clock_origin_wall_unix_seconds', 'clock_tolerance_seconds')}
+    origin_wall = result['clock_origin_wall_unix_seconds']
+    if (type(origin_wall) not in (int, float) or not math.isfinite(origin_wall)
+            or type(result['clock_tolerance_seconds']) is not int
+            or result['clock_tolerance_seconds'] != CLOCK_TOLERANCE
+            or math.floor(origin_wall) != timestamp(summary['started_at']).timestamp()):
+        raise ValueError('observer clock origin metadata is invalid')
     for key in ('min_free_bytes', 'min_free_inodes'):
         if type(result[key]) is not int or result[key] <= 0:
             raise ValueError('positive qualified reserve thresholds required')
@@ -274,9 +283,15 @@ def preflight(path):
 def validate_complete(config, observer, summary, status):
     if (status != 'health_storage_passed' or summary.get('failure') is not None
             or summary.get('samples') != PUBLIC_SAMPLES or summary.get('host_samples') != HOST_SAMPLES
-            or summary.get('elapsed_seconds', 0) < DURATION
-            or timestamp(summary['ended_at']) < timestamp(config['expected_end'])):
+            or summary.get('elapsed_seconds', 0) < DURATION):
         raise ValueError('full 24-hour health/storage observation has not passed')
+    ended_wall = summary.get('ended_wall_unix_seconds')
+    elapsed_total = summary.get('elapsed_seconds')
+    origin_wall = config['expected']['clock_origin_wall_unix_seconds']
+    if (type(ended_wall) not in (int, float) or not math.isfinite(ended_wall)
+            or abs((ended_wall - origin_wall) - elapsed_total) > CLOCK_TOLERANCE + 0.001
+            or math.floor(ended_wall) != timestamp(summary['ended_at']).timestamp()):
+        raise ValueError('observer end timestamp does not match monotonic duration within clock tolerance')
     process = read_json(Path(config['run_dir']) / 'process.json')
     if process_alive(observer, process):
         raise ValueError('observer is still running after reporting completion')
@@ -291,12 +306,15 @@ def validate_complete(config, observer, summary, status):
         scheduled = timestamp(config['started_at']) + dt.timedelta(seconds=PROBE_INTERVAL * index)
         if (event.get('type') != 'sample' or event.get('index') != index or event.get('failures') != []
                 or timestamp(event['scheduled_at']) != scheduled
-                or not scheduled <= timestamp(event['observed_at']) <= scheduled + dt.timedelta(seconds=GAP_GRACE)
                 or event.get('host_error') is not None):
             raise ValueError('observation contains a missing, late, or failed sample')
         elapsed = event.get('elapsed_seconds')
+        observed_wall = event.get('observed_wall_unix_seconds')
         execution = event.get('sample_execution_ms')
         if (not isinstance(elapsed, (int, float)) or not index * PROBE_INTERVAL <= elapsed <= index * PROBE_INTERVAL + GAP_GRACE
+                or type(observed_wall) not in (int, float) or not math.isfinite(observed_wall)
+                or abs((observed_wall - origin_wall) - elapsed) > CLOCK_TOLERANCE + 0.001
+                or math.floor(observed_wall) != timestamp(event['observed_at']).timestamp()
                 or type(execution) is not int or not 0 <= execution <= GAP_GRACE * 1000
                 # Both fields round independently to milliseconds. Allow only
                 # that rounding error when reconstructing the sample end.
@@ -315,7 +333,7 @@ def validate_complete(config, observer, summary, status):
             if errors:
                 raise ValueError('host observation does not meet the retained-image and storage contract')
     last = json.loads(lines[-1])
-    if last['observed_at'] != summary['last_sample_at'] or timestamp(last['observed_at']) < timestamp(config['expected_end']):
+    if last['observed_at'] != summary['last_sample_at'] or last['elapsed_seconds'] < DURATION:
         raise ValueError('final observation sample does not cover the required end')
     return digest(raw), baseline
 
@@ -335,6 +353,22 @@ def check_current(observer, expected, baseline):
         raise ValueError('current host differs from accepted observation')
 
 
+def sanitized_failure_reason(exc):
+    if isinstance(exc, (OSError, subprocess.SubprocessError)):
+        return 'local file or subprocess operation failed'
+    if isinstance(exc, (ValueError, RuntimeError)):
+        message = str(exc)
+    else:
+        return 'acceptance gate raised ' + type(exc).__name__
+    message = re.sub(r'(?i)\b(password|token|secret|authorization|private[_ -]?key)\b\s*[:=]\s*\S+',
+                     r'\1=<redacted>', message)
+    message = re.sub(r'https?://[^\s\])}>]+', '<url>', message)
+    message = re.sub(r"(?<![A-Za-z0-9])/(?:[^/\s:'\"]+/)*[^/\s:'\"]*", '<path>', message)
+    message = re.sub(r'\b(?:SHA256:)?[A-Za-z0-9+/=_-]{40,}\b', '<redacted-value>', message)
+    message = ' '.join(''.join(c if c.isprintable() else ' ' for c in message).split())
+    return (message or 'acceptance gate failed')[:240]
+
+
 def accept(path):
     bundle = Path(path).absolute()
     private_directory(bundle)
@@ -344,18 +378,20 @@ def accept(path):
     receipt = {'schema': 1, 'status': 'failed', 'scope': 'observation_and_boundary_smokes_only',
                'rollout_acceptance': 'final_retention_and_recovery_audit_required',
                'production_mutations': 'none'}
+    stage = 'bundle_validation'
     try:
         _, config, observer, summary, status = load_bundle(bundle)
+        stage = 'observation_validation'
         event_sha, baseline = validate_complete(config, observer, summary, status)
-        if dt.datetime.now(dt.timezone.utc) < timestamp(config['expected_end']):
-            raise ValueError('acceptance cannot run before the observation ends')
         receipt['samples_sha256'] = event_sha
+        stage = 'current_state_before_smoke'
         check_current(observer, config['expected'], baseline)
         env = {name: os.environ[name] for name in ('HOME', 'PATH', 'LANG', 'LC_ALL', 'TZ') if name in os.environ}
         env.update(LEAPVIEW_PUBLIC_SITE_URL=config['expected']['base_url'],
                    LEAPVIEW_PUBLIC_SITE_ALIASES=','.join(config['aliases']),
                    LEAPVIEW_PUBLIC_RELEASE_MANIFEST=str(bundle / 'public-release.json'),
                    LEAPVIEW_DESKTOP_RELEASE_MANIFEST=str(bundle / 'desktop-release.json'))
+        stage = 'end_smoke'
         with (bundle / 'end-smoke.log').open('xb') as log:
             os.chmod(bundle / 'end-smoke.log', 0o600)
             result = subprocess.run([str(bundle / 'bun'), 'run', str(bundle / 'public_site_smoke.ts')],
@@ -366,12 +402,14 @@ def accept(path):
         log_raw = read_file(bundle / 'end-smoke.log')
         if result.returncode or config['smoke_marker'].encode() not in log_raw:
             raise ValueError('observation-end public adoption smoke failed')
+        stage = 'frozen_inputs_after_smoke'
         load_bundle(bundle)
+        stage = 'current_state_after_smoke'
         check_current(observer, config['expected'], baseline)
         receipt.update(status='passed', end_smoke_sha256=digest(log_raw),
                        config_sha256=digest(read_file(bundle / 'config.json')))
     except Exception as exc:
-        receipt['failure'] = type(exc).__name__
+        receipt['failure'] = {'stage': stage, 'reason': sanitized_failure_reason(exc)}
     write_new(bundle / 'receipt.json', (json.dumps(receipt, sort_keys=True) + '\n').encode())
     return receipt
 

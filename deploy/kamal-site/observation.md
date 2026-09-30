@@ -12,7 +12,10 @@ full interval after a new start smoke; preserve each failed run.
 Use protected operator storage and the existing pinned SSH identity, host-key
 fingerprint, and self-contained SSH config. The config must explicitly select
 the identity, `User root`, `IdentitiesOnly yes`, `BatchMode yes`, strict host-key
-checking, port 22, and the reviewed known-host file. Agent credentials, proxy
+checking, port 22, and the reviewed known-host file. `IdentityFile` and
+`UserKnownHostsFile` must be absolute literal paths; tilde, environment, percent,
+and working-directory-relative paths are rejected so scheduled runs do not
+depend on their current directory. Agent credentials, proxy
 commands/jumps, `Include`, and `Match` configuration are not supported.
 
 Set these shell variables to verified operator inputs before using the commands:
@@ -57,6 +60,14 @@ record individual and total durations. A successful run requires 1,441 public
 and 97 host samples. Host checks cover exact active/prior images and containers,
 restart counts, private proxy/Caddy topology, qualified filesystem reserves,
 disabled updater, and absence of pending work/ownership/locks.
+
+Monotonic elapsed time controls cadence and the full 24-hour qualification. The
+observer records the precise wall-clock origin and each sample/end wall-clock
+reading alongside UTC timestamps rounded down to seconds. Wall-clock corrections
+of up to five seconds are allowed and checked against monotonic elapsed time, so
+an observed UTC timestamp can fall a few seconds before or after its nominal
+schedule without changing the interval qualification. Larger divergence fails
+the run.
 
 ```sh
 nohup python3 -B "$OBSERVER" run \
@@ -119,8 +130,9 @@ and after that smoke. It uses a minimal child environment and never forwards
 GitHub tokens or SSH agent variables. HTTP and `www` aliases are checked by
 default for the public site; another HTTPS origin requires explicit aliases.
 
-An attempt is one-shot. Failed checks produce a protected failed receipt and do
-not silently become success. A killed attempt is interrupted; keep its artifacts
+An attempt is one-shot. Failed checks produce a protected receipt with the failing
+stage and a sanitized reason, without copying subprocess stderr or private paths.
+A killed attempt is interrupted; keep its artifacts
 and investigate before creating a new bundle/run. Even a passed receipt covers
 only observation and boundary smokes: final backup integrity, retained-image
 inventory, recovery evidence/runbook review, and fallback closure remain required.

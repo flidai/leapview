@@ -3,6 +3,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import threading
 import unittest
@@ -98,7 +99,7 @@ class FakeClock:
 
 
 class ObserverTests(unittest.TestCase):
-    def run_fixture(self, cfg=None, *, clock=None, http=None, host=None):
+    def run_fixture(self, cfg=None, *, clock=None, http=None, host=None, clock_tolerance=5):
         cfg = cfg or config(); clock = clock or FakeClock()
         tmp = tempfile.TemporaryDirectory()
         out = Path(tmp.name) / 'run'
@@ -109,7 +110,7 @@ class ObserverTests(unittest.TestCase):
                 http_probe=http or http_good,
                 host_sample=host or host_sample,
                 monotonic=clock.monotonic, wall_time=clock.wall, sleep=clock.sleep,
-                gap_grace=5, clock_tolerance=2)
+                gap_grace=5, clock_tolerance=clock_tolerance)
         events = [json.loads(line) for line in (out / 'samples.jsonl').read_text().splitlines()]
         return tmp, out, result, events
 
@@ -330,8 +331,10 @@ class ObserverTests(unittest.TestCase):
                    and node.targets[0].id in ('template','network_template')}
         self.assertIn('"mounts":[{{range $i,$m := .Mounts}}',templates['template'])
         self.assertIn('{{range $name,$network := .NetworkSettings.Networks}}',templates['network_template'])
-        go_file=Path(__file__).parent/'testdata'/'observe_template.go'
+        go_source=Path(__file__).parent/'testdata'/'observe_template.go.txt'
         with tempfile.TemporaryDirectory() as directory:
+            go_file=Path(directory)/'observe_template.go'
+            go_file.write_bytes(go_source.read_bytes())
             binary=Path(directory)/'render-template'
             built=subprocess.run(['go','build','-o',str(binary),str(go_file)],capture_output=True,
                                  text=True,env={**os.environ,'GOWORK':'off','GO111MODULE':'off'},timeout=60)
@@ -393,13 +396,30 @@ class ObserverTests(unittest.TestCase):
         finally: tmp.cleanup()
 
     def test_wall_clock_jump_is_rejected(self):
-        clock=FakeClock(); clock.jump_after_sleep=3
+        clock=FakeClock(); clock.jump_after_sleep=6
         tmp,_,result,events=self.run_fixture(clock=clock)
         try:
             self.assertEqual(result['status'],'failed')
             self.assertIn('clocks diverged',result['failure'])
             self.assertEqual(events[-1]['type'],'rejected')
         finally: tmp.cleanup()
+
+    def test_permitted_positive_and_negative_wall_clock_corrections_pass(self):
+        for correction in (-4, 4):
+            with self.subTest(correction=correction):
+                clock=FakeClock(); clock.jump_after_sleep=correction
+                tmp,out,result,events=self.run_fixture(clock=clock)
+                try:
+                    self.assertEqual(result['status'],'health_storage_passed')
+                    shifted=events[1]
+                    self.assertEqual(shifted['elapsed_seconds'],60)
+                    self.assertAlmostEqual(shifted['observed_wall_unix_seconds'] -
+                                           result['clock_origin_wall_unix_seconds'],60 + correction,places=3)
+                    self.assertEqual(shifted['observed_at'] < shifted['scheduled_at'],correction < 0)
+                    self.assertAlmostEqual(result['ended_wall_unix_seconds'] -
+                                           result['clock_origin_wall_unix_seconds'],
+                                           result['elapsed_seconds'] + correction,places=3)
+                finally: tmp.cleanup()
 
     def test_interrupted_process_status_is_not_success_or_resumable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -430,7 +450,7 @@ class ObserverTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); os.chmod(root,0o700)
             cfg=root/'ssh_config'; pin=root/'host-fingerprint'; known=root/'known_hosts'; identity=root/'identity'
-            for path,contents in ((cfg,'Host *\n IdentityFile '+str(identity)+'\n'),
+            for path,contents in ((cfg,'Host *\n IdentityFile '+str(identity)+'\n UserKnownHostsFile '+str(known)+'\n'),
                                   (pin,'SHA256:'+'A'*43+'\n'),(known,'fixture ssh-ed25519 AAAA\n'),
                                   (identity,'fixture-only-key')):
                 path.write_text(contents); os.chmod(path,0o600)
@@ -452,6 +472,53 @@ class ObserverTests(unittest.TestCase):
             cfg.write_text('Host another.example\n IdentityFile '+str(identity)+'\n'); os.chmod(cfg,0o600)
             with self.assertRaisesRegex(ValueError,'explicitly provide an IdentityFile'):
                 observe.explicit_ssh_identity_paths(cfg,'fixture.example')
+
+    def test_relative_ssh_identity_and_known_hosts_paths_fail_before_ssh_g(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); os.chmod(root,0o700)
+            cfg=root/'ssh_config'; pin=root/'host-fingerprint'; known=root/'known_hosts'; identity=root/'identity'
+            for path,contents in ((pin,'SHA256:'+'A'*43+'\n'),(known,'fixture ssh-ed25519 AAAA\n'),
+                                  (identity,'fixture-only-key')):
+                path.write_text(contents); os.chmod(path,0o600)
+            cases=(('IdentityFile relative-key\n UserKnownHostsFile '+str(known)+'\n','IdentityFile'),
+                   ('IdentityFile '+str(identity)+'\n UserKnownHostsFile relative-known-hosts\n','UserKnownHostsFile'))
+            for directives, label in cases:
+                cfg.write_text('Host fixture.example\n '+directives); os.chmod(cfg,0o600)
+                with self.subTest(label=label), patch.object(observe.subprocess,'run') as command:
+                    with self.assertRaisesRegex(ValueError,'explicit absolute path'):
+                        observe.verify_ssh_config(cfg,pin,'fixture.example')
+                    command.assert_not_called()
+
+    def test_real_ssh_g_resolves_absolute_local_fixture_without_connecting(self):
+        if not shutil.which('ssh') or not shutil.which('ssh-keygen'):
+            self.skipTest('OpenSSH tools are unavailable')
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); os.chmod(root,0o700)
+            identity=root/'fixture-identity'; known=root/'known_hosts'
+            generated=subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(identity)],
+                                     capture_output=True,text=True,timeout=10)
+            self.assertEqual(generated.returncode,0,generated.stderr)
+            public=(root/'fixture-identity.pub').read_text().split()
+            fingerprint=subprocess.run(['ssh-keygen','-lf',str(root/'fixture-identity.pub')],
+                                        capture_output=True,text=True,timeout=10)
+            self.assertEqual(fingerprint.returncode,0,fingerprint.stderr)
+            pin=fingerprint.stdout.split()[1]
+            target='fixture.example'
+            known.write_text(target+' '+public[0]+' '+public[1]+'\n'); os.chmod(known,0o600)
+            fingerprint_pin=root/'host-fingerprint'; fingerprint_pin.write_text(pin+'\n'); os.chmod(fingerprint_pin,0o600)
+            cfg=root/'ssh_config'
+            content=('Host '+target+'\n'
+                     '  HostName '+target+'\n'
+                     '  User root\n'
+                     '  Port 22\n'
+                     '  BatchMode yes\n'
+                     '  IdentitiesOnly yes\n'
+                     '  StrictHostKeyChecking yes\n'
+                     '  IdentityFile '+str(identity)+'\n'
+                     '  UserKnownHostsFile '+str(known)+'\n'
+                     '  GlobalKnownHostsFile none\n')
+            cfg.write_text(content); os.chmod(cfg,0o600)
+            self.assertEqual(observe.verify_ssh_config(cfg,fingerprint_pin,target),str(cfg.resolve()))
 
     def test_record_validation_rejects_wrong_release_or_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:

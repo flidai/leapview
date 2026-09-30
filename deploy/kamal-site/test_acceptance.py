@@ -2,6 +2,7 @@ import copy
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,7 +37,7 @@ class AcceptanceTests(unittest.TestCase):
             path = self.write(name, content)
             inputs[key] = {'path': str(path), 'sha256': acceptance.digest(path.read_bytes())}
         cfg.update(input_files=inputs, observer_sha256=observe.observer_source_sha256())
-        self.summary = observe._initial_summary(cfg, self.started.timestamp())
+        self.summary = observe._initial_summary(cfg, self.started.timestamp(), acceptance.CLOCK_TOLERANCE)
         self.summary.update(samples=1, host_samples=1, elapsed_seconds=1,
                             last_sample_at=self.iso(self.started))
         self.write_run('summary.json', self.summary)
@@ -79,15 +80,22 @@ class AcceptanceTests(unittest.TestCase):
         http = http_good()
         for response in http.values():
             response['canonical_url'] = True
-        self.events = [{'type': 'sample', 'index': index,
-                        'scheduled_at': self.iso(self.started + dt.timedelta(seconds=60 * index)),
-                        'observed_at': self.iso(self.started + dt.timedelta(seconds=60 * index)),
-                        'elapsed_seconds': index * 60, 'sample_execution_ms': 1,
-                        'http': copy.deepcopy(http), 'host': host_sample() if index % 15 == 0 else None,
-                        'host_error': None, 'failures': []} for index in range(1441)]
+        origin = self.summary['clock_origin_wall_unix_seconds']
+        self.events = []
+        for index in range(1441):
+            elapsed = index * 60
+            observed_wall = origin + elapsed
+            self.events.append({'type': 'sample', 'index': index,
+                'scheduled_at': self.iso(dt.datetime.fromtimestamp(math.floor(origin) + elapsed, dt.timezone.utc)),
+                'observed_at': self.iso(dt.datetime.fromtimestamp(math.floor(observed_wall), dt.timezone.utc)),
+                'observed_wall_unix_seconds': observed_wall,
+                'elapsed_seconds': elapsed, 'sample_execution_ms': 1,
+                'http': copy.deepcopy(http), 'host': host_sample() if index % 15 == 0 else None,
+                'host_error': None, 'failures': []})
         self.save_events()
         self.summary.update(status='health_storage_passed', elapsed_seconds=86400,
-                            ended_at=self.iso(self.started + dt.timedelta(days=1)),
+                            ended_at=self.iso(dt.datetime.fromtimestamp(math.floor(origin + 86400), dt.timezone.utc)),
+                            ended_wall_unix_seconds=origin + 86400,
                             last_sample_at=self.events[-1]['observed_at'], samples=1441, host_samples=97)
         self.write_run('summary.json', self.summary)
 
@@ -188,6 +196,9 @@ class AcceptanceTests(unittest.TestCase):
         cases = [lambda event: event.update(failures=['503']),
                  lambda event: event.update(observed_at=self.iso(self.started + dt.timedelta(seconds=36016))),
                  lambda event: event.update(elapsed_seconds=36016),
+                 lambda event: event.update(observed_wall_unix_seconds=event['observed_wall_unix_seconds'] + 6,
+                                             observed_at=self.iso(dt.datetime.fromtimestamp(math.floor(
+                                                 event['observed_wall_unix_seconds'] + 6), dt.timezone.utc))),
                  lambda event: event.update(sample_execution_ms=15001),
                  lambda event: event.update(elapsed_seconds=36010, sample_execution_ms=10000),
                  lambda event: event['http'].pop('readyz'),
@@ -199,6 +210,51 @@ class AcceptanceTests(unittest.TestCase):
                 self.save_events()
                 with self.assertRaises(ValueError):
                     self.validate()
+
+    def shift_wall_clock(self, correction, *, from_index=1):
+        origin = self.summary['clock_origin_wall_unix_seconds']
+        for event in self.events:
+            offset = correction if event['index'] >= from_index else 0
+            event['observed_wall_unix_seconds'] = origin + event['elapsed_seconds'] + offset
+            observed = dt.datetime.fromtimestamp(math.floor(event['observed_wall_unix_seconds']), dt.timezone.utc)
+            event['observed_at'] = observed.isoformat().replace('+00:00', 'Z')
+        self.summary['ended_wall_unix_seconds'] = origin + self.summary['elapsed_seconds'] + correction
+        ended = dt.datetime.fromtimestamp(math.floor(self.summary['ended_wall_unix_seconds']), dt.timezone.utc)
+        self.summary['ended_at'] = ended.isoformat().replace('+00:00', 'Z')
+        self.summary['last_sample_at'] = self.events[-1]['observed_at']
+        self.save_events()
+        self.write_run('summary.json', self.summary)
+
+    def test_permitted_wall_clock_corrections_are_validated_against_monotonic_elapsed(self):
+        self.complete()
+        base_events = copy.deepcopy(self.events)
+        base_summary = copy.deepcopy(self.summary)
+        for correction in (-4, 4):
+            with self.subTest(correction=correction):
+                self.events = copy.deepcopy(base_events)
+                self.summary = copy.deepcopy(base_summary)
+                self.shift_wall_clock(correction)
+                self.validate()
+
+    def test_wall_clock_drift_over_tolerance_is_rejected(self):
+        self.complete()
+        self.shift_wall_clock(6, from_index=600)
+        with self.assertRaisesRegex(ValueError, 'clock tolerance'):
+            self.validate()
+
+    def test_fractional_clock_origin_keeps_second_floor_consistent(self):
+        self.started = self.started.replace(microsecond=999800)
+        self.summary['clock_origin_wall_unix_seconds'] = self.started.timestamp()
+        self.write_run('summary.json', self.summary)
+        self.complete()
+        origin = self.summary['clock_origin_wall_unix_seconds']
+        event = self.events[1]
+        event['elapsed_seconds'] = 60.0004
+        event['observed_wall_unix_seconds'] = origin + event['elapsed_seconds']
+        event['observed_at'] = self.iso(dt.datetime.fromtimestamp(
+            math.floor(event['observed_wall_unix_seconds']), dt.timezone.utc))
+        self.save_events()
+        self.validate()
 
     def test_host_reserve_or_restart_failure_is_independently_rejected(self):
         self.complete()
@@ -253,8 +309,33 @@ class AcceptanceTests(unittest.TestCase):
         with patch.object(acceptance, 'process_alive', return_value=False), \
                 patch.object(acceptance, 'check_current', side_effect=ValueError('changed host')), \
                 patch.object(acceptance.subprocess, 'run') as command:
-            self.assertEqual(acceptance.accept(self.bundle)['status'], 'failed')
+            result = acceptance.accept(self.bundle)
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['failure']['stage'], 'current_state_before_smoke')
+            self.assertEqual(result['failure']['reason'], 'changed host')
             command.assert_not_called()
+
+    def test_failure_receipt_redacts_sensitive_values(self):
+        self.complete()
+        with patch.object(acceptance, 'process_alive', return_value=False), \
+                patch.object(acceptance, 'check_current', side_effect=ValueError(
+                    'token=TOPSECRET /home/operator/.ssh/id_ed25519')):
+            result = acceptance.accept(self.bundle)
+        self.assertEqual(result['failure']['stage'], 'current_state_before_smoke')
+        self.assertNotIn('TOPSECRET', result['failure']['reason'])
+        self.assertNotIn('/home/operator', result['failure']['reason'])
+
+    def test_subprocess_stderr_is_not_copied_into_failure_receipt(self):
+        self.complete()
+        import subprocess
+        with patch.object(acceptance, 'process_alive', return_value=False), \
+                patch.object(acceptance, 'check_current'), \
+                patch.object(acceptance.subprocess, 'run', side_effect=subprocess.CalledProcessError(
+                    1, ['bun'], stderr='PRIVATE SSH KEY')):
+            result = acceptance.accept(self.bundle)
+        self.assertEqual(result['failure']['stage'], 'end_smoke')
+        self.assertEqual(result['failure']['reason'], 'local file or subprocess operation failed')
+        self.assertNotIn('PRIVATE SSH KEY', json.dumps(result))
 
     def test_symlinked_inputs_and_unprotected_bundle_are_rejected(self):
         alternate = self.root / 'symlink.ts'
