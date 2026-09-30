@@ -1,5 +1,6 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import { compactScrollLegendGeometry } from './compact-scroll-legend'
+import { proportionalOutsideLabelsFitCompactCanvas } from './proportional-label-fit'
 
 const COMPACT_WIDTH = 480
 const COMPACT_HEIGHT = 280
@@ -23,7 +24,7 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
   }
 }
 
-export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number, focused = false): string {
+export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number, focused = false, option?: Record<string, any>): string {
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
   if (envelope.spec.kind === 'polar' && envelope.spec.mark === 'gauge') {
     return `${compact ? 'compact' : 'roomy'}:gauge-${gaugeTickLabelsHidden(width, height) ? 'quiet' : 'labeled'}`
@@ -51,9 +52,9 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
   if (envelope.spec.presentation.labelPosition === 'inside') {
     return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}:focus-${focused}`
   }
-  // Focus moves authored side legends to the bottom, so use their responsive
-  // position for both outside-label bounds and bottom-legend radius breakpoints.
-  const authoredSideLegendMovesBottom = focused
+  // Compact layouts and focus move authored side legends to the bottom, so
+  // use their responsive position for outside-label and radius breakpoints.
+  const authoredSideLegendMovesBottom = (compact || focused)
     && (envelope.spec.presentation.legend === 'left' || envelope.spec.presentation.legend === 'right')
   const responsiveBottomLegend = envelope.spec.presentation.legend === 'bottom' || authoredSideLegendMovesBottom
   const bounded = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
@@ -61,7 +62,13 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
     || (responsiveBottomLegend && width < 800)
   const narrowBottomLegendRadius = !compact && width < 600 && responsiveBottomLegend
     && (envelope.spec.mark === 'pie' || envelope.spec.mark === 'donut')
-  const bottomRadiusLayout = narrowBottomLegendRadius ? ':bottom-radius-narrow' : ''
+  const shortBottomLegendRadius = width < 600 && height < COMPACT_HEIGHT && responsiveBottomLegend
+    && (envelope.spec.mark === 'pie' || envelope.spec.mark === 'donut')
+  const compactLabelFit = shortBottomLegendRadius && option
+    ? proportionalOutsideLabelsFitCompactCanvas(option.series, option.dataset, width, height) ? 'expanded' : 'bounded'
+    : 'bounded'
+  const bottomRadiusLayout = shortBottomLegendRadius ? `:bottom-radius-short-${compactLabelFit}`
+    : narrowBottomLegendRadius ? ':bottom-radius-narrow' : ''
   return bounded
     ? `${compact ? 'compact' : 'roomy'}:outside-bounded${bottomRadiusLayout}:focus-${focused}`
     : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}${bottomRadiusLayout}:focus-${focused}`
@@ -76,7 +83,10 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const bottomLegend = (compact || focused) && visibleBottomLegend
   const narrowWithoutLegend = option.legend === undefined && width < 600 && hasPieSeries(option.series)
   const narrowBottomLegend = visibleBottomLegend && width < 600 && hasPieSeries(option.series)
-  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, visibleBottomLegend, movedSide, focused && !compact ? 66 : 56, narrowWithoutLegend, narrowBottomLegend)
+  const narrowBottomLegendCap = narrowBottomLegend
+    ? (height < COMPACT_HEIGHT && proportionalOutsideLabelsFitCompactCanvas(option.series, option.dataset, width, height) ? 56 : 40)
+    : focused && !compact ? 66 : 56
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, visibleBottomLegend, movedSide, narrowBottomLegendCap, narrowWithoutLegend)
   const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
   const graphSeries = responsiveGraphSeries(option.series, width, compact)
   const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
@@ -306,7 +316,7 @@ function wrapWords(value: string, maxCharacters: number): string {
   return lines.join('\n')
 }
 
-function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right', radiusCap = 56, narrowWithoutLegend = false, narrowBottomLegend = false): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right', radiusCap = 56, narrowWithoutLegend = false): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT || narrowWithoutLegend || (bottomLegend && width < 800)
   let hasResponsiveSeries = false
@@ -374,7 +384,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
     if (labelOption.position !== 'outside') return entry
     hasResponsiveSeries = true
-    const reservedRadius = (bottomLegend && (width < 800 || radiusCap > 56)) || narrowWithoutLegend ? compactProportionalRadius(source.radius, narrowWithoutLegend || narrowBottomLegend ? 40 : radiusCap) : undefined
+    const reservedRadius = (bottomLegend && (width < 800 || radiusCap > 56)) || narrowWithoutLegend ? compactProportionalRadius(source.radius, narrowWithoutLegend ? 40 : radiusCap) : undefined
     return {
       ...source,
       ...pieLayout,
