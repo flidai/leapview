@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4 AS node
+FROM node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6 AS node
 
 # A caller may override this empty stage with a named build context containing
 # basemap.pmtiles. The generator verifies the pinned digest before accepting it.
@@ -11,7 +11,9 @@ WORKDIR /src
 
 COPY go.mod go.sum ./
 COPY pkg/apigen/go.mod pkg/apigen/go.sum ./pkg/apigen/
-RUN go mod download
+RUN go mod download || \
+    (sleep 5 && go mod download) || \
+    (sleep 5 && go mod download)
 
 FROM go-deps AS sourcegen
 

@@ -1,0 +1,53 @@
+{
+  "synthetic": true,
+  "production_changed": false,
+  "observations": [],
+  "cycles": [],
+  "harness_sha256": "31e61e46a0fa64cadadcc78bd47ae1ad887c5df3452621ca0da55e66fc284d61",
+  "docker": {
+    "ServerVersion": "29.1.3",
+    "Driver": "overlayfs",
+    "DriverStatus": [
+      [
+        "driver-type",
+        "io.containerd.snapshotter.v1"
+      ]
+    ]
+  },
+  "kamal": "2.12.0",
+  "private_remote_working_directory_verified": true,
+  "images": {
+    "prior": {
+      "id": "sha256:7f3a134780a304650f893abafe71340b5792cd825adf988b72074b30c193ab75",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:7f3a134780a304650f893abafe71340b5792cd825adf988b72074b30c193ab75"
+      ]
+    },
+    "current": {
+      "id": "sha256:377b243d12bc8236928043bbe36587ed169a35c90b9d32a4ba3f80b5bc59bdf0",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:377b243d12bc8236928043bbe36587ed169a35c90b9d32a4ba3f80b5bc59bdf0"
+      ]
+    },
+    "public-rejected": {
+      "id": "sha256:ed957b0f91272b402b55e9264d97d957b7164d8ef64f0f4a0c743c73bde0510d",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:ed957b0f91272b402b55e9264d97d957b7164d8ef64f0f4a0c743c73bde0510d"
+      ]
+    },
+    "accepted": {
+      "id": "sha256:c7dc66c09d16769586eafd18d82746ebdb3a1164aec526920e12740ca32cbd9a",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:c7dc66c09d16769586eafd18d82746ebdb3a1164aec526920e12740ca32cbd9a"
+      ]
+    }
+  },
+  "caddy_tls_www": true,
+  "caddy_tls_host_forwarding_www": true,
+  "deferred_prune_preserves_both_verified_versions_on_public_failure": true,
+  "exact_rejected_and_duplicate_cleanup_preserves_distinct_prior": true,
+  "registry_failure_on_same_version_pull_preserves_live_and_prior": true,
+  "foreign_images_containers_and_shared_layers_preserved": true,
+  "registry_recovery_then_healthy_deployment": true,
+  "storage_edges_sha256": "d2b7562965e5dc0a809a96ffe3469c73997f9ae5ed402049256848a57b0af960"
+}

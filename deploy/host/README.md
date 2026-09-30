@@ -158,3 +158,42 @@ Compose, initialization, or application backup/restore behavior.
 Migration URLs that name TLS certificate or key files must reference existing
 read-only application bind mounts. The one-shot migrator receives only those
 individual files, never the application environment or entire secret directory.
+
+## NixOS host prerequisites
+
+For a NixOS host, import [`nixos.nix`](./nixos.nix) from the host's existing
+flake configuration. For example, add the module to the existing
+`nixosSystem.modules` list:
+
+```nix
+modules = [
+  (inputs.leapview.outPath + "/deploy/host/nixos.nix")
+  ./configuration.nix
+];
+```
+
+Keep host-specific networking, SSH and Tailscale settings, and private provider
+directory configuration in the host configuration. The reusable module enables
+Docker and its Compose v2 CLI plugin, installs Python, OpenSSL and filesystem
+tools, enables `nix-ld` with the C++ runtime library, opens TCP ports 80 and 443
+plus UDP 443, and adds a `leapviewctl` command to the NixOS system package path.
+That command exports `LEAPVIEWCTL_ROOT=/opt/leapview` and executes the installed
+`/opt/leapview/leapviewctl`, forwarding its arguments and exit status. Mutable
+configuration, credentials, and deployment files remain outside the Nix store.
+
+The module only configures host prerequisites. It defines no Compose service,
+installer hook, or application lifecycle action, so `nixos-rebuild switch` does
+not install or initialize LeapView. The normal Docker restart policies continue
+to start existing containers when Docker starts after boot. PostgreSQL is not
+published through the host firewall. The Ubuntu 24.04 and Debian 13
+`bootstrap-linux.sh` path remains unchanged.
+
+After activating the host configuration, check the noninteractive command
+environment before running the normal controller installation procedure:
+
+```sh
+sudo -n leapviewctl version
+docker compose version
+python3 --version
+openssl version
+```

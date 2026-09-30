@@ -48,6 +48,12 @@ updates:
     groups:
       go-dependencies: {patterns: ["*"]}
   - package-ecosystem: gomod
+    directory: /deploy/kamal-trial
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      kamal-trial-go-dependencies: {patterns: ["*"]}
+  - package-ecosystem: gomod
     directory: /pkg/apigen
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
@@ -103,3 +109,16 @@ updates:
     open-pull-requests-limit: 5
     groups:
       site-terraform-providers: {patterns: ["*"]}
+
+  - package-ecosystem: bundler
+    directory: /deploy/kamal-site
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 2
+    groups:
+      site-deployment-tooling: {patterns: ["*"]}
+  - package-ecosystem: bundler
+    directory: /deploy/kamal-trial
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 2
+    groups:
+      kamal-trial-dependencies: {patterns: ["*"]}

@@ -60,7 +60,7 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
-  const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, compact && hasBottomLegend(option.legend))
   const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
   const graphSeries = responsiveGraphSeries(option.series, width, compact)
   const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
@@ -286,7 +286,7 @@ function wrapWords(value: string, maxCharacters: number): string {
   return lines.join('\n')
 }
 
-function responsiveProportionalSeries(value: unknown, width: number, height: number): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
   let hasResponsiveLabels = false
@@ -350,8 +350,10 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
     if (labelOption.position !== 'outside') return entry
     hasResponsiveLabels = true
+    const reservedRadius = bottomLegend && height < COMPACT_HEIGHT ? compactProportionalRadius(source.radius) : undefined
     return {
       ...source,
+      ...(reservedRadius ? { radius: reservedRadius } : {}),
       label: {
         ...labelOption,
         // Edge alignment keeps text inside narrow cards. In roomy views it
@@ -372,6 +374,17 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
   })
   return hasResponsiveLabels ? series : undefined
+}
+
+function compactProportionalRadius(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length !== 2) return undefined
+  const inner = percentNumber(value[0])
+  const outer = percentNumber(value[1])
+  if (inner === undefined || outer === undefined || outer <= 66) return undefined
+  // Outside pie labels can reach the bottom scroll legend in short chat cards.
+  // Scale both radii so the donut ring keeps its authored thickness ratio.
+  const scale = 66 / outer
+  return [`${Math.round(inner * scale * 100) / 100}%`, '66%']
 }
 
 function wrapFunnelOutsideLabel(value: string, width: number, fontSize: number): string {

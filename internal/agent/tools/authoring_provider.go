@@ -52,6 +52,7 @@ type DashboardAuthoring interface {
 	Fork(context.Context, sourceadapter.ForkRequest) (authoringservice.Result, error)
 	Preview(context.Context, previewservice.PreviewRequest) (previewservice.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 	ReadSource(context.Context, authoringapplication.DraftRequest) (authoringapplication.SourceRead, error)
 	EditSource(context.Context, authoringapplication.SourceEditRequest) (authoringapplication.SourceEditResult, error)
 }
@@ -149,7 +150,8 @@ type dashboardAuthoringAssignFieldInput struct {
 
 type dashboardAuthoringExportInput struct {
 	SourceKind  sourceadapter.SourceKind       `json:"sourceKind"`
-	DashboardID dashboardauthoring.DashboardID `json:"dashboardId"`
+	DashboardID dashboardauthoring.DashboardID `json:"dashboardId,omitempty"`
+	StableID    string                         `json:"stableId,omitempty"`
 }
 
 type dashboardAuthoringSourceEditInput struct {
@@ -413,7 +415,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			}
 			return agentcore.ToolResult{Content: value}
 		}),
-		p.definition(ExportDashboardYAMLToolName, "Export an authorized authored dashboard source as canonical project YAML.", "read", agentcontracts.DashboardAuthoringExportInputSchemaJSON, agentcontracts.DashboardAuthoringExportResultSchemaJSON, []string{"dashboard", "authoring", "export"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(ExportDashboardYAMLToolName, "Export an authorized dashboard source as canonical project YAML. Pass exactly one of dashboardId or stableId. Instance sources export the current draft and require RESOURCE_EDIT; project sources export the retained source and require RESOURCE_READ.", "read", agentcontracts.DashboardAuthoringExportInputSchemaJSON, agentcontracts.DashboardAuthoringExportResultSchemaJSON, []string{"dashboard", "authoring", "export"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringExportInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
@@ -422,7 +424,20 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if !ok {
 				return result
 			}
-			id, result, ok := authoredDashboardID(string(input.DashboardID))
+			rawDashboardID := strings.TrimSpace(string(input.DashboardID))
+			if strings.TrimSpace(input.StableID) != "" {
+				if rawDashboardID != "" {
+					return ToolError("invalid_arguments", "provide dashboardId or stableId, not both")
+				}
+				var resolved bool
+				rawDashboardID, resolved = dashboardIDFromStableID(input.StableID, input.SourceKind, project)
+				if !resolved {
+					return ToolError("invalid_arguments", "stableId does not match the requested source and project")
+				}
+			} else if rawDashboardID == "" {
+				return ToolError("invalid_arguments", "dashboardId or stableId is required")
+			}
+			id, result, ok := authoredDashboardID(rawDashboardID)
 			if !ok {
 				return result
 			}
@@ -436,9 +451,16 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, ProjectID: project, DashboardID: id}, ActorID: scope.PrincipalID}
 			var value []byte
 			var err error
-			value, err = p.Application.ExportYAML(ctx, request)
-			if err != nil {
-				return authoringToolError(err)
+			if input.SourceKind == sourceadapter.SourceInstance {
+				value, err = p.Application.ExportDraftYAML(ctx, request)
+				if err != nil {
+					return instanceDraftExportToolError(err)
+				}
+			} else {
+				value, err = p.Application.ExportYAML(ctx, request)
+				if err != nil {
+					return authoringToolError(err)
+				}
 			}
 			yaml := string(value)
 			return agentcore.ToolResult{
@@ -449,6 +471,28 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			}
 		}),
 	}
+}
+
+// Catalog stable IDs include the source kind and trusted project identity.
+// Require both to match before returning the opaque dashboard resource ID.
+func dashboardIDFromStableID(raw string, sourceKind sourceadapter.SourceKind, projectID projectgraph.ResourceID) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if !sourceKind.Valid() {
+		return "", false
+	}
+	prefix := string(sourceKind) + ":" + projectID.String() + ":"
+	if !strings.HasPrefix(raw, prefix) {
+		return "", false
+	}
+	dashboardID := strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+	return dashboardID, dashboardID != ""
+}
+
+func instanceDraftExportToolError(err error) agentcore.ToolResult {
+	if errors.Is(err, access.ErrForbidden) || errors.Is(err, sourceadapter.ErrSourceUnavailable) || errors.Is(err, dashboardauthoring.ErrNotFound) {
+		return ToolError("not_found", "dashboard draft not found")
+	}
+	return authoringToolError(err)
 }
 
 func (p DashboardAuthoringProvider) definition(name, description, effect, input, output string, tags []string, run func(context.Context, agentcore.ToolCall) agentcore.ToolResult) agentcore.ToolDefinition {

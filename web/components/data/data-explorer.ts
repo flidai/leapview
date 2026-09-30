@@ -30,6 +30,7 @@ import {
   toggleVisibleColumns,
 } from './data-explorer-controller'
 import { dataExplorerURL } from './data-explorer-url'
+import './data-explorer-saved'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
@@ -1077,6 +1078,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <header class="header">
           <h1>${page?.title ?? 'Data Explorer'}</h1>
           <div class="header-actions">
+            ${!this.embedded ? html`<lv-data-explorer-saved></lv-data-explorer-saved>` : nothing}
             ${columns.length ? html`
               <details class="header-columns">
                 <summary title="Choose visible columns" aria-label="Choose visible columns">
@@ -1948,9 +1950,8 @@ function datasetGrainLabel(dataset: DataExploreDatasetSignal): string {
 function replaceDataExplorerURL(command: DataExplorerCommand) {
   if (typeof window === 'undefined') return
   const next = dataExplorerURL(command)
-  if (window.location.pathname + window.location.search !== next) {
-    window.history.replaceState({}, '', next)
-  }
+  if (window.location.pathname + window.location.search === next) return
+  window.history.replaceState({}, '', next)
 }
 
 function iconForLayer(layer: string): any {
@@ -1986,8 +1987,7 @@ function queryTargetLabel(object: DataExplorerObjectSignal): string {
 }
 
 function label(value: unknown): string {
-  if (value == null || value === '') return '-'
-  return String(value)
+  return value == null || value === '' ? '-' : String(value)
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)

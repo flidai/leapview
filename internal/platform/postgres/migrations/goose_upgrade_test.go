@@ -136,7 +136,7 @@ func TestRefreshManualIntentMigrationUpgradesVersionFortyFour(t *testing.T) {
 	if exists {
 		t.Fatal("revision 44 unexpectedly contains refresh.manual_intent")
 	}
-	if _, err := provider.Up(t.Context()); err != nil {
+	if _, err := provider.UpTo(t.Context(), 45); err != nil {
 		t.Fatalf("upgrade existing database through revision 45: %v", err)
 	}
 	current, _, err := provider.GetVersions(t.Context())

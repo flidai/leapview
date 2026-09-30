@@ -84,7 +84,7 @@ def _validate_binding(value):
         raise ValueError('Runtime binding workflow run ID is invalid')
     if not isinstance(attempt, str) or not RUN_ID_RE.fullmatch(attempt):
         raise ValueError('Runtime binding workflow attempt is invalid')
-    return {
+    binding = {
         'version': 1,
         'operation': operation,
         'operationId': operation_id,
@@ -93,6 +93,21 @@ def _validate_binding(value):
         'workflowRunId': run_id,
         'workflowAttempt': attempt,
     }
+    qualification_fields = ('qualificationRunId', 'qualificationAttempt', 'permissionProfile')
+    if any(key in value for key in qualification_fields):
+        qualification_run = value.get('qualificationRunId')
+        qualification_attempt = value.get('qualificationAttempt')
+        permission_profile = value.get('permissionProfile')
+        if (not isinstance(qualification_run, str) or not RUN_ID_RE.fullmatch(qualification_run)
+                or not isinstance(qualification_attempt, str) or not RUN_ID_RE.fullmatch(qualification_attempt)
+                or not isinstance(permission_profile, str) or not permission_profile.strip()):
+            raise ValueError('Runtime binding qualification identity is invalid')
+        binding.update(
+            qualificationRunId=qualification_run,
+            qualificationAttempt=qualification_attempt,
+            permissionProfile=permission_profile,
+        )
+    return binding
 
 
 def _binding():
@@ -103,13 +118,35 @@ def _binding():
     return _validate_binding(value)
 
 
+def _verify_qualification_binding(binding):
+    if 'qualificationRunId' not in binding:
+        return
+    if os.environ.get('QUALIFICATION_RUN') != binding['qualificationRunId']:
+        raise ValueError('Runtime binding differs from the admitted qualification run')
+    runner_temp = os.environ.get('RUNNER_TEMP')
+    if not runner_temp:
+        raise ValueError('RUNNER_TEMP is required to verify the admitted qualification')
+    qualification = _read_json(Path(runner_temp)/'demo-qualification.json', 'Qualification receipt')
+    if (qualification.get('runId') != binding['qualificationRunId']
+            or qualification.get('runAttempt') != binding['qualificationAttempt']
+            or qualification.get('image') != binding['candidate']['image']
+            or qualification.get('revision') != binding['candidate']['revision']
+            or qualification.get('qualified') is not True
+            or read_contract(binding['candidate']['revision']).get('permissionProfile') != binding['permissionProfile']):
+        raise ValueError('Runtime binding differs from its admitted qualification receipt')
+
+
 def _binding_from_record(record):
     payload = _payload(record)
     if payload.get('recordType') != ATTEMPT_KIND:
         raise ValueError('Runtime deployment record has no supported outcome contract')
-    binding = {key: payload.get(key) for key in (
+    keys = (
         'version', 'operation', 'operationId', 'candidate', 'predecessor',
-        'workflowRunId', 'workflowAttempt')}
+        'workflowRunId', 'workflowAttempt')
+    binding = {key: payload.get(key) for key in keys}
+    for key in ('qualificationRunId', 'qualificationAttempt', 'permissionProfile'):
+        if key in payload:
+            binding[key] = payload[key]
     return _validate_binding(binding)
 
 
@@ -152,9 +189,13 @@ def _validate_attempt(record, binding):
         raise ValueError('Runtime deployment record targets a different task or environment')
     if payload.get('recordType') != ATTEMPT_KIND:
         raise ValueError('Runtime deployment record has no supported outcome contract')
-    stored = {key: payload.get(key) for key in (
+    keys = (
         'version', 'operation', 'operationId', 'candidate', 'predecessor',
-        'workflowRunId', 'workflowAttempt')}
+        'workflowRunId', 'workflowAttempt')
+    stored = {key: payload.get(key) for key in keys}
+    for key in ('qualificationRunId', 'qualificationAttempt', 'permissionProfile'):
+        if key in payload:
+            stored[key] = payload[key]
     if stored != binding:
         raise ValueError('Runtime binding differs from the immutable deployment record')
     if record.get('sha') != binding['candidate']['revision']:
@@ -178,6 +219,7 @@ def _new_deployment(ref, payload):
 
 def start():
     binding = _binding()
+    _verify_qualification_binding(binding)
     expected_revision = os.environ.get('SOURCE_REVISION', '')
     expected_image = os.environ.get('DEMO_IMAGE', '')
     if (expected_revision != binding['candidate']['revision']
@@ -304,6 +346,19 @@ def _verified_result(outcome, binding):
             return 'unresolved'
         if observed_schema != candidate_schema:
             return 'unresolved'
+        evidence_type = outcome.get('hostEvidenceType')
+        if evidence_type == 'deployment':
+            if outcome.get('deploymentReceiptVerified') is not True:
+                return 'unresolved'
+        elif evidence_type == 'installation':
+            if (binding['operation'] != 'deploy'
+                    or binding['candidate'] != binding['predecessor']
+                    or not all(key in binding for key in (
+                        'qualificationRunId', 'qualificationAttempt', 'permissionProfile'))
+                    or outcome.get('installationEvidenceVerified') is not True):
+                return 'unresolved'
+        else:
+            return 'unresolved'
         return 'committed'
     if result == 'recovered':
         if binding['operation'] in {'upgrade', 'recover'}:
@@ -314,6 +369,9 @@ def _verified_result(outcome, binding):
         if observed != binding['predecessor']:
             return 'unresolved'
         if observed_schema != predecessor_schema:
+            return 'unresolved'
+        if (outcome.get('hostEvidenceType') != 'deployment'
+                or outcome.get('deploymentReceiptVerified') is not True):
             return 'unresolved'
         return 'recovered'
     return 'unresolved'

@@ -18,6 +18,7 @@ describe('UI command boundary analysis', () => {
     expect(inspectUICommandSource('web/components/shared/command.ts', `
       const headers = { 'X-LeapView-Operation-ID': 'saveThing' }
       window.LeapViewCommand = { headers }
+      fetch('/save', { method: 'POST', headers: headers('saveThing') })
     `)).toEqual([])
   })
 

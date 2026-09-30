@@ -113,6 +113,7 @@ func testStoreOptions(store *testControlStore, options assemblyConfig) assemblyC
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
 			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
 			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility("lvinst_test", options.AccessModule.ResolveSemanticAttributes, semanticCatalogAuditRecorder)),
+			projectcatalog.WithSemanticModelSearchTerms(projectmodule.SemanticCatalogSearchTerms()),
 		)
 		if err != nil {
 			panic(err)

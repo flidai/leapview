@@ -59,7 +59,7 @@ Search and list results use the same compact item envelope. It contains the ref,
 
 ## Find an unknown resource
 
-`catalog_search` searches all authorized resources in the server-bound Project. LeapView does not expose a Project-listing step or allow the caller to switch Project context.
+`catalog_search` searches authorized resources in the server-bound Project and can find visible semantic metric and dimension names and labels. LeapView does not expose a Project-listing step or allow the caller to switch Project context.
 
 ```json
 {
@@ -70,17 +70,18 @@ Search and list results use the same compact item envelope. It contains the ref,
 }
 ```
 
-Only `query` is required. Kind and domain filters constrain the search without changing authorization. The default limit is 10 and the maximum is 25.
+Only `query` is required. Kind and domain filters constrain the search without changing authorization. Domain filters use authored resource domain metadata; if no authorized resource exposes domain metadata, the tool returns `catalog_domain_unsupported`. The default limit is 10 and the maximum is 25.
 
 Every search page includes `count` and `hasMore`. Use `nextCursor` unchanged when `hasMore` is true. Cursors are opaque and bound to the search, caller, and catalog snapshot. Restart from the first page if the catalog changed.
 
 ## Browse a known hierarchy
 
-Call `catalog_list` without a parent to list authorized resources across the active, server-bound Project graph. Pass a returned resource ref as `parent` to browse that resource's declared dependencies:
+Call `catalog_list` without a parent to list authorized resources across the active, server-bound Project graph. A project ref for the active Project does the same after checking project-settings read access. Pass a returned resource ref as `parent` to browse that resource's declared dependencies:
 
 | Parent | Children |
 | --- | --- |
 | none | authorized resources in the active Project graph |
+| active project ref | authorized resources in the active Project graph |
 | resource ref | authorized resources referenced by that resource |
 
 ```json
@@ -96,7 +97,7 @@ Call `catalog_list` without a parent to list authorized resources across the act
 
 `childKinds` is optional, but every requested kind must be valid. Results are deterministically ordered. The default limit is 25 and the maximum is 50. Every page includes `count` and `hasMore`; pass `nextCursor` back as `cursor` when `hasMore` is true. Do not parse or edit the cursor.
 
-Listing an exact parent first resolves and authorizes that parent. Search and list silently omit inaccessible results.
+Listing an exact parent first resolves and authorizes that parent. Search and list silently omit inaccessible results. A missing or unauthorized parent returns `catalog_not_found`; an authorized graph resource with no declared dependencies returns `catalog_not_traversable`.
 
 ## Inspect an exact definition
 
@@ -149,7 +150,7 @@ Use the capabilities returned with a catalog item to choose the next tool.
 
 - Use `query_semantic_model` with a semantic-model ref and the field and metric IDs discovered through catalog browsing. It returns governed row data and supports bounded pagination. Agent calls default to 25 rows and accept at most 50 rows per page even though the corresponding REST operation supports larger application-oriented pages.
 - Use `query_dashboard_visual` with exact project and dashboard refs plus the visual location of an existing visual. It preserves the dashboard definition, filters, authorization, and data-policy boundary. The agent receives a compact analytical rowset—not the renderer envelope—with the visual title/type, semantic columns, normalized applied filters, status and diagnostics, cardinality/completeness, query provenance, and freshness. Calls return at most 50 rows per agent page; follow `nextCursor` when `hasMore` is true.
-- Use `query_visual` when no saved visual fits. Provide exact project and semantic-model refs, a dataset, visual type, semantic fields, and optional governed semantic filters. Inline data and arbitrary expressions are rejected. Built-in chat and MCP receive the same compact generated result: field and filter refs, units and formats when defined, row completeness, status and diagnostics, query provenance, freshness, and the display signal. LeapView retains the renderer-independent visualization artifact only as display content; the call does not save or mutate the dashboard.
+- Use `query_visual` when no saved visual fits. Provide exact project and semantic-model refs, a dataset, visual type, semantic fields, and optional governed semantic filters. For `records` queries, provide each field as an explicit `{ "field": "column" }` reference; bare-string shorthand is not accepted. Inline data and arbitrary expressions are rejected. Built-in chat and MCP receive the same compact generated result: field and filter refs, units and formats when defined, row completeness, status and diagnostics, query provenance, freshness, and the display signal. LeapView retains the renderer-independent visualization artifact only as display content; the call does not save or mutate the dashboard.
 
 Semantic query rows are positional. Read each cell using the column at the same index. Precision-sensitive numbers remain strings, while SQL `NULL` is JSON `null` and is distinct from a genuine empty string. Column descriptors identify the governed field or metric ref, label, semantic kind, data type, nullability, unit, and format when defined; these descriptors come from the semantic model and table schema rather than values sampled from the current page.
 
@@ -199,6 +200,8 @@ Catalog lookup deliberately does not reveal inaccessible resources:
 | --- | --- | --- |
 | `invalid_arguments` | The ref, child relationship, limit, filter, or cursor is invalid. | Correct the request using the discovered schema. |
 | `catalog_not_found` | The resource is missing or inaccessible. | Search or list again with the current principal; do not infer which case occurred. |
+| `catalog_not_traversable` | The authorized resource has no declared dependencies to browse. | Use `catalog_get` to inspect the resource, or browse from its owning resource. |
+| `catalog_domain_unsupported` | No authorized catalog resource exposes domain metadata for filtering. | Omit `domain` or add domain metadata to project resources. |
 | `catalog_location_required` | A shared visual or filter needs an exact dashboard/page location. | Retry with one of the returned locations. |
 | `catalog_snapshot_changed` | The catalog changed during cursor pagination. | Restart the search or list from its first page. |
 

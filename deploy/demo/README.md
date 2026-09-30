@@ -130,8 +130,10 @@ project authoring, and release publication. The release principal uses a separat
 inspection. The version-aware client selects scopes before OAuth from the
 independently bound deployed source; it does not authenticate just to discover
 which scopes authentication requires. The typed publisher requests
-`connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read`;
-the reviewer requests `delivery.approve delivery.read`.
+`connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read`
+for source revisions below schema 46, and uses `connection.upload` in place of
+`connection.manage` for schema 46 and later. The reviewer requests
+`delivery.approve delivery.read`.
 These publisher actions are only the short-lived token ceiling needed by
 managed-data ingestion and the retained CFO graph. They do not create role or
 grant authority. Target-owned typed policy must separately authorize each
@@ -147,6 +149,120 @@ pre-existing project grant. This is essential on the first deployment,
 because the project graph is not active until its exact candidate is
 activated. The subsequent authoring, ingestion, publication, approval, and
 activation calls remain protected by the canonical project grants.
+
+### Fresh demo installation bootstrap
+
+For a fresh demo-02 instance, complete the application bootstrap before retrying
+the host installer. Install the PostgreSQL CA at the configured application
+home path, `/var/lib/leapview/home/postgres-root.crt`, before configuration
+validation or any TLS database connection. Preserve the existing credentials
+and encryption keys. Run `admin initialize` through the canonical
+`/opt/leapview` root (`LEAPVIEWCTL_ROOT=/opt/leapview`) and keep its one-time
+credential response in the root-private bootstrap handoff. Then use the
+qualified application image's `admin delivery pool qualify` to generate the
+physical-pool artifacts, and admit them with
+`admin delivery pool bootstrap --pool <pool.json> --evidence <evidence.json> --apply`.
+Retain the generated pool identity in the canonical private application
+configuration.
+
+Start the app on loopback at `127.0.0.1:8081`, then claim the issuer-owned
+project through the supported project-claim flow. A fresh target has no active
+publication, so the initial host-install attempt can remain waiting for
+readiness. That wait is expected until the first publication activates. Do not
+repeat initialization or create a host marker or receipt by hand.
+
+Before that first publication, the claimed human owner must nominate a separate
+human `release_approver` through the authenticated **Admin → Access** command.
+The pre-publication bootstrap accepts that human session and nominee; the
+principal-detail route currently returns HTTP 500 before publication, so use
+the Access surface instead. The reviewer completes OAuth device authorization
+with the custom scope `delivery.approve delivery.read`. Publish the first
+candidate to activate it and the pending access policy.
+
+To move release approval to the permanent service principal, temporarily grant
+the human reviewer `project_admin` and publish that policy change first. Then
+use the supported Admin → Access command to delegate `release_approver` to the
+service principal, then publish and activate that role binding. Confirm a
+release approved by that principal before removing the human reviewer’s
+temporary role or account through the supported admin commands. Stop the
+loopback app with `leapviewctl stop` before retrying host installation:
+credential acknowledgement takes the exclusive application-state lock. After
+the installer completes, continue with the one-time handoff below.
+
+### First-install runtime handoff
+
+A fresh host installation has `.host-install.json` but no rollout receipt. After
+the exact qualified image has been installed, the CFO project has been published,
+and the shared-viewer CFO check passes, create the one-time installation handoff
+with the operator adapter:
+
+```sh
+DEMO_HOST=89.58.13.145 \
+DEMO_IMAGE='ghcr.io/flidai/leapview@sha256:<qualified-digest>' \
+QUALIFICATION_RUN='<successful Main artifacts run ID>' \
+python3 scripts/bootstrap/compose_installation.py
+```
+
+The operator must have `gh` access to the qualification run, the publisher
+principal environment used by the normal publication validator, and the local
+browser dependencies used by `scripts/demo_validate_browser.mjs`. The adapter
+reads the qualification and transition receipts from that exact successful run,
+authenticates the public build revision, then checks the shared viewer's four
+CFO pages before it invokes the remote writer over the pinned demo-02 SSH key.
+If qualification or either authenticated check fails, the writer is not invoked.
+It reads the shared viewer login through the established root-protected handoff;
+the writer receives no credentials.
+
+The root-side writer independently checks the host-install marker, active
+generation bytes against the immutable image payload, running container digest
+and Compose identity, loopback readiness, live Goose schema, and instance ID
+from both PostgreSQL and the application. It records the host target ID from
+the marker and qualification metadata from the admitted artifact. It refuses
+to run when a deployment receipt or host upgrade history already exists.
+The resulting versioned, secret-free
+`/etc/leapview-provider-cfo/compose-installation.json` is created atomically as
+root with mode `0600`. Its UTC `validatedAt` is recorded only after these checks
+finish. The file supplies first-install runtime reconciliation; after a real
+replacement, `compose-deployment.json` remains authoritative.
+
+### First runtime pin and upload compatibility
+
+The restored schema-45 image predates `connection.upload`. Keep
+`DEMO_RUNTIME_REVISION` pinned to the exact source revision already running;
+do not point the fallback at a candidate that has not replaced it. After
+writing first-install evidence, dispatch the normal `deploy` action with the
+same installed digest and its qualification run. This same-image operation
+records the installed runtime because its candidate and predecessor are
+identical. The current adapter selects the schema-45-compatible
+`connection.manage` scope, but the publisher has no exact manage grant and the
+supported delegation path cannot issue connection administration. Its
+publication therefore still fails with HTTP 403 on the old upload path. Treat
+that workflow as an incomplete publication, even though its runtime record
+remains successful and authoritative. A `publish` retry still selects the old
+runtime and fails for the same missing grant.
+
+Then complete the normal `prepare` and `upgrade` flow with the qualified
+schema-46 image that includes the upload action. This must be a real runtime
+replacement. The workflow's runtime job can commit while its separate,
+mandatory publication job fails with HTTP 403 because the schema-46 publisher
+does not yet have its exact `connection.upload` grant. Schema 45 cannot stage
+that newly introduced action, so the grant must wait until schema 46 is active.
+Treat the workflow as incomplete while retaining the successful runtime
+record. Do not broaden publisher grants automatically.
+
+With schema 46 active, use the supported `leapview admin access stage-grant`
+operation to stage one exact `connection.upload` grant for the publisher on
+`connection:finance_files`, using the current policy revision and the normal
+operator approval flow. Then use the existing CFO data to plan, build, and
+publish a candidate without running the upload/data-sync step. The permanent
+release service principal approves this publication; activation makes the
+staged grant effective. Retry the normal deployment/publication workflow only
+after that activation, so its upload step can use the exact grant. Finally, use
+a second qualified digest for the same schema-46 source in the normal image-only
+`deploy` path; this verifies a distinct image replacement and its required
+publication. The first-install evidence exception applies only to the
+same-image runtime record and does not authorize a candidate whose image or
+source differs from the installed predecessor.
 
 ## Database upgrades and interrupted-operation recovery
 
@@ -234,10 +350,12 @@ For the retained CFO source graph, the publisher's typed policy also needs
 `model:finance_products`, `model:finance_segments`,
 `model:financial_performance`, `model:pnl_lines`, `model:pnl_statement`,
 `model:variance_driver_dimension`, and `model:variance_drivers`,
-`semantic.consume` on `semantic-model:finance`, and `connection.read`, `connection.use`, and
-`connection.manage` on `connection:finance_files`. Managed-data synchronization
-needs read access to recover and poll its upload session as well as manage access
-to stage files. These resource grants are
+`semantic.consume` on `semantic-model:finance`, and `connection.read`,
+`connection.use`, and `connection.upload` on `connection:finance_files`.
+Managed-data synchronization needs read access to recover and poll its upload
+session as well as the exact upload grant to stage files. `connection.manage`
+is a separate, non-delegable administration action and does not substitute for
+upload authority. These resource grants are
 independent of the publisher's project-scoped `release_operator` role. The
 schema-32 inventory command does not emit graph dependencies; this list comes
 from the unchanged retained CFO graph. This supported transition path covers

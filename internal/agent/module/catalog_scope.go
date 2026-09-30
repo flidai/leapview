@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
@@ -29,7 +30,13 @@ func (c credentialCatalog) Search(ctx context.Context, scope agenttools.Scope, r
 func (c credentialCatalog) List(ctx context.Context, scope agenttools.Scope, request agenttools.CatalogListRequest) (agenttools.CatalogPage, error) {
 	if request.Parent != nil {
 		id, err := projectgraph.NewResourceID(request.Parent.ID)
-		if err != nil || !CredentialAllowsResource(moduleScopeFromTools(scope), id, projectgraph.Kind(request.Parent.Kind), access.CapabilityResourceRead) {
+		allowed := false
+		if err == nil && projectgraph.Kind(request.Parent.Kind) == projectgraph.KindProjectNamespace {
+			allowed = CredentialAllowsProjectSettingsRead(moduleScopeFromTools(scope), id)
+		} else if err == nil {
+			allowed = CredentialAllowsResource(moduleScopeFromTools(scope), id, projectgraph.Kind(request.Parent.Kind), access.CapabilityResourceRead)
+		}
+		if !allowed {
 			return agenttools.CatalogPage{}, &agenttools.CatalogError{Code: "catalog_not_found", Message: "resource is unknown or unauthorized"}
 		}
 	}
@@ -40,6 +47,25 @@ func (c credentialCatalog) List(ctx context.Context, scope agenttools.Scope, req
 	page.Items = filterCatalogItems(scope, page.Items)
 	page.Count = len(page.Items)
 	return page, nil
+}
+
+func CredentialAllowsProjectSettingsRead(scope Scope, id projectgraph.ResourceID) bool {
+	if !scope.Credential.Restricted || scope.DevAuthBypass {
+		return true
+	}
+	if scope.Credential.PermissionProfile != access.PermissionCatalogProfile {
+		return false
+	}
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(scope.ProjectID))
+	if err != nil || projectID != id {
+		return false
+	}
+	pair, err := access.NewProjectPermissionPair(access.ActionProjectSettingsRead, projectID)
+	if err != nil {
+		return false
+	}
+	required, err := access.RequiredPermissionPairs(pair)
+	return err == nil && permissionPairsAllowAll(scope.Credential.Permissions, required)
 }
 
 func (c credentialCatalog) Get(ctx context.Context, scope agenttools.Scope, request agenttools.CatalogGetRequest) (agenttools.CatalogGetResult, error) {

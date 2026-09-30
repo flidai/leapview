@@ -185,6 +185,12 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyFourWithContrac
 
 	for _, fixture := range fixtures {
 		fixture := fixture
+		// This upgrade stops at schema 36, whose permission validator predates
+		// connection.upload. The schema-45-to-46 test below owns the two
+		// connection.upload corpus cases, including the wrong-resource denial.
+		if fixture.Name == "exact managed data upload" || fixture.Name == "managed data upload cannot target another resource kind" {
+			continue
+		}
 		t.Run(fixture.Name, func(t *testing.T) {
 			var profile any
 			if fixture.Profile != nil {
@@ -210,5 +216,81 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyFourWithContrac
 	}
 	if persisted != 1 {
 		t.Fatalf("valid existing typed token rows = %d, want 1", persisted)
+	}
+}
+
+func TestConnectionUploadPermissionValidatorUpgradeFromSchema45(t *testing.T) {
+	harness := postgrestest.Start(t)
+	owner := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Login: true, Password: "connection-upload-upgrade"})
+	harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
+	harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Login: true, Password: "connection-upload-maintenance"})
+	harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
+	harness.GrantRole(t, owner, migrator)
+	database := harness.NewDatabase(t, "connection_upload_permission_upgrade")
+	harness.GrantDatabase(t, database.Name, owner, "CONNECT", "CREATE")
+	harness.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	admin, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	if _, err := admin.Exec(ctx, `
+		ALTER DATABASE connection_upload_permission_upgrade OWNER TO leapview_control_owner;
+		REVOKE ALL ON SCHEMA public FROM PUBLIC;
+		GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		t.Fatal(err)
+	}
+	migrationDB, err := sql.Open("pgx", database.URL(migrator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = migrationDB.Close() })
+	provider, err := NewProvider(migrationDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 45); err != nil {
+		t.Fatalf("apply predecessor schema 45: %v", err)
+	}
+
+	fixtures := readPermissionPairContractFixtures(t)
+	fixturePairs := func(name string) json.RawMessage {
+		t.Helper()
+		for _, fixture := range fixtures {
+			if fixture.Name == name {
+				return fixture.Pairs
+			}
+		}
+		t.Fatalf("permission contract fixture %q is missing", name)
+		return nil
+	}
+	var accepted bool
+	if err := admin.QueryRow(ctx, `
+		SELECT access.valid_permission_pairs('leapview.permissions/v1', $1::jsonb)`,
+		fixturePairs("exact managed data upload")).Scan(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted {
+		t.Fatal("schema 45 unexpectedly accepts the schema 46 connection.upload action")
+	}
+	if _, err := provider.UpTo(ctx, 46); err != nil {
+		t.Fatalf("upgrade schema 45 to schema 46: %v", err)
+	}
+	for _, name := range []string{"exact managed data upload", "managed data upload cannot target another resource kind", "exact semantic consume"} {
+		fixture := fixturePairs(name)
+		want := name != "managed data upload cannot target another resource kind"
+		var got bool
+		if err := admin.QueryRow(ctx, `
+			SELECT access.valid_permission_pairs('leapview.permissions/v1', $1::jsonb)`, fixture).Scan(&got); err != nil {
+			t.Fatalf("validate fixture %q after schema 46: %v", name, err)
+		}
+		if got != want {
+			t.Errorf("schema 46 permission validity for %q = %t, want %t", name, got, want)
+		}
 	}
 }

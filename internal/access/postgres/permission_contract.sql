@@ -136,6 +136,9 @@ BEGIN
         ELSIF action_name = 'connection.manage' THEN
             expected_scope := 'resource';
             allowed_resource_kinds := ARRAY['connection']::text[];
+        ELSIF action_name = 'connection.upload' THEN
+            expected_scope := 'resource';
+            allowed_resource_kinds := ARRAY['connection']::text[];
         ELSIF action_name = 'resource.share' THEN
             expected_scope := 'resource';
             allowed_resource_kinds := ARRAY['connection', 'source', 'model', 'semantic_model', 'pipeline', 'dashboard']::text[];

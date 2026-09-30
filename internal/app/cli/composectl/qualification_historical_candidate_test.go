@@ -148,8 +148,8 @@ func runQualificationHistoricalCandidateTransition(
 	t.Helper()
 	require.NotNil(t, fixture.Predecessor)
 	require.NotNil(t, fixture.Topology)
-	_, err := fixture.Predecessor.Kill(ctx, "KILL")
-	require.NoError(t, err, "stop the exact schema-32 predecessor before migrating its database")
+	require.NoError(t, stopQualificationHistoricalContainerGracefully(ctx, fixture.Predecessor),
+		"gracefully stop and verify the exact schema-32 predecessor before migrating its database")
 
 	runtime := newTestcontainersQualificationRuntime()
 	project := fixture.ComposeProject
@@ -274,16 +274,34 @@ func runQualificationHistoricalCandidateTransition(
 		currentInventory.PolicyRevision, currentInventory.PolicyDigest)
 	require.Equal(t, http.StatusForbidden, preTransitionStatus,
 		"the migrated but not-yet-transitioned schema-32 policy must reproduce the original viewer denial")
-	_, err = candidate.Kill(ctx, "KILL")
-	require.NoError(t, err, "stop the candidate server before invoking the offline maintenance command")
+	// Match NativeEffects.transitionAccess: artifacts must be created by the
+	// candidate runtime identity, otherwise its private object-store files are
+	// unreadable when the non-root server resumes.
+	uidOutput, err := candidate.Exec(ctx, nil, "id", "-u")
+	require.NoError(t, err)
+	gidOutput, err := candidate.Exec(ctx, nil, "id", "-g")
+	require.NoError(t, err)
+	uid, err := strconv.Atoi(strings.TrimSpace(string(uidOutput)))
+	require.NoError(t, err)
+	gid, err := strconv.Atoi(strings.TrimSpace(string(gidOutput)))
+	require.NoError(t, err)
+	require.Positive(t, uid, "the application must run as a non-root user")
+	require.Positive(t, gid)
+	runtimeUser := fmt.Sprintf("%d:%d", uid, gid)
+	require.NoError(t, stopQualificationHistoricalContainerGracefully(ctx, candidate),
+		"gracefully stop and verify the candidate server before invoking the offline maintenance command")
 
 	publisherHostPath := writeQualificationHistoricalPrivateFile(t, privateRoot, "publisher.secret", []byte(fixture.Seed.PublisherClientSecret))
 	reviewerHostPath := writeQualificationHistoricalPrivateFile(t, privateRoot, "reviewer.secret", []byte(fixture.Seed.ReleaseClientSecret))
 	copyQualificationHistoricalPrivateFile(t, ctx, utility, publisherPath, mustReadQualificationHistoricalPrivateFile(t, publisherHostPath))
 	copyQualificationHistoricalPrivateFile(t, ctx, utility, reviewerPath, mustReadQualificationHistoricalPrivateFile(t, reviewerHostPath))
-	transitionOutput, err := utility.Exec(ctx, nil, "leapview", "admin", "transition-access",
+	_, err = utility.Exec(ctx, nil, "chown", "-R", runtimeUser, transitionDir)
+	require.NoError(t, err, "stage private transition inputs for the candidate runtime identity")
+	transitionCommand := exec.CommandContext(ctx, "docker", "exec", "--user", runtimeUser,
+		project+"-candidate-transition", "leapview", "admin", "transition-access",
 		"--request", requestPath, "--journal", journalPath, "--recovery-digest", recoveryDigest,
 		"--mode", "live", "--publisher-credential-file", publisherPath, "--reviewer-credential-file", reviewerPath)
+	transitionOutput, err := transitionCommand.CombinedOutput()
 	if err != nil {
 		diagnostic := qualificationHistoricalCommandDiagnostic(transitionOutput, err,
 			fixture.Seed.PublisherClientSecret, fixture.Seed.ReleaseClientSecret, fixture.Topology.ControlMigratorURL)

@@ -2,10 +2,12 @@ package module
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -55,6 +57,42 @@ func TestCredentialCatalogHidesWrongTargetFromGetAndParentList(t *testing.T) {
 	}
 	if _, err := catalog.List(t.Context(), scope, agenttools.CatalogListRequest{Parent: &hidden}); err == nil {
 		t.Fatal("typed credential listed children of a parent outside its exact target")
+	}
+}
+
+func TestCredentialCatalogAllowsOnlyExactProjectParentRead(t *testing.T) {
+	projectID := projectgraph.ResourceID("project:analytics")
+	projectPair, err := access.NewProjectPermissionPair(access.ActionProjectSettingsRead, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelPair := mustCatalogPermission(t, access.ActionModelRead, "model_orders", projectgraph.KindModel)
+	scope := agenttools.Scope{ProjectID: projectID.String(), PrincipalID: "principal", Credential: agenttools.CredentialScope{
+		Restricted: true, PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{projectPair, modelPair},
+	}}
+	catalog := credentialCatalog{base: credentialCatalogFake{page: agenttools.CatalogPage{Items: []agenttools.CatalogItem{{Ref: agenttools.CatalogRef{ID: "model_orders", Kind: "model"}}}}}}
+	page, err := catalog.List(t.Context(), scope, agenttools.CatalogListRequest{Parent: &agenttools.CatalogRef{ID: projectID.String(), Kind: "project"}})
+	if err != nil || page.Count != 1 {
+		t.Fatalf("project parent list = %#v, %v", page, err)
+	}
+	if _, err := catalog.List(t.Context(), scope, agenttools.CatalogListRequest{Parent: &agenttools.CatalogRef{ID: "project:other", Kind: "project"}}); err == nil {
+		t.Fatal("typed credential listed a different project root")
+	}
+}
+
+func TestCatalogMapsTraversalAndUnsupportedDomainErrors(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{err: projectcatalog.ErrNotTraversable, code: "catalog_not_traversable"},
+		{err: projectcatalog.ErrUnsupportedDomain, code: "catalog_domain_unsupported"},
+	} {
+		got := catalogError(test.err)
+		var catalogErr *agenttools.CatalogError
+		if !errors.As(got, &catalogErr) || catalogErr.Code != test.code {
+			t.Errorf("catalogError(%v) = %#v, want code %q", test.err, got, test.code)
+		}
 	}
 }
 
