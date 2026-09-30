@@ -4,18 +4,23 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
+	"github.com/flidai/leapview/internal/app/poolcompatibility"
 	"github.com/flidai/leapview/internal/app/postgresducklake"
 	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +33,6 @@ type localNativeBuildCatalogFixture struct {
 // The native physical-build port requires a PostgreSQL-backed writer. Use the
 // production credential bootstrap and catalog provisioning helpers, with a
 // separate metadata writer that cannot create schemas or catalog tables.
-// Physical-pool admission is fixture evidence, not a conformance qualification.
 func newLocalNativeBuildCatalogFixture(t *testing.T, admission extension.Admission) localNativeBuildCatalogFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
@@ -46,7 +50,7 @@ func newLocalNativeBuildCatalogFixture(t *testing.T, admission extension.Admissi
 	_, err = admin.Exec(ctx, `REVOKE ALL ON SCHEMA public FROM PUBLIC`)
 	require.NoError(t, err)
 
-	poolContract := localNativeBuildPoolContract(t)
+	poolContract := localNativeBuildPoolContract(t, ctx, admission)
 	poolID := poolContract.Pool.ID.String()
 	dataPath, err := poolContract.Pool.DataPath()
 	require.NoError(t, err)
@@ -117,24 +121,75 @@ func newLocalNativeBuildCatalogFixture(t *testing.T, admission extension.Admissi
 	}
 }
 
-func localNativeBuildPoolContract(t *testing.T) *analyticsducklake.PoolContract {
+type localNativeBuildCatalogControl interface {
+	Begin(context.Context) (pgx.Tx, error)
+}
+
+func (f *localNativeBuildCatalogFixture) bootstrapRuntimeCompatibility(t *testing.T, control localNativeBuildCatalogControl) {
 	t.Helper()
-	tuple := physicalpool.Compatibility{
-		DuckDBRuntime: "duckdb:fixture", DuckLakeExtension: "ducklake:fixture", CatalogFormat: "ducklake:v1",
-		StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1",
-	}
+	require.NotNil(t, control)
+	require.NotNil(t, f.contract.PoolContract)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	tx, err := control.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	_, _, err = ducklakepostgres.BootstrapCatalog(ctx, tx, f.contract.Catalog, f.contract.Compatibility)
+	require.NoError(t, err)
+	conformanceDigest := f.contract.PoolContract.Evidence.Digest
+	beginEvidence, err := json.Marshal(map[string]any{
+		"backup_verified": true, "bootstrap": true,
+		"conformance_evidence_digest": conformanceDigest, "drain_verified": true,
+	})
+	require.NoError(t, err)
+	completionEvidence, err := json.Marshal(map[string]any{
+		"bootstrap": true, "catalog_registration_verified": true,
+		"conformance_evidence_digest": conformanceDigest,
+	})
+	require.NoError(t, err)
+	qualified, err := ducklakepostgres.QualifyCatalogBootstrap(ctx, tx, ducklakepostgres.CatalogBootstrapQualificationInput{
+		PhysicalPoolID: f.contract.PhysicalPoolID, CatalogID: f.contract.Catalog.CatalogID,
+		OwnerID: "local-native-catalog-bootstrap", Compatibility: f.contract.Compatibility,
+		BeginEvidence: beginEvidence, CompletionEvidence: completionEvidence,
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	f.contract.CatalogRuntime = qualified
+}
+
+func localNativeBuildPoolContract(t *testing.T, ctx context.Context, admission extension.Admission) *analyticsducklake.PoolContract {
+	t.Helper()
+	tuple, err := poolcompatibility.LocalPool(ctx, admission)
+	require.NoError(t, err)
+	// The shared extension fixture labels versions "test-fixture". Observe the
+	// admitted binary before conformance, independently of the later build seal.
+	versionEnvironment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
+		RootDir: t.TempDir(), ExtensionAdmission: admission,
+	})
+	require.NoError(t, err)
+	versionRows, versionErr := versionEnvironment.Query(ctx, semanticquery.Plan{
+		SQL: "SELECT extension_version FROM lake.settings() LIMIT 1", Columns: []string{"extension_version"},
+	})
+	closeErr := versionEnvironment.Close()
+	require.NoError(t, versionErr)
+	require.NoError(t, closeErr)
+	require.Len(t, versionRows, 1)
+	observedExtensionVersion, ok := versionRows[0]["extension_version"].(string)
+	require.True(t, ok)
+	observedExtensionVersion = strings.TrimPrefix(strings.TrimSpace(observedExtensionVersion), "v")
+	require.NotEmpty(t, observedExtensionVersion)
+	tuple.DuckLakeExtension = "ducklake:" + observedExtensionVersion
+
+	evidence, err := analyticsducklake.RunLocalPoolConformance(ctx, filepath.Join(t.TempDir(), "conformance"), tuple, admission)
+	require.NoError(t, err)
+	require.NoError(t, (analyticsducklake.SharedPoolConformance{Compatibility: tuple}).ValidateEvidence(evidence))
+
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
 		StorageLocation: filepath.Join(t.TempDir(), "lake"), StorageNamespace: "objects",
 		Region: "fixture", Tenant: "fixture", EncryptionDomain: "fixture",
 		IsolationBoundary: "fixture", RetentionAuthority: "fixture", Compatibility: tuple,
-	})
-	require.NoError(t, err)
-	checks := make([]physicalpool.EvidenceCheck, 0, len(analyticsducklake.SharedPoolConformanceChecks))
-	for _, name := range analyticsducklake.SharedPoolConformanceChecks {
-		checks = append(checks, physicalpool.EvidenceCheck{ID: name, Passed: true, ObservationDigest: activeResultIdentityDigest('a')})
-	}
-	evidence, err := physicalpool.NewEvidence(physicalpool.EvidenceInput{
-		Compatibility: tuple, ConformanceVersion: analyticsducklake.SharedPoolConformanceVersion, Checks: checks,
 	})
 	require.NoError(t, err)
 	admitted, err := pool.Admit(evidence)

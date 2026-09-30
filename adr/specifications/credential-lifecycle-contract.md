@@ -1780,9 +1780,10 @@ connection and plaintext credential are cleared.
 This is deliberately a first-delivery failure case with no `PipelinePlan`. It
 qualifies source consumption and durable failure settlement through the native
 build coordinator. It does not qualify generation-bound pipeline admission,
-base-pin continuity, successful build qualification or sealing, publication,
-or physical-pool conformance beyond the synthetic evidence used by the test
-fixture. The focused Docker-backed runtime test and PostgreSQL conformance
+base-pin continuity, successful build qualification or sealing, or publication.
+The shared catalog fixture now derives its runtime tuple from admitted extension
+artifacts and runs the existing local physical-pool conformance checks. The
+focused Docker-backed runtime test and PostgreSQL conformance
 application shard 3 both passed in this workspace.
 
 The test calls the coordinator directly, so it bypasses the production refresh
@@ -1793,3 +1794,32 @@ lifecycle mechanism is added. PR #744 at
 `5938aeaa8a02c2b84084036961d7ce7edc29ddd9` remains the design reference; Flid's
 Rill connection acquisition/release pairing supplies narrow lifetime precedent,
 not a replacement for LeapView's native build and publication contracts.
+
+### Local credential physical build and exact-snapshot qualification
+
+A lower-level integration qualification uses the real candidate connection
+registration and `BuildNativePhysical` to materialize TLS PostgreSQL source rows
+into a PostgreSQL-backed DuckLake catalog. It checks the exact credential version
+and destination, source-session closure, cleared plaintext, and the committed
+snapshot's marker and physical closure. The shared catalog fixture derives engine
+versions from admitted extension artifacts, runs local pool conformance, and
+persists bootstrap compatibility through the existing administrative transaction.
+Read-only qualification consults that record through the restricted runtime role.
+
+After closing candidate registration, the test revokes its fixture source token
+and drops the upstream table. `QualifyNativeSnapshot` must still pass source-schema
+and model row-count checks against the exact committed snapshot without another
+credential read. Altered snapshot or compatibility evidence must fail.
+
+This test supplies an attempt value; it does not durably admit or complete a build
+attempt, persist source observations, seal a serving generation, or publish it.
+Credential metadata, record storage, keyring and artifact/plan identities remain
+fixture inputs, and the test owns candidate-registration sequencing. It does not
+establish immutable artifact provenance. A successful `NativeBuildCoordinator`
+journey with immutable artifact/policy evidence and transactional generation
+admission remains the next gap before joining publication and activation.
+Production local-credential preflight remains closed and is asserted separately.
+
+Astra reviewed this boundary against PR #744's credential-lifecycle requirements.
+Flid's Rill acquisition/release pairing supplies lifetime precedent; the existing
+LeapView physical-build and qualification factories provide the implementation.
