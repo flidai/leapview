@@ -87,7 +87,11 @@ def main():
         for namespace in ("public", "private"):
             for destination in ("172.30.0.2", "[fd00:3::2]"):
                 for port in (80, 8080):
-                    run("ip", "netns", "exec", namespace, "curl", "--noproxy", "*", "-s", "--max-time", "2", "-o", "/dev/null", f"http://{destination}:{port}")
+                    deadline = time.monotonic() + 10
+                    while run("ip", "netns", "exec", namespace, "curl", "--noproxy", "*", "-s", "--max-time", "1", "-o", "/dev/null", f"http://{destination}:{port}", check=False).returncode:
+                        if time.monotonic() >= deadline:
+                            raise AssertionError(f"Direct-route baseline did not become reachable: {namespace}:{destination}:{port}")
+                        time.sleep(0.1)
         # Baseline connections used distinct client ports and have closed. New
         # requests below must be denied rather than inheriting established state.
         for iteration in range(2):
