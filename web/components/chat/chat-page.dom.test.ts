@@ -273,6 +273,24 @@ test('chat donut panel keeps outside value labels and places the legend below th
   }
 })
 
+test('chat visual panel preserves a hidden proportional legend', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const legend = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-visual-panel')
+      const panel = document.createElement('lv-chat-visual-panel') as any
+      panel.payload = { spec: { kind: 'proportional', mark: 'donut', presentation: { legend: 'hidden', labelPosition: 'outside' } } }
+      document.body.append(panel)
+      await panel.updateComplete
+      return panel.shadowRoot.querySelector('lv-visual-artifact')?.payload?.spec.presentation.legend
+    })
+    expect(legend).toBe('hidden')
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 820, expectedSurfaceWidth: 760 },
   { name: 'narrow desktop', width: 700, height: 820, expectedSurfaceWidth: 668 },

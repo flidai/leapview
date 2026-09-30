@@ -611,6 +611,33 @@ test('chat thread keeps a repaired visual presentation error inside Worked', asy
   await page.close()
 })
 
+test('chat thread does not treat different visual filters or datasets as retries', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const errors = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-thread')
+      const thread = document.querySelector('lv-chat-thread') as any
+      const query = { type: 'aggregate', metrics: [{ metric: 'net_sales' }], dimensions: [{ dimension: 'country' }] }
+      const visual = { type: 'bar', query }
+      const input = (extra: Record<string, unknown>, visualExtra: Record<string, unknown> = {}) => JSON.stringify({ semanticModelId: 'semantic-model:finance', ...extra, visual: { ...visual, ...visualExtra } })
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [
+        { id: 'user', kind: 'user', text: 'Compare revenue charts' },
+        { id: 'filtered-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Filtered chart failed.', argumentsJson: input({ filters: [{ id: 'region', dimension: 'region', default: { type: 'text', value: 'west' } }] }) },
+        { id: 'filtered-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: input({ filters: [{ id: 'region', dimension: 'region', default: { type: 'text', value: 'east' } }] }) },
+        { id: 'dataset-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Comparison dataset failed.', argumentsJson: input({}, { datasets: { comparison: { type: 'aggregate', metrics: ['gross_sales'] } } }) },
+        { id: 'dataset-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: input({}, { datasets: { comparison: { type: 'aggregate', metrics: ['net_sales'] } } }) },
+      ]
+      await thread.updateComplete
+      return Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
+    })
+    expect(errors).toEqual(['Filtered chart failed.', 'Comparison dataset failed.'])
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat thread keeps an unrelated failed lookup inside Worked when the turn produces a visual', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

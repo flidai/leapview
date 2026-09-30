@@ -297,11 +297,12 @@ function wrapWords(value: string, maxCharacters: number): string {
 function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right', radiusCap = 56, narrowWithoutLegend = false, narrowBottomLegend = false): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT || narrowWithoutLegend || (bottomLegend && width < 800)
-  let hasResponsiveLabels = false
+  let hasResponsiveSeries = false
   const series = value.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
     const source = entry as Record<string, unknown>
     const pieLayout = source.type === 'pie' && movedSide && source[movedSide] === '12%' ? { [movedSide]: 0 } : undefined
+    if (pieLayout) hasResponsiveSeries = true
     const label = source.label
     if (source.type === 'funnel') {
       const labelOption = label && typeof label === 'object' && !Array.isArray(label) ? label as Record<string, unknown> : undefined
@@ -309,7 +310,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       const centeredOutside = source.orient === 'vertical' && labelOption?.position === 'outside'
       const canFormat = labelOption?.position === 'outside' && labelOption?.show !== false && typeof formatter === 'function'
       if (!centeredOutside && !canFormat) return entry
-      hasResponsiveLabels = true
+      hasResponsiveSeries = true
       const responsiveFormatter = canFormat && (width < COMPACT_WIDTH || height < COMPACT_HEIGHT)
         ? (params: unknown) => wrapFunnelOutsideLabel(
           String(formatter!(params) ?? ''),
@@ -334,7 +335,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     const labelOption = label as Record<string, unknown>
     if (labelOption.position === 'inside') {
       const crowded = width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT
-      hasResponsiveLabels = true
+      hasResponsiveSeries = true
       if (!crowded) {
         return {
           ...source,
@@ -360,7 +361,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       }
     }
     if (labelOption.position !== 'outside') return entry
-    hasResponsiveLabels = true
+    hasResponsiveSeries = true
     const reservedRadius = (bottomLegend && (width < 800 || radiusCap > 56)) || narrowWithoutLegend ? compactProportionalRadius(source.radius, narrowWithoutLegend || narrowBottomLegend ? 40 : radiusCap) : undefined
     return {
       ...source,
@@ -385,7 +386,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       }),
     }
   })
-  return hasResponsiveLabels ? series : undefined
+  return hasResponsiveSeries ? series : undefined
 }
 
 function compactProportionalRadius(value: unknown, cap: number): string[] | undefined {

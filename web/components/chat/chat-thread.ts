@@ -516,8 +516,11 @@ function toolRequestKey(item: ChatTranscriptItemSignal): string | undefined {
     try {
       const args = JSON.parse(argumentsJSON)
       if (args.semanticModelId && args.visual?.type && args.visual?.query) {
-        // A retry may repair presentation options while keeping the same data query.
-        return `${item.name}\u0000${JSON.stringify([args.semanticModelId, args.visual.type, args.visual.query])}`
+        // Presentation may change during a retry, but filters, secondary datasets,
+        // calculations, and other visual inputs can change the actual result.
+        const visualRequest = { ...args.visual }
+        delete visualRequest.presentation
+        return `${item.name}\u0000${JSON.stringify([args.semanticModelId, args.filters ?? null, visualRequest])}`
       }
     } catch { /* Preserve exact matching for malformed arguments. */ }
   }

@@ -157,6 +157,23 @@ test('compact side legends move their title and donut inset with the legend', ()
   expect(roomy.legend).toMatchObject({ orient: 'vertical', right: 0 })
 })
 
+test('compact side legends remove the donut inset when slice labels are hidden', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.legend = 'right'
+  envelope.spec.presentation.legendTitle = 'Country'
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(option, 465, 409)
+  expect(option.series[0].right).toBe('12%')
+  expect(option.series[0].label.show).toBe(false)
+  expect(compact.legend).toMatchObject({ orient: 'horizontal', bottom: 0 })
+  expect(compact.series[0].right).toBe(0)
+  const focused = responsiveEChartsPatch(option, 1384, 844, true)
+  expect(focused.legend).toMatchObject({ orient: 'horizontal', bottom: 0 })
+  expect(focused.series[0].right).toBe(0)
+})
+
 test('focused donuts center side legends below the chart without changing the regular layout', () => {
   const envelope = proportionalWithIconFormat('donut')
   if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
