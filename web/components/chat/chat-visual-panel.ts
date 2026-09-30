@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property } from 'lit/decorators.js'
-import { ArrowUpRight, X } from 'lucide'
+import { X } from 'lucide'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/visual-artifact'
@@ -63,7 +63,7 @@ export class ChatVisualPanel extends LitElement {
 
     .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--base-size-8); }
 
-    button, a {
+    button {
       display: inline-flex;
       min-height: var(--lv-control-medium);
       align-items: center;
@@ -76,15 +76,14 @@ export class ChatVisualPanel extends LitElement {
       color: var(--lv-fg-default);
       cursor: pointer;
       font: var(--lv-type-secondary);
-      text-decoration: none;
     }
 
-    button:hover:not(:disabled), a:hover { background: var(--lv-bg-control-hover); }
-    button:focus-visible, a:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--base-size-2); }
+    button:hover:not(:disabled) { background: var(--lv-bg-control-hover); }
+    button:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--base-size-2); }
     button:disabled { cursor: default; opacity: 0.6; }
 
     .close { width: var(--lv-control-medium); padding: 0; }
-    .close svg, a svg { width: var(--base-size-16); height: var(--base-size-16); }
+    .close svg { width: var(--base-size-16); height: var(--base-size-16); }
 
     .content { min-height: 0; overflow: auto; padding: var(--base-size-16); }
     lv-visual-artifact { display: block; height: min(36rem, 68vh); min-height: min(18rem, 48vh); }
@@ -105,7 +104,6 @@ export class ChatVisualPanel extends LitElement {
           <h2>${this.title || 'Visual result'}</h2>
           <div class="actions">
             ${this.explorerHref ? html`
-              <a href=${this.explorerHref} aria-label="Open visual in Data Explorer" title="Open in Data Explorer">${lucideIcon(ArrowUpRight, { size: 16 })}<span>Explore</span></a>
               <button type="button" ?disabled=${this.saving || this.saved} @click=${this.save} aria-label="Save visual to Data Explorer">${this.saved ? 'Saved' : this.saving ? 'Saving…' : 'Save'}</button>
             ` : nothing}
             ${this.dashboardAvailable ? html`<button class="add-dashboard" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-visual-add-dashboard', { bubbles: true, composed: true }))}>Add to dashboard</button>` : nothing}

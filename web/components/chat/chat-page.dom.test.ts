@@ -170,7 +170,7 @@ for (const viewport of [
   })
 }
 
-test('chat visual card opens a side panel with the chart and Data Explorer actions', async () => {
+test('chat visual card opens a side panel with the chart and Save action', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     savedVisualRequest = null
@@ -209,7 +209,8 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
         schemaVersion: panel?.shadowRoot.querySelector('lv-visual-artifact')?.payload?.schemaVersion,
         revisions: [panel?.payload?.specRevision, panel?.payload?.dataState?.specRevision, panel?.payload?.dataRevision, panel?.payload?.dataState?.dataRevision],
         save: Boolean(panel?.shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]')),
-        href: panel?.shadowRoot.querySelector('a')?.getAttribute('href'),
+        hasExploreLink: Boolean(panel?.shadowRoot.querySelector('a[aria-label="Open visual in Data Explorer"]')),
+        explorerHref: panel?.explorerHref,
       }
     })
     expect(state.open).toBe(true)
@@ -218,7 +219,8 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
     expect(state.schemaVersion).toBe(14)
     expect(state.revisions).toEqual([`sha256:${'2'.repeat(64)}`, `sha256:${'2'.repeat(64)}`, 1, 1])
     expect(state.save).toBe(true)
-    expect(state.href).toContain('/explore?')
+    expect(state.hasExploreLink).toBe(false)
+    expect(state.explorerHref).toContain('/explore?')
     const screenshotDir = process.env.LEAPVIEW_CHAT_SCREENSHOT_DIR
     if (screenshotDir) {
       await page.waitForFunction(() => Boolean(document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.querySelector('lv-visual-artifact')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('.renderer canvas')))
@@ -227,7 +229,7 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
     }
     await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('lv-chat-visual-panel').shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]').click())
     await page.waitForFunction(() => document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
-    expect(JSON.parse(savedVisualRequest!.body)).toMatchObject({ title: 'Revenue by country', explorerUrl: state.href })
+    expect(JSON.parse(savedVisualRequest!.body)).toMatchObject({ title: 'Revenue by country', explorerUrl: state.explorerHref })
     expect(savedVisualRequest!.csrf).toBe('test-csrf')
     await page.setViewportSize({ width: 390, height: 820 })
     await page.waitForFunction(() => Boolean(document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('.main')?.hasAttribute('inert')))

@@ -20,7 +20,7 @@ See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, h
 
 ## Keep a chat visual
 
-Open a visual card in chat to inspect its chart. **Explore** opens the query in Data Explorer, and **Save** keeps it as a saved exploration.
+Open a visual card in chat to inspect its chart. **Save** keeps it as a saved exploration.
 
 For a visual created by the agent, choose **Add to dashboard** to select an editable dashboard and page or create a new private dashboard. The picker shows compatible dashboards that you can edit or copy. Published dashboards use **Create copy and add**, which creates a private editable copy containing the visual. The visual retains its semantic query and filters.
 

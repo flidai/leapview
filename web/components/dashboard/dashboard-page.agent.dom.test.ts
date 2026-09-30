@@ -753,7 +753,7 @@ test('side agent keeps the composer visible and starter prompts never submit aut
   } finally { await page.close() }
 })
 
-test('dashboard agent opens an eligible query visual with Explore and Save actions', async () => {
+test('dashboard agent opens an eligible query visual with a Save action', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   let savedVisual: Record<string, unknown> | null = null
   try {
@@ -816,7 +816,8 @@ test('dashboard agent opens an eligible query visual with Explore and Save actio
       return {
         title: panel.shadowRoot.querySelector('h2')?.textContent,
         hasSave: Boolean(panel.shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]')),
-        href: panel.shadowRoot.querySelector('a[aria-label="Open visual in Data Explorer"]')?.getAttribute('href'),
+        hasExploreLink: Boolean(panel.shadowRoot.querySelector('a[aria-label="Open visual in Data Explorer"]')),
+        explorerHref: panel.explorerHref,
         panelBounds: (() => {
           const panelBounds = panel.getBoundingClientRect()
           const drawerBounds = drawer.getBoundingClientRect()
@@ -830,10 +831,11 @@ test('dashboard agent opens an eligible query visual with Explore and Save actio
     })
     expect(panelState.title).toBe('Revenue by country')
     expect(panelState.hasSave).toBe(true)
+    expect(panelState.hasExploreLink).toBe(false)
     expect(panelState.panelBounds.width).toBeGreaterThan(300)
     expect(panelState.panelBounds.height).toBeGreaterThan(400)
     expect(panelState.panelBounds.withinDrawer).toBe(true)
-    const explorerURL = new URL(panelState.href!, 'https://example.test')
+    const explorerURL = new URL(panelState.explorerHref!, 'https://example.test')
     expect(explorerURL.pathname).toBe('/explore')
     expect(explorerURL.searchParams.get('mode')).toBe('explore')
     expect(explorerURL.searchParams.get('semanticModel')).toBe('semantic:sales')
@@ -853,7 +855,7 @@ test('dashboard agent opens an eligible query visual with Explore and Save actio
       element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('lv-chat-visual-panel').shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]').click()
     })
     await page.waitForFunction(() => document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
-    expect(savedVisual as unknown).toEqual({ title: 'Revenue by country', explorerUrl: panelState.href })
+    expect(savedVisual as unknown).toEqual({ title: 'Revenue by country', explorerUrl: panelState.explorerHref })
 
     const drawerRemainsOpen = await page.locator('lv-dashboard-page').evaluate((element: any) => {
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
