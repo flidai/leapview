@@ -193,14 +193,17 @@ class ChatThread extends LitElement {
 	}
 
   private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
-    const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
     const hasVisualResult = !running && items.some(item => item.kind === 'tool' && this.toolStatus(item) === 'complete' && Boolean(item.artifact))
-    const context = hasVisualResult ? items.filter(item => item.kind === 'assistant' || item.kind === 'summary' || (item.kind === 'tool' && this.toolStatus(item) === 'error')) : []
+    // A completed visual is the outcome of this turn; failed intermediate tool
+    // probes should not appear in the answer or its expandable context.
+    const displayedItems = hasVisualResult ? items.filter(item => item.kind !== 'tool' || this.toolStatus(item) !== 'error') : items
+    const text = displayedItems.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
+    const context = hasVisualResult ? displayedItems.filter(item => item.kind === 'assistant' || item.kind === 'summary') : []
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
           ${steps.length > 0 || context.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context) : nothing}
-          ${items.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item))}
+          ${displayedItems.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item))}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>

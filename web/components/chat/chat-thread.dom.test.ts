@@ -638,7 +638,7 @@ test('chat thread does not treat different visual filters or datasets as retries
   }
 })
 
-test('chat thread keeps an unrelated failed lookup inside Worked when the turn produces a visual', async () => {
+test('chat thread hides failed tool lookups once the turn produces a visual', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   const state = await page.evaluate(async () => {
@@ -650,6 +650,7 @@ test('chat thread keeps an unrelated failed lookup inside Worked when the turn p
       { id: 'failed', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Catalog resource not found.', argumentsJson: '{"ref":"unknown"}' },
       { id: 'found', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":"finance"}' },
       { id: 'visual', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'donut', id: 'by-country', summary: 'Net sales by country' } },
+      { id: 'answer', kind: 'assistant', markdown: 'Visual' },
     ]
     await thread.updateComplete
     return {
@@ -660,7 +661,7 @@ test('chat thread keeps an unrelated failed lookup inside Worked when the turn p
       visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
     }
   })
-  expect(state).toEqual({ topLevelErrors: 0, workedErrors: ['Catalog resource not found.'], numberedSteps: 0, toolLabels: false, visual: true })
+  expect(state).toEqual({ topLevelErrors: 0, workedErrors: [], numberedSteps: 0, toolLabels: false, visual: true })
   await page.close()
 })
 
