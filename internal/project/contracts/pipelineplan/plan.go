@@ -26,16 +26,36 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
 // admission through delivery publication. MaterializationScope and
 // ModelExecutionOrder are dependency ordered and are never sorted.
 type Plan struct {
-	ID                   string   `json:"id"`
-	PipelineID           string   `json:"pipelineId"`
-	ProjectID            string   `json:"projectId"`
-	Environment          string   `json:"environment"`
-	SemanticModelID      string   `json:"semanticModelId"`
-	SelectedResourceType string   `json:"selectedResourceType"`
-	SelectedResourceID   string   `json:"selectedResourceId"`
-	ServingGenerationID  string   `json:"servingGenerationId"`
-	ArtifactDigest       string   `json:"artifactDigest"`
-	SelectionDigest      string   `json:"selectionDigest"`
+	ID                   string `json:"id"`
+	PipelineID           string `json:"pipelineId"`
+	ProjectID            string `json:"projectId"`
+	Environment          string `json:"environment"`
+	SemanticModelID      string `json:"semanticModelId"`
+	SelectedResourceType string `json:"selectedResourceType"`
+	SelectedResourceID   string `json:"selectedResourceId"`
+	ServingGenerationID  string `json:"servingGenerationId"`
+	ArtifactDigest       string `json:"artifactDigest"`
+	SelectionDigest      string `json:"selectionDigest"`
+	// ParameterDigest is the canonical parameter evidence for this plan. The
+	// current refresh contract has no runtime parameter surface, so New seals
+	// that absence as a stable empty-evidence digest instead of leaving it
+	// implicit.
+	ParameterDigest string `json:"parameterDigest"`
+	// BindingDigest identifies the connection/binding evidence selected by the
+	// executable closure. It is intentionally separate from artifact identity:
+	// an environment binding edit must invalidate queued work.
+	BindingDigest string `json:"bindingDigest"`
+	// RunAsPrincipalID binds the executable plan to the workload principal. An
+	// empty value is a sealed absent value for compatibility-only plans; native
+	// refresh admission supplies the exact execution principal.
+	RunAsPrincipalID string `json:"runAsPrincipalId,omitempty"`
+	// DestinationDigest is the canonical destination evidence. Refresh has no
+	// authored external destination today, so the constructor seals an explicit
+	// empty-evidence value.
+	DestinationDigest string `json:"destinationDigest"`
+	// TriggerDigest identifies the effective invocation/trigger evidence,
+	// including schedule selection and overlap policy.
+	TriggerDigest        string   `json:"triggerDigest"`
 	MaterializationScope []string `json:"materializationScope"`
 	ModelExecutionOrder  []string `json:"modelExecutionOrder"`
 	SourceInputs         []string `json:"sourceInputs,omitempty"`
@@ -72,6 +92,11 @@ func (p Plan) Canonical() Plan {
 	p.ServingGenerationID = strings.TrimSpace(p.ServingGenerationID)
 	p.ArtifactDigest = strings.TrimSpace(p.ArtifactDigest)
 	p.SelectionDigest = strings.TrimSpace(p.SelectionDigest)
+	p.ParameterDigest = strings.TrimSpace(p.ParameterDigest)
+	p.BindingDigest = strings.TrimSpace(p.BindingDigest)
+	p.RunAsPrincipalID = strings.TrimSpace(p.RunAsPrincipalID)
+	p.DestinationDigest = strings.TrimSpace(p.DestinationDigest)
+	p.TriggerDigest = strings.TrimSpace(p.TriggerDigest)
 	p.InvocationSource = strings.TrimSpace(p.InvocationSource)
 	p.ConcurrencyPolicy = strings.TrimSpace(p.ConcurrencyPolicy)
 	p.RequestedStart = strings.TrimSpace(p.RequestedStart)
@@ -137,6 +162,16 @@ func (p Plan) ValidateWithoutDigest() error {
 	for name, value := range map[string]string{"artifact": p.ArtifactDigest, "selection": p.SelectionDigest} {
 		if err := validateDigest(value); err != nil {
 			return fmt.Errorf("%s digest: %w", name, err)
+		}
+	}
+	for name, value := range map[string]string{"parameters": p.ParameterDigest, "bindings": p.BindingDigest, "destinations": p.DestinationDigest, "trigger": p.TriggerDigest} {
+		if err := validateDigest(value); err != nil {
+			return fmt.Errorf("%s evidence digest: %w", name, err)
+		}
+	}
+	if p.RunAsPrincipalID != "" {
+		if err := validateID(p.RunAsPrincipalID); err != nil {
+			return fmt.Errorf("run-as principal id: %w", err)
 		}
 	}
 	if len(p.MaterializationScope) == 0 {
@@ -218,6 +253,18 @@ func New(plan Plan) (Plan, error) {
 	if plan.SelectedResourceID == "" {
 		plan.SelectedResourceID = plan.SemanticModelID
 	}
+	if plan.ParameterDigest == "" {
+		plan.ParameterDigest = SealedAbsentEvidenceDigest("parameters")
+	}
+	if plan.BindingDigest == "" {
+		plan.BindingDigest = SealedAbsentEvidenceDigest("connection-bindings")
+	}
+	if plan.DestinationDigest == "" {
+		plan.DestinationDigest = SealedAbsentEvidenceDigest("destinations")
+	}
+	if plan.TriggerDigest == "" {
+		plan.TriggerDigest = SealedAbsentEvidenceDigest("triggers")
+	}
 	if len(plan.ModelExecutionOrder) == 0 {
 		plan.ModelExecutionOrder = append([]string(nil), plan.MaterializationScope...)
 	}
@@ -243,16 +290,17 @@ func New(plan Plan) (Plan, error) {
 func componentDigests(plan Plan) (string, string, string, string, error) {
 	execution, err := digestJSON(struct {
 		PipelineID, ProjectID, Environment, SemanticModelID, SelectedResourceType, SelectedResourceID, ServingGenerationID, SelectionDigest string
+		ParameterDigest, BindingDigest, RunAsPrincipalID                                                                                    string
 		MaterializationScope, ModelExecutionOrder, SourceInputs                                                                             []string
 		RequestedStart, RequestedEnd, RequestedWatermark, EffectiveStart, EffectiveEnd, EffectiveWatermark                                  string
-	}{plan.PipelineID, plan.ProjectID, plan.Environment, plan.SemanticModelID, plan.SelectedResourceType, plan.SelectedResourceID, plan.ServingGenerationID, plan.SelectionDigest, plan.MaterializationScope, plan.ModelExecutionOrder, plan.SourceInputs, plan.RequestedStart, plan.RequestedEnd, plan.RequestedWatermark, plan.EffectiveStart, plan.EffectiveEnd, plan.EffectiveWatermark})
+	}{plan.PipelineID, plan.ProjectID, plan.Environment, plan.SemanticModelID, plan.SelectedResourceType, plan.SelectedResourceID, plan.ServingGenerationID, plan.SelectionDigest, plan.ParameterDigest, plan.BindingDigest, plan.RunAsPrincipalID, plan.MaterializationScope, plan.ModelExecutionOrder, plan.SourceInputs, plan.RequestedStart, plan.RequestedEnd, plan.RequestedWatermark, plan.EffectiveStart, plan.EffectiveEnd, plan.EffectiveWatermark})
 	if err != nil {
 		return "", "", "", "", err
 	}
 	provenance, err := digestJSON(struct {
-		ArtifactDigest string
-		SourceInputs   []string
-	}{plan.ArtifactDigest, plan.SourceInputs})
+		ArtifactDigest, DestinationDigest string
+		SourceInputs                      []string
+	}{plan.ArtifactDigest, plan.DestinationDigest, plan.SourceInputs})
 	if err != nil {
 		return "", "", "", "", err
 	}
@@ -267,8 +315,32 @@ func componentDigests(plan Plan) (string, string, string, string, error) {
 	evidence, err := digestJSON(struct {
 		QualificationChecks []string
 		MatchingScheduleIDs []string
-	}{plan.QualificationChecks, plan.MatchingScheduleIDs})
+		TriggerDigest       string
+	}{plan.QualificationChecks, plan.MatchingScheduleIDs, plan.TriggerDigest})
 	return execution, provenance, governance, evidence, err
+}
+
+// SealedAbsentEvidenceDigest returns the canonical evidence identity for a
+// dimension that has no runtime representation in the current contract. The
+// label is part of the digest so parameters, destinations, and other absent
+// dimensions cannot be accidentally conflated.
+func SealedAbsentEvidenceDigest(label string) string {
+	return CanonicalEvidenceDigest(label, nil)
+}
+
+// CanonicalEvidenceDigest computes a stable digest for a named evidence list.
+// Values are treated as a set because connection/binding identities and other
+// closure members are unordered; callers that need order must encode it into
+// each value before calling this helper.
+func CanonicalEvidenceDigest(label string, values []string) string {
+	label = strings.TrimSpace(label)
+	canonical := canonicalSet(values)
+	digest, _ := digestJSON(struct {
+		Version int      `json:"version"`
+		Label   string   `json:"label"`
+		Values  []string `json:"values"`
+	}{1, label, canonical})
+	return digest
 }
 
 func canonicalDigest(plan Plan) (string, error) {

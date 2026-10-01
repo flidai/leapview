@@ -86,7 +86,10 @@ export const adapter: RendererAdapter = {
   async mount(container, envelope, context) {
     const echarts = await import('echarts')
     const frame = createEChartsRendererFrame(container)
-    const chart = echarts.getInstanceByDom(frame) ?? echarts.init(frame, undefined, { renderer: 'canvas', devicePixelRatio: context.devicePixelRatio })
+    // Builder grid edits can resize several mounted charts at once. Use SVG in
+    // authoring so none of those previews allocates a GPU canvas backing store.
+    const renderer = context.echartsRenderer === 'svg' || (envelope.spec.kind === 'proportional' && envelope.spec.mark === 'funnel') ? 'svg' : 'canvas'
+    const chart = echarts.getInstanceByDom(frame) ?? echarts.init(frame, undefined, { renderer, devicePixelRatio: context.devicePixelRatio })
     const handle = new EChartsHandle(container, frame, chart, categoryColorRegistryFor(container))
     try {
       handle.mount(envelope, context)
@@ -112,6 +115,7 @@ export function removeEChartsRendererFrame(container: ParentNode, frame: HTMLEle
 export class EChartsHandle implements RendererHandle {
   private envelope?: VisualizationEnvelope
   private context?: RendererContext
+  private responsiveOption?: Record<string, any>
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
@@ -138,6 +142,7 @@ export class EChartsHandle implements RendererHandle {
     this.readinessAbort = new AbortController()
     this.readiness = waitForEChartsFrame(this.chart, 5_000, this.readinessAbort.signal)
     const option = echartsOption(envelope, context, this.categoryColors)
+    this.responsiveOption = option as Record<string, any>
     this.dataZoomInitialized = hasEChartsDataZoom(option)
     this.chart.setOption(option, { notMerge: true, lazyUpdate: false })
   }
@@ -151,6 +156,7 @@ export class EChartsHandle implements RendererHandle {
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
+    this.responsiveOption = option as Record<string, any>
     const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
     const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
@@ -186,10 +192,12 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
-    const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight)
+    const focused = visualizationHostIsFocused(this.container)
+    const option = this.responsiveOption ?? echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>
+    const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight, focused, option)
     const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
-    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    const patch = responsiveEChartsPatch(option, this.lastWidth, this.lastHeight, focused)
     // Exact compact widths only affect scroll legends. Avoid reapplying an
     // unchanged proportional series while a card is continuously resized.
     if (!force && compact && sameLayout && patch.legend === undefined) {
@@ -228,7 +236,20 @@ export class EChartsHandle implements RendererHandle {
   }
 
   async snapshot(): Promise<Blob> {
-    const response = await fetch(this.chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' }))
+    const dataURL = this.chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' })
+    // SVG renderers return an SVG data URL even when the requested type is
+    // PNG. Fetching that URL can be blocked by the page's CSP, so decode it
+    // locally and preserve its actual media type.
+    if (dataURL.startsWith('data:image/svg+xml')) {
+      const comma = dataURL.indexOf(',')
+      if (comma < 0) throw new Error('invalid ECharts SVG snapshot')
+      const payload = dataURL.slice(comma + 1)
+      const bytes = dataURL.slice(0, comma).includes(';base64')
+        ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+        : decodeURIComponent(payload)
+      return new Blob([bytes], { type: 'image/svg+xml' })
+    }
+    const response = await fetch(dataURL)
     return response.blob()
   }
 
@@ -348,8 +369,8 @@ export function heatmapFocusDataZoom(focused: boolean, compactRange: HeatmapZoom
 }
 
 function visualizationHostIsFocused(container: HTMLElement): boolean {
-  const root = container.getRootNode()
-  return root instanceof ShadowRoot && root.host.getAttribute('slot') === 'focus-visual'
+  const root = container.getRootNode?.()
+  return typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot && root.host.getAttribute('slot') === 'focus-visual'
 }
 
 export function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {

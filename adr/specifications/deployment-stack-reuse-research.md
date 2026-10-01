@@ -2,11 +2,11 @@
 
 Date: 2026-09-25
 
-Last revised: 2026-09-28
+Last revised: 2026-10-01
 
 Status: research supporting selected proposal; no production profile is qualified
 
-Governing proposal: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md)
+Governing proposal: [ADR-0028](../0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md)
 
 Scope clarification after this research: self-hosting prioritizes a straightforward
 Compose installation; operator deployments prioritize reuse and robustness. The
@@ -37,7 +37,7 @@ now includes analytical rebuild from sources or an optional consistent backup.
 
 ### Final evaluation and agreed target
 
-The 2026-09-28 review confirms the core target in ADR-0025: public Compose and an
+The 2026-09-28 review confirms the core target in ADR-0028: public Compose and an
 operated NixOS/Kamal application VPS with a separate self-operated PostgreSQL VPS.
 No core platform replacement is required. The final refinements are:
 

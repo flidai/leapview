@@ -670,7 +670,7 @@ op listDashboards(@query limit?: ListLimit, @query pageToken?: PageToken): OkJso
 @summary("Describe dashboard")
 @route("/dashboards/{dashboard}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "describe"], args: #[#{ source: "path", name: "dashboard", displayName: "dashboard-id" }], output: #{ mode: "raw" } })
 op getDashboard(@path dashboard: ResourceId): OkJson<DashboardManifestResponse> | CommonErrors;
@@ -679,7 +679,7 @@ op getDashboard(@path dashboard: ResourceId): OkJson<DashboardManifestResponse> 
 @summary("Describe dashboard page")
 @route("/dashboards/{dashboard}/pages/{page}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "page"], args: #[#{ source: "path", name: "dashboard", displayName: "dashboard-id" }, #{ source: "path", name: "page", displayName: "page" }], output: #{ mode: "raw" } })
 op getDashboardPage(@path dashboard: ResourceId, @path page: string): OkJson<DashboardPageResponse> | CommonErrors;
@@ -688,7 +688,7 @@ op getDashboardPage(@path dashboard: ResourceId, @path page: string): OkJson<Das
 @summary("Describe dashboard visual")
 @route("/dashboards/{dashboard}/pages/{page}/visuals/{visual}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "visual"], args: #[#{ source: "path", name: "dashboard", displayName: "dashboard-id" }, #{ source: "path", name: "page", displayName: "page" }, #{ source: "path", name: "visual", displayName: "visual" }], output: #{ mode: "raw" } })
 op getDashboardVisual(@path dashboard: ResourceId, @path page: string, @path visual: string): OkJson<DashboardVisualDescribeResponse> | CommonErrors;
@@ -697,7 +697,7 @@ op getDashboardVisual(@path dashboard: ResourceId, @path page: string, @path vis
 @summary("Describe dashboard filter")
 @route("/dashboards/{dashboard}/pages/{page}/filters/{filter}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 op getDashboardFilter(@path dashboard: ResourceId, @path page: string, @path filter: string): OkJson<DashboardFilterDescribeResponse> | CommonErrors;
 
@@ -713,7 +713,7 @@ op listSemanticModels(@query limit?: ListLimit, @query pageToken?: PageToken): O
 @summary("Describe semantic model")
 @route("/semantic-models/{model}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "semantic.read", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "describe"], args: #[#{ source: "path", name: "model", displayName: "model-id" }], output: #{ mode: "raw" } })
 op getSemanticModel(@path("model") modelName: ResourceId): OkJson<SemanticModelDescriptionResponse> | CommonErrors;
@@ -722,7 +722,7 @@ op getSemanticModel(@path("model") modelName: ResourceId): OkJson<SemanticModelD
 @summary("List semantic model relationships")
 @route("/semantic-models/{model}/relationships")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "semantic.read", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 op listSemanticRelationships(@path("model") modelName: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticRelationshipListResponse> | CommonErrors;
 
@@ -730,7 +730,7 @@ op listSemanticRelationships(@path("model") modelName: ResourceId, @query limit?
 @summary("List semantic model sources")
 @route("/semantic-models/{model}/sources")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "semantic.read", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 op listSemanticSources(@path("model") modelName: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticSourceListResponse> | CommonErrors;
 
@@ -738,7 +738,7 @@ op listSemanticSources(@path("model") modelName: ResourceId, @query limit?: List
 @summary("List semantic model fields")
 @route("/semantic-models/{model}/fields")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "semantic.read", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "model-fields"], args: #[#{ source: "path", name: "model", displayName: "model-id" }], output: #{ mode: "raw" } })
 op listSemanticModelFields(@path("model") modelName: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticFieldListResponse> | CommonErrors;
@@ -748,7 +748,7 @@ op listSemanticModelFields(@path("model") modelName: ResourceId, @query limit?: 
 @route("/semantic-models/{model}/query")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE", action: "semantic.query", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
 @apigen.cli(#{ command: #["semantic-models", "model-query"], args: #[#{ source: "path", name: "model", displayName: "model-id" }], output: #{ mode: "raw" } })
@@ -796,7 +796,7 @@ op querySemanticModel(@path("model") modelName: ResourceId, @header accept?: str
 @route("/semantic-models/{model}/query/explain")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE", action: "semantic.query", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "model-explain"], args: #[#{ source: "path", name: "model", displayName: "model-id" }], output: #{ mode: "raw" } })
 op explainSemanticModelQuery(@path("model") modelName: ResourceId, @body body?: SemanticQueryRequest): OkJson<SemanticExplainResponse> | CommonErrors;
@@ -805,7 +805,7 @@ op explainSemanticModelQuery(@path("model") modelName: ResourceId, @body body?: 
 @summary("List semantic model datasets")
 @route("/semantic-models/{model}/datasets")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "semantic.read", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "datasets"], args: #[#{ source: "path", name: "model", displayName: "model-id" }], output: #{ mode: "raw" } })
 op listSemanticDatasets(@path("model") modelName: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticDatasetListResponse> | CommonErrors;
@@ -814,7 +814,7 @@ op listSemanticDatasets(@path("model") modelName: ResourceId, @query limit?: Lis
 @summary("Describe semantic model dataset")
 @route("/semantic-models/{model}/datasets/{dataset}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "semantic.read", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "dataset"], args: #[#{ source: "path", name: "model", displayName: "model-id" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
 op getSemanticDataset(@path("model") modelName: ResourceId, @path dataset: string): OkJson<SemanticDatasetResponse> | CommonErrors;
@@ -823,7 +823,7 @@ op getSemanticDataset(@path("model") modelName: ResourceId, @path dataset: strin
 @summary("List semantic model dataset fields")
 @route("/semantic-models/{model}/datasets/{dataset}/fields")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "semantic.read", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "fields"], args: #[#{ source: "path", name: "model", displayName: "model-id" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
 op listSemanticFields(@path("model") modelName: ResourceId, @path dataset: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticFieldListResponse> | CommonErrors;
@@ -833,7 +833,7 @@ op listSemanticFields(@path("model") modelName: ResourceId, @path dataset: strin
 @route("/semantic-models/{model}/datasets/{dataset}/preview")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE", action: "semantic.query", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
 @apigen.cli(#{ command: #["semantic-models", "preview"], args: #[#{ source: "path", name: "model", displayName: "model-id" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
@@ -844,7 +844,7 @@ op previewSemanticDataset(@path("model") modelName: ResourceId, @path dataset: s
 @route("/semantic-models/{model}/datasets/{dataset}/preview/explain")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE", action: "semantic.query", resolver: "semantic-model" })
 @extension("x-leapview-object-scope", "semantic-model")
 @apigen.cli(#{ command: #["semantic-models", "explain-preview"], args: #[#{ source: "path", name: "model", displayName: "model-id" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
 op explainSemanticPreview(@path("model") modelName: ResourceId, @path dataset: string, @body body?: SemanticPreviewRequest): OkJson<SemanticExplainResponse> | CommonErrors;
@@ -854,7 +854,7 @@ op explainSemanticPreview(@path("model") modelName: ResourceId, @path dataset: s
 @route("/dashboards/{dashboard}/pages/{page}/query")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "query-page"], args: #[#{ source: "path", name: "dashboard", displayName: "dashboard-id" }, #{ source: "path", name: "page", displayName: "page" }], output: #{ mode: "raw" } })
 op queryDashboardPage(@path dashboard: ResourceId, @path page: string, @body body?: DashboardPageQueryRequest): OkJson<DashboardPageQueryResponse> | CommonErrors;
@@ -864,7 +864,7 @@ op queryDashboardPage(@path dashboard: ResourceId, @path page: string, @body bod
 @route("/dashboards/{dashboard}/pages/{page}/visuals/{visual}/query")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
 @apigen.cli(#{ command: #["dashboards", "visual-data"], args: #[#{ source: "path", name: "dashboard", displayName: "dashboard-id" }, #{ source: "path", name: "page", displayName: "page" }, #{ source: "path", name: "visual", displayName: "visual" }], output: #{ mode: "raw" } })
@@ -886,7 +886,7 @@ op queryDashboardVisualData(@path dashboard: ResourceId, @path page: string, @pa
 @route("/dashboards/{dashboard}/pages/{page}/filters/{filter}/values")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.cli(#{ command: #["dashboards", "filter-options"], args: #[#{ source: "path", name: "dashboard", displayName: "dashboard-id" }, #{ source: "path", name: "page", displayName: "page" }, #{ source: "path", name: "filter", displayName: "filter" }], output: #{ mode: "raw" } })
 op listDashboardFilterValues(@path dashboard: ResourceId, @path page: string, @path filter: string, @query limit?: ListLimit, @query pageToken?: PageToken, @body body?: DashboardPageQueryRequest): OkJson<DashboardFilterOptionListResponse> | CommonErrors;
@@ -895,7 +895,7 @@ op listDashboardFilterValues(@path dashboard: ResourceId, @path page: string, @p
 @summary("Update a dashboard's catalog appearance")
 @route("/dashboards/{dashboard}/appearance")
 @put
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "dashboard.update", resolver: "dashboard" })
 @extension("x-leapview-object-scope", "dashboard")
 @apigen.command(#{ auditAction: "dashboard.appearance.updated", guarantee: "best-effort", failures: #[
   #{ kind: "invalid", statusCode: 422, code: "INVALID_DASHBOARD_APPEARANCE", publicDetail: "The selected dashboard appearance is invalid." },

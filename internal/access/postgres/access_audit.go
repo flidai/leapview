@@ -9,11 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -159,35 +157,4 @@ func (r *Repository) RunAuditedMutationBatch(ctx context.Context, mutation func(
 		return fmt.Errorf("%w: commit: %v", access.ErrAuditTransaction, err)
 	}
 	return nil
-}
-
-func (r *Repository) BootstrapAPITokenEvidence(ctx context.Context, principalID, tokenID string, now time.Time) (access.APIToken, error) {
-	pid, err := uuidID("principal id", principalID)
-	if err != nil {
-		return access.APIToken{}, err
-	}
-	tid, err := uuidID("api token id", tokenID)
-	if err != nil {
-		return access.APIToken{}, err
-	}
-	db, err := r.requireDB()
-	if err != nil {
-		return access.APIToken{}, err
-	}
-	parsedPrincipalID, err := pgUUID(pid)
-	if err != nil {
-		return access.APIToken{}, err
-	}
-	parsedTokenID, err := pgUUID(tid)
-	if err != nil {
-		return access.APIToken{}, err
-	}
-	exists, err := accessdb.New(db).HasBootstrapAPITokenEvidence(ctx, accessdb.HasBootstrapAPITokenEvidenceParams{TokenID: parsedTokenID, PrincipalID: parsedPrincipalID})
-	if err != nil {
-		return access.APIToken{}, err
-	}
-	if !exists {
-		return access.APIToken{}, pgx.ErrNoRows
-	}
-	return r.apiToken(ctx, tid)
 }

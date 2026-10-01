@@ -309,7 +309,7 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 }
 
 func (m *Module) authorizeDashboardPublication(r *http.Request, projectID, dashboardID string, capability access.Capability) (bool, error) {
-	if m == nil || m.handler.CurrentPrincipalID == nil || m.handler.AuthorizeListResource == nil {
+	if m == nil || m.handler.CurrentPrincipalID == nil || m.handler.AuthorizeTypedDashboardAction == nil {
 		return false, errors.New("dashboard authorization is unavailable")
 	}
 	principalID := strings.TrimSpace(m.handler.CurrentPrincipalID(r))
@@ -324,11 +324,20 @@ func (m *Module) authorizeDashboardPublication(r *http.Request, projectID, dashb
 	if err != nil {
 		return false, err
 	}
-	resource, err := access.NewResourceRef(dashboard, projectgraph.KindDashboard)
+	action := access.ActionDashboardRead
+	if capability == access.CapabilityResourcePublish {
+		action = access.ActionDashboardPublish
+	} else if capability != access.CapabilityResourceRead {
+		return false, fmt.Errorf("unsupported dashboard publication capability %q", capability)
+	}
+	typed, allowed, err := m.handler.AuthorizeTypedDashboardAction(r.Context(), projectgraph.ResourceID(projectID), dashboard, action)
 	if err != nil {
 		return false, err
 	}
-	return m.handler.AuthorizeListResource(r.Context(), principalID, resource, capability)
+	if !typed {
+		return false, errors.New("typed dashboard authorization is unavailable")
+	}
+	return allowed, nil
 }
 
 func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) (publication.Publication, bool) {

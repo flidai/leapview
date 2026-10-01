@@ -65,6 +65,7 @@ func TestFlattenHierarchyRowsRejectsInvalidValues(t *testing.T) {
 func TestFlattenHierarchyRowsPreservesExactDecimalSums(t *testing.T) {
 	rows := reportdef.QueryRows{
 		{"region": "Americas", "city": "Austin", "value": "9007199254740993.125"},
+		{"region": "Europe", "city": "Paris", "value": nil},
 		{"region": "Americas", "city": "Austin", "value": "0.875"},
 	}
 	got, err := flattenHierarchyRowsTyped(rows, []string{"region", "city"}, "value", true)
@@ -73,5 +74,8 @@ func TestFlattenHierarchyRowsPreservesExactDecimalSums(t *testing.T) {
 	}
 	if got[0]["value"] != "9007199254740994.000" {
 		t.Fatalf("exact hierarchy sum = %#v, want canonical decimal", got[0]["value"])
+	}
+	if len(got) != 2 {
+		t.Fatalf("flattened rows = %#v, want null-valued hierarchy branches omitted", got)
 	}
 }

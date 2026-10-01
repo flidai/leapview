@@ -40,6 +40,16 @@ export function headers(operation?: CommandOperation, ifMatch?: string): Command
   }
 }
 
+/** Send a browser-only JSON command through the shared CSRF and request identity transport. */
+export function postUIJSON(url: string, operation: string, body: unknown, idempotencyKey?: string): Promise<Response> {
+  return fetch(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { ...headers(operation), ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 declare global {
   interface Window {
     LeapViewCommand: {

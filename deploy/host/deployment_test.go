@@ -84,6 +84,52 @@ func TestHostOperationalScriptsAreSyntacticallyValid(t *testing.T) {
 	}
 }
 
+func TestNixOSPrerequisitesModuleDoesNotOwnApplicationLifecycle(t *testing.T) {
+	module := read(t, "nixos.nix")
+	for _, required := range []string{
+		"virtualisation.docker.enable = true;",
+		"virtualisation.docker.enableOnBoot = true;",
+		"python3",
+		"openssl",
+		"coreutils",
+		"findutils",
+		"util-linux",
+		"gnutar",
+		"gzip",
+		"xz",
+		"programs.nix-ld",
+		"pkgs.stdenv.cc.cc.lib",
+		"networking.firewall.allowedTCPPorts = [ 80 443 ];",
+		"networking.firewall.allowedUDPPorts = [ 443 ];",
+		"export LEAPVIEWCTL_ROOT=/opt/leapview",
+		"exec /opt/leapview/leapviewctl \"$@\"",
+	} {
+		requireContains(t, module, required)
+	}
+	for _, forbidden := range []string{
+		"systemd.services",
+		"virtualisation.oci-containers",
+		"docker compose up",
+		"leapviewctl host install",
+		"5432",
+	} {
+		if strings.Contains(module, forbidden) {
+			t.Errorf("NixOS prerequisites module contains lifecycle or public database fragment %q", forbidden)
+		}
+	}
+
+	readme := read(t, "README.md")
+	for _, required := range []string{
+		"NixOS host prerequisites",
+		"inputs.leapview.outPath + \"/deploy/host/nixos.nix\"",
+		"nixos-rebuild switch",
+		"Ubuntu 24.04 and Debian 13",
+		"sudo -n leapviewctl version",
+	} {
+		requireContains(t, readme, required)
+	}
+}
+
 func TestHostPayloadOmitsApplicationBackupAssets(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join("files", "leapview-backup-hook"),

@@ -21,6 +21,7 @@ var stableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var uiActionPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*(\.[a-z][a-z0-9]*(-[a-z0-9]+)*)+$`)
 var jobKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 var failureCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+var authzResolverPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
 
 // Load parses and validates an IR document from disk.
 func Load(path string) (Document, error) {
@@ -891,6 +892,30 @@ func validateAuthzExtension(value any) error {
 	}
 	if _, ok := mode.(string); !ok {
 		return fmt.Errorf("x-authz.mode must be string")
+	}
+	if privilege, ok := extension["privilege"]; ok {
+		_, ok := privilege.(string)
+		if !ok {
+			return fmt.Errorf("x-authz.privilege must be string")
+		}
+	}
+	if action, ok := extension["action"]; ok {
+		value, ok := action.(string)
+		if !ok {
+			return fmt.Errorf("x-authz.action must be string")
+		}
+		if !auditActionPattern.MatchString(value) {
+			return fmt.Errorf("x-authz.action %q must be a stable dotted lower_snake_case name", value)
+		}
+	}
+	if resolver, ok := extension["resolver"]; ok {
+		value, ok := resolver.(string)
+		if !ok {
+			return fmt.Errorf("x-authz.resolver must be string")
+		}
+		if !authzResolverPattern.MatchString(value) {
+			return fmt.Errorf("x-authz.resolver %q must be a stable dotted lower-case name", value)
+		}
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -22,6 +25,7 @@ type previewFixture struct {
 	repository *previewRepository
 	authorizer *previewAuthorizer
 	provider   *previewProvider
+	governor   *previewGovernor
 	runtime    *previewRuntime
 	service    *Service
 	request    PreviewRequest
@@ -44,11 +48,12 @@ func newPreviewFixture(t *testing.T) previewFixture {
 	provider := &previewProvider{lease: &previewLease{runtime: runtime, identity: identity}}
 	repo := &previewRepository{lifecycle: lifecycle, revision: revision}
 	auth := &previewAuthorizer{}
-	svc, err := NewService(Options{Repository: repo, Authorizer: auth, Provider: provider})
+	governor := &previewGovernor{}
+	svc, err := NewService(Options{Repository: repo, Authorizer: auth, Provider: provider, Governor: governor})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return previewFixture{repository: repo, authorizer: auth, provider: provider, runtime: runtime, service: svc, request: PreviewRequest{ProjectID: "project", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"}, revision: revision}
+	return previewFixture{repository: repo, authorizer: auth, provider: provider, governor: governor, runtime: runtime, service: svc, request: PreviewRequest{ProjectID: "project", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"}, revision: revision}
 }
 
 func previewDocument() document.DashboardDocument {
@@ -74,6 +79,39 @@ func TestPreviewAuthorizesBeforeRevisionAndRuntimeReads(t *testing.T) {
 	}
 }
 
+func TestPreviewRequiresGovernorBeforeDraftReads(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.service.governor = nil
+	if _, err := f.service.Preview(t.Context(), f.request); err == nil {
+		t.Fatal("preview without query governor succeeded")
+	}
+	if f.authorizer != nil && len(f.authorizer.requests) != 0 {
+		t.Fatalf("preview without governor authorized draft: %#v", f.authorizer.requests)
+	}
+	if f.repository.getRevisionCalls != 0 || f.provider.acquireCalls != 0 {
+		t.Fatalf("preview without governor touched draft/runtime: revision=%d acquire=%d", f.repository.getRevisionCalls, f.provider.acquireCalls)
+	}
+}
+
+func TestPreviewPassesGovernorToLeasedRuntimeAndPropagatesDenial(t *testing.T) {
+	f := newPreviewFixture(t)
+	if _, err := f.service.Preview(t.Context(), f.request); err != nil {
+		t.Fatal(err)
+	}
+	if !f.runtime.governorSeen || f.governor.calls != 1 {
+		t.Fatalf("governor propagation = seen %t calls %d", f.runtime.governorSeen, f.governor.calls)
+	}
+
+	f = newPreviewFixture(t)
+	f.governor.err = errors.New("preview query denied")
+	if _, err := f.service.Preview(t.Context(), f.request); !errors.Is(err, f.governor.err) {
+		t.Fatalf("governor denial error = %v", err)
+	}
+	if f.provider.lease.releases != 1 {
+		t.Fatalf("denied preview released %d leases, want 1", f.provider.lease.releases)
+	}
+}
+
 func TestPreviewRejectsStaleBeforeLeaseAndCompilesThroughOneLease(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.request.ExpectedRevision.Number++
@@ -93,6 +131,44 @@ func TestPreviewRejectsStaleBeforeLeaseAndCompilesThroughOneLease(t *testing.T) 
 	}
 	if result.Revision != f.revision.Token() || result.Definition.ID != "sales" || result.SemanticEvidence.Identity.GenerationID != "serving-1" || result.SemanticEvidence.RuntimeModel != "sales" {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestPreviewCanQueryOnlyOneVisual(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.request.VisualID = "orders"
+	result, err := f.service.Preview(t.Context(), f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.runtime.queryCalls != 0 || f.runtime.visualQueryCalls != 1 || f.runtime.visualID != "orders" {
+		t.Fatalf("runtime calls page=%d visual=%d id=%q", f.runtime.queryCalls, f.runtime.visualQueryCalls, f.runtime.visualID)
+	}
+	if len(result.PagePatch.Visuals) != 1 || result.PagePatch.Visuals["orders"].VisualID != "orders" {
+		t.Fatalf("targeted preview visuals = %#v", result.PagePatch.Visuals)
+	}
+}
+
+func TestTargetedPreviewQueryFailureRetainsTypedErrorEnvelope(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.request.VisualID = "orders"
+	f.runtime.visualQueryErr = errors.New("query failed")
+	result, err := f.service.Preview(t.Context(), f.request)
+	if err != nil {
+		t.Fatalf("best-effort targeted preview returned an error: %v", err)
+	}
+	envelope, ok := result.PagePatch.Visuals["orders"]
+	if !ok {
+		t.Fatalf("targeted query failure omitted visual envelope: %#v", result.PagePatch.Visuals)
+	}
+	if err := visualizationir.ValidateEnvelope(envelope); err != nil {
+		t.Fatalf("targeted query failure returned invalid envelope: %v", err)
+	}
+	if envelope.Status.Kind != visualizationir.VisualizationStatusKindError || envelope.DataState.Value == nil {
+		t.Fatalf("targeted query failure envelope = %#v, want typed error state", envelope)
+	}
+	if !strings.Contains(result.VisualErrors["orders"], "query failed") {
+		t.Fatalf("targeted visual error = %#v, want query failure", result.VisualErrors)
 	}
 }
 
@@ -169,6 +245,17 @@ func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testi
 	}
 	if f.runtime.queryCalls != 1 || f.provider.lease.releases != 3 {
 		t.Fatalf("best-effort preview calls query=%d release=%d", f.runtime.queryCalls, f.provider.lease.releases)
+	}
+	f.request.VisualID = "orders"
+	targeted, err := f.service.Preview(t.Context(), f.request)
+	if err != nil {
+		t.Fatalf("targeted best-effort preview returned an error: %v", err)
+	}
+	if targeted.VisualErrors["orders"] == "" || len(targeted.PagePatch.Visuals) != 0 {
+		t.Fatalf("invalid target preview = visuals %#v errors %#v, want an explicit error and no envelope", targeted.PagePatch.Visuals, targeted.VisualErrors)
+	}
+	if f.runtime.visualQueryCalls != 0 || f.runtime.visualID != "" || f.provider.lease.releases != 4 {
+		t.Fatalf("invalid target queried runtime or leaked lease: visualCalls=%d visualID=%q releases=%d", f.runtime.visualQueryCalls, f.runtime.visualID, f.provider.lease.releases)
 	}
 }
 
@@ -264,7 +351,22 @@ type previewRuntime struct {
 	queryMetadata               dataquery.Metadata
 	modelID                     graph.ResourceID
 	model                       *semanticmodel.Model
+	visualQueryErr              error
 	projectionCalls, queryCalls int
+	governorSeen                bool
+	visualQueryCalls            int
+	windowQueryCalls            int
+	visualID                    string
+}
+
+type previewGovernor struct {
+	calls int
+	err   error
+}
+
+func (g *previewGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+	g.calls++
+	return request, nil, g.err
 }
 
 func (r *previewRuntime) Close() error              { return nil }
@@ -280,7 +382,28 @@ func (r *previewRuntime) SemanticModelProjection(id graph.ResourceID) (*semantic
 func (r *previewRuntime) QueryDashboardPageForDefinition(ctx context.Context, _ definition.Definition, _ string, _ dashboard.Filters) (dashboard.Patch, error) {
 	r.queryCalls++
 	r.queryMetadata = dataquery.MetadataFromContext(ctx)
+	governor, ok := dataquery.GovernorFromContext(ctx)
+	if !ok {
+		return dashboard.EmptyPatch(dashboard.Filters{}, nil), errors.New("preview query governor was not propagated")
+	}
+	r.governorSeen = true
+	if _, _, err := governor.GovernDataQuery(ctx, dataquery.Query{}); err != nil {
+		return dashboard.EmptyPatch(dashboard.Filters{}, nil), err
+	}
 	return dashboard.EmptyPatch(dashboard.Filters{}, nil), nil
+}
+func (r *previewRuntime) QueryVisualizationForDefinition(ctx context.Context, compiled definition.Definition, _ string, _ dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
+	r.visualQueryCalls++
+	r.visualID = visualID
+	r.queryMetadata = dataquery.MetadataFromContext(ctx)
+	if r.visualQueryErr != nil {
+		return visualizationir.VisualizationEnvelope{}, r.visualQueryErr
+	}
+	visual, ok := compiled.Visualizations[visualID]
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, errors.New("unknown visualization")
+	}
+	return visualizationruntime.EmptyEnvelopeFromDefinition(visual, 0, 1, 0)
 }
 
 func TestPreviewBindsDataCapabilitiesToAuthorizedActor(t *testing.T) {

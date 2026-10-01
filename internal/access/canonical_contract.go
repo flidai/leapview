@@ -23,6 +23,10 @@ var (
 	// ErrInvalidCapability indicates a capability outside the canonical access
 	// contract.
 	ErrInvalidCapability = errors.New("invalid canonical capability")
+	// ErrTokenCapabilitiesRequired indicates that an API token creation request
+	// omitted its explicit attenuation allowlist. Nil is reserved for legacy
+	// persisted values and is always treated as deny-all when read.
+	ErrTokenCapabilitiesRequired = errors.New("API token capabilities are required")
 	// ErrCapabilityNotAllowed indicates that a capability is valid in general,
 	// but not for the referenced graph kind.
 	ErrCapabilityNotAllowed = errors.New("canonical capability is not allowed for resource kind")
@@ -159,6 +163,7 @@ func (r *ResourceRef) UnmarshalJSON(data []byte) error {
 type Capability string
 
 const (
+	CapabilityPlatformAdmin   Capability = "PLATFORM_ADMIN"
 	CapabilityProjectAdmin    Capability = "PROJECT_ADMIN"
 	CapabilityResourceUse     Capability = "RESOURCE_USE"
 	CapabilityResourceRead    Capability = "RESOURCE_READ"
@@ -169,6 +174,7 @@ const (
 )
 
 var canonicalCapabilityOrder = []Capability{
+	CapabilityPlatformAdmin,
 	CapabilityProjectAdmin,
 	CapabilityResourceUse,
 	CapabilityResourceRead,
@@ -179,6 +185,7 @@ var canonicalCapabilityOrder = []Capability{
 }
 
 var canonicalCapabilitySet = map[Capability]struct{}{
+	CapabilityPlatformAdmin:   {},
 	CapabilityProjectAdmin:    {},
 	CapabilityResourceUse:     {},
 	CapabilityResourceRead:    {},
@@ -215,14 +222,14 @@ func (capability Capability) Validate() error {
 func (capability Capability) String() string { return string(capability) }
 
 // ValidateTokenCapabilities validates an API-token attenuation request against
-// the principal's current effective capabilities. A nil request is the
-// dynamic form: the token carries no allowlist and each authorization decision
-// must use the principal's effective capabilities at that time. A non-nil
-// request is an explicit least-privilege allowlist and every capability must be
-// present in the current effective set.
+// the principal's current effective capabilities. API token creation requires
+// an explicit allowlist: nil is an omitted request and is rejected, while a
+// non-nil empty list is a valid deny-all/authentication-only token. Every
+// capability in a non-empty request must be present in the current effective
+// set.
 func ValidateTokenCapabilities(requested, effective []Capability) error {
 	if requested == nil {
-		return nil
+		return ErrTokenCapabilitiesRequired
 	}
 	allowed := make(map[Capability]struct{}, len(effective))
 	for _, capability := range effective {
@@ -248,16 +255,16 @@ func ValidateTokenCapabilities(requested, effective []Capability) error {
 }
 
 // IntersectTokenCapabilities applies a stored API-token allowlist to the
-// principal's effective capabilities. A nil allowlist is intentionally
-// dynamic and therefore returns a defensive copy of effective. Explicit
-// allowlists are intersected as defense in depth even after creation-time
-// subset validation.
+// principal's effective capabilities. Nil is a legacy stored form and is
+// denied rather than interpreted as dynamic inheritance. Explicit allowlists
+// are intersected as defense in depth even after creation-time subset
+// validation.
 func IntersectTokenCapabilities(token, effective []Capability) []Capability {
 	if len(effective) == 0 {
 		return []Capability{}
 	}
 	if token == nil {
-		return append([]Capability(nil), effective...)
+		return []Capability{}
 	}
 	allowed := make(map[Capability]struct{}, len(token))
 	for _, capability := range token {
@@ -298,6 +305,22 @@ func (capability *Capability) UnmarshalText(data []byte) error {
 // order. The returned slice is defensive.
 func CanonicalCapabilities() []Capability {
 	return append([]Capability(nil), canonicalCapabilityOrder...)
+}
+
+// LegacyProjectCapabilities returns the pre-platform token capability set in
+// canonical order. It is used only by compatibility helpers that predate an
+// explicit capability argument; new token creation must receive a caller-
+// supplied allowlist and must never auto-add PLATFORM_ADMIN.
+func LegacyProjectCapabilities() []Capability {
+	return []Capability{
+		CapabilityProjectAdmin,
+		CapabilityResourceUse,
+		CapabilityResourceRead,
+		CapabilityResourceEdit,
+		CapabilityResourceManage,
+		CapabilityResourceShare,
+		CapabilityResourcePublish,
+	}
 }
 
 // canonicalCapabilityMatrix is immutable package state. CapabilitiesForKind

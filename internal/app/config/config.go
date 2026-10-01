@@ -217,6 +217,18 @@ func (c Config) Validate(profile Profile) error {
 	if err != nil {
 		return err
 	}
+	if c.DevBrowserSessionTTL < 0 || c.DevBrowserSessionTTL > 30*24*time.Hour {
+		return errors.New("LEAPVIEW_DEV_BROWSER_SESSION_TTL must be between 0 and 720h")
+	}
+	if c.Production && (c.DevBrowserSessionTTL != 0 || c.DevCookieNamespace != "" || c.DevQuickLogin) {
+		return errors.New("production cannot configure development browser sessions, cookie names, or quick login")
+	}
+	if (c.DevBrowserSessionTTL != 0 || c.DevCookieNamespace != "" || c.DevQuickLogin) && !loopbackListenHost(listen.Host) {
+		return errors.New("development browser-session and quick-login settings require LEAPVIEW_ADDR to bind an explicit loopback host")
+	}
+	if c.DevQuickLogin && (!c.LocalAuth || c.DevAuthBypass) {
+		return errors.New("LEAPVIEW_DEV_QUICK_LOGIN requires local authentication without development authentication bypass")
+	}
 	if c.DevAuthBypass && !loopbackListenHost(listen.Host) {
 		return errors.New("LEAPVIEW_DEV_AUTH_BYPASS requires LEAPVIEW_ADDR to bind an explicit loopback host")
 	}

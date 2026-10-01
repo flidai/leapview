@@ -1,13 +1,15 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4 AS node
+FROM node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6 AS node
 
 FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go-deps
 WORKDIR /src
 
 COPY go.mod go.sum ./
 COPY pkg/apigen/go.mod pkg/apigen/go.sum ./pkg/apigen/
-RUN go mod download
+RUN go mod download || \
+    (sleep 5 && go mod download) || \
+    (sleep 5 && go mod download)
 
 FROM go-deps AS sourcegen
 
@@ -67,7 +69,8 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 ARG BUILD_VERSION=dev
 ARG BUILD_REVISION=unknown
 
-LABEL org.opencontainers.image.title="LeapView documentation site" \
+LABEL service="leapview-site" \
+      org.opencontainers.image.title="LeapView documentation site" \
       org.opencontainers.image.description="LeapView public website and documentation portal" \
       org.opencontainers.image.source="https://github.com/flidai/leapview" \
       org.opencontainers.image.licenses="Apache-2.0" \

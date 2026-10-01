@@ -4,6 +4,7 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -13,6 +14,7 @@ import (
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var (
@@ -79,6 +81,25 @@ type RunRecord struct {
 	Error          string                  `json:"error,omitempty"`
 }
 
+// RunAttemptRecord is persisted worker-attempt evidence. It intentionally
+// omits worker and fencing identities from user-facing run investigation.
+// Duration is derived by readers only when both stored timestamps are valid.
+type RunAttemptRecord struct {
+	Number     int64  `json:"number"`
+	Status     string `json:"status"`
+	ClaimedAt  string `json:"claimedAt"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// RunAttemptPage is a bounded, chronologically ordered read of persisted
+// attempts for one run.
+type RunAttemptPage struct {
+	Attempts  []RunAttemptRecord `json:"attempts"`
+	Truncated bool               `json:"truncated"`
+}
+
 type RunInput struct {
 	// RunID is an optional caller-owned command identity. PostgreSQL adapters
 	// require it (or another explicit invocation identity) for exact replay;
@@ -104,7 +125,10 @@ type RunInput struct {
 	ParentRunID          string
 	JobKind              string
 	PayloadJSON          string
-	AuditIntent          *access.AuditIntent
+	// Authority is captured by the authenticated producer and carried through
+	// native refresh admission into the canonical product job.
+	Authority   jobs.AuthorityEnvelope
+	AuditIntent *access.AuditIntent
 }
 
 type JobRecord struct {
@@ -130,6 +154,10 @@ type JobRecord struct {
 	AttemptCount         int
 	LeaseOwner           string
 	LeaseRevision        int64
+	// Authority is the immutable queue envelope captured with the root run.
+	// Refresh execution revalidates it again at each protected unit/output
+	// boundary, not only at platform dequeue.
+	Authority jobs.AuthorityEnvelope
 }
 
 type JobQueueStats struct {
@@ -191,8 +219,8 @@ type MonitorFilter struct {
 }
 
 type MonitorPage struct {
-	Runs                             []RunRecord
-	Total, Failed, Completed, Active int64
+	Runs  []RunRecord
+	Total int64
 }
 
 // RunTreeInput describes one refresh pipeline root and all dependency
@@ -377,6 +405,11 @@ func (job JobRecord) Validate() error {
 	}
 	if job.TargetType == TargetRefreshPipeline && job.PipelineID != job.TargetID {
 		return errors.New("refresh pipeline target must equal pipeline id")
+	}
+	if !job.Authority.IsZero() {
+		if err := validatePipelineAuthorityTarget(job.Authority, job.Identity, job.PipelineID, job.PrincipalID); err != nil {
+			return fmt.Errorf("refresh job authority: %w", err)
+		}
 	}
 	if job.TargetType == TargetRefreshPipeline {
 		if err := validateOperational(job.TriggerID, "trigger id", false); err != nil {

@@ -7,20 +7,21 @@ import (
 )
 
 var browserAuthorizationPage = template.Must(template.New("browser-authorization").Parse(`<!doctype html>
-<html lang="en">
+<html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Access unavailable | LeapView</title>
   <link rel="icon" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/theme.js"></script>
 </head>
 <body class="min-h-svh bg-app text-fg-default flex items-center justify-center p-6">
   <main class="w-full max-w-lg rounded-xl border border-border-default bg-canvas-default p-6 shadow-lg" aria-labelledby="access-title">
     <p class="text-sm text-fg-muted">LeapView</p>
     <h1 class="mt-3 text-xl font-semibold" id="access-title">You don't have access to this {{.Area}}</h1>
     <p class="mt-3 text-sm text-fg-muted">Your session is active, but your current role does not allow this action. No changes were made.</p>
-    <a class="mt-5 inline-flex items-center rounded-md border border-border-default px-3 py-2 text-sm font-medium hover:bg-canvas-subtle" href="/">Return to Insights</a>
+    <a class="mt-5 inline-flex items-center rounded-md border border-border-default px-3 py-2 text-sm font-medium hover:bg-canvas-subtle" href="/admin/profile">Open your profile</a>
   </main>
 </body>
 </html>`))

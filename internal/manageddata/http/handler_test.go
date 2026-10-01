@@ -178,7 +178,7 @@ func TestCancelUploadCompletesOnlyItsGeneratedCommandGuard(t *testing.T) {
 }
 
 func TestDevelopmentBypassOnlySkipsConnectionSnapshotAuthorization(t *testing.T) {
-	deny := func(context.Context, string, string, string, access.Capability) (bool, error) { return false, nil }
+	deny := func(context.Context, string, string, string, access.Action) (bool, error) { return false, nil }
 	for _, test := range []struct {
 		name       string
 		principal  managedhttp.Principal
@@ -291,6 +291,63 @@ func TestMultipartOperationsAreSDKFreeAndScopedToUpload(t *testing.T) {
 	decodeResponse(t, signedRecorder, &signed)
 	if signed.Url != "https://signed.example/part" || len(signed.Headers) != 1 || signed.Headers[0].Name != "x-checksum" {
 		t.Fatalf("signed response = %#v", signed)
+	}
+}
+
+func TestEveryManagedDataUploadMutationUsesConnectionUpload(t *testing.T) {
+	result := uploadFixture()
+	result.Files[0].Transport = control.TransportDescription{Protocol: control.ProtocolS3Multipart, S3Multipart: &control.S3MultipartDescription{CreateEndpoint: "/multipart", MinimumPartSize: 1, MaximumPartSize: 1024, MaximumParts: 100}}
+	uploads := &fakeUploads{result: result}
+	multipart := &fakeMultipart{upload: s3multipart.UploadResult{
+		ID: "multipart-a", UploadSessionID: "upload-a", File: result.Manifest.Files[0],
+		Status: s3multipart.StatusOpen, CreatedAt: "2026-01-01T00:00:00Z", ExpiresAt: "2026-01-01T01:00:00Z",
+	}}
+	var authorized []access.Action
+	options := handlerOptions(metadataFixture(), uploads, multipart)
+	options.AuthorizeConnection = func(_ context.Context, _ string, _ string, _ string, action access.Action) (bool, error) {
+		authorized = append(authorized, action)
+		return action == access.ActionConnectionUpload, nil
+	}
+	handler := managedhttp.NewHandler(options)
+	tests := []struct {
+		name string
+		body string
+		want int
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{"create session", `{"manifest":{"files":[{"path":"orders.csv","size":3,"sha256":"` + digestA + `"}]}}`, http.StatusCreated, func(w http.ResponseWriter, r *http.Request) {
+			handler.CreateManagedDataUploadSession(w, r, "project-a", "orders", apigenapi.GenCreateManagedDataUploadSessionHeaders{IdempotencyKey: "create-key"})
+		}},
+		{"cancel session", ``, http.StatusOK, func(w http.ResponseWriter, r *http.Request) {
+			handler.CancelManagedDataUploadSession(w, r, "project-a", "orders", "upload-a", apigenapi.GenCancelManagedDataUploadSessionHeaders{IdempotencyKey: "cancel-key"})
+		}},
+		{"finalize session", ``, http.StatusAccepted, func(w http.ResponseWriter, r *http.Request) {
+			handler.FinalizeManagedDataUploadSession(w, r, "project-a", "orders", "upload-a", apigenapi.GenFinalizeManagedDataUploadSessionHeaders{IdempotencyKey: "finalize-key"})
+		}},
+		{"create multipart upload", `{"path":"orders.csv"}`, http.StatusCreated, func(w http.ResponseWriter, r *http.Request) {
+			handler.CreateManagedDataS3MultipartUpload(w, r, "project-a", "orders", "upload-a", apigenapi.GenCreateManagedDataS3MultipartUploadHeaders{IdempotencyKey: "multipart-create-key"})
+		}},
+		{"sign multipart part", `{"size":3,"sha256":"` + digestA + `"}`, http.StatusOK, func(w http.ResponseWriter, r *http.Request) {
+			handler.SignManagedDataS3MultipartPart(w, r, "project-a", "orders", "upload-a", "multipart-a", 1)
+		}},
+		{"complete multipart upload", `{"parts":[{"partNumber":1,"etag":"etag-a","sha256":"` + digestA + `"}]}`, http.StatusOK, func(w http.ResponseWriter, r *http.Request) {
+			handler.CompleteManagedDataS3MultipartUpload(w, r, "project-a", "orders", "upload-a", "multipart-a", apigenapi.GenCompleteManagedDataS3MultipartUploadHeaders{IdempotencyKey: "multipart-complete-key"})
+		}},
+		{"abort multipart upload", ``, http.StatusOK, func(w http.ResponseWriter, r *http.Request) {
+			handler.AbortManagedDataS3MultipartUpload(w, r, "project-a", "orders", "upload-a", "multipart-a", apigenapi.GenAbortManagedDataS3MultipartUploadHeaders{IdempotencyKey: "multipart-abort-key"})
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			authorized = nil
+			recorder := call(t, test.body, test.call)
+			if recorder.Code != test.want {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			if len(authorized) != 1 || authorized[0] != access.ActionConnectionUpload {
+				t.Fatalf("connection authorization actions = %v, want exactly [connection.upload]", authorized)
+			}
+		})
 	}
 }
 
@@ -504,7 +561,7 @@ func newHandler(repo managedhttp.Repository, uploads managedhttp.UploadCoordinat
 func handlerOptions(repo managedhttp.Repository, uploads managedhttp.UploadCoordinator, multipart s3multipart.Coordinator) managedhttp.Options {
 	return managedhttp.Options{
 		Repository: repo, Uploads: uploads, Multipart: multipart, Environment: "prod",
-		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) { return true, nil },
+		AuthorizeConnection: func(context.Context, string, string, string, access.Action) (bool, error) { return true, nil },
 		EnqueueFinalize:     func(context.Context, control.UploadRequest) error { return nil },
 		BuildAuditIntent: func(context.Context, managedhttp.CommandAuditInput) (*access.AuditIntent, error) {
 			return &access.AuditIntent{}, nil

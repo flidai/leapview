@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -79,7 +80,7 @@ func TestEstablishLocalAuthoringSessionsUsesNormalScopedDeviceAuthority(t *testi
 	require.Equal(t, request.InstanceID, authority.loginRequest.InstanceID)
 	require.Equal(t, request.ProjectID, authority.loginRequest.ProjectID)
 	require.False(t, authority.loginRequest.Headless)
-	require.Equal(t, []string{"PROJECT_ADMIN", "RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH", "RESOURCE_MANAGE"}, authority.loginRequest.Capabilities)
+	require.Equal(t, access.DefaultAuthoringActions(), authority.loginRequest.Actions)
 	require.Contains(t, output.String(), "ABCD-EFGH")
 }
 

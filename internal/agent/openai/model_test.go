@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agentapp "github.com/flidai/leapview/internal/agent"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -25,6 +26,18 @@ func TestNewModelUsesBoundedDefaultHTTPClient(t *testing.T) {
 	}
 	if model.client.Timeout != DefaultHTTPTimeout {
 		t.Fatalf("default HTTP timeout = %s, want %s", model.client.Timeout, DefaultHTTPTimeout)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://api.example.com/redirect", nil)
+	if model.client.CheckRedirect == nil || !errors.Is(model.client.CheckRedirect(request, []*http.Request{request}), http.ErrUseLastResponse) {
+		t.Fatal("default model client must preserve the no-redirect policy")
+	}
+}
+
+func TestDefaultModelClientRejectsPrivateDestination(t *testing.T) {
+	model := NewModel(agentapp.Config{APIKey: "test-key", BaseURL: "http://127.0.0.1:1", Model: "test-model"}, nil)
+	_, err := model.Complete(t.Context(), agentcore.ModelRequest{}, nil)
+	if !errors.Is(err, outbound.ErrDestinationDenied) {
+		t.Fatalf("Complete() error = %v, want outbound destination denial", err)
 	}
 }
 

@@ -64,6 +64,7 @@ func NewHandlerWithOptions(options Options) http.Handler {
 	mux.Handle("POST /mcp", documentationMCP)
 	mux.Handle("DELETE /mcp", documentationMCP)
 	mux.HandleFunc("GET /{$}", server.home)
+	mux.HandleFunc("GET /compliance", server.compliance)
 	mux.HandleFunc("GET /download", server.desktopDownload)
 	mux.HandleFunc("GET /visuals", server.visuals)
 	mux.HandleFunc("GET /visuals/responsive", server.responsiveWidgets)
@@ -229,6 +230,11 @@ func (s *siteServer) home(w http.ResponseWriter, r *http.Request) {
 	renderHTML(w, http.StatusOK, sitePage(metadata), "render site page")
 }
 
+func (s *siteServer) compliance(w http.ResponseWriter, r *http.Request) {
+	metadata := s.metadata(r, "Compliance & Security — "+siteBrandName, "Current security and assurance status for "+siteBrandName+", with implemented capabilities and pending approvals kept distinct.", "website", "")
+	renderHTML(w, http.StatusOK, compliancePage(metadata), "render compliance page")
+}
+
 func (s *siteServer) visuals(w http.ResponseWriter, r *http.Request) {
 	metadata := s.metadata(r, siteBrandName+" visual showcase", "Explore "+siteBrandName+" charts, KPIs, tables, matrices, and pivots.", "website", "")
 	renderHTML(w, http.StatusOK, visualsPage(metadata), "render visuals page")
@@ -369,7 +375,7 @@ func (s *siteServer) absoluteURL(r *http.Request, requestedPath string) string {
 }
 
 func (s *siteServer) sitemap(w http.ResponseWriter, r *http.Request) {
-	paths := []string{"/", "/download", "/visuals", "/visuals/responsive", "/docs"}
+	paths := []string{"/", "/compliance", "/download", "/visuals", "/visuals/responsive", "/docs"}
 	if s.showcaseEmbedURL != nil {
 		paths = append(paths, "/showcase")
 	}

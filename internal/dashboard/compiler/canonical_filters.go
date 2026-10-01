@@ -626,26 +626,13 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 			}
 			var datasets []string
 			if visualValidation != canonicalFilterVisualValidationNone {
-				if lowered, err := LowerDashboardQueryBinding(visual.Query, model, model.Name); err == nil {
-					datasets = append(datasets, loweredDashboardQueryDatasets(lowered)...)
-					if len(datasets) == 0 {
-						datasets, err = canonicalQueryDatasets(visual.Query, model)
-						if err != nil {
-							if visualValidation == canonicalFilterVisualValidationBestEffort {
-								continue
-							}
-							return fmt.Errorf("visual %q query: %w", component.Visual, err)
-						}
+				var resolveErr error
+				datasets, resolveErr = canonicalVisualQueryDatasets(visual.Query, model)
+				if resolveErr != nil {
+					if visualValidation == canonicalFilterVisualValidationBestEffort {
+						continue
 					}
-				} else {
-					var resolveErr error
-					datasets, resolveErr = canonicalQueryDatasets(visual.Query, model)
-					if resolveErr != nil {
-						if visualValidation == canonicalFilterVisualValidationBestEffort {
-							continue
-						}
-						return fmt.Errorf("visual %q query: %w", component.Visual, resolveErr)
-					}
+					return fmt.Errorf("visual %q query: %w", component.Visual, resolveErr)
 				}
 			}
 			for filterID, definition := range definitions {

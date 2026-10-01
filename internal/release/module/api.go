@@ -216,7 +216,7 @@ type JobStore interface {
 type APIConfig struct {
 	CurrentPrincipal     func(*http.Request) (Principal, bool)
 	ProjectSearchCatalog projectcatalogSearcher
-	AuthorizeConnection  func(context.Context, string, string, string, access.Capability) (bool, error)
+	AuthorizeConnection  func(context.Context, string, string, string, access.Action) (bool, error)
 	Jobs                 JobStore
 }
 

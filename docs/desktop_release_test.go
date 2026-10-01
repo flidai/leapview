@@ -33,7 +33,7 @@ type desktopReleasePlatform struct {
 	MinimumVersion string   `json:"minimumVersion"`
 }
 
-func TestDesktopReleaseManifestPublishesPreviewAndMatchesPolicy(t *testing.T) {
+func TestDesktopReleaseManifestWithdrawsUnavailablePreviewAndMatchesPolicy(t *testing.T) {
 	contents, err := Files.ReadFile("desktop-release.json")
 	if err != nil {
 		t.Fatalf("read desktop release manifest: %v", err)
@@ -42,8 +42,8 @@ func TestDesktopReleaseManifestPublishesPreviewAndMatchesPolicy(t *testing.T) {
 	if err := json.Unmarshal(contents, &manifest); err != nil {
 		t.Fatalf("decode desktop release manifest: %v", err)
 	}
-	if manifest.SchemaVersion != 1 || manifest.Status != "published" || manifest.Release == nil {
-		t.Fatalf("desktop release state = schema %d, status %q, release %#v; want published preview schema 1", manifest.SchemaVersion, manifest.Status, manifest.Release)
+	if manifest.SchemaVersion != 1 || manifest.Status != "withdrawn" || manifest.Release == nil {
+		t.Fatalf("desktop release state = schema %d, status %q, release %#v; want withdrawn preview schema 1", manifest.SchemaVersion, manifest.Status, manifest.Release)
 	}
 	if manifest.Product.Name != "LeapView" || manifest.Product.ApplicationID != "dev.leapview.desktop" {
 		t.Errorf("desktop product identity = %#v", manifest.Product)

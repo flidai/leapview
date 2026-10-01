@@ -14,6 +14,7 @@ import (
 	"time"
 
 	agentapp "github.com/flidai/leapview/internal/agent"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -26,7 +27,10 @@ type OpenAIModel struct {
 
 func NewModel(config agentapp.Config, client *http.Client) *OpenAIModel {
 	if client == nil {
-		client = &http.Client{Timeout: DefaultHTTPTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client = outbound.New(outbound.ExplicitPrivate, outbound.Options{}).HTTPClient(
+			&http.Client{Timeout: DefaultHTTPTimeout},
+			outbound.HTTPConfig{AllowedSchemes: []string{"http", "https"}},
+		)
 	}
 	return &OpenAIModel{config: config, client: client}
 }

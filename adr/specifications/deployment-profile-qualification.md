@@ -4,9 +4,9 @@ Status: proposed requirements; no profile is qualified by this document
 
 Date: 2026-09-25
 
-Last revised: 2026-09-28
+Last revised: 2026-10-01
 
-Related: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md),
+Related: [ADR-0028](../0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md),
 [supporting technology research](deployment-stack-reuse-research.md)
 
 ## Purpose and release gates
@@ -15,6 +15,25 @@ Qualify public Compose self-hosting and the operated Kamal profile using existin
 tooling, shared LeapView lifecycle commands, and the UBDR occurrence/evidence
 contracts. Linear tracks owners and delivery status. No production capability or
 numeric service guarantee is established by this specification.
+
+Record the selected application's process and credential lifecycle contract before
+qualification. ADR-0028 requires candidate-first Kamal overlap; ADR-0027's current
+single-process foundation cannot qualify that profile. Resolve the process ownership,
+admission/draining, publication and restart contract under review before accepting
+their combined implementation. A separately accepted stop-first maintenance profile
+requires its own amended scope and evidence.
+
+Classify incompatible credential/schema/catalog transitions before mutation and use
+their declared maintenance/recovery procedure. Ordinary compatible image rollback
+must preserve acknowledged writes and usable retained credential versions/keys.
+Do not claim old-binary downgrade support across an unsupported credential format.
+
+Build outputs and profiles qualify independently. Managed acceptance may use admitted
+conventional images; a later Nix image requires its exact-artifact gates and affected
+profile requalification. Public site, Compose, CLI and desktop evidence remains
+separate. Protected candidate authorization, exact-source CI and final-artifact
+admission are distinct; never promote a rebuilt or differently identified artifact
+using an older receipt.
 
 | Gate | Required before | Configuration and evidence |
 |---|---|---|
@@ -135,7 +154,7 @@ for production. Do not require self-hosters to subscribe to them.
   without replacing them. Exercise resumable key rotation, retained-backup
   decryption and restoration using a separately protected per-deployment keyring.
   Credential formats and lifecycle details require the focused ADR identified by
-  ADR-0025 before implementation.
+  ADR-0028 before implementation.
 - **Cloudflare:** test both direct ingress and the optional proxy path. Verify SSE
   delivery/reconnection, upload bounds, cache exclusions, origin TLS/certificate
   renewal, origin restrictions and trusted client identity. Record plaintext access

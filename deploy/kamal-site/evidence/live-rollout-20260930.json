@@ -1,0 +1,251 @@
+{
+  "automatic_vps_activation_enabled": false,
+  "availability_observation": {
+    "continuous_outage_duration_inferred": false,
+    "cutover_and_reboot_window_ist": {
+      "end": "2026-09-30T14:26:00+05:30",
+      "start": "2026-09-30T14:16:00+05:30"
+    },
+    "cutover_and_reboot_window_utc": {
+      "end": "2026-09-30T08:56:00Z",
+      "start": "2026-09-30T08:46:00Z"
+    },
+    "failed_endpoint_samples": 25,
+    "other_unaccepted_attempts_included_as_passes": false,
+    "sampled_seconds_with_failed_endpoint_samples": 13,
+    "zero_downtime_claimed": false
+  },
+  "capacity_qualification": {
+    "available_bytes_at_qualification": 33906552832,
+    "available_inodes_at_qualification": 2398341,
+    "basis": "real admitted A/B image lifecycle qualification, with the measured envelope mapped to the matching live Docker/containerd filesystem; raw paths and host identifiers omitted",
+    "candidate_headroom_bytes": 1904160768,
+    "filesystem_capacity_bytes": 39964635136,
+    "filesystem_count_after_deduplicating_docker_and_containerd": 1,
+    "maximum_qualified_compressed_image_bytes": 264041238,
+    "measured_full_lifecycle_peak_bytes": 1269440512,
+    "measured_full_lifecycle_peak_inodes": 3787,
+    "minimum_required_free_bytes": 5900624282,
+    "minimum_required_free_inodes": 13787,
+    "qualified_images": [
+      {
+        "compressed_bytes": 264041238,
+        "reference": "ghcr.io/flidai/leapview-site@sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec",
+        "selected_platform_manifest": "sha256:b6a0ef9ae640eb341b51c9e4fbcf25144a10f437952a7f25cf1f97a41aa29150",
+        "service_source_revision": "aa823506bf7916f051083cab56dd015cbcadac0d"
+      },
+      {
+        "compressed_bytes": 264041225,
+        "reference": "ghcr.io/flidai/leapview-site@sha256:acc225d4526738b4a7b55609b1a643e31fdbc034dca305f17ca952a973f16e87",
+        "selected_platform_manifest": "sha256:a54473f74baa138e7c8a74a673d59222bef34fcf38fdebcae7ed4a996ec61bf5",
+        "service_source_revision": "0f25215ceb1cc7331701d2f3120da47b66a88714"
+      }
+    ],
+    "reserve_bytes": 3996463514,
+    "reserve_inodes": 10000,
+    "status": "passed_for_both_live_images"
+  },
+  "events": {
+    "b_deploy_offline_rollback_to_a_and_cached_b_restore": {
+      "completed_at_ist": "2026-09-30T14:22:57+05:30",
+      "completed_at_utc": "2026-09-30T08:52:57.538499Z",
+      "final_active_image": "ghcr.io/flidai/leapview-site@sha256:acc225d4526738b4a7b55609b1a643e31fdbc034dca305f17ca952a973f16e87",
+      "final_prior_image": "ghcr.io/flidai/leapview-site@sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec",
+      "maintenance_pending": false,
+      "offline_rollback_qualified": true,
+      "pending_operation": null,
+      "result": "live_b_offline_a_cached_b_passed"
+    },
+    "bootstrap_a": {
+      "image": "ghcr.io/flidai/leapview-site@sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec",
+      "permanent_state_written_after_public_acceptance": true,
+      "ready_then_state_preflight_passed": true,
+      "receipt_written_at_ist": "2026-09-30T14:18:39+05:30",
+      "receipt_written_at_utc": "2026-09-30T08:48:39.895128Z",
+      "status": "handover_accepted",
+      "timestamp_basis": "filesystem receipt timestamp; bootstrap JSON does not embed event times"
+    },
+    "caddy_recreation_and_public_acceptance": {
+      "caddy_recreation_status": "caddy_recreated_and_verified",
+      "desktop_download_status": "withdrawn",
+      "desktop_installer_links": 0,
+      "finished_at_ist": "2026-09-30T14:24:15+05:30",
+      "finished_at_utc": "2026-09-30T08:54:15.693756Z",
+      "public_acceptance": true,
+      "public_smoke_outcome": "passed",
+      "started_at_ist": "2026-09-30T14:23:56+05:30",
+      "started_at_utc": "2026-09-30T08:53:56.245697Z",
+      "state_unchanged_after_recreation": true,
+      "status": "accepted"
+    },
+    "original_compose_restore": {
+      "finished_at_ist": "2026-09-30T13:04:25+05:30",
+      "finished_at_utc": "2026-09-30T07:34:25.297644Z",
+      "kamal_ready_or_state_written_during_restore": false,
+      "status": "original_restored_and_publicly_accepted"
+    },
+    "real_host_reboot_and_postboot_acceptance": {
+      "accepted_at_ist": "2026-09-30T14:26:31+05:30",
+      "accepted_at_utc": "2026-09-30T08:56:31.972933Z",
+      "boot_changed": true,
+      "containerd_service": "active",
+      "docker_service": "active",
+      "legacy_timer": "disabled",
+      "post_smoke_host_recheck_passed": true,
+      "public_acceptance": true,
+      "public_smoke_outcome": "passed",
+      "role": "B",
+      "status": "postboot_accepted"
+    }
+  },
+  "evidence_type": "live_public_site_kamal_rollout",
+  "images": {
+    "A": {
+      "reference": "ghcr.io/flidai/leapview-site@sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec",
+      "role": "verified_prior_and_offline_rollback_target",
+      "service_source_revision": "aa823506bf7916f051083cab56dd015cbcadac0d"
+    },
+    "B": {
+      "reference": "ghcr.io/flidai/leapview-site@sha256:acc225d4526738b4a7b55609b1a643e31fdbc034dca305f17ca952a973f16e87",
+      "role": "active_live_image",
+      "service_source_revision": "0f25215ceb1cc7331701d2f3120da47b66a88714"
+    }
+  },
+  "monitoring": {
+    "acceptance_preflight_tests_passed": 8,
+    "duration_seconds": 86400,
+    "end_adoption_smoke": "pending",
+    "expected_end_at_ist": "2026-10-01T15:58:20+05:30",
+    "expected_end_at_utc": "2026-10-01T10:28:20Z",
+    "failed_public_samples_as_of_snapshot": 0,
+    "final_acceptance_receipt": "pending",
+    "freeze_note": "preflight passed with start-smoke evidence bound by hash; no end smoke or final acceptance receipt written",
+    "frozen_preflight": "preflight_passed",
+    "host_sample_interval_seconds": 900,
+    "host_samples": 4,
+    "latest_http_checks": {
+      "build": {
+        "http_status": 200,
+        "ok": true
+      },
+      "healthz": {
+        "http_status": 200,
+        "ok": true
+      },
+      "readyz": {
+        "http_status": 200,
+        "ok": true
+      }
+    },
+    "latest_sample_at_ist": "2026-09-30T16:47:20+05:30",
+    "latest_sample_at_utc": "2026-09-30T11:17:20Z",
+    "observer_source_sha256": "45f17cec00df5700c36d729b24d69ecb14dc71ad7d02e6fa2016990ab91f1f82",
+    "probe_interval_seconds": 60,
+    "public_samples": 50,
+    "rollout_acceptance": "incomplete_public_adoption_smoke_required",
+    "run_id": "run-20260930T102635Z",
+    "schedule_status": "queued",
+    "scheduled_acceptance_at_ist": "2026-10-01T16:01:00+05:30",
+    "scheduled_acceptance_at_utc": "2026-10-01T10:31:00Z",
+    "start_adoption_smoke": {
+      "input_hash_file_sha256": "d62c7c646e830586d5d14edcc457097e8ab982a60fca51336e7d2305b87c0a22",
+      "log_sha256": "2753e8e089839c0553b1fae4a50ab7c0cce318d7f350cc55610264f0c4b24c42",
+      "status": "passed_in_frozen_preflight"
+    },
+    "started_at_ist": "2026-09-30T15:58:20+05:30",
+    "started_at_utc": "2026-09-30T10:28:20Z",
+    "status": "running"
+  },
+  "pending_gates": [
+    "complete_the_full_24_hour_observation",
+    "record_the_end_public_adoption_smoke_and_final_acceptance_receipt",
+    "perform_the_post_observation_image_retention_audit",
+    "close_pr_748_after_all_acceptance_gates_pass"
+  ],
+  "prior_monitor_attempt": {
+    "cause": "unknown",
+    "failed_at_utc": "2026-09-30T09:54:44Z",
+    "included_in_24_hour_acceptance": false,
+    "public_endpoint_http_statuses": [
+      200,
+      200,
+      200
+    ],
+    "sample_duration_seconds": 20.873,
+    "version": "v3"
+  },
+  "receipt_index": [
+    {
+      "id": "bootstrap_acceptance",
+      "sha256": "6f790d4b520a90c281e7d70f1fc96d0fc2cede8fcd672d2695bee6f411883a5e"
+    },
+    {
+      "id": "capacity_qualification",
+      "sha256": "d50384d6ee1cad3c4a4e72a5de9be8c6542f4ef06beeba6fed857e4385b71bc2"
+    },
+    {
+      "id": "original_compose_restore",
+      "sha256": "a5ade79edcbb12fa4ba85d6f428ce2a91cfd39643f9441185f8af127778135d6"
+    },
+    {
+      "id": "b_offline_rollback_and_restore_result",
+      "sha256": "1ac49d161649625e8b49d5e1a951416b846ae667dfecc2e0443e870058dd1403"
+    },
+    {
+      "id": "final_operator_state",
+      "sha256": "c862ad155e98c2492ac884339939f1dc4de6fec7615d8bf6978c3f26f112da61"
+    },
+    {
+      "id": "offline_rollback_receipt",
+      "sha256": "5771823653335860fc20b7d2aec7770e37ca910bd7582841a2db132cd2ea76e8"
+    },
+    {
+      "id": "caddy_recreation_acceptance",
+      "sha256": "1250dccbcaa57a96aff958faefdbafd26912fd31cc9642cb72d3139b0470773b"
+    },
+    {
+      "id": "host_reboot_acceptance",
+      "sha256": "045900aa288507edcb1d6045863fc17e583ae0f16185f2dac14b3ffd0136db94"
+    },
+    {
+      "id": "observer_start_status",
+      "sha256": "c5b0f91348180d44b758f043f75dcd2ef8f84a1aa01626639325d3ce7e77bc63"
+    },
+    {
+      "id": "observer_summary_snapshot",
+      "sha256": "49ab449d57d7757278c7b7e4eda9395729199ca1e21e6a9bd108eced13388f3a"
+    },
+    {
+      "id": "observer_samples_snapshot",
+      "sha256": "7529c75b6da18f6e54d1807dbc9a63518fdcfeea56cd8b451525e526d630cab8"
+    },
+    {
+      "id": "observer_freeze",
+      "sha256": "45bf4a22e5dcd83ffe9be1e173dbfb8f48507e7733bbd2cdc35159384b1dacfc"
+    },
+    {
+      "id": "observer_schedule",
+      "sha256": "5f71cffb9daf5e5010f9e429a47fb98639ef6db0058657f6365ff37c2cbcc98a"
+    },
+    {
+      "id": "observer_acceptance_preflight",
+      "sha256": "22704c8917dbccba3cd940facdae5a13fbd7524f621cb72158380acbf8ca0ddc"
+    }
+  ],
+  "sanitization": {
+    "credentials_or_environment_values_included": false,
+    "host_private_identifiers_included": false,
+    "protected_locations_included": false,
+    "raw_logs_included": false
+  },
+  "schema": 1,
+  "scope": {
+    "deployment_mode": "operator_controlled",
+    "product_demo_in_scope": false,
+    "public_site": "leapview.dev",
+    "www_behavior": "redirect_to_primary_site"
+  },
+  "snapshot_at_ist": "2026-09-30T16:47:20+05:30",
+  "snapshot_at_utc": "2026-09-30T11:17:20Z",
+  "status": "24_hour_observation_in_progress"
+}

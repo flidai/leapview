@@ -19,6 +19,7 @@ import {
 	Plug,
 	Search,
 	Settings,
+  ShieldCheck,
   TableProperties,
 	Users,
 	UsersRound,
@@ -29,11 +30,15 @@ import {
 	type IconNode,
 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
+import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
 import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
-import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
+import { renderSidebarChatHistory, sidebarChatHistoryStyles, sidebarPinnedChats, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
+import { renderSidebarPinnedItems, sidebarPinnedDashboardStyles, unpinSidebarDashboard } from './sidebar-pinned-dashboards'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
+import { catalogPinsChangedEvent, readPinnedDashboardLinks, scopedCatalogPinLinksStorageKey, scopedCatalogPinsStorageKey, type PinnedDashboardLink } from '../app/catalog-pins'
+import { readStringList } from '../app/catalog-preferences'
 
 type NavItem = {
   id: string
@@ -68,6 +73,7 @@ type SidebarConfig = {
   modelTitle?: string
   modelId?: string
   dashboardId?: string
+  principalId?: string
   userRole?: string
   compact?: boolean
   primaryAction?: SidebarAction
@@ -111,6 +117,7 @@ type IconName =
   | 'users'
   | 'users-round'
   | 'user'
+  | 'shield-check'
   | 'search'
   | 'collapse'
   | 'expand'
@@ -180,12 +187,13 @@ class LeapViewSidebar extends LitElement {
   @state() private searchQuery = ''
   @state() private liveUserAvatarUrl: string | undefined
   @state() private sidebarWidth = SIDEBAR_DEFAULT_WIDTH
+  @state() private pinnedDashboardLinks: PinnedDashboardLink[] = []
   private collapseStateInitialized = false
   private loadedWidthStorageKey = ''
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
-  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, sidebarAccountStyles, css`
+  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, sidebarPinnedDashboardStyles, sidebarAccountStyles, css`
     :host {
       --lv-sidebar-width-default: var(--lv-sidebar-width-expanded);
       --lv-sidebar-width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
@@ -1057,6 +1065,9 @@ class LeapViewSidebar extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
+    this.refreshPinnedDashboards()
+    window.addEventListener(catalogPinsChangedEvent, this.refreshPinnedDashboards)
+    window.addEventListener('storage', this.onPinnedDashboardStorage)
     document.addEventListener('keydown', this.onKeyDown)
     document.addEventListener('pointerdown', this.closeChatMenusOnOutsidePointerDown)
     document.addEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
@@ -1067,6 +1078,8 @@ class LeapViewSidebar extends LitElement {
   }
 
   disconnectedCallback(): void {
+    window.removeEventListener(catalogPinsChangedEvent, this.refreshPinnedDashboards)
+    window.removeEventListener('storage', this.onPinnedDashboardStorage)
     document.removeEventListener('keydown', this.onKeyDown)
     document.removeEventListener('pointerdown', this.closeChatMenusOnOutsidePointerDown)
     document.removeEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
@@ -1087,6 +1100,7 @@ class LeapViewSidebar extends LitElement {
     if (changedProperties.has('config')) {
       this.syncSidebarWidth()
       this.restorePeekAfterNavigation()
+      if (this.config.principalId !== previousConfig?.principalId) this.refreshPinnedDashboards()
     }
   }
 
@@ -1372,6 +1386,7 @@ class LeapViewSidebar extends LitElement {
               ${group.items.map((item) => item.disabled ? this.renderDisabledItem(item) : this.renderLink(item))}
             </section>
           `) : this.searchQuery.trim() ? html`<p class="search-empty">No matching pages</p>` : null}
+          ${this.renderPinnedItems()}
           ${this.renderHistory()}
           <div class="mobile-footer"><div class="footer-row">${this.renderUserCard(true)}${this.renderFooterSearch()}</div></div>
         </nav>
@@ -1625,6 +1640,28 @@ class LeapViewSidebar extends LitElement {
     return renderSidebarChatHistory(this.config.history, this.pendingRemovalIds, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item))
   }
 
+  private refreshPinnedDashboards = (): void => {
+    const principalID = this.config.principalId?.trim() ?? ''
+    const pinnedIDs = principalID ? readStringList(scopedCatalogPinsStorageKey(principalID)) : []
+    this.pinnedDashboardLinks = readPinnedDashboardLinks(principalID).filter(link => pinnedIDs.some(id => id === link.id || id.endsWith(`:${link.id}`)))
+  }
+
+  private onPinnedDashboardStorage = (event: StorageEvent): void => {
+    const principalID = this.config.principalId?.trim()
+    if (principalID && (event.key === scopedCatalogPinLinksStorageKey(principalID) || event.key === scopedCatalogPinsStorageKey(principalID) || event.key === null)) this.refreshPinnedDashboards()
+  }
+
+  private unpinDashboard(event: MouseEvent, dashboard: PinnedDashboardLink): void {
+    event.stopPropagation()
+    unpinSidebarDashboard(this.config.principalId?.trim() ?? '', dashboard.id)
+    this.refreshPinnedDashboards()
+  }
+
+  private renderPinnedItems() {
+    if (this.config.admin) return null
+    return renderSidebarPinnedItems(this.pinnedDashboardLinks, sidebarPinnedChats(this.config.history, this.pendingRemovalIds), this.config.dashboardId, (event, href) => this.followInternalLink(event, href), (event, link) => this.unpinDashboard(event, link), (action, item) => this.chatAction(action, item))
+  }
+
   private chatAction(action: string, item: SidebarHistoryItem) {
     this.dispatchEvent(new CustomEvent('lv-chat-action', { bubbles: true, composed: true, detail: { action, conversationId: item.id, title: item.title, href: item.href } }))
   }
@@ -1668,6 +1705,7 @@ function icon(name: string) {
     users: Users,
     'users-round': UsersRound,
     user: User,
+    'shield-check': ShieldCheck,
     search: Search,
     collapse: PanelLeft,
     expand: PanelLeft,

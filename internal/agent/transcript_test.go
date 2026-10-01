@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTranscriptFormatsToolInputAndToonResult(t *testing.T) {
 	transcript := transcriptFromMessages("conv_1", []Message{
@@ -69,6 +72,20 @@ func TestTranscriptPrefersTypedCodeDisplayForExportResult(t *testing.T) {
 	}
 	if transcript[0].ResultJSON != "apiVersion: leapview.dev/v1\nkind: Dashboard\n" {
 		t.Fatalf("export result = %q", transcript[0].ResultJSON)
+	}
+}
+
+func TestTranscriptUsesStructuredVisualResultForExplorerLink(t *testing.T) {
+	transcript := transcriptFromMessages("conv_1", []Message{{
+		ID: "tool_visual", Role: MessageRoleTool, ToolCallID: "call_visual", ToolName: "query_visual",
+		ContentText: "id: visual_1\nok: true\nfields[1]:\n  - fieldId: model.country",
+		ContentJSON: `{"display_content":{"type":"bar","id":"visual_1","patch":{"visuals":{"visual_1":{"data":[{"secret":"row data"}]}}},"result":{"id":"visual_1","ok":true,"type":"bar","datasetId":"orders","semanticModelRef":{"id":"model","kind":"semantic_model"},"fields":[{"fieldId":"model.country","role":"dimension","explorerFieldId":"orders.country"}]}}}`,
+	}})
+	if len(transcript) != 1 || transcript[0].ResultFormat != "json" || transcript[0].Artifact == nil {
+		t.Fatalf("visual transcript = %#v", transcript)
+	}
+	if !strings.Contains(transcript[0].ResultJSON, `"explorerFieldId": "orders.country"`) || strings.Contains(transcript[0].ResultJSON, "row data") {
+		t.Fatalf("visual result preview = %q", transcript[0].ResultJSON)
 	}
 }
 

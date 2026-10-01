@@ -2,7 +2,7 @@ import type { VisualizationEnvelope, VisualizationFieldRef } from '../../../../.
 import type { RendererContext } from '../../host-controller'
 import { formatDisplayField, formatField, inlineDataset, legendDecoration, type EChartsTranslation } from './common'
 import { conditionalItemColor } from './conditional-color'
-import { echartsLabelPolicy } from './label-policy'
+import { echartsLabelPolicy, truncateVisualizationLabel } from './label-policy'
 import { categoryIdentity, type CategoryColorRegistry } from './category-colors'
 import { conditionalColorWithFallback } from './series-intent'
 
@@ -20,12 +20,13 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   const categoryIndex = dataset?.columns.indexOf(spec.category.field) ?? -1
   const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
   const outside = presentation.labelPosition !== 'inside'
+  const outsideLabelSegmenter = outside ? new Intl.Segmenter(context.locale, { granularity: 'grapheme' }) : undefined
   const labels = echartsLabelPolicy(envelope, spec.value.dataset, presentation.labelPolicy, ({ value }) => {
     const row = Array.isArray(value) ? value : []
     const amount = formatDisplayField(envelope, spec.value, valueIndex >= 0 ? row[valueIndex] : undefined, context)
     if (!outside) return amount
     const category = formatField(envelope, spec.category, categoryIndex >= 0 ? row[categoryIndex] : undefined, context)
-    return `${category}: ${amount}`
+    return proportionalOutsideLabel(category, amount, presentation.labelPolicy.maxCharacters, context.locale, outsideLabelSegmenter!)
   }, context)
   const categoryValues = categoryIndex < 0 ? [] : (dataset?.rows ?? []).map((row) => row[categoryIndex])
   categoryColors.register(envelope, spec.category, categoryValues)
@@ -96,7 +97,9 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
       series.right = '44%'
     }
     if (presentation.align !== undefined) series.funnelAlign = presentation.align
-    series.sort = presentation.sort === 'ascending' ? 'ascending' : presentation.sort === 'descending' ? 'descending' : 'none'
+    // A funnel without an authored sort must taper by value. Preserving the
+    // query's category order can put a wider stage below a narrower one.
+    series.sort = presentation.sort === 'ascending' ? 'ascending' : 'descending'
   }
   const centerText = proportionalCenterText(envelope, context)
   const center = centerText === undefined ? {} : {
@@ -143,6 +146,23 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     series: spec.mark === 'donut' && categoryValues.length === 0 ? [] : [series],
     aria: { decal: { show: repeatsColors } },
   }
+}
+
+function proportionalOutsideLabel(category: string, amount: string, maxCharacters: number, locale: string, segmenter: Intl.Segmenter): string {
+  const combined = `${category}: ${amount}`
+  const segment = (value: string) => [...segmenter.segment(value)]
+  if (segment(combined).length <= maxCharacters) return combined
+
+  // Keep the measure readable when the category is long. Truncating the full
+  // string first used to consume the label budget with the category and drop
+  // the value entirely (for example, "United States of America: $1.98M").
+  const amountLength = segment(amount).length
+  const categoryBudget = maxCharacters - amountLength - 2 // room for ": "
+  if (categoryBudget >= 2) {
+    return `${truncateVisualizationLabel(category, categoryBudget, locale)}: ${amount}`
+  }
+  if (categoryBudget === 1) return `…: ${amount}`
+  return truncateVisualizationLabel(combined, maxCharacters, locale)
 }
 
 export function proportionalCenterText(envelope: VisualizationEnvelope, context: RendererContext, activeRow?: readonly unknown[]): string | undefined {

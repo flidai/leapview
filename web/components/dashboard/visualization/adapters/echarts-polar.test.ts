@@ -175,6 +175,12 @@ test('ECharts emits only mark-supported proportional fields and preserves explic
   for (const pieOnly of ['radius', 'roseType', 'avoidLabelOverlap', 'minShowLabelAngle', 'labelLine']) {
     expect(funnelOption.series[0]).not.toHaveProperty(pieOnly)
   }
+
+  // An unsorted source can include a larger final category. The default
+  // funnel must still taper rather than widen again below a smaller stage.
+  funnel.spec.presentation.sort = undefined
+  const defaultFunnel = echartsOption(funnel, defaultRendererContext) as any
+  expect(defaultFunnel.series[0].sort).toBe('descending')
 })
 
 function proportionalFixture(mark: 'pie' | 'donut' | 'funnel'): VisualizationEnvelope {

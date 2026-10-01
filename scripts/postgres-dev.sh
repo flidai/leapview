@@ -120,8 +120,8 @@ write_runtime_env() {
     printf 'LEAPVIEW_POSTGRES_REQUIRE_TLS=false\n'
     printf 'LEAPVIEW_ENVIRONMENT=dev\n'
     printf 'LEAPVIEW_PRODUCTION=false\n'
-    printf 'LEAPVIEW_DEV_AUTH_BYPASS=true\n'
-    printf 'LEAPVIEW_DEV_API_TOKEN=dev\n'
+    printf 'LEAPVIEW_DEV_AUTH_BYPASS=false\n'
+    printf 'LEAPVIEW_LOCAL_AUTH=true\n'
     # Development still needs a stable process-local fingerprint key for
     # PostgreSQL access/audit identities; this value is intentionally not a
     # production credential and is scoped to the generated worktree file.

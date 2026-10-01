@@ -56,6 +56,51 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('standalone chart hosts keep the canvas renderer outside the builder', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    const surface = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:400px;height:300px'
+      host.envelope = { ...(window as any).__lvSourceHosts.orders_chart.envelope, status: { kind: 'ready' } }
+      document.body.append(host)
+      await host.ensureMounted()
+      return { canvas: host.shadowRoot.querySelectorAll('.renderer canvas').length, svg: host.shadowRoot.querySelectorAll('.renderer svg').length }
+    })
+    expect(surface).toEqual({ canvas: 1, svg: 0 })
+  } finally { await page.close() }
+})
+
+test('compact KPI cards align their titles regardless of comparison details', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    const offsets = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi.envelope
+      const measure = async (rich: boolean) => {
+        const host = document.createElement('lv-visualization-host') as any
+        host.style.cssText = 'display:block;width:320px;height:170px'
+        const envelope = structuredClone(source)
+        envelope.visualID = rich ? 'rich-kpi' : 'simple-kpi'
+        if (rich) envelope.spec.comparison = { field: { dataset: 'primary', field: 'value' }, reducer: 'first', label: 'Budget' }
+        else envelope.spec.presentation.note = undefined
+        host.envelope = envelope
+        document.body.append(host)
+        await host.ensureMounted()
+        const root = host.shadowRoot as ShadowRoot
+        const card = root.querySelector<HTMLElement>('.lv-kpi-card')!
+        const label = root.querySelector<HTMLElement>('.lv-visualization-label')!
+        return label.getBoundingClientRect().top - card.getBoundingClientRect().top
+      }
+      return { rich: await measure(true), simple: await measure(false) }
+    })
+    expect(Math.abs(offsets.rich - offsets.simple)).toBeLessThan(2)
+  } finally { await page.close() }
+})
+
 test('deferred hosts retain the latest valid envelope and mount once on eligibility', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -177,6 +222,87 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
     })
     expect(state.mounted).toBeGreaterThan(0)
     expect(state.snapshotText).toContain('Orders')
+  } finally {
+    await page.close()
+  }
+})
+
+test('visualization hosts suspend queued resize work and apply only the latest size on resume', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 })
+  try {
+    await page.addInitScript(() => {
+      const observers: any[] = []
+      class ControlledResizeObserver {
+        target?: Element
+        constructor(private readonly callback: ResizeObserverCallback) { observers.push(this) }
+        observe(target: Element): void { this.target = target }
+        unobserve(): void {}
+        disconnect(): void {}
+        takeRecords(): ResizeObserverEntry[] { return [] }
+        deliver(width: number, height: number): void {
+          if (!this.target) throw new Error('resize observer has no target')
+          this.callback([{ target: this.target, contentRect: { width, height } } as ResizeObserverEntry], this as unknown as ResizeObserver)
+        }
+      }
+      Object.defineProperty(window, 'ResizeObserver', { configurable: true, value: ControlledResizeObserver })
+      Object.defineProperty(window, '__lvResizeObservers', { configurable: true, value: observers })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    const result = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_chart
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      host.envelope = structuredClone(source.envelope)
+      host.style.cssText = 'display:block;width:640px;height:360px'
+      document.body.append(host)
+      await host.ensureMounted()
+
+      const renderer = (host.shadowRoot as ShadowRoot).querySelector('.renderer')!
+      const observer = (window as any).__lvResizeObservers.find((candidate: any) => candidate.target === renderer)
+      if (!observer) throw new Error('visualization renderer ResizeObserver was not installed')
+      const resizes: boolean[] = []
+      host.addEventListener('lv-visualization-observation', (event: CustomEvent) => {
+        if (event.detail?.stage === 'resize') resizes.push(host.resizeSuspended)
+      })
+      const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+      // Queue one ordinary resize, then suspend before its RAF can reach ECharts.
+      observer.deliver(320, 240)
+      host.resizeSuspended = true
+      observer.deliver(344, 240)
+      observer.deliver(368, 240)
+      await nextFrame()
+      await nextFrame()
+      const suspendedResizeCount = resizes.length
+
+      host.resizeSuspended = false
+      // A final ResizeObserver delivery can race with resizestop in the same frame.
+      observer.deliver(380, 260)
+      await nextFrame()
+      await nextFrame()
+      const canvas = renderer.querySelector('canvas') as HTMLCanvasElement | null
+      const applied = { width: canvas?.width ?? 0, height: canvas?.height ?? 0 }
+      const appliedResizeCount = resizes.length
+      host.remove()
+      await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
+      return {
+        suspendedResizeCount,
+        appliedResizeCount,
+        applied,
+        suspendedAfter: host.resizeSuspended,
+        resizeEventDuringSuspension: resizes.some(Boolean),
+      }
+    })
+
+    expect(result).toEqual({
+      suspendedResizeCount: 0,
+      appliedResizeCount: 1,
+      applied: { width: 380, height: 260 },
+      suspendedAfter: false,
+      resizeEventDuringSuspension: false,
+    })
   } finally {
     await page.close()
   }
@@ -613,7 +739,21 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
 for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
   test(`deferred hosts fall back to eager mounting when IntersectionObserver ${failureMode}`, async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    let releaseRendererChunk = () => {}
+    let rendererChunkRequested: Promise<void> | undefined
     try {
+      if (failureMode === 'constructor') {
+        let markRendererChunkRequested!: () => void
+        rendererChunkRequested = new Promise((resolve) => { markRendererChunkRequested = resolve })
+        let continueRendererChunk!: () => void
+        const rendererChunkGate = new Promise<void>((resolve) => { continueRendererChunk = resolve })
+        releaseRendererChunk = continueRendererChunk
+        await page.route('**/chunks/html-*.js', async (route) => {
+          markRendererChunkRequested()
+          await rendererChunkGate
+          await route.continue()
+        })
+      }
       await page.addInitScript((mode) => {
         if (mode === 'missing') {
           Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: undefined })
@@ -628,19 +768,24 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
       }, failureMode)
       await page.goto(baseURL)
       await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+      if (rendererChunkRequested) await rendererChunkRequested
 
-      const mounted = await page.evaluate(async () => {
+      await page.evaluate(async () => {
         const source = (window as any).__lvSourceHosts.orders_kpi
         const deferred = document.createElement('lv-visualization-host') as any
+        deferred.id = 'deferred-fallback'
         deferred.deferMount = true
         deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
         document.body.append(deferred)
         await deferred.updateComplete
-        await new Promise<void>((resolve) => setTimeout(resolve, 0))
-        return ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0
       })
-      expect(mounted).toBe(true)
+      const renderer = page.locator('#deferred-fallback .renderer > *')
+      if (rendererChunkRequested) expect(await renderer.count()).toBe(0)
+      releaseRendererChunk()
+      await renderer.waitFor({ state: 'attached' })
+      expect(await renderer.count()).toBeGreaterThan(0)
     } finally {
+      releaseRendererChunk()
       await page.close()
     }
   })

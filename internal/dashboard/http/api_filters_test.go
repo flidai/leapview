@@ -7,6 +7,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 )
 
 func TestDashboardComponentDTOEmitsSlicerDiscriminatorAndField(t *testing.T) {
@@ -37,12 +38,12 @@ func TestDashboardQueryFiltersDecodesVersionedAppliedStateAndIndependentSelectio
 				}},
 			},
 		},
-		Pages: []dashboard.Page{{ID: "overview", FilterBindings: map[string]dashboardfilter.Binding{
+		Pages: []dashboard.Page{{ID: "overview", Visuals: []dashboard.PageVisual{{Visual: "orders"}}, FilterBindings: map[string]dashboardfilter.Binding{
 			"state": {
 				Key: key, ID: "state", Filter: "state", Scope: dashboardfilter.ScopePage, PageID: "overview",
 				Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered},
 			},
-		}}},
+		}}}, Visualizations: map[string]visualizationdefinition.Definition{"orders": {ID: "orders"}},
 	}
 	filters, err := dashboardQueryFilters(definition, "overview", map[string]any{
 		"version": "typed_v1",
@@ -50,7 +51,7 @@ func TestDashboardQueryFiltersDecodesVersionedAppliedStateAndIndependentSelectio
 			"kind": "set", "operator": "in",
 			"values": []any{map[string]any{"kind": "string", "value": "SP"}},
 		}},
-	}, []map[string]any{{"sourceKind": "visual", "sourceId": "orders"}}, nil)
+	}, []map[string]any{{"sourceKind": "visual", "sourceId": "orders", "interactionKind": "selection"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,10 +63,70 @@ func TestDashboardQueryFiltersDecodesVersionedAppliedStateAndIndependentSelectio
 	}
 }
 
+func TestDashboardQueryFiltersRejectsForgedInteractionSources(t *testing.T) {
+	definition := dashboarddefinition.Definition{
+		Pages: []dashboard.Page{
+			{ID: "overview", Visuals: []dashboard.PageVisual{{Visual: "orders"}}},
+			{ID: "hidden", Visuals: []dashboard.PageVisual{{Visual: "secret"}}},
+		},
+		Visualizations: map[string]visualizationdefinition.Definition{
+			"orders": {ID: "orders"}, "secret": {ID: "secret"},
+		},
+	}
+	for name, selection := range map[string]map[string]any{
+		"unknown visual":     {"sourceKind": "visual", "sourceId": "missing", "interactionKind": "selection"},
+		"off-page visual":    {"sourceKind": "visual", "sourceId": "secret", "interactionKind": "selection"},
+		"forged source kind": {"sourceKind": "semanticModel", "sourceId": "orders", "interactionKind": "selection"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := dashboardQueryFilters(definition, "overview", nil, []map[string]any{selection}, nil); err == nil {
+				t.Fatal("forged interaction source was accepted")
+			}
+		})
+	}
+}
+
+func TestDashboardQueryFiltersRejectsForgedSpatialSources(t *testing.T) {
+	definition := dashboarddefinition.Definition{
+		Pages: []dashboard.Page{
+			{ID: "overview", Visuals: []dashboard.PageVisual{{Visual: "orders"}}},
+			{ID: "hidden", Visuals: []dashboard.PageVisual{{Visual: "secret-map"}}},
+		},
+		Visualizations: map[string]visualizationdefinition.Definition{
+			"orders": {ID: "orders"}, "secret-map": {ID: "secret-map"},
+		},
+	}
+	if _, err := dashboardQueryFilters(definition, "overview", nil, nil, []map[string]any{{"visualID": "secret-map", "interactionID": "spatial"}}); err == nil {
+		t.Fatal("off-page spatial source was accepted")
+	}
+}
+
 func TestDashboardQueryFiltersRejectsLegacyWholeMapState(t *testing.T) {
 	if _, err := dashboardQueryFilters(dashboarddefinition.Definition{}, "overview", map[string]any{
 		"controls": map[string]any{},
 	}, nil, nil); err == nil {
 		t.Fatal("legacy unversioned filter state was accepted")
+	}
+}
+
+func TestDashboardQueryFiltersRejectsForgedFilterBinding(t *testing.T) {
+	definition := dashboarddefinition.Definition{
+		FilterDefinitions: map[string]dashboardfilter.Definition{
+			"status": {ValueKind: dashboardfilter.ValueString},
+		},
+		FilterBindings: map[string]dashboardfilter.Binding{
+			"status": {Key: "status", ID: "status", Filter: "status", Scope: dashboardfilter.ScopeReport},
+		},
+		Pages: []dashboard.Page{{ID: "overview"}},
+	}
+	_, err := dashboardQueryFilters(definition, "overview", map[string]any{
+		"version": "typed_v1",
+		"controls": map[string]any{"forged": map[string]any{
+			"kind": "set", "operator": "in",
+			"values": []any{map[string]any{"kind": "string", "value": "secret"}},
+		}},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("forged filter binding was accepted")
 	}
 }

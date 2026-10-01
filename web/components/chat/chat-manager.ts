@@ -1,9 +1,10 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
-import { Archive, ArchiveRestore, Search, Trash2, X } from 'lucide'
+import { ArchiveRestore, Search, Trash2, X } from 'lucide'
 import { DatastarLit } from '../shared/datastar-lit'
 import { lucideIcon } from '../shared/lucide-icons'
 import { browserCommandFailure, ownsBrowserCommandFetch } from '../shared/command-failure'
+import '../shared/toast'
 import type { ChatManagementSignal } from '../../generated/signals'
 
 export type ChatAction = { action: string; conversationId: string; title?: string; newTitle?: string; href?: string }
@@ -126,12 +127,6 @@ export class ChatManager extends DatastarLit(LitElement) {
     .chat-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .empty { padding: 26px 0; text-align: center; color: var(--lv-fg-muted); }
     .error { color: var(--lv-fg-danger); line-height: 1.5; }
-    .toast-stack { position: fixed; z-index: 100; top: max(16px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: grid; justify-items: center; gap: 8px; width: max-content; max-width: calc(100vw - 32px); }
-    .toast { display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: max-content; max-width: 100%; padding: 8px 12px; border: 0; border-radius: var(--lv-radius-large); background: var(--lv-bg-panel-muted); box-shadow: none; font: var(--lv-type-caption); }
-    .toast-label { font-weight: var(--base-text-weight-semibold); }
-    .toast svg { flex-shrink: 0; }
-    .toast button { border: 0; padding: 5px 10px; font: inherit; }
-    .toast .undo { background: var(--lv-fg-default); color: var(--lv-bg-panel); }
     @media (max-width: 500px) { header { padding: 16px; } .body { padding: 0 16px 16px; } }
   `
 
@@ -431,11 +426,11 @@ export class ChatManager extends DatastarLit(LitElement) {
         </div>
       </dialog>
       ${!this.opened && (this.undoPendings.length || this.pending || this.failure || this.feedback) ? html`
-        <div class="toast-stack">
-          ${this.undoPendings.map(pending => html`<div class="toast" role="status">${lucideIcon(pending.action.action === 'archive' ? Archive : Trash2, { size: 16 })}<span class="toast-label">${pending.action.action === 'archive' ? 'Archived chat' : 'Deleted chat'}</span><button class="undo" data-conversation-id=${pending.action.conversationId} aria-label=${`Undo ${pending.action.action} of ${pending.action.title || 'chat'}`} ?disabled=${Boolean(this.pending)} @click=${() => this.undo(pending.requestId)}>Undo</button></div>`)}
-          ${!this.undoPendings.length && this.pending ? html`<div class="toast" role="status">Updating chat…</div>` : nothing}
-          ${this.failure || this.feedback ? html`<div class=${`toast ${this.failure ? 'error' : ''}`} role=${this.failure ? 'alert' : 'status'}>${this.failure || this.feedback}<button class="icon" aria-label="Dismiss" @click=${() => { this.failure = ''; this.feedback = '' }}>${lucideIcon(X, { size: 14 })}</button></div>` : nothing}
-        </div>
+        <lv-toast-region>
+          ${this.undoPendings.map(pending => html`<lv-toast data-conversation-id=${pending.action.conversationId} .message=${pending.action.action === 'archive' ? 'Archived chat' : 'Deleted chat'} tone="success" actionLabel="Undo" .actionAriaLabel=${`Undo ${pending.action.action} of ${pending.action.title || 'chat'}`} .actionDisabled=${Boolean(this.pending)} @lv-toast-action=${() => this.undo(pending.requestId)}></lv-toast>`)}
+          ${!this.undoPendings.length && this.pending ? html`<lv-toast message="Updating chat…"></lv-toast>` : nothing}
+          ${this.failure || this.feedback ? html`<lv-toast .message=${this.failure || this.feedback} .tone=${this.failure ? 'error' : 'info'} dismissible @lv-toast-dismiss=${() => { this.failure = ''; this.feedback = '' }}></lv-toast>` : nothing}
+        </lv-toast-region>
       ` : nothing}
     `
   }

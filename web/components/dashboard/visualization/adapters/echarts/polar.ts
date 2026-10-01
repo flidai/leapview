@@ -10,14 +10,21 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
   const spec = envelope.spec
   if (spec.kind !== 'polar') return {}
   if (spec.mark === 'gauge') {
-    if (spec.presentation.minimum === undefined || spec.presentation.maximum === undefined) {
-      throw new Error('Gauge rendering requires an explicit minimum and maximum')
+    const configuredMinimum = spec.presentation.minimum
+    const configuredMaximum = spec.presentation.maximum
+    if ((configuredMinimum === undefined) !== (configuredMaximum === undefined)) {
+      throw new Error('Gauge rendering requires both minimum and maximum when either is configured')
+    }
+    if (configuredMinimum === undefined && (spec.presentation.target !== undefined || spec.presentation.thresholds !== undefined)) {
+      throw new Error('Gauge targets and thresholds require an explicit minimum and maximum')
     }
     const dataset = inlineDataset(envelope, spec.value.dataset)
     const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
     const value = valueIndex >= 0 ? dataset?.rows[0]?.[valueIndex] : undefined
     const approximateValue = approximateNumericValue(value)
-    const minimum = spec.presentation.minimum, maximum = spec.presentation.maximum
+    const [minimum, maximum] = configuredMinimum === undefined || configuredMaximum === undefined
+      ? autoGaugeDomain(approximateValue)
+      : [configuredMinimum, configuredMaximum]
     const displayUnit = displayUnitForField(envelope, spec.value, undefined, [spec.value], [minimum, maximum, spec.presentation.target])
     if (approximateValue !== undefined && (approximateValue < minimum || approximateValue > maximum)) {
       const formattedValue = formatField(envelope, spec.value, value, context)
@@ -47,10 +54,14 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
     const series: Record<string, any>[] = [{
       id: 'series:polar:gauge', type: 'gauge', min: minimum, max: maximum,
       data: [{ value, __lv_dataset: dataset?.id ?? 'primary', __lv_row_index: 0 }], pointer: { show: spec.presentation.showPointer },
-      progress: { show: true, width: spec.presentation.progressWidth }, axisLine: { lineStyle: { color: colors } },
+      progress: { show: true, width: spec.presentation.progressWidth }, splitNumber: 5, axisLine: { lineStyle: { color: colors } },
       axisTick: { lineStyle: { color: context.colors.muted } },
       splitLine: { lineStyle: { color: context.colors.grid } },
-      axisLabel: { color: context.colors.muted, fontFamily: context.fontFamily },
+      axisLabel: {
+        color: context.colors.muted,
+        fontFamily: context.fontFamily,
+        formatter: (raw: unknown) => formatDisplayField(envelope, spec.value, raw, context, displayUnit),
+      },
       detail: {
         show: showDetail,
         formatter: (raw: unknown) => truncateVisualizationLabel(
@@ -201,6 +212,21 @@ function niceRadarMaximum(value: number): number {
   const normalized = value / magnitude
   const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
   return factor * magnitude
+}
+
+function autoGaugeDomain(value: number | undefined): [number, number] {
+  if (value === undefined || value === 0) return [0, 1]
+  const ceiling = niceGaugeCeiling(Math.abs(value))
+  return value > 0 ? [0, ceiling] : [-ceiling, 0]
+}
+
+function niceGaugeCeiling(value: number): number {
+  const magnitude = 10 ** Math.floor(Math.log10(value))
+  if (magnitude === 0) return value
+  const normalized = value / magnitude
+  const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
+  const ceiling = factor * magnitude
+  return Number.isFinite(ceiling) ? ceiling : value
 }
 
 function approximateNumericValue(value: unknown): number | undefined {

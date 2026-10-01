@@ -28,6 +28,7 @@ type snapshotEntry struct {
 	Directory bool   `json:"directory"`
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256,omitempty"`
+	HardLink  string `json:"hardLink,omitempty"`
 }
 type snapshotManifest struct {
 	Version int                        `json:"version"`
@@ -110,6 +111,10 @@ func syncDirectory(path string) error {
 }
 func snapshotTree(ctx context.Context, root string) ([]snapshotEntry, error) {
 	var entries []snapshotEntry
+	// Record relative link topology, not machine-specific inode numbers. Each
+	// copied volume owns new inodes; links must never point back into live data.
+	type inode struct{ device, number uint64 }
+	links := map[inode]string{}
 	err := filepath.WalkDir(root, func(path string, _ fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -135,6 +140,12 @@ func snapshotTree(ctx context.Context, root string) ([]snapshotEntry, error) {
 		}
 		entry := snapshotEntry{Path: relative, Mode: uint32(info.Mode().Perm() | (info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky))), UID: int(owner.Uid), GID: int(owner.Gid), Directory: info.IsDir()}
 		if !info.IsDir() {
+			identity := inode{uint64(owner.Dev), owner.Ino}
+			if first, ok := links[identity]; ok {
+				entry.HardLink = first
+			} else {
+				links[identity] = relative
+			}
 			file, err := os.Open(path)
 			if err != nil {
 				return err
@@ -167,6 +178,13 @@ func copySnapshotTree(ctx context.Context, source, destination string) ([]snapsh
 		dest := filepath.Join(destination, entry.Path)
 		if entry.Directory {
 			if err = os.Mkdir(dest, 0700); err != nil {
+				return nil, err
+			}
+		} else if entry.HardLink != "" {
+			// The target was already copied in WalkDir order. Link only within
+			// this destination so the stopped source and recovery point remain
+			// independent even when the restored files are later modified.
+			if err = os.Link(filepath.Join(destination, entry.HardLink), dest); err != nil {
 				return nil, err
 			}
 		} else {

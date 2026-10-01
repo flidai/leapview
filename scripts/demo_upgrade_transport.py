@@ -12,6 +12,8 @@ import subprocess
 import threading
 import time
 
+from demo_client_contract import clone_only_environment
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -69,7 +71,10 @@ def private_browser(ssh, remote_port, browser_env):
             thread = threading.Thread(target=proxy.serve_forever, daemon=True)
             thread.start()
             try:
-                yield dict(browser_env, DEMO_BROWSER_PROXY=f'http://127.0.0.1:{proxy.server_address[1]}')
+                proxy_url = f'http://127.0.0.1:{proxy.server_address[1]}'
+                env = clone_only_environment(browser_env, proxy_url)
+                env['DEMO_BROWSER_PROXY'] = proxy_url
+                yield env
             finally:
                 proxy.shutdown()
                 thread.join(timeout=5)
@@ -78,6 +83,12 @@ def private_browser(ssh, remote_port, browser_env):
         try: tunnel.wait(timeout=10)
         except subprocess.TimeoutExpired:
             tunnel.kill(); tunnel.wait()
+
+
+def run_private_client(ssh, remote_port, client_env, command, *, cwd=ROOT, timeout=None):
+    """Run any supported demo client while its clone-only tunnel is alive."""
+    with private_browser(ssh, remote_port, client_env) as env:
+        return subprocess.run(command, cwd=cwd, check=True, timeout=timeout, env=env)
 
 
 def qualified_request(previous, image, revision, plan):
@@ -99,6 +110,11 @@ def prepare(ssh, remote, action, previous, image, revision, plan):
         request = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'pending', image, revision]))
     else:
         request = qualified_request(previous, image, revision, plan)
+        if plan['sourceBefore']['permissionProfile'] != plan['sourceAfter']['permissionProfile']:
+            request['accessTransition'] = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'intent', image, revision]))
+        if action == 'upgrade':
+            rehearsal = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'prepared', image, revision, previous['image']]))
+            request['preparationDigest'] = rehearsal['preparationDigest']
     subprocess.run([*ssh, f'umask 077; cat > {request_path}'],
                    input=json.dumps(request).encode(), check=True)
     # Candidate-owned policy checks the exact reviewed transition before the
@@ -109,8 +125,18 @@ def prepare(ssh, remote, action, previous, image, revision, plan):
     return helper, request_path, dict(request, operationDigest=report['operationDigest'])
 
 
-def rollout(ssh, helper, request_path, action, image, revision, browser_env, expected_digest, profile):
-    process = subprocess.Popen([*ssh, 'python3', helper, 'apply' if action == 'upgrade' else 'recover',
+def rollout(ssh, helper, request_path, action, image, revision, browser_env, expected_digest, profile, validate=None):
+    if action not in ('upgrade', 'recover', 'prepare'):
+        raise ValueError('Unsupported maintenance transport operation')
+    command = {'upgrade':'apply', 'recover':'recover', 'prepare':'verify-copy'}[action]
+    if action == 'prepare':
+        # This command returns only after the live capture transaction is
+        # terminal and the predecessor has reopened. No detached failure below
+        # can call the live recovery command.
+        capture = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'capture', image, revision, request_path]))
+        if capture.get('phase') != 'ready' or capture.get('identity', {}).get('artifactAdmissionDigest') != expected_digest:
+            raise RuntimeError('Live capture has not released the exact predecessor')
+    process = subprocess.Popen([*ssh, 'python3', helper, command,
                                 image, revision, request_path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     approved = set()
     result = None
@@ -120,17 +146,26 @@ def rollout(ssh, helper, request_path, action, image, revision, browser_env, exp
             print(marker, flush=True)
             ports = {'AWAITING_RECOVERY_BROWSER_VALIDATION': int(profile['rehearsalBinding'].rsplit(':',1)[1]), 'AWAITING_REHEARSAL_BROWSER_VALIDATION': int(profile['rehearsalBinding'].rsplit(':',1)[1]), 'AWAITING_CANDIDATE_BROWSER_VALIDATION': int(profile['httpsBinding'].rsplit(':',1)[1])}
             if marker in ports:
-                if action != 'upgrade' or marker in approved or identity != expected_digest:
+                if action not in ('upgrade', 'prepare') or (action == 'prepare' and marker == 'AWAITING_CANDIDATE_BROWSER_VALIDATION') or marker in approved or identity != expected_digest:
                     raise RuntimeError('Unexpected or repeated browser approval request')
                 with private_browser(ssh, ports[marker], browser_env) as env:
+                    if validate is not None:
+                        validate(marker, env)
                     subprocess.run(['node', 'scripts/demo_validate_browser.mjs'], cwd=ROOT, check=True, timeout=240, env=env)
                 process.stdin.write(f'commit {identity} {marker}\n'); process.stdin.flush()
                 approved.add(marker)
             if marker in ('DEPLOYMENT_COMMITTED', 'PREDECESSOR_RECOVERED'): result = marker
+            if action == 'prepare' and line.startswith('{'):
+                receipt = json.loads(line)
+                if receipt.get('identity', {}).get('artifactAdmissionDigest') != expected_digest or receipt.get('phase') != 'passed':
+                    raise RuntimeError('Detached rehearsal did not pass for this operation')
+                result = 'REHEARSAL_PASSED'
         if process.wait() != 0 or result is None:
             raise RuntimeError('Upgrade/recovery did not finish; inspect durable host journal before retrying')
         if action == 'upgrade' and (result != 'DEPLOYMENT_COMMITTED' or len(approved) != 3):
             raise RuntimeError('Upgrade did not complete all recovery/rehearsal/candidate browser gates')
+        if action == 'prepare' and (result != 'REHEARSAL_PASSED' or len(approved) != 2):
+            raise RuntimeError('Detached rehearsal did not complete both clone gates')
         return result
     finally:
         process.stdin.close()  # EOF cancels approval and invokes paired recovery.
@@ -138,3 +173,26 @@ def rollout(ssh, helper, request_path, action, image, revision, browser_env, exp
         except subprocess.TimeoutExpired:
             process.kill(); process.wait()
             raise RuntimeError('Recovery exceeded timeout; use the explicit recover action after inspecting the journal')
+
+
+def stage_credentials(ssh, helper, request_path, image, revision, request):
+    intent = request.get('accessTransition')
+    if not intent:
+        return
+    if os.environ.get('DEMO_RELEASE_CLIENT_ID') != intent['reviewerPrincipalId'] or os.environ.get('DEMO_PUBLISHER_CLIENT_ID') != intent['publisherPrincipalId']:
+        raise ValueError('Workflow credential identities differ from the admitted transition intent')
+    credentials = dict(publisher=os.environ['DEMO_PUBLISHER_CLIENT_SECRET'], reviewer=os.environ['DEMO_RELEASE_CLIENT_SECRET'])
+    for credential in credentials.values():
+        if not credential or len(credential.encode()) > 65536 or any(ch in credential for ch in '\x00\n\r'):
+            raise ValueError('Invalid workload credential')
+    subprocess.run([*ssh, 'python3', helper, 'stage-credentials', image, revision, request_path, request['operationDigest']],
+                   input=json.dumps(credentials).encode(), check=True)
+
+
+def clear_credentials(ssh, helper, image, revision, request=None, *, operation_id=None):
+    if request is not None and not request.get('accessTransition'):
+        return
+    digest = operation_id or (request or {}).get('operationDigest')
+    if not isinstance(digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+        raise ValueError('Transition cleanup requires the original admitted operation digest')
+    subprocess.run([*ssh, 'python3', helper, 'clear-credentials', image, revision, digest], check=True)

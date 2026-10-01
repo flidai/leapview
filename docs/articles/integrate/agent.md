@@ -6,8 +6,8 @@ LeapView conversations are global and owned by the authenticated principal. Proj
 
 Built-in chat, MCP discovery, and `leapview agent tools` expose one governed catalog. Its discovery, query, and documentation subset remains read-only; the dashboard-authoring subset adds the twelve bounded authoring tools documented in [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring).
 
-- `catalog_search` searches authorized resources in the server-bound Project when a resource's location is unknown.
-- `catalog_list` browses the server-bound Project graph. Omit `parent` to list authorized resources across the active graph, then pass a returned `{kind,id}` ref to browse its dependencies.
+- `catalog_search` searches authorized resources in the server-bound Project when a resource's location is unknown, including visible semantic metric and dimension names and labels.
+- `catalog_list` browses the server-bound Project graph. Omit `parent` to list authorized resources across the active graph, pass an authorized active Project ref to list the same root, or pass a returned `{kind,id}` resource ref to browse its dependencies.
 - `catalog_get` returns the compact definition for one exact ref. Shared visuals and filters may require one of the returned dashboard/page locations.
 - `query_semantic_model` executes governed semantic queries.
 - `query_dashboard_visual` queries one existing dashboard visual.
@@ -17,6 +17,14 @@ Built-in chat, MCP discovery, and `leapview agent tools` expose one governed cat
 Catalog search and list silently omit inaccessible resources. Exact lookup returns the same not-found result for missing and inaccessible refs. These discovery/query/documentation tools are read-only, idempotent, non-destructive, and closed-world. Dashboard authoring is the explicit exception: its twelve tools can create private drafts and apply the four bounded intents or lifecycle commands, while still enforcing project-resource grants, governed fields, exact revisions, and no access to connections, raw sources, lineage, refresh runs, raw SQL, credentials, semantic-model mutation, or data mutation.
 
 See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, pagination, shared-resource locations, tool-selection guidance, and stable error behavior. Use the generated [Agent tool reference](/docs/agent-tools) for exact schemas and metadata.
+
+## Keep a chat visual
+
+Open a visual card in chat to inspect its chart. **Save** keeps it as a saved exploration.
+
+For a visual created by the agent, choose **Add to dashboard** to select an editable dashboard and page or create a new private dashboard. The picker shows compatible dashboards that you can edit or copy. Published dashboards use **Create copy and add**, which creates a private editable copy containing the visual. The visual retains its semantic query and filters.
+
+After adding the visual, choose **Open dashboard** to inspect it in the editor, or **Add another visual** to return to chat. The next dashboard picker remembers the dashboard and page you selected.
 
 ## Product documentation tools
 

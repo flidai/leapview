@@ -23,6 +23,7 @@ import (
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
 	"github.com/flidai/leapview/internal/agent/ui"
+	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	"github.com/flidai/leapview/internal/platform/http/pagination"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -72,6 +73,8 @@ type Options struct {
 	BuildAuditIntent       func(context.Context, CommandAuditInput) (*access.AuditIntent, error)
 	Logger                 *slog.Logger
 	APIGenToolContracts    map[string]agenttool.Contract
+	DashboardAuthoring     *dashboardauthoringapplication.Application
+	AuthorizeSemanticModel func(context.Context, agent.Scope, string) error
 }
 
 func (h *Handler) DashboardBootstrap(r *stdhttp.Request) ui.ChatViewState {
@@ -911,25 +914,31 @@ type adminAgentCommandSignals struct {
 
 func agentCredentialScope(credential access.APICredential) agent.CredentialScope {
 	if credential.Authoring != nil {
-		capabilities := make([]string, len(credential.Authoring.Scope.Capabilities))
-		for index, capability := range credential.Authoring.Scope.Capabilities {
-			capabilities[index] = string(capability)
-		}
 		return agent.CredentialScope{
-			ProjectID: credential.Authoring.Scope.ProjectID.String(), Capabilities: capabilities, Restricted: true,
+			ProjectID: credential.Authoring.Scope.ProjectID.String(), PermissionProfile: access.PermissionCatalogProfile,
+			Permissions: access.ClonePermissionPairs(credential.Authoring.Scope.Permissions), Restricted: true,
 		}
 	}
 	if credential.Token.ID == "" {
 		return agent.CredentialScope{}
 	}
-	var capabilities []string
-	if credential.Token.Capabilities != nil {
-		capabilities = make([]string, len(credential.Token.Capabilities))
-		for index, capability := range credential.Token.Capabilities {
-			capabilities[index] = string(capability)
-		}
+	// A token with an omitted/legacy capability list is invalid for
+	// authorization. Project that form as an explicit non-nil deny-all list so
+	// downstream agent contexts cannot mistake it for an unrestricted scope.
+	capabilities := make([]string, len(credential.Token.Capabilities))
+	for index, capability := range credential.Token.Capabilities {
+		capabilities[index] = string(capability)
 	}
-	return agent.CredentialScope{Capabilities: capabilities, Restricted: true}
+	var permissions []access.PermissionPair
+	if credential.Token.Permissions != nil {
+		permissions = append(make([]access.PermissionPair, 0, len(credential.Token.Permissions)), credential.Token.Permissions...)
+	}
+	return agent.CredentialScope{
+		Capabilities:      capabilities,
+		PermissionProfile: credential.Token.PermissionProfile,
+		Permissions:       permissions,
+		Restricted:        true,
+	}
 }
 
 func agentConversationDTO(row agent.Conversation) api.AgentConversationResponse {

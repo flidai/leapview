@@ -18,6 +18,7 @@ import (
 	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	refreshdb "github.com/flidai/leapview/internal/refresh/postgres/internal/db"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -82,6 +83,7 @@ type RunInput struct {
 	MatchingScheduleIDs                                      []string
 	MaterializationScope                                     []string
 	PrincipalID, JobID                                       string
+	Authority                                                jobs.AuthorityEnvelope
 }
 type Run struct {
 	RunInput
@@ -1545,6 +1547,67 @@ func (r *Repository) CheckInvocationAdmission(ctx context.Context, scope Scope, 
 
 func (r *Repository) CheckScheduledInvocationAdmission(ctx context.Context, scope Scope, pipelineID string) error {
 	return r.CheckInvocationAdmission(ctx, scope, pipelineID, "schedule")
+}
+
+// DenyScheduledOccurrenceForExternalActiveRoot records the terminal outcome
+// for a claimed occurrence when any non-scheduled root is active in the same
+// project/environment. The scope lock is shared with root insertion so the
+// decision observes the same publication-target boundary as admission.
+//
+// The bool is true only when this call durably changed the occurrence to
+// skipped; false means no external root currently blocks it.
+func (r *Repository) DenyScheduledOccurrenceForExternalActiveRoot(ctx context.Context, occurrence Occurrence) (denied bool, err error) {
+	if err := r.requireDB(); err != nil {
+		return false, err
+	}
+	if validateScope(occurrence.ProjectID, occurrence.Environment) != nil ||
+		validateGeneration(occurrence.GenerationID) != nil ||
+		canonicalID("pipeline id", occurrence.PipelineID, 255) != nil ||
+		canonicalID("occurrence id", occurrence.OccurrenceID, 256) != nil ||
+		canonicalID("lease owner", occurrence.LeaseOwner, 256) != nil || occurrence.FenceGeneration <= 0 {
+		return false, ErrInvalid
+	}
+	err = r.withTx(ctx, func(tx pgx.Tx) error {
+		q := refreshdb.New(tx)
+		if _, lockErr := q.AdvisoryLock(ctx, manualIntentScopeLockKey(occurrence.ProjectID, occurrence.Environment)); lockErr != nil {
+			return lockErr
+		}
+		claim := refreshdb.IsScheduledOccurrenceClaimCurrentParams{
+			OccurrenceID: occurrence.OccurrenceID, ProjectID: occurrence.ProjectID,
+			Environment: occurrence.Environment, GenerationID: occurrence.GenerationID,
+			PipelineID: occurrence.PipelineID, LeaseOwner: occurrence.LeaseOwner,
+			FenceGeneration: occurrence.FenceGeneration,
+		}
+		claimCurrent, queryErr := q.IsScheduledOccurrenceClaimCurrent(ctx, claim)
+		if queryErr != nil {
+			return queryErr
+		}
+		if !claimCurrent {
+			return ErrStaleFence
+		}
+		externalActive, queryErr := q.HasExternalActiveRefreshRoot(ctx, refreshdb.HasExternalActiveRefreshRootParams{ProjectID: occurrence.ProjectID, Environment: occurrence.Environment})
+		if queryErr != nil {
+			return queryErr
+		}
+		if !externalActive {
+			return nil
+		}
+		rows, updateErr := q.SkipClaimedOccurrenceForExternalActiveRoot(ctx, refreshdb.SkipClaimedOccurrenceForExternalActiveRootParams{
+			OccurrenceID: occurrence.OccurrenceID, ProjectID: occurrence.ProjectID,
+			Environment: occurrence.Environment, GenerationID: occurrence.GenerationID,
+			PipelineID: occurrence.PipelineID, LeaseOwner: occurrence.LeaseOwner,
+			FenceGeneration: occurrence.FenceGeneration,
+		})
+		if updateErr != nil {
+			return updateErr
+		}
+		if rows != 1 {
+			return ErrStaleFence
+		}
+		denied = true
+		return nil
+	})
+	return denied, err
 }
 
 // PrepareRun advances a live running run to the prepared publication phase

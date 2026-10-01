@@ -30,9 +30,9 @@ export function inspectUICommandSource(file: string, source: string, generatedUI
 		  const initializer = ts.isPropertyAssignment(method) ? method.initializer : undefined
 		  if (!initializer || !ts.isStringLiteralLike(initializer) || mutationMethods.has(initializer.text.toUpperCase())) {
 			const operationID = generatedOperationHeader(options)
-			if (!operationID) {
+          if (!operationID && !file.endsWith('web/components/shared/command.ts')) {
               report(method, 'direct mutating fetch bypasses the generated UI command transport')
-			} else if (generatedUIOperations && !generatedUIOperations.has(operationID)) {
+            } else if (operationID && generatedUIOperations && !generatedUIOperations.has(operationID)) {
 			  report(method, `direct mutating fetch references non-generated UI operation ${JSON.stringify(operationID)}`)
 			}
           }

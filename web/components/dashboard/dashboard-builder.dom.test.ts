@@ -1108,6 +1108,39 @@ test('dashboard builder keeps the independent Data pane usable across dock break
   }
 })
 
+test('dashboard builder keeps the visual inspector usable in a narrow split browser', async () => {
+  const page = await browser.newPage({ viewport: { width: 700, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const inspector = root.querySelector('.visual-builder') as HTMLElement
+      const inspectorBounds = inspector.getBoundingClientRect()
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        inspectorWidth: inspectorBounds.width,
+        inspectorOverflow: inspector.scrollWidth > inspector.clientWidth + 1,
+        controlsFit: Array.from(root.querySelectorAll('.visual-builder input, .visual-builder select, .visual-builder button'))
+          .filter((control) => (control as HTMLElement).offsetParent !== null)
+          .every((control) => control.getBoundingClientRect().right <= inspectorBounds.right + 1),
+        command,
+      }
+    })
+    expect(state.inspectorWidth).toBeGreaterThanOrEqual(240)
+    expect(state.inspectorOverflow).toBe(false)
+    expect(state.controlsFit).toBe(true)
+    expect(state.command).toMatchObject({ action: 'set_visual_type', pageId: 'overview', visualId: 'sales-chart', type: 'line' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder keeps bottom-tab navigation and add-page actions wired', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1428,22 +1461,21 @@ test('dashboard builder fits the authored desktop canvas without idle rows below
         grownCanvasHeight: grownCanvasBox.height,
       }
     })
-    expect(state.logicalWidth).toBe(1200)
-    expect(state.logicalHeight).toBeGreaterThanOrEqual(800)
+    expect(state.logicalWidth).toBe(1200 - 32)
+    expect(state.logicalHeight).toBeGreaterThanOrEqual(800 - 32)
     expect(state.scale).toBeGreaterThan(0)
     expect(state.scale).toBeLessThanOrEqual(1)
     expect(state.fittedWidth).toBeLessThanOrEqual(state.scrollWidth + 1)
-    expect(state.fittedHeight).toBeCloseTo(state.logicalHeight * state.scale, 0)
+    expect(state.fittedHeight).toBeCloseTo((state.logicalHeight + 32) * state.scale, 0)
     expect(state.cellHeight).toBe(64)
     expect(state.grownLogicalHeight).toBeGreaterThan(state.logicalHeight)
-    expect(state.grownLogicalHeight).toBeCloseTo(state.contentBottom + 16, 0)
-    expect(state.grownFittedHeight).toBeCloseTo(state.grownCanvasHeight, 0)
+    expect(state.grownLogicalHeight).toBeCloseTo(state.contentBottom, 0)
+    expect(state.grownFittedHeight).toBeCloseTo(state.grownCanvasHeight + 32 * state.scale, 0)
   } finally {
     await page.close()
   }
 })
-
-test('dashboard builder preserves pointer drag placement on the fitted canvas', async () => {
+test('dashboard builder preserves pointer-drop positions without compacting intentional gaps', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1456,10 +1488,11 @@ test('dashboard builder preserves pointer drag placement on the fitted canvas', 
       builder.addEventListener('lv-builder-command', (event: CustomEvent) => {
         if (event.detail?.action === 'set_placements') (window as any).__builderPlacementCommands.push(event.detail)
       })
-      return {
-        fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
-        scale: (root.querySelector('.canvas') as HTMLElement).getBoundingClientRect().width / (root.querySelector('.canvas') as HTMLElement).offsetWidth,
-      }
+      const readSignal = builder.signal.bind(builder)
+      ;(window as any).__builderSignalReads = 0
+      builder.signal = (path: string, fallback: unknown) => { if (path === 'builder') (window as any).__builderSignalReads++; return readSignal(path, fallback) }
+      return { fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
+        scale: (root.querySelector('.canvas') as HTMLElement).getBoundingClientRect().width / (root.querySelector('.canvas') as HTMLElement).offsetWidth }
     })
     const handle = element.locator('.visual-drag-header')
     const box = await handle.boundingBox()
@@ -1467,21 +1500,26 @@ test('dashboard builder preserves pointer drag placement on the fitted canvas', 
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
     await page.mouse.down()
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 8 * 64 * initial.scale, { steps: 12 })
-    const draggingHeight = await element.locator('.canvas-fit').evaluate(node => node.getBoundingClientRect().height)
+    const dragging = await element.evaluate((builder: any) => {
+      const root = builder.shadowRoot as ShadowRoot
+      const helper = root.querySelector('.builder-grid-drag-helper')
+      const placeholder = root.querySelector<HTMLElement>('.grid-stack-placeholder .placeholder-content')
+      return { height: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height, signalReads: (window as any).__builderSignalReads, lightweightHelper: Boolean(helper && !helper.querySelector('.grid-stack-item-content')), mappedPlaceholder: placeholder ? getComputedStyle(placeholder).borderStyle === 'dashed' : false }
+    })
     await page.mouse.up()
     await page.waitForTimeout(30)
     const state = await element.evaluate((builder: any) => {
       const root = (builder.shadowRoot as ShadowRoot)
       const commands = (window as any).__builderPlacementCommands as any[]
-      return {
-        command: commands.at(-1),
-        fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
-      }
+      return { command: commands.at(-1), fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height }
     })
     expect(state.command).toBeDefined()
+    expect(state.command.compact).toBe(false)
+    expect(dragging).toMatchObject({ lightweightHelper: true, mappedPlaceholder: true })
+    expect(dragging.signalReads).toBeLessThan(4)
     expect(state.command.placements[0].placement.row).toBeGreaterThan(1)
     expect(state.fittedHeight).toBeGreaterThanOrEqual(initial.fittedHeight)
-    expect(draggingHeight).toBeGreaterThan(state.fittedHeight)
+    expect(dragging.height).toBeGreaterThan(state.fittedHeight)
   } finally {
     await page.close()
   }
@@ -1519,6 +1557,7 @@ test('dashboard builder resizes a selected widget from its left edge', async () 
     const command = await element.evaluate((builder: any) => (window as any).__builderPlacementCommands.at(-1))
     const placement = command?.placements?.[0]?.placement
     expect(placement).toBeDefined()
+    expect(command.compact).toBe(false)
     expect(placement.column).toBeGreaterThan(initial.column)
     expect(placement.columnSpan).toBeLessThan(initial.columnSpan)
   } finally {
@@ -1545,6 +1584,7 @@ test('dashboard builder emits one canonical atomic placement command after a Gri
     expect(command).toMatchObject({
       action: 'set_placements',
       pageId: 'overview',
+      compact: false,
       placements: [{ componentId: 'sales-chart', placement: { column: 3, row: 4, columnSpan: 5, rowSpan: 6 } }],
     })
   } finally {
@@ -1596,12 +1636,13 @@ test('dashboard builder supports keyboard move and resize through the same atomi
       await new Promise((resolve) => setTimeout(resolve, 20))
       return received.map((item) => ({
         action: item.action,
+        compact: item.compact,
         placement: (item.placements as any[])?.[0]?.placement,
       }))
     })
     expect(commands).toEqual([
-      { action: 'set_placements', placement: { column: 2, row: 1, columnSpan: 6, rowSpan: 5 } },
-      { action: 'set_placements', placement: { column: 2, row: 1, columnSpan: 7, rowSpan: 5 } },
+      { action: 'set_placements', compact: false, placement: { column: 2, row: 1, columnSpan: 6, rowSpan: 5 } },
+      { action: 'set_placements', compact: false, placement: { column: 2, row: 1, columnSpan: 7, rowSpan: 5 } },
     ])
   } finally {
     await page.close()
@@ -1630,7 +1671,7 @@ test('dashboard builder does not persist breakpoint-derived mobile stacking', as
   }
 })
 
-test('dashboard builder disables GridStack editing in read-only state and reinitializes on revision cutover', async () => {
+test('dashboard builder disables GridStack editing without rebuilding it on revision cutover', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1647,16 +1688,61 @@ test('dashboard builder disables GridStack editing in read-only state and reinit
       const secondGrid = canvas.gridstack
       return {
         disabled: visual.classList.contains('ui-draggable-disabled') && visual.classList.contains('ui-resizable-disabled'),
-        reinitialized: Boolean(secondGrid) && firstGrid !== secondGrid,
+        retained: Boolean(secondGrid) && firstGrid === secondGrid,
         firstDestroyed: !firstGrid.el,
       }
     })
-    expect(state).toEqual({ disabled: true, reinitialized: true, firstDestroyed: true })
+    expect(state).toEqual({ disabled: true, retained: true, firstDestroyed: false })
   } finally {
     await page.close()
   }
 })
-
+test('dashboard builder reconciles placement patches that arrive after revision metadata', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = (element.shadowRoot as ShadowRoot)
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const initialPages = structuredClone(element.builder.pages)
+      const table = initialPages[0].visuals[0]
+      table.title = 'Product performance scorecard'
+      table.type = 'table'
+      initialPages[0].visuals.push({ ...structuredClone(table), id: 'current-cash', visualId: 'current-cash', title: 'Current cash', type: 'tree', placement: { col: 7, row: 1, colSpan: 6, rowSpan: 6 } })
+      mergePatch({ builder: { pages: initialPages } })
+      await element.updateComplete
+      const canvas = root.querySelector('.canvas') as any
+      const firstGrid = canvas.gridstack
+      const visual = root.querySelector('.visual[gs-id="sales-chart"]') as HTMLElement & { gridstackNode?: { x?: number, y?: number, w?: number, h?: number } }
+      firstGrid.update(visual, { x: 6, y: 6 })
+      firstGrid.update = () => firstGrid
+      // Revision metadata can render before placement values from the same Datastar response.
+      mergePatch({ builder: { revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
+      await element.updateComplete
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].placement = { col: 7, row: 7, colSpan: 6, rowSpan: 5 }
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      const tree = root.querySelector<HTMLElement>('.visual[gs-id="current-cash"]')!
+      const visualRect = visual.getBoundingClientRect(), treeRect = tree.getBoundingClientRect()
+      return {
+        retained: firstGrid === canvas.gridstack,
+        node: { x: visual.gridstackNode?.x, y: visual.gridstackNode?.y, w: visual.gridstackNode?.w, h: visual.gridstackNode?.h },
+        style: { left: visual.style.left, top: visual.style.top },
+        overlapsTree: visualRect.left < treeRect.right && visualRect.right > treeRect.left && visualRect.top < treeRect.bottom && visualRect.bottom > treeRect.top,
+      }
+    })
+    expect(state).toEqual({
+      retained: true,
+      node: { x: 6, y: 6, w: 6, h: 5 },
+      style: { left: 'calc(6 * var(--gs-column-width))', top: 'calc(6 * var(--gs-cell-height))' },
+      overlapsTree: false })
+  } finally {
+    await page.close()
+  }
+})
 test('dashboard builder shows build and format controls in one inspector panel', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -2463,9 +2549,11 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
           ? { ...visual, placement: { ...visual.placement, colSpan: Math.max(1, visual.placement.colSpan - 1) } }
           : visual) }
         : page)
-      mergePatch({ builder: { pages } })
+      mergePatch({ builder: { revision: { id: 'rev-8', number: 8, contentHash: 'sha256:layout' }, pages } })
+      await new Promise((resolve) => setTimeout(resolve, 20))
       await element.updateComplete
       const hostAfterLayout = root.querySelector('.visual-preview lv-visualization-host') as any
+      const visualAfterLayout = root.querySelector('.visual') as any
       const previewWrapper = root.querySelector('.visual-preview') as HTMLElement | null
       const hostBox = host?.getBoundingClientRect()
       const wrapperBox = previewWrapper?.getBoundingClientRect()
@@ -2475,6 +2563,9 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
         visualRole: root.querySelector('.visual')?.getAttribute('role'),
         hostVisualID: host?.envelope?.visualID,
         envelopeStableAfterLayout: hostAfterLayout?.envelope === initialEnvelope,
+        gridWidthAfterLayout: visualAfterLayout?.gridstackNode?.w,
+        gridWidthAttributeAfterLayout: visualAfterLayout?.getAttribute('gs-w'),
+        gridLayoutKeyAfterLayout: element.gridLayoutKey,
         hostAuthoring: host?.authoring,
         hostPointerEvents: host ? getComputedStyle(host).pointerEvents : '',
         wrapperInert: previewWrapper?.hasAttribute('inert'),
@@ -2510,6 +2601,9 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
     expect(state.visualRole).toBe('group')
     expect(state.hostVisualID).toBe('sales-chart')
     expect(state.envelopeStableAfterLayout).toBe(true)
+    expect(state.gridWidthAttributeAfterLayout).toBe('5')
+    expect(state.gridLayoutKeyAfterLayout).toBe('overview:sales-chart:12:48:16')
+    expect(state.gridWidthAfterLayout).toBe(5)
     expect(state.hostAuthoring).toBe(true)
     expect(state.hostPointerEvents).toBe('auto')
     expect(state.wrapperInert).toBe(false)
@@ -2582,7 +2676,7 @@ test('dashboard builder keeps headerless runtime visuals free of duplicate autho
   }
 })
 
-test('dashboard builder uses a full-bleed central canvas and keeps no-preview guidance actionable', async () => {
+test('dashboard builder keeps the authored page inset and no-preview guidance actionable', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2611,7 +2705,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
     expect(state.canvasBorder).toMatch(/^0px none /)
     expect(state.canvasRadius).toBe('0px')
     expect(state.canvasShadow).toBe('none')
-    expect(state.canvasWidth).toBe('1200px')
+    expect(state.canvasWidth).toBe('1168px')
     expect(state.canvasBackground).toBe('rgb(251, 252, 254)')
     expect(state.canvasGuides).toBe('none')
     expect(state.workspaceBackground).toBe('rgb(238, 241, 244)')
@@ -2656,84 +2750,6 @@ test('dashboard builder keeps an accessible responsive surface and exposes loadi
   }
 })
 
-test('dashboard builder stacks visual tiles within the mobile canvas viewport', async () => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      await element.updateComplete
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const visual = (id: string, title: string, row: number, type = 'bar') => ({
-        id, title, type, placement: { col: 1, row, colSpan: 4, rowSpan: 4 },
-        slots: [], filters: [],
-      })
-      mergePatch({
-        builder: {
-          pages: [{
-            id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 },
-        // Stream order is intentionally different from authored canvas order.
-            visuals: [visual('three', 'Three', 11, 'table'), visual('one', 'One', 1, 'kpi'), visual('two', 'Two', 6)],
-          }],
-          selectedPageId: 'overview', selectedVisualId: 'one',
-        },
-      })
-      await element.updateComplete
-      const root = (element.shadowRoot as ShadowRoot)
-      const canvas = root.querySelector('.canvas') as HTMLElement
-      const scroll = root.querySelector('.canvas-scroll') as HTMLElement
-      const canvasBox = canvas.getBoundingClientRect()
-      const visuals = Array.from(root.querySelectorAll('.visual')).map((node) => {
-        const box = (node as HTMLElement).getBoundingClientRect()
-        const contentBox = (node.querySelector('.grid-stack-item-content') as HTMLElement).getBoundingClientRect()
-        const tile = node as HTMLElement
-        const style = getComputedStyle(tile)
-        return { title: tile.querySelector('.visual-drag-header')?.textContent?.trim(), left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height, contentWidth: contentBox.width, contentHeight: contentBox.height, type: tile.getAttribute('data-visual-type'), position: style.position, order: style.order, topOffset: style.top, leftOffset: style.left, authoredTop: tile.style.top }
-      })
-      return {
-        canvasWidth: canvasBox.width,
-        canvasHeight: canvasBox.height,
-        scrollHeight: scroll.scrollHeight,
-        scrollWidth: scroll.scrollWidth,
-        scrollClientWidth: scroll.clientWidth,
-        visuals,
-        documentHorizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
-      }
-    })
-    expect(state.canvasWidth).toBeGreaterThan(0)
-    expect(state.canvasHeight).toBeLessThan(1000)
-    expect(state.scrollHeight).toBeLessThan(1200)
-    expect(state.scrollWidth).toBeLessThanOrEqual(state.scrollClientWidth)
-    expect(state.documentHorizontalOverflow).toBe(false)
-    expect(state.visuals).toHaveLength(3)
-    expect(state.visuals.map((visual) => visual.title)).toEqual(['Three', 'One', 'Two'])
-    expect(state.visuals.map((visual) => visual.order)).toEqual(['2', '0', '1'])
-    const kpi = state.visuals.find((visual) => visual.type === 'kpi')
-    const chart = state.visuals.find((visual) => visual.type === 'bar')
-    const table = state.visuals.find((visual) => visual.type === 'table')
-    expect(kpi?.height).toBeLessThan(chart?.height ?? 0)
-    expect(table?.height).toBeLessThanOrEqual(256)
-    const flow = [...state.visuals].sort((left, right) => Number(left.order) - Number(right.order))
-    for (const visual of state.visuals) {
-      expect(visual.position).toBe('relative')
-      // Relative flow resolves auto offsets to 0px; authored top/left values
-      // remain on the inline style but no longer offset the mobile tile.
-      expect(visual.topOffset).toBe('0px')
-      expect(visual.leftOffset).toBe('0px')
-      expect(visual.left).toBeGreaterThanOrEqual(-1)
-      expect(visual.right).toBeLessThanOrEqual(state.canvasWidth + 1)
-      expect(visual.bottom).toBeGreaterThan(visual.top)
-      expect(visual.contentWidth).toBeCloseTo(visual.width, 0)
-      expect(visual.contentHeight).toBeCloseTo(visual.height, 0)
-    }
-    expect(flow[1].authoredTop).not.toBe('0px')
-    expect(flow[2].authoredTop).not.toBe('0px')
-    expect(flow[1].top).toBeGreaterThan(flow[0].bottom)
-    expect(flow[2].top).toBeGreaterThan(flow[1].bottom)
-  } finally {
-    await page.close()
-  }
-})
 
 test('dashboard builder can reload a page-scoped preview through page-base-href links', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })

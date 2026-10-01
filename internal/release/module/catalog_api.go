@@ -52,7 +52,7 @@ func (m *Module) ListManagedConnections(w http.ResponseWriter, r *http.Request, 
 	}
 	items := make([]releaseapi.ManagedConnectionResponse, 0, len(rows))
 	for _, row := range rows {
-		allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, row.ID, access.CapabilityResourceRead)
+		allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, row.ID, access.ActionConnectionRead)
 		if err != nil {
 			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
 			return
@@ -87,7 +87,7 @@ func (m *Module) GetManagedConnection(w http.ResponseWriter, r *http.Request, pr
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
 		return
 	}
-	allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.CapabilityResourceRead)
+	allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.ActionConnectionRead)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
 		return
@@ -111,11 +111,14 @@ func (m *Module) GetManagedConnection(w http.ResponseWriter, r *http.Request, pr
 	apitransport.WriteJSON(w, http.StatusOK, item)
 }
 
-func (m *Module) authorizeConnection(ctx context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+func (m *Module) authorizeConnection(ctx context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
 	if m == nil || m.api.AuthorizeConnection == nil {
 		return false, errors.New("connection authorization is unavailable")
 	}
-	return m.api.AuthorizeConnection(ctx, principalID, projectID, connectionID, capability)
+	if action != access.ActionConnectionRead {
+		return false, errors.New("unsupported connection catalog action")
+	}
+	return m.api.AuthorizeConnection(ctx, principalID, projectID, connectionID, action)
 }
 
 func (m *Module) ProjectCursorSnapshot(r *http.Request, projectID string) string {

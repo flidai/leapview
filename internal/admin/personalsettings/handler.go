@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/pkg/pagestream"
@@ -14,6 +15,7 @@ import (
 
 type PrincipalProvider func(*http.Request) (string, bool)
 type SessionProvider func(*http.Request) (string, bool)
+type CredentialProvider func(*http.Request) (access.APICredential, bool)
 
 type commandSignals struct {
 	Profile          ProfileCommand          `json:"personalProfileCommand"`
@@ -28,6 +30,11 @@ type Handler struct {
 	Service          *Service
 	CurrentPrincipal PrincipalProvider
 	CurrentSession   SessionProvider
+	// CurrentCredential is populated only for API-token and authoring
+	// credentials. Personal settings are a browser-session surface; bearer
+	// callers use the typed Current User API, which applies child-token
+	// attenuation against the initiating credential.
+	CurrentCredential CredentialProvider
 }
 
 // Bootstrap emits the settings state as a normal Datastar signal patch. The
@@ -37,6 +44,9 @@ func (h Handler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	principalID, ok := h.currentPrincipal(r)
 	if !ok {
 		h.writeError(w, r, ErrPrincipalRequired, http.StatusUnauthorized)
+		return
+	}
+	if h.rejectCredential(w, r) {
 		return
 	}
 	state, err := h.load(r, principalID)
@@ -54,6 +64,9 @@ func (h Handler) Command(w http.ResponseWriter, r *http.Request) {
 	principalID, ok := h.currentPrincipal(r)
 	if !ok {
 		h.writeError(w, r, ErrPrincipalRequired, http.StatusUnauthorized)
+		return
+	}
+	if h.rejectCredential(w, r) {
 		return
 	}
 	if h.Service == nil {
@@ -108,6 +121,17 @@ func (h Handler) Command(w http.ResponseWriter, r *http.Request) {
 		state.Tokens.NewToken = newToken
 	}
 	_ = pagestream.PatchResponse(w, r, BootstrapSignals(state))
+}
+
+func (h Handler) rejectCredential(w http.ResponseWriter, r *http.Request) bool {
+	if h.CurrentCredential == nil {
+		return false
+	}
+	if _, credential := h.CurrentCredential(r); !credential {
+		return false
+	}
+	h.writeError(w, r, access.ErrForbidden, http.StatusForbidden)
+	return true
 }
 
 func beginPersonalSettingsInvocation(r *http.Request, signals commandSignals) (*http.Request, error) {
@@ -170,6 +194,26 @@ func beginPersonalSettingsInvocation(r *http.Request, signals commandSignals) (*
 			})
 			return ctx, err
 		})
+	case signals.Token.Action == "update":
+		if r.Header.Get("If-Match") != `"`+strings.TrimSpace(signals.Token.ExpectedModifiedAt)+`"` {
+			return r, ErrCommandInvalid
+		}
+		return begin(accessgen.GenUIActionUpdateCurrentAPIToken(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenUpdateCurrentAPITokenCommand(r.Context(), accessgen.GenUpdateCurrentAPITokenCommandInvocation{
+				Surface: apigencommand.SurfaceUI, Token: strings.TrimSpace(signals.Token.TokenID), ConcurrencyToken: r.Header.Get("If-Match"), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.Token.Action == "rotate":
+		if r.Header.Get("If-Match") != `"`+strings.TrimSpace(signals.Token.ExpectedModifiedAt)+`"` {
+			return r, ErrCommandInvalid
+		}
+		return begin(accessgen.GenUIActionRotateCurrentAPIToken(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRotateCurrentAPITokenCommand(r.Context(), accessgen.GenRotateCurrentAPITokenCommandInvocation{
+				Surface: apigencommand.SurfaceUI, Token: strings.TrimSpace(signals.Token.TokenID), ConcurrencyToken: r.Header.Get("If-Match"), IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
 	case signals.Token.Action == "revoke":
 		return begin(accessgen.GenUIActionRevokeCurrentAPIToken(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenRevokeCurrentAPITokenCommand(r.Context(), accessgen.GenRevokeCurrentAPITokenCommandInvocation{
@@ -196,7 +240,7 @@ func (h Handler) load(r *http.Request, principalID string) (Signal, error) {
 		currentSessionID, _ = h.CurrentSession(r)
 	}
 	active := strings.TrimSpace(r.URL.Query().Get("section"))
-	tokensActive := active == "api-tokens" || active == "api-token-new"
+	tokensActive := active == "api-tokens" || active == "api-token-new" || active == "api-token-edit"
 	state, err := h.Service.Load(r.Context(), principalID, currentSessionID, tokensActive)
 	if tokensActive {
 		state.Active = "api-tokens"

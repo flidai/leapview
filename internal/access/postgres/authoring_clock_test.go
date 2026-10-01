@@ -34,12 +34,12 @@ func TestAuthoringDatabaseClockIgnoresSessionPresentation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{Email: "clock-settings@example.com", Environment: "production"}, nil)
+	result, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{InstanceID: "instance_clock_settings", Email: "clock-settings@example.com", Environment: "production"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.PublisherToken == "" || result.PublisherTokenExpiresAt.Before(time.Now().UTC().Add(23*time.Hour)) {
-		t.Fatalf("database-clock expiry under session settings = %s", result.PublisherTokenExpiresAt)
+	if result.ProjectClaimToken == "" || result.ProjectClaimTokenExpiresAt.Before(time.Now().UTC().Add(23*time.Hour)) {
+		t.Fatalf("database-clock expiry under session settings = %s", result.ProjectClaimTokenExpiresAt)
 	}
 }
 
@@ -186,10 +186,14 @@ func seedRotatableWorkloadCredential(t *testing.T, db auditDatabase, repo *Repos
 	if err != nil {
 		t.Fatal(err)
 	}
+	permissions, err := access.ProjectPermissionPairsForActions(projectID, []access.Action{access.ActionConnectionRead})
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	credential, err := repo.CreateWorkloadCredential(t.Context(), access.WorkloadCredentialIssue{
 		Session: access.AuthoringSession{ID: "rotation-session-" + suffix, Kind: access.AuthoringSessionWorkload, ClientID: principal.ID, PrincipalID: principal.ID,
-			Scope: access.AuthoringScope{TargetID: "target-" + suffix, ProjectID: projectID, Capabilities: []access.Capability{access.CapabilityResourceRead}}, CreatedAt: now, ExpiresAt: now.Add(2 * time.Hour)},
+			Scope: access.AuthoringScope{TargetID: "target-" + suffix, ProjectID: projectID, Permissions: permissions}, CreatedAt: now, ExpiresAt: now.Add(2 * time.Hour)},
 		CredentialID: "rotation-credential-" + suffix, AccessTokenHash: strings.Repeat(accessChar, 64), AccessExpiresAt: now.Add(30 * time.Minute),
 	})
 	if err != nil {

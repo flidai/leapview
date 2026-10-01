@@ -8,6 +8,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"net"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -142,10 +145,13 @@ func (s *PinnedSession) Close() error {
 // target probes and migration attach need external access until their
 // target-specific attach phase has completed.
 type ResourcePolicy struct {
-	MemoryMaxBytes int64
-	TempMaxBytes   int64
-	MaxThreads     int
-	TempDir        string
+	MemoryMaxBytes    int64
+	TempMaxBytes      int64
+	MaxThreads        int
+	TempDir           string
+	HTTPProxyURL      string
+	HTTPProxyUser     string
+	HTTPProxyPassword string
 
 	AllowedDirectories    []string
 	DisableExternalAccess bool
@@ -166,6 +172,26 @@ func (p ResourcePolicy) Validate() error {
 		}
 		if containsControl(p.TempDir) {
 			return errors.New("DuckDB temporary directory contains a control character")
+		}
+	}
+	if p.HTTPProxyURL == "" && (p.HTTPProxyUser != "" || p.HTTPProxyPassword != "") {
+		return errors.New("DuckDB HTTP proxy credentials require an internal proxy")
+	}
+	if p.HTTPProxyURL != "" {
+		if p.HTTPProxyUser == "" || p.HTTPProxyPassword == "" ||
+			len(p.HTTPProxyUser) > 256 || len(p.HTTPProxyPassword) > 256 ||
+			containsControl(p.HTTPProxyUser) || containsControl(p.HTTPProxyPassword) {
+			return errors.New("DuckDB HTTP proxy requires bounded internal credentials")
+		}
+		proxy, err := url.Parse(p.HTTPProxyURL)
+		if err != nil || proxy.Scheme != "http" || proxy.User != nil || proxy.Path != "" ||
+			proxy.RawQuery != "" || proxy.Fragment != "" {
+			return errors.New("DuckDB HTTP proxy must be a loopback HTTP origin")
+		}
+		host, _, err := net.SplitHostPort(proxy.Host)
+		address, parseErr := netip.ParseAddr(host)
+		if err != nil || parseErr != nil || !address.IsLoopback() {
+			return errors.New("DuckDB HTTP proxy must be a loopback HTTP origin")
 		}
 	}
 	for _, directory := range p.AllowedDirectories {
@@ -195,6 +221,13 @@ func (p ResourcePolicy) BoundedStatements() ([]string, error) {
 	}
 	if p.TempDir != "" {
 		statements = append(statements, "SET temp_directory = '"+sqlLiteral(p.TempDir)+"'")
+	}
+	if p.HTTPProxyURL != "" {
+		statements = append(statements,
+			"SET http_proxy = '"+sqlLiteral(p.HTTPProxyURL)+"'",
+			"SET http_proxy_username = '"+sqlLiteral(p.HTTPProxyUser)+"'",
+			"SET http_proxy_password = '"+sqlLiteral(p.HTTPProxyPassword)+"'",
+		)
 	}
 	return statements, nil
 }

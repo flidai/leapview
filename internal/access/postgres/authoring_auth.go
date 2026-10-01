@@ -23,7 +23,11 @@ func (r *Repository) CreateDeviceAuthorization(ctx context.Context, record acces
 	if ttl <= 0 || ttl > 24*time.Hour {
 		return errors.New("device authorization expiry is invalid")
 	}
-	caps, err := json.Marshal(record.Scope.Capabilities)
+	scope, err := access.NewAuthoringScope(record.Scope.TargetID, record.Scope.ProjectID, record.Scope.Permissions)
+	if err != nil {
+		return err
+	}
+	permissions, err := access.EncodePermissionPairs(scope.Permissions)
 	if err != nil {
 		return err
 	}
@@ -33,13 +37,13 @@ func (r *Repository) CreateDeviceAuthorization(ctx context.Context, record acces
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err = accessdb.New(tx).InsertDeviceAuthorization(ctx, accessdb.InsertDeviceAuthorizationParams{ID: record.ID, ClientID: record.ClientID,
-		DeviceCodeHash: record.DeviceCodeHash, UserCodeHash: record.UserCodeHash, TargetID: record.Scope.TargetID,
-		ProjectID: record.Scope.ProjectID.String(), Capabilities: caps, Status: string(record.Status), Ttl: pgInterval(ttl),
+		DeviceCodeHash: record.DeviceCodeHash, UserCodeHash: record.UserCodeHash, TargetID: scope.TargetID,
+		ProjectID: scope.ProjectID.String(), PermissionProfile: access.PermissionCatalogProfile, Permissions: permissions, Status: string(record.Status), Ttl: pgInterval(ttl),
 		PollIntervalSeconds: int32(record.PollInterval / time.Second)}); err != nil {
 		return err
 	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
-	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{ProjectID: record.Scope.ProjectID.String(), Action: "authoring.device.started", ResourceKind: "device_authorization", ResourceID: record.ID, Status: "success"}); err != nil {
+	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{ProjectID: scope.ProjectID.String(), Action: "authoring.device.started", ResourceKind: "device_authorization", ResourceID: record.ID, Status: "success"}); err != nil {
 		return fmt.Errorf("%w: record device authorization audit: %v", access.ErrAuditTransaction, err)
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -246,7 +250,11 @@ func (r *Repository) CreateWorkloadCredential(ctx context.Context, issue access.
 }
 
 func insertAuthoringSessionAndCredential(ctx context.Context, tx pgx.Tx, sessionID string, kind access.AuthoringSessionKind, clientID, principalID string, scope access.AuthoringScope, createdAt, expiresAt time.Time, credentialID, accessHash, refreshHash string, accessExpiresAt, refreshExpiresAt time.Time) error {
-	caps, err := json.Marshal(scope.Capabilities)
+	validatedScope, err := access.NewAuthoringScope(scope.TargetID, scope.ProjectID, scope.Permissions)
+	if err != nil {
+		return err
+	}
+	permissions, err := access.EncodePermissionPairs(validatedScope.Permissions)
 	if err != nil {
 		return err
 	}
@@ -255,7 +263,8 @@ func insertAuthoringSessionAndCredential(ctx context.Context, tx pgx.Tx, session
 		return err
 	}
 	if err = accessdb.New(tx).InsertAuthoringSession(ctx, accessdb.InsertAuthoringSessionParams{ID: sessionID, Kind: string(kind), ClientID: clientID,
-		PrincipalID: parsedPrincipalID, TargetID: scope.TargetID, ProjectID: scope.ProjectID.String(), Capabilities: caps, ExpiresAt: pgTimestamp(expiresAt)}); err != nil {
+		PrincipalID: parsedPrincipalID, TargetID: validatedScope.TargetID, ProjectID: validatedScope.ProjectID.String(),
+		PermissionProfile: access.PermissionCatalogProfile, Permissions: permissions, ExpiresAt: pgTimestamp(expiresAt)}); err != nil {
 		return err
 	}
 	var refresh *string
@@ -295,7 +304,8 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 		Email: principalRow.Email, DisplayName: principalRow.DisplayName, DisabledAt: principalRow.DisabledAt, BlockedAt: principalRow.BlockedAt,
 		LastSeenAt: principalRow.LastSeenAt, CreatedAt: principalRow.CreatedAt, UpdatedAt: principalRow.UpdatedAt})
 	row, err := accessdb.New(tx).LockAuthoringCredentialForRotation(ctx, &refreshTokenHash)
-	var oldID, sessionID, principalID, kind, clientID, targetID, projectID, capsJSON string
+	var oldID, sessionID, principalID, kind, clientID, targetID, projectID, permissionProfile string
+	var permissionsJSON string
 	var refreshExp, sessionExpires, sessionCreated time.Time
 	var sessionRevoked *time.Time
 	var active bool
@@ -317,7 +327,8 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 		if err != nil {
 			return access.AuthoringCredential{}, err
 		}
-		capsJSON = string(row.Capabilities)
+		permissionProfile = row.PermissionProfile
+		permissionsJSON = string(row.Permissions)
 		if row.RevokedAt.Valid {
 			t := row.RevokedAt.Time
 			sessionRevoked = &t
@@ -355,13 +366,13 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 		if err != nil {
 			return access.AuthoringCredential{}, err
 		}
-		var capabilities []access.Capability
-		if err := json.Unmarshal([]byte(capsJSON), &capabilities); err != nil {
+		scope, err := authoringScopeFromStorage(targetID, projectID, permissionProfile, []byte(permissionsJSON))
+		if err != nil {
 			return access.AuthoringCredential{}, err
 		}
 		metadata, err := json.Marshal(map[string]any{
 			"kind": kind, "clientId": clientID, "targetId": targetID,
-			"projectId": project.String(), "capabilities": capabilities,
+			"projectId": project.String(), "permissionProfile": permissionProfile, "permissions": scope.Permissions,
 		})
 		if err != nil {
 			return access.AuthoringCredential{}, err
@@ -397,18 +408,14 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 		AccessTokenHash: rotation.AccessTokenHash, RefreshTokenHash: &refreshTokenHashNew, AccessExpiresAt: pgTimestamp(rotation.AccessExpiresAt), RefreshExpiresAt: pgTimestamp(rotation.RefreshExpiresAt)}); err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	project, err := graph.NewResourceID(projectID)
+	scope, err := authoringScopeFromStorage(targetID, projectID, permissionProfile, []byte(permissionsJSON))
 	if err != nil {
-		return access.AuthoringCredential{}, err
-	}
-	var capabilities []access.Capability
-	if err = json.Unmarshal([]byte(capsJSON), &capabilities); err != nil {
 		return access.AuthoringCredential{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	return access.AuthoringCredential{ID: rotation.CredentialID, Principal: principal, Session: access.AuthoringSession{ID: sessionID, Kind: access.AuthoringSessionKind(kind), ClientID: clientID, PrincipalID: principalID, Scope: access.AuthoringScope{TargetID: targetID, ProjectID: project, Capabilities: capabilities}, CreatedAt: sessionCreated.UTC(), ExpiresAt: rotation.RefreshExpiresAt}, AccessExpiresAt: rotation.AccessExpiresAt, RefreshExpiresAt: rotation.RefreshExpiresAt}, nil
+	return access.AuthoringCredential{ID: rotation.CredentialID, Principal: principal, Session: access.AuthoringSession{ID: sessionID, Kind: access.AuthoringSessionKind(kind), ClientID: clientID, PrincipalID: principalID, Scope: scope, CreatedAt: sessionCreated.UTC(), ExpiresAt: rotation.RefreshExpiresAt}, AccessExpiresAt: rotation.AccessExpiresAt, RefreshExpiresAt: rotation.RefreshExpiresAt}, nil
 }
 
 func (r *Repository) AuthoringCredentialByAccessTokenHash(ctx context.Context, hash string, now time.Time) (access.AuthoringCredential, error) {
@@ -421,12 +428,8 @@ func (r *Repository) AuthoringCredentialByAccessTokenHash(ctx context.Context, h
 		return access.AuthoringCredential{}, err
 	}
 	_ = accessdb.New(db).TouchAuthoringSession(ctx, row.SessionID)
-	project, err := graph.NewResourceID(row.ProjectID)
+	scope, err := authoringScopeFromStorage(row.TargetID, row.ProjectID, row.PermissionProfile, row.Permissions)
 	if err != nil {
-		return access.AuthoringCredential{}, err
-	}
-	var capabilities []access.Capability
-	if err = json.Unmarshal(row.Capabilities, &capabilities); err != nil {
 		return access.AuthoringCredential{}, err
 	}
 	principalID := principalUUID(row.PrincipalID)
@@ -442,7 +445,7 @@ func (r *Repository) AuthoringCredentialByAccessTokenHash(ctx context.Context, h
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	return access.AuthoringCredential{ID: row.ID, Principal: principal, Session: access.AuthoringSession{ID: row.SessionID, Kind: access.AuthoringSessionKind(row.Kind), ClientID: row.ClientID, PrincipalID: principalID, Scope: access.AuthoringScope{TargetID: row.TargetID, ProjectID: project, Capabilities: capabilities}, ExpiresAt: sessionExpires}, AccessExpiresAt: accessExpires}, nil
+	return access.AuthoringCredential{ID: row.ID, Principal: principal, Session: access.AuthoringSession{ID: row.SessionID, Kind: access.AuthoringSessionKind(row.Kind), ClientID: row.ClientID, PrincipalID: principalID, Scope: scope, ExpiresAt: sessionExpires}, AccessExpiresAt: accessExpires}, nil
 }
 
 func (r *Repository) ListAuthoringSessions(ctx context.Context, principalID string) ([]access.AuthoringSession, error) {
@@ -472,7 +475,8 @@ func (r *Repository) ListAuthoringSessions(ctx context.Context, principalID stri
 		if err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal(row.Capabilities, &value.Scope.Capabilities); err != nil {
+		value.Scope, err = authoringScopeFromStorage(row.TargetID, row.ProjectID, row.PermissionProfile, row.Permissions)
+		if err != nil {
 			return nil, err
 		}
 		value.CreatedAt, err = pgRequiredTime("authoring session created_at", row.CreatedAt)
@@ -537,18 +541,32 @@ func pgRequiredTime(label string, value pgtype.Timestamptz) (time.Time, error) {
 	return value.Time.UTC(), nil
 }
 
+func authoringScopeFromStorage(targetID, projectID, permissionProfile string, encoded []byte) (access.AuthoringScope, error) {
+	project, err := graph.NewResourceID(projectID)
+	if err != nil {
+		return access.AuthoringScope{}, err
+	}
+	permissions, err := access.DecodePermissionPairs(encoded)
+	if err != nil {
+		return access.AuthoringScope{}, err
+	}
+	if err := access.ValidateTypedPermissionSet(permissionProfile, permissions); err != nil {
+		return access.AuthoringScope{}, err
+	}
+	return access.NewAuthoringScope(targetID, project, permissions)
+}
+
 func deviceAuthorizationFromGenerated(row accessdb.AccessDeviceAuthorization) (access.DeviceAuthorization, error) {
 	projectID, err := graph.NewResourceID(row.ProjectID)
 	if err != nil {
 		return access.DeviceAuthorization{}, err
 	}
 	value := access.DeviceAuthorization{ID: row.ID, ClientID: row.ClientID, DeviceCodeHash: row.DeviceCodeHash,
-		UserCodeHash: row.UserCodeHash, Scope: access.AuthoringScope{TargetID: row.TargetID, ProjectID: projectID},
+		UserCodeHash: row.UserCodeHash,
 		Status: access.DeviceAuthorizationStatus(row.Status), PollInterval: time.Duration(row.PollIntervalSeconds) * time.Second}
-	if row.Capabilities != nil {
-		if err := json.Unmarshal(row.Capabilities, &value.Scope.Capabilities); err != nil {
-			return access.DeviceAuthorization{}, err
-		}
+	value.Scope, err = authoringScopeFromStorage(row.TargetID, projectID.String(), row.PermissionProfile, row.Permissions)
+	if err != nil {
+		return access.DeviceAuthorization{}, err
 	}
 	value.PrincipalID = principalUUID(row.PrincipalID)
 	value.ExpiresAt, err = pgRequiredTime("device authorization expires_at", row.ExpiresAt)

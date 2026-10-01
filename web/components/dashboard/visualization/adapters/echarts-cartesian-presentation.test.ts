@@ -191,6 +191,86 @@ test('ECharts keeps compact histogram endpoint labels inside the chart', () => {
   }
 })
 
+test('ECharts reveals isolated line and area points without changing null measures', () => {
+  for (const mark of ['line', 'area', 'combo']) {
+    const envelope = cartesianPresentationFixture(mark) as any
+    envelope.spec.mark = mark
+    envelope.spec.datasets[0].fields[0].label = 'Scenario'
+    envelope.spec.datasets[0].fields[1] = {
+      id: 'value', role: 'metric', dataType: 'decimal', nullable: true, label: 'Current cash',
+      format: { kind: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 },
+    }
+    envelope.spec.presentation.showSymbols = false
+    if (mark === 'combo') envelope.spec.presentation.comboSeries = [{ seriesValue: 'value', mark: 'line', axis: 'primary' }]
+    envelope.dataState.datasets[0].rows = [
+      ['Base', 11_415_995.22],
+      ['Downside', null],
+      ['Upside', null],
+    ]
+
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(option.series[0]).toMatchObject({ type: 'line', symbol: 'circle', symbolSize: 8 })
+    expect(option.series[0].label.position).toBe('top')
+    expect(option.tooltip.formatter({ value: ['Downside', null] })).toBe('Scenario: Downside<br>Current cash: —')
+    expect(option.dataset.source).toEqual([
+      ['label', 'value'],
+      ['Base', 11_415_995.22],
+      ['Downside', null],
+      ['Upside', null],
+    ])
+
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+    try {
+      chart.setOption(option, { notMerge: true, lazyUpdate: false })
+      chart.renderToSVGString()
+      const chartModel = (chart as unknown as { getModel: () => { getSeriesByIndex: (index: number) => { getData: () => any } } }).getModel()
+      const data = chartModel.getSeriesByIndex(0).getData()
+      expect(data.count()).toBe(3)
+      expect(data.getItemGraphicEl(0)).toBeDefined()
+      expect(data.getItemGraphicEl(1)).toBeUndefined()
+      expect(data.getItemGraphicEl(2)).toBeUndefined()
+    } finally {
+      chart.dispose()
+    }
+  }
+
+  const separated = cartesianPresentationFixture('line') as any
+  separated.spec.presentation.showSymbols = false
+  separated.dataState.datasets[0].rows = [['Base', 1], ['Downside', null], ['Upside', 2]]
+  expect((echartsOption(separated, defaultRendererContext) as any).series[0].symbol).toBe('circle')
+  separated.dataState.datasets[0].rows = [['Base', 1], ['Downside', 2], ['Upside', null]]
+  expect((echartsOption(separated, defaultRendererContext) as any).series[0].symbol).toBe('none')
+
+  const authoredPlacement = cartesianPresentationFixture('line') as any
+  authoredPlacement.spec.presentation.showSymbols = false
+  authoredPlacement.spec.presentation.labelPosition = 'inside'
+  expect((echartsOption(authoredPlacement, defaultRendererContext) as any).series[0].label.position).toBe('inside')
+
+  const horizontal = cartesianPresentationFixture('line') as any
+  horizontal.spec.presentation.showSymbols = false
+  horizontal.spec.presentation.orientation = 'horizontal'
+  expect((echartsOption(horizontal, defaultRendererContext) as any).series[0].label.position).toBe('right')
+})
+
+test('ECharts formats histogram bounds and omits raw helper columns from default tooltips', () => {
+  const envelope = cartesianPresentationFixture('histogram') as any
+  envelope.spec.datasets[0].fields = [
+    { id: 'bucket', role: 'dimension', dataType: 'string', nullable: false, label: 'bucket' },
+    { id: 'count', role: 'metric', dataType: 'integer', nullable: false, label: 'count' },
+    { id: 'start', role: 'metric', dataType: 'decimal', nullable: false, label: 'start' },
+    { id: 'end', role: 'metric', dataType: 'decimal', nullable: false, label: 'end' },
+  ]
+  envelope.spec.x = { dataset: 'primary', field: 'bucket' }
+  envelope.spec.y = [{ dataset: 'primary', field: 'count' }]
+  envelope.dataState.datasets[0].columns = ['bucket', 'count', 'start', 'end']
+  envelope.dataState.datasets[0].rows = [['11415995.22', 1, '11415995.22', '11415995.22']]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.xAxis.axisLabel.formatter('11415995.22')).toBe('11.4M')
+  expect(option.tooltip.formatter({ value: ['11415995.22', 1, '11415995.22', '11415995.22'] })).toBe('Range: 11.4M<br>Count: 1')
+  expect(option.tooltip.formatter({ value: ['11415995.22', null, '11415995.22', '11415995.22'] })).toBe('Range: 11.4M<br>Count: —')
+})
+
 function cartesianPresentationFixture(mark: string): VisualizationEnvelope {
   return {
     schemaVersion: 9,

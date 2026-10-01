@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -46,6 +48,16 @@ func TestUpdateCurrentPrincipalIfMatchSemantics(t *testing.T) {
 			if test.ifMatch != "" {
 				request.Header.Set("If-Match", test.ifMatch)
 			}
+			operationID := accessgen.GenCommandOperationUpdateCurrentPrincipal().APIGenOperationID()
+			contract, ok := accessgen.GetAPIGenCommandRuntimeContract(operationID)
+			if !ok {
+				t.Fatalf("missing generated command contract for %s", operationID)
+			}
+			commandContext, guard, err := apigencommand.Begin(request.Context(), contract)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request = request.WithContext(commandContext)
 			response := httptest.NewRecorder()
 			handler.UpdateCurrentPrincipal(response, request)
 			if response.Code != test.wantStatus {
@@ -53,6 +65,9 @@ func TestUpdateCurrentPrincipalIfMatchSemantics(t *testing.T) {
 			}
 			if test.wantStatus == stdhttp.StatusPreconditionFailed && repository.principal.DisplayName != "Before" {
 				t.Fatalf("stale write changed principal: %#v", repository.principal)
+			}
+			if test.wantStatus == stdhttp.StatusOK && !guard.Completed() {
+				t.Fatal("current-principal update bypassed its generated If-Match command")
 			}
 		})
 	}

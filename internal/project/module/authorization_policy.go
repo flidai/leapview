@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
@@ -18,7 +19,14 @@ import (
 // document can be represented by the target policy's role-binding-only model.
 // Known legacy constructs are left attached to their active generation rather
 // than discarded during upgrade; malformed documents still fail closed.
-func DecodeAuthorizationRoleBindingsJSON(encoded string) ([]access.RoleBinding, bool, error) {
+//
+// The projectID is required because the persisted pair set must be checked
+// against the exact project-bound expansion of its PermissionRole, even when
+// the document happens to contain only legacy bindings today.
+func DecodeAuthorizationRoleBindingsJSON(encoded string, projectID projectgraph.ResourceID) ([]access.RoleBinding, bool, error) {
+	if err := projectID.Validate(); err != nil {
+		return nil, false, fmt.Errorf("active serving authorization policy project: %w", err)
+	}
 	if strings.TrimSpace(encoded) == "" {
 		return nil, false, errors.New("active generation has no serving authorization policy document")
 	}
@@ -68,16 +76,36 @@ func DecodeAuthorizationRoleBindingsJSON(encoded string) ([]access.RoleBinding, 
 		if err != nil {
 			return nil, false, fmt.Errorf("active serving role binding %q subject: %w", id, err)
 		}
-		role, err := access.ParseProjectRole(item.Role)
-		if err != nil {
-			return nil, false, fmt.Errorf("active serving role binding %q role: %w", id, err)
+		binding := access.RoleBinding{
+			ID:                item.ID,
+			Name:              item.Name,
+			Subject:           subject,
+			Role:              access.ProjectRole(item.Role),
+			PermissionProfile: item.PermissionProfile,
+			Permissions:       access.ClonePermissionPairs(item.Permissions),
+			PermissionRole:    item.PermissionRole,
 		}
-		binding := access.RoleBinding{ID: item.ID, Name: item.Name, Subject: subject, Role: role, Capabilities: access.ProjectRoleCapabilities(role)}
+		typed := item.PermissionProfile != "" || item.Permissions != nil || item.PermissionRole != ""
+		if typed {
+			if err := access.ValidateTypedRoleBindingForProject(binding, projectID); err != nil {
+				return nil, false, fmt.Errorf("active serving role binding %q typed assignment: %w", id, err)
+			}
+		} else {
+			role, err := access.ParseProjectRole(item.Role)
+			if err != nil {
+				return nil, false, fmt.Errorf("active serving role binding %q role: %w", id, err)
+			}
+			binding.Role = role
+			binding.Capabilities = access.ProjectRoleCapabilities(role)
+		}
 		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
 			// Serving snapshots historically did not constrain descriptive role-
 			// binding names. If every authorization-bearing field is valid under
 			// the new target-policy contract, retain the immutable generation and
 			// defer migration rather than normalizing or rejecting its legacy name.
+			if typed {
+				return nil, false, fmt.Errorf("active serving role binding %q: %w", id, err)
+			}
 			legacy := binding
 			legacy.Name = ""
 			if access.ValidateAuthorizationRoleBinding(legacy) == nil {

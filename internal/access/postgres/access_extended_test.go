@@ -150,12 +150,12 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	}
 
 	initial, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{
-		Email: "bootstrap@example.com", Environment: "production", Now: time.Unix(1, 0).UTC(),
+		InstanceID: "instance_extended", Email: "bootstrap@example.com", Environment: "production", Now: time.Unix(1, 0).UTC(),
 	}, nil)
 	if err != nil {
 		t.Fatalf("initialize instance: %v", err)
 	}
-	if initial.PublisherToken == "" || !initial.PublisherTokenExpiresAt.After(time.Now().UTC()) {
+	if initial.ProjectClaimToken == "" || !initial.ProjectClaimTokenExpiresAt.After(time.Now().UTC()) {
 		t.Fatalf("initial credentials = %#v", initial)
 	}
 	var marker string
@@ -169,7 +169,7 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if initialized, err := repo.Initialized(t.Context()); err != nil || !initialized {
 		t.Fatalf("repository initialization marker lookup = %t (%v)", initialized, err)
 	}
-	if _, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{Email: "second@example.com", Environment: "production", Now: time.Now()}, nil); !errors.Is(err, access.ErrInstanceAlreadyInitialized) {
+	if _, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{InstanceID: "instance_extended", Email: "second@example.com", Environment: "production", Now: time.Now()}, nil); !errors.Is(err, access.ErrInstanceAlreadyInitialized) {
 		t.Fatalf("second initialization error = %v", err)
 	}
 
@@ -180,10 +180,14 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	now := time.Now().UTC()
 	deviceHash := hashHex("device-extended")
 	userHash := hashHex("user-extended")
+	authoringPermissions, err := access.ProjectPermissionPairsForActions(projectGraphID, []access.Action{access.ActionConnectionRead})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := repo.CreateDeviceAuthorization(t.Context(), access.DeviceAuthorization{
 		ID: "da_extended", ClientID: access.AuthoringCLIClientID,
 		DeviceCodeHash: deviceHash, UserCodeHash: userHash,
-		Scope:  access.AuthoringScope{TargetID: "instance_extended", ProjectID: projectGraphID, Capabilities: []access.Capability{access.CapabilityResourceRead}},
+		Scope:  access.AuthoringScope{TargetID: "instance_extended", ProjectID: projectGraphID, Permissions: authoringPermissions},
 		Status: access.DeviceAuthorizationPending, CreatedAt: now, ExpiresAt: now.Add(5 * time.Minute), PollInterval: time.Second,
 	}); err != nil {
 		t.Fatalf("create device authorization: %v", err)

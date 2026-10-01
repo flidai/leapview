@@ -206,11 +206,11 @@ WHERE EXISTS (
 );
 
 -- name: FindBrowserSession :one
-SELECT p.id, s.token_fingerprint, s.verifier
+SELECT p.id, s.id AS session_id, s.token_fingerprint, s.verifier, s.expires_at
 FROM access.session s
 JOIN access.principal p ON p.id = s.principal_id
 WHERE s.token_fingerprint = sqlc.arg(token_fingerprint)
-  AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+  AND s.kind = 'browser' AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
   AND p.status = 'active' AND p.revoked_at IS NULL
   AND p.disabled_at IS NULL AND p.blocked_at IS NULL;
 
@@ -243,10 +243,11 @@ WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
 SELECT sqlc.arg(expires_at)::timestamptz > clock_timestamp()
    AND sqlc.arg(expires_at)::timestamptz <= clock_timestamp() + interval '365 days';
 
--- name: CreateAPIToken :execresult
-INSERT INTO access.api_token(id, principal_id, name, description, token_fingerprint, verifier, capabilities, expires_at)
+-- name: CreateScopedAPIToken :execresult
+INSERT INTO access.api_token(id, principal_id, name, description, token_fingerprint, verifier, capabilities, permission_profile, permissions, expires_at)
 SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name), sqlc.arg(description),
-       sqlc.arg(token_fingerprint), sqlc.arg(verifier), sqlc.arg(capabilities)::jsonb,
+       sqlc.arg(token_fingerprint), sqlc.arg(verifier), NULL,
+       sqlc.arg(permission_profile), sqlc.arg(permissions)::jsonb,
        sqlc.arg(expires_at)
 WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
   AND sqlc.arg(expires_at)::timestamptz <= clock_timestamp() + interval '365 days'
@@ -257,9 +258,30 @@ WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
   );
 
 -- name: GetAPIToken :one
-SELECT id, principal_id, name, description, capabilities, expires_at, created_at, last_used_at, revoked_at
+SELECT id, principal_id, name, description, token_fingerprint, capabilities, permission_profile, permissions,
+       expires_at, created_at, modified_at, last_used_at, revoked_at
 FROM access.api_token
 WHERE id = sqlc.arg(id)::uuid;
+
+-- name: UpdateScopedAPITokenForPrincipal :execresult
+UPDATE access.api_token
+SET name = sqlc.arg(name), description = sqlc.arg(description),
+    permissions = sqlc.arg(permissions)::jsonb, expires_at = sqlc.arg(expires_at),
+    modified_at = GREATEST(clock_timestamp(), modified_at + interval '1 microsecond')
+WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
+  AND permission_profile = 'leapview.permissions/v1' AND revoked_at IS NULL
+  AND expires_at > clock_timestamp()
+  AND modified_at = sqlc.arg(expected_modified_at)::timestamptz
+  AND sqlc.arg(expires_at)::timestamptz > clock_timestamp()
+  AND sqlc.arg(expires_at)::timestamptz <= created_at + interval '365 days';
+
+-- name: RevokeScopedAPITokenForRotation :execresult
+UPDATE access.api_token
+SET revoked_at = clock_timestamp(), modified_at = GREATEST(clock_timestamp(), modified_at + interval '1 microsecond')
+WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
+  AND permission_profile = 'leapview.permissions/v1' AND revoked_at IS NULL
+  AND expires_at > clock_timestamp()
+  AND modified_at = sqlc.arg(expected_modified_at)::timestamptz;
 
 -- name: FindAPITokenByFingerprint :one
 SELECT t.id, t.verifier
@@ -267,6 +289,8 @@ FROM access.api_token t
 JOIN access.principal p ON p.id = t.principal_id
 WHERE t.token_fingerprint = sqlc.arg(token_fingerprint)
   AND t.revoked_at IS NULL AND t.expires_at > clock_timestamp()
+  AND t.permission_profile = 'leapview.permissions/v1'
+  AND t.permissions IS NOT NULL
   AND p.status = 'active' AND p.revoked_at IS NULL
   AND p.disabled_at IS NULL AND p.blocked_at IS NULL;
 

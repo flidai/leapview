@@ -121,13 +121,96 @@ func canonicalSnapshot(t testing.TB, grants []struct {
 		if err != nil {
 			t.Fatal(err)
 		}
+		action, ok := canonicalActionForCapability(item.resource.Kind(), item.capability)
+		if !ok {
+			t.Fatalf("no typed action mapping for %s on %s", item.capability, item.resource.Kind())
+		}
+		var pair access.PermissionPair
+		if action == access.ActionProjectAccessManage {
+			pair, err = access.NewProjectPermissionPair(action, identity.ProjectID)
+		} else {
+			pair, err = access.NewExactPermissionPair(action, identity.ProjectID, item.resource)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		grant, err := accesssnapshot.NewTypedPermissionGrant(item.id, item.id, subject, pair)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonicalGrants = append(canonicalGrants, grant)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, canonicalGrants, policies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func canonicalActionForCapability(kind projectgraph.Kind, capability access.Capability) (access.Action, bool) {
+	switch kind {
+	case projectgraph.KindSemanticModel:
+		switch capability {
+		case access.CapabilityResourceUse:
+			return access.ActionSemanticConsume, true
+		case access.CapabilityResourceRead:
+			return access.ActionSemanticRead, true
+		}
+	case projectgraph.KindModel:
+		switch capability {
+		case access.CapabilityResourceUse, access.CapabilityResourceRead:
+			return access.ActionModelRead, true
+		}
+	case projectgraph.KindDashboard:
+		if capability == access.CapabilityResourceRead {
+			return access.ActionDashboardRead, true
+		}
+	case projectgraph.KindProjectNamespace:
+		if capability == access.CapabilityProjectAdmin {
+			return access.ActionProjectAccessManage, true
+		}
+	}
+	return "", false
+}
+
+func canonicalLegacySnapshot(t testing.TB, grants []struct {
+	id         string
+	resource   access.ResourceRef
+	capability access.Capability
+}, policies []accesssnapshot.DataPolicy) accesssnapshot.AuthorizationSnapshot {
+	t.Helper()
+	graph, identity, _, _, _ := canonicalGraph(t)
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyGrants := make([]accesssnapshot.Grant, 0, len(grants))
+	for _, item := range grants {
 		grant, err := access.NewCanonicalGrant(graph, subject, item.resource, item.capability)
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonicalGrants = append(canonicalGrants, accesssnapshot.Grant{ID: item.id, Canonical: grant})
+		legacyGrants = append(legacyGrants, accesssnapshot.Grant{ID: item.id, Canonical: grant})
 	}
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, canonicalGrants, policies)
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, legacyGrants, policies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func canonicalSnapshotWithTypedPermissions(t testing.TB, principalID string, permissions ...access.PermissionPair) accesssnapshot.AuthorizationSnapshot {
+	t.Helper()
+	graph, identity, _, _, _ := canonicalGraph(t)
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := accesssnapshot.NewTypedGrant("typed", "typed", subject, permissions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{grant}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +268,15 @@ func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.Authoriz
 			if credentialID == "" {
 				return access.APICredential{}, false
 			}
-			return access.APICredential{Token: access.APIToken{ID: credentialID}}, true
+			subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
+			if err != nil {
+				return access.APICredential{}, false
+			}
+			permissions, err := snapshot.EffectiveTypedPermissions([]access.SubjectRef{subject})
+			if err != nil {
+				return access.APICredential{}, false
+			}
+			return access.APICredential{Token: access.APIToken{ID: credentialID, PermissionProfile: access.PermissionCatalogProfile, Permissions: permissions}}, true
 		},
 		AuditRecorder: recorder,
 	})
@@ -200,6 +291,7 @@ func TestCanonicalSemanticAndPhysicalAuthorization(t *testing.T) {
 	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
 	metrics := canonicalMetricsWithSnapshot(t, semanticSnapshot, nil)
 	semanticQuery := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
+	semanticQuery.Surface, semanticQuery.Operation = dataquery.SurfaceDashboard, dataquery.OperationDashboardRows
 	if _, _, err := metrics.GovernDataQuery(context.Background(), semanticQuery); err != nil {
 		t.Fatalf("semantic authorization: %v", err)
 	}
@@ -210,15 +302,21 @@ func TestCanonicalSemanticAndPhysicalAuthorization(t *testing.T) {
 	}{{"physical", physical, access.CapabilityResourceUse}}, nil)
 	physicalOnly := canonicalMetricsWithSnapshot(t, physicalOnlySnapshot, nil)
 	physicalQuery := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Target: "orders", Kind: dataquery.KindSemanticRows}
-	governed, _, err := physicalOnly.GovernDataQuery(context.Background(), physicalQuery)
-	if err != nil {
-		t.Fatalf("physical authorization: %v", err)
-	}
-	if governed.Target != "orders" {
-		t.Fatalf("physical executable target = %q, want symbolic table name orders", governed.Target)
+	physicalQuery.Surface, physicalQuery.Operation = dataquery.SurfaceAPI, dataquery.OperationAPIQuery
+	if _, _, err := physicalOnly.GovernDataQuery(context.Background(), physicalQuery); !IsDenied(err) {
+		t.Fatalf("semantic query used physical-only typed authority: %v", err)
 	}
 	if _, _, err := physicalOnly.GovernDataQuery(context.Background(), semanticQuery); err == nil {
 		t.Fatal("semantic query unexpectedly used a physical-only grant")
+	}
+	modelRows := dataquery.ModelRows("semantic_sales", "orders", []string{"region"}, nil, 0, 100, false)
+	modelRows.ProjectID = canonicalProject
+	governed, _, err := physicalOnly.GovernDataQuery(context.Background(), modelRows)
+	if err != nil {
+		t.Fatalf("targeted model read authorization: %v", err)
+	}
+	if governed.Target != "orders" {
+		t.Fatalf("physical executable target = %q, want symbolic table name orders", governed.Target)
 	}
 	unknownPhysical := physicalQuery
 	unknownPhysical.Target = "unknown"
@@ -320,7 +418,7 @@ func TestCanonicalSemanticDatasetAliasAppliesBackingModelPolicies(t *testing.T) 
 }
 
 func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
-	_, _, _, physical, _ := canonicalGraph(t)
+	_, _, semantic, physical, _ := canonicalGraph(t)
 	row, err := accesspolicy.Compile("rls", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -334,9 +432,9 @@ func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
-	}{{"physical", physical, access.CapabilityResourceUse}}, policies)
+	}{{"semantic", semantic, access.CapabilityResourceUse}}, policies)
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
-	request := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Target: "orders", Kind: dataquery.KindSemanticRows, Fields: []dataquery.Field{{Field: "orders.email"}}}
+	request := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows, ModelID: "semantic_sales", Target: "orders", Kind: dataquery.KindSemanticRows, Fields: []dataquery.Field{{Field: "orders.email"}}}
 	governed, _, err := metrics.GovernDataQuery(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -355,7 +453,7 @@ func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
-	}{{"physical", physical, access.CapabilityResourceUse}}, []accesssnapshot.DataPolicy{{ID: "rls-us", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["US"]}`, Compiled: usCompiled}})
+	}{{"semantic", semantic, access.CapabilityResourceUse}}, []accesssnapshot.DataPolicy{{ID: "rls-us", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["US"]}`, Compiled: usCompiled}})
 	usGoverned, _, err := canonicalMetricsWithSnapshot(t, usSnapshot, nil).GovernDataQuery(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -367,7 +465,7 @@ func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
-	}{{"physical", physical, access.CapabilityResourceUse}}, policies, "bob")
+	}{{"semantic", semantic, access.CapabilityResourceUse}}, policies, "bob")
 	bobMetrics := canonicalMetricsWithSnapshot(t, bobSnapshot, nil, "bob", "token-b")
 	bobRequest := request
 	bobRequest.PrincipalID = "bob"
@@ -388,14 +486,14 @@ func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 }
 
 func TestCanonicalTokenAttenuationAndProjectIdentity(t *testing.T) {
-	_, identity, semantic, _, _ := canonicalGraph(t)
+	_, _, semantic, _, _ := canonicalGraph(t)
 	snapshot := canonicalSnapshot(t, []struct {
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
 	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
 	currentSnapshot := snapshot
-	var tokenCaps []access.Capability
+	var tokenPermissions []access.PermissionPair
 	metrics := New(canonicalMetrics{model: &semanticmodel.Model{Name: "sales"}}, Options{
 		SnapshotFromContext: func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) { return currentSnapshot, nil },
 		SubjectsFromContext: func(context.Context, string) ([]access.SubjectRef, error) {
@@ -404,27 +502,35 @@ func TestCanonicalTokenAttenuationAndProjectIdentity(t *testing.T) {
 		},
 		PrincipalFromContext: func(context.Context) (Principal, bool) { return Principal{ID: "alice"}, true },
 		CredentialFromContext: func(context.Context) (access.APICredential, bool) {
-			return access.APICredential{Token: access.APIToken{Capabilities: tokenCaps}}, true
+			return access.APICredential{Token: access.APIToken{PermissionProfile: access.PermissionCatalogProfile, Permissions: tokenPermissions}}, true
 		},
 	})
-	query := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
-	// Nil means dynamic attenuation and follows current effective capabilities.
-	tokenCaps = nil
-	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err != nil {
-		t.Fatalf("nil token attenuation: %v", err)
+	query := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
+	consume, err := access.NewExactPermissionPair(access.ActionSemanticConsume, canonicalProject, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := access.NewExactPermissionPair(access.ActionSemanticRead, canonicalProject, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Omitted token permissions are invalid and cannot inherit current authority.
+	tokenPermissions = nil
+	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err == nil {
+		t.Fatal("omitted token permissions unexpectedly authorized")
 	}
 	// A non-nil empty list is explicit deny-all, not dynamic.
-	tokenCaps = []access.Capability{}
+	tokenPermissions = []access.PermissionPair{}
 	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err == nil {
 		t.Fatal("explicit empty token unexpectedly authorized")
 	}
-	// An allowlist narrower than the effective capability set is denied.
-	tokenCaps = []access.Capability{access.CapabilityResourceRead}
+	// An allowlist containing metadata read cannot authorize data consumption.
+	tokenPermissions = []access.PermissionPair{read}
 	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err == nil {
-		t.Fatal("attenuated token unexpectedly authorized RESOURCE_USE")
+		t.Fatal("attenuated token unexpectedly authorized semantic.consume")
 	}
-	// Dynamic tokens are re-evaluated against a revoked serving snapshot.
-	tokenCaps = nil
+	// An exact typed allowlist is re-evaluated against a revoked serving snapshot.
+	tokenPermissions = []access.PermissionPair{consume}
 	graph, revokedIdentity, _, _, _ := canonicalGraph(t)
 	revoked, err := accesssnapshot.NewAuthorizationSnapshot(revokedIdentity, graph, nil, nil)
 	if err != nil {
@@ -432,9 +538,8 @@ func TestCanonicalTokenAttenuationAndProjectIdentity(t *testing.T) {
 	}
 	currentSnapshot = revoked
 	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err == nil {
-		t.Fatal("revoked dynamic token retained authorization")
+		t.Fatal("revoked token retained authorization")
 	}
-	_ = identity
 }
 
 func TestCanonicalActiveProjectIdentityRejectsMismatch(t *testing.T) {
@@ -529,11 +634,15 @@ func TestCanonicalPolicyAlgebraAndCandidateRestrictions(t *testing.T) {
 		t.Fatal("contradictory masks were accepted")
 	}
 	rowCompiled, _ := accesspolicy.Compile("candidate", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
-	snapshot := canonicalSnapshot(t, []struct {
-		id         string
-		resource   access.ResourceRef
-		capability access.Capability
-	}{{"physical-use", physical, access.CapabilityResourceUse}, {"physical-read", physical, access.CapabilityResourceRead}}, nil)
+	queryPair, err := access.NewExactPermissionPair(access.ActionSemanticQuery, canonicalProject, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumePair, err := access.NewExactPermissionPair(access.ActionSemanticConsume, canonicalProject, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := canonicalSnapshotWithTypedPermissions(t, "alice", queryPair, consumePair)
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
 	ctx := WithCandidateQueryCapability(context.Background(), CandidateQueryCapability{CandidateID: "candidate-1", OwnerPrincipalID: "alice", ProjectID: canonicalProject, PolicyDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Restrictions: []accesssnapshot.DataPolicy{{ID: "candidate", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["EU"]}`, Compiled: rowCompiled}}})
 	governed, _, err := metrics.GovernDataQuery(ctx, dataquery.Query{ProjectID: canonicalProject, ModelID: semantic.CanonicalID(), Target: "orders", Kind: dataquery.KindSemanticRows})
@@ -593,22 +702,24 @@ func TestCanonicalCandidateBootstrapAuthorityIsOwnerBound(t *testing.T) {
 
 func TestCanonicalViewAsRequiresProjectAdmin(t *testing.T) {
 	_, _, _, _, _ = canonicalGraph(t)
-	graph, identity, _, _, _ := canonicalGraph(t)
-	projectRef, _ := access.NewResourceRef(canonicalProject, projectgraph.KindProjectNamespace)
-	subject, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
-	grant, err := access.NewCanonicalGrant(graph, subject, projectRef, access.CapabilityProjectAdmin)
+	_, _, _, _, _ = canonicalGraph(t)
+	projectPermission, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, canonicalProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{{ID: "admin", Canonical: grant}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	snapshot := canonicalSnapshotWithTypedPermissions(t, "alice", projectPermission)
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
 	request := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
 	ctx := WithViewAsCapability(context.Background(), ViewAsCapability{ActorPrincipalID: "alice", SubjectPrincipalID: "bob", ProjectID: canonicalProject})
 	if _, err := metrics.authorizeViewAs(ctx, Principal{ID: "alice"}, request, ViewAsCapability{ActorPrincipalID: "alice", SubjectPrincipalID: "bob", ProjectID: canonicalProject}); err != nil {
 		t.Fatal(err)
+	}
+	legacyTokenMetrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
+	legacyTokenMetrics.credentialFromContext = func(context.Context) (access.APICredential, bool) {
+		return access.APICredential{Token: access.APIToken{Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}, true
+	}
+	if _, err := legacyTokenMetrics.authorizeViewAs(ctx, Principal{ID: "alice"}, request, ViewAsCapability{ActorPrincipalID: "alice", SubjectPrincipalID: "bob", ProjectID: canonicalProject}); err == nil {
+		t.Fatal("legacy PROJECT_ADMIN token unexpectedly authorized view-as")
 	}
 	deniedSnapshot := canonicalSnapshot(t, nil, nil)
 	deniedMetrics := canonicalMetricsWithSnapshot(t, deniedSnapshot, nil)
@@ -626,7 +737,7 @@ func TestCanonicalArrowAuditRecordsSuccessAndFailure(t *testing.T) {
 	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
 	recorder := &canonicalAuditRecorder{}
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, recorder)
-	query := dataquery.Query{ProjectID: canonicalProject, ModelID: semantic.CanonicalID(), Kind: dataquery.KindSemanticRows}
+	query := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows, ModelID: semantic.CanonicalID(), Kind: dataquery.KindSemanticRows}
 	if _, err := metrics.ExecuteDataQueryArrow(context.Background(), query, nil); err != nil {
 		t.Fatal(err)
 	}

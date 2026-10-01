@@ -12,6 +12,7 @@ import (
 
 type LoginPageOptions struct {
 	LocalAuth          bool
+	DevelopmentLogin   bool
 	SSOAuth            bool
 	MustChangePassword bool
 	ProviderLabel      string
@@ -47,6 +48,7 @@ func LoginBootstrapSignalsForOptions(options LoginPageOptions) map[string]any {
 	return map[string]any{
 		"page": LoginPageSignal{
 			BackgroundModuleSrc: opts.Assets.URL("/static/topology-background.js"),
+			DevelopmentLogin:    opts.DevelopmentLogin,
 			Kind:                "login", LocalAuth: opts.LocalAuth, MustChangePassword: opts.MustChangePassword,
 			ProviderLabel: opts.ProviderLabel, SSOAuth: opts.SSOAuth, Title: opts.Presentation.ProductName,
 		},

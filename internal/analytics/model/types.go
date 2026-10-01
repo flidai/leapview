@@ -163,6 +163,11 @@ type Connection struct {
 	Database    string           `yaml:"database" json:"-"`
 	Username    string           `yaml:"username" json:"-"`
 	SSLMode     string           `yaml:"sslMode" json:"-"`
+
+	// ResolvedHost is a policy-validated connection-time address. It is never
+	// authored or persisted and is used only by native clients that can retain
+	// Host for TLS name verification while pinning the socket address.
+	ResolvedHost string `yaml:"-" json:"-"`
 	// Auth is populated only on a short-lived refresh copy by the injected
 	// credential resolver. It is deliberately absent from authored contracts.
 	Auth        ConnectionAuth        `yaml:"-" json:"-"`

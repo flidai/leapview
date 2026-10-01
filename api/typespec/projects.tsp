@@ -18,6 +18,6 @@ model ProjectResponse {
 @summary("Get a materialized project")
 @route("/projects/{project}")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.settings.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op getProject(@path project: ResourceId): OkJson<ProjectResponse> | CommonErrors;

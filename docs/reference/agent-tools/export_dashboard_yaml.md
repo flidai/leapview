@@ -2,7 +2,7 @@
 
 # export_dashboard_yaml
 
-Export an authorized authored dashboard source as canonical project YAML.
+Export an authorized dashboard source as canonical project YAML. Pass exactly one of dashboardId or stableId. Instance sources export the current draft and require RESOURCE_EDIT; project sources export the retained source and require RESOURCE_READ.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/export_dashboard_yaml.json) · [complete manifest](/docs/agent-tools/manifest.json)
 
@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/export_dashboard_yaml.j
 
 | Property | Value |
 | --- | --- |
-| Authorization | `RESOURCE_READ` |
+| Authorization | `authenticated` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `export` |
@@ -33,10 +33,13 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/export_dashboard_yaml.j
         "instance"
       ],
       "type": "string"
+    },
+    "stableId": {
+      "minLength": 1,
+      "type": "string"
     }
   },
   "required": [
-    "dashboardId",
     "sourceKind"
   ],
   "type": "object"

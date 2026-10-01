@@ -207,11 +207,23 @@ func directArrowExperimentSnapshot(
 		if err != nil {
 			t.Fatal(err)
 		}
-		grant, err := access.NewCanonicalGrant(graph, subject, physical, access.CapabilityResourceUse)
+		semantic, err := access.NewResourceRef("semantic_sales", projectgraph.KindSemanticModel)
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = []accesssnapshot.Grant{{ID: "physical", Canonical: grant}}
+		query, err := access.NewExactPermissionPair(access.ActionSemanticQuery, identity.ProjectID, semantic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		consume, err := access.NewExactPermissionPair(access.ActionSemanticConsume, identity.ProjectID, semantic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		grant, err := accesssnapshot.NewTypedGrant("semantic", "semantic", subject, []access.PermissionPair{query, consume})
+		if err != nil {
+			t.Fatal(err)
+		}
+		grants = []accesssnapshot.Grant{grant}
 	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, policies)
 	if err != nil {

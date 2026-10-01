@@ -93,7 +93,7 @@ func TestLoad_AcceptsAndNormalizesTypedCommand(t *testing.T) {
       "authz_mode": "privilege",
       "privilege": "MANAGE_GRANTS"
     },
-    "extensions": {"x-authz": {"mode": "privilege", "privilege": "MANAGE_GRANTS"}}
+    "extensions": {"x-authz": {"mode": "privilege", "privilege": "MANAGE_GRANTS", "action": "dashboard.read", "resolver": "dashboard"}}
   }]
 }`), 0o644))
 
@@ -104,6 +104,9 @@ func TestLoad_AcceptsAndNormalizesTypedCommand(t *testing.T) {
 	require.Equal(t, "workspace.access.role-binding.create", doc.Endpoints[0].Command.UI.ActionID)
 	require.Equal(t, "workspace", doc.Endpoints[0].Command.Target.Parameter)
 	require.Equal(t, "required", doc.Endpoints[0].Command.Idempotency)
+	authz, ok := AuthzMetadataFromExtensions(doc.Endpoints[0].Extensions)
+	require.True(t, ok)
+	require.Equal(t, AuthzMetadata{Mode: "privilege", Privilege: "MANAGE_GRANTS", Action: "dashboard.read", Resolver: "dashboard"}, authz)
 }
 
 func TestValidate_RejectsInvalidTypedCommands(t *testing.T) {
@@ -1089,6 +1092,26 @@ func TestLoad_RejectsMalformedAPIGenEndpointExtensions(t *testing.T) {
 			name:      "authz mode must be string",
 			extension: map[string]any{"x-authz": map[string]any{"mode": true}},
 			wantErr:   `x-authz.mode must be string`,
+		},
+		{
+			name:      "authz action must be string",
+			extension: map[string]any{"x-authz": map[string]any{"mode": "privilege", "action": true}},
+			wantErr:   `x-authz.action must be string`,
+		},
+		{
+			name:      "authz action must be canonical",
+			extension: map[string]any{"x-authz": map[string]any{"mode": "privilege", "action": "Dashboard.Read"}},
+			wantErr:   `x-authz.action "Dashboard.Read" must be a stable dotted lower_snake_case name`,
+		},
+		{
+			name:      "authz resolver must be string",
+			extension: map[string]any{"x-authz": map[string]any{"mode": "privilege", "resolver": true}},
+			wantErr:   `x-authz.resolver must be string`,
+		},
+		{
+			name:      "authz resolver must be canonical",
+			extension: map[string]any{"x-authz": map[string]any{"mode": "privilege", "resolver": "Dashboard"}},
+			wantErr:   `x-authz.resolver "Dashboard" must be a stable dotted lower-case name`,
 		},
 	}
 

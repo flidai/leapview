@@ -73,6 +73,9 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(reader.requests) != 1 || !reader.requests[0].IncludeEditableDrafts {
+		t.Fatalf("dashboard discovery must request editable drafts: %#v", reader.requests)
+	}
 	if len(options.Dashboards) != 3 {
 		t.Fatalf("dashboards = %#v", options.Dashboards)
 	}
@@ -337,7 +340,7 @@ func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
 	h := &BrowserHandler{
 		Environment: "dev",
 		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
-			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:semantic", Status: "succeeded", TriggerType: "schedule"}},
+			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:semantic", PipelineID: "pipeline:sales", Status: "succeeded", TriggerType: "schedule"}},
 			LatestSuccessful: refreshpresentation.AssetRefreshRun{ID: "run:semantic", Status: "succeeded"},
 		}, requestedSemanticModelID: &requestedSemanticModelID},
 	}
@@ -347,7 +350,7 @@ func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Runs) != 1 || state.Runs[0].ID != "run:semantic" || state.LatestSuccessful.ID != "run:semantic" {
+	if len(state.Runs) != 1 || state.Runs[0].ID != "run:semantic" || state.Runs[0].PipelineID != "pipeline:sales" || state.LatestSuccessful.ID != "run:semantic" {
 		t.Fatalf("semantic model refresh state = %#v", state)
 	}
 	if requestedSemanticModelID != "semantic-model:sales" {
@@ -1435,7 +1438,7 @@ func TestSourcesRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Open your profile") {
 		t.Fatalf("forbidden source recovery body = %q", body)
 	}
 }
@@ -1451,7 +1454,7 @@ func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Open your profile") {
 		t.Fatalf("forbidden Explorer recovery body = %q", body)
 	}
 }

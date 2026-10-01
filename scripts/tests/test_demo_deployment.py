@@ -8,6 +8,7 @@ import os
 import io
 import json
 import sys
+import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -46,6 +47,30 @@ class AdmissionTests(unittest.TestCase):
                 self.policy.admit(self.run, self.receipt, image)
 
 class PreflightTests(unittest.TestCase):
+    def test_runtime_binding_carries_the_exact_qualified_artifact_attempt(self):
+        runner = load('demo_compose_deploy')
+        with tempfile.TemporaryDirectory() as directory:
+            image = 'ghcr.io/flidai/leapview@sha256:'+'a'*64
+            revision = 'b'*40
+            pathlib.Path(directory, 'demo-qualification.json').write_text(json.dumps({
+                'image':image, 'revision':revision, 'runId':'123', 'runAttempt':'2', 'qualified':True,
+            }))
+            env = {'QUALIFICATION_RUN':'123', 'RUNNER_TEMP':directory,
+                   'GITHUB_RUN_ID':'456', 'GITHUB_RUN_ATTEMPT':'1'}
+            previous = {'image':image, 'revision':revision}
+            with patch.dict(os.environ, env, clear=True), \
+                 patch.object(runner, 'read_contract', return_value={'permissionProfile':'leapview.permissions/v1'}):
+                binding = runner.runtime_binding('deploy', previous, image, revision, 'sha256:'+'c'*64)
+            self.assertEqual(binding['qualificationRunId'], '123')
+            self.assertEqual(binding['qualificationAttempt'], '2')
+            self.assertEqual(binding['permissionProfile'], 'leapview.permissions/v1')
+            receipt = json.loads(pathlib.Path(directory, 'demo-qualification.json').read_text())
+            receipt['image'] = 'ghcr.io/flidai/leapview@sha256:'+'d'*64
+            pathlib.Path(directory, 'demo-qualification.json').write_text(json.dumps(receipt))
+            with patch.dict(os.environ, env, clear=True):
+                with self.assertRaisesRegex(ValueError, 'admitted qualification receipt'):
+                    runner.runtime_binding('deploy', previous, image, revision, 'sha256:'+'c'*64)
+
     def test_preflight_never_starts_host_transaction_or_fetches_viewer(self):
         for mode in ['image-only', 'database-upgrade-required', 'review-required']:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
@@ -56,12 +81,15 @@ class PreflightTests(unittest.TestCase):
                     commands.append(args)
                     if args[0] == 'ssh-keyscan': return b'host public-key'
                     if args[0] == 'ssh-keygen': return '256 ' + runner.FINGERPRINT + ' host'
-                    if args[-1] == 'inspect': return json.dumps({'revision':revision}).encode()
+                    if args[-1] == 'inspect': return json.dumps({'revision':revision, 'image':'ghcr.io/flidai/leapview@sha256:'+'c'*64}).encode()
                     self.fail('Unexpected preflight command: ' + repr(args))
                 env = {'DEMO_IMAGE':'ghcr.io/flidai/leapview@sha256:'+'a'*64,
                        'SOURCE_REVISION':revision, 'DEMO_HOST':runner.HOST,
                        'DEMO_SSH_PRIVATE_KEY':'test-only',
-                       'GITHUB_STEP_SUMMARY':str(pathlib.Path(directory)/'summary')}
+                       'DEMO_PERMISSION_PROFILE':'leapview.permissions/v1',
+                       'DEMO_PREDECESSOR_PERMISSION_PROFILE':'legacy-capabilities/v1',
+                       'GITHUB_STEP_SUMMARY':str(pathlib.Path(directory)/'summary'),
+                       'RUNNER_TEMP':directory, 'GITHUB_RUN_ID':'123', 'GITHUB_RUN_ATTEMPT':'1'}
                 report = {'mode':mode, 'currentSchema':28, 'candidateSchema':30}
                 previous_umask = os.umask(0o077)
                 try:
@@ -70,9 +98,10 @@ class PreflightTests(unittest.TestCase):
                          patch.object(runner.subprocess, 'run') as run, \
                          patch.object(runner.subprocess, 'Popen') as popen, \
                          patch.object(runner, 'inspect_transition', return_value=report), \
-                         patch.object(runner.upgrade, 'prepare'), \
+                         patch.object(runner, 'read_contract', return_value={'permissionProfile':'leapview.permissions/v1'}), \
+                         patch.object(runner.upgrade, 'prepare', return_value=('helper', 'request', {'operationDigest':'sha256:'+'d'*64})), \
                          patch.object(runner, 'verify_public_revision') as public, patch('sys.stdout', io.StringIO()):
-                        if mode == 'image-only': runner.main()
+                        if mode in ('image-only', 'database-upgrade-required'): runner.main()
                         else:
                             with self.assertRaisesRegex(RuntimeError, mode): runner.main()
                         popen.assert_not_called()
@@ -123,7 +152,94 @@ class UpgradeGuardTests(unittest.TestCase):
         self.write('succeeded')
         self.journal.chmod(0o644)
         with self.assertRaises(RuntimeError):
-            with self.runtime.upgrade_guard(): self.fail('accepted writable journal')
+                with self.runtime.upgrade_guard(): self.fail('accepted writable journal')
+
+
+class RuntimeEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load('demo_compose_runtime')
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = pathlib.Path(self.directory.name)/'root'
+        self.provider = pathlib.Path(self.directory.name)/'provider'
+        self.root.mkdir()
+        self.provider.mkdir()
+        self.runtime.ROOT = self.root
+        self.runtime.PROVIDER = self.provider
+        self.image = 'ghcr.io/flidai/leapview@sha256:'+'a'*64
+        self.revision = 'b'*40
+        release = self.root/'releases'/('sha256-'+'a'*64)
+        release.mkdir(parents=True)
+        (self.root/'current').symlink_to('releases/'+release.name)
+        self.marker = {'image':self.image, 'targetId':'app-leapview-demo-02'}
+        self.instance = 'lvinst_'+'i'*32
+        self.installation = {
+            'version':'leapview-compose-installation-v1',
+            'host':'app-leapview-demo-02',
+            'installationRoot':str(self.root),
+            'hostTargetId':self.marker['targetId'],
+            'instanceId':self.instance,
+            'image':self.image,
+            'revision':self.revision,
+            'schema':30,
+            'permissionProfile':'leapview.permissions/v1',
+            'qualificationRunId':'123456',
+            'qualificationAttempt':'2',
+            'validatedAt':'2026-09-28T12:34:56Z',
+        }
+
+    def write_installation(self, value=None, mode=0o600):
+        path = self.provider/'compose-installation.json'
+        path.write_text(json.dumps(self.installation if value is None else value))
+        path.chmod(mode)
+        return path
+
+    def select(self):
+        real_fstat = self.runtime.os.fstat
+        def as_root(descriptor):
+            info = real_fstat(descriptor)
+            return types.SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_size=info.st_size)
+        with patch.object(self.runtime.os, 'fstat', side_effect=as_root):
+            return self.runtime._select_runtime_evidence(
+                self.marker, self.image, self.revision, 30, self.instance)
+
+    def test_missing_deployment_receipt_uses_exact_private_installation_evidence(self):
+        self.write_installation()
+        kind, receipt, installation = self.select()
+        self.assertEqual(kind, 'installation')
+        self.assertIsNone(receipt)
+        self.assertEqual(installation, self.installation)
+
+    def test_malformed_or_mismatched_deployment_receipt_never_falls_back(self):
+        self.write_installation()
+        receipt = self.provider/'compose-deployment.json'
+        receipt.write_text('{malformed')
+        receipt.chmod(0o600)
+        with self.assertRaises(ValueError): self.select()
+        receipt.write_text(json.dumps({'image':'ghcr.io/flidai/leapview@sha256:'+'c'*64,
+                                      'revision':self.revision}))
+        with self.assertRaisesRegex(ValueError, 'descriptors disagree'): self.select()
+
+    def test_unfinished_maintenance_journal_denies_installation_evidence(self):
+        self.write_installation()
+        journal = self.root/'upgrade-operation.json'
+        journal.write_text(json.dumps({'version':1, 'state':{'phase':'migrating'}}))
+        journal.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, 'Unfinished schema upgrade'):
+            self.select()
+
+    def test_installation_evidence_requires_exact_mode_identity_and_active_payload(self):
+        self.write_installation(mode=0o640)
+        with self.assertRaisesRegex(ValueError, 'permissions'):
+            self.select()
+        self.write_installation(dict(self.installation, instanceId='lvinst_'+'x'*32))
+        with self.assertRaisesRegex(ValueError, 'live host identity'):
+            self.select()
+        self.write_installation()
+        (self.root/'current').unlink()
+        (self.root/'current').symlink_to('releases/sha256-'+'c'*64)
+        with self.assertRaisesRegex(ValueError, 'Active host payload'):
+            self.select()
 
 class RolloutTests(unittest.TestCase):
     def setUp(self):
@@ -185,7 +301,7 @@ class StagingTests(unittest.TestCase):
         self.release.mkdir(parents=True)
         self.payload = {name: b'packaged content' for name in
                         ['compose.yaml', 'compose.https.yaml', 'Caddyfile',
-                         'deployment.env.example', 'leapviewctl']}
+                         'deployment.env.example', 'leapviewctl', 'leapviewctl-wrapper']}
         for name, data in self.payload.items():
             (self.release/name).write_bytes(data)
             (self.root/name).symlink_to('current/'+name)
@@ -194,7 +310,9 @@ class StagingTests(unittest.TestCase):
     def copy(self, *args):
         if args[:2] == ('docker', 'cp'):
             for name, data in self.payload.items():
-                (pathlib.Path(args[-1])/name).write_bytes(data)
+                target = pathlib.Path(args[-1])/name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
 
     def stage(self):
         with patch.object(self.rollout, 'out', return_value='container'), patch.object(self.rollout, 'run', side_effect=self.copy):
@@ -215,6 +333,63 @@ class StagingTests(unittest.TestCase):
             self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
                              (current.st_ino, current.st_mtime_ns, current.st_mode))
         self.assertEqual(list((self.root/'releases').iterdir()), [self.release])
+
+    def add_auxiliary_payload(self):
+        self.payload.update({'README.md': b'documentation',
+                             'qualification/browser.mjs': b'qualification helper'})
+
+    def test_host_upgrade_generation_accepts_image_auxiliary_files(self):
+        before = {name: (self.release/name).stat() for name in self.payload}
+        self.add_auxiliary_payload()
+        self.assertEqual(self.stage(), self.release)
+        self.assertEqual({entry.name for entry in self.release.iterdir()}, set(before))
+        for name, previous in before.items():
+            current = (self.release/name).stat()
+            self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
+                             (current.st_ino, current.st_mtime_ns, current.st_mode))
+
+    def test_new_generation_contains_only_canonical_runtime_payload(self):
+        runtime_files = set(self.payload)
+        self.add_auxiliary_payload()
+        self.image = 'ghcr.io/flidai/leapview@sha256:'+'b'*64
+        staged = self.stage()
+        self.assertEqual({entry.name for entry in staged.iterdir()}, runtime_files)
+        for name in runtime_files:
+            expected = 0o700 if name in ('leapviewctl', 'leapviewctl-wrapper') else 0o600
+            self.assertEqual((staged/name).stat().st_mode & 0o777, expected)
+
+    def test_legacy_complete_payload_is_accepted_without_rewriting(self):
+        self.add_auxiliary_payload()
+        for name, data in self.payload.items():
+            target = self.release/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        before = {name: (self.release/name).stat() for name in self.payload}
+        self.assertEqual(self.stage(), self.release)
+        for name, previous in before.items():
+            current = (self.release/name).stat()
+            self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
+                             (current.st_ino, current.st_mtime_ns, current.st_mode))
+
+    def test_unverified_extra_files_are_still_rejected(self):
+        for name, contents in [('unexpected', b'unknown'), ('README.md', b'modified docs')]:
+            with self.subTest(name=name):
+                self.add_auxiliary_payload()
+                extra = self.release/name
+                extra.write_bytes(contents)
+                with self.assertRaisesRegex(RuntimeError, 'Existing release'):
+                    self.stage()
+                self.assertEqual(extra.read_bytes(), contents)
+                extra.unlink()
+
+    def test_missing_or_modified_wrapper_is_rejected(self):
+        self.payload.pop('leapviewctl-wrapper')
+        with self.assertRaisesRegex(RuntimeError, 'payload'):
+            self.stage()
+        self.payload['leapviewctl-wrapper'] = b'packaged content'
+        (self.release/'leapviewctl-wrapper').write_bytes(b'modified wrapper')
+        with self.assertRaisesRegex(RuntimeError, 'Existing release'):
+            self.stage()
 
     def test_changed_existing_release_tool_is_rejected_without_overwriting(self):
         (self.release/'leapviewctl').write_bytes(b'operator tool')
@@ -248,20 +423,24 @@ class PublicIdentityTests(unittest.TestCase):
     def test_public_endpoint_must_match_exact_revision(self):
         deploy=load('demo_compose_deploy')
         for revision, succeeds in [('a'*40,True),('b'*40,False)]:
-            with patch.dict(os.environ,DEMO_PUBLISHER_CLIENT_ID='id',DEMO_PUBLISHER_CLIENT_SECRET='secret',DEMO_PROJECT_ID='project'):
+            with patch.dict(os.environ,DEMO_PUBLISHER_CLIENT_ID='id',DEMO_PUBLISHER_CLIENT_SECRET='secret',DEMO_PROJECT_ID='project',DEMO_PERMISSION_PROFILE='leapview.permissions/v1'):
                 responses=[io.BytesIO(b'{"access_token":"test"}'),io.BytesIO(json.dumps({'buildRevision':revision,'buildDirty':False}).encode())]
-                with patch.object(deploy.urllib.request,'urlopen',side_effect=responses):
+                with patch.object(deploy,'demo_urlopen',side_effect=responses) as urlopen:
                     if succeeds: deploy.verify_public_revision('a'*40)
                     else:
                         with self.assertRaises(RuntimeError): deploy.verify_public_revision('a'*40)
+                    form = urlopen.call_args_list[0].args[0].data.decode()
+                    self.assertIn('scope=delivery.read', form)
 
 class RuntimePinTests(unittest.TestCase):
     def test_successful_record_overrides_legacy_variable(self):
         record=load('demo_runtime_record')
         with tempfile.NamedTemporaryFile() as output, patch.dict(os.environ, GITHUB_OUTPUT=output.name, DEMO_RUNTIME_REVISION='a'*40):
-            with patch.object(record,'api',side_effect=[[{'id':1,'sha':'b'*40}],[{'state':'success'}]]):
+            with patch.object(record,'api',side_effect=[[{'id':1,'sha':'b'*40}],[{'state':'success'}]]), \
+                 patch.object(record,'read_contract',return_value={'permissionProfile':'legacy-capabilities/v1'}):
                 record.resolve()
             self.assertIn('revision='+'b'*40, pathlib.Path(output.name).read_text())
+            self.assertIn('permission_profile=legacy-capabilities/v1', pathlib.Path(output.name).read_text())
     def test_incomplete_deployment_never_falls_back_to_stale_variable(self):
         record=load('demo_runtime_record')
         for state in ['failure','error','in_progress','pending']:
@@ -272,7 +451,9 @@ class RuntimePinTests(unittest.TestCase):
     def test_bootstrap_without_records_uses_existing_pin(self):
         record=load('demo_runtime_record')
         with tempfile.NamedTemporaryFile() as output, patch.dict(os.environ, GITHUB_OUTPUT=output.name, DEMO_RUNTIME_REVISION='a'*40):
-            with patch.object(record,'api',return_value=[]): record.resolve()
+            with patch.object(record,'api',return_value=[]), \
+                 patch.object(record,'read_contract',return_value={'permissionProfile':'legacy-capabilities/v1'}):
+                record.resolve()
             self.assertIn('revision='+'a'*40,pathlib.Path(output.name).read_text())
 
 if __name__ == '__main__': unittest.main()

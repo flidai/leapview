@@ -9,31 +9,34 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	depauth "github.com/flidai/leapview/internal/deployment/postgres"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // AccessApprovalAuthorizer binds approval authorization to the process-owned
-// target and either the active immutable capability projection or, for the
+// target and either the active immutable typed-permission projection or, for the
 // first reviewer decision only, the exact candidate generation's immutable
 // policy. It starts fail-closed until composition installs those resolvers.
 type AccessApprovalAuthorizer struct {
 	TargetID                         string
 	ResolveTarget                    func(context.Context, string) (depauth.DeliveryTarget, error)
 	CurrentProject                   func(context.Context) (string, error)
-	EffectiveCapabilities            func(context.Context, string) ([]access.Capability, error)
-	CandidateCapabilities            func(context.Context, string, string) (string, string, []access.Capability, error)
+	EffectivePermissions             func(context.Context, string) ([]access.PermissionPair, error)
+	CandidatePermissions             func(context.Context, string, string) (string, string, []access.PermissionPair, error)
+	CandidateSnapshotDigest          func(context.Context, string) (string, error)
 	bootstrapAuthorization           func(context.Context) (accessmodule.BootstrapAuthorization, bool)
 	publicationApprovalAuthorization func(context.Context) (accessmodule.PublicationApprovalBootstrapAuthorization, bool)
+	accessTransitionAuthorization    func(context.Context) (accessmodule.AccessTransitionApprovalAuthorization, bool)
 }
 
-// SetCandidateResolver installs the immutable candidate-generation capability
+// SetCandidateResolver installs the immutable candidate-generation permission
 // lookup used by the fresh-target reviewer path. The resolver must return the
 // project bound to the exact generation as well as that generation's effective
-// capabilities for the reviewer principal.
-func (a *AccessApprovalAuthorizer) SetCandidateResolver(resolve func(context.Context, string, string) (string, string, []access.Capability, error)) {
+// permissions for the reviewer principal.
+func (a *AccessApprovalAuthorizer) SetCandidateResolver(resolve func(context.Context, string, string) (string, string, []access.PermissionPair, error)) {
 	if a == nil {
 		return
 	}
-	a.CandidateCapabilities = resolve
+	a.CandidatePermissions = resolve
 }
 
 func NewAccessApprovalAuthorizer(targetID string, resolveTarget func(context.Context, string) (depauth.DeliveryTarget, error)) (*AccessApprovalAuthorizer, error) {
@@ -44,17 +47,18 @@ func NewAccessApprovalAuthorizer(targetID string, resolveTarget func(context.Con
 		TargetID: targetID, ResolveTarget: resolveTarget,
 		bootstrapAuthorization:           accessmodule.BootstrapAuthorizationFromContext,
 		publicationApprovalAuthorization: accessmodule.PublicationApprovalBootstrapAuthorizationFromContext,
+		accessTransitionAuthorization:    accessmodule.AccessTransitionApprovalAuthorizationFromContext,
 	}, nil
 }
 
-// SetResolvers installs active runtime and Access capability lookups. Passing
+// SetResolvers installs active runtime and Access typed-permission lookups. Passing
 // nil keeps the adapter fail-closed and is useful during startup/error paths.
-func (a *AccessApprovalAuthorizer) SetResolvers(project func(context.Context) (string, error), capabilities func(context.Context, string) ([]access.Capability, error)) {
+func (a *AccessApprovalAuthorizer) SetResolvers(project func(context.Context) (string, error), permissions func(context.Context, string) ([]access.PermissionPair, error)) {
 	if a == nil {
 		return
 	}
 	a.CurrentProject = project
-	a.EffectiveCapabilities = capabilities
+	a.EffectivePermissions = permissions
 }
 
 func (a *AccessApprovalAuthorizer) AuthorizeApproval(ctx context.Context, input depauth.ApprovalAuthorizationInput) error {
@@ -71,13 +75,17 @@ func (a *AccessApprovalAuthorizer) AuthorizeApproval(ctx context.Context, input 
 	if target.TargetID != a.TargetID || target.ProjectID == "" || target.Environment == "" {
 		return depauth.ErrApprovalUnauthorized
 	}
-	required := access.CapabilityProjectAdmin
+	requiredAction, ok := approvalActionPermission(input.Action)
+	if !ok {
+		return depauth.ErrApprovalUnauthorized
+	}
+	markerCapability := access.CapabilityProjectAdmin
 	if input.Action == depauth.ApprovalActionRequest {
-		required = access.CapabilityResourcePublish
+		markerCapability = access.CapabilityResourcePublish
 	}
 	if a.bootstrapAuthorization != nil {
 		if marker, marked := a.bootstrapAuthorization(ctx); marked {
-			if input.Action != depauth.ApprovalActionRequest || marker.ProjectID.String() != target.ProjectID || marker.PrincipalID != input.Actor.PrincipalID || marker.Capability != required {
+			if input.Action != depauth.ApprovalActionRequest || marker.ProjectID.String() != target.ProjectID || marker.PrincipalID != input.Actor.PrincipalID || marker.Capability != markerCapability {
 				return depauth.ErrApprovalUnauthorized
 			}
 			return nil
@@ -85,41 +93,85 @@ func (a *AccessApprovalAuthorizer) AuthorizeApproval(ctx context.Context, input 
 	}
 	if a.publicationApprovalAuthorization != nil {
 		if marker, marked := a.publicationApprovalAuthorization(ctx); marked {
-			if input.Action != depauth.ApprovalActionApprove || marker.ProjectID.String() != target.ProjectID || marker.PrincipalID != input.Actor.PrincipalID || marker.Capability != access.CapabilityProjectAdmin || a.CandidateCapabilities == nil {
+			if input.Action != depauth.ApprovalActionApprove || marker.ProjectID.String() != target.ProjectID || marker.PrincipalID != input.Actor.PrincipalID || marker.Capability != access.CapabilityProjectAdmin || a.CandidatePermissions == nil {
 				return depauth.ErrApprovalUnauthorized
 			}
-			project, environment, capabilities, err := a.CandidateCapabilities(ctx, input.Request.GenerationID, input.Actor.PrincipalID)
+			project, environment, permissions, err := a.CandidatePermissions(ctx, input.Request.GenerationID, input.Actor.PrincipalID)
 			if err != nil {
-				return fmt.Errorf("%w: resolve candidate approval capabilities: %v", depauth.ErrApprovalUnauthorized, err)
+				return fmt.Errorf("%w: resolve candidate approval permissions: %v", depauth.ErrApprovalUnauthorized, err)
 			}
-			if project != target.ProjectID || environment != target.Environment || !capabilityAllowed(capabilities, access.CapabilityProjectAdmin) {
+			if project != target.ProjectID || environment != target.Environment || !approvalPermissionAllowed(permissions, requiredAction, target.ProjectID) {
 				return depauth.ErrApprovalUnauthorized
 			}
 			return nil
 		}
 	}
-	if a.CurrentProject == nil || a.EffectiveCapabilities == nil {
+	if a.accessTransitionAuthorization != nil {
+		if marker, marked := a.accessTransitionAuthorization(ctx); marked {
+			if marker.TargetID != target.TargetID || marker.ProjectID.String() != target.ProjectID || marker.Environment != target.Environment ||
+				marker.ExpectedActiveGenerationID != target.ActiveGenerationID || input.Request.TargetID != marker.TargetID ||
+				input.Request.GenerationID != marker.CandidateGenerationID ||
+				input.Request.CandidateID != marker.CandidateID || input.Request.PublicationID != marker.PublicationID || a.CandidatePermissions == nil || a.CandidateSnapshotDigest == nil {
+				return depauth.ErrApprovalUnauthorized
+			}
+			var requiredPrincipal string
+			switch input.Action {
+			case depauth.ApprovalActionRequest:
+				requiredPrincipal = marker.PublisherPrincipalID
+			case depauth.ApprovalActionApprove:
+				requiredPrincipal = marker.ReviewerPrincipalID
+			default:
+				return depauth.ErrApprovalUnauthorized
+			}
+			if input.Actor.PrincipalID != requiredPrincipal {
+				return depauth.ErrApprovalUnauthorized
+			}
+			if input.Action == depauth.ApprovalActionApprove && (input.Current == nil || input.Current.RequestedBy.PrincipalID != marker.PublisherPrincipalID || input.Current.GenerationID != marker.CandidateGenerationID || input.Current.PublicationID != marker.PublicationID) {
+				return depauth.ErrApprovalUnauthorized
+			}
+			digest, err := a.CandidateSnapshotDigest(ctx, marker.CandidateGenerationID)
+			if err != nil || digest != marker.CandidateSnapshotDigest {
+				return depauth.ErrApprovalUnauthorized
+			}
+			project, environment, permissions, err := a.CandidatePermissions(ctx, marker.CandidateGenerationID, input.Actor.PrincipalID)
+			if err != nil || project != target.ProjectID || environment != target.Environment || !approvalPermissionAllowed(permissions, requiredAction, target.ProjectID) {
+				return depauth.ErrApprovalUnauthorized
+			}
+			return nil
+		}
+	}
+	if a.CurrentProject == nil || a.EffectivePermissions == nil {
 		return depauth.ErrApprovalUnauthorized
 	}
 	project, err := a.CurrentProject(ctx)
 	if err != nil || strings.TrimSpace(project) == "" || project != target.ProjectID {
 		return depauth.ErrApprovalUnauthorized
 	}
-	capabilities, err := a.EffectiveCapabilities(ctx, input.Actor.PrincipalID)
+	permissions, err := a.EffectivePermissions(ctx, input.Actor.PrincipalID)
 	if err != nil {
-		return fmt.Errorf("%w: resolve effective capabilities: %v", depauth.ErrApprovalUnauthorized, err)
+		return fmt.Errorf("%w: resolve effective permissions: %v", depauth.ErrApprovalUnauthorized, err)
 	}
-	if !capabilityAllowed(capabilities, required) {
+	if !approvalPermissionAllowed(permissions, requiredAction, target.ProjectID) {
 		return depauth.ErrApprovalUnauthorized
 	}
 	return nil
 }
 
-func capabilityAllowed(capabilities []access.Capability, required access.Capability) bool {
-	for _, capability := range capabilities {
-		if capability == required || (required != access.CapabilityProjectAdmin && capability == access.CapabilityProjectAdmin) {
-			return true
-		}
+func approvalActionPermission(action depauth.ApprovalAction) (access.Action, bool) {
+	switch action {
+	case depauth.ApprovalActionRequest:
+		return access.ActionDeliveryPublish, true
+	case depauth.ApprovalActionApprove, depauth.ApprovalActionDeny, depauth.ApprovalActionRevoke:
+		return access.ActionDeliveryApprove, true
+	default:
+		return "", false
 	}
-	return false
+}
+
+func approvalPermissionAllowed(permissions []access.PermissionPair, action access.Action, projectID string) bool {
+	pair, err := access.NewProjectPermissionPair(action, projectgraph.ResourceID(projectID))
+	if err != nil {
+		return false
+	}
+	return access.PermissionSetAllows(permissions, pair)
 }

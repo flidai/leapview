@@ -1,4 +1,4 @@
-# ADR-0025: Share an open deployment stack for self-hosted and managed LeapView
+# ADR-0028: Share an open deployment stack for self-hosted and managed LeapView
 
 Status: proposed
 
@@ -8,7 +8,7 @@ Review: target architecture agreed; record remains proposed pending PR review
 
 Proposal date: 2026-09-25
 
-Last revised: 2026-09-28
+Last revised: 2026-10-01
 
 Implementation: pending; this proposal does not establish production readiness
 
@@ -36,6 +36,45 @@ Related: [ADR-0003](0003-retain-narrow-infisical-resolver.md),
 [deployment profile qualification](specifications/deployment-profile-qualification.md),
 [production Compose package](../deploy/compose/README.md),
 [Hetzner deployment](../deploy/hetzner/README.md)
+
+## Decision reconciliation and acceptance boundary
+
+This deployment proposal is ADR-0028. Main's accepted ADR-0025 governs typed
+resource permissions and scoped API credentials; ADR-0026 governs authority across
+operations. ADR-0027 is reserved by the [credential lifecycle proposal in PR #785](https://github.com/flidai/leapview/pull/785).
+Neither accepted decision is renumbered or amended by this numbering repair.
+
+The managed target continues to require Kamal's normal candidate-first sequence
+and safe temporary process overlap. The current ADR-0027 proposal limits its
+credential lifecycle to one supervised process with stop/start deployment. That
+foundation may be reviewed within its declared limits, but its component evidence
+does not qualify the combined managed profile. Before accepting the combined
+implementation contract, reconcile ADR-0027's process ownership, admission,
+consumer draining, publication and restart boundaries with this overlap requirement.
+Readiness must remain separate from authority to mutate durable state, run workers,
+activate credentials or retire shared files and credential versions.
+
+A stop-first maintenance profile is a different deployment contract. Substituting
+it requires an explicit reviewed amendment to this ADR and the migration roadmap,
+with named profile, interruption bounds and distinct qualification evidence. Until
+then, it cannot replace the overlap gate. The stateless public site's qualification
+does not establish stateful application or credential lifecycle correctness.
+
+ADR-0027 also proposes a clean credential-format break without old-binary downgrade
+support. Classify that boundary before any durable mutation. An incompatible
+transition requires its reviewed maintenance and recovery procedure; it cannot
+advertise ordinary image rollback. Releases within a declared compatible window
+must retain usable credential versions, key inputs and acknowledged customer writes
+for both the live and retained rollback release. Legacy-format compatibility is
+not introduced by this proposal.
+
+Host, database and application owners remain independent. NixOS hosts may qualify
+with admitted conventional images. Each Nix-built output adds its own exact-artifact
+compatibility, inventory/security, provenance and installation gates only to the
+profile adopting it. CLI, application, public-site and desktop adoption are
+independent; Compose and site closeout do not wait for the managed two-host gate.
+Implementation approval, ADR acceptance, qualification, adoption, observation and
+retirement remain separate decisions.
 
 ## Context and problem statement
 

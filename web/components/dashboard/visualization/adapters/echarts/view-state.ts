@@ -1,11 +1,15 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import { compactScrollLegendGeometry } from './compact-scroll-legend'
+import { proportionalOutsideLabelsFitCompactCanvas } from './proportional-label-fit'
 
 const COMPACT_WIDTH = 480
 const COMPACT_HEIGHT = 280
 const BOUNDED_OUTSIDE_LABEL_WIDTH = 400
 const CROWDED_INSIDE_LABEL_WIDTH = 640
 const CROWDED_INSIDE_LABEL_HEIGHT = 420
+const GAUGE_LABEL_WIDTH = 360
+const GAUGE_LABEL_HEIGHT = 220
+const RESPONSIVE_LABEL_SEGMENTER = new Intl.Segmenter('en', { granularity: 'grapheme' })
 
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
@@ -20,25 +24,75 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
   }
 }
 
-export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number): string {
+export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number, focused = false, option?: Record<string, any>): string {
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
-  if (envelope.spec.kind !== 'proportional' || envelope.spec.mark === 'funnel') return compact ? 'compact' : 'roomy'
-  if (envelope.spec.presentation.labelPosition === 'inside') {
-    return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}`
+  if (envelope.spec.kind === 'polar' && envelope.spec.mark === 'gauge') {
+    return `${compact ? 'compact' : 'roomy'}:gauge-${gaugeTickLabelsHidden(width, height) ? 'quiet' : 'labeled'}`
   }
+  if (envelope.spec.kind === 'hierarchy' && envelope.spec.mark === 'graph'
+    && (envelope.spec.presentation.layout === 'standard' || envelope.spec.presentation.layout === 'circular')) {
+    return `${compact ? 'compact' : 'roomy'}:graph-${graphLabelWidth(width)}`
+  }
+  if (envelope.spec.kind === 'hierarchy' && envelope.spec.mark === 'tree') {
+    return `${compact ? 'compact' : 'roomy'}:tree-${height < 180 ? 'short' : 'normal'}-${expandedCenteredBounds(width, height) ? 'centered' : 'standard'}`
+  }
+  if (envelope.spec.kind === 'hierarchy' && envelope.spec.mark === 'sankey') {
+    return `${compact ? 'compact' : 'roomy'}:sankey-${expandedCenteredBounds(width, height) ? 'centered' : 'standard'}`
+  }
+  if (envelope.spec.kind !== 'proportional') return compact ? 'compact' : 'roomy'
+  if (envelope.spec.mark === 'funnel') {
+    const outsideLabels = envelope.spec.presentation.labelPosition !== 'inside'
+      && envelope.spec.presentation.labelPolicy.density !== 'hidden'
+    if (outsideLabels && compact) {
+      const fontSize = envelope.spec.presentation.labelPolicy.density === 'dense' ? 10 : 12
+      return `compact:funnel-outside-${funnelOutsideLabelCharacterBudget(width, fontSize)}`
+    }
+    return compact ? 'compact' : 'roomy'
+  }
+  if (envelope.spec.presentation.labelPosition === 'inside') {
+    return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}:focus-${focused}`
+  }
+  // Compact layouts and focus move authored side legends to the bottom, so
+  // use their responsive position for outside-label and radius breakpoints.
+  const authoredSideLegendMovesBottom = (compact || focused)
+    && (envelope.spec.presentation.legend === 'left' || envelope.spec.presentation.legend === 'right')
+  const responsiveBottomLegend = envelope.spec.presentation.legend === 'bottom' || authoredSideLegendMovesBottom
   const bounded = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
+    || (envelope.spec.presentation.legend === 'hidden' && width < 600)
+    || (responsiveBottomLegend && width < 800)
+  const narrowBottomLegendRadius = !compact && width < 600 && responsiveBottomLegend
+    && (envelope.spec.mark === 'pie' || envelope.spec.mark === 'donut')
+  const shortBottomLegendRadius = width < 600 && height < COMPACT_HEIGHT && responsiveBottomLegend
+    && (envelope.spec.mark === 'pie' || envelope.spec.mark === 'donut')
+  const compactLabelFit = shortBottomLegendRadius && option
+    ? proportionalOutsideLabelsFitCompactCanvas(option.series, option.dataset, width, height) ? 'expanded' : 'bounded'
+    : 'bounded'
+  const bottomRadiusLayout = shortBottomLegendRadius ? `:bottom-radius-short-${compactLabelFit}`
+    : narrowBottomLegendRadius ? ':bottom-radius-narrow' : ''
   return bounded
-    ? `${compact ? 'compact' : 'roomy'}:outside-bounded`
-    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}`
+    ? `${compact ? 'compact' : 'roomy'}:outside-bounded${bottomRadiusLayout}:focus-${focused}`
+    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}${bottomRadiusLayout}:focus-${focused}`
 }
 
-export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
+export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number, focused = false): Record<string, any> {
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
-  const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
-  const responsivePie = hasPieSeries(option.series)
+  const movedSide = (compact || focused) && hasPieSeries(option.series) ? proportionalSideLegend(option.legend) : undefined
+  const responsiveLegend = movedSide ? compactProportionalSideLegend(option.legend) : option.legend
+  const visibleBottomLegend = hasBottomLegend(responsiveLegend)
+  const bottomLegend = (compact || focused) && visibleBottomLegend
+  const narrowWithoutLegend = option.legend === undefined && width < 600 && hasPieSeries(option.series)
+  const narrowBottomLegend = visibleBottomLegend && width < 600 && hasPieSeries(option.series)
+  const narrowBottomLegendCap = narrowBottomLegend
+    ? (height < COMPACT_HEIGHT && proportionalOutsideLabelsFitCompactCanvas(option.series, option.dataset, width, height) ? 56 : 40)
+    : focused && !compact ? 66 : 56
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, visibleBottomLegend, movedSide, narrowBottomLegendCap, narrowWithoutLegend)
+  const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
+  const graphSeries = responsiveGraphSeries(option.series, width, compact)
+  const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
+  const treeSeries = responsiveSingleNodeTreeSeries(option.series, width, height)
+  const gaugeGraphic = responsiveGaugeGraphic(option.graphic, width)
   const patch: Record<string, any> = {}
-  const bottomLegend = compact && hasBottomLegend(option.legend)
   if (option.grid !== undefined) {
     const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
     const slider = compact && hasSliderDataZoom(option.dataZoom)
@@ -58,8 +112,18 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     patch.grid = Array.isArray(option.grid) ? grid : grid[0]
   }
   if (proportionalSeries !== undefined) patch.series = proportionalSeries
-  if (option.legend !== undefined && (option.grid !== undefined || responsivePie)) {
-    patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
+  if (gaugeSeries !== undefined) patch.series = gaugeSeries
+  if (graphSeries !== undefined) patch.series = graphSeries
+  if (hierarchySeries !== undefined) patch.series = hierarchySeries
+  if (treeSeries !== undefined) patch.series = treeSeries
+  if (gaugeGraphic !== undefined) patch.graphic = gaugeGraphic
+  if (option.graphic !== undefined) {
+    const graphic = movedSide ? compactProportionalLegendTitle(option.graphic, movedSide) : option.graphic
+    const centeredGraphic = responsiveProportionalCenterGraphic(graphic, proportionalSeries ?? option.series, height)
+    if (movedSide || centeredGraphic !== option.graphic) patch.graphic = centeredGraphic
+  }
+  if (option.legend !== undefined) {
+    patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(responsiveLegend, hasPieSeries(option.series))
   }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
@@ -67,37 +131,243 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   return patch
 }
 
-function hasPieSeries(value: unknown): boolean {
-  const series = Array.isArray(value) ? value : [value]
-  return series.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
-    && (entry as Record<string, unknown>).type === 'pie')
+function gaugeTickLabelsHidden(width: number, height: number): boolean {
+  return width < GAUGE_LABEL_WIDTH || height < GAUGE_LABEL_HEIGHT
 }
 
-function responsiveProportionalSeries(value: unknown, width: number, height: number): unknown[] | undefined {
+function responsiveGaugeSeries(value: unknown, width: number, height: number): unknown[] | undefined {
+  const series = Array.isArray(value) ? value : [value]
+  if (!series.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && (entry as Record<string, unknown>).type === 'gauge' && (entry as Record<string, unknown>).silent !== true)) return undefined
+  const hideTicks = gaugeTickLabelsHidden(width, height)
+  return series.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, any>
+    if (source.type !== 'gauge' || source.silent === true) return source
+    return {
+      ...source,
+      splitNumber: hideTicks ? 3 : source.splitNumber ?? 5,
+      axisLabel: { ...source.axisLabel, show: !hideTicks },
+      axisTick: { ...source.axisTick, show: !hideTicks },
+      splitLine: { ...source.splitLine, show: !hideTicks },
+    }
+  })
+}
+
+function responsiveGraphSeries(value: unknown, width: number, compact: boolean): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
-  const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
-  let hasResponsivePieLabels = false
+  let hasResponsiveGraph = false
+  const series = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, any>
+    const label = source.label
+    if (source.type !== 'graph' || !['none', 'circular'].includes(source.layout) || !label || typeof label !== 'object' || label.show === false) return entry
+    hasResponsiveGraph = true
+    const graphNodes = Array.isArray(source.data) ? source.data : []
+    const compactCircular = compact && source.layout === 'circular' && graphNodes.length > 8
+    const visibleCircularLabelIndexes = compactCircular
+      ? new Set(Array.from({ length: 4 }, (_, index) => Math.floor(index * graphNodes.length / 4)))
+      : undefined
+    return {
+      ...source,
+      label: {
+        ...label,
+        width: graphLabelWidth(width),
+        overflow: 'truncate',
+        ellipsis: typeof label.ellipsis === 'string' ? label.ellipsis : '…',
+        ...(visibleCircularLabelIndexes ? {
+          formatter: (params: { dataIndex?: number }) => visibleCircularLabelIndexes.has(params.dataIndex ?? -1)
+            ? label.formatter?.(params)
+            : '',
+        } : {}),
+      },
+      ...(compactCircular ? {
+        // Dense circular layouts have too little circumference for every node
+        // label. Keep four evenly spaced labels visible; the rest are exposed
+        // when emphasized and through each node's tooltip.
+        emphasis: {
+          ...source.emphasis,
+          label: {
+            ...source.emphasis?.label,
+            show: true,
+            ...(typeof label.formatter === 'function' ? { formatter: label.formatter } : {}),
+          },
+        },
+      } : {}),
+    }
+  })
+  return hasResponsiveGraph ? series : undefined
+}
+
+function responsiveSingleNodeTreeSeries(value: unknown, width: number, height: number): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  let hasSingleNodeTree = false
+  const series = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, any>
+    if (source.type !== 'tree' || !Array.isArray(source.data) || source.data.length !== 1
+      || source.data[0]?.children?.length || !source.label || typeof source.label !== 'object') return entry
+    hasSingleNodeTree = true
+    if (height >= 180) return source
+    const label = {
+      ...source.label,
+      position: 'right',
+      align: 'left',
+      distance: 10,
+      fontSize: 14,
+      lineHeight: 20,
+      width: Math.max(40, Math.floor(width * 0.67)),
+      overflow: 'truncate',
+    }
+    return {
+      ...source,
+      left: '15%',
+      right: '75%',
+      symbolSize: 14,
+      label,
+      leaves: { ...source.leaves, label },
+    }
+  })
+  return hasSingleNodeTree ? series : undefined
+}
+
+function responsiveHierarchySeries(value: unknown, width: number, height: number): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  let changed = false
   const series = value.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
     const source = entry as Record<string, unknown>
+    if (source.type !== 'tree' && source.type !== 'sankey') return entry
+    const left = percentNumber(source.left)
+    const right = percentNumber(source.right)
+    if (left === undefined || right === undefined || left === right) return entry
+    changed = true
+    if (!expandedCenteredBounds(width, height)) return source
+    const inset = `${(left + right) / 2}%`
+    return { ...source, left: inset, right: inset }
+  })
+  return changed ? series : undefined
+}
+
+function expandedCenteredBounds(width: number, height: number): boolean {
+  return width >= 800 && height >= 400
+}
+
+function percentNumber(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !/^\d+(?:\.\d+)?%$/.test(value)) return undefined
+  return Number(value.slice(0, -1))
+}
+
+function graphLabelWidth(width: number): number {
+  return Math.max(0, Math.min(160, Math.floor(width * 0.2) - 2))
+}
+
+function responsiveGaugeGraphic(value: unknown, width: number): unknown[] | undefined {
+  const graphics = Array.isArray(value) ? value : [value]
+  if (!graphics.some((entry) => isGaugeDomainDiagnostic(entry))) return undefined
+  const fontSize = width < 360 ? 10 : 11
+  const textWidth = Math.max(120, width - 24)
+  const maxCharacters = Math.max(18, Math.floor(textWidth / (fontSize * 0.55)))
+  return graphics.map((entry) => {
+    if (!isGaugeDomainDiagnostic(entry)) return entry
+    const source = entry as Record<string, any>
+    const style = source.style as Record<string, any>
+    return {
+      ...source,
+      style: {
+        ...style,
+        text: wrapWords(style.text, maxCharacters),
+        width: textWidth,
+        overflow: 'break',
+        fontSize,
+        lineHeight: fontSize + 4,
+      },
+    }
+  })
+}
+
+function isGaugeDomainDiagnostic(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const style = (value as Record<string, unknown>).style
+  return Boolean(style && typeof style === 'object' && !Array.isArray(style)
+    && typeof (style as Record<string, unknown>).text === 'string'
+    && ((style as Record<string, string>).text).includes('outside configured gauge domain'))
+}
+
+function wrapWords(value: string, maxCharacters: number): string {
+  const lines: string[] = []
+  let line = ''
+  for (const word of value.split(/\s+/)) {
+    if (line.length > 0 && line.length + 1 + word.length > maxCharacters) {
+      lines.push(line)
+      line = ''
+    }
+    if (word.length <= maxCharacters) {
+      line = line ? `${line} ${word}` : word
+      continue
+    }
+    for (let offset = 0; offset < word.length; offset += maxCharacters) {
+      const chunk = word.slice(offset, offset + maxCharacters)
+      if (line) lines.push(line)
+      line = chunk
+    }
+  }
+  if (line) lines.push(line)
+  return lines.join('\n')
+}
+
+function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right', radiusCap = 56, narrowWithoutLegend = false): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT || narrowWithoutLegend || (bottomLegend && width < 800)
+  let hasResponsiveSeries = false
+  const series = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, unknown>
+    const pieLayout = source.type === 'pie' && movedSide && source[movedSide] === '12%' ? { [movedSide]: 0 } : undefined
+    if (pieLayout) hasResponsiveSeries = true
     const label = source.label
+    if (source.type === 'funnel') {
+      const labelOption = label && typeof label === 'object' && !Array.isArray(label) ? label as Record<string, unknown> : undefined
+      const formatter = labelOption?.formatter
+      const centeredOutside = source.orient === 'vertical' && labelOption?.position === 'outside'
+      const canFormat = labelOption?.position === 'outside' && labelOption?.show !== false && typeof formatter === 'function'
+      if (!centeredOutside && !canFormat) return entry
+      hasResponsiveSeries = true
+      const responsiveFormatter = canFormat && (width < COMPACT_WIDTH || height < COMPACT_HEIGHT)
+        ? (params: unknown) => wrapFunnelOutsideLabel(
+          String(formatter!(params) ?? ''),
+          width,
+          finiteNumber(labelOption?.fontSize) ?? 12,
+        )
+        : formatter
+      return {
+        ...source,
+        ...(centeredOutside && width >= COMPACT_WIDTH && height >= COMPACT_HEIGHT ? { left: '25%', right: '25%' } : {}),
+        ...(canFormat ? { label: {
+          ...labelOption,
+          formatter: responsiveFormatter,
+        } } : {}),
+      }
+    }
     if (
       source.type !== 'pie'
       || !label || typeof label !== 'object' || Array.isArray(label)
       || (label as Record<string, unknown>).show === false
-    ) return entry
+    ) return pieLayout ? { ...source, ...pieLayout } : entry
     const labelOption = label as Record<string, unknown>
     if (labelOption.position === 'inside') {
       const crowded = width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT
-      hasResponsivePieLabels = true
+      hasResponsiveSeries = true
       if (!crowded) {
         return {
           ...source,
+          ...pieLayout,
           label: { ...labelOption, rotate: null },
         }
       }
       return {
         ...source,
+        ...pieLayout,
         label: {
           ...labelOption,
           // Horizontal labels near the centre of neighbouring sectors can
@@ -113,9 +383,13 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       }
     }
     if (labelOption.position !== 'outside') return entry
-    hasResponsivePieLabels = true
+    hasResponsiveSeries = true
+    const reservedRadius = (bottomLegend && (width < 800 || radiusCap > 56)) || narrowWithoutLegend ? compactProportionalRadius(source.radius, narrowWithoutLegend ? 40 : radiusCap) : undefined
     return {
       ...source,
+      ...pieLayout,
+      ...(bottomLegend && source.bottom === undefined ? { bottom: '12%' } : {}),
+      ...(reservedRadius ? { radius: reservedRadius } : {}),
       label: {
         ...labelOption,
         // Edge alignment keeps text inside narrow cards. In roomy views it
@@ -135,7 +409,96 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       }),
     }
   })
-  return hasResponsivePieLabels ? series : undefined
+  return hasResponsiveSeries ? series : undefined
+}
+
+function responsiveProportionalCenterGraphic(graphic: unknown, series: unknown, height: number): unknown {
+  const seriesItems = Array.isArray(series) ? series : [series]
+  const pie = seriesItems.find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && (entry as Record<string, unknown>).type === 'pie') as Record<string, unknown> | undefined
+  if (!pie || (pie.top === undefined && pie.bottom === undefined)) return graphic
+  const top = pie.top === undefined ? 0 : proportionalInsetPixels(pie.top, height)
+  const bottom = pie.bottom === undefined ? 0 : proportionalInsetPixels(pie.bottom, height)
+  if (top === undefined || bottom === undefined || top === 0 && bottom === 0) return graphic
+  const center = top + (height - top - bottom) / 2
+  const items = Array.isArray(graphic) ? graphic : [graphic]
+  let changed = false
+  const responsive = items.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, unknown>
+    if (source.id !== 'graphic:proportional:center' || source.type !== 'text') return entry
+    // ECharts positions the text origin at `top`; subtract half its rendered line height.
+    const textOffset = proportionalGraphicVerticalCenterOffset(source.style)
+    const textTop = `${Math.round((center - textOffset) / height * 10_000) / 100}%`
+    changed = true
+    return { ...source, top: textTop }
+  })
+  if (!changed) return graphic
+  return Array.isArray(graphic) ? responsive : responsive[0]
+}
+
+function proportionalInsetPixels(value: unknown, dimension: number): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return undefined
+  const match = /^(-?(?:\d+\.?\d*|\.\d+))(%)?$/.exec(value.trim())
+  if (!match) return undefined
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount)) return undefined
+  return match[2] === '%' ? amount * dimension / 100 : amount
+}
+
+function proportionalGraphicVerticalCenterOffset(value: unknown): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0
+  const style = value as Record<string, unknown>
+  if (typeof style.text !== 'string') return 0
+  const baseLineHeight = finiteNumber(style.lineHeight) ?? finiteNumber(style.fontSize) ?? 12
+  const rich = style.rich && typeof style.rich === 'object' && !Array.isArray(style.rich)
+    ? style.rich as Record<string, unknown>
+    : {}
+  const height = style.text.split('\n').reduce((total, line) => {
+    const runs = [...line.matchAll(/\{([\w-]+)\|/g)]
+    const lineHeight = runs.reduce((maximum, run) => {
+      const runStyle = rich[run[1] ?? '']
+      const runLineHeight = runStyle && typeof runStyle === 'object' && !Array.isArray(runStyle)
+        ? finiteNumber((runStyle as Record<string, unknown>).lineHeight)
+        : undefined
+      return Math.max(maximum, runLineHeight ?? baseLineHeight)
+    }, baseLineHeight)
+    return total + lineHeight
+  }, 0)
+  return height / 2
+}
+
+function compactProportionalRadius(value: unknown, cap: number): string[] | undefined {
+  if (!Array.isArray(value) || value.length !== 2) return undefined
+  const inner = percentNumber(value[0])
+  const outer = percentNumber(value[1])
+  if (inner === undefined || outer === undefined || outer <= cap) return undefined
+  // Outside pie labels can reach the bottom scroll legend in narrow chat cards.
+  // Scale both radii so the donut ring keeps its authored thickness ratio.
+  const scale = cap / outer
+  return [`${Math.round(inner * scale * 100) / 100}%`, `${cap}%`]
+}
+
+function wrapFunnelOutsideLabel(value: string, width: number, fontSize: number): string {
+  const separator = value.lastIndexOf(': ')
+  if (separator <= 0 || separator >= value.length - 2) return value
+  const availableCharacters = funnelOutsideLabelCharacterBudget(width, fontSize)
+  if (value.length <= availableCharacters) return value
+  const category = truncateResponsiveLabel(value.slice(0, separator), availableCharacters - 1)
+  const amount = truncateResponsiveLabel(value.slice(separator + 2), availableCharacters)
+  return `${category}:\n${amount}`
+}
+
+function funnelOutsideLabelCharacterBudget(width: number, fontSize: number): number {
+  return Math.floor((width * 0.43) / (fontSize * 0.5))
+}
+
+function truncateResponsiveLabel(value: string, maxCharacters: number): string {
+  const graphemes = [...RESPONSIVE_LABEL_SEGMENTER.segment(value)].map((segment) => segment.segment)
+  if (graphemes.length <= maxCharacters) return value
+  if (maxCharacters <= 1) return maxCharacters === 1 ? '…' : ''
+  return `${graphemes.slice(0, maxCharacters - 1).join('')}…`
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -173,19 +536,58 @@ function isHorizontalBottomLegend(value: unknown): value is Record<string, unkno
     && (value as Record<string, unknown>).bottom !== undefined)
 }
 
+function hasPieSeries(series: unknown): boolean {
+  const entries = Array.isArray(series) ? series : [series]
+  return entries.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'pie')
+}
+
+function proportionalSideLegend(legend: unknown): 'left' | 'right' | undefined {
+  const entries = Array.isArray(legend) ? legend : [legend]
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || entry.orient !== 'vertical') continue
+    if (entry.left !== undefined) return 'left'
+    if (entry.right !== undefined) return 'right'
+  }
+  return undefined
+}
+
+function compactProportionalSideLegend(legend: unknown): unknown {
+  const legends = Array.isArray(legend) ? legend : [legend]
+  const result = legends.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, unknown>
+    if (source.orient !== 'vertical' || (source.left === undefined && source.right === undefined)) return entry
+    return { ...source, orient: 'horizontal', top: 'auto', bottom: 0, left: 'center', right: 'auto' }
+  })
+  return Array.isArray(legend) ? result : result[0]
+}
+
+function compactProportionalLegendTitle(graphic: unknown, movedSide: 'left' | 'right'): unknown {
+  if (!Array.isArray(graphic)) return graphic
+  return graphic.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const title = entry as Record<string, unknown>
+    if (title.type !== 'text' || title.top !== 4 || title[movedSide] !== 8) return entry
+    return { ...title, top: 'auto', bottom: 28, left: 8, right: 'auto' }
+  })
+}
+
 function hasSliderDataZoom(value: unknown): boolean {
   if (!Array.isArray(value)) return false
   return value.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'slider')
 }
 
-function desktopLegend(value: unknown): unknown {
+function desktopLegend(value: unknown, resetProportionalSide = false): unknown {
   const legends = Array.isArray(value) ? value : [value]
   const result = legends.map((entry) => {
+    if (resetProportionalSide && entry && typeof entry === 'object' && !Array.isArray(entry) && entry.orient === 'vertical' && (entry.left !== undefined || entry.right !== undefined)) {
+      return { ...entry, left: entry.left ?? 'auto', right: entry.right ?? 'auto', height: 'auto' }
+    }
     if (!isHorizontalBottomLegend(entry)) return entry
     const legend = entry
     // Clear compact sizing, retaining the scroll component and its selection state.
     return {
-      type: 'scroll', left: 'center', right: 'auto', width: 'auto', height: 'auto', ...legend,
+      ...legend, type: 'scroll', left: 'center', right: 'auto', width: 'auto', height: 'auto',
       itemWidth: finiteNumber(legend.itemWidth) ?? 25,
       itemHeight: finiteNumber(legend.itemHeight) ?? 14,
       textStyle: {

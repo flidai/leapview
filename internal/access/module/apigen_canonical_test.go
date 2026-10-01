@@ -89,6 +89,39 @@ func apigenResolver(parameter string, kind projectgraph.Kind) APIGenResourceReso
 	}
 }
 
+func TestAPIGenDeliveryFamilyOutsideNativeDeliveryPathResolvesProjectNamespace(t *testing.T) {
+	contract := APIGenOperationContract{
+		OperationID: "listReleases",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{project}/releases",
+		Protected:   true,
+		AuthzMode:   "privilege",
+		Action:      string(access.ActionDeliveryRead),
+		Resolver:    string(access.TypedOperationResolverDelivery),
+		Extensions: map[string]any{
+			apiGenObjectScopeExtension: "delivery",
+			"x-authz":                  map[string]any{"mode": "privilege", "privilege": string(access.CapabilityResourceRead)},
+		},
+	}
+	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: "project_demo"},
+		map[string]APIGenOperationContract{contract.OperationID: contract},
+		APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProjectNamespace)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, ok := authorizer.resourceResolverForContract(contract)
+	if !ok || resolver == nil {
+		t.Fatal("delivery-family project resolver was not created")
+	}
+	resources := resolver(apigenRequest(http.MethodGet, contract.Path, map[string]string{"project": "project_demo"}), "project_demo")
+	if len(resources) != 1 || resources[0].Kind() != projectgraph.KindProjectNamespace || resources[0].ID() != "project_demo" {
+		t.Fatalf("resolved resources = %#v, want exact project namespace", resources)
+	}
+}
+
 func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projectgraph.ResourceID, resourceKind projectgraph.Kind, direct, group bool) (projectgraph.ServingIdentity, accesssnapshot.AuthorizationSnapshot) {
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
@@ -107,9 +140,23 @@ func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projec
 	if err != nil {
 		t.Fatal(err)
 	}
-	capability := access.CapabilityResourceRead
+	action := access.ActionDashboardRead
+	switch resourceKind {
+	case projectgraph.KindSemanticModel:
+		action = access.ActionSemanticRead
+	case projectgraph.KindConnection:
+		action = access.ActionConnectionRead
+	case projectgraph.KindProjectNamespace:
+		action = access.ActionProjectSettingsRead
+	}
+	var pair access.PermissionPair
 	if resourceKind == projectgraph.KindProjectNamespace {
-		capability = access.CapabilityProjectAdmin
+		pair, err = access.NewProjectPermissionPair(action, identity.ProjectID)
+	} else {
+		pair, err = access.NewExactPermissionPair(action, identity.ProjectID, resource)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	grants := make([]accesssnapshot.Grant, 0, 2)
 	if direct {
@@ -117,22 +164,22 @@ func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projec
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := access.NewCanonicalGrant(graph, subject, resource, capability)
+		grant, err := accesssnapshot.NewTypedGrant("grant_direct", "direct read", subject, []access.PermissionPair{pair})
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = append(grants, accesssnapshot.Grant{ID: "grant_direct", Canonical: canonical})
+		grants = append(grants, grant)
 	}
 	if group {
 		subject, err := access.NewSubjectRef(access.SubjectKindGroup, groupID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := access.NewCanonicalGrant(graph, subject, resource, capability)
+		grant, err := accesssnapshot.NewTypedGrant("grant_group", "group read", subject, []access.PermissionPair{pair})
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = append(grants, accesssnapshot.Grant{ID: "grant_group", Canonical: canonical})
+		grants = append(grants, grant)
 	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
 	if err != nil {
@@ -192,18 +239,23 @@ func apigenResourceAuthorizer(t *testing.T, principal Principal, groups []string
 		return snapshot.EffectiveCapabilities(subjects)
 	})
 	parameter, scope := "dashboard", "dashboard"
+	action := access.ActionDashboardRead
 	resolvers := APIGenResourceResolvers{Dashboard: apigenResolver("dashboard", projectgraph.KindDashboard), SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel), Connection: apigenResolver("connection", projectgraph.KindConnection), Project: apigenResolver("project", projectgraph.KindProjectNamespace)}
 	switch resourceKind {
 	case projectgraph.KindSemanticModel:
 		parameter, scope = "model", "semantic-model"
+		action = access.ActionSemanticRead
 	case projectgraph.KindConnection:
 		parameter, scope = "connection", "connection"
+		action = access.ActionConnectionRead
 	case projectgraph.KindProjectNamespace:
 		parameter, scope = "project", "project"
+		action = access.ActionProjectSettingsRead
 	}
 	contract := APIGenOperationContract{
 		OperationID: "readResource", Method: http.MethodGet,
 		Path: "/api/v1/projects/{project}/" + scope + "/{" + parameter + "}", Protected: true, AuthzMode: "privilege",
+		Action: string(action), Resolver: scope,
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ"},
 		Extensions: map[string]any{apiGenObjectScopeExtension: scope},
 	}
@@ -278,6 +330,7 @@ func TestAPIGenServerBoundResourceRouteUsesActiveProject(t *testing.T) {
 	contract := APIGenOperationContract{
 		OperationID: "readDashboard", Method: http.MethodGet,
 		Path: "/api/v1/dashboards/{dashboard}", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDashboardRead), Resolver: string(access.TypedOperationResolverDashboard),
 		Extensions: map[string]any{
 			apiGenObjectScopeExtension: "dashboard",
 			"x-authz":                  map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"},
@@ -329,6 +382,7 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 	contract := APIGenOperationContract{
 		OperationID: "readResource", Method: http.MethodGet,
 		Path: "/api/v1/projects/{project}/dashboard/{dashboard}", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDashboardRead), Resolver: string(access.TypedOperationResolverDashboard),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ"},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "dashboard"},
 	}
@@ -352,25 +406,44 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 		handler.ServeHTTP(recorder, request)
 		return recorder.Code
 	}
-	dynamicSecret, dynamicToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "dynamic", ExpiresAt: time.Now().Add(time.Hour)})
+	resource, err := access.NewResourceRef(resourceID, projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readPair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamicSecret, dynamicToken, err := repository.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "read-only", Permissions: []access.PermissionPair{readPair}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := call(dynamicSecret); got != http.StatusNoContent {
-		t.Fatalf("dynamic token status = %d, want 204", got)
+		t.Fatalf("read-only token status = %d, want 204", got)
 	}
-	denySecret, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "deny-all", Capabilities: []access.Capability{}, ExpiresAt: time.Now().Add(time.Hour)})
+	denySecret, _, err := repository.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "deny-all", Permissions: []access.PermissionPair{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := call(denySecret); got != http.StatusForbidden {
 		t.Fatalf("deny-all token status = %d, want 403", got)
 	}
+	otherAction, err := access.NewExactPermissionPair(access.ActionDashboardUpdate, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSecret, _, err := repository.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "update-only", Permissions: []access.PermissionPair{otherAction}, ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := call(otherSecret); got != http.StatusForbidden {
+		t.Fatalf("other-action token status = %d, want 403", got)
+	}
 	events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{ProjectID: "project_demo", Action: "authorization.denied"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].ProjectID != "project_demo" || events[0].PrincipalID != principal.ID || events[0].ResourceKind != string(projectgraph.KindDashboard) || events[0].ResourceID != resourceID.String() || events[0].Capability != access.CapabilityResourceRead || events[0].Status != "denied" || events[0].RequestID != "request_resource_denial" {
+	if len(events) != 2 || events[0].ProjectID != "project_demo" || events[0].PrincipalID != principal.ID || events[0].ResourceKind != string(projectgraph.KindDashboard) || events[0].ResourceID != resourceID.String() || events[0].Capability != access.CapabilityResourceRead || events[0].Status != "denied" || events[0].RequestID != "request_resource_denial" {
 		t.Fatalf("authorization denial audit = %#v", events)
 	}
 	if err := repository.RevokeAPIToken(t.Context(), dynamicToken.ID); err != nil {
@@ -471,11 +544,25 @@ func generatedAPIGenContracts() map[string]APIGenOperationContract {
 		}
 		contracts[operationID] = APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path,
-			Protected: contract.Protected, AuthzMode: contract.AuthzMode, Command: command,
+			Protected: contract.Protected, AuthzMode: contract.AuthzMode, Action: authzAction(contract), Resolver: authzResolver(contract), Command: command,
 			Extensions: contract.Extensions,
 		}
 	}
 	return contracts
+}
+
+func authzAction(contract accessgen.GenOperationContract) string {
+	if contract.Authz == nil {
+		return ""
+	}
+	return contract.Authz.Action
+}
+
+func authzResolver(contract accessgen.GenOperationContract) string {
+	if contract.Authz == nil {
+		return ""
+	}
+	return contract.Authz.Resolver
 }
 
 func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testing.T) {
@@ -488,7 +575,9 @@ func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testin
 		Dashboard:     apigenResolver("dashboard", projectgraph.KindDashboard),
 		SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel),
 		Connection:    apigenResolver("connection", projectgraph.KindConnection),
+		ResourceShare: apigenResolver("resourceId", projectgraph.KindDashboard),
 		Project:       apigenResolver("project", projectgraph.KindProjectNamespace),
+		Instance:      func(*http.Request) string { return "instance_test" },
 	})
 	if err != nil {
 		t.Fatalf("generated operation contracts are not constructible: %v", err)
@@ -593,10 +682,11 @@ func TestAPIGenPublicationReplayRechecksRevokedResourcePublishGrant(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowedSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{
-		ID: "binding_deployer", Subject: subject, Role: access.ProjectRoleDeployer,
-		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer),
-	}}, nil, nil)
+	binding, err := access.NewTypedRoleBinding("binding_deployer", "release operator", subject, access.PermissionRoleReleaseOperator, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{binding}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,8 +704,9 @@ func TestAPIGenPublicationReplayRechecksRevokedResourcePublishGrant(t *testing.T
 		"suspendDashboardPublication": {
 			OperationID: "suspendDashboardPublication", Method: http.MethodPost,
 			Path: "/api/v1/projects/{project}/dashboard-publications/{publication}/suspend", Protected: true, AuthzMode: "privilege",
+			Action: string(access.ActionDeliveryPublish), Resolver: string(access.TypedOperationResolverDelivery),
 			Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_PUBLISH", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
-			Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+			Extensions: map[string]any{apiGenObjectScopeExtension: "delivery"},
 		},
 	}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProjectNamespace)})
 	if err != nil {
@@ -706,6 +797,7 @@ func TestAPIGenDeliveryCandidateActivePathKeepsNormalSessionSnapshotAuthorizatio
 	contract := APIGenOperationContract{
 		OperationID: "publishDeliveryCandidate", Method: http.MethodPost,
 		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}/publish", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryPublish), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_PUBLISH", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 	}
@@ -735,8 +827,9 @@ func TestAPIGenDeliveryAuthorizerUsesTargetOwnedRoleDecision(t *testing.T) {
 	contract := APIGenOperationContract{
 		OperationID: "createDeliveryPlan", Method: http.MethodPost,
 		Path: "/api/v1/projects/{project}/delivery", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryPlan), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
-		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "delivery"},
 	}
 	var calls int
 	authorizer, err := module.APIGenAuthorizer(
@@ -777,6 +870,7 @@ func TestAPIGenDeliveryActivePathValidatesTargetForConfiguredDevelopmentBypass(t
 	contract := APIGenOperationContract{
 		OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet,
 		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryRead), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 	}
@@ -820,6 +914,7 @@ func TestAPIGenCreateDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T
 	contract := APIGenOperationContract{
 		OperationID: "createDeliveryPlan", Method: http.MethodPost,
 		Path: "/api/v1/projects/{project}/delivery", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryPlan), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 	}
@@ -848,7 +943,8 @@ func TestAPIGenCreateDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T
 	if !ok || protected == nil {
 		t.Fatal("delivery authorizer was not created")
 	}
-	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+	plan := bootstrapProjectPair(t, projectID, access.ActionDeliveryPlan)
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{plan}}}
 	r := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery", map[string]string{"project": "project_demo"})
 	r.Header.Set("Authorization", "Bearer test-token")
 	r = r.WithContext(WithAPICredential(r.Context(), credential))
@@ -862,14 +958,24 @@ func TestAPIGenCreateDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T
 func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_demo")
 	newContract := func(operationID, path string, capability access.Capability) APIGenOperationContract {
+		action := access.ActionDeliveryPlan
+		switch operationID {
+		case "buildDeliveryPlan":
+			action = access.ActionDeliveryBuild
+		case "publishDeliveryCandidate", "requestDeliveryPublicationApproval":
+			action = access.ActionDeliveryPublish
+		case "approveDeliveryPublicationApproval":
+			action = access.ActionDeliveryApprove
+		}
 		return APIGenOperationContract{
 			OperationID: operationID, Method: http.MethodPost,
 			Path: path, Protected: true, AuthzMode: "privilege",
+			Action: string(action), Resolver: string(access.TypedOperationResolverDelivery),
 			Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: string(capability), Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
-			Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+			Extensions: map[string]any{apiGenObjectScopeExtension: "delivery"},
 		}
 	}
-	serve := func(t *testing.T, contract APIGenOperationContract, requestPath string, parameters map[string]string, admin bool, scopeProject projectgraph.ResourceID, capabilities []access.Capability, wantStatus int, wantMarker bool) {
+	serve := func(t *testing.T, contract APIGenOperationContract, requestPath string, parameters map[string]string, admin bool, scopeProject projectgraph.ResourceID, actions []access.Action, wantStatus int, wantMarker bool) {
 		t.Helper()
 		module := browserGuardModule(browserGuardRepository{admin: admin}, Principal{}, false)
 		module.auth = &Auth{}
@@ -913,7 +1019,11 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 		if !ok || protected == nil {
 			t.Fatal("delivery authorizer was not created")
 		}
-		scope, err := access.NewAuthoringScope("instance-prod", scopeProject, capabilities)
+		permissions := make([]access.PermissionPair, 0, len(actions))
+		for _, action := range actions {
+			permissions = append(permissions, bootstrapProjectPair(t, scopeProject, action))
+		}
+		scope, err := access.NewAuthoringScope("instance-prod", scopeProject, permissions)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -952,7 +1062,7 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 			if test.method != "" {
 				contract.Method = test.method
 			}
-			serve(t, contract, test.requestPath, test.parameters, true, projectID, []access.Capability{test.capability}, http.StatusNoContent, true)
+			serve(t, contract, test.requestPath, test.parameters, true, projectID, []access.Action{access.Action(contract.Action)}, http.StatusNoContent, true)
 		})
 	}
 	if !isBootstrapDeliveryAPIGenOperation("approveDeliveryPublicationApproval") {
@@ -968,21 +1078,21 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 	}
 	approveContract := newContract("approveDeliveryPublicationApproval", "/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/approve", access.CapabilityProjectAdmin)
 	t.Run("approveDeliveryPublicationApproval/authoring credential allowed", func(t *testing.T) {
-		serve(t, approveContract, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{"project": projectID.String(), "publication": "publication_1", "approval": "approval_1"}, true, projectID, []access.Capability{access.CapabilityProjectAdmin}, http.StatusNoContent, true)
+		serve(t, approveContract, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{"project": projectID.String(), "publication": "publication_1", "approval": "approval_1"}, true, projectID, []access.Action{access.ActionDeliveryApprove}, http.StatusNoContent, true)
 	})
 	contract := newContract("createDeliveryPlan", "/api/v1/projects/{project}/delivery", access.CapabilityResourceRead)
 	for _, test := range []struct {
 		name         string
 		admin        bool
 		scopeProject projectgraph.ResourceID
-		capabilities []access.Capability
+		actions      []access.Action
 	}{
-		{name: "project scope mismatch denied", admin: true, scopeProject: "project_other", capabilities: []access.Capability{access.CapabilityResourceRead}},
-		{name: "capability mismatch denied", admin: true, scopeProject: projectID, capabilities: []access.Capability{access.CapabilityResourceUse}},
-		{name: "platform admin required", admin: false, scopeProject: projectID, capabilities: []access.Capability{access.CapabilityResourceRead}},
+		{name: "project scope mismatch denied", admin: true, scopeProject: "project_other", actions: []access.Action{access.ActionDeliveryPlan}},
+		{name: "action mismatch denied", admin: true, scopeProject: projectID, actions: []access.Action{access.ActionDeliveryBuild}},
+		{name: "platform admin required", admin: false, scopeProject: projectID, actions: []access.Action{access.ActionDeliveryPlan}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			serve(t, contract, "/api/v1/projects/project_demo/delivery", map[string]string{"project": projectID.String()}, test.admin, test.scopeProject, test.capabilities, http.StatusForbidden, false)
+			serve(t, contract, "/api/v1/projects/project_demo/delivery", map[string]string{"project": projectID.String()}, test.admin, test.scopeProject, test.actions, http.StatusForbidden, false)
 		})
 	}
 }
@@ -1003,11 +1113,12 @@ func TestAPIGenPublicationApprovalBootstrapUsesReviewerCredential(t *testing.T) 
 		OperationID: "approveDeliveryPublicationApproval", Method: http.MethodPost,
 		Path:      "/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/approve",
 		Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryApprove), Resolver: string(access.TypedOperationResolverDelivery),
 		Command: &APIGenCommandContract{
 			AuthzMode: "privilege", Privilege: "PROJECT_ADMIN",
 			Target: &APIGenCommandTarget{Parameter: "project", Type: "project"},
 		},
-		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "delivery"},
 	}
 	authorizer, err := module.APIGenAuthorizer(
 		apigenRuntimeFake{project: projectID, err: errors.New("no active serving generation")},
@@ -1039,9 +1150,10 @@ func TestAPIGenPublicationApprovalBootstrapUsesReviewerCredential(t *testing.T) 
 	if !ok || protected == nil {
 		t.Fatal("delivery approval authorizer was not created")
 	}
+	approve := bootstrapProjectPair(t, projectID, access.ActionDeliveryApprove)
 	credential := access.APICredential{
 		Principal: access.Principal{ID: "reviewer", Kind: access.PrincipalKindUser},
-		Token:     access.APIToken{ID: "reviewer-token", PrincipalID: "reviewer", Capabilities: []access.Capability{access.CapabilityProjectAdmin}},
+		Token:     access.APIToken{ID: "reviewer-token", PrincipalID: "reviewer", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{approve}},
 	}
 	request := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{
 		"project": projectID.String(), "publication": "publication_1", "approval": "approval_1",
@@ -1054,7 +1166,7 @@ func TestAPIGenPublicationApprovalBootstrapUsesReviewerCredential(t *testing.T) 
 		t.Fatalf("reviewer approval bootstrap status = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusNoContent)
 	}
 
-	authoringScope, err := access.NewAuthoringScope("instance-prod", projectID, []access.Capability{access.CapabilityProjectAdmin})
+	authoringScope, err := access.NewAuthoringScope("instance-prod", projectID, []access.PermissionPair{approve})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1082,21 +1194,21 @@ func TestAPIGenPublicationApprovalBootstrapUsesReviewerCredential(t *testing.T) 
 		scope access.AuthoringScope
 	}{
 		{name: "wrong project", scope: func() access.AuthoringScope {
-			scope, err := access.NewAuthoringScope("instance-prod", projectgraph.ResourceID("project_other"), []access.Capability{access.CapabilityProjectAdmin})
+			scope, err := access.NewAuthoringScope("instance-prod", projectgraph.ResourceID("project_other"), []access.PermissionPair{bootstrapProjectPair(t, "project_other", access.ActionDeliveryApprove)})
 			if err != nil {
 				t.Fatal(err)
 			}
 			return scope
 		}()},
 		{name: "wrong target", scope: func() access.AuthoringScope {
-			scope, err := access.NewAuthoringScope("instance-other", projectID, []access.Capability{access.CapabilityProjectAdmin})
+			scope, err := access.NewAuthoringScope("instance-other", projectID, []access.PermissionPair{approve})
 			if err != nil {
 				t.Fatal(err)
 			}
 			return scope
 		}()},
-		{name: "missing project admin", scope: func() access.AuthoringScope {
-			scope, err := access.NewAuthoringScope("instance-prod", projectID, []access.Capability{access.CapabilityResourcePublish})
+		{name: "missing approval action", scope: func() access.AuthoringScope {
+			scope, err := access.NewAuthoringScope("instance-prod", projectID, []access.PermissionPair{bootstrapProjectPair(t, projectID, access.ActionDeliveryPublish)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1197,6 +1309,7 @@ func TestAPIGenBuildDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T)
 	contract := APIGenOperationContract{
 		OperationID: "buildDeliveryPlan", Method: http.MethodPost,
 		Path: "/api/v1/projects/{project}/delivery/plans/{plan}/build", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryBuild), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_USE", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 	}
@@ -1225,7 +1338,7 @@ func TestAPIGenBuildDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T)
 	if !ok || protected == nil {
 		t.Fatal("delivery authorizer was not created")
 	}
-	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceUse}}}
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{bootstrapProjectPair(t, projectID, access.ActionDeliveryBuild)}}}
 	r := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/plans/plan_1/build", map[string]string{"project": "project_demo", "plan": "plan_1"})
 	r.Header.Set("Authorization", "Bearer test-token")
 	r = r.WithContext(WithAPICredential(r.Context(), credential))
@@ -1266,6 +1379,7 @@ func TestAPIGenDeliveryPlanResolutionReadsUseBootstrapBeforeFirstGeneration(t *t
 			contract := APIGenOperationContract{
 				OperationID: test.operationID, Method: http.MethodGet,
 				Path: test.path, Protected: true, AuthzMode: "privilege",
+				Action: string(access.ActionDeliveryRead), Resolver: string(access.TypedOperationResolverDelivery),
 				Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 				Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 			}
@@ -1296,7 +1410,7 @@ func TestAPIGenDeliveryPlanResolutionReadsUseBootstrapBeforeFirstGeneration(t *t
 			if !ok || protected == nil {
 				t.Fatal("delivery authorizer was not created")
 			}
-			credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+			credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{bootstrapProjectPair(t, projectID, access.ActionDeliveryRead)}}}
 			r := apigenRequest(http.MethodGet, test.requestPath, test.parameters)
 			r.Header.Set("Authorization", "Bearer test-token")
 			r = r.WithContext(WithAPICredential(r.Context(), credential))
@@ -1318,6 +1432,7 @@ func TestAPIGenDeliveryReadPreservesTargetOwnedAuthorizationForLocalDeveloper(t 
 	contract := APIGenOperationContract{
 		OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet,
 		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryRead), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 	}
@@ -1361,6 +1476,7 @@ func TestAPIGenPublishDeliveryCandidateUsesBootstrapMarker(t *testing.T) {
 	contract := APIGenOperationContract{
 		OperationID: "publishDeliveryCandidate", Method: http.MethodPost,
 		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}/publish", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryPublish), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_PUBLISH", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
 	}
@@ -1395,7 +1511,7 @@ func TestAPIGenPublishDeliveryCandidateUsesBootstrapMarker(t *testing.T) {
 	if !ok || protected == nil {
 		t.Fatal("delivery authorizer was not created")
 	}
-	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourcePublish}}}
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{bootstrapProjectPair(t, projectID, access.ActionDeliveryPublish)}}}
 	r := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/candidates/candidate_1/publish", map[string]string{"project": "project_demo", "candidate": "candidate_1"})
 	r.Header.Set("Authorization", "Bearer test-token")
 	r = r.WithContext(WithAPICredential(r.Context(), credential))
@@ -1410,8 +1526,9 @@ func TestAPIGenSourcePlanPreActivationRequiresExplicitRESTTokenPlatformAdmin(t *
 	contract := APIGenOperationContract{
 		OperationID: "planProjectCandidateSynchronization", Method: http.MethodPost,
 		Path: "/api/v1/projects/{project}/candidate-sync/plan", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryPlan), Resolver: string(access.TypedOperationResolverDelivery),
 		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_EDIT", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
-		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "delivery"},
 	}
 	newAuthorizer := func(admin bool) *APIGenAuthorizer {
 		module := browserGuardModule(browserGuardRepository{admin: admin}, Principal{ID: "admin"}, true)
@@ -1441,7 +1558,7 @@ func TestAPIGenSourcePlanPreActivationRequiresExplicitRESTTokenPlatformAdmin(t *
 		protected.ServeHTTP(recorder, r)
 		return recorder.Code, recorder.Body.String()
 	}
-	explicit := &access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceEdit}}}
+	explicit := &access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{bootstrapProjectPair(t, "project_demo", access.ActionDeliveryPlan)}}}
 	if status, body := serve(newAuthorizer(true), explicit); status != http.StatusNoContent {
 		t.Fatalf("explicit token status = %d body=%q, want %d", status, body, http.StatusNoContent)
 	}
@@ -1449,7 +1566,7 @@ func TestAPIGenSourcePlanPreActivationRequiresExplicitRESTTokenPlatformAdmin(t *
 		t.Fatalf("session status = %d, want %d", status, http.StatusUnauthorized)
 	}
 	empty := *explicit
-	empty.Token.Capabilities = []access.Capability{}
+	empty.Token.Permissions = nil
 	if status, _ := serve(newAuthorizer(true), &empty); status != http.StatusForbidden {
 		t.Fatalf("empty token status = %d, want %d", status, http.StatusForbidden)
 	}
@@ -1509,6 +1626,7 @@ func TestAPIGenActiveDeliveryCapabilityUsesRoleBinding(t *testing.T) {
 	contract := APIGenOperationContract{
 		OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet,
 		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}", Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryRead), Resolver: string(access.TypedOperationResolverDelivery),
 		Extensions: map[string]any{
 			apiGenObjectScopeExtension: "project",
 			"x-authz":                  map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"},
@@ -1580,6 +1698,7 @@ func TestAPIGenDeliveryStatusUsesActiveSnapshotForSessionAndProjectToken(t *test
 		"getDeliveryCandidateStatus": {
 			OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet, Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}",
 			Protected: true, AuthzMode: "privilege",
+			Action: string(access.ActionDeliveryRead), Resolver: string(access.TypedOperationResolverDelivery),
 			Extensions: map[string]any{apiGenObjectScopeExtension: "project", "x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"}},
 		},
 	}
@@ -1624,7 +1743,7 @@ func TestAPIGenDeliveryStatusUsesActiveSnapshotForSessionAndProjectToken(t *test
 			if !ok || protected == nil {
 				t.Fatal("delivery status authorizer was not created")
 			}
-			credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_project_read", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+			credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_project_read", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{bootstrapProjectPair(t, projectID, access.ActionDeliveryRead)}}}
 			request := apigenRequest(http.MethodGet, contract.Path, map[string]string{"project": projectID.String(), "candidate": "candidate_1"})
 			request = request.WithContext(WithAPICredential(request.Context(), credential))
 			recorder := httptest.NewRecorder()
@@ -1645,6 +1764,7 @@ func TestAPIGenDeliveryStatusBootstrapRemainsFailClosed(t *testing.T) {
 	contract := APIGenOperationContract{
 		OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet, Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}",
 		Protected: true, AuthzMode: "privilege",
+		Action: string(access.ActionDeliveryRead), Resolver: string(access.TypedOperationResolverDelivery),
 		Extensions: map[string]any{apiGenObjectScopeExtension: "project", "x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"}},
 	}
 	authorizer, err := module.APIGenAuthorizer(apigenRuntimeFake{project: projectID, err: errors.New("runtime warm-up")}, map[string]APIGenOperationContract{"getDeliveryCandidateStatus": contract}, APIGenResourceResolvers{Delivery: func(context.Context, *http.Request, string, string, projectgraph.ResourceID, access.Capability) (bool, error) {
@@ -1667,7 +1787,7 @@ func TestAPIGenDeliveryStatusBootstrapRemainsFailClosed(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("bootstrap session status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
-	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_project_read", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_project_read", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{bootstrapProjectPair(t, projectID, access.ActionDeliveryRead)}}}
 	request = request.WithContext(WithAPICredential(request.Context(), credential))
 	request.Header.Set("Authorization", "Bearer test-token")
 	recorder = httptest.NewRecorder()
@@ -1748,6 +1868,40 @@ func TestAPIGenResourceResolverRejectsMismatchedCanonicalScope(t *testing.T) {
 		if _, ok := authorizer.resourceResolverForContract(contract); ok {
 			t.Errorf("%s accepted a mismatched or legacy scope", name)
 		}
+	}
+}
+
+func TestAPIGenTypedResolverOwnsSecurityTargetWhenCommandTargetIsProtocolScope(t *testing.T) {
+	contract := APIGenOperationContract{
+		OperationID: "createRefreshRun", Path: "/api/v1/projects/{project}/refresh-runs",
+		Protected: true, AuthzMode: "privilege", Action: string(access.ActionPipelineRun), Resolver: string(access.TypedOperationResolverPipeline),
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: string(access.CapabilityResourceUse), Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "pipeline", "x-authz": map[string]any{"mode": "privilege", "privilege": string(access.CapabilityResourceUse)}},
+	}
+	typed, err := NewAPIGenTypedOperationRequirementService(map[string]APIGenOperationContract{"createRefreshRun": contract})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := access.NewResourceRef("pipeline:orders", projectgraph.KindPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer := &APIGenAuthorizer{
+		typed: typed,
+		scopes: map[string]apiGenResourceScope{
+			"pipeline": {pathParameter: "pipeline", kind: projectgraph.KindPipeline, resolver: func(*http.Request, projectgraph.ResourceID) []access.ResourceRef {
+				return []access.ResourceRef{resolved}
+			}},
+		},
+	}
+	resolver, ok := authorizer.resourceResolverForContract(contract)
+	if !ok || resolver == nil {
+		t.Fatal("typed Pipeline resolver was rejected because the command protocol target is Project")
+	}
+	request := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/refresh-runs", map[string]string{"project": "project_demo"})
+	resources := resolver(request, "project_demo")
+	if len(resources) != 1 || resources[0] != resolved {
+		t.Fatalf("resolved resources = %#v, want %#v", resources, []access.ResourceRef{resolved})
 	}
 }
 

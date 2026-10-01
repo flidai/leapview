@@ -39,6 +39,7 @@ func TestQualificationComposeEnvironmentKeepsOperationSecretOutOfArguments(t *te
 	)
 	require.NoError(t, err)
 	require.Equal(t, []byte("ok"), output)
+	require.True(t, captured.StdoutOnly)
 	require.NotContains(t, strings.Join(captured.Arguments, " "), secret)
 	require.Contains(t, captured.Arguments, "qualification-project")
 	require.Contains(t, captured.Arguments, name)

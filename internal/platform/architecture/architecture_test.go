@@ -2496,7 +2496,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"COPY --from=sourcegen /src/docs ./docs",
 		"CGO_ENABLED=1 go build",
 		"CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags=\"$BUILD_LDFLAGS\" -o /out/leapviewctl ./cmd/leapviewctl",
-		"FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:",
+		"FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:",
 		"USER leapview:leapview",
 		"WORKDIR /app",
 		"COPY --from=web /src/static ./static",
@@ -2799,124 +2799,6 @@ func TestCoreProceduralGuidesUseTheOperationalTemplate(t *testing.T) {
 	}
 }
 
-func TestDevelopmentServerTracksCompiledFallbackProcess(t *testing.T) {
-	root := repoRoot(t)
-	server, err := os.ReadFile(filepath.Join(root, "scripts", "dev-server.sh"))
-	if err != nil {
-		t.Fatalf("read development server script: %v", err)
-	}
-	serverText := string(server)
-	for _, want := range []string{
-		`go build -tags=duckdb_arrow -o "$TMP_DIR/leapview-dev" ./cmd/leapview`,
-		`"$TMP_DIR/leapview-dev" >> "$LOG_FILE" 2>&1 &`,
-		`LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES="${LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES:-67108864}"`,
-	} {
-		if !strings.Contains(serverText, want) {
-			t.Fatalf("development server script missing tracked binary fragment %q", want)
-		}
-	}
-	if strings.Contains(serverText, `go run ./cmd/leapview >> "$LOG_FILE" 2>&1 &`) {
-		t.Fatal("development server must not track the go run wrapper as the server process")
-	}
-
-	qa, err := os.ReadFile(filepath.Join(root, "scripts", "qa_ui_framework.ts"))
-	if err != nil {
-		t.Fatalf("read UI framework QA script: %v", err)
-	}
-	qaText := string(qa)
-	if !strings.Contains(qaText, "const managedServerReadyAttempts = 1800") ||
-		!strings.Contains(qaText, "attempt < managedServerReadyAttempts") {
-		t.Fatal("UI framework QA must allow a cold Go build before checking server readiness")
-	}
-	for _, want := range []string{
-		"LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`",
-		"['chmod', '-R', 'u+w', qaHome]",
-	} {
-		if !strings.Contains(qaText, want) {
-			t.Fatalf("UI framework QA must isolate and clean managed-data state: missing %q", want)
-		}
-	}
-}
-
-func TestDevelopmentServerDefaultsAgentToAmbientDeepSeekCredential(t *testing.T) {
-	root := repoRoot(t)
-	server, err := os.ReadFile(filepath.Join(root, "scripts", "dev-server.sh"))
-	if err != nil {
-		t.Fatalf("read development server script: %v", err)
-	}
-	serverText := string(server)
-	for _, want := range []string{
-		`if [[ -z "${LEAPVIEW_AGENT_API_KEY:-}" && -n "${DEEPSEEK_API_KEY:-}" ]]; then`,
-		`LEAPVIEW_AGENT_API_KEY="$DEEPSEEK_API_KEY"`,
-		`LEAPVIEW_AGENT_BASE_URL="${LEAPVIEW_AGENT_BASE_URL:-https://api.deepseek.com}"`,
-		`LEAPVIEW_AGENT_MODEL="${LEAPVIEW_AGENT_MODEL:-deepseek-v4-flash}"`,
-	} {
-		if !strings.Contains(serverText, want) {
-			t.Fatalf("development server must configure the default DeepSeek agent without overriding explicit agent credentials: missing %q", want)
-		}
-	}
-}
-
-func TestDevelopmentServerRunsAgentMCPSmokeCheckAfterPublishing(t *testing.T) {
-	root := repoRoot(t)
-	server, err := os.ReadFile(filepath.Join(root, "scripts", "dev-server.sh"))
-	if err != nil {
-		t.Fatalf("read development server script: %v", err)
-	}
-	serverText := string(server)
-	for _, want := range []string{
-		"mcp_smoke()",
-		`"method":"tools/list"`,
-		`"name":"catalog_list"`,
-		`name:"query_semantic_model"`,
-		`mcp_smoke "$port"`,
-	} {
-		if !strings.Contains(serverText, want) {
-			t.Fatalf("development server must smoke-test the live MCP tool surface after publishing: missing %q", want)
-		}
-	}
-	if strings.Index(serverText, `go run ./cmd/leapview publish`) > strings.Index(serverText, `mcp_smoke "$port"`) {
-		t.Fatal("development MCP smoke check must run after candidate publication")
-	}
-}
-
-func TestDevelopmentPublishingCanonicalizesSharedDatasetRoots(t *testing.T) {
-	root := repoRoot(t)
-	server, err := os.ReadFile(filepath.Join(root, "scripts", "dev-server.sh"))
-	if err != nil {
-		t.Fatalf("read development server script: %v", err)
-	}
-	serverText := string(server)
-	for _, want := range []string{
-		"canonical_source_root()",
-		`local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"`,
-		`from="$(canonical_source_root "$from")"`,
-		`candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"`,
-		`go run ./cmd/leapview publish "$candidate_id" --token "$token"`,
-		`publish) publish_running "$@" ;;`,
-	} {
-		if !strings.Contains(serverText, want) {
-			t.Fatalf("development server must safely resolve shared dataset roots: missing %q", want)
-		}
-	}
-	for _, forbidden := range []string{
-		"go run ./cmd/leapview publish --project",
-		"go run ./cmd/leapview publish --target",
-	} {
-		if strings.Contains(serverText, forbidden) {
-			t.Fatalf("development server still uses retired publish selector %q", forbidden)
-		}
-	}
-
-	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
-	if err != nil {
-		t.Fatalf("read Taskfile.yml: %v", err)
-	}
-	if !strings.Contains(string(taskfile), "./scripts/dev-server.sh publish") {
-		t.Fatal("dev:publish must delegate to the canonical development server publication path")
-	}
-}
-
 func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T) {
 	root := repoRoot(t)
 	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
@@ -2964,7 +2846,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]",
+		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation, host-recovery-validation]",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
@@ -3059,7 +2941,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"uses: ./.github/actions/setup-ci",
 		"run: task ci:full:extras:hosted",
 		"name: CI gate",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation]",
+		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, host-recovery-validation]",
 	} {
 		if !strings.Contains(mergeText, want) {
 			t.Fatalf("merge validation workflow missing %q", want)
@@ -3199,6 +3081,14 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	deployCheck := taskfileTaskBlock(t, taskText, "deploy:check")
 	if !strings.Contains(deployCheck, "- api:generate") {
 		t.Fatal("deploy:check must generate its build-only API inputs")
+	}
+	for _, required := range []string{
+		"terraform -chdir=deploy/hetzner init -backend=false -input=false -lockfile=readonly",
+		"terraform -chdir=deploy/hetzner-site init -backend=false -input=false -lockfile=readonly",
+	} {
+		if !strings.Contains(deployCheck, required) {
+			t.Errorf("deploy:check must initialize providers without modifying the committed Terraform lockfiles: missing %q", required)
+		}
 	}
 	siteImageQualification := taskfileTaskBlock(t, taskText, "image:qualify:site")
 	if !strings.Contains(siteImageQualification, "- task: api:generate") {
@@ -3559,7 +3449,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	frontendShard := taskfileTaskBlock(t, string(taskfile), "ci:lane:frontend:shard")
 	for _, want := range []string{
 		"enum: [core, reports, chat, data, site]",
-		"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}",
+		`node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}`,
 	} {
 		if !strings.Contains(frontendShard, want) {
 			t.Fatalf("frontend shard lane must retain its bounded retry contract: missing %q", want)

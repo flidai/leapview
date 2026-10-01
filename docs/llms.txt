@@ -118,6 +118,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Reference](/docs/reference): Find exact syntax and supported contracts.
 - [Environment variable reference](/docs/configuration): Process-wide settings generated from the runtime configuration specification.
 - [Supported capabilities](/docs/reference/capabilities): Review supported resource, data, visual, and integration surfaces.
+- [Typed permission catalog](/docs/reference/permissions): Review canonical typed actions, target scopes, prerequisites, and role expansions.
 - [Data-resource connector capabilities](/docs/reference/data-resource-connectors): Review generated connector locations, approved extensions, target-binding modes, and typed path options.
 - [CLI troubleshooting](/docs/cli/troubleshooting): Diagnose local validation and remote operation failures.
 
@@ -128,14 +129,14 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [add_dashboard_visual](/docs/agent-tools/add_dashboard_visual): Add a governed dashboard visual to a private draft using an exact expected revision.
 - [assign_dashboard_field](/docs/agent-tools/assign_dashboard_field): Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.
 - [catalog_get](/docs/agent-tools/catalog_get): Resolve one exact authorized project resource ID and return compact metadata.
-- [catalog_list](/docs/agent-tools/catalog_list): Browse one authorized project-resource hierarchy level when a parent ref is known.
-- [catalog_search](/docs/agent-tools/catalog_search): Search authorized project resources by stable ID, name, description, or domain metadata.
+- [catalog_list](/docs/agent-tools/catalog_list): Browse authorized project resources from the project ref, or one dependency level from a resource ref.
+- [catalog_search](/docs/agent-tools/catalog_search): Search authorized project resources by stable ID, name, description, semantic metric or dimension names and labels, or domain metadata.
 - [create_dashboard_draft](/docs/agent-tools/create_dashboard_draft): Create a private dashboard draft owned by the authenticated principal.
 - [docs_read](/docs/agent-tools/docs_read): Read a bounded line window from one LeapView document returned by docs_search.
 - [docs_search](/docs/agent-tools/docs_search): Search LeapView's version-matched product documentation.
 - [edit_dashboard_source](/docs/agent-tools/edit_dashboard_source): Apply atomic exact-text replacements to one canonical dashboard YAML revision.
 - [execute_dashboard_command](/docs/agent-tools/execute_dashboard_command): Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision.
-- [export_dashboard_yaml](/docs/agent-tools/export_dashboard_yaml): Export an authorized authored dashboard source as canonical project YAML.
+- [export_dashboard_yaml](/docs/agent-tools/export_dashboard_yaml): Export an authorized dashboard source as canonical project YAML.
 - [fork_dashboard](/docs/agent-tools/fork_dashboard): Fork an authorized project or instance dashboard source into a private draft.
 - [get_dashboard](/docs/agent-tools/get_dashboard): Get one authorized dashboard's governed metadata.
 - [get_dashboard_draft](/docs/agent-tools/get_dashboard_draft): Read the exact current private draft and retained revision for one dashboard.
@@ -160,6 +161,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### CLI commands
 
 - [CLI command reference](/docs/cli/reference): Browse every generated LeapView command.
+- [leapview acknowledge-project-claim-publisher](/docs/cli/acknowledge-project-claim-publisher): Acknowledge durable handoff of a Project publisher credential
 - [leapview admin](/docs/cli/admin): Administrative utilities
 - [leapview agent](/docs/cli/agent): Use the LeapView governed BI agent
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation

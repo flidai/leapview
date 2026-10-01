@@ -1,6 +1,7 @@
-// Package accessadapter bridges dashboard authoring to the canonical project
-// resource capability contract. Authoring does not know about access grants;
-// the adapter supplies one narrow, graph-identity based decision boundary.
+// Package accessadapter bridges dashboard authoring to the canonical typed
+// action/resource authorization contract. Authoring does not know about access
+// grants; the adapter supplies one narrow, graph-identity based decision
+// boundary.
 package accessadapter
 
 import (
@@ -17,35 +18,39 @@ import (
 
 var ErrInvalid = errors.New("invalid dashboard authoring authorization request")
 
-// AuthorizeResource is implemented by access-owned policy evaluation. The
-// project and resource identities are graph IDs; capability is the canonical
-// object-grant action, never a legacy broad-scope privilege.
-type AuthorizeResource func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
+// AuthorizeTypedResource evaluates an exact action/resource pair and reports
+// whether a typed decision was available. A missing typed decision is denied;
+// it can never be replaced by legacy capability authority.
+type AuthorizeTypedResource func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Action) (typed bool, allowed bool, err error)
 
-type AuthorizeProjectCapability func(context.Context, string, graph.ResourceID, access.Capability) (bool, error)
+// AuthorizeTypedProject evaluates an exact project/action pair.
+type AuthorizeTypedProject func(context.Context, string, graph.ResourceID, access.Action) (typed bool, allowed bool, err error)
 
 type Options struct {
-	AuthorizeResource          AuthorizeResource
-	AuthorizeProjectCapability AuthorizeProjectCapability
+	AuthorizeTypedResource AuthorizeTypedResource
+	AuthorizeTypedProject  AuthorizeTypedProject
 }
 
 type Adapter struct {
-	authorizeResource AuthorizeResource
-	authorizeProject  AuthorizeProjectCapability
+	authorizeTypedResource AuthorizeTypedResource
+	authorizeTypedProject  AuthorizeTypedProject
 }
 
 func New(options Options) (*Adapter, error) {
-	if options.AuthorizeResource == nil || options.AuthorizeProjectCapability == nil {
-		return nil, fmt.Errorf("dashboard authoring resource and project capability authorizers are required")
+	if options.AuthorizeTypedResource == nil || options.AuthorizeTypedProject == nil {
+		return nil, fmt.Errorf("dashboard authoring typed resource and project authorizers are required")
 	}
-	return &Adapter{authorizeResource: options.AuthorizeResource, authorizeProject: options.AuthorizeProjectCapability}, nil
+	return &Adapter{
+		authorizeTypedResource: options.AuthorizeTypedResource,
+		authorizeTypedProject:  options.AuthorizeTypedProject,
+	}, nil
 }
 
 var _ service.Authorizer = (*Adapter)(nil)
 
 func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRequest) error {
-	if a == nil || a.authorizeResource == nil || a.authorizeProject == nil {
-		return fmt.Errorf("dashboard authoring resource and project capability authorizers are required")
+	if a == nil || a.authorizeTypedResource == nil || a.authorizeTypedProject == nil {
+		return fmt.Errorf("dashboard authoring typed resource and project authorizers are required")
 	}
 	actorID := strings.TrimSpace(request.ActorID)
 	if actorID == "" {
@@ -57,47 +62,54 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
 	}
-	capability, err := capabilityForAction(request.Action)
+	resource, err := access.NewResourceRef(request.DashboardID, graph.KindDashboard)
+	if err != nil {
+		return fmt.Errorf("%w: dashboard resource: %v", ErrInvalid, err)
+	}
+	resourceAction, err := typedActionForAuthorization(request.Action)
 	if err != nil {
 		return err
 	}
-	var allowed bool
+
 	switch request.Target {
-	case service.AuthorizationTargetProjectDashboard:
-		resource, resourceErr := access.NewResourceRef(request.DashboardID, graph.KindDashboard)
-		if resourceErr != nil {
-			return fmt.Errorf("%w: dashboard resource: %v", ErrInvalid, resourceErr)
+	case service.AuthorizationTargetProjectDashboard, service.AuthorizationTargetAuthoredDashboard:
+		if allowed, err := a.authorizeResource(ctx, actorID, request.ProjectID, resource, resourceAction); err != nil || !allowed {
+			if err != nil {
+				return err
+			}
+			return access.ErrForbidden
 		}
-		allowed, err = a.authorizeResource(ctx, actorID, request.ProjectID, resource, capability)
+		if request.Target == service.AuthorizationTargetAuthoredDashboard && request.DependencyChange {
+			if err := a.authorizeSemanticDependency(ctx, actorID, request.ProjectID, request.SemanticModel); err != nil {
+				return err
+			}
+		}
+		return nil
 	case service.AuthorizationTargetNewDashboard:
 		if request.Action != authoring.AuthorizationActionEdit {
 			return fmt.Errorf("%w: new-dashboard authorization requires edit action", ErrInvalid)
 		}
-		allowed, err = a.authorizeProject(ctx, actorID, request.ProjectID, capability)
-		if err == nil && allowed && strings.TrimSpace(request.OwnerPrincipalID) != "" && strings.TrimSpace(request.OwnerPrincipalID) != actorID {
-			allowed, err = a.authorizeProject(ctx, actorID, request.ProjectID, access.CapabilityProjectAdmin)
-		}
-		if err == nil && allowed {
-			if modelErr := request.SemanticModel.Validate(); modelErr != nil {
-				return fmt.Errorf("%w: semantic model: %v", ErrInvalid, modelErr)
+		if allowed, err := a.authorizeProject(ctx, actorID, request.ProjectID, access.ActionDashboardCreate); err != nil || !allowed {
+			if err != nil {
+				return err
 			}
-			semanticResource, resourceErr := access.NewResourceRef(request.SemanticModel, graph.KindSemanticModel)
-			if resourceErr != nil {
-				return fmt.Errorf("%w: semantic model resource: %v", ErrInvalid, resourceErr)
-			}
-			allowed, err = a.authorizeResource(ctx, actorID, request.ProjectID, semanticResource, access.CapabilityResourceRead)
+			return access.ErrForbidden
 		}
-	case service.AuthorizationTargetAuthoredDashboard:
-		allowed, err = a.authorizeProject(ctx, actorID, request.ProjectID, capability)
-		if err == nil && allowed && strings.TrimSpace(request.OwnerPrincipalID) != actorID {
-			if request.Action == authoring.AuthorizationActionView && request.Visibility == authoring.VisibilityOrganization {
-				break
-			}
-			allowed, err = a.authorizeProject(ctx, actorID, request.ProjectID, access.CapabilityProjectAdmin)
-		}
+		return a.authorizeSemanticDependency(ctx, actorID, request.ProjectID, request.SemanticModel)
 	default:
 		return fmt.Errorf("%w: unsupported authorization target %q", ErrInvalid, request.Target)
 	}
+}
+
+func (a *Adapter) authorizeSemanticDependency(ctx context.Context, actorID string, projectID graph.ResourceID, semanticModel graph.ResourceID) error {
+	if err := semanticModel.Validate(); err != nil {
+		return fmt.Errorf("%w: semantic model dependency: %v", ErrInvalid, err)
+	}
+	resource, err := access.NewResourceRef(semanticModel, graph.KindSemanticModel)
+	if err != nil {
+		return fmt.Errorf("%w: semantic model dependency resource: %v", ErrInvalid, err)
+	}
+	allowed, err := a.authorizeResource(ctx, actorID, projectID, resource, access.ActionSemanticRead)
 	if err != nil {
 		return err
 	}
@@ -107,18 +119,40 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 	return nil
 }
 
-func capabilityForAction(action authoring.AuthorizationAction) (access.Capability, error) {
+func (a *Adapter) authorizeResource(ctx context.Context, actorID string, projectID graph.ResourceID, resource access.ResourceRef, action access.Action) (bool, error) {
+	typed, allowed, err := a.authorizeTypedResource(ctx, actorID, projectID, resource, action)
+	if err != nil {
+		return false, err
+	}
+	if !typed {
+		return false, access.ErrForbidden
+	}
+	return allowed, nil
+}
+
+func (a *Adapter) authorizeProject(ctx context.Context, actorID string, projectID graph.ResourceID, action access.Action) (bool, error) {
+	typed, allowed, err := a.authorizeTypedProject(ctx, actorID, projectID, action)
+	if err != nil {
+		return false, err
+	}
+	if !typed {
+		return false, access.ErrForbidden
+	}
+	return allowed, nil
+}
+
+func typedActionForAuthorization(action authoring.AuthorizationAction) (access.Action, error) {
 	switch action {
 	case authoring.AuthorizationActionView:
-		return access.CapabilityResourceRead, nil
+		return access.ActionDashboardRead, nil
 	case authoring.AuthorizationActionEdit:
-		return access.CapabilityResourceEdit, nil
+		return access.ActionDashboardUpdate, nil
 	case authoring.AuthorizationActionPublish:
-		return access.CapabilityResourcePublish, nil
+		return access.ActionDashboardPublish, nil
 	case authoring.AuthorizationActionArchive:
-		return access.CapabilityResourceManage, nil
+		return access.ActionDashboardDelete, nil
 	case authoring.AuthorizationActionDelete:
-		return access.CapabilityResourceManage, nil
+		return access.ActionDashboardDelete, nil
 	default:
 		return "", fmt.Errorf("%w: unsupported authorization action %q", ErrInvalid, action)
 	}

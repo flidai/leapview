@@ -1,12 +1,60 @@
 import { expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { blockingAxeViolations, formatAxeViolations, type AxeViolation } from './axe_accessibility'
+import { appendCapturedOutput, drainProcessOutput, formatManagedStartupFailure } from './qa_ui_framework_process'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
-test('UI framework QA gives the managed dev task its full readiness budget', async () => {
+test('managed startup failures show a bounded task log tail with credentials redacted', () => {
+  const output = appendCapturedOutput(
+    'older log lines\n',
+    'PMTiles extraction failed: unexpected EOF\npublisher token: lv_pat_example123\nraw credential lv_pat_other456\nPGPASSWORD=db-password\nLEAPVIEW_DEV_API_TOKEN=api-token-value\nLEAPVIEW_DEV_BOOTSTRAP_TOKEN=bootstrap-token-value\nAWS_SECRET_ACCESS_KEY=aws-secret-value\n\"client_secret\": \"oauth-secret-value\"\nordinary_status=500\npostgres://qa-user:db-secret@localhost/qa\n',
+  )
+  const message = formatManagedStartupFailure('task dev exited with status 201', output)
+
+  expect(message).toContain('PMTiles extraction failed: unexpected EOF')
+  expect(message).toContain('publisher token: [REDACTED]')
+  expect(message).toContain('raw credential lv_pat_[REDACTED]')
+  expect(message).toContain('postgres://qa-user:[REDACTED]@localhost/qa')
+  expect(message).not.toContain('lv_pat_example123')
+  expect(message).not.toContain('lv_pat_other456')
+  expect(message).not.toContain('db-secret')
+  expect(message).not.toContain('db-password')
+  expect(message).not.toContain('api-token-value')
+  expect(message).not.toContain('bootstrap-token-value')
+  expect(message).not.toContain('aws-secret-value')
+  expect(message).not.toContain('oauth-secret-value')
+  expect(message).toContain('ordinary_status=500')
+  expect(appendCapturedOutput('123456', '7890', 6)).toBe('567890')
+})
+
+test('managed startup output draining cancels readers that outlive the task', async () => {
+  let cancelled = false
+  const completion = drainProcessOutput(
+    [new Promise<void>(() => {})],
+    async () => { cancelled = true },
+    5,
+    5,
+  )
+  const outcome = await new Promise<'completed' | 'hung'>((resolve) => {
+    const timer = setTimeout(() => resolve('hung'), 500)
+    void completion.then(() => {
+      clearTimeout(timer)
+      resolve('completed')
+    })
+  })
+
+  expect(outcome).toBe('completed')
+  expect(cancelled).toBe(true)
+})
+
+test('UI framework QA separates bounded task startup from server readiness budgets', async () => {
   const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
 
+  expect(source).toContain('const managedServerReadyAttempts = 1800')
+  expect(source).toContain('const managedTaskStartupAttempts = 9_000')
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
+  expect(source).toMatch(/async function waitForManagedServer\(\): Promise<string> \{[\s\S]*?attempt < managedTaskStartupAttempts/)
+  expect(source).toMatch(/async function waitForProjectReady\(baseURL: string\): Promise<void> \{[\s\S]*?attempt < managedServerReadyAttempts/)
 })
 
 test('UI framework QA owns an isolated disposable PostgreSQL topology', async () => {
@@ -28,6 +76,34 @@ test('UI framework QA waits for asynchronous publication activation', async () =
   expect(source).toContain("new URL('/healthz', baseURL)")
   expect(source).toContain('await waitForProjectReady(started)')
   expect(source).toContain("new URL('/explore', baseURL)")
+})
+
+test('UI framework QA seeds managed data for its first publication', async () => {
+  const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
+
+  expect(source).toContain("const command = ['./scripts/dev-server.sh', 'publish']")
+  expect(source).toContain("...qaPostgresEnv, ...qaRuntimeEnv, LEAPVIEW_DEV_SKIP_DATA_SYNC: '0'")
+  expect(source).toContain("LEAPVIEW_DEV_SKIP_DATA_SYNC: '0'")
+  expect(source).not.toContain("const command = ['task', 'dev:publish']")
+})
+
+test('UI framework QA signs in for protected routes without masking the login page', async () => {
+  const [runner, routes, visual, copy] = await Promise.all([
+    readFile('scripts/qa_ui_framework.ts', 'utf8'),
+    readFile('scripts/datastar_lit_route_qa.ts', 'utf8'),
+    readFile('scripts/playwright.visual.config.ts', 'utf8'),
+    readFile('scripts/dashboard_copy_builder_qa.ts', 'utf8'),
+  ])
+
+  expect(runner).toContain('Continue as Local Developer')
+  expect(runner).toContain('LEAPVIEW_QA_STORAGE_STATE')
+  expect(routes).toContain("route.path !== '/login'")
+  expect(routes).toContain('LEAPVIEW_QA_STORAGE_STATE')
+  expect(visual).toContain('LEAPVIEW_QA_STORAGE_STATE')
+  expect(copy).toContain('storageState')
+  expect(runner).toContain("LEAPVIEW_QA_DISPOSABLE: startedServer ? '1' : '0'")
+  expect(routes).toContain("Bun.env.LEAPVIEW_QA_DISPOSABLE === '1'")
+  expect(copy).not.toContain('copied dashboard cleanup')
 })
 
 test('development startup reuses the bounded CI fixture supply', async () => {
@@ -57,6 +133,8 @@ test('development readiness files are published only after PostgreSQL bootstrap'
   const readiness = source.lastIndexOf('echo "$port" > "$PORT_FILE"')
   expect(bootstrap).toBeGreaterThanOrEqual(0)
   expect(readiness).toBeGreaterThan(bootstrap)
+  const credentialPreparation = source.lastIndexOf('if ! prepare_dev_auth; then')
+  expect(readiness).toBeGreaterThan(credentialPreparation)
   expect(source).toContain('Publish the readiness contract only after the final server')
 })
 
@@ -66,6 +144,17 @@ test('development publication can seed a healthy server before a project is acti
 
   expect(publishRunning).toContain('"http://localhost:${port}/healthz"')
   expect(publishRunning).not.toContain('"http://localhost:${port}/"')
+})
+
+test('managed development waits for the published Project before handing over the UI', async () => {
+  const [server, taskfile] = await Promise.all([
+    readFile('scripts/dev-server.sh', 'utf8'),
+    readFile('Taskfile.yml', 'utf8'),
+  ])
+
+  expect(server).toContain('.checks.runtime == "ok"')
+  expect(server).toContain('wait_active_project "$port" || return 1')
+  expect(taskfile).toContain('      - ./scripts/dev-server.sh start')
 })
 
 test('maintained headless workflows use the managed PostgreSQL dev lifecycle', async () => {
@@ -116,16 +205,19 @@ test('managed development keeps bypass HTTP loopback-only and preserves caller o
   expect(capture).toContain('LEAPVIEW_ADDR: `127.0.0.1:${port}`')
 })
 
-test('managed development keeps an explicit PORT outside worktree allocation', async () => {
+test('managed development reuses a pinned port and fails instead of silently changing origins', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
   const ensurePort = source.indexOf('ensure_port()')
-  const explicitPort = source.indexOf('if [[ -n "${PORT:-}" ]]', ensurePort)
-  const managedRange = source.indexOf('local end=$((PORT_START + PORT_COUNT - 1))', explicitPort)
+  const runner = source.indexOf('runner_name()', ensurePort)
 
-  expect(explicitPort).toBeGreaterThanOrEqual(0)
-  expect(source.slice(explicitPort, managedRange)).toContain('echo "$candidate"')
-  expect(source.slice(explicitPort, managedRange)).toContain('Explicit PORT')
-  expect(source.slice(explicitPort, managedRange)).not.toContain('PORT_START')
+  expect(source).toContain('PREFERRED_PORT_FILE="$TMP_DIR/dev-server.preferred-port"')
+  expect(source).toContain('echo "$port" > "$PREFERRED_PORT_FILE"')
+  expect(source.slice(ensurePort, runner)).toContain('Development port $candidate is occupied')
+  expect(source.slice(ensurePort, runner)).not.toContain('PORT_START')
+  expect(source.slice(ensurePort, runner)).not.toContain('offset')
+  expect(source).toContain('LEAPVIEW_DEV_BROWSER_SESSION_TTL="${LEAPVIEW_DEV_BROWSER_SESSION_TTL:-720h}"')
+  expect(source).toContain('LEAPVIEW_DEV_QUICK_LOGIN="${LEAPVIEW_DEV_QUICK_LOGIN:-true}"')
+  expect(source).toContain('LEAPVIEW_DEV_COOKIE_NAMESPACE="${LEAPVIEW_DEV_COOKIE_NAMESPACE:-$cookie_namespace}"')
 })
 
 test('frontend and desktop test typechecks retain semantic checking', async () => {

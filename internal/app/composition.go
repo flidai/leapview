@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
@@ -134,6 +135,14 @@ func configuredListenURL(addr string) string {
 
 func accessAuthConfig(cfg config.Config, production, cookieSecure bool) accessmodule.AuthConfig {
 	providers := []accessmodule.OIDCProviderConfig{}
+	devBrowserSessionTTL := time.Duration(0)
+	devCookieNamespace := ""
+	devQuickLogin := false
+	if !production {
+		devBrowserSessionTTL = cfg.DevBrowserSessionTTL
+		devCookieNamespace = cfg.DevCookieNamespace
+		devQuickLogin = cfg.DevQuickLogin
+	}
 	if cfg.OIDCConfigured() {
 		providers = append(providers, accessmodule.OIDCProviderConfig{
 			ID: cfg.OIDCProviderID, IssuerURL: cfg.OIDCIssuerURL, ClientID: cfg.OIDCClientID,
@@ -144,6 +153,7 @@ func accessAuthConfig(cfg config.Config, production, cookieSecure bool) accessmo
 		DevBypass: !production && cfg.DevAuthBypass, DevAPIToken: cfg.DevAPIToken, APITokenOnly: cfg.APITokenOnlyAuth,
 		LocalAuth: cfg.LocalAuth, AzureClientID: cfg.AzureClientID, AzureSecret: cfg.AzureSecret,
 		AzureCallback: cfg.AzureCallbackURL, AzureTenant: cfg.AzureTenant, CSRFKey: cfg.CSRFKey,
-		CookieSecure: cookieSecure, BootstrapTenant: cfg.AzureTenant, OIDCProviders: providers,
+		CookieSecure: cookieSecure, BrowserSessionTTL: devBrowserSessionTTL, CookieNamespace: devCookieNamespace, DevelopmentLogin: devQuickLogin,
+		BootstrapTenant: cfg.AzureTenant, OIDCProviders: providers,
 	}
 }

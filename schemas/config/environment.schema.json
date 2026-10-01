@@ -2530,6 +2530,32 @@
       "x-lifecycle": "development",
       "x-scope": "serve"
     },
+    "LEAPVIEW_DEV_BOOTSTRAP_TOKEN": {
+      "description": "Private typed bootstrap token prepared by the managed development server.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "internal",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_BROWSER_SESSION_TTL": {
+      "description": "Optional browser-session lifetime for loopback development; production keeps the standard lifetime.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DEV_CANDIDATE_KEY": {
+      "description": "Explicit private candidate key for an authorized development publication.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_COOKIE_NAMESPACE": {
+      "description": "Cookie-name suffix isolating one loopback development worktree from others on localhost.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_DEV_LOG_LINES": {
       "default": "120",
       "description": "Number of log lines shown by the managed development server.",
@@ -2599,6 +2625,14 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_QUICK_LOGIN": {
+      "default": "false",
+      "description": "Offer the durable local developer sign-in shortcut on a loopback development server; forbidden in production.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_DEV_READY_ATTEMPTS": {
       "default": "150",
       "description": "Readiness attempts made by the managed development server.",
@@ -2615,9 +2649,33 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_RESET_LOGIN": {
+      "default": "false",
+      "description": "Explicitly restore the private local development login during credential preparation.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
     "LEAPVIEW_DEV_RESTART": {
       "default": "false",
       "description": "Force the managed development server to restart.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_ROTATE_PUBLISHER": {
+      "default": "false",
+      "description": "Revoke and replace the scoped development publisher token during credential preparation.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_SKIP_DATA_SYNC": {
+      "default": "false",
+      "description": "Reuse staged managed data instead of opening new upload sessions during development publication.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
       "type": "string",
       "x-lifecycle": "development",
@@ -2726,12 +2784,60 @@
       "x-lifecycle": "supported",
       "x-scope": "healthcheck"
     },
+    "LEAPVIEW_HISTORICAL_TRANSITION_ADMISSION": {
+      "description": "Absolute path to exact-image OCI admission evidence for final artifact qualification.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_IMAGE": {
+      "description": "Exact OCI digest or local pre-merge image ID tested by the transition fixture.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_REVISION": {
+      "description": "Full source revision bound to the candidate image.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_EVIDENCE": {
+      "description": "Private absolute path for the passed transition receipt.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_FINAL_ARTIFACT": {
+      "default": "false",
+      "description": "Require an admitted published OCI digest instead of a local pre-merge image.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED": {
+      "default": "false",
+      "description": "Require execution of the supported predecessor-to-candidate transition fixture.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
     "LEAPVIEW_HOME": {
       "default": ".leapview",
       "description": "Instance state directory containing databases, artifacts, and runtime files.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve,admin,client"
+    },
+    "LEAPVIEW_HOST_UPGRADE_QUALIFICATION": {
+      "default": "false",
+      "description": "Require the real isolated PostgreSQL recovery and host-layout tests.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "isolated host recovery qualification"
     },
     "LEAPVIEW_IMAGE": {
       "description": "Exact immutable LeapView OCI image identity used by release, backup, and qualification workflows.",
@@ -3589,6 +3695,20 @@
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
+    },
+    "LEAPVIEW_QA_DISPOSABLE": {
+      "default": "false",
+      "description": "Marks the isolated QA server whose database is destroyed after browser mutation checks.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "ui-qa"
+    },
+    "LEAPVIEW_QA_STORAGE_STATE": {
+      "description": "Private Playwright browser-session file used by authenticated route and visual QA.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "ui-qa"
     },
     "LEAPVIEW_QUALIFICATION_REQUIRED": {
       "default": "false",

@@ -89,7 +89,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	frontendShard := taskfileTaskBlock(t, taskfile, "ci:lane:frontend:shard")
 	for _, want := range []string{
 		"enum: [core, reports, chat, data, site]",
-		"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}",
+		`node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}`,
 	} {
 		if !strings.Contains(frontendShard, want) {
 			t.Fatalf("frontend shard lane missing bounded retry contract %q", want)

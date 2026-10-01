@@ -35,7 +35,7 @@ customer site.
 | [ADR-0014](0014-adopt-an-asset-selected-refresh-pipeline-contract.md) | Adopt an asset-selected refresh pipeline contract | Accepted | 2026-08-20 | Pending | — |
 | [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md) | Adopt durable audit and compliance controls | Accepted | 2026-08-23 | Durable foundation and prioritized producer adoption | — |
 | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md) | Adopt standards-aligned data contracts and interchange | Accepted | 2026-09-01 | Partial; active standards profiles qualified | [ADR-0023](0023-unify-source-and-model-fields-and-checks.md), Source/Model nullability authoring and shared rule projection |
-| [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md) | Adopt a Looker-aligned semantic access contract | Accepted | 2026-09-01 | Active for the qualified supported profile | [ADR-0024](0024-use-named-lists-for-authored-definitions.md), access-grant definition syntax only |
+| [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md) | Adopt a Looker-aligned semantic access contract | Accepted | 2026-09-01 | Active for the qualified supported profile | [ADR-0024](0024-use-named-lists-for-authored-definitions.md), access-grant definition syntax only; [ADR-0025](0025-adopt-typed-resource-permissions-and-scoped-api-credentials.md), API credential attenuation for control-plane administration only; [ADR-0026](0026-preserve-authority-across-governed-operations.md), retained-generation eligibility under current security restrictions only |
 | [ADR-0018](0018-retain-project-as-the-durable-deployment-namespace.md) | Retain Project as the durable deployment namespace | Accepted | 2026-09-02 | Pending | [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md), dbt mapping and external-source examples only |
 | [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md) | Integrate dbt at the warehouse contract boundary | Accepted | 2026-09-03 | Pending | — |
 | [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md) | Adopt a PostgreSQL-centered target data architecture | Accepted | 2026-08-28 | In progress (clean-slate target architecture) | [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md), local analytics development topology and filesystem storage profile only |
@@ -43,7 +43,11 @@ customer site.
 | [ADR-0022](0022-adopt-dataset-local-semantic-authoring.md) | Adopt dataset-local semantic authoring | Accepted | 2026-09-11 | Complete | [ADR-0024](0024-use-named-lists-for-authored-definitions.md), named collection syntax and member-name defaults only |
 | [ADR-0023](0023-unify-source-and-model-fields-and-checks.md) | Unify Source and Model fields and checks | Accepted | 2026-09-14 | Complete | [ADR-0024](0024-use-named-lists-for-authored-definitions.md), Source and Model field and entity collection syntax only |
 | [ADR-0024](0024-use-named-lists-for-authored-definitions.md) | Use named lists for authored definitions | Accepted | 2026-09-14 | Complete | — |
-| [ADR-0025](0025-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md) | Share an open deployment stack for self-hosted and managed LeapView | Proposed | 2026-09-28 | Pending | — |
+| [ADR-0025](0025-adopt-typed-resource-permissions-and-scoped-api-credentials.md) | Adopt typed resource permissions and scoped API credentials | Accepted | 2026-09-17 | Partial; typed contracts, assignments, durable grants, private operation slices, and native delivery planning/build qualified | [ADR-0026](0026-preserve-authority-across-governed-operations.md), authority flow, reference emphasis, and implementation sequencing |
+| [ADR-0026](0026-preserve-authority-across-governed-operations.md) | Preserve authority across governed operations | Accepted | 2026-09-17 | Partial; restricted consumption, scheduled/delegated refresh, delivery planning/build, discovery, cache, and rollback slices qualified | — |
+| [ADR-0028](0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md) | Share an open deployment stack for self-hosted and managed LeapView | Proposed | 2026-09-28 | Pending | — |
+
+ADR-0027 is reserved by the [credential lifecycle proposal in PR #785](https://github.com/flidai/leapview/pull/785); it is not accepted by this deployment proposal.
 
 ## Companion specifications
 
@@ -69,6 +73,7 @@ historical records.
 - [Analytics development CLI contract](specifications/analytics-development-cli-contract.md)
 - [Deployment stack reuse research](specifications/deployment-stack-reuse-research.md)
 - [Deployment profile qualification](specifications/deployment-profile-qualification.md)
+- [Resource authorization authority flow](specifications/resource-authorization-authority-flow.md)
 
 ## Conventions
 

@@ -39,6 +39,7 @@ type Module struct {
 	projectID          projectgraph.ResourceID
 	projectIDResolver  func(context.Context) (projectgraph.ResourceID, error)
 	currentPrincipal   func(*http.Request) (Principal, bool)
+	currentCredential  func(*http.Request) (access.APICredential, bool)
 	dashboardMetrics   func(string) (queryruntime.Metrics, bool)
 	recordAudit        func(context.Context, access.AuditEventInput) error
 	dispatchAPIGen     func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
@@ -149,9 +150,11 @@ type Scope struct {
 type ResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
 
 type CredentialScope struct {
-	ProjectID    string
-	Capabilities []string
-	Restricted   bool
+	ProjectID         string
+	Capabilities      []string
+	PermissionProfile string
+	Permissions       []access.PermissionPair
+	Restricted        bool
 }
 
 type Settings interface {
@@ -269,6 +272,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		projectID:         config.ProjectID,
 		projectIDResolver: config.ResolveProjectID,
 		currentPrincipal:  config.HTTP.CurrentPrincipal,
+		currentCredential: config.HTTP.CurrentCredential,
 		dashboardMetrics:  config.DashboardMetrics,
 		recordAudit:       config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
@@ -309,7 +313,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return agenthttp.Principal{ID: principal.ID, DevAuthBypass: principal.DevAuthBypass}, ok
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
-		Service: service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
+		DashboardAuthoring:     config.DashboardAuthoring,
+		AuthorizeSemanticModel: m.authorizeChatVisualModel,
+		Service:                service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
 		PlatformAdmin:    config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
 		ResolveGroupIDs: config.HTTP.ResolveGroupIDs,
@@ -331,9 +337,11 @@ func scopeFromAgent(scope agent.Scope) Scope {
 		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
-			ProjectID:    scope.Credential.ProjectID,
-			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
-			Restricted:   scope.Credential.Restricted,
+			ProjectID:         scope.Credential.ProjectID,
+			Capabilities:      append([]string(nil), scope.Credential.Capabilities...),
+			PermissionProfile: scope.Credential.PermissionProfile,
+			Permissions:       clonePermissionPairs(scope.Credential.Permissions),
+			Restricted:        scope.Credential.Restricted,
 		},
 	}
 }
@@ -343,11 +351,20 @@ func scopeToAgent(scope Scope) agent.Scope {
 		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: agent.CredentialScope{
-			ProjectID:    scope.Credential.ProjectID,
-			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
-			Restricted:   scope.Credential.Restricted,
+			ProjectID:         scope.Credential.ProjectID,
+			Capabilities:      append([]string(nil), scope.Credential.Capabilities...),
+			PermissionProfile: scope.Credential.PermissionProfile,
+			Permissions:       clonePermissionPairs(scope.Credential.Permissions),
+			Restricted:        scope.Credential.Restricted,
 		},
 	}
+}
+
+func clonePermissionPairs(pairs []access.PermissionPair) []access.PermissionPair {
+	if pairs == nil {
+		return nil
+	}
+	return append(make([]access.PermissionPair, 0, len(pairs)), pairs...)
 }
 
 func (m *Module) HTTP() *agenthttp.Handler { return m.handler }
@@ -360,4 +377,21 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		w,
 		r,
 	)
+}
+
+// authorizeChatVisualModel repeats the source query's resource-use decision
+// before a persisted chat artifact can be imported into an editable dashboard.
+func (m *Module) authorizeChatVisualModel(ctx context.Context, scope agent.Scope, id string) error {
+	if m == nil || m.resolveResource == nil {
+		return agent.ErrNotFound
+	}
+	modelID := projectgraph.ResourceID(id)
+	if err := modelID.Validate(); err != nil {
+		return agent.ErrNotFound
+	}
+	resolved, err := m.resolveResource(ctx, scopeFromAgent(scope), modelID, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
+	if err != nil || resolved != modelID {
+		return agent.ErrNotFound
+	}
+	return nil
 }

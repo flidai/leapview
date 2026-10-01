@@ -5,6 +5,7 @@ package hostinstall
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -42,12 +44,16 @@ func (e *NativeEffects) awaitBrowser(ctx context.Context, phase string) error {
 		}
 		done <- err
 	}()
+	timeout := 6 * time.Minute
+	if e.detached && phase == "AWAITING_REHEARSAL_BROWSER_VALIDATION" {
+		timeout = 35 * time.Minute
+	}
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(6 * time.Minute):
+	case <-time.After(timeout):
 		return errors.New("browser validation timed out")
 	}
 }
@@ -55,7 +61,7 @@ func (e *NativeEffects) cleanupClone(ctx context.Context) error {
 	prefix := e.clonePrefix()
 	// These deterministic names belong only to this journal identity. No prune,
 	// volume removal, or unrelated container cleanup is permitted.
-	for _, suffix := range []string{"-migrator", "-caddy", "-app", "-pg"} {
+	for _, suffix := range []string{"-transition", "-migrator", "-caddy", "-app", "-pg"} {
 		name := prefix + suffix
 		found, err := e.docker(ctx, "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
 		if err != nil {
@@ -170,6 +176,16 @@ func (e *NativeEffects) CaptureAndVerify(ctx context.Context, id Identity) (dige
 	if err != nil {
 		return "", err
 	}
+	return e.rehearseSnapshot(ctx, id, digest)
+}
+
+func (e *NativeEffects) rehearseSnapshot(ctx context.Context, id Identity, digest string) (verified string, err error) {
+	if id != e.id {
+		return "", ErrIdentity
+	}
+	if _, err = readSnapshot(ctx, e.snapshot(), id.Target, digest); err != nil {
+		return "", err
+	}
 	cloneRoot := filepath.Join(e.operation, "rehearsal")
 	if err = securefs.EnsurePrivateDir(cloneRoot); err != nil {
 		return "", err
@@ -239,29 +255,16 @@ func (e *NativeEffects) CaptureAndVerify(ctx context.Context, id Identity) (dige
 	if err = e.migrateOn(ctx, id, digest, e.clonePrefix(), true); err != nil {
 		return "", err
 	}
+	if err = e.transitionOn(ctx, id, digest, e.clonePrefix(), true); err != nil {
+		return "", err
+	}
 	candidate := e.original.App
 	candidate.Config.Image = id.Candidate
-	prepared, err := e.candidateEnvironment()
+	prepared, err := e.candidateContainerEnvironment()
 	if err != nil {
 		return "", err
 	}
-	var key string
-	for _, line := range strings.Split(string(prepared), "\n") {
-		if strings.HasPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=") {
-			key = line
-		}
-	}
-	candidate.Config.Env = append([]string{}, candidate.Config.Env...)
-	for i, line := range candidate.Config.Env {
-		if strings.HasPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=") {
-			candidate.Config.Env[i] = key
-			key = ""
-			break
-		}
-	}
-	if key != "" {
-		candidate.Config.Env = append(candidate.Config.Env, key)
-	}
+	candidate.Config.Env = strings.Split(strings.TrimSuffix(string(prepared), "\n"), "\n")
 	if err = e.clone(ctx, prefix+"-app", e.request.Profile.AppService, candidate, volumes); err != nil {
 		return "", err
 	}
@@ -269,6 +272,9 @@ func (e *NativeEffects) CaptureAndVerify(ctx context.Context, id Identity) (dige
 		return "", err
 	}
 	if err = e.waitApp(ctx, prefix+"-app", id.Candidate, e.request.CandidateRevision); err != nil {
+		return "", err
+	}
+	if err = e.waitTransitionActivation(ctx, prefix+"-pg", true); err != nil {
 		return "", err
 	}
 	// Recreate the proxy so its upstream resolves the candidate clone's address.
@@ -335,10 +341,21 @@ func (e *NativeEffects) Migrate(ctx context.Context, id Identity, digest string)
 	if json.Unmarshal(proof, &passed) != nil || passed.Identity != id || passed.RecoveryDigest != digest || passed.Phase != Verified {
 		return errors.New("missing exact candidate rehearsal")
 	}
-	return e.migrateOn(ctx, id, digest, e.request.Profile.Network, false)
+	if err := e.migrateOn(ctx, id, digest, e.request.Profile.Network, false); err != nil {
+		return err
+	}
+	return e.transitionOn(ctx, id, digest, e.request.Profile.Network, false)
 }
 func (e *NativeEffects) migrateOn(ctx context.Context, id Identity, digest, network string, rehearsal bool) error {
-	dsn, err := e.migratorURL(e.original.App)
+	var dsn string
+	var err error
+	if rehearsal && e.detached {
+		var raw []byte
+		raw, err = securefs.ReadPrivateFile(filepath.Join(e.operation, "captured-migrator.url"))
+		dsn = string(raw)
+	} else {
+		dsn, err = e.migratorURL(e.original.App)
+	}
 	if err != nil {
 		return err
 	}
@@ -351,13 +368,22 @@ func (e *NativeEffects) migrateOn(ctx context.Context, id Identity, digest, netw
 	journalPath := filepath.Join(e.root, JournalName)
 	if rehearsal {
 		action = "rehearse"
+		if e.detached {
+			action = "migrate-copy"
+			journalPath = filepath.Join(e.operation, detachedStateName)
+		}
 	}
 	// No application environment or runtime credentials enter this process.
 	args := []string{"run", "--rm", "--name", e.clonePrefix() + "-migrator", "--user", "0:0", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "--network", network,
 		"--mount", "type=bind,src=" + filepath.Join(e.operation, "request.json") + ",dst=/upgrade/request.json,readonly",
 		"--mount", "type=bind,src=" + secret + ",dst=/upgrade/migrator.url,readonly",
 		"--mount", "type=bind,src=" + journalPath + ",dst=/upgrade-journal.json,readonly"}
-	tlsMounts, err := migrationTLSMounts(dsn, e.original.App)
+	home := e.original.Volumes["home"]
+	tlsHome := home
+	if rehearsal {
+		tlsHome = filepath.Join(e.operation, "rehearsal", "home")
+	}
+	tlsMounts, err := migrationTLSMounts(dsn, e.original.App, map[string]string{home: tlsHome})
 	if err != nil {
 		return err
 	}
@@ -374,38 +400,116 @@ func (e *NativeEffects) link(target string) error {
 }
 func (e *NativeEffects) candidateEnvironment() ([]byte, error) {
 	path := filepath.Join(e.root, "leapview.env")
+	if e.detached {
+		path = filepath.Join(e.operation, "original-config", "leapview.env")
+	}
 	data, err := securefs.ReadPrivateFile(path)
 	if err != nil {
 		return nil, err
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=") && strings.TrimSpace(strings.TrimPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=")) != "" {
-			key := strings.TrimSpace(strings.TrimPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY="))
-			decoded, err := hex.DecodeString(key)
-			if err != nil || len(decoded) != 32 {
-				return nil, errors.New("existing agent credential key must be 32-byte hex; refusing to rotate it")
-			}
-			return data, nil
-		}
+	_, configured, err := agentCredentialKeyFromEnvironment(data)
+	if err != nil {
+		return nil, err
+	}
+	if configured {
+		return data, nil
 	}
 	keyPath := filepath.Join(e.operation, "agent-credential-key")
-	key, err := securefs.ReadPrivateFile(keyPath)
-	if errors.Is(err, os.ErrNotExist) {
-		raw := make([]byte, 32)
-		if _, err = rand.Read(raw); err != nil {
-			return nil, err
+	var key string
+	switch {
+	case e.detached:
+		key, err = readAgentCredentialKeyFile(keyPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, errors.New("detached rehearsal agent credential key is missing")
 		}
-		key = []byte(hex.EncodeToString(raw))
-		err = securefs.WritePrivateFileAtomic(keyPath, key)
+	case e.request.PreparationDigest != "":
+		preparedPath := filepath.Join(e.provider, "upgrade-operations", strings.TrimPrefix(e.request.PreparationDigest, "sha256:"), "agent-credential-key")
+		var preparedKey string
+		preparedKey, err = readAgentCredentialKeyFile(preparedPath)
+		if err == nil {
+			var existing string
+			existing, err = readAgentCredentialKeyFile(keyPath)
+			if errors.Is(err, os.ErrNotExist) {
+				err = securefs.WritePrivateFileAtomic(keyPath, []byte(preparedKey))
+				existing = preparedKey
+			} else if err == nil && existing != preparedKey {
+				err = errors.New("live operation agent credential key differs from its passed rehearsal")
+			}
+			key = existing
+		}
+	default:
+		key, err = readAgentCredentialKeyFile(keyPath)
+		if errors.Is(err, os.ErrNotExist) {
+			raw := make([]byte, 32)
+			if _, err = rand.Read(raw); err != nil {
+				return nil, err
+			}
+			key = hex.EncodeToString(raw)
+			err = securefs.WritePrivateFileAtomic(keyPath, []byte(key))
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	data, err = setDeploymentValue(data, "LEAPVIEW_AGENT_CREDENTIAL_KEY", string(key))
+	if key == "" {
+		return nil, errors.New("agent credential key is unavailable")
+	}
+	data, err = setDeploymentValue(data, "LEAPVIEW_AGENT_CREDENTIAL_KEY", key)
 	if err != nil {
 		return nil, err
 	}
 	return data, nil
+}
+
+func agentCredentialKeyFromEnvironment(data []byte) (string, bool, error) {
+	var value string
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=") {
+			continue
+		}
+		if found {
+			return "", false, errors.New("duplicate agent credential key in runtime environment")
+		}
+		found = true
+		value = strings.TrimSpace(strings.TrimPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY="))
+	}
+	if !found || value == "" {
+		return "", false, nil
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != 32 {
+		return "", false, errors.New("existing agent credential key must be 32-byte hex; refusing to rotate it")
+	}
+	return value, true, nil
+}
+
+func readAgentCredentialKeyFile(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	owner, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || owner.Uid != uint32(os.Geteuid()) {
+		return "", errors.New("agent credential key must be an owned private regular file")
+	}
+	raw, err := securefs.ReadPrivateFile(path)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) != 64 {
+		return "", errors.New("agent credential key file must contain exactly 32-byte hex")
+	}
+	decoded, err := hex.DecodeString(string(raw))
+	if err != nil || len(decoded) != 32 {
+		return "", errors.New("agent credential key file must contain exactly 32-byte hex")
+	}
+	return string(raw), nil
+}
+
+func candidateEnvironmentDigest(environment []byte) string {
+	sum := sha256.Sum256(append([]byte("leapview/host-maintenance-candidate-environment/v1\n"), environment...))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 func (e *NativeEffects) ensureAgentKey() error {
 	data, err := e.candidateEnvironment()
@@ -450,6 +554,9 @@ func (e *NativeEffects) ValidateCandidate(ctx context.Context, id Identity) erro
 		return err
 	}
 	if err := e.waitApp(ctx, e.app(), id.Candidate, e.request.CandidateRevision); err != nil {
+		return err
+	}
+	if err := e.waitTransitionActivation(ctx, e.request.Profile.Postgres, false); err != nil {
 		return err
 	}
 	return e.awaitBrowser(ctx, "AWAITING_CANDIDATE_BROWSER_VALIDATION")
@@ -595,8 +702,9 @@ func (e *NativeEffects) migratorURL(app dockerInspection) (string, error) {
 
 // Mount only the TLS files explicitly named by the migrator URL, preserving
 // their container paths. Never copy the application's environment or whole
-// secret directories into the one-shot migrator.
-func migrationTLSMounts(dsn string, app dockerInspection) ([]string, error) {
+// secret directories into the one-shot migrator. volumeSources maps inventoried
+// application volume roots to live or restored roots for this operation.
+func migrationTLSMounts(dsn string, app dockerInspection, volumeSources map[string]string) ([]string, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
 		return nil, errors.New("invalid migrator URL")
@@ -611,23 +719,41 @@ func migrationTLSMounts(dsn string, app dockerInspection) ([]string, error) {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, ",\r\n") {
 			return nil, errors.New("TLS material must use canonical container paths")
 		}
+		// Respect the most specific container mount, including unsupported
+		// nested mounts which shadow a certificate in the application volume.
+		selected := -1
+		for i, mount := range app.Mounts {
+			if path == mount.Destination || strings.HasPrefix(path, mount.Destination+"/") {
+				if selected < 0 || len(mount.Destination) > len(app.Mounts[selected].Destination) {
+					selected = i
+				}
+			}
+		}
 		source := ""
-		for _, mount := range app.Mounts {
-			if mount.Type != "bind" || mount.RW {
-				continue
-			}
-			if path == mount.Destination {
-				source = mount.Source
-				break
-			}
-			if strings.HasPrefix(path, mount.Destination+"/") {
-				source = filepath.Join(mount.Source, strings.TrimPrefix(path, mount.Destination+"/"))
-				break
+		if selected >= 0 {
+			mount := app.Mounts[selected]
+			relative := strings.TrimPrefix(strings.TrimPrefix(path, mount.Destination), "/")
+			switch {
+			case mount.Type == "bind" && !mount.RW:
+				source = filepath.Join(mount.Source, relative)
+			case mount.Type == "volume" && mount.Name != "" && volumeSources[mount.Source] != "":
+				// Only the inventoried home volume is supplied by the caller.
+				// Rehearsal substitutes its restored root; never mount the whole
+				// volume or read TLS material from live data during rehearsal.
+				root, resolveErr := filepath.EvalSymlinks(volumeSources[mount.Source])
+				if resolveErr != nil {
+					return nil, fmt.Errorf("resolve TLS volume: %w", resolveErr)
+				}
+				resolved, resolveErr := filepath.EvalSymlinks(filepath.Join(root, relative))
+				if resolveErr != nil || !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+					return nil, errors.New("TLS file must remain inside the tracked application volume")
+				}
+				source = resolved
 			}
 		}
 		info, statErr := os.Lstat(source)
 		if source == "" || strings.ContainsAny(source, ",\r\n") || statErr != nil || !info.Mode().IsRegular() {
-			return nil, errors.New("migrator TLS material must be an existing read-only application bind file")
+			return nil, errors.New("migrator TLS material must be a regular file in a read-only bind or tracked application volume")
 		}
 		args = append(args, "--mount", "type=bind,src="+source+",dst="+path+",readonly")
 		seen[path] = true

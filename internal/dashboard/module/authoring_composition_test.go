@@ -116,11 +116,11 @@ func TestBuildAuthoringNativeUsesSuppliedRepository(t *testing.T) {
 	}
 	application, err := BuildAuthoring(AuthoringConfig{
 		Persistence: nativeCompositionPersistence(t, repository),
-		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
-			return true, nil
+		AuthorizeTypedResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (bool, bool, error) {
+			return true, true, nil
 		},
-		AuthorizeProjectCapability: func(context.Context, string, projectgraph.ResourceID, access.Capability) (bool, error) {
-			return true, nil
+		AuthorizeTypedProject: func(context.Context, string, projectgraph.ResourceID, access.Action) (bool, bool, error) {
+			return true, true, nil
 		},
 		AcquireRuntime: func(context.Context) (runtimehost.Lease, error) { return nil, errors.New("runtime unavailable") },
 	})

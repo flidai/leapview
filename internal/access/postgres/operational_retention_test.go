@@ -24,8 +24,8 @@ VALUES ('63000000-0000-7000-8000-000000000002', $1, decode(repeat('11',32),'hex'
 INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at, created_at, last_seen_at)
 VALUES ('63000000-0000-7000-8000-000000000003', $1, decode(repeat('33',32),'hex'), decode(repeat('44',32),'hex'), clock_timestamp() + interval '1 hour', clock_timestamp(), clock_timestamp())`,
 		`
-INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, expires_at, created_at)
-VALUES ('63000000-0000-7000-8000-000000000004', $1, 'old', decode(repeat('55',32),'hex'), decode(repeat('66',32),'hex'), $2::timestamptz + interval '1 hour', $2::timestamptz)`,
+INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, permission_profile, permissions, expires_at, created_at)
+VALUES ('63000000-0000-7000-8000-000000000004', $1, 'old', decode(repeat('55',32),'hex'), decode(repeat('66',32),'hex'), 'leapview.permissions/v1', '[]'::jsonb, $2::timestamptz + interval '1 hour', $2::timestamptz)`,
 		`
 INSERT INTO access.service_principal_secret(id, service_principal_id, name, secret_fingerprint, verifier, expires_at, created_at)
 VALUES ('63000000-0000-7000-8000-000000000005', $1, 'old', decode(repeat('77',32),'hex'), decode(repeat('88',32),'hex'), $2::timestamptz + interval '1 hour', $2::timestamptz)`,
@@ -33,11 +33,11 @@ VALUES ('63000000-0000-7000-8000-000000000005', $1, 'old', decode(repeat('77',32
 INSERT INTO access.desktop_authorization_code(code_hash, principal_id, client_id, instance_id, profile_id, redirect_uri, code_challenge, return_path, expires_at, created_at)
 VALUES (decode(repeat('99',32),'hex'), $1, 'leapview-desktop', 'instance', 'profile', '/', repeat('a',43), '/', $2::timestamptz + interval '5 minutes', $2::timestamptz)`,
 		`
-INSERT INTO access.device_authorization(id, client_id, device_code_hash, user_code_hash, target_id, project_id, capabilities, status, principal_id, expires_at, poll_interval_seconds, created_at, denied_at)
-VALUES ('device-old', 'leapview-cli', repeat('a',64), repeat('b',64), 'target', 'project', '[]', 'denied', $1, $2::timestamptz + interval '1 hour', 5, $2::timestamptz, $2::timestamptz)`,
+INSERT INTO access.device_authorization(id, client_id, device_code_hash, user_code_hash, target_id, project_id, permission_profile, permissions, status, principal_id, expires_at, poll_interval_seconds, created_at, denied_at)
+VALUES ('device-old', 'leapview-cli', repeat('a',64), repeat('b',64), 'target', 'project', 'leapview.permissions/v1', '[]'::jsonb, 'denied', $1, $2::timestamptz + interval '1 hour', 5, $2::timestamptz, $2::timestamptz)`,
 		`
-INSERT INTO access.authoring_session(id, kind, client_id, principal_id, target_id, project_id, capabilities, created_at, expires_at, revoked_at)
-VALUES ('authoring-old', 'human_cli', 'cli', $1, 'target', 'project', '[]', $2::timestamptz, $2::timestamptz + interval '1 hour', $2::timestamptz)`,
+INSERT INTO access.authoring_session(id, kind, client_id, principal_id, target_id, project_id, permission_profile, permissions, created_at, expires_at, revoked_at)
+VALUES ('authoring-old', 'human_cli', 'cli', $1, 'target', 'project', 'leapview.permissions/v1', '[]'::jsonb, $2::timestamptz, $2::timestamptz + interval '1 hour', $2::timestamptz)`,
 		`
 INSERT INTO access.authoring_credential(id, session_id, access_token_hash, access_expires_at, active, created_at, replaced_at)
 VALUES ('credential-old', 'authoring-old', repeat('c',64), $2::timestamptz + interval '1 hour', false, $2::timestamptz, $2::timestamptz)`,

@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "5fd03c7c5535e919400ae2669006764296b1ff11fcd6c37622f099e7ac09fb0e"
+	const expectedRouteContractDigest = "2f9e916deaa7ff02eb58766e264b7bf1a433786581922733b2a003ffca7ddfeb"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -136,7 +136,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	switch {
 	case strings.HasPrefix(path, "/product/logo/"):
 		authenticated.owner = "admin"
-	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/archived-chats" || path == "/admin/personal-settings/command":
+	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/api-tokens/{token}/edit" || path == "/admin/archived-chats" || path == "/admin/personal-settings/command":
 		authenticated.owner = "admin"
 	case path == "/admin/agent" || path == "/admin/agent/config":
 		authenticated.owner = "agent"
@@ -167,7 +167,10 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/dashboards/new" || path == "/dashboards/{dashboard}/fork":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
-	case path == "/dashboards/{dashboard}/preview" || path == "/dashboards/{dashboard}/export.yaml":
+	case path == "/dashboards/{dashboard}/preview":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "RESOURCE_EDIT"
+	case path == "/dashboards/{dashboard}/export.yaml":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
 	case path == "/dashboards/{asset}/appearance":
@@ -179,7 +182,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
-	case path == "/explore" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
+	case path == "/explore" || path == "/explore/saved" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_USE"
 	case path == "/pipelines/command":
@@ -252,9 +255,11 @@ GET /.well-known/oauth-authorization-server
 GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
 GET /admin
+GET /admin/access
 GET /admin/api-tokens
 GET /admin/archived-chats
 GET /admin/api-tokens/new
+GET /admin/api-tokens/{token}/edit
 GET /admin/agent
 GET /admin/audit
 GET /admin/authentication
@@ -269,6 +274,7 @@ GET /admin/queries
 GET /admin/security
 GET /admin/service-accounts
 GET /admin/service-accounts/new
+GET /admin/service-accounts/{serviceAccount}
 GET /admin/storage
 GET /admin/storage/tables/{schema}/{table}
 GET /admin/system
@@ -284,6 +290,7 @@ GET /chats/management
 GET /chats/references/search
 GET /chats/restore
 GET /chats/{conversation}
+GET /chats/{conversation}/visuals/{artifact}/dashboards
 GET /candidates/{candidate}
 GET /candidates/{candidate}/review
 GET /candidates/{candidate}/dashboards/{dashboard}
@@ -313,6 +320,7 @@ GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
+GET /explore/saved
 GET /favicon.ico
 GET /healthz
 GET /login
@@ -323,6 +331,10 @@ GET /metrics
 GET /models
 GET /models/{asset}/{section}
 GET /pipelines
+GET /pipelines/runs
+GET /pipelines/{asset}
+GET /pipelines/{asset}/runs/{run}
+GET /pipelines/{asset}/runs/{run}/{section}
 GET /pipelines/{asset}/{section}
 GET /runs
 POST /pipelines/command
@@ -353,11 +365,13 @@ POST /admin/queries/command
 POST /admin/service-accounts/command
 POST /auth/desktop/disconnect
 POST /auth/desktop/redeem
+POST /auth/development/login
 POST /auth/local/login
 POST /auth/local/password
 POST /auth/logout
 POST /auth/logout-all
 POST /chats/stop
+POST /chats/{conversation}/visuals/{artifact}/dashboards
 POST /chats/turns
 POST /chats/manage
 POST /candidates/{candidate}/dashboards/{dashboard}/commands/{command}
@@ -365,6 +379,7 @@ GET /catalog/search
 GET /connections/search
 GET /dashboards/search
 POST /explore/command
+POST /explore/saved
 POST /dashboards/{dashboard}/archive
 POST /dashboards/{dashboard}/delete
 POST /dashboards/{dashboard}/commands/clear-selection
