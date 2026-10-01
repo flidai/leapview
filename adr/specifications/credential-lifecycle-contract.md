@@ -1851,3 +1851,28 @@ still checked. This does not establish the generation-bound
 refresh pipeline, crash recovery during an incomplete build, publication or
 consumer activation. Production local-credential preflight remains closed and is
 asserted separately. Those boundaries must be joined before enabling local pins.
+
+### Transaction-bound activation access authority
+
+`access/postgres.AuthorizeCredentialActivationTx` checks both exact
+`connection.manage` and `connection.use` permissions in a caller-owned
+READ COMMITTED transaction. It binds the supplied generation snapshot to its
+persisted digest, intersects its captured authority with the current locked
+policy, and checks the active principal, effective group memberships and exact
+browser-session or API-token evidence. API-token permissions remain a separate
+ceiling. Locks fence revocation through the caller's transaction; concurrent
+membership additions are conservatively ignored. Credential expiry is checked
+with the database clock after potentially blocking authority reads.
+
+PostgreSQL tests cover exact scope, current policy and membership revocation,
+API-token attenuation, caller-owned transaction lifetime and revocation locks.
+The expiry regression holds a token row lock until the database clock passes
+expiry and requires rejection after release.
+
+This is the access decision, not permission to publish or report a credential
+as in use. The app-owned callback must still bind the receipt actor, customer
+owner, exact binding/configuration and target revision/predecessor in the same
+transaction. Publication approvals remain independent. The caller must perform
+no provider work while holding the transaction. Production activation remains
+closed until that composition, consumer drain, runtime installation and recovery
+are qualified together.

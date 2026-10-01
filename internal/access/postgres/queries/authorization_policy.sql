@@ -1,6 +1,9 @@
 -- Target-owned authorization policy control state. The head row is mutable
 -- only through the repository CAS path; revision children are immutable.
 
+-- name: GetTransactionIsolation :one
+SELECT current_setting('transaction_isolation');
+
 -- name: GetAuthorizationPolicyHead :one
 SELECT target_id, project_id, environment, revision, digest
 FROM access.authorization_policy
