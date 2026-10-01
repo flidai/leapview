@@ -105,6 +105,7 @@
           packages = [
             pkgs.syft
             pkgs.grype
+            pkgs.skopeo
             pkgs.python3
           ];
         };

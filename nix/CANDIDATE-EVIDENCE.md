@@ -64,6 +64,58 @@ runtime reports cannot be attached to an archive output.
 
 ## Release authority and follow-up adapters
 
+### OCI content binding
+
+The read-only image qualification lane exports the existing Docker archive to
+an OCI layout while preserving the exact config and uncompressed layer bytes,
+without rebuilding. Flake-pinned Skopeo copies that layout with
+`--preserve-digests`; directly converting a Docker archive through Skopeo
+normalizes the config and changes its digest, which this verifier rejects.
+The lane then runs
+`scripts/nix_oci_content.py` to bind the layout's selected root manifest or image
+index digest and every declared platform manifest to freshly verified candidate
+archive and runtime report bytes:
+
+```sh
+python3 scripts/nix_oci_content.py export --layout .tmp/nix-exported-oci \
+  --platform linux/amd64 --kind application-image \
+  --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security
+nix develop --no-update-lock-file .#runtime-security -c \
+  skopeo copy --preserve-digests oci:.tmp/nix-exported-oci:candidate oci:.tmp/nix-candidate-oci:candidate
+digest=$(python3 -c 'import json; print(json.load(open(".tmp/nix-exported-oci/index.json"))["manifests"][0]["digest"])')
+python3 scripts/nix_oci_content.py bind --layout .tmp/nix-candidate-oci \
+  --manifest-digest "$digest" --platform linux/amd64 --kind application-image \
+  --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security \
+  --output .tmp/nix-runtime-security/oci-content-binding.json
+```
+
+Replace `--output` with `--verify` to recompute and compare a retained binding.
+For a platform matrix, repeat `--candidate ARCHIVE MANIFEST RUNTIME_EVIDENCE` and
+`--platform` for every platform. The candidate and OCI index platform sets must
+match exactly, with one source/input identity, output kind and version. No
+platform is inferred or omitted. An application record cannot qualify a site
+image. Actual ARM64 and site qualification remain pending.
+
+Descriptor SHA-256 values and sizes are verified against local blob bytes. The
+image config must retain its original digest, and every ordered layer must
+decompress to its original diff ID. Compression may change without changing
+image content; changed configs, missing or reordered layers and substituted
+platforms fail. The bounded adapter accepts OCI image manifests and flat image
+indexes, with plain or gzip layers. Nested indexes, platform variants, external
+descriptors and symlinked content are rejected. JSON documents are limited to
+2 MiB, layers to 8 GiB, and total inspected bytes (including decompression) to
+16 GiB. These are qualification limits, not a change to release support.
+
+The workflow retains `oci-content-binding.json` for 14 days alongside the
+candidate and runtime reports. It neither publishes nor reads from a registry.
+The caller selects the root digest; this unsigned record proves content matching
+when verified against retained artifacts, not registry authenticity or trusted
+builder provenance. Publication and promotion must independently verify the
+actual immutable registry digest and platform manifests. `releaseAdmission`
+remains `false`, and all existing release gates remain required.
+
+### Remaining release authority
+
 The manifest is unsigned. Its hashes detect accidental substitution when checked
 against trusted source and retained evidence, but they do not authenticate a
 builder or authorize publication. The image config digest is not the registry

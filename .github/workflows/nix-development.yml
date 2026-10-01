@@ -24,6 +24,8 @@ on:
       - 'scripts/tests/test_nix_runtime_security.py'
       - 'scripts/nix_candidate_manifest.py'
       - 'scripts/tests/test_nix_candidate_manifest.py'
+      - 'scripts/nix_oci_content.py'
+      - 'scripts/tests/test_nix_oci_content.py'
       - 'scripts/generate_build_sources.sh'
       - 'pkg/apigen/**'
       - 'scripts/ensure_playwright*'
@@ -110,6 +112,7 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
           python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - name: Enforce assessed Nix runtime findings (not release clearance)
         run: >-
           nix develop --no-update-lock-file .#runtime-security -c
@@ -123,6 +126,22 @@ jobs:
           python3 scripts/nix_candidate_manifest.py result-image --kind application-image \
             --runtime-evidence .tmp/nix-runtime-security \
             --verify .tmp/nix-runtime-security/candidate-manifest.json
+      - name: Bind candidate content to the converted OCI manifest (not release clearance)
+        run: |
+          python3 scripts/nix_oci_content.py export --layout .tmp/nix-exported-oci \
+            --platform linux/amd64 --kind application-image \
+            --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security
+          nix develop --no-update-lock-file .#runtime-security -c \
+            skopeo copy --preserve-digests oci:.tmp/nix-exported-oci:candidate oci:.tmp/nix-candidate-oci:candidate
+          digest=$(python3 -c 'import json; print(json.load(open(".tmp/nix-exported-oci/index.json"))["manifests"][0]["digest"])')
+          python3 scripts/nix_oci_content.py bind --layout .tmp/nix-candidate-oci \
+            --manifest-digest "$digest" --platform linux/amd64 --kind application-image \
+            --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security \
+            --output .tmp/nix-runtime-security/oci-content-binding.json
+          python3 scripts/nix_oci_content.py bind --layout .tmp/nix-candidate-oci \
+            --manifest-digest "$digest" --platform linux/amd64 --kind application-image \
+            --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security \
+            --verify .tmp/nix-runtime-security/oci-content-binding.json
       - name: Retain runtime inventory, matching controls and unresolved findings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -134,6 +153,7 @@ jobs:
           path: |
             .tmp/nix-runtime-security/summary.json
             .tmp/nix-runtime-security/candidate-manifest.json
+            .tmp/nix-runtime-security/oci-content-binding.json
             .tmp/nix-runtime-security/sbom.syft.json
             .tmp/nix-runtime-security/sbom.spdx.json
             .tmp/nix-runtime-security/runtime.syft.json
