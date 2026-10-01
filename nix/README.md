@@ -65,8 +65,11 @@ instead of silently downloading a different compiler.
 The second Nix input provides only upstream Playwright packaging at the version
 used by npm. Chromium and its headless shell are supplied through
 `PLAYWRIGHT_BROWSERS_PATH`, including native dependencies and fonts. Browser
-installation does not depend on mutable host libraries. The smoke check verifies
-the npm/browser version pairing, starts Chromium, and exercises a page interaction.
+installation does not depend on mutable host libraries. Font discovery and
+configuration use only locked Nix paths, including Playwright's WenQuanYi CJK
+fallback: ECharts derives text heights from a CJK glyph even for Latin labels.
+The smoke check verifies the npm/browser pairing, starts Chromium, exercises a
+page interaction, and checks the chart font metrics without host fonts.
 Desktop/Electron packaging and other platforms still require qualification.
 
 ## CI and updates
