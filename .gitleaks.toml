@@ -33,3 +33,35 @@ condition = "AND"
 regexTarget = "line"
 regexes = ['''Password:\s*"adr0026-qualification-secret"''']
 paths = ['''^internal/analytics/materialize/adr0026_qualification_test\.go$''']
+
+[[allowlists]]
+description = "Non-secret credential-version UUID identity validation fixtures"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''CredentialVersionID:\s*"(?:8b8d2f2e-92dd-4f2a-85ac-154831c16a4d|8b8d2f2e92dd4f2a85ac154831c16a4d|8B8D2F2E-92DD-4F2A-85AC-154831C16A4D)"''']
+paths = ['''(?:^|/)internal/analytics/connectionbinding/binding_test\.go$''']
+
+[[allowlists]]
+description = "Non-secret mismatched credential-version UUID in local pool test"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''CredentialVersionID:\s*"c9f9b69c-4706-49dc-a6bf-28096d0df596"''']
+paths = ['''(?:^|/)internal/analytics/duckdb/target_pool_local_test\.go$''']
+
+[[allowlists]]
+description = "Non-secret local runtime credential-version UUID test constant"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''(?m)^const localRuntimeCredentialVersion = "93d623e3-8d75-41ea-b006-aed3375d0592"$''']
+paths = ['''(?:^|/)internal/analytics/module/local_runtime_credential_test\.go$''']
+
+[[allowlists]]
+description = "Non-secret instance identity constant in offline setup tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''(?m)^const credentialSetupInstance = "lvinst_0123456789abcdefghijklmnopqrstuv"$''']
+paths = ['''(?:^|/)internal/app/adminpostgres/credential_setup_test\.go$''']
