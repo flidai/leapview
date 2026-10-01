@@ -42,15 +42,74 @@ type usageError struct{ message string }
 func (e usageError) Error() string { return e.message }
 
 type admissionOptions struct {
-	image            string
-	OCIRepository    string
-	expectedWorkflow string
-	sourceRevision   string
-	policyPath       string
-	platform         string
-	mode             string
-	evidencePath     string
-	outputPath       string
+	image                   string
+	OCIRepository           string
+	expectedWorkflow        string
+	sourceRevision          string
+	policyPath              string
+	platform                string
+	mode                    string
+	evidencePath            string
+	outputPath              string
+	vulnerabilityReportPath string
+}
+
+const (
+	vulnerabilityReportSchema   = 1
+	maxVulnerabilityReportBytes = 256 * 1024
+	maxVulnerabilityJSONBytes   = 32 * 1024 * 1024
+	maxReportedFindings         = 2048
+	outcomeNotScanned           = "not-scanned"
+	outcomeScannerError         = "scanner-error"
+	outcomeInvalidReport        = "invalid-report"
+	outcomeRejected             = "rejected"
+	outcomePassed               = "passed"
+)
+
+type vulnerabilityReport struct {
+	SchemaVersion          int               `json:"schemaVersion"`
+	Image                  string            `json:"image"`
+	Revision               string            `json:"revision"`
+	ExpectedSourceRevision string            `json:"expectedSourceRevision"`
+	Platform               string            `json:"platform"`
+	Scanner                reportScanner     `json:"scanner"`
+	Database               reportDatabases   `json:"database"`
+	PolicySHA256           string            `json:"policySHA256"`
+	Outcome                string            `json:"outcome"`
+	UnresolvedCount        int               `json:"unresolvedCount"`
+	Findings               []reportedFinding `json:"findings"`
+	FindingsTruncated      bool              `json:"findingsTruncated,omitempty"`
+}
+
+type reportScanner struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type reportDatabases struct {
+	Vulnerability reportDatabaseMetadata `json:"vulnerability"`
+	Java          reportDatabaseMetadata `json:"java"`
+}
+
+type reportDatabaseMetadata struct {
+	Version      string `json:"version"`
+	UpdatedAt    string `json:"updatedAt"`
+	NextUpdate   string `json:"nextUpdate"`
+	DownloadedAt string `json:"downloadedAt"`
+}
+
+type reportedFinding struct {
+	Package          string `json:"package"`
+	CVE              string `json:"cve"`
+	InstalledVersion string `json:"installedVersion"`
+	FixedVersion     string `json:"fixedVersion"`
+}
+
+type parsedVulnerabilityReport struct {
+	UnresolvedCount   int
+	Findings          []reportedFinding
+	FindingsTruncated bool
+	ImageRevision     string
 }
 
 type vulnerabilityPolicy struct {
@@ -125,9 +184,10 @@ func runAdmission(args, env []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
+	report := newVulnerabilityReport(opts, policySHA256, "")
 	if token, ok := envValue(env, "GH_TOKEN"); !ok || strings.TrimSpace(token) == "" {
 		if token, ok = envValue(env, "GITHUB_TOKEN"); !ok || strings.TrimSpace(token) == "" {
-			return errors.New("live verification requires GH_TOKEN or GITHUB_TOKEN")
+			return rejectWithReport(opts, report, outcomeNotScanned, "live verification requires GH_TOKEN or GITHUB_TOKEN")
 		}
 	}
 	githubRepository, ok := envValue(env, "GITHUB_REPOSITORY")
@@ -135,7 +195,7 @@ func runAdmission(args, env []string, stdout, stderr io.Writer) error {
 		githubRepository = repositoryIdentity
 	}
 	if githubRepository != repositoryIdentity {
-		return errors.New("GitHub repository identity is not flidai/leapview")
+		return rejectWithReport(opts, report, outcomeNotScanned, "GitHub repository identity is not flidai/leapview")
 	}
 	if err := runner.verifyLive(opts, policy, policySHA256, contract, stdout); err != nil {
 		return err
@@ -156,6 +216,7 @@ func parseOptions(args []string, stderr io.Writer) (admissionOptions, error) {
 	flags.StringVar(&opts.mode, "mode", "live", "live or hermetic")
 	flags.StringVar(&opts.evidencePath, "evidence", "", "hermetic evidence path")
 	flags.StringVar(&opts.outputPath, "output", "", "optional output path")
+	flags.StringVar(&opts.vulnerabilityReportPath, "vulnerability-report", "", "optional sanitized vulnerability report path")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "usage: ociadmission --image REPOSITORY@sha256:DIGEST")
 		fmt.Fprintln(stderr, "  --repository OCI_REPOSITORY")
@@ -163,7 +224,7 @@ func parseOptions(args []string, stderr io.Writer) (admissionOptions, error) {
 		fmt.Fprintln(stderr, "  --source-revision HEX_SHA")
 		fmt.Fprintln(stderr, "  --policy PATH")
 		fmt.Fprintln(stderr, "  [--platform linux/amd64|linux/arm64]")
-		fmt.Fprintln(stderr, "  [--mode live|hermetic] [--evidence PATH] [--output PATH]")
+		fmt.Fprintln(stderr, "  [--mode live|hermetic] [--evidence PATH] [--output PATH] [--vulnerability-report PATH]")
 	}
 	if err := flags.Parse(args); err != nil {
 		return opts, usageError{message: err.Error()}
@@ -360,21 +421,44 @@ func scannerVersion(data []byte) (string, error) {
 	return "", errors.New("scanner version is missing")
 }
 
-func unresolvedCount(data []byte, contract *securitypolicy.Exceptions) (int, error) {
+func parseVulnerabilityReport(data []byte, contract *securitypolicy.Exceptions, env []string) (parsedVulnerabilityReport, error) {
+	if len(data) == 0 || len(data) > maxVulnerabilityJSONBytes {
+		return parsedVulnerabilityReport{}, errors.New("invalid vulnerability report")
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil || root == nil {
+		return parsedVulnerabilityReport{}, errors.New("invalid vulnerability report")
+	}
+	if _, exists := root["Results"]; !exists {
+		return parsedVulnerabilityReport{}, errors.New("invalid vulnerability report")
+	}
 	var report struct {
+		Metadata struct {
+			ImageConfig struct {
+				Config struct {
+					Labels map[string]string `json:"Labels"`
+				} `json:"config"`
+			} `json:"ImageConfig"`
+		} `json:"Metadata"`
 		Results []struct {
 			Vulnerabilities []struct {
-				Rule     any `json:"VulnerabilityID"`
-				Package  any `json:"PkgName"`
-				Target   any `json:"Target"`
-				Severity any `json:"Severity"`
+				Rule             any `json:"VulnerabilityID"`
+				Package          any `json:"PkgName"`
+				Target           any `json:"Target"`
+				Severity         any `json:"Severity"`
+				InstalledVersion any `json:"InstalledVersion"`
+				FixedVersion     any `json:"FixedVersion"`
 			} `json:"Vulnerabilities"`
 		} `json:"Results"`
 	}
-	if json.Unmarshal(data, &report) != nil {
-		return 0, errors.New("invalid vulnerability report")
+	if err := json.Unmarshal(data, &report); err != nil {
+		return parsedVulnerabilityReport{}, errors.New("invalid vulnerability report")
 	}
-	count := 0
+	parsed := parsedVulnerabilityReport{Findings: make([]reportedFinding, 0)}
+	imageRevision := report.Metadata.ImageConfig.Config.Labels["org.opencontainers.image.revision"]
+	if revisionPattern.MatchString(imageRevision) {
+		parsed.ImageRevision = imageRevision
+	}
 	for _, result := range report.Results {
 		for _, vulnerability := range result.Vulnerabilities {
 			rule := stringValue(vulnerability.Rule)
@@ -383,12 +467,152 @@ func unresolvedCount(data []byte, contract *securitypolicy.Exceptions) (int, err
 				resource = stringValue(vulnerability.Target)
 			}
 			severity := stringValue(vulnerability.Severity)
-			if rule == "" || resource == "" || !matchesException(contract, rule, resource, severity) {
-				count++
+			if rule != "" && resource != "" && matchesException(contract, rule, resource, severity) {
+				continue
 			}
+			parsed.UnresolvedCount++
+			if len(parsed.Findings) >= maxReportedFindings {
+				parsed.FindingsTruncated = true
+				continue
+			}
+			parsed.Findings = append(parsed.Findings, reportedFinding{
+				Package:          sanitizeReportValue(stringValue(vulnerability.Package), env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@+_.:/-", 256),
+				CVE:              sanitizeReportValue(rule, env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-", 128),
+				InstalledVersion: sanitizeReportValue(stringValue(vulnerability.InstalledVersion), env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.+~_:,@-", 256),
+				FixedVersion:     sanitizeReportValue(stringValue(vulnerability.FixedVersion), env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.+~_:,@-", 256),
+			})
 		}
 	}
-	return count, nil
+	return parsed, nil
+}
+
+func sanitizeReportValue(value string, env []string, allowed string, maxLength int) string {
+	value = strings.TrimSpace(value)
+	for _, entry := range env {
+		key, secret, ok := strings.Cut(entry, "=")
+		if !ok || secret == "" || !sensitiveEnvironmentKey(key) {
+			continue
+		}
+		value = strings.ReplaceAll(value, secret, "")
+	}
+	if len(value) == 0 || len(value) > maxLength {
+		return ""
+	}
+	for _, char := range value {
+		if char > 127 || !strings.ContainsRune(allowed, char) {
+			return ""
+		}
+	}
+	return value
+}
+
+func sensitiveEnvironmentKey(key string) bool {
+	key = strings.ToUpper(key)
+	for _, marker := range []string{"TOKEN", "PASSWORD", "SECRET", "CREDENTIAL", "AUTH", "KEY"} {
+		if strings.Contains(key, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func newVulnerabilityReport(opts admissionOptions, policySHA256, scannerVersion string) vulnerabilityReport {
+	return vulnerabilityReport{
+		SchemaVersion: vulnerabilityReportSchema,
+		Image:         opts.image, ExpectedSourceRevision: opts.sourceRevision, Platform: opts.platform,
+		Scanner:      reportScanner{Name: "trivy", Version: scannerVersion},
+		PolicySHA256: policySHA256, Findings: make([]reportedFinding, 0),
+	}
+}
+
+func writeVulnerabilityReport(path string, report vulnerabilityReport) error {
+	if path == "" {
+		return nil
+	}
+	if len(report.Findings) > maxReportedFindings {
+		return errors.New("vulnerability report contains too many findings")
+	}
+	data, err := json.Marshal(report)
+	if err != nil {
+		return errors.New("could not encode vulnerability report")
+	}
+	if len(data) > maxVulnerabilityReportBytes {
+		return errors.New("vulnerability report exceeds bounded size")
+	}
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return errors.New("could not create vulnerability report directory")
+	}
+	temporary, err := os.CreateTemp(directory, ".oci-vulnerability-report-*")
+	if err != nil {
+		return errors.New("could not write vulnerability report")
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return errors.New("could not write vulnerability report")
+	}
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		temporary.Close()
+		return errors.New("could not write vulnerability report")
+	}
+	if err := temporary.Close(); err != nil {
+		return errors.New("could not write vulnerability report")
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return errors.New("could not write vulnerability report")
+	}
+	return nil
+}
+
+func readDatabaseMetadata(path string, env []string) reportDatabaseMetadata {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 || len(data) > 16*1024 {
+		return reportDatabaseMetadata{}
+	}
+	var values map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&values); err != nil || values == nil {
+		return reportDatabaseMetadata{}
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return reportDatabaseMetadata{}
+	}
+	metadataValue := func(keys ...string) string {
+		for _, key := range keys {
+			if value, exists := values[key]; exists {
+				return stringValue(value)
+			}
+		}
+		return ""
+	}
+	return reportDatabaseMetadata{
+		Version:      sanitizeReportValue(metadataValue("Version", "version"), env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-", 64),
+		UpdatedAt:    sanitizeReportValue(metadataValue("UpdatedAt", "updatedAt"), env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.:+-TZ", 64),
+		NextUpdate:   sanitizeReportValue(metadataValue("NextUpdate", "nextUpdate"), env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.:+-TZ", 64),
+		DownloadedAt: sanitizeReportValue(metadataValue("DownloadedAt", "downloadedAt"), env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.:+-TZ", 64),
+	}
+}
+
+func reportDatabasesFromCache(cacheDir string, env []string) reportDatabases {
+	return reportDatabases{
+		Vulnerability: readDatabaseMetadata(filepath.Join(cacheDir, "db", "metadata.json"), env),
+		Java:          readDatabaseMetadata(filepath.Join(cacheDir, "java-db", "metadata.json"), env),
+	}
+}
+
+func rejectWithReport(opts admissionOptions, report vulnerabilityReport, outcome, summary string) error {
+	report.Outcome = outcome
+	if report.Findings == nil {
+		report.Findings = make([]reportedFinding, 0)
+	}
+	if err := writeVulnerabilityReport(opts.vulnerabilityReportPath, report); err != nil {
+		return fmt.Errorf("%s; could not write vulnerability report", summary)
+	}
+	return errors.New(summary)
 }
 
 func matchesException(contract *securitypolicy.Exceptions, rule, resource, severity string) bool {
@@ -490,9 +714,27 @@ func firstJSONAlternative(values map[string]any, keys ...string) string {
 	return ""
 }
 
-func redactError(err error) string {
+func redactError(err error, env []string) string {
 	if err == nil {
 		return ""
 	}
-	return strings.TrimSpace(err.Error())
+	value := strings.TrimSpace(err.Error())
+	for _, entry := range env {
+		key, secret, ok := strings.Cut(entry, "=")
+		if ok && secret != "" && sensitiveEnvironmentKey(key) {
+			value = strings.ReplaceAll(value, secret, "***")
+		}
+	}
+	value = strings.Map(func(char rune) rune {
+		if char < 32 || char == 127 {
+			return ' '
+		}
+		return char
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	const maxSummaryBytes = 512
+	if len(value) > maxSummaryBytes {
+		value = strings.ToValidUTF8(value[:maxSummaryBytes], "") + "..."
+	}
+	return value
 }

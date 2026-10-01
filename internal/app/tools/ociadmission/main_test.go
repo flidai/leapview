@@ -91,8 +91,8 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 				t.Fatalf("runAdmission error = %v, want %q", err, tc.want)
 			}
 			if tc.mode == "unavailable" {
-				if strings.Contains(err.Error(), "fixture-token") || !strings.Contains(err.Error(), "registry unavailable with token ***") {
-					t.Fatalf("runAdmission diagnostic = %q, want useful redacted scanner failure", err)
+				if strings.Contains(err.Error(), "fixture-token") || !strings.Contains(err.Error(), "scan could not complete") {
+					t.Fatalf("runAdmission diagnostic = %q, want bounded scanner failure summary", err)
 				}
 			}
 		})
@@ -103,8 +103,9 @@ func TestVulnerabilityReportParsesAndAccountsForExceptions(t *testing.T) {
 	contract := &securitypolicy.Exceptions{Version: 1, Exceptions: []securitypolicy.Exception{{
 		Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "openssl",
 	}}}
-	clean, err := parseVulnerabilityReport([]byte(`{"Results":[]}`), contract, testEnv(nil))
-	if err != nil || clean.UnresolvedCount != 0 || len(clean.Findings) != 0 {
+	cleanJSON := `{"Metadata":{"ImageConfig":{"config":{"Labels":{"org.opencontainers.image.revision":"` + testRevision + `"}}}},"Results":[]}`
+	clean, err := parseVulnerabilityReport([]byte(cleanJSON), contract, testEnv(nil))
+	if err != nil || clean.UnresolvedCount != 0 || len(clean.Findings) != 0 || clean.ImageRevision != testRevision {
 		t.Fatalf("clean report = %#v, err = %v", clean, err)
 	}
 
@@ -122,14 +123,25 @@ func TestVulnerabilityReportParsesAndAccountsForExceptions(t *testing.T) {
 	if got := parsed.Findings[0]; got.CVE != "CVE-2026-0002" || got.Package != "curl" || got.InstalledVersion != "8.1.0" || got.FixedVersion != "8.1.1" {
 		t.Fatalf("unresolved finding = %#v", got)
 	}
+	redacted, err := parseVulnerabilityReport([]byte(`{"Results":[{"Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0003","PkgName":"openssl-fixture-token","InstalledVersion":"3.0-fixture-token","FixedVersion":"3.1"}]}]}`), nil, testEnv(map[string]string{"GH_TOKEN": "fixture-token"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(redacted.Findings)
+	if err != nil || strings.Contains(string(encoded), "fixture-token") {
+		t.Fatalf("sanitized findings leaked credentials: %s, err=%v", encoded, err)
+	}
+	if _, err := parseVulnerabilityReport([]byte(`{}`), nil, nil); err == nil {
+		t.Fatal("report without Results was accepted")
+	}
 }
 
 func TestLiveVulnerabilityReport(t *testing.T) {
 	policyPath, _ := testPolicy(t)
 	for _, tc := range []struct {
 		name, mode, outcome, wantError string
-		wantCount                    int
-		wantSuccess                  bool
+		wantCount                      int
+		wantSuccess                    bool
 	}{
 		{name: "clean scan", mode: "valid", outcome: "passed", wantSuccess: true},
 		{name: "multiple findings reject without success outputs", mode: "multiple", outcome: "rejected", wantError: "exceeds policy", wantCount: 2},
@@ -182,12 +194,13 @@ func TestLiveVulnerabilityReport(t *testing.T) {
 				t.Fatalf("read vulnerability report: %v", readErr)
 			}
 			var report struct {
-				SchemaVersion   int    `json:"schemaVersion"`
-				Image           string `json:"image"`
-				Revision        string `json:"revision"`
-				Platform        string `json:"platform"`
-				Scanner         struct{ Name, Version string }
-				Database        struct {
+				SchemaVersion          int    `json:"schemaVersion"`
+				Image                  string `json:"image"`
+				Revision               string `json:"revision"`
+				ExpectedSourceRevision string `json:"expectedSourceRevision"`
+				Platform               string `json:"platform"`
+				Scanner                struct{ Name, Version string }
+				Database               struct {
 					Vulnerability struct {
 						Version, UpdatedAt, NextUpdate, DownloadedAt string
 					}
@@ -199,20 +212,26 @@ func TestLiveVulnerabilityReport(t *testing.T) {
 				Outcome         string `json:"outcome"`
 				UnresolvedCount int    `json:"unresolvedCount"`
 				Findings        []struct {
-					Package         string `json:"package"`
-					CVE             string `json:"cve"`
+					Package          string `json:"package"`
+					CVE              string `json:"cve"`
 					InstalledVersion string `json:"installedVersion"`
-					FixedVersion    string `json:"fixedVersion"`
+					FixedVersion     string `json:"fixedVersion"`
 				} `json:"findings"`
 			}
 			if err := json.Unmarshal(data, &report); err != nil {
 				t.Fatalf("decode vulnerability report: %v", err)
 			}
-			if report.SchemaVersion != 1 || report.Image != testImage || report.Revision != testRevision || report.Platform != "linux/arm64" || report.Scanner.Name != "trivy" || report.Scanner.Version != "0.74.0" || report.Outcome != tc.outcome || report.UnresolvedCount != tc.wantCount {
+			if report.SchemaVersion != 1 || report.Image != testImage || report.Revision != "" || report.ExpectedSourceRevision != testRevision || report.Platform != "linux/arm64" || report.Scanner.Name != "trivy" || report.Scanner.Version != "0.74.0" || report.Outcome != tc.outcome || report.UnresolvedCount != tc.wantCount {
 				t.Fatalf("vulnerability report = %#v", report)
 			}
 			if tc.name == "clean scan" && (report.Database.Vulnerability.Version != "2" || report.Database.Vulnerability.DownloadedAt == "") {
 				t.Fatalf("vulnerability database metadata missing: %#v", report.Database.Vulnerability)
+			}
+			if len(report.PolicySHA256) != 64 {
+				t.Fatalf("policy hash = %q", report.PolicySHA256)
+			}
+			if tc.mode == "multiple" && (len(report.Findings) != 2 || report.Findings[0].Package != "openssl" || report.Findings[0].CVE != "CVE-2026-0001" || report.Findings[0].InstalledVersion != "3.0.1" || report.Findings[0].FixedVersion != "3.0.2") {
+				t.Fatalf("unresolved findings = %#v", report.Findings)
 			}
 			if tc.mode == "unavailable" && strings.Contains(string(data), "fixture-token") {
 				t.Fatalf("vulnerability report leaked scanner credentials: %s", data)

@@ -43,6 +43,7 @@ jobs:
 
       - name: Run focused vulnerability report admission tests
         run: >-
+          python3 scripts/check_image_admission_regression.py &&
           go test ./internal/app/tools/ociadmission
           -run 'TestVulnerabilityReportParsesAndAccountsForExceptions|TestLiveVulnerabilityReport'
           -count=1
@@ -87,3 +88,48 @@ jobs:
           path: ${{ runner.temp }}/image-baseline-vulnerabilities.json
           if-no-files-found: ignore
           retention-days: 14
+
+  reusable-upload-probe:
+    name: Probe the called workflow's real uploader
+    uses: ./.github/workflows/demo-upgrade-qualification.yml
+    with:
+      candidate_image: ghcr.io/flidai/leapview@sha256:d03a12efcd20e7383f8973f5ef5e32e909ca6495ca49c70860222fe926398f86
+      candidate_revision: ${{ github.event.pull_request.head.sha }}
+      final_artifact: true
+      upload_probe: true
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+
+  verify-reusable-upload-probe:
+    name: Verify reusable upload and absence of receipts
+    needs: [reusable-upload-probe]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require the deliberate stop before qualification
+        env:
+          REUSABLE_RESULT: ${{ needs.reusable-upload-probe.result }}
+        run: test "${REUSABLE_RESULT}" = failure
+
+      - name: Download the reusable workflow's diagnostic artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: oci-vulnerability-diagnostic-historical-transition-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reusable-upload-probe
+
+      - name: Validate the uploaded probe and verify no qualification receipts exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          jq -e '.schemaVersion == 1 and .diagnosticOnly == true and .probe == "reusable-upload" and .outcome == "upload-probe" and .unresolvedCount == 0 and .findings == []' \
+            reusable-upload-probe/oci-vulnerability-report.json >/dev/null
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            | jq -e '.artifacts | map(.name) as $names | any($names[]; startswith("oci-vulnerability-diagnostic-historical-transition-")) and all($names[]; (startswith("historical-transition-") or startswith("production-image-qualification-")) | not)' \
+            >/dev/null

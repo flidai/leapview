@@ -13,6 +13,7 @@ BASELINES = (
     "ghcr.io/flidai/leapview@sha256:d53f0fa80a7637e9d61ab667fab87c9cf3703b92bdce55e45797e428975f8d21",
     "ghcr.io/flidai/leapview@sha256:d03a12efcd20e7383f8973f5ef5e32e909ca6495ca49c70860222fe926398f86",
 )
+RUNTIME_BASE = "gcr.io/distroless/cc-debian13:debug-nonroot@sha256:f525a9a37aed3e8a848f46cfe055999782d66ed797e9e2886928c8caaaa4fc52"
 PLATFORM = "linux/amd64"
 
 
@@ -60,6 +61,8 @@ def findings(scan):
                                fixedVersion=text(item.get("FixedVersion", "")),
                                severity=text(item.get("Severity", "")),
                                severitySource=text(item.get("SeveritySource", "")),
+                               dataSource=text((item.get("DataSource") or {}).get("Name", "")),
+                               vendorSeverity={text(key): text(str(value)) for key, value in (item.get("VendorSeverity") or {}).items()},
                                component=text(section.get("Type", "")),
                                target=text(Path(section.get("Target", "")).name)))
     return sorted(result, key=lambda item: (item["cve"], item["package"], item["target"]))
@@ -79,7 +82,7 @@ def main():
                   scanner=dict(name="trivy", version=policy["scannerVersion"], image=policy["scannerImage"]),
                   policySHA256=hashlib.sha256(policy_bytes).hexdigest(), images=[])
     try:
-        with tempfile.TemporaryDirectory(prefix="leapview-baseline-") as directory:
+        with tempfile.TemporaryDirectory(prefix="leapview-baseline-", ignore_cleanup_errors=True) as directory:
             cache = Path(directory)
             command = ["docker", "run", "--rm", "--network", "host",
                        "-v", "/var/run/docker.sock:/var/run/docker.sock",
@@ -91,12 +94,13 @@ def main():
                 run(command + ["image", "--cache-dir", "/cache", flag, "--quiet"])
             frozen = databases(cache)
             report["database"] = frozen
-            for image in BASELINES:
+            for image in (*BASELINES, RUNTIME_BASE):
                 run(["docker", "pull", "--platform", PLATFORM, image])
                 labels = json.loads(run(["docker", "image", "inspect", image,
-                                         "--format", "{{json .Config.Labels}}"] ))
+                                         "--format", "{{json .Config.Labels}}"] )) or {}
                 revision = labels.get("org.opencontainers.image.revision", "")
-                assert re.fullmatch(r"[0-9a-f]{40}", revision)
+                if image in BASELINES:
+                    assert re.fullmatch(r"[0-9a-f]{40}", revision)
                 scan = json.loads(run(command + ["image", "--cache-dir", "/cache", "--quiet",
                     "--format", "json", "--exit-code", "0", "--scanners", "vuln",
                     "--platform", PLATFORM, "--severity", ",".join(policy["severity"]),
