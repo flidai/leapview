@@ -76,3 +76,23 @@ test('fresh full and nightly qualification provision the deployment Terraform de
   const contractIndex = development.findIndex((step: any) => step.env?.CONTRACT)
   expect(development.indexOf(terraform)).toBeLessThan(contractIndex)
 })
+
+test('Nix candidate collection follows enforcement and retains all bound evidence', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const image = workflow.jobs.image.steps
+  const enforcement = image.findIndex((step: any) => step.run?.includes('check_nix_runtime_security.py result-image'))
+  const collection = image.findIndex((step: any) => step.run?.includes('nix_candidate_manifest.py result-image'))
+  expect(enforcement).toBeGreaterThan(-1)
+  expect(collection).toBeGreaterThan(enforcement)
+  expect(image[collection].if).toBeUndefined() // The default success gate rejects incomplete scans.
+  expect(image[collection].run).toContain('--kind application-image')
+  expect(image[collection].run).toContain('--verify .tmp/nix-runtime-security/candidate-manifest.json')
+  const retention = image.find((step: any) => step.with?.name?.startsWith('nix-runtime-security-'))
+  expect(retention.if).toBe('always()')
+  for (const name of ['candidate-manifest', 'summary', 'sbom.syft', 'sbom.spdx', 'runtime.syft',
+    'runtime.grype', 'runtime.assessed.grype', 'controls.synthetic.syft', 'controls.grype',
+    'assessments.vex', 'syft-config', 'grype-config']) {
+    expect(retention.with.path).toContain(`.tmp/nix-runtime-security/${name}.json`)
+  }
+  expect(workflow.permissions).toEqual({ contents: 'read' })
+})
