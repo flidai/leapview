@@ -1739,7 +1739,7 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 	if err != nil {
 		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
 	}
-	result, err := h.DashboardCatalog.List(r.Context(), dashboardauthoringcatalog.ListRequest{ProjectID: projectID, ActorID: principal.ID})
+	result, err := h.DashboardCatalog.List(r.Context(), dashboardauthoringcatalog.ListRequest{ProjectID: projectID, ActorID: principal.ID, IncludeEditableDrafts: true})
 	if err != nil {
 		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
 	}
