@@ -12,7 +12,7 @@ when adding or removing a caller.
 | `merge-validation.yml` | Shared `setup-ci`, default Nix | Existing complete merge-queue candidate checks |
 | `nightly.yml` | Shared `setup-ci`, default Nix | Existing full checks, security scans, dependency evidence and diagnostic evaluations |
 | `nix-development.yml` | Root flake directly | Native/compiler and real-browser checks, fresh-checkout PR/full/nightly contract selection; image qualification remains independent |
-| `demo-upgrade-qualification.yml`, `recovery-evidence-qualification.yml` | Shared `setup-ci`, default Nix | Existing disposable recovery/transition fixtures, without live host adoption |
+| `demo-upgrade-qualification.yml`, `recovery-evidence-qualification.yml` | Shared `setup-ci`, default Nix | Existing disposable recovery/transition fixtures; historical utility containers extract a portable client from a digest-pinned Docker CLI image rather than mounting the host toolchain |
 | `security.yml`, `dbt-warehouse-boundary-reference.yml`, `dbt-warehouse-boundary-azure-qualification.yml` | Shared `setup-ci`, default Nix | dbt's pinned Python environment remains separate; cloud qualification retains its own gates |
 | `demo-deploy.yml` | Selected source's shared setup action | Historical source revisions retain their own action; current revisions use default Nix tools. Demo remains Compose |
 | `artifacts.yml` installed-candidate qualification | Shared `setup-ci`, default Nix | Qualifies conventional immutable images; populates default-branch validation caches |

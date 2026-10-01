@@ -84,7 +84,9 @@ or private cache account. Manual dispatch can select
 `checks=image` or `checks=development` for a focused rerun; the default and
 pull-request validation run both lanes. Select `contract=full` or `contract=nightly`
 with `checks=development` to exercise those contracts in a fresh hosted environment.
-Their ordinary merge-queue/nightly workflows retain their existing gates.
+Their ordinary merge-queue/nightly workflows retain their existing gates. Historical
+transition utility containers use a portable Docker client from a digest-pinned
+fixture image, so they do not depend on the host toolchain's loader or libraries.
 
 Go caches remain bounded by workload, platform, runner image, selected toolchain,
 compiler version and locked inputs. Only default-branch jobs publish archives;

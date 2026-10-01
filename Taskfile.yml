@@ -2144,7 +2144,7 @@ tasks:
       - api:generate
     cmds:
       - go test ./cmd/leapviewctl ./internal/app/cli/composectl ./internal/app/cli/hostinstall ./deploy/compose ./deploy/host
-      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualificationContainerRuntimeLifecycle$'
+      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualification(ContainerRuntimeLifecycle|HistoricalDockerClientPortable)$'
       - go test ./deploy/hetzner
       - go test ./deploy/hetzner-site
       - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/kamal-site -p 'test_*.py'
