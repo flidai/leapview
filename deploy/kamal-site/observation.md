@@ -13,8 +13,15 @@ observation.
 
 ## Inputs and start smoke
 
-Use protected operator storage and the existing pinned SSH identity, host-key
-fingerprint, and self-contained SSH config. The config must explicitly select
+Use a durable private operator state directory, for example
+`$HOME/.local/state/leapview/site-observations`, on storage that survives logout,
+reboot, and cleanup of temporary files. Do not place a run in `/tmp`, a checkout,
+or another scratch directory. Create `PRIVATE` with mode `0700` and keep every
+run directory and adjacent log there so the evidence remains available for the
+full observation and later review.
+
+Use the existing pinned SSH identity, host-key fingerprint, and self-contained
+SSH config. The config must explicitly select
 the identity, `User root`, `IdentitiesOnly yes`, `BatchMode yes`, strict host-key
 checking, port 22, and the reviewed known-host file. `IdentityFile` and
 `UserKnownHostsFile` must be absolute literal paths; tilde, environment, percent,
@@ -34,6 +41,14 @@ Set these shell variables to verified operator inputs before using the commands:
 | `MIN_FREE_BYTES`, `MIN_FREE_INODES` | Qualified thresholds, no lower than host reserves. |
 | `PUBLIC_MANIFEST`, `DESKTOP_MANIFEST` | Exact protected release manifests from B. |
 | `BUN` | Explicit path to the tested Bun executable. |
+
+For example, set up the durable run location before exporting the other verified
+inputs:
+
+```sh
+PRIVATE="${XDG_STATE_HOME:-$HOME/.local/state}/leapview/site-observations"
+install -d -m 700 -- "$PRIVATE"
+```
 
 From the repository root, assign new run/bundle paths. Both commands refuse to
 reuse existing output directories. Keep logs and artifacts in protected storage,
@@ -91,6 +106,24 @@ a dead or zombie process is interrupted. PID alone is insufficient. It does not
 resume an interrupted run or count unobserved time. Preserve `summary.json`,
 `samples.jsonl`, `process.json`, input/source hashes, and boundary smoke logs.
 Use `status` regularly; these tools do not configure push notifications.
+
+The supported `run` command supervises a worker process. After the worker exits,
+the supervisor writes `exit.json`, bound to the run ID, child and supervisor
+process identities, source hash, and exact summary/process hashes. `status` and
+acceptance report a pass only when this durable receipt records child exit code
+zero. Preparation remains available while the worker is running; qualification
+fails closed when the receipt is missing, mismatched, or nonzero.
+
+The worker flushes each sample and summary. If a run-file write fails, it
+reports a sanitized stage and errno to stderr, attempts to append a rejection
+and save a failed summary, then exits unsuccessfully. Those final writes are
+best effort because the same filesystem may be full or unavailable. The
+supervisor's nonzero exit receipt prevents qualification even if an earlier
+pass summary remains visible. A nonzero `run` command exit or a sanitized I/O
+diagnostic in its adjacent stdout/stderr log requires investigation and a fresh
+interval, even if a receipt file remains visible. If the last durable summary
+still says `running`, `status` reports it as `interrupted` once the process is
+dead or its identity is stale.
 
 ## Freeze and preflight the final check
 

@@ -3,6 +3,7 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
+import errno
 import fnmatch
 import hashlib
 import ipaddress
@@ -10,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import signal
 import shlex
 import stat
@@ -32,6 +34,22 @@ CLOCK_TOLERANCE = 5
 
 class ObservationFailure(Exception):
     pass
+
+
+def _io_failure(stage, exc):
+    """Return a bounded diagnostic without exposing OS-provided paths or text."""
+    code = getattr(exc, 'errno', None)
+    if type(code) is int and 0 < code <= 9999:
+        name = errno.errorcode.get(code, 'UNKNOWN')
+        return f'observer I/O failure during {stage} (errno {code} {name})'
+    return f'observer I/O failure during {stage} (errno unavailable)'
+
+
+def _report_failure(message):
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except Exception:
+        pass
 
 
 def utc(ts):
@@ -628,7 +646,7 @@ def _append_jsonl(path,value):
 
 
 def _initial_summary(config, start_wall, clock_tolerance):
-    return {'schema':1,'status':'running','scope':'health_and_storage_observation_only',
+    result={'schema':1,'status':'running','scope':'health_and_storage_observation_only',
             'rollout_acceptance':'incomplete_public_adoption_smoke_required',
             'required_external_gates':{'public_adoption_smoke_at_start':'required_not_recorded_by_observer',
                                        'public_adoption_smoke_at_end':'required_not_recorded_by_observer'},
@@ -642,10 +660,13 @@ def _initial_summary(config, start_wall, clock_tolerance):
             'min_free_bytes':config['min_free_bytes'],'min_free_inodes':config['min_free_inodes'],
             'observer_sha256':config['observer_sha256'],'input_files':config.get('input_files',{}),
             'samples':0,'host_samples':0,'last_sample_at':None,'elapsed_seconds':0,'failure':None}
+    if config.get('run_id') is not None: result['run_id']=config['run_id']
+    return result
 
 
 def run_observation(config, output_dir, *, http_probe=None, host_sample=None, monotonic=time.monotonic,
-                    wall_time=time.time, sleep=time.sleep, gap_grace=GAP_GRACE, clock_tolerance=CLOCK_TOLERANCE):
+                    wall_time=time.time, sleep=time.sleep, gap_grace=GAP_GRACE, clock_tolerance=CLOCK_TOLERANCE,
+                    run_id=None, output_dir_exists=False):
     if not 0 < gap_grace <= GAP_GRACE or not 0 < clock_tolerance <= CLOCK_TOLERANCE:
         raise ValueError('observation timing tolerances may not be loosened')
     if (config.get('duration_seconds')!=DURATION or config.get('probe_interval_seconds')!=PROBE_INTERVAL
@@ -662,13 +683,17 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
     if config.get('observer_sha256',source_sha)!=source_sha:
         raise ValueError('observer source changed after run configuration was prepared')
     config['observer_sha256']=source_sha
-    out=_ensure_protected_dir(output_dir)
+    if output_dir_exists:
+        out=Path(output_dir)
+        st=out.lstat()
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
+            raise ValueError('observer output directory is not protected')
+    else:
+        out=_ensure_protected_dir(output_dir)
     event_path=out/'samples.jsonl'; summary_path=out/'summary.json'
     start_m=monotonic(); start_w=wall_time(); wall_mono_offset=start_w-start_m
+    if run_id is not None: config['run_id']=run_id
     summary=_initial_summary(config,start_w,clock_tolerance)
-    _write_json_atomic(summary_path,summary)
-    _write_json_atomic(out/'process.json',{'pid':os.getpid(),'start_ticks':proc_identity(os.getpid())['start_ticks'],
-                                           'boot_id':proc_boot_id(),'observer_sha256':source_sha})
     if http_probe is None: http_probe=lambda:probe_public(config['identity'],config['base_url'])
     baseline=None; failure=None; index=0; next_deadline=start_m
     def reject(reason, observed_m, observed_w):
@@ -677,6 +702,33 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
                                   'elapsed_seconds':round(observed_m-start_m,3),'failure':reason})
     def stop_handler(signum, frame):
         raise ObservationFailure('received stop signal ' + str(signum))
+
+    def fail_io(stage, exc, observed_m=None, observed_w=None, *, attempt_rejection=True):
+        message=_io_failure(stage,exc)
+        summary['status']='failed'; summary['failure']=message
+        ended=wall_time() if observed_w is None else observed_w
+        summary['ended_at']=utc(ended)
+        _report_failure(message)
+        if attempt_rejection:
+            try:
+                reject(message,monotonic() if observed_m is None else observed_m,ended)
+            except BaseException:
+                pass
+        try:
+            _write_json_atomic(summary_path,summary)
+        except BaseException:
+            pass
+        return summary
+
+    try:
+        _write_json_atomic(summary_path,summary)
+        process={'pid':os.getpid(),'start_ticks':proc_identity(os.getpid())['start_ticks'],
+                 'boot_id':proc_boot_id(),'observer_sha256':source_sha}
+        if run_id is not None: process['run_id']=run_id
+        _write_json_atomic(out/'process.json',process)
+    except OSError as exc:
+        return fail_io('startup metadata write',exc)
+
     old_term=signal.signal(signal.SIGTERM,stop_handler)
     old_int=signal.signal(signal.SIGINT,stop_handler)
     try:
@@ -685,9 +737,17 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
             if now<next_deadline: sleep(next_deadline-now)
             sample_m=monotonic(); sample_w=wall_time()
             if abs((sample_w-sample_m)-wall_mono_offset)>clock_tolerance:
-                failure='wall and monotonic clocks diverged'; reject(failure,sample_m,sample_w); break
+                failure='wall and monotonic clocks diverged'
+                try: reject(failure,sample_m,sample_w)
+                except OSError as exc:
+                    return fail_io('rejection append',exc,sample_m,sample_w,attempt_rejection=False)
+                break
             if sample_m>next_deadline+gap_grace:
-                failure='monitoring gap exceeded grace'; reject(failure,sample_m,sample_w); break
+                failure='monitoring gap exceeded grace'
+                try: reject(failure,sample_m,sample_w)
+                except OSError as exc:
+                    return fail_io('rejection append',exc,sample_m,sample_w,attempt_rejection=False)
+                break
             elapsed=max(0,sample_m-start_m)
             host_due=(index*config['probe_interval_seconds'])%config['host_interval_seconds']==0
             http_started_m=monotonic()
@@ -716,10 +776,16 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
                    'public_probe_duration_ms':http_duration_ms,
                    'sample_execution_ms':int(round(max(0.0,end_m-sample_m)*1000)),'http':http,
                    'host':host,'host_error':host_error,'failures':failures}
-            _append_jsonl(event_path,event)
+            try:
+                _append_jsonl(event_path,event)
+            except OSError as exc:
+                return fail_io('sample append',exc,end_m,end_w)
             summary['samples']+=1; summary['host_samples']+=1 if host_due else 0
             summary['last_sample_at']=event['observed_at']; summary['elapsed_seconds']=round(end_m-start_m,3)
-            _write_json_atomic(summary_path,summary)
+            try:
+                _write_json_atomic(summary_path,summary)
+            except OSError as exc:
+                return fail_io('sample summary write',exc,end_m,end_w)
             if failures:
                 failure='; '.join(dict.fromkeys(failures)); break
             if elapsed>=config['duration_seconds']:
@@ -734,15 +800,153 @@ def run_observation(config, output_dir, *, http_probe=None, host_sample=None, mo
             index+=1; next_deadline=start_m+index*config['probe_interval_seconds']
         if failure:
             summary['status']='failed'; summary['failure']=failure; summary['ended_at']=utc(wall_time())
+    except OSError as exc:
+        return fail_io('observation loop',exc)
     except BaseException as exc:
         summary['status']='failed'; summary['failure']='observer stopped: '+type(exc).__name__
         summary['ended_at']=utc(wall_time())
         try: reject(summary['failure'],monotonic(),wall_time())
+        except OSError as io_exc:
+            return fail_io('rejection append',io_exc,attempt_rejection=False)
         except Exception: pass
     finally:
         signal.signal(signal.SIGTERM,old_term); signal.signal(signal.SIGINT,old_int)
-    _write_json_atomic(summary_path,summary)
+    try:
+        _write_json_atomic(summary_path,summary)
+    except OSError as exc:
+        return fail_io('final summary write',exc)
     return summary
+
+
+def _protected_run_file(output_dir, name):
+    path=Path(output_dir)/name
+    st=path.lstat()
+    if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
+        raise ValueError('observer metadata is not protected')
+    return path.read_bytes()
+
+
+def read_exit_receipt(output_dir):
+    """Read and validate the supervisor's durable receipt for this exact run."""
+    try:
+        out=Path(output_dir)
+        out_st=out.lstat()
+        if not stat.S_ISDIR(out_st.st_mode) or out_st.st_uid!=os.getuid() or out_st.st_mode&0o077:
+            raise ValueError('observer output directory is not protected')
+        summary_raw=_protected_run_file(out,'summary.json')
+        process_raw=_protected_run_file(out,'process.json')
+        supervisor_raw=_protected_run_file(out,'supervisor.json')
+        receipt_raw=_protected_run_file(out,'exit.json')
+        summary=json.loads(summary_raw); process=json.loads(process_raw)
+        supervisor=json.loads(supervisor_raw); receipt=json.loads(receipt_raw)
+        if any(not isinstance(item,dict) for item in (summary,process,supervisor,receipt)):
+            raise ValueError('invalid observer exit receipt')
+        run_id=summary.get('run_id')
+        if (not isinstance(run_id,str) or not re.fullmatch(r'[a-f0-9]{32}',run_id)
+                or process.get('run_id')!=run_id or supervisor.get('run_id')!=run_id
+                or summary.get('observer_sha256')!=process.get('observer_sha256')
+                or summary.get('observer_sha256')!=supervisor.get('observer_sha256')
+                or summary.get('observer_sha256')!=observer_source_sha256()
+                or receipt.get('schema')!=1 or receipt.get('run_id')!=run_id
+                or receipt.get('observer_sha256')!=summary.get('observer_sha256')
+                or type(receipt.get('returncode')) is not int or not 0<=receipt['returncode']<=255
+                or receipt.get('child')!={'pid':process.get('pid'),'start_ticks':process.get('start_ticks'),
+                                           'boot_id':process.get('boot_id')}
+                or receipt.get('supervisor')!={'pid':supervisor.get('pid'),
+                                                'start_ticks':supervisor.get('start_ticks'),
+                                                'boot_id':supervisor.get('boot_id')}
+                or receipt.get('supervisor_sha256')!=hashlib.sha256(supervisor_raw).hexdigest()
+                or receipt.get('process_sha256')!=hashlib.sha256(process_raw).hexdigest()
+                or receipt.get('summary_sha256')!=hashlib.sha256(summary_raw).hexdigest()):
+            raise ValueError('invalid observer exit receipt')
+        return receipt
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError('observer exit receipt is missing or invalid') from exc
+
+
+def _record_matches(summary, process, supervisor):
+    run_id=summary.get('run_id')
+    source_sha=summary.get('observer_sha256')
+    return (isinstance(run_id,str) and re.fullmatch(r'[a-f0-9]{32}',run_id) is not None
+            and process.get('run_id')==run_id and supervisor.get('run_id')==run_id
+            and process.get('observer_sha256')==source_sha
+            and supervisor.get('observer_sha256')==source_sha
+            and re.fullmatch(r'[a-f0-9]{64}',str(source_sha)) is not None
+            and source_sha==observer_source_sha256())
+
+
+def _identity_alive(identity):
+    try:
+        proc=proc_identity(identity['pid'])
+        return (proc['state'] not in ('Z','X') and proc['start_ticks']==identity['start_ticks']
+                and proc_boot_id()==identity['boot_id'])
+    except Exception:
+        return False
+
+
+def _remove_exit_receipt_best_effort(output_dir):
+    try:
+        (Path(output_dir)/'exit.json').unlink(missing_ok=True)
+        dfd=os.open(str(output_dir),os.O_RDONLY|os.O_DIRECTORY)
+        try: os.fsync(dfd)
+        finally: os.close(dfd)
+    except OSError:
+        pass
+
+
+def run_supervised(config, output_dir):
+    """Run the observer in a child and durably record its exact exit status."""
+    source_sha=observer_source_sha256()
+    if config.get('observer_sha256',source_sha)!=source_sha:
+        raise ValueError('observer source changed after run configuration was prepared')
+    out=_ensure_protected_dir(output_dir)
+    run_id=secrets.token_hex(16)
+    supervisor={'schema':1,'pid':os.getpid(),'start_ticks':proc_identity(os.getpid())['start_ticks'],
+                'boot_id':proc_boot_id(),'observer_sha256':source_sha,'run_id':run_id}
+    _write_json_atomic(out/'supervisor.json',supervisor)
+    child_config=dict(config,run_id=run_id)
+    command=[sys.executable,'-B',os.path.abspath(__file__),'__worker','--output-dir',str(out)]
+    child=subprocess.Popen(command,stdin=subprocess.PIPE,env=ssh_environment())
+    try:
+        child_identity={'pid':child.pid,'start_ticks':proc_identity(child.pid)['start_ticks'],
+                        'boot_id':proc_boot_id()}
+    except Exception:
+        child.terminate(); child.wait()
+        raise
+    try:
+        child.communicate(json.dumps(child_config,sort_keys=True,separators=(',',':')).encode())
+        returncode=child.returncode
+    except OSError as exc:
+        _report_failure(_io_failure('worker communication',exc))
+        try: child.terminate()
+        except OSError: pass
+        child.wait()
+        returncode=2
+    if type(returncode) is not int or not 0<=returncode<=255: returncode=2
+    try:
+        summary_raw=_protected_run_file(out,'summary.json')
+        summary=json.loads(summary_raw)
+        print(json.dumps(summary,sort_keys=True))
+    except Exception:
+        summary_raw=None
+        print(json.dumps({'status':'failed','failure':'observer produced no readable summary'},sort_keys=True))
+    try:
+        process_raw=_protected_run_file(out,'process.json')
+    except Exception:
+        process_raw=None
+    receipt={'schema':1,'run_id':run_id,'observer_sha256':source_sha,'returncode':returncode,
+             'child':child_identity,
+             'supervisor':{key:supervisor[key] for key in ('pid','start_ticks','boot_id')},
+             'supervisor_sha256':hashlib.sha256(_protected_run_file(out,'supervisor.json')).hexdigest(),
+             'process_sha256':hashlib.sha256(process_raw).hexdigest() if process_raw is not None else None,
+             'summary_sha256':hashlib.sha256(summary_raw).hexdigest() if summary_raw is not None else None}
+    try:
+        _write_json_atomic(out/'exit.json',receipt)
+    except OSError as exc:
+        _remove_exit_receipt_best_effort(out)
+        _report_failure(_io_failure('exit receipt write',exc))
+        return 2
+    return returncode
 
 
 def status(output_dir):
@@ -750,24 +954,31 @@ def status(output_dir):
     if out.is_symlink() or not out.is_dir(): raise ValueError('observer output directory missing')
     out_st=out.stat()
     if out_st.st_uid!=os.getuid() or out_st.st_mode&0o077: raise ValueError('observer output directory is not protected')
-    def local_json(name):
-        path=out/name; st=path.lstat()
-        if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
-            raise ValueError('observer metadata is not protected')
-        return json.loads(path.read_text())
+    def local_json(name): return json.loads(_protected_run_file(out,name))
     summary=local_json('summary.json')
+    if not isinstance(summary,dict): raise ValueError('observer summary is invalid')
+    try: process=local_json('process.json')
+    except (OSError,ValueError,json.JSONDecodeError): process={}
+    try: supervisor=local_json('supervisor.json')
+    except (OSError,ValueError,json.JSONDecodeError): supervisor={}
+    if not isinstance(process,dict): process={}
+    if not isinstance(supervisor,dict): supervisor={}
     if summary.get('status')=='running':
-        process=local_json('process.json')
-        try:
-            proc=proc_identity(process['pid'])
-            current_source_sha=observer_source_sha256()
-            alive=(proc['state'] not in ('Z','X') and proc['start_ticks']==process['start_ticks']
-                   and proc_boot_id()==process['boot_id']
-                   and re.fullmatch(r'[a-f0-9]{64}',summary.get('observer_sha256','')) is not None
-                   and summary.get('observer_sha256')==current_source_sha
-                   and process.get('observer_sha256')==summary.get('observer_sha256'))
-        except Exception: alive=False
+        bound=_record_matches(summary,process,supervisor)
+        alive=bound and _identity_alive(process) and _identity_alive(supervisor)
+        if not alive:
+            summary=dict(summary)
+            summary['status']='interrupted'
+            summary['failure']=summary.get('failure') or 'observer process is dead or its recorded identity/source is stale'
         return summary, ('running' if alive else 'interrupted')
+    if summary.get('status')=='health_storage_passed':
+        try: receipt=read_exit_receipt(out)
+        except ValueError:
+            return summary,'interrupted'
+        if receipt['returncode']==0: return summary,'health_storage_passed'
+        summary=dict(summary); summary['status']='failed'
+        summary['failure']='supervised observer exited unsuccessfully'
+        return summary,'failed'
     return summary,summary.get('status','invalid')
 
 
@@ -830,20 +1041,32 @@ def main(argv=None):
     run.add_argument('--target',required=True,help='validated host name or IP address for pinned SSH checks')
     run.add_argument('--base-url',default=DEFAULT_BASE_URL,help='HTTPS origin for public read-only probes')
     run.add_argument('--output-dir',required=True)
+    worker=subs.add_parser('__worker',help=argparse.SUPPRESS)
+    worker.add_argument('--output-dir',required=True)
     check=subs.add_parser('status'); check.add_argument('--output-dir',required=True)
     args=parser.parse_args(argv)
     try:
         if args.command=='status':
             summary,result=status(args.output_dir); print(json.dumps({'result':result,'summary':summary},sort_keys=True))
             return 0 if result in ('running','health_storage_passed') else 1
+        if args.command=='__worker':
+            config=json.loads(sys.stdin.buffer.read())
+            run_id=config.pop('run_id',None)
+            if not isinstance(run_id,str) or not re.fullmatch(r'[a-f0-9]{32}',run_id):
+                raise ValueError('supervised worker run identity is invalid')
+            summary=run_observation(config,args.output_dir,run_id=run_id,output_dir_exists=True)
+            return 0 if summary['status']=='health_storage_passed' else 1
         config=prepare_config(args.record,args.prior_version,args.active_image_id,args.prior_image_id,
                               args.min_free_bytes,args.min_free_inodes,args.ssh_config,args.fingerprint_file,
                               args.target,args.base_url)
-        summary=run_observation(config,args.output_dir)
-        print(json.dumps(summary,sort_keys=True))
-        return 0 if summary['status']=='health_storage_passed' else 1
+        return run_supervised(config,args.output_dir)
     except Exception as exc:
-        print('observer rejected: '+str(exc),file=sys.stderr)
+        if isinstance(exc,OSError):
+            _report_failure(_io_failure('setup or execution',exc))
+        elif isinstance(exc,subprocess.TimeoutExpired):
+            print('observer rejected: pinned SSH command timed out',file=sys.stderr)
+        else:
+            print('observer rejected: '+str(exc),file=sys.stderr)
         return 2
 
 
