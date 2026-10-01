@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -38,25 +39,56 @@ func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
 	}
 }
 
-func TestPMTilesTransientExtractionClassificationIsExact(t *testing.T) {
-	for _, failure := range []string{"HTTP error: 429", "HTTP error: 500", "HTTP error: 502", "HTTP error: 503", "HTTP error: 504", "unexpected EOF", "EOF"} {
-		if !isPMTilesTransientExtraction("2026/09/30 14:24:48 main.go:185: Failed to extract, " + failure + "\nexit status 1\n") {
-			t.Errorf("transient extraction failure %q was not retryable", failure)
-		}
-	}
-	for _, message := range []string{
-		"Failed to extract, HTTP error: 404",
-		"Failed to extract, HTTP error: 401",
-		"Failed to extract, HTTP error: 5000",
-		"Failed to extract, write output: no space left on device",
-		"Failed to merge, unexpected EOF",
-		"unexpected archive digest",
-		"HTTP 429 returned by an unrelated message",
-		"unexpected EOF",
+func TestPMTilesTransientFailureClassification(t *testing.T) {
+	for _, test := range []struct {
+		message string
+		retry   bool
+	}{
+		{"Failed to extract, HTTP error: 429", true},
+		{"Failed to extract, HTTP error: 500", true},
+		{"Failed to extract, HTTP error: 502", true},
+		{"Failed to extract, HTTP error: 503", true},
+		{"Failed to extract, HTTP error: 504", true},
+		{"Failed to extract, unexpected EOF", true},
+		{"Failed to extract, EOF", true},
+		{"Failed to extract, read tcp: connection reset by peer", true},
+		{"Failed to extract, read tcp: i/o timeout", true},
+		{"Failed to extract, EOF while reading", false},
+		{"Failed to extract, HTTP error: 401", false},
+		{"Failed to extract, HTTP error: 403", false},
+		{"Failed to extract, HTTP error: 403 unexpected EOF", false},
+		{"Failed to extract, HTTP error: 404", false},
+		{"Failed to extract, HTTP error: 5000", false},
+		{"Failed to extract, write output: no space left on device", false},
+		{"Failed to merge, unexpected EOF", false},
+		{"unexpected archive digest", false},
+		{"HTTP 429 returned by an unrelated message", false},
+		{"unexpected EOF in generated source", false},
 	} {
-		if isPMTilesTransientExtraction(message) {
-			t.Errorf("classified permanent or unrelated failure %q as retryable", message)
-		}
+		t.Run(strings.ReplaceAll(test.message, " ", "_"), func(t *testing.T) {
+			if got := isPMTilesTransientFailure(test.message); got != test.retry {
+				t.Fatalf("retryable = %t, want %t for %q", got, test.retry, test.message)
+			}
+		})
+	}
+}
+
+func TestPMTilesRetriesRequireWellFormedExtractArguments(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"extract", planetURL},
+		{"merge", "input.pmtiles", filepath.Join(t.TempDir(), "merged.pmtiles")},
+	} {
+		t.Run(strings.Join(arguments, "/"), func(t *testing.T) {
+			attempts := 0
+			failure := errors.New("transient extraction failure")
+			err := runPMTilesWithRetry(context.Background(), arguments, func(context.Context, ...string) (string, error) {
+				attempts++
+				return "Failed to extract, unexpected EOF", failure
+			})
+			if !errors.Is(err, failure) || attempts != 1 {
+				t.Fatalf("attempts=%d err=%v, want one attempt and original error", attempts, err)
+			}
+		})
 	}
 }
 
@@ -226,5 +258,95 @@ func TestRegionalExtractionProfileExtendsTheGlobalArchive(t *testing.T) {
 	}
 	if archiveDigest == globalArchiveDigest {
 		t.Fatal("regional detail was not merged into a distinct immutable archive")
+	}
+}
+
+func TestPMTilesRetriesDiscardPartialArchivesAndRecover(t *testing.T) {
+	t.Parallel()
+	target := filepath.Join(t.TempDir(), "regional.pmtiles")
+	arguments := []string{"extract", planetURL, target}
+	attempts := 0
+	err := runPMTilesWithRetry(context.Background(), arguments, func(_ context.Context, got ...string) (string, error) {
+		attempts++
+		if !slices.Equal(got, arguments) {
+			t.Fatalf("retry changed pinned extraction arguments: %q", got)
+		}
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Fatalf("attempt %d retained partial output: %v", attempts, err)
+		}
+		if attempts < 3 {
+			if err := os.WriteFile(target, []byte("partial archive"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			message := "Failed to extract, unexpected EOF"
+			if attempts == 2 {
+				message = "Failed to extract, HTTP error: 500"
+			}
+			return message, errors.New("extraction failed")
+		}
+		return "", os.WriteFile(target, []byte("complete archive"), 0o600)
+	})
+	if err != nil || attempts != 3 {
+		t.Fatalf("attempts=%d err=%v, want recovery on third attempt", attempts, err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256([]byte("complete archive")))
+	if err := verifyFile(target, want); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPMTilesRetriesAreBounded(t *testing.T) {
+	t.Parallel()
+	attempts := 0
+	failure := errors.New("source unavailable")
+	err := runPMTilesWithRetry(context.Background(), []string{"extract", planetURL, filepath.Join(t.TempDir(), "regional.pmtiles")}, func(context.Context, ...string) (string, error) {
+		attempts++
+		return "Failed to extract, HTTP error: 503", failure
+	})
+	if !errors.Is(err, failure) || attempts != 3 {
+		t.Fatalf("attempts=%d err=%v, want three attempts and original failure", attempts, err)
+	}
+}
+
+func TestPMTilesPermanentFailuresAndCancellationStopRetries(t *testing.T) {
+	for _, cancelDuringRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel=%t", cancelDuringRun), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			attempts := 0
+			failure := errors.New("source rejected request")
+			err := runPMTilesWithRetry(ctx, []string{"extract", planetURL, filepath.Join(t.TempDir(), "regional.pmtiles")}, func(context.Context, ...string) (string, error) {
+				attempts++
+				if cancelDuringRun {
+					cancel()
+					return "Failed to extract, unexpected EOF", failure
+				}
+				return "Failed to extract, HTTP error: 403", failure
+			})
+			want := failure
+			if cancelDuringRun {
+				want = context.Canceled
+			}
+			if !errors.Is(err, want) || attempts != 1 {
+				t.Fatalf("attempts=%d err=%v, want one attempt and %v", attempts, err, want)
+			}
+		})
+	}
+}
+
+func TestPMTilesCommandCapturesExtractionDiagnostics(t *testing.T) {
+	if os.Getenv("LEAPVIEW_PMTILES_TEST_HELPER") == "1" {
+		fmt.Fprintln(os.Stdout, "Failed to extract, unexpected EOF")
+		fmt.Fprintln(os.Stderr, "exit status 1")
+		os.Exit(1)
+	}
+	command := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestPMTilesCommandCapturesExtractionDiagnostics$")
+	command.Env = append(os.Environ(), "LEAPVIEW_PMTILES_TEST_HELPER=1")
+	output, err := runPMTilesCommand(command)
+	if err == nil || !isPMTilesTransientFailure(output) {
+		t.Fatalf("PMTiles stdout failure was not captured for retry: output=%q err=%v", output, err)
+	}
+	if !strings.Contains(output, "exit status 1") {
+		t.Fatalf("launcher stderr missing from captured diagnostics: %q", output)
 	}
 }

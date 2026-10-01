@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property } from 'lit/decorators.js'
-import { ArrowUpRight, X } from 'lucide'
+import { X } from 'lucide'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/visual-artifact'
@@ -14,6 +14,9 @@ export class ChatVisualPanel extends LitElement {
   @property({ type: Boolean }) saved = false
   @property({ type: Boolean }) modal = false
   @property() saveError = ''
+  @property({ type: Boolean }) dashboardAvailable = false
+  private displaySource?: VisualizationEnvelope
+  private displayVisual?: VisualizationEnvelope
 
   static styles = css`
     :host {
@@ -22,6 +25,7 @@ export class ChatVisualPanel extends LitElement {
       min-width: 0;
       min-height: 0;
       height: 100%;
+      container-type: inline-size;
       border-left: var(--lv-border-muted);
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
@@ -57,9 +61,9 @@ export class ChatVisualPanel extends LitElement {
       white-space: nowrap;
     }
 
-    .actions { display: flex; align-items: center; gap: var(--base-size-8); }
+    .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--base-size-8); }
 
-    button, a {
+    button {
       display: inline-flex;
       min-height: var(--lv-control-medium);
       align-items: center;
@@ -72,22 +76,21 @@ export class ChatVisualPanel extends LitElement {
       color: var(--lv-fg-default);
       cursor: pointer;
       font: var(--lv-type-secondary);
-      text-decoration: none;
     }
 
-    button:hover:not(:disabled), a:hover { background: var(--lv-bg-control-hover); }
-    button:focus-visible, a:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--base-size-2); }
+    button:hover:not(:disabled) { background: var(--lv-bg-control-hover); }
+    button:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--base-size-2); }
     button:disabled { cursor: default; opacity: 0.6; }
 
     .close { width: var(--lv-control-medium); padding: 0; }
-    .close svg, a svg { width: var(--base-size-16); height: var(--base-size-16); }
+    .close svg { width: var(--base-size-16); height: var(--base-size-16); }
 
     .content { min-height: 0; overflow: auto; padding: var(--base-size-16); }
-    lv-visual-artifact { display: block; height: min(28rem, 60vh); min-height: 16rem; }
+    lv-visual-artifact { display: block; height: min(36rem, 68vh); min-height: min(18rem, 48vh); }
     .feedback { margin: var(--base-size-12) 0 0; font: var(--lv-type-secondary); }
     .feedback.error { color: var(--lv-fg-danger); }
 
-    @media (max-width: 42rem) {
+    @container (max-width: 42rem) {
       .header { flex-wrap: wrap; }
       h2 { flex-basis: 100%; }
       .actions { width: 100%; justify-content: flex-end; }
@@ -101,19 +104,41 @@ export class ChatVisualPanel extends LitElement {
           <h2>${this.title || 'Visual result'}</h2>
           <div class="actions">
             ${this.explorerHref ? html`
-              <a href=${this.explorerHref} aria-label="Open visual in Data Explorer" title="Open in Data Explorer">${lucideIcon(ArrowUpRight, { size: 16 })}<span>Explore</span></a>
               <button type="button" ?disabled=${this.saving || this.saved} @click=${this.save} aria-label="Save visual to Data Explorer">${this.saved ? 'Saved' : this.saving ? 'Saving…' : 'Save'}</button>
             ` : nothing}
+            ${this.dashboardAvailable ? html`<button class="add-dashboard" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-visual-add-dashboard', { bubbles: true, composed: true }))}>Add to dashboard</button>` : nothing}
             <button class="close" type="button" aria-label="Close visual details" @click=${this.close}>${lucideIcon(X, { size: 16 })}</button>
           </div>
         </div>
         <div class="content">
-          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.payload}></lv-visual-artifact>
+          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()}></lv-visual-artifact>
           ${this.saveError ? html`<p class="feedback error" role="alert">${this.saveError}</p>` : nothing}
           ${this.saved ? html`<p class="feedback" role="status">Saved to Data Explorer.</p>` : nothing}
         </div>
       </aside>
     `
+  }
+
+  private visualDisplayPayload(): VisualizationEnvelope | undefined {
+    if (this.payload === this.displaySource) return this.displayVisual
+    this.displaySource = this.payload
+    const payload = this.payload
+    if (!payload) {
+      this.displayVisual = undefined
+      return this.displayVisual
+    }
+    const spec = payload.spec
+    if (spec.kind === 'proportional' && (spec.presentation.legend === 'left' || spec.presentation.legend === 'right')) {
+      const titleHiddenSpec = spec.titleVisible === false ? spec : { ...spec, titleVisible: false }
+      this.displayVisual = { ...payload, spec: { ...titleHiddenSpec, presentation: { ...spec.presentation, legend: 'bottom' } } }
+    } else {
+      this.displayVisual = spec.titleVisible === false ? payload : { ...payload, spec: { ...spec, titleVisible: false } }
+    }
+    return this.displayVisual
+  }
+
+  focusAddToDashboard(): void {
+    this.renderRoot.querySelector<HTMLButtonElement>('.add-dashboard')?.focus()
   }
 
   focusClose(): void {

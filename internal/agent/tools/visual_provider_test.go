@@ -320,6 +320,36 @@ func TestAgentVisualCanonicalAggregateExposesExplorerDimensionBinding(t *testing
 		t.Fatalf("aliased semantic dimension explorer binding = %#v, want order_facts.country", aliasUsage.ExplorerFieldID)
 	}
 
+	// A conformed dimension is replayable in Explorer when its authored join
+	// is the same unambiguous, grain-preserving path Explorer will use.
+	joinedModel := testAgentModel()
+	joinedModel.Datasets["customers"] = semanticmodel.SemanticDatasetSpec{Model: "customers"}
+	joinedModel.Tables["customers"] = semanticmodel.Table{ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{
+		"country": {Field: "customers.country", Type: "string", Datatype: semanticmodel.DataTypeString},
+	}}
+	joinedModel.Relationships = []semanticmodel.Relationship{{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}}
+	joinedModel.Dimensions["customer_country"] = semanticmodel.SemanticDimension{Bindings: map[string]semanticmodel.DimensionBinding{
+		"orders": {Field: "customers.country", Path: []string{"orders_customers"}},
+	}}
+	joined := agentVisualFieldUsage("sales", "commerce", joinedModel, agentVisualFieldRef{Field: "customer_country"}, "dimension", "orders")
+	if joined.ExplorerFieldID == nil || *joined.ExplorerFieldID != "customers.country" {
+		t.Fatalf("joined semantic dimension explorer binding = %#v, want customers.country", joined.ExplorerFieldID)
+	}
+	joinedModel.Datasets["order_facts"] = semanticmodel.SemanticDatasetSpec{Model: "orders"}
+	joinedModel.Datasets["customer_lookup"] = semanticmodel.SemanticDatasetSpec{Model: "customers"}
+	joinedModel.Tables["order_facts"] = joinedModel.Tables["orders"]
+	joinedModel.Tables["customer_lookup"] = semanticmodel.Table{ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{
+		"country": {Field: "customer_lookup.country", Type: "string", Datatype: semanticmodel.DataTypeString},
+	}}
+	joinedModel.Relationships = []semanticmodel.Relationship{{ID: "facts_lookup", FromDataset: "order_facts", FromFields: []string{"customer_id"}, ToDataset: "customer_lookup", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}}
+	joinedModel.Dimensions["customer_country"] = semanticmodel.SemanticDimension{Bindings: map[string]semanticmodel.DimensionBinding{
+		"order_facts": {Field: "customer_lookup.country", Path: []string{"facts_lookup"}},
+	}}
+	joinedAlias := agentVisualFieldUsage("sales", "commerce", joinedModel, agentVisualFieldRef{Field: "customer_country"}, "dimension", "order_facts")
+	if joinedAlias.ExplorerFieldID == nil || *joinedAlias.ExplorerFieldID != "customer_lookup.country" {
+		t.Fatalf("aliased joined semantic dimension explorer binding = %#v, want customer_lookup.country", joinedAlias.ExplorerFieldID)
+	}
+
 	model.Dimensions["country"].Bindings["orders"] = semanticmodel.DimensionBinding{Field: "orders.country", Path: []string{"orders_customers"}}
 	unsafe := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "country", Alias: "country"}, "dimension", "orders")
 	if unsafe.ExplorerFieldID != nil {

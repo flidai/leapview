@@ -154,19 +154,22 @@ type ForkRequest struct {
 // Source is descriptive provenance only. In particular, an adapter must not
 // manufacture a RevisionToken for a project artifact that does not have one.
 type CreateFromDocumentRequest struct {
-	ProjectID            graph.ResourceID
-	ActorID              string
-	OwnerPrincipalID     string
-	Document             document.DashboardDocument
-	Title                string
-	Slug                 string
-	Origin               authoring.Origin
-	Source               *authoring.SourceMetadata
-	ForkedFrom           *authoring.ForkEvidence
-	ConversationID       string
-	ToolCallID           string
-	IdempotencyKey       string
-	OperationSeed        *ForkOperationSeed
+	ProjectID        graph.ResourceID
+	ActorID          string
+	OwnerPrincipalID string
+	Document         document.DashboardDocument
+	Title            string
+	Slug             string
+	Origin           authoring.Origin
+	Source           *authoring.SourceMetadata
+	ForkedFrom       *authoring.ForkEvidence
+	ConversationID   string
+	ToolCallID       string
+	IdempotencyKey   string
+	OperationSeed    *ForkOperationSeed
+	// OperationKind selects the authored create operation identity. It defaults
+	// to "fork" for existing source-adapter callers that create from a document.
+	OperationKind        string
 	BaseSemanticIdentity graph.ServingIdentity
 }
 
@@ -207,12 +210,19 @@ type ForkIdentityRequest struct {
 // as Create, while preserving every authored field in the supplied document.
 // No compiler, publication, deployment, or data/model mutation is involved.
 func (s *Service) CreateFromDocument(ctx context.Context, input CreateFromDocumentRequest) (Result, error) {
+	kind := strings.TrimSpace(input.OperationKind)
+	if kind == "" {
+		kind = "fork"
+	}
+	if kind != "create" && kind != "fork" {
+		return Result{}, fmt.Errorf("%w: invalid complete-document create operation kind %q", authoring.ErrInvalidPayload, kind)
+	}
 	return s.createDraft(ctx, createDraftInput{
 		ProjectID: input.ProjectID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
 		Document: input.Document, Title: input.Title, Slug: input.Slug, Visibility: authoring.VisibilityPrivate,
 		Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom,
 		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, IdempotencyKey: input.IdempotencyKey,
-		OperationSeed: input.OperationSeed, BaseSemanticIdentity: input.BaseSemanticIdentity, OperationKind: "fork",
+		OperationSeed: input.OperationSeed, BaseSemanticIdentity: input.BaseSemanticIdentity, OperationKind: kind,
 	})
 }
 

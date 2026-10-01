@@ -24,15 +24,15 @@ import (
 )
 
 const (
-	planetURL               = "https://build.protomaps.com/20260720.pmtiles"
-	archiveDigest           = visualizationmapasset.ArchiveSHA256
-	globalArchiveDigest     = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
-	regionalBounds          = "-82,-56,-30,14"
-	regionalMinimumZoom     = "7"
-	regionalMaximumZoom     = "10"
-	archiveDownloadThreads  = "2"
-	pmtilesDownloadAttempts = 3
-	basemapAssetsSHA        = visualizationmapasset.BasemapAssetsRevision
+	planetURL              = "https://build.protomaps.com/20260720.pmtiles"
+	archiveDigest          = visualizationmapasset.ArchiveSHA256
+	globalArchiveDigest    = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
+	regionalBounds         = "-82,-56,-30,14"
+	regionalMinimumZoom    = "7"
+	regionalMaximumZoom    = "10"
+	archiveDownloadThreads = "2"
+	pmtilesMaxAttempts     = 3
+	basemapAssetsSHA       = visualizationmapasset.BasemapAssetsRevision
 )
 
 var glyphRanges = []string{
@@ -292,34 +292,45 @@ func reuseVerifiedArchive(primary, legacy, digest, target string) error {
 }
 
 func runPMTiles(ctx context.Context, arguments ...string) error {
+	return runPMTilesWithRetry(ctx, arguments, func(ctx context.Context, arguments ...string) (string, error) {
+		return runPMTilesCommand(pmtilesCommand(ctx, arguments...))
+	})
+}
+
+func runPMTilesCommand(command *exec.Cmd) (string, error) {
+	// The PMTiles logger writes extraction failures to stdout; the Go launcher
+	// reports its exit status on stderr. Capture both using separate buffers,
+	// since os/exec drains the two streams concurrently.
+	var stdout, stderr strings.Builder
+	command.Stdout = io.MultiWriter(os.Stdout, &stdout)
+	command.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	err := command.Run()
+	return stdout.String() + "\n" + stderr.String(), err
+}
+
+func runPMTilesWithRetry(ctx context.Context, arguments []string, run func(context.Context, ...string) (string, error)) error {
 	var lastErr error
-	for attempt := 1; attempt <= pmtilesDownloadAttempts; attempt++ {
+	for attempt := 1; attempt <= pmtilesMaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		var stdout, stderr strings.Builder
-		command := pmtilesCommand(ctx, arguments...)
-		// The pinned PMTiles CLI logs extraction failures on stdout. go run
-		// adds its exit status on stderr; capture both without mixing writers.
-		command.Stdout = io.MultiWriter(os.Stdout, &stdout)
-		command.Stderr = io.MultiWriter(os.Stderr, &stderr)
-		err := command.Run()
+		diagnostics, err := run(ctx, arguments...)
 		if err == nil {
 			return nil
 		}
-		lastErr = err
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		lastErr = err
 		if len(arguments) < 3 || arguments[0] != "extract" ||
-			!isPMTilesTransientExtraction(stdout.String()+"\n"+stderr.String()) || attempt == pmtilesDownloadAttempts {
+			!isPMTilesTransientFailure(diagnostics) || attempt == pmtilesMaxAttempts {
 			return err
 		}
 		if removeErr := os.Remove(arguments[2]); removeErr != nil && !os.IsNotExist(removeErr) {
 			return fmt.Errorf("remove partial PMTiles extraction before retry: %w", removeErr)
 		}
 		delay := time.Duration(attempt*5) * time.Second
-		fmt.Fprintf(os.Stderr, "PMTiles source download interrupted; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesDownloadAttempts)
+		fmt.Fprintf(os.Stderr, "PMTiles source request failed transiently; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesMaxAttempts)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -331,15 +342,30 @@ func runPMTiles(ctx context.Context, arguments ...string) error {
 	return lastErr
 }
 
-func isPMTilesTransientExtraction(output string) bool {
-	for line := range strings.SplitSeq(output, "\n") {
+func isPMTilesTransientFailure(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
 		_, failure, found := strings.Cut(line, "Failed to extract, ")
 		if !found {
 			continue
 		}
-		switch strings.TrimSpace(failure) {
-		case "HTTP error: 429", "HTTP error: 500", "HTTP error: 502", "HTTP error: 503", "HTTP error: 504", "unexpected EOF", "EOF":
+		failure = strings.TrimSpace(failure)
+		if failure == "EOF" {
 			return true
+		}
+		if status, found := strings.CutPrefix(failure, "HTTP error: "); found {
+			fields := strings.Fields(status)
+			if len(fields) > 0 {
+				switch fields[0] {
+				case "429", "500", "502", "503", "504":
+					return true
+				}
+			}
+			continue
+		}
+		for _, transportError := range []string{"unexpected EOF", "connection reset by peer", "i/o timeout"} {
+			if strings.Contains(failure, transportError) {
+				return true
+			}
 		}
 	}
 	return false

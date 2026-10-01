@@ -23,6 +23,7 @@ import (
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
 	"github.com/flidai/leapview/internal/agent/ui"
+	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	"github.com/flidai/leapview/internal/platform/http/pagination"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -72,6 +73,8 @@ type Options struct {
 	BuildAuditIntent       func(context.Context, CommandAuditInput) (*access.AuditIntent, error)
 	Logger                 *slog.Logger
 	APIGenToolContracts    map[string]agenttool.Contract
+	DashboardAuthoring     *dashboardauthoringapplication.Application
+	AuthorizeSemanticModel func(context.Context, agent.Scope, string) error
 }
 
 func (h *Handler) DashboardBootstrap(r *stdhttp.Request) ui.ChatViewState {

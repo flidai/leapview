@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, setDefaultTimeout, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, type Browser, type Page } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
@@ -170,7 +170,7 @@ for (const viewport of [
   })
 }
 
-test('chat visual card opens a side panel with the chart and Data Explorer actions', async () => {
+test('chat visual card opens a side panel with the chart and Save action', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     savedVisualRequest = null
@@ -209,7 +209,8 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
         schemaVersion: panel?.shadowRoot.querySelector('lv-visual-artifact')?.payload?.schemaVersion,
         revisions: [panel?.payload?.specRevision, panel?.payload?.dataState?.specRevision, panel?.payload?.dataRevision, panel?.payload?.dataState?.dataRevision],
         save: Boolean(panel?.shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]')),
-        href: panel?.shadowRoot.querySelector('a')?.getAttribute('href'),
+        hasExploreLink: Boolean(panel?.shadowRoot.querySelector('a[aria-label="Open visual in Data Explorer"]')),
+        explorerHref: panel?.explorerHref,
       }
     })
     expect(state.open).toBe(true)
@@ -218,7 +219,8 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
     expect(state.schemaVersion).toBe(14)
     expect(state.revisions).toEqual([`sha256:${'2'.repeat(64)}`, `sha256:${'2'.repeat(64)}`, 1, 1])
     expect(state.save).toBe(true)
-    expect(state.href).toContain('/explore?')
+    expect(state.hasExploreLink).toBe(false)
+    expect(state.explorerHref).toContain('/explore?')
     const screenshotDir = process.env.LEAPVIEW_CHAT_SCREENSHOT_DIR
     if (screenshotDir) {
       await page.waitForFunction(() => Boolean(document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.querySelector('lv-visual-artifact')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('.renderer canvas')))
@@ -227,7 +229,7 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
     }
     await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('lv-chat-visual-panel').shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]').click())
     await page.waitForFunction(() => document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
-    expect(JSON.parse(savedVisualRequest!.body)).toMatchObject({ title: 'Revenue by country', explorerUrl: state.href })
+    expect(JSON.parse(savedVisualRequest!.body)).toMatchObject({ title: 'Revenue by country', explorerUrl: state.explorerHref })
     expect(savedVisualRequest!.csrf).toBe('test-csrf')
     await page.setViewportSize({ width: 390, height: 820 })
     await page.waitForFunction(() => Boolean(document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('.main')?.hasAttribute('inert')))
@@ -240,6 +242,54 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'chat-visual-panel-mobile-after.png'), fullPage: true })
     await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('lv-chat-visual-panel').shadowRoot.querySelector('[aria-label="Close visual details"]').click())
     expect(await page.locator('lv-chat-page').evaluate((element: any) => Boolean(element.shadowRoot.querySelector('lv-chat-visual-panel')))).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat donut panel keeps outside value labels and places the legend below the chart', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const state = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-visual-panel')
+      const panel = document.createElement('lv-chat-visual-panel') as any
+      panel.payload = {
+        spec: { kind: 'proportional', mark: 'donut', titleVisible: true, presentation: { legend: 'right', labelPosition: 'outside' } },
+      }
+      document.body.append(panel)
+      await panel.updateComplete
+      const displayed = panel.shadowRoot.querySelector('lv-visual-artifact')?.payload
+      panel.saving = true
+      await panel.updateComplete
+      return {
+        savedTitleVisible: panel.payload.spec.titleVisible,
+        displayedTitleVisible: displayed.spec.titleVisible,
+        savedLegend: panel.payload.spec.presentation.legend,
+        displayedLegend: panel.shadowRoot.querySelector('lv-visual-artifact')?.payload?.spec.presentation.legend,
+        displayedLabels: panel.shadowRoot.querySelector('lv-visual-artifact')?.payload?.spec.presentation.labelPosition,
+        stablePayload: displayed === panel.shadowRoot.querySelector('lv-visual-artifact')?.payload,
+      }
+    })
+    expect(state).toEqual({ savedTitleVisible: true, displayedTitleVisible: false, savedLegend: 'right', displayedLegend: 'bottom', displayedLabels: 'outside', stablePayload: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat visual panel preserves a hidden proportional legend', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const legend = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-visual-panel')
+      const panel = document.createElement('lv-chat-visual-panel') as any
+      panel.payload = { spec: { kind: 'proportional', mark: 'donut', presentation: { legend: 'hidden', labelPosition: 'outside' } } }
+      document.body.append(panel)
+      await panel.updateComplete
+      return panel.shadowRoot.querySelector('lv-visual-artifact')?.payload?.spec.presentation.legend
+    })
+    expect(legend).toBe('hidden')
   } finally {
     await page.close()
   }
@@ -883,3 +933,106 @@ function escapeHTML(value: string): string {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
 }
+
+
+async function openDashboardTestVisual(page: Page): Promise<void> {
+  await page.goto(baseURL)
+  await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-thread'))
+  await page.evaluate(async () => {
+    const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+    const field = (id: string, role: string) => ({ id, role, dataType: role === 'metric' ? 'decimal' : 'string', nullable: false, label: id })
+    mergePatch({ agent: { transcript: [{ id: 'tool-dashboard', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'chart-dashboard', type: 'bar', summary: 'Net sales by country' } }] }, visuals: { 'chart-dashboard': {
+schemaVersion: 14, visualID: 'chart-dashboard', rendererID: 'echarts', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1,
+          spec: { kind: 'cartesian', mark: 'bar', title: 'Net sales by country', datasets: [{ id: 'primary', fields: [field('label', 'dimension'), field('value', 'metric')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Net sales by country', description: 'Revenue' }, interactions: [], x: { dataset: 'primary', field: 'label' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
+          dataState: { kind: 'inline', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['France', 42]], completeness: 'complete' }] },
+          selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
+    } } })
+    const chat = document.querySelector('lv-chat-page') as any
+    await chat.updateComplete
+    chat.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', {
+      detail: { artifactId: 'chart-dashboard', title: 'Net sales by country', explorerHref: '/explore?model=sales' }, bubbles: true, composed: true,
+    }))
+  })
+  await page.getByRole('button', { name: 'Add to dashboard', exact: true }).click()
+}
+
+for (const createNew of [false, true]) {
+  test(`chat adds a visual to ${createNew ? 'a new' : 'an existing'} dashboard and offers another visual`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    const requests: { body: any; csrf: string | undefined; key: string | undefined }[] = []
+    try {
+      await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', async route => {
+        if (route.request().method() === 'GET') {
+          await route.fulfill({ json: { dashboards: [{ id: 'dashboard:finance', title: 'Finance', pages: [{ id: 'overview', title: 'Overview' }, { id: 'details', title: 'Details' }] }], canCreate: true } })
+        } else {
+          const headers = route.request().headers()
+          requests.push({ body: route.request().postDataJSON(), csrf: headers['x-csrf-token'], key: headers['idempotency-key'] })
+          await route.fulfill({ json: { dashboardId: createNew ? 'dashboard:new' : 'dashboard:finance', title: createNew ? 'CFO review' : 'Finance', pageId: createNew ? 'overview' : 'details', href: '/dashboards/dashboard:finance/edit' } })
+        }
+      })
+      await openDashboardTestVisual(page)
+      const picker = page.locator('lv-chat-dashboard-picker')
+      await picker.getByRole('radio', { name: 'Finance', exact: true }).waitFor()
+      if (createNew) {
+        await picker.getByRole('radio', { name: 'New dashboard', exact: true }).check()
+        await picker.getByRole('textbox', { name: 'Dashboard name' }).fill('CFO review')
+      } else {
+        await picker.getByLabel('Page', { exact: true }).selectOption('details')
+      }
+      await picker.getByRole('button', { name: createNew ? 'Create dashboard and add' : 'Add visual', exact: true }).click()
+      await picker.getByRole('heading', { name: 'Visual added' }).waitFor()
+      expect(requests).toHaveLength(1)
+      expect(requests[0].body).toEqual(createNew ? { title: 'CFO review' } : { dashboardId: 'dashboard:finance', pageId: 'details' })
+      expect(requests[0].csrf).toBe('test-csrf')
+      expect(requests[0].key).toMatch(/^[0-9a-f-]{14}7[0-9a-f-]{21}$/)
+      expect(await picker.getByRole('link', { name: 'Open dashboard' }).getAttribute('href')).toBe('/dashboards/dashboard:finance/edit')
+      await page.locator('lv-chat-composer').evaluate((element: any) => element.setDraft('Show margin by product', false))
+      await picker.getByRole('button', { name: 'Add another visual' }).click()
+      await page.locator('.dashboard-destination').waitFor()
+      expect(await page.locator('lv-chat-composer').getByRole('combobox').inputValue()).toBe('Show margin by product')
+      expect(await page.locator('lv-chat-composer').getByRole('combobox').evaluate(element => element.getRootNode() instanceof ShadowRoot && (element.getRootNode() as ShadowRoot).activeElement === element)).toBe(true)
+      expect(await page.locator('lv-chat-visual-panel').count()).toBe(0)
+    } finally { await page.close() }
+  })
+}
+
+test('dashboard save retries preserve the command identity and keep failures in the picker', async () => {
+  const page = await browser.newPage()
+  const keys: string[] = []
+  try {
+    await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', async route => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ json: { dashboards: [], canCreate: true } })
+      } else {
+        keys.push(route.request().headers()['idempotency-key'])
+        await route.fulfill(keys.length === 1 ? { status: 503, json: {} } : { json: { dashboardId: 'dashboard:new', title: 'CFO review', href: '/dashboards/dashboard:new/edit', pageId: 'overview' } })
+      }
+    })
+    await openDashboardTestVisual(page)
+    const picker = page.locator('lv-chat-dashboard-picker')
+    await picker.getByRole('textbox', { name: 'Dashboard name' }).fill('CFO review')
+    await picker.getByRole('button', { name: 'Create dashboard and add' }).click()
+    await picker.getByRole('alert').waitFor()
+    expect(await picker.getByRole('heading', { name: 'Visual added' }).count()).toBe(0)
+    await picker.getByRole('button', { name: 'Create dashboard and add' }).click()
+    await picker.getByRole('heading', { name: 'Visual added' }).waitFor()
+    expect(keys).toHaveLength(2)
+    expect(keys[1]).toBe(keys[0])
+  } finally { await page.close() }
+})
+
+
+test('dashboard search cannot submit a destination hidden by the filter', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', route => route.fulfill({ json: {
+      dashboards: Array.from({ length: 7 }, (_, i) => ({ id: `dashboard:${i}`, title: `Finance ${i}`, pages: [{ id: 'overview', title: 'Overview' }] })), canCreate: true,
+    } }))
+    await openDashboardTestVisual(page)
+    const picker = page.locator('lv-chat-dashboard-picker')
+    await picker.getByRole('searchbox', { name: 'Find a dashboard' }).fill('Finance 6')
+    expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isDisabled()).toBe(true)
+    await picker.getByRole('radio', { name: 'Finance 6', exact: true }).check()
+    expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isEnabled()).toBe(true)
+  } finally { await page.close() }
+})
