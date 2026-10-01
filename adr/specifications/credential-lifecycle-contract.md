@@ -1,15 +1,55 @@
 # Credential lifecycle contract
 
-Status: proposed; clean-break, single-process implementation scope
+Status: proposed; D02 foundation and single-process component assumptions; D12 production lifecycle pending
 
 Date: 2026-09-27
 
 Governing proposal: [ADR-0027](../0027-separate-credential-storage-activation-and-retirement.md)
 
-Research: [Step 1 inventory](credential-lifecycle-inventory.md), application
+Historical research: [Step 1 inventory](credential-lifecycle-inventory.md), application
 `8283839939dd630e2a1874927c62fdb8ccadfa8d`, and [PR #744](https://github.com/flidai/leapview/pull/744)
 at `ac6b0986d52771776535b74e250774a94aecbe91`. Existing-code links are reuse points,
 not evidence that the new contract is already implemented.
+
+Current decision reference (1 October 2026): [PR #744's proposed ADR-0028](https://github.com/flidai/leapview/blob/b305bcc616892538a27bd3d255fe0b4e9fa66dff/adr/0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md#decision-reconciliation-and-acceptance-boundary).
+Its candidate-first managed deployment contract remains unreconciled with the
+single-process lifecycle below. Historical research pins elsewhere in this
+document remain evidence for their individual checkpoints, not current decisions.
+
+### Delivery scope and shared decisions
+
+The 1 October migration roadmap separates D02 ([PR #785](https://github.com/flidai/leapview/pull/785))
+from D12 completion. Freeze further activation/runtime feature growth in D02
+while maintainers review this scope. This ledger records the existing diff and
+proposed allocation; it neither extracts code nor accepts the lifecycle decision.
+
+| Work | D02 disposition | Completion responsibility |
+| --- | --- | --- |
+| Owner/keyring setup, encrypted immutable drafts, scoped metadata/save APIs, validation receipts and transactional audit | Retain as the credential foundation under review. Offline owner/keyring setup is not customer-secret bootstrap or first publication. | D02; D10/D12 compose customer-secret bootstrap through the same authorized, audited service. |
+| Existing access checks, preparation/switch/commit records, pins, source/pool cleanup and publication fences | Review as explicit prerequisites; decide which stay in D02 and which need a separate PR. Some restrictive safeguards are installed; receipt-backed activation is not composed into production. | D11/D12 for combined ownership, drain, publication, installation and restart guarantees. |
+| Remaining app activation authority callback and production coordinator, source/agent consumption and administration UI | Defer further feature work; reuse the existing publication-admission adapter and reviewed prerequisites. Saved, validated or sealed does not mean in use. | D12 after D01/D02 decisions and the D10/D11 shared contract. |
+| Rotation, retirement, independent key recovery and retained-backup decryption | Required follow-up, not completed by draft-storage tests. | D12 implementation; D13 profile/recovery qualification. |
+| Accumulated CI/browser/security, retained release-provenance and demo-readiness fixes | Separate keep/split review; no removal is implied by this ledger. | Their owning CI, release and deployment reviews; none proves Nix adoption or managed lifecycle acceptance. |
+
+Before D12 implementation crosses these shared boundaries, record the reviewed
+contract and named credential/deployment owners for:
+
+- **D10 bootstrap:** the shared authorized/audited customer-secret service and
+  bounded setup authorities; no parallel raw-SQL secret bootstrap.
+- **D11 process ownership:** shared home/storage access, worker and mutation
+  authority, candidate readiness, admission and draining across overlapping
+  processes. A process-local barrier cannot account for another process.
+- **D11/D12 publication and restart:** serialization, committed-version
+  installation, recovery and the evidence for `in_use` and safe local retirement.
+  Readiness alone grants none of these mutation or retirement authorities.
+- **Release/recovery:** preflight classification of incompatible credential
+  formats, maintenance/recovery for those transitions, and retained versions,
+  keys and acknowledged writes within a declared compatible rollback window.
+
+These are pending interface decisions, not a new coordination protocol. A
+stop-first profile cannot replace Kamal overlap without a reviewed amendment to
+the deployment ADR and roadmap and distinct qualification. Independent host and
+build work may proceed; full managed acceptance requires the combined gates.
 
 ## 1. Scope boundary
 
@@ -27,7 +67,9 @@ secret-store reference, and do not add per-provider-account ownership management
 
 There is no backward compatibility requirement: no legacy encryption adapter,
 historical-data conversion, dual-read/write rollout, deprecated endpoint behavior
-or image downgrade path. New agent configuration revisions reference the new
+or image downgrade across an incompatible credential-format transition. Releases
+within a declared compatible window still retain usable keys, versions and
+acknowledged writes. New agent configuration revisions reference the new
 credential store directly. Change callers and schemas together. Unsupported old
 credential state fails with setup guidance; this proposal does not authorize
 wiping an existing database. Previously saved agent credentials/configurations
@@ -37,7 +79,8 @@ Do not repoint old runs, mutate their evidence or discard unrelated data. Any
 reset/removal is a separate explicit operation. New-format history, publications,
 runs and backups still have their normal integrity and recovery requirements.
 
-V1 has one app process, colocated River workers and no overlapping deployments.
+The foundation's component model assumes one app process, colocated River workers
+and no overlapping deployments; this is not the managed target's release contract.
 Reuse the [instance lock](../../internal/app/cli/serve.go#L71), with the same host
 home/lock path shared across launches. Stop the old process before starting its
 replacement; do not treat a DB lease timeout as proof of process death. A second
@@ -45,7 +88,10 @@ host or worker process is outside this profile. All credential consumers and
 mutations must pass through this process/service; deployment qualification must
 prove that container layouts and direct CLI paths cannot bypass that condition.
 Online CLI commands call the running service; offline bootstrap/maintenance
-commands require the app stopped and take the same instance lock.
+commands require the app stopped and take the same instance lock. These limits
+do not establish Kamal overlap safety or a qualified production lifecycle. The
+activation, retirement and recovery sections below describe the proposed model
+pending the shared decisions above, not completed D02 behavior.
 
 ## 2. Small data model
 

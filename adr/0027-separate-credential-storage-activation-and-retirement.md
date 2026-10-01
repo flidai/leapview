@@ -8,16 +8,11 @@ Proposal date: 2026-09-27
 
 Review: pending; the date records this proposal, not maintainer acceptance.
 
-Implementation: partial; encrypted draft setup/API and validation receipts,
-internal activation transaction phases and publication fencing, and runtime
-admission/retirement, concrete-pool credential identity, and synchronous scoped
-runtime credential checks, foreground connection-use authority and a request-bound
-reader factory with generation ownership through temporary-pool cleanup, and
-source-preparation cleanup fencing, scoped authentication-map ownership and
-native refresh plan/build and admitted source-work authority revalidation, and
-per-source connection ownership through native cleanup implemented.
-Production activation and live credential consumption, coordinator and
-restart/recovery integration, and credential UI remain pending.
+Implementation: partial D02 foundation; encrypted draft setup/API, validation
+receipts, and internal authorization, publication and consumer-lifetime
+prerequisites. Production activation and end-to-end credential consumption,
+coordinator/restart recovery, and credential UI remain pending. The companion
+contract records which safeguards are installed and which pieces are not composed.
 
 Deciders: LeapView maintainers
 
@@ -42,14 +37,42 @@ proposes application-encrypted PostgreSQL storage with an independent keyring.
 Jacob's subsequent scope clarification explicitly excludes backward compatibility
 and asks for a small design. This proposal therefore specifies a clean break:
 no legacy ciphertext reader, dual-write/read rollout, automatic credential import,
-old API compatibility or old-binary downgrade support. The inventory describes
-existing behavior; it is not a requirement to preserve every old path.
+old API compatibility or downgrade across an incompatible credential-format
+transition. The inventory describes existing behavior; it is not a requirement
+to preserve every old path.
 
 Saving a credential still does not prove the application uses it. Existing source
 publications pin exact provider versions, and agent runs pin configuration
 revisions. These are current product correctness requirements, including for
 records created after the change; removing backward compatibility does not make
 those references safe to overwrite.
+
+## Delivery boundary and decision reconciliation
+
+The 1 October 2026 migration roadmap assigns [PR #785](https://github.com/flidai/leapview/pull/785)
+to D02, the credential ADR and foundation. D12 owns completion of the customer
+credential lifecycle, coordinated with D10 bootstrap and D11 application lifecycle.
+Keep further activation/runtime feature growth out of D02 while maintainers review
+the existing prerequisites and supporting fixes against the
+[scope ledger](specifications/credential-lifecycle-contract.md#delivery-scope-and-shared-decisions).
+This boundary does not remove existing code or accept the proposed decision.
+
+The current [ADR-0028 deployment proposal](https://github.com/flidai/leapview/blob/b305bcc616892538a27bd3d255fe0b4e9fa66dff/adr/0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md#decision-reconciliation-and-acceptance-boundary)
+retains candidate-first Kamal overlap. The single-process assumptions below limit
+the foundation's component evidence; they do not qualify that managed profile.
+D01/D02 must reconcile the process contract before accepting affected lifecycle
+implementation, and D11/D12 must agree ownership, admission/draining, publication
+and restart interfaces before implementing their combined path. Readiness alone
+must not grant worker, mutation, activation or retirement authority. A stop-first
+maintenance profile requires a separate reviewed amendment to the deployment ADR
+and roadmap, named interruption bounds and its own qualification.
+
+Classify an incompatible credential-format transition before durable mutation and
+use its reviewed maintenance/recovery procedure, not ordinary image rollback.
+Within a declared compatible release window, retain usable credential versions,
+keys and acknowledged writes for the live and rollback releases. This does not
+introduce a legacy credential reader. Decision acceptance, implementation review,
+profile qualification and deployment adoption remain separate gates.
 
 ## Decision
 
@@ -77,19 +100,21 @@ rewrapping their ciphertext does not change the version a publication/run pins.
 Keep the keyring outside PostgreSQL with an independent encrypted recovery copy.
 Missing keys fail closed rather than being regenerated over encrypted records.
 
-### Use the existing single-process runtime
+### Single-process foundation assumptions
 
-V1 supports one supervised application process with its colocated workers, with
+The current foundation assumes one supervised process with colocated workers,
 stop/start deployment and no process overlap. Reuse the instance home lock and
 existing pool, runtime-host and publication transaction mechanisms. Deployment
 must give that lock a shared host path; it does not establish exclusion across
-hosts or isolated container filesystems. Separate workers and rolling overlap
-are outside this release.
+hosts or isolated container filesystems. These component assumptions establish
+neither a supported managed deployment profile nor cross-process drain evidence.
+The proposed lifecycle below remains subject to the D01/D11/D12 reconciliation.
 
-A small lifecycle service closes an in-process admission barrier, drains current
-credential consumers, commits existing publication/configuration authority, then
-installs and verifies the committed state before reopening. Persist the exact
-operation and phase with transactional audit; do not introduce a durable
+Within that single-process model, a lifecycle service would close an in-process
+admission barrier, drain current credential consumers, commit existing
+publication/configuration authority, then install and verify the committed state
+before reopening. Persist the exact operation and phase with transactional audit;
+do not introduce a durable
 per-consumer registry, membership service or distributed acknowledgment protocol.
 An unresponsive consumer leaves the change blocked until it stops or the
 supervisor confirms the entire process has exited.
@@ -122,10 +147,11 @@ or preserve exact version pins. A distributed secret-management platform would
 solve a larger problem than this release needs. The selected approach adds a
 small durable lifecycle around existing runtime and publication boundaries.
 
-The tradeoff is a short instance-wide pause for credential-backed work and an
-explicit single-process deployment limit. Blocking failures can require operator
-restart. Legacy credential data and backups are not promised compatibility; an
-unsupported format must be rejected with setup guidance, never silently erased
+This single-process model requires an instance-wide pause for credential-backed
+work and does not solve managed release overlap. Blocking failures can require
+operator restart. Legacy-format credential data and backups requiring that format
+are not promised compatibility; an unsupported format must be rejected with setup
+guidance, never silently erased
 or guessed. Any destructive reset is a separate explicit operation.
 
 Key rotation and restore of the new format remain required. Keep old keys for
