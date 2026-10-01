@@ -1530,6 +1530,56 @@ tasks:
     cmds:
       - task: ci:pr
 
+  managed:check:
+    desc: Validate the managed scaffold without cloud credentials or live deployment
+    cmds:
+      - task: managed:infrastructure:check
+      - task: managed:hosts:check
+      - task: managed:kamal:check
+
+  managed:infrastructure:check:
+    desc: Validate OpenTofu and run mocked provider plans
+    dir: deploy/managed/hetzner
+    cmds:
+      - tofu init -backend=false -input=false -lockfile=readonly
+      - tofu fmt -check -recursive
+      - tofu validate
+      - tofu test
+
+  managed:hosts:check:
+    desc: Build both locked NixOS hosts, deploy-rs checks and host-role assertions
+    dir: deploy/managed/nixos
+    cmds:
+      - nix fmt -- --check flake.nix inventory.example.nix modules/*.nix tests/*.nix
+      - nix build .#nixosConfigurations.example-app.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - nix build .#nixosConfigurations.example-database.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+
+  managed:hosts:boot-test:
+    desc: Boot isolated NixOS guests and verify TLS, filtering and reboot persistence
+    cmds:
+      - nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+
+  managed:hosts:network-test:
+    desc: Exercise IPv4/IPv6 Docker ingress in fresh kernel namespaces (requires sudo)
+    cmds:
+      - sudo unshare --mount --net --fork python3 deploy/managed/nixos/tests/docker_firewall_test.py
+
+  managed:hosts:docker-test:
+    desc: Exercise real Docker forwarding and restart in isolated namespaces (requires sudo)
+    cmds:
+      - python3 deploy/managed/nixos/tests/namespace_test.py
+      - |
+        probe_image="$(nix build path:./deploy/managed/nixos#port-probe --no-link --no-update-lock-file --print-out-paths)"
+        docker_package="$(nix build path:./deploy/managed/nixos#nixosConfigurations.example-app.config.virtualisation.docker.package --no-link --no-update-lock-file --print-out-paths)"
+        sudo python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package"
+
+  managed:kamal:check:
+    desc: Parse the application template with locked Kamal dependencies (no SSH)
+    dir: deploy/managed/kamal
+    cmds:
+      - bundle exec ruby config_test.rb
+
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures
     cmds:
