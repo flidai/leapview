@@ -456,7 +456,7 @@ func parseVulnerabilityReport(data []byte, contract *securitypolicy.Exceptions, 
 	}
 	parsed := parsedVulnerabilityReport{Findings: make([]reportedFinding, 0)}
 	imageRevision := report.Metadata.ImageConfig.Config.Labels["org.opencontainers.image.revision"]
-	if revisionPattern.MatchString(imageRevision) {
+	if revisionPattern.MatchString(imageRevision) && sanitizeReportValue(imageRevision, env, "0123456789abcdef", 40) == imageRevision {
 		parsed.ImageRevision = imageRevision
 	}
 	for _, result := range report.Results {
@@ -536,7 +536,15 @@ func writeVulnerabilityReport(path string, report vulnerabilityReport) error {
 	if err != nil {
 		return errors.New("could not encode vulnerability report")
 	}
-	if len(data) > maxVulnerabilityReportBytes {
+	for len(data)+1 > maxVulnerabilityReportBytes && len(report.Findings) > 0 {
+		report.FindingsTruncated = true
+		report.Findings = report.Findings[:len(report.Findings)-1]
+		data, err = json.Marshal(report)
+		if err != nil {
+			return errors.New("could not encode vulnerability report")
+		}
+	}
+	if len(data)+1 > maxVulnerabilityReportBytes {
 		return errors.New("vulnerability report exceeds bounded size")
 	}
 	directory := filepath.Dir(path)

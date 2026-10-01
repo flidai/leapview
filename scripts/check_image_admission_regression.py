@@ -15,7 +15,8 @@ try:
     tests = saved[paths[-1]].decode()
     start = tests.index("func TestVulnerabilityReportParsesAndAccountsForExceptions(")
     end = tests.index("func TestLiveVulnerabilityReport(", start)
-    paths[-1].write_text(tests[:start] + tests[end:])
+    cli_tests = (tests[:start] + tests[end:]).replace('\n\t"github.com/flidai/leapview/internal/app/securitypolicy"\n', "\n")
+    paths[-1].write_text(cli_tests)
     result = subprocess.run(["go", "test", "./internal/app/tools/ociadmission",
                              "-run", "^TestLiveVulnerabilityReport$", "-count=1"],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
