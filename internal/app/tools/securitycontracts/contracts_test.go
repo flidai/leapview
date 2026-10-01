@@ -56,6 +56,95 @@ func TestOCIAdmissionActionUsesRepositoryOwnedGoContract(t *testing.T) {
 	}
 }
 
+func TestOCIAdmissionDiagnosticUploadsAreBoundedAndAttemptScoped(t *testing.T) {
+	action := repositoryYAML(t, ".github/actions/oci-admission/action.yml")
+	for _, fragment := range []string{
+		"  vulnerability-report:",
+		"VULNERABILITY_REPORT: ${{ inputs.vulnerability-report }}",
+		"vulnerability_report_args=(--vulnerability-report \"$VULNERABILITY_REPORT\")",
+		"\"${vulnerability_report_args[@]}\"",
+	} {
+		if !strings.Contains(action, fragment) {
+			t.Errorf("OCI admission action is missing vulnerability diagnostics contract %q", fragment)
+		}
+	}
+	if strings.Contains(action, "  vulnerability-report:\n    description: Optional path for a sanitized vulnerability diagnostic report.\n    required: true") {
+		t.Fatal("OCI admission vulnerability report must remain optional for existing callers")
+	}
+
+	assertDiagnosticUpload := func(path, job string) {
+		t.Helper()
+		workflow := repositoryYAML(t, path)
+		var document struct {
+			Jobs map[string]struct {
+				Steps []struct {
+					Name string            `yaml:"name"`
+					If   string            `yaml:"if"`
+					Uses string            `yaml:"uses"`
+					With map[string]string `yaml:"with"`
+				} `yaml:"steps"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal([]byte(workflow), &document); err != nil {
+			t.Fatal(err)
+		}
+		definition, ok := document.Jobs[job]
+		if !ok {
+			t.Fatalf("%s is missing job %q", path, job)
+		}
+		admissionIndex, uploadIndex := -1, -1
+		for index, step := range definition.Steps {
+			if step.Uses == "./.github/actions/oci-admission" {
+				admissionIndex = index
+				if step.With["platform"] != "linux/amd64" {
+					t.Errorf("%s admission platform is %q, want linux/amd64", path, step.With["platform"])
+				}
+				if step.With["vulnerability-report"] != "${{ runner.temp }}/oci-vulnerability-report.json" {
+					t.Errorf("%s does not direct admission diagnostics to the isolated JSON file", path)
+				}
+			}
+			if step.Name == "Upload OCI vulnerability diagnostic" {
+				uploadIndex = index
+				if step.If != "always()" {
+					t.Errorf("%s diagnostic upload condition is %q, want always()", path, step.If)
+				}
+				if step.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" {
+					t.Errorf("%s diagnostic upload action is not commit-pinned", path)
+				}
+				if step.With["path"] != "${{ runner.temp }}/oci-vulnerability-report.json" {
+					t.Errorf("%s diagnostic upload path is not the single report JSON: %q", path, step.With["path"])
+				}
+				if step.With["if-no-files-found"] != "ignore" || step.With["retention-days"] != "14" {
+					t.Errorf("%s diagnostic upload handling/retention is unsafe: %#v", path, step.With)
+				}
+				name := step.With["name"]
+				for _, fragment := range []string{"${{ github.job }}", "${{ github.run_id }}", "${{ github.run_attempt }}"} {
+					if !strings.Contains(name, fragment) {
+						t.Errorf("%s diagnostic artifact name %q omits %s", path, name, fragment)
+					}
+				}
+			}
+		}
+		if admissionIndex < 0 || uploadIndex != admissionIndex+1 {
+			t.Errorf("%s must upload the diagnostic immediately after admission, got indexes %d and %d", path, admissionIndex, uploadIndex)
+		}
+	}
+
+	assertDiagnosticUpload(".github/workflows/artifacts.yml", "qualify-production-image")
+	assertDiagnosticUpload(".github/workflows/demo-upgrade-qualification.yml", "historical-transition")
+
+	artifactsWorkflow := repositoryText(t, ".github/workflows/artifacts.yml")
+	for _, fragment := range []string{
+		"if: github.event_name == 'workflow_dispatch'",
+		"Require the exact head of one open pull request to main",
+		".head.sha == $revision",
+	} {
+		if !strings.Contains(artifactsWorkflow, fragment) {
+			t.Errorf("artifacts workflow lost protected candidate guard %q", fragment)
+		}
+	}
+}
+
 func TestAggregateJobChecksOutCandidateOwnedGoContract(t *testing.T) {
 	workflow := repositoryYAML(t, ".github/workflows/security.yml")
 	start := strings.Index(workflow, "  security-gate:")

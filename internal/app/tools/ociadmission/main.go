@@ -13,10 +13,10 @@ func main() {
 	if err := runAdmission(os.Args[1:], os.Environ(), os.Stdout, os.Stderr); err != nil {
 		var usage usageError
 		if errors.As(err, &usage) {
-			fmt.Fprintln(os.Stderr, usage.Error())
+			fmt.Fprintln(os.Stderr, redactError(usage, os.Environ()))
 			os.Exit(64)
 		}
-		fmt.Fprintf(os.Stderr, "OCI admission rejected: %s\n", redactError(err))
+		fmt.Fprintf(os.Stderr, "OCI admission rejected: %s\n", redactError(err, os.Environ()))
 		os.Exit(1)
 	}
 }
