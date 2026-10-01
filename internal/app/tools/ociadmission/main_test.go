@@ -91,8 +91,8 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 				t.Fatalf("runAdmission error = %v, want %q", err, tc.want)
 			}
 			if tc.mode == "unavailable" {
-				if strings.Contains(err.Error(), "fixture-token") || !strings.Contains(err.Error(), "scan could not complete") {
-					t.Fatalf("runAdmission diagnostic = %q, want bounded scanner failure summary", err)
+				if strings.Contains(err.Error(), "fixture-token") || !strings.Contains(err.Error(), "registry unavailable with token ***") || len(err.Error()) > 512 {
+					t.Fatalf("runAdmission diagnostic = %q, want bounded redacted scanner failure", err)
 				}
 			}
 		})
@@ -134,6 +134,48 @@ func TestVulnerabilityReportParsesAndAccountsForExceptions(t *testing.T) {
 	if _, err := parseVulnerabilityReport([]byte(`{}`), nil, nil); err == nil {
 		t.Fatal("report without Results was accepted")
 	}
+
+	const excessFindings = maxReportedFindings + 17
+	vulnerabilities := make([]map[string]any, excessFindings)
+	for index := range vulnerabilities {
+		vulnerabilities[index] = map[string]any{
+			"VulnerabilityID":  strings.Repeat("c", 128),
+			"PkgName":          strings.Repeat("p", 256),
+			"InstalledVersion": strings.Repeat("i", 256),
+			"FixedVersion":     strings.Repeat("f", 256),
+		}
+	}
+	largeScan, err := json.Marshal(map[string]any{"Results": []any{map[string]any{"Vulnerabilities": vulnerabilities}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := parseVulnerabilityReport(largeScan, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounded.UnresolvedCount != excessFindings || len(bounded.Findings) != maxReportedFindings || !bounded.FindingsTruncated {
+		t.Fatalf("finding truncation = count %d, details %d, truncated %t", bounded.UnresolvedCount, len(bounded.Findings), bounded.FindingsTruncated)
+	}
+	path := filepath.Join(t.TempDir(), "bounded-report.json")
+	report := vulnerabilityReport{
+		SchemaVersion: vulnerabilityReportSchema, Image: testImage, Revision: testRevision,
+		Scanner: reportScanner{Name: "trivy", Version: "0.74.0"}, Outcome: outcomeRejected,
+		UnresolvedCount: bounded.UnresolvedCount, Findings: bounded.Findings, FindingsTruncated: bounded.FindingsTruncated,
+	}
+	if err := writeVulnerabilityReport(path, report); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored vulnerabilityReport
+	if err := json.Unmarshal(written, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(written) > maxVulnerabilityReportBytes || stored.UnresolvedCount != excessFindings || len(stored.Findings) != maxReportedFindings || !stored.FindingsTruncated {
+		t.Fatalf("bounded report is %d bytes with count %d, details %d, truncated %t", len(written), stored.UnresolvedCount, len(stored.Findings), stored.FindingsTruncated)
+	}
 }
 
 func TestLiveVulnerabilityReport(t *testing.T) {
@@ -142,19 +184,21 @@ func TestLiveVulnerabilityReport(t *testing.T) {
 		name, mode, outcome, wantError string
 		wantCount                      int
 		wantSuccess                    bool
+		writeFailure                   bool
 	}{
 		{name: "clean scan", mode: "valid", outcome: "passed", wantSuccess: true},
 		{name: "multiple findings reject without success outputs", mode: "multiple", outcome: "rejected", wantError: "exceeds policy", wantCount: 2},
 		{name: "malformed report", mode: "malformed", outcome: "invalid-report", wantError: "machine-readable"},
 		{name: "scanner outage is redacted", mode: "unavailable", outcome: "scanner-error", wantError: "scan could not complete"},
-		{name: "report write failure rejects", mode: "valid", outcome: "", wantError: "write vulnerability report"},
+		{name: "report write failure rejects", mode: "valid", outcome: "", wantError: "write vulnerability report", writeFailure: true},
+		{name: "report write failure preserves policy rejection", mode: "multiple", outcome: "", wantError: "exceeds policy", wantCount: 2, writeFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := liveTools(t)
 			reportPath := filepath.Join(t.TempDir(), "vulnerability-report.json")
 			outputPath := filepath.Join(t.TempDir(), "admission.json")
 			githubOutput := filepath.Join(t.TempDir(), "github-output")
-			if tc.name == "report write failure rejects" {
+			if tc.writeFailure {
 				reportPath = t.TempDir()
 			}
 			env := testEnv(map[string]string{
@@ -185,8 +229,11 @@ func TestLiveVulnerabilityReport(t *testing.T) {
 				if strings.Contains(err.Error(), "fixture-token") || len(err.Error()) > 512 {
 					t.Fatalf("rejection summary is unredacted or unbounded: %q", err.Error())
 				}
+				if tc.writeFailure && tc.mode == "multiple" && !strings.Contains(err.Error(), "could not write vulnerability report") {
+					t.Fatalf("report write failure lost its diagnostic summary: %q", err.Error())
+				}
 			}
-			if tc.name == "report write failure rejects" {
+			if tc.writeFailure {
 				return
 			}
 			data, readErr := os.ReadFile(reportPath)

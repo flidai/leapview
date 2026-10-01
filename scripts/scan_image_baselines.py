@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Temporary diagnostic comparison; never produces admission/qualification receipts."""
 import argparse
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -82,7 +83,16 @@ def main():
                   scanner=dict(name="trivy", version=policy["scannerVersion"], image=policy["scannerImage"]),
                   policySHA256=hashlib.sha256(policy_bytes).hexdigest(), images=[])
     try:
-        with tempfile.TemporaryDirectory(prefix="leapview-baseline-", ignore_cleanup_errors=True) as directory:
+        report["stage"] = "runtime-base-build"
+        run(["docker", "buildx", "build", "--load", "--platform", PLATFORM,
+             "--target", "runtime-base", "--tag", "leapview:runtime-security-base", "."])
+        patched_image = json.loads(run(["docker", "image", "inspect", "leapview:runtime-security-base",
+                                       "--format", "{{json .Id}}"] ))
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", patched_image)
+        report["stage"] = "frozen-scans"
+        # The ephemeral hosted runner owns cache disposal. Scanner containers can
+        # create root-owned entries; never let host cleanup change a scan outcome.
+        with nullcontext(tempfile.mkdtemp(prefix="leapview-baseline-")) as directory:
             cache = Path(directory)
             command = ["docker", "run", "--rm", "--network", "host",
                        "-v", "/var/run/docker.sock:/var/run/docker.sock",
@@ -94,8 +104,9 @@ def main():
                 run(command + ["image", "--cache-dir", "/cache", flag, "--quiet"])
             frozen = databases(cache)
             report["database"] = frozen
-            for image in (*BASELINES, RUNTIME_BASE):
-                run(["docker", "pull", "--platform", PLATFORM, image])
+            for image in (*BASELINES, RUNTIME_BASE, patched_image):
+                if image != patched_image:
+                    run(["docker", "pull", "--platform", PLATFORM, image])
                 labels = json.loads(run(["docker", "image", "inspect", image,
                                          "--format", "{{json .Config.Labels}}"] )) or {}
                 revision = labels.get("org.opencontainers.image.revision", "")
@@ -110,6 +121,7 @@ def main():
                 report["images"].append(dict(image=image, revision=revision,
                     outcome="findings" if entries else "clean", findingCount=len(entries), findings=entries))
             report["outcome"] = "compared"
+            report.pop("stage", None)
     except Exception:
         report["outcome"] = "diagnostic-error"
         raise

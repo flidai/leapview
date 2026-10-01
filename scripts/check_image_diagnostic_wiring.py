@@ -35,5 +35,6 @@ assert policy['severity'] == ['CRITICAL', 'HIGH'] and policy['ignoreUnfixed'] is
 assert policy['maxUnresolved'] == 0
 workflow_permissions = diagnostic.split('permissions:', 1)[1].split('jobs:', 1)[0]
 assert 'write' not in workflow_permissions
-assert '\n  workflow_dispatch:' not in diagnostic
+assert '\n  workflow_dispatch:' in diagnostic
+assert 'types: [opened, synchronize, reopened, ready_for_review]' in diagnostic
 print('Workflow/action wiring and pinned vulnerability policy validated.')

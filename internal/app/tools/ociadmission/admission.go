@@ -58,12 +58,13 @@ const (
 	vulnerabilityReportSchema   = 1
 	maxVulnerabilityReportBytes = 256 * 1024
 	maxVulnerabilityJSONBytes   = 32 * 1024 * 1024
-	maxReportedFindings         = 2048
-	outcomeNotScanned           = "not-scanned"
-	outcomeScannerError         = "scanner-error"
-	outcomeInvalidReport        = "invalid-report"
-	outcomeRejected             = "rejected"
-	outcomePassed               = "passed"
+	// Max-length sanitized finding fields at this count stay below the byte cap.
+	maxReportedFindings  = 128
+	outcomeNotScanned    = "not-scanned"
+	outcomeScannerError  = "scanner-error"
+	outcomeInvalidReport = "invalid-report"
+	outcomeRejected      = "rejected"
+	outcomePassed        = "passed"
 )
 
 type vulnerabilityReport struct {

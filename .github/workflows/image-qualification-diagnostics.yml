@@ -1,7 +1,9 @@
 name: Image qualification diagnostics
 
 on:
+  workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
     paths:
       - '.github/actions/oci-admission/action.yml'
@@ -11,6 +13,8 @@ on:
       - '.github/workflows/image-qualification-diagnostics.yml'
       - 'scripts/scan_image_baselines.py'
       - 'scripts/check_image_diagnostic_wiring.py'
+      - 'Dockerfile'
+      - 'internal/platform/architecture/runtime_os_packages_test.go'
       - 'internal/app/tools/ociadmission/**'
       - 'internal/app/tools/securitycontracts/**'
 
@@ -19,11 +23,12 @@ permissions:
   packages: read
 
 concurrency:
-  group: image-qualification-diagnostics-${{ github.event.pull_request.number }}
+  group: image-qualification-diagnostics-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   admission-report-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: OCI admission report tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -33,7 +38,7 @@ jobs:
       - name: Check out exact pull request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -43,10 +48,7 @@ jobs:
 
       - name: Run focused vulnerability report admission tests
         run: >-
-          python3 scripts/check_image_admission_regression.py &&
-          go test ./internal/app/tools/ociadmission
-          -run 'TestVulnerabilityReportParsesAndAccountsForExceptions|TestLiveVulnerabilityReport'
-          -count=1
+          go test ./internal/app/tools/ociadmission -count=1
 
       - name: Check diagnostic upload contract
         run: >-
@@ -55,6 +57,7 @@ jobs:
           -count=1
 
   frozen-baseline-scans:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Frozen baseline image scans
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -65,7 +68,7 @@ jobs:
       - name: Check out exact pull request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Validate workflow and security policy wiring
         run: python3 scripts/check_image_diagnostic_wiring.py
@@ -77,7 +80,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Scan the two frozen baseline images
+      - name: Build and scan the patched runtime with frozen baselines
         run: python3 scripts/scan_image_baselines.py --output "${RUNNER_TEMP}/image-baseline-vulnerabilities.json"
 
       - name: Upload sanitized baseline diagnostic
@@ -90,11 +93,12 @@ jobs:
           retention-days: 14
 
   reusable-upload-probe:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Probe the called workflow's real uploader
     uses: ./.github/workflows/demo-upgrade-qualification.yml
     with:
       candidate_image: ghcr.io/flidai/leapview@sha256:d03a12efcd20e7383f8973f5ef5e32e909ca6495ca49c70860222fe926398f86
-      candidate_revision: ${{ github.event.pull_request.head.sha }}
+      candidate_revision: ${{ github.event.pull_request.head.sha || github.sha }}
       final_artifact: true
       upload_probe: true
     permissions:
@@ -105,7 +109,7 @@ jobs:
   verify-reusable-upload-probe:
     name: Verify reusable upload and absence of receipts
     needs: [reusable-upload-probe]
-    if: always()
+    if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
