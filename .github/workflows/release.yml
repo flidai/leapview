@@ -195,6 +195,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Set up Buildx
@@ -485,6 +486,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Generate release build inputs
@@ -731,6 +733,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Verify Docker container prerequisites
@@ -824,6 +827,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Run plan-to-GC lifecycle conformance

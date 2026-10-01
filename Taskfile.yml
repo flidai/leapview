@@ -527,6 +527,8 @@ tasks:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
+      - bun test scripts/nix_ci_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/agent_e2e_config.test.ts
