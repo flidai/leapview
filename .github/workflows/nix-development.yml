@@ -69,6 +69,12 @@ jobs:
         run: nix develop --no-update-lock-file -c task nix:smoke
       - name: Prepare generated and embedded assets for the fresh checkout
         run: nix develop --no-update-lock-file -c task ci:prepare
+      - name: Set up Terraform for deployment validation
+        if: inputs.contract == 'full' || inputs.contract == 'nightly'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
       - name: Run the selected existing contract with the same development environment
         env:
           CONTRACT: ${{ inputs.contract || 'pr' }}

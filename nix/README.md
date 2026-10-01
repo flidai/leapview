@@ -31,6 +31,8 @@ nix flake check --no-update-lock-file -L
 
 On a fresh checkout, run `nix develop -c task ci:prepare` before `task ci` to
 create the ignored generated inputs, as the existing hosted CI does.
+Local full/nightly contracts also require Terraform 1.13.5 on `PATH`; deployment
+validation retains this specialist dependency outside the Nix development shell.
 
 `task nix:check` runs the flake check and browser smoke check; `task nix:ci` runs the
 existing PR contract through Nix. Stage new Nix files before evaluating them:
@@ -84,6 +86,7 @@ or private cache account. Manual dispatch can select
 `checks=image` or `checks=development` for a focused rerun; the default and
 pull-request validation run both lanes. Select `contract=full` or `contract=nightly`
 with `checks=development` to exercise those contracts in a fresh hosted environment.
+These selections install the same pinned Terraform used by deployment validation.
 Their ordinary merge-queue/nightly workflows retain their existing gates. Historical
 transition utility containers use a portable Docker client from a digest-pinned
 fixture image, so they do not depend on the host toolchain's loader or libraries.

@@ -63,3 +63,16 @@ test('cache fallbacks retain the toolchain and locked compiler input identity', 
     expect(cache.with[field]).toContain('${{ steps.toolchain.outputs.go-version }}')
   }
 })
+
+test('fresh full and nightly qualification provision the deployment Terraform dependency', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const development = workflow.jobs.development.steps
+  const terraform = development.find((step: any) => step.uses?.startsWith('hashicorp/setup-terraform@'))
+  const canonical = steps.find((step: any) => step.name === 'Set up Terraform')
+  expect(terraform).toBeDefined()
+  expect(terraform.uses).toBe(canonical.uses)
+  expect(terraform.with).toEqual(canonical.with)
+  expect(terraform.if).toBe("inputs.contract == 'full' || inputs.contract == 'nightly'")
+  const contractIndex = development.findIndex((step: any) => step.env?.CONTRACT)
+  expect(development.indexOf(terraform)).toBeLessThan(contractIndex)
+})
