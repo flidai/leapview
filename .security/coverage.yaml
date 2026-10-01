@@ -143,6 +143,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/image-qualification-diagnostics.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/authoring-package-qualification.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}

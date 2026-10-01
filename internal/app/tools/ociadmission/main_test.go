@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/app/securitypolicy"
 )
 
 const (
@@ -92,6 +94,128 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 				if strings.Contains(err.Error(), "fixture-token") || !strings.Contains(err.Error(), "registry unavailable with token ***") {
 					t.Fatalf("runAdmission diagnostic = %q, want useful redacted scanner failure", err)
 				}
+			}
+		})
+	}
+}
+
+func TestVulnerabilityReportParsesAndAccountsForExceptions(t *testing.T) {
+	contract := &securitypolicy.Exceptions{Version: 1, Exceptions: []securitypolicy.Exception{{
+		Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "openssl",
+	}}}
+	clean, err := parseVulnerabilityReport([]byte(`{"Results":[]}`), contract, testEnv(nil))
+	if err != nil || clean.UnresolvedCount != 0 || len(clean.Findings) != 0 {
+		t.Fatalf("clean report = %#v, err = %v", clean, err)
+	}
+
+	multiple := []byte(`{"Results":[{"Vulnerabilities":[` +
+		`{"VulnerabilityID":"CVE-2026-0001","PkgName":"openssl","InstalledVersion":"3.0.1","FixedVersion":"3.0.2","Severity":"MEDIUM"},` +
+		`{"VulnerabilityID":"CVE-2026-0002","PkgName":"curl","InstalledVersion":"8.1.0","FixedVersion":"8.1.1","Severity":"LOW"}` +
+		`]}]}`)
+	parsed, err := parseVulnerabilityReport(multiple, contract, testEnv(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.UnresolvedCount != 1 || len(parsed.Findings) != 1 {
+		t.Fatalf("exception accounting = count %d, findings %#v", parsed.UnresolvedCount, parsed.Findings)
+	}
+	if got := parsed.Findings[0]; got.CVE != "CVE-2026-0002" || got.Package != "curl" || got.InstalledVersion != "8.1.0" || got.FixedVersion != "8.1.1" {
+		t.Fatalf("unresolved finding = %#v", got)
+	}
+}
+
+func TestLiveVulnerabilityReport(t *testing.T) {
+	policyPath, _ := testPolicy(t)
+	for _, tc := range []struct {
+		name, mode, outcome, wantError string
+		wantCount                    int
+		wantSuccess                  bool
+	}{
+		{name: "clean scan", mode: "valid", outcome: "passed", wantSuccess: true},
+		{name: "multiple findings reject without success outputs", mode: "multiple", outcome: "rejected", wantError: "exceeds policy", wantCount: 2},
+		{name: "malformed report", mode: "malformed", outcome: "invalid-report", wantError: "machine-readable"},
+		{name: "scanner outage is redacted", mode: "unavailable", outcome: "scanner-error", wantError: "scan could not complete"},
+		{name: "report write failure rejects", mode: "valid", outcome: "", wantError: "write vulnerability report"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := liveTools(t)
+			reportPath := filepath.Join(t.TempDir(), "vulnerability-report.json")
+			outputPath := filepath.Join(t.TempDir(), "admission.json")
+			githubOutput := filepath.Join(t.TempDir(), "github-output")
+			if tc.name == "report write failure rejects" {
+				reportPath = t.TempDir()
+			}
+			env := testEnv(map[string]string{
+				"PATH": bin + ":/usr/bin:/bin", "GH_TOKEN": "fixture-token",
+				"GITHUB_REPOSITORY": repositoryIdentity, "OCI_TEST_MODE": tc.mode,
+				"GITHUB_OUTPUT": githubOutput,
+			})
+			args := append(liveArgs(policyPath), "--vulnerability-report", reportPath, "--output", outputPath)
+			var output bytes.Buffer
+			err := runAdmission(args, env, &output, &output)
+			if tc.wantSuccess {
+				if err != nil || output.String() != testImage+"\n" {
+					t.Fatalf("runAdmission error = %v, output = %q", err, output.String())
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("runAdmission error = %v, want %q", err, tc.wantError)
+				}
+				if output.Len() != 0 {
+					t.Fatalf("rejected admission wrote successful stdout: %q", output.String())
+				}
+				if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+					t.Fatalf("rejected admission wrote result file: stat error %v", statErr)
+				}
+				if _, statErr := os.Stat(githubOutput); !os.IsNotExist(statErr) {
+					t.Fatalf("rejected admission wrote GitHub outputs: stat error %v", statErr)
+				}
+				if strings.Contains(err.Error(), "fixture-token") || len(err.Error()) > 512 {
+					t.Fatalf("rejection summary is unredacted or unbounded: %q", err.Error())
+				}
+			}
+			if tc.name == "report write failure rejects" {
+				return
+			}
+			data, readErr := os.ReadFile(reportPath)
+			if readErr != nil {
+				t.Fatalf("read vulnerability report: %v", readErr)
+			}
+			var report struct {
+				SchemaVersion   int    `json:"schemaVersion"`
+				Image           string `json:"image"`
+				Revision        string `json:"revision"`
+				Platform        string `json:"platform"`
+				Scanner         struct{ Name, Version string }
+				Database        struct {
+					Vulnerability struct {
+						Version, UpdatedAt, NextUpdate, DownloadedAt string
+					}
+					Java struct {
+						Version, UpdatedAt, NextUpdate, DownloadedAt string
+					}
+				}
+				PolicySHA256    string `json:"policySHA256"`
+				Outcome         string `json:"outcome"`
+				UnresolvedCount int    `json:"unresolvedCount"`
+				Findings        []struct {
+					Package         string `json:"package"`
+					CVE             string `json:"cve"`
+					InstalledVersion string `json:"installedVersion"`
+					FixedVersion    string `json:"fixedVersion"`
+				} `json:"findings"`
+			}
+			if err := json.Unmarshal(data, &report); err != nil {
+				t.Fatalf("decode vulnerability report: %v", err)
+			}
+			if report.SchemaVersion != 1 || report.Image != testImage || report.Revision != testRevision || report.Platform != "linux/arm64" || report.Scanner.Name != "trivy" || report.Scanner.Version != "0.74.0" || report.Outcome != tc.outcome || report.UnresolvedCount != tc.wantCount {
+				t.Fatalf("vulnerability report = %#v", report)
+			}
+			if tc.name == "clean scan" && (report.Database.Vulnerability.Version != "2" || report.Database.Vulnerability.DownloadedAt == "") {
+				t.Fatalf("vulnerability database metadata missing: %#v", report.Database.Vulnerability)
+			}
+			if tc.mode == "unavailable" && strings.Contains(string(data), "fixture-token") {
+				t.Fatalf("vulnerability report leaked scanner credentials: %s", data)
 			}
 		})
 	}
@@ -304,7 +428,7 @@ func liveTools(t *testing.T) string {
 	dir := t.TempDir()
 	writeTool(t, filepath.Join(dir, "gh"), "#!/bin/sh\nset -eu\nif [ \"$3\" = --help ]; then exit 0; fi\nrepository='https://github.com/"+repositoryIdentity+"'\nworkflow='https://github.com/"+testWorkflow+"@refs/heads/main'\nrevision='"+testRevision+"'\n[ \"$OCI_TEST_MODE\" = wrong-repository ] && repository='https://github.com/attacker/example'\n[ \"$OCI_TEST_MODE\" = wrong-workflow ] && workflow='https://github.com/flidai/leapview/.github/workflows/untrusted.yml@refs/heads/main'\n[ \"$OCI_TEST_MODE\" = wrong-revision ] && revision='ffffffffffffffffffffffffffffffffffffffff'\nprintf '[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryURI\":\"%s\",\"buildSignerURI\":\"%s\",\"sourceRepositoryDigest\":\"%s\"}}}}]\\n' \"$repository\" \"$workflow\" \"$revision\"\n")
 	writeTool(t, filepath.Join(dir, "docker"), "#!/bin/sh\nset -eu\ncase \"$*\" in\n  *'imagetools inspect'*)\n    [ \"$OCI_TEST_MODE\" = missing-sbom ] && printf '{}\\n' || printf '{\"SPDX\":{\"SPDXID\":\"SPDXRef-DOCUMENT\"}}\\n';;\n  *) exit 64;;\nesac\n")
-	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\nif [ \"$1\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\ncase \" $* \" in *' --platform linux/arm64 '*) ;; *) printf 'target platform was not explicit\\n' >&2; exit 71;; esac\nif [ \"$OCI_TEST_MODE\" = unavailable ]; then printf 'registry unavailable with token %s\\n' \"$GH_TOKEN\" >&2; exit 70; fi\n[ \"$OCI_TEST_MODE\" = vulnerable ] && printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n' || printf '{\"Results\":[]}\\n'\n")
+	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\ncache_dir=''\naction=''\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --cache-dir) cache_dir=$2; shift 2;;\n    version|image) action=$1; shift; break;;\n    *) shift;;\n  esac\ndone\nif [ \"$action\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\ncase \" $* \" in *' --platform linux/arm64 '*) ;; *) printf 'target platform was not explicit\\n' >&2; exit 71;; esac\nmkdir -p \"$cache_dir/db\" \"$cache_dir/java-db\"\nprintf '{\"Version\":2,\"UpdatedAt\":\"2026-09-30T12:00:00Z\",\"NextUpdate\":\"2026-10-01T12:00:00Z\",\"DownloadedAt\":\"2026-09-30T12:01:00Z\"}\\n' > \"$cache_dir/db/metadata.json\"\nprintf '{\"Version\":1,\"UpdatedAt\":\"2026-09-30T12:00:00Z\",\"NextUpdate\":\"2026-10-01T12:00:00Z\",\"DownloadedAt\":\"2026-09-30T12:01:00Z\"}\\n' > \"$cache_dir/java-db/metadata.json\"\nif [ \"$OCI_TEST_MODE\" = unavailable ]; then printf 'registry unavailable with token %s\\n' \"$GH_TOKEN\" >&2; exit 70; fi\ncase \"$OCI_TEST_MODE\" in\n  malformed) printf '{broken\\n';;\n  multiple) printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\",\"PkgName\":\"openssl\",\"InstalledVersion\":\"3.0.1\",\"FixedVersion\":\"3.0.2\",\"Severity\":\"HIGH\"},{\"VulnerabilityID\":\"CVE-2026-0002\",\"PkgName\":\"curl\",\"InstalledVersion\":\"8.1.0\",\"FixedVersion\":\"8.1.1\",\"Severity\":\"MEDIUM\"}]}]}\\n';;\n  vulnerable) printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n';;\n  *) printf '{\"Results\":[]}\\n';;\nesac\n")
 	return dir
 }
 
