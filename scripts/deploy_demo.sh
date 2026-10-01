@@ -303,7 +303,9 @@ jq -e --arg project "$project_id" --arg generation "$generation_id" --arg candid
 jq -e --arg project "$project_id" --arg candidate "$candidate_id" --arg generation "$generation_id" '
   .projectId == $project and .candidateId == $candidate and .generationId == $generation
 ' <<<"$publication_status_json" >/dev/null
-demo_curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
+# Durable activation can reach active before local reconciliation makes readiness healthy.
+demo_curl --fail --silent --show-error --max-time 15 \
+  --retry 45 --retry-delay 2 --retry-max-time 90 "$demo_target/readyz" >/dev/null
 mapfile -t browser_entry < <(demo_curl --silent --show-error --max-time 15 \
   --output /dev/null \
   --write-out '%{http_code}\n%{redirect_url}\n' \
