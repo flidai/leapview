@@ -11,7 +11,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/flidai/leapview/internal/app/securitypolicy"
 	"io"
 	"math"
 	"os"
@@ -20,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/app/securitypolicy"
 )
 
 const (
@@ -154,6 +155,9 @@ func runAdmission(args, env []string, stdout, stderr io.Writer) error {
 	if err := validateOptions(opts); err != nil {
 		return err
 	}
+	if err := validateReportOutputPaths(opts, env); err != nil {
+		return err
+	}
 	policy, policyBytes, err := readPolicy(opts.policyPath)
 	if err != nil {
 		return err
@@ -266,6 +270,43 @@ func validateOptions(opts admissionOptions) error {
 	}
 	if opts.mode == "hermetic" && opts.evidencePath == "" {
 		return errors.New("hermetic mode requires evidence")
+	}
+	return nil
+}
+
+func validateReportOutputPaths(opts admissionOptions, env []string) error {
+	if opts.vulnerabilityReportPath == "" {
+		return nil
+	}
+	canonical := func(path string) (string, error) {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
+			return resolved, nil
+		}
+		if parent, err := filepath.EvalSymlinks(filepath.Dir(absolute)); err == nil {
+			return filepath.Join(parent, filepath.Base(absolute)), nil
+		}
+		return absolute, nil
+	}
+	reportPath, err := canonical(opts.vulnerabilityReportPath)
+	if err != nil {
+		return errors.New("vulnerability report path is invalid")
+	}
+	githubOutput, _ := envValue(env, "GITHUB_OUTPUT")
+	for _, output := range []string{opts.outputPath, githubOutput} {
+		if output == "" {
+			continue
+		}
+		outputPath, err := canonical(output)
+		if err != nil {
+			return errors.New("admission output path is invalid")
+		}
+		if reportPath == outputPath {
+			return errors.New("vulnerability report path must be separate from admission outputs")
+		}
 	}
 	return nil
 }

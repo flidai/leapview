@@ -199,6 +199,11 @@ func (r commandRunner) runCommandPartsWithDiagnostic(parts []string) ([]byte, st
 	if output.overflow && err == nil {
 		err = errors.New("scanner output exceeds bounded size")
 	}
+	// Never expose a truncated credential: exact secret matching cannot redact
+	// a value cut off at the bounded stderr boundary.
+	if diagnostic.overflow {
+		return []byte(output.value.String()), "scanner stderr exceeded bounded size", err
+	}
 	return []byte(output.value.String()), r.redactDiagnostic(diagnostic.value.String()), err
 }
 

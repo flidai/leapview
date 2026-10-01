@@ -504,3 +504,35 @@ func writeTool(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestScannerDiagnosticDiscardsTruncatedCredentials(t *testing.T) {
+	runner := commandRunner{env: testEnv(map[string]string{"GH_TOKEN": "sensitive-credential-value"})}
+	_, diagnostic, err := runner.runCommandPartsWithDiagnostic([]string{"/bin/sh", "-c", "exec 1>&2; printf '%4080s' ''; printf 'sensitive-credential-value'; exit 1"})
+	if err == nil || strings.Contains(diagnostic, "sensitive") || !strings.Contains(diagnostic, "exceeded bounded size") {
+		t.Fatalf("truncated scanner diagnostic = %q, err = %v", diagnostic, err)
+	}
+}
+
+func TestVulnerabilityReportRejectsOutputPathCollisions(t *testing.T) {
+	policyPath, _ := testPolicy(t)
+	path := filepath.Join(t.TempDir(), "output.json")
+	for _, target := range []string{"receipt", "github-output"} {
+		t.Run(target, func(t *testing.T) {
+			args := append(liveArgs(policyPath), "--vulnerability-report", path)
+			env := testEnv(nil)
+			if target == "receipt" {
+				args = append(args, "--output", path)
+			} else {
+				env = testEnv(map[string]string{"GITHUB_OUTPUT": path})
+			}
+			var output bytes.Buffer
+			err := runAdmission(args, env, &output, &output)
+			if err == nil || !strings.Contains(err.Error(), "separate from admission outputs") || output.Len() != 0 {
+				t.Fatalf("colliding %s path error = %v, output = %q", target, err, output.String())
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("colliding output was created: %v", err)
+			}
+		})
+	}
+}
