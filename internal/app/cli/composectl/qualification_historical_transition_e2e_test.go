@@ -625,7 +625,19 @@ func startQualificationHistoricalServer(
 	endpoint := qualificationHistoricalServerEndpoint(t, ctx, container, network)
 	startupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	require.NoError(t, waitQualificationHistoricalHealth(startupCtx, endpoint))
+	healthErr := waitQualificationHistoricalHealth(startupCtx, endpoint)
+	if healthErr != nil {
+		logsCtx, logsCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		serverLogs, logsErr := container.Logs(logsCtx, 128)
+		logsCancel()
+		secrets := make([]string, 0, len(environment))
+		for _, value := range environment {
+			secrets = append(secrets, value)
+		}
+		sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+		t.Logf("qualification server startup diagnostics: %s", qualificationHistoricalCandidateFailureLogs(serverLogs, logsErr, secrets...))
+	}
+	require.NoError(t, healthErr)
 	return container, endpoint
 }
 
@@ -666,7 +678,7 @@ func waitQualificationHistoricalHealth(ctx context.Context, endpoint string) err
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("predecessor did not become ready: %w", ctx.Err())
+			return fmt.Errorf("qualification server did not become ready: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}

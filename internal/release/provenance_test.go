@@ -2,6 +2,7 @@ package release
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,19 +19,73 @@ func TestProvenanceCanonicalizesGenerationEvidence(t *testing.T) {
 	require.Equal(t, provenance.Artifact.ContentDigest, provenance.Artifact.ContentDigest)
 }
 
-func TestProvenanceRequiresPolicyEvidenceAndValidatesLegacyVersionFour(t *testing.T) {
+func TestProvenanceValidatesImmutableVersionFiveGolden(t *testing.T) {
+	// Fixed output of NewProvenance in v5 commit 28bfc7e7e8f8074847229c05c42f0bbc2dd79336.
+	encoded, err := os.ReadFile("testdata/provenance_v5.json")
+	require.NoError(t, err)
+	var provenance Provenance
+	require.NoError(t, json.Unmarshal(encoded, &provenance))
+
+	require.Equal(t, 5, provenance.Version)
+	require.Equal(t, "sha256:35e828d289732d505094f92745017d6604cfb287002ac6ab67849f4f5cf2203d", provenance.ArtifactProvenanceDigest)
+	require.Equal(t, "sha256:3e6d66d1d9db5950b28d77962843563cc5382b8e76d159498eb4c5bd6a496aa7", provenance.PlanDigest)
+	require.Equal(t, "sha256:e801981ee796e0f12c630383e7740b188e9b91827daaaba9e53355da9775dcd1", provenance.Digest)
+	require.NoError(t, provenance.Validate())
+
+	canonical, err := json.MarshalIndent(provenance, "", "  ")
+	require.NoError(t, err)
+	require.Equal(t, strings.TrimSpace(string(encoded)), string(canonical))
+
+	tampered := provenance
+	tampered.Plan.TargetID = "target_tampered"
+	require.ErrorContains(t, tampered.Validate(), "content digest mismatch")
+}
+
+func TestProvenanceVersionFiveRejectsInsertedLocalCredentialPin(t *testing.T) {
+	encoded, err := os.ReadFile("testdata/provenance_v5.json")
+	require.NoError(t, err)
+	var provenance Provenance
+	require.NoError(t, json.Unmarshal(encoded, &provenance))
+
+	provenance.Plan.Bindings = append([]BindingEvidence(nil), provenance.Plan.Bindings...)
+	provenance.Plan.Bindings[0].ValidatedVersion = ""
+	provenance.Plan.Bindings[0].CredentialVersionID = "0198f2c0-7c7a-7f00-8a11-000000000301"
+	evidence := *provenance.Plan.GateEvidence
+	evidence.BindingGeneration = BindingFingerprint(provenance.Plan.Bindings)
+	evidence, err = evidence.Canonical()
+	require.NoError(t, err)
+	provenance.Plan.GateEvidence = &evidence
+
+	require.ErrorContains(t, provenance.Validate(), "version-5 provenance cannot carry local credential version pins")
+}
+
+func TestProvenanceAuthorizationEvidenceVersionBoundaries(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	input.Plan.PolicyRevision = 0
+	input.Plan.AuthorizationDigest = ""
+
+	v4, err := newProvenanceVersion(input, 4)
+	require.NoError(t, err)
+	require.NoError(t, v4.Validate())
+	_, err = newProvenanceVersion(input, 5)
+	require.ErrorContains(t, err, "target authorization policy revision and compiled digest are required")
+	_, err = newProvenanceVersion(input, 6)
+	require.ErrorContains(t, err, "target authorization policy revision and compiled digest are required")
+}
+
+func TestProvenanceRequiresPolicyEvidenceAndValidatesVersionFour(t *testing.T) {
 	current := testGenerationInput(t, GenerationDataRefreshSources)
 	current.Plan.PolicyRevision = 0
 	current.Plan.AuthorizationDigest = ""
 	if _, err := NewProvenance(current); err == nil {
-		t.Fatal("version-5 provenance accepted missing target authorization policy evidence")
+		t.Fatal("current provenance accepted missing target authorization policy evidence")
 	}
 
 	legacy, err := NewLegacyProvenance(current)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Validate())
 	unsupportedVersion := legacy
-	unsupportedVersion.Version = 5
+	unsupportedVersion.Version = 7
 	require.Error(t, unsupportedVersion.Validate())
 	legacy.Digest = testDigest("0")
 	require.Error(t, legacy.Validate())
