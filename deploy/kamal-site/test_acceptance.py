@@ -37,12 +37,18 @@ class AcceptanceTests(unittest.TestCase):
             path = self.write(name, content)
             inputs[key] = {'path': str(path), 'sha256': acceptance.digest(path.read_bytes())}
         cfg.update(input_files=inputs, observer_sha256=observe.observer_source_sha256())
+        self.run_id = 'c' * 32
+        cfg['run_id'] = self.run_id
         self.summary = observe._initial_summary(cfg, self.started.timestamp(), acceptance.CLOCK_TOLERANCE)
         self.summary.update(samples=1, host_samples=1, elapsed_seconds=1,
                             last_sample_at=self.iso(self.started))
         self.write_run('summary.json', self.summary)
         self.write_run('process.json', {'pid': os.getpid(), 'start_ticks': observe.proc_identity(os.getpid())['start_ticks'],
-                                      'boot_id': observe.proc_boot_id(), 'observer_sha256': cfg['observer_sha256']})
+                                      'boot_id': observe.proc_boot_id(), 'observer_sha256': cfg['observer_sha256'],
+                                      'run_id': self.run_id})
+        self.write_run('supervisor.json', {'schema': 1, 'pid': os.getpid(),
+            'start_ticks': observe.proc_identity(os.getpid())['start_ticks'], 'boot_id': observe.proc_boot_id(),
+            'observer_sha256': cfg['observer_sha256'], 'run_id': self.run_id})
         smoke = self.write('public_site_smoke.ts', 'fixture smoke source', mode=0o664)
         public = self.write('public-release.json', json.dumps(self.public))
         desktop = self.write('desktop-release.json', json.dumps({'schemaVersion': 1, 'status': 'withdrawn'}))
@@ -71,6 +77,22 @@ class AcceptanceTests(unittest.TestCase):
         path = self.run / name
         path.write_text(json.dumps(value))
         path.chmod(0o600)
+        if name == 'summary.json' and (self.run / 'exit.json').exists():
+            self.write_exit_receipt(json.loads((self.run / 'exit.json').read_text()).get('returncode', 0))
+
+    def write_exit_receipt(self, returncode=0):
+        summary_raw = (self.run / 'summary.json').read_bytes()
+        process_raw = (self.run / 'process.json').read_bytes()
+        supervisor = json.loads((self.run / 'supervisor.json').read_text())
+        process = json.loads(process_raw)
+        receipt = {'schema': 1, 'run_id': self.run_id, 'observer_sha256': self.summary['observer_sha256'],
+                   'returncode': returncode,
+                   'child': {key: process[key] for key in ('pid', 'start_ticks', 'boot_id')},
+                   'supervisor': {key: supervisor[key] for key in ('pid', 'start_ticks', 'boot_id')},
+                   'supervisor_sha256': acceptance.digest((self.run / 'supervisor.json').read_bytes()),
+                   'process_sha256': acceptance.digest(process_raw),
+                   'summary_sha256': acceptance.digest(summary_raw)}
+        self.write_run('exit.json', receipt)
 
     def prepare(self):
         return acceptance.prepare(self.args)
@@ -98,6 +120,7 @@ class AcceptanceTests(unittest.TestCase):
                             ended_wall_unix_seconds=origin + 86400,
                             last_sample_at=self.events[-1]['observed_at'], samples=1441, host_samples=97)
         self.write_run('summary.json', self.summary)
+        self.write_exit_receipt()
 
     def save_events(self):
         path = self.run / 'samples.jsonl'
@@ -176,6 +199,38 @@ class AcceptanceTests(unittest.TestCase):
         event_hash, baseline = self.validate()
         self.assertEqual(event_hash, acceptance.digest((self.run / 'samples.jsonl').read_bytes()))
         self.assertIsNotNone(baseline)
+
+    def test_qualification_requires_matching_zero_exit_receipt(self):
+        self.complete()
+        _, config, observer, summary, status = acceptance.load_bundle(self.bundle)
+        self.assertEqual(status,'health_storage_passed')
+        receipt_path=self.run/'exit.json'
+        valid=json.loads(receipt_path.read_text())
+        cases=[('missing',None,'interrupted'),
+               ('mismatched',dict(valid,summary_sha256='0'*64),'interrupted'),
+               ('source-mismatched',dict(valid,observer_sha256='0'*64),'interrupted'),
+               ('nonzero',dict(valid,returncode=1),'failed')]
+        for name,receipt,expected_status in cases:
+            with self.subTest(name=name):
+                if receipt is None:
+                    receipt_path.unlink()
+                else:
+                    self.write_run('exit.json',receipt)
+                _,observed_status=observer.status(self.run)
+                self.assertEqual(observed_status,expected_status)
+                with patch.object(acceptance,'process_alive',return_value=False), \
+                        self.assertRaisesRegex(ValueError,'supervised observer exit receipt|did not exit successfully'):
+                    acceptance.validate_complete(config,observer,summary,'health_storage_passed')
+        self.write_run('exit.json',valid)
+
+    def test_qualification_rejects_receipt_from_changed_observer_source(self):
+        self.complete()
+        _, config, observer, summary, _ = acceptance.load_bundle(self.bundle)
+        with patch.object(observer,'observer_source_sha256',return_value='0'*64):
+            self.assertEqual(observer.status(self.run)[1],'interrupted')
+            with patch.object(acceptance,'process_alive',return_value=False), \
+                    self.assertRaisesRegex(ValueError,'supervised observer exit receipt'):
+                acceptance.validate_complete(config,observer,summary,'health_storage_passed')
 
     def test_incomplete_counts_and_log_are_rejected(self):
         self.complete()
