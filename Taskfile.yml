@@ -527,6 +527,8 @@ tasks:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
+      - bun test scripts/nix_ci_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/agent_e2e_config.test.ts
@@ -2142,7 +2144,7 @@ tasks:
       - api:generate
     cmds:
       - go test ./cmd/leapviewctl ./internal/app/cli/composectl ./internal/app/cli/hostinstall ./deploy/compose ./deploy/host
-      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualificationContainerRuntimeLifecycle$'
+      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualification(ContainerRuntimeLifecycle|HistoricalDockerClientPortable)$'
       - go test ./deploy/hetzner
       - go test ./deploy/hetzner-site
       - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/kamal-site -p 'test_*.py'

@@ -477,10 +477,7 @@ func startQualificationHistoricalTransitionUtility(
 	name string,
 ) qualificationContainer {
 	t.Helper()
-	dockerPath, err := exec.LookPath("docker")
-	require.NoError(t, err, "candidate plan validation needs the local Docker client")
-	dockerPath, err = filepath.Abs(dockerPath)
-	require.NoError(t, err)
+	dockerPath := qualificationHistoricalDockerClient(t, ctx)
 	if _, err := os.Stat("/var/run/docker.sock"); err != nil {
 		t.Fatalf("candidate plan validation needs the local Docker socket: %v", err)
 	}

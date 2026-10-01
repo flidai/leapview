@@ -13,7 +13,7 @@ Install Nix using its [official instructions](https://nixos.org/download/) and e
 `nix-command flakes`. From this Git checkout:
 
 ```sh
-nix develop
+./scripts/develop.sh
 # Existing commands continue to own the workflow:
 task dev
 task ci
@@ -23,12 +23,16 @@ For one command without an interactive shell:
 
 ```sh
 nix develop --no-update-lock-file -c task ci
+./scripts/develop.sh task ci:full
+./scripts/develop.sh task ci:nightly
 nix develop --no-update-lock-file -c task nix:smoke
 nix flake check --no-update-lock-file -L
 ```
 
 On a fresh checkout, run `nix develop -c task ci:prepare` before `task ci` to
 create the ignored generated inputs, as the existing hosted CI does.
+Local full/nightly contracts also require Terraform 1.13.5 on `PATH`; deployment
+validation retains this specialist dependency outside the Nix development shell.
 
 `task nix:check` runs the flake check and browser smoke check; `task nix:ci` runs the
 existing PR contract through Nix. Stage new Nix files before evaluating them:
@@ -61,19 +65,45 @@ instead of silently downloading a different compiler.
 The second Nix input provides only upstream Playwright packaging at the version
 used by npm. Chromium and its headless shell are supplied through
 `PLAYWRIGHT_BROWSERS_PATH`, including native dependencies and fonts. Browser
-installation does not depend on mutable host libraries. The smoke check verifies
-the npm/browser version pairing, starts Chromium, and exercises a page interaction.
+installation does not depend on mutable host libraries. Font discovery and
+configuration use only locked Nix paths, including Playwright's WenQuanYi CJK
+fallback: ECharts derives text heights from a CJK glyph even for Latin labels.
+The smoke check verifies the npm/browser pairing, starts Chromium, exercises a
+page interaction, and checks the chart font metrics without host fonts.
 Desktop/Electron packaging and other platforms still require qualification.
 
 ## CI and updates
 
-The `Nix development` workflow runs native toolchain checks, browser checks, and the
+The shared `setup-ci` action defaults to the locked Nix shell on x86_64 Linux.
+PR validation (including planning and gating), merge-queue validation and nightly
+validation keep their existing Task contracts and use those tools. Compiler flags,
+native library paths and pinned browser/font paths are exported into subsequent
+workflow steps with an explicit allowlist; runner credentials are never copied.
+Browser lanes verify the npm/browser pairing with `task nix:smoke`; a missing or
+mismatched locked browser fails without downloading a replacement.
+
+The `Nix development` workflow also runs native toolchain checks, browser checks, and the
 existing `task ci` on relevant toolchain changes or manual dispatch. It uses an
 ephemeral GitHub-hosted runner and public Nix substitutes, with no deployment secrets
-or private cache account. Existing CI remains in place during qualification; this
-slice does not migrate every CI lane to Nix. Manual dispatch can select
+or private cache account. Manual dispatch can select
 `checks=image` or `checks=development` for a focused rerun; the default and
-pull-request validation run both lanes.
+pull-request validation run both lanes. Select `contract=full` or `contract=nightly`
+with `checks=development` to exercise those contracts in a fresh hosted environment.
+These selections install the same pinned Terraform used by deployment validation.
+Their ordinary merge-queue/nightly workflows retain their existing gates. Historical
+transition utility containers use a portable Docker client from a digest-pinned
+fixture image, so they do not depend on the host toolchain's loader or libraries.
+
+Go caches remain bounded by workload, platform, runner image, selected toolchain,
+compiler version and locked inputs. Only default-branch jobs publish archives;
+candidate jobs restore them and run all selected checks even on a cache miss.
+
+Conventional release builders explicitly select `toolchain: conventional` until
+each output passes its compatibility and final-artifact admission gates. Other
+platforms keep their existing tool setup. The current flake qualifies x86_64 Linux;
+ARM64 development-shell adoption is still pending. Terraform/provider and specialist
+dbt/Electron dependencies retain their existing setup until their callers migrate.
+See [the caller inventory](CI-CALLERS.md) before removing any installer.
 
 Update toolchains in a reviewed change. After `nix flake update`, inspect the lock
 and version changes. A Go/Bun manifest update needs the corresponding official

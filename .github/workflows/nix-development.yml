@@ -13,6 +13,11 @@ on:
       - 'bun.lock'
       - 'Taskfile.yml'
       - 'scripts/check_nix_development.mjs'
+      - 'scripts/develop.sh'
+      - 'scripts/export_nix_ci_environment.py'
+      - 'scripts/nix_ci_contract.test.ts'
+      - 'scripts/tests/test_nix_ci_environment.py'
+      - '.github/actions/setup-ci/**'
       - 'scripts/check_nix_image.sh'
       - 'scripts/testdata/nix/**'
       - 'scripts/check_nix_runtime_security.py'
@@ -28,6 +33,11 @@ on:
         type: choice
         default: all
         options: [all, development, image]
+      contract:
+        description: Existing development contract to qualify (image lane is independent)
+        type: choice
+        default: pr
+        options: [pr, full, nightly]
 
 permissions:
   contents: read
@@ -40,7 +50,7 @@ jobs:
   development:
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'image') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -59,8 +69,22 @@ jobs:
         run: nix develop --no-update-lock-file -c task nix:smoke
       - name: Prepare generated and embedded assets for the fresh checkout
         run: nix develop --no-update-lock-file -c task ci:prepare
-      - name: Run the existing PR contract with the same development environment
-        run: nix develop --no-update-lock-file -c task ci
+      - name: Set up Terraform for deployment validation
+        if: inputs.contract == 'full' || inputs.contract == 'nightly'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+      - name: Run the selected existing contract with the same development environment
+        env:
+          CONTRACT: ${{ inputs.contract || 'pr' }}
+        run: |
+          case "$CONTRACT" in
+            pr) nix develop --no-update-lock-file -c task ci ;;
+            full) nix develop --no-update-lock-file -c task ci:full ;;
+            nightly) nix develop --no-update-lock-file -c task ci:nightly ;;
+            *) echo "unknown Nix qualification contract: $CONTRACT" >&2; exit 1 ;;
+          esac
 
   image:
     name: Application and image
