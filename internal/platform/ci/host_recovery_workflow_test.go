@@ -23,6 +23,7 @@ type qualificationWorkflow struct {
 		TimeoutMinutes string            `yaml:"timeout-minutes"`
 		Needs          any               `yaml:"needs"`
 		Permissions    map[string]string `yaml:"permissions"`
+		With           map[string]string `yaml:"with"`
 		Steps          []struct {
 			Name string            `yaml:"name"`
 			ID   string            `yaml:"id"`

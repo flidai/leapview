@@ -76,6 +76,7 @@ func TestNightlyWorkflowFullValidationAndStrictGate(t *testing.T) {
 		"full-validation",
 		"security-validation",
 		"dependency-evidence-refresh",
+		"host-recovery-validation",
 	}
 	gate, ok := workflow.Jobs["ci-gate"]
 	if !ok {
@@ -92,6 +93,7 @@ func TestNightlyWorkflowFullValidationAndStrictGate(t *testing.T) {
 		t.Fatal("nightly CI gate result check changed")
 	}
 	expectedResults := map[string]string{
+		"HOST_RECOVERY_RESULT":               "${{ needs.host-recovery-validation.result }}",
 		"APIGEN_RESULT":                      "${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT":                 "${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT":              "${{ needs.go-application-validation.result }}",
