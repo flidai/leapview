@@ -1,3 +1,4 @@
+import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
@@ -17,6 +18,38 @@ export class PlaygroundCharts extends LitElement {
   @state() private fixture?: ChartFixture
   @state() private events: Array<{ name: string; detail: unknown }> = []
   private revision = 0
+
+  getExampleCode() {
+    const height = Math.round(this.renderRoot.querySelector('.preview')?.getBoundingClientRect().height || 420)
+    return [
+      "import { html } from 'lit'",
+      "import '../web/components/dashboard/visualization/host'",
+      "import '../web/components/dashboard/visual-modal'",
+      "import type { VisualizationEnvelope } from '../web/generated/visualization'",
+      '', `const envelope: VisualizationEnvelope = ${JSON.stringify(this.fixture?.envelope, null, 2)}`,
+      '', '// Load production tokens and wire the public selection/window events in the owner.',
+      'html`<div style="height: ' + height + 'px">',
+      '  <lv-visualization-host .envelope=${envelope}></lv-visualization-host>',
+      '</div><lv-visual-modal></lv-visual-modal>`',
+    ].join('\n')
+  }
+
+  getExampleState() {
+    return {
+      ...this.options,
+    }
+  }
+
+  async restoreExampleState(value: Record<string, unknown>) {
+    await this.updateComplete
+    this.options = readState(value, defaultChartOptions, {
+      scenario: ['standard', 'dense', 'long-labels', 'missing', 'single', 'zero', 'negative', 'precision'],
+      status: ['ready', 'loading', 'empty', 'error'], legend: ['top', 'bottom', 'left', 'right', 'hidden'],
+      labels: ['hidden', 'automatic', 'dense', 'always'], tooltip: ['default', 'value'],
+      mapLayer: ['point', 'heat', 'density', 'choropleth', 'path', 'reference'], kpiMode: ['compact', 'bullet', 'progress'],
+    })
+    this.rebuild()
+  }
 
   connectedCallback(): void {
     super.connectedCallback()

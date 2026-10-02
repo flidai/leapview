@@ -1,3 +1,5 @@
+import { previewCode } from './example-code'
+import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
@@ -75,6 +77,40 @@ export class PlaygroundControls extends LitElement {
   @state() private filterSearch = ''
   @state() private toastVisible = true
   @state() private logs: string[] = []
+
+  getExampleCode() {
+    return previewCode(this, [
+      "import { settingsLayoutStyles } from '../web/components/shared/settings-layout'",
+      "import { settingsFieldStyles } from '../web/components/shared/settings-field-styles'",
+      "import '../web/components/shared/select-menu'",
+      "import '../web/components/shared/entity-multi-select'",
+      "import '../web/components/shared/filter-menu'",
+      "import '../web/components/shared/toast'",
+      "import '../web/components/shared/loading-spinner'",
+      "import '../web/components/dashboard/filters/date-picker'",
+    ], ["settingsLayoutStyles", "settingsFieldStyles"])
+  }
+
+  getExampleState() {
+    return {
+      disabled: this.disabled,
+      invalid: this.invalid,
+      empty: this.empty,
+      loading: this.loading,
+      sunday: this.sunday,
+      selected: this.selected,
+      selectedIds: this.selectedIds,
+      date: this.date,
+      filterSelected: this.filterSelected,
+      filterSearch: this.filterSearch,
+      toastVisible: this.toastVisible,
+    }
+  }
+
+  async restoreExampleState(value: Record<string, unknown>) {
+    await this.updateComplete
+    Object.assign(this, readState(value, this.getExampleState(), { selected: ['daily', 'weekly', 'monthly'], selectedIds: ['alex', 'sam', 'analytics'], filterSelected: ['active', 'draft'] }))
+  }
 
   static styles = [settingsLayoutStyles, settingsFieldStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }

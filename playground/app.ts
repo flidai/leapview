@@ -13,10 +13,38 @@ import { contentExamples } from './content'
 import { tableExamples } from './tables'
 import { surfaceExamples } from './surfaces'
 import { filterExamples } from './filters'
+import './linked-visuals'
+import './overlay-recipe'
+import './reload-client'
+import { decodeSnapshot, snapshotKey, type ExampleSnapshot, type StatefulExample } from './example-state'
+import { copyText, snapshotURL } from './review-tools'
+import './review-tools'
 
 const parameters = new URLSearchParams(location.search)
-const initialTheme = parameters.get('theme')
-if (initialTheme) document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: initialTheme } }))
+const embedded = parameters.get('embedded') === '1'
+let restored = decodeSnapshot(parameters.get('state'))
+try {
+  const reload = JSON.parse(sessionStorage.getItem(snapshotKey) || 'null')
+  if (!embedded && reload?.href === location.href) {
+    restored = decodeSnapshot(reload.state) || restored
+    sessionStorage.removeItem(snapshotKey)
+  }
+} catch { /* Storage is optional; shared URLs still work. */ }
+const initialSnapshot = restored?.route === (location.hash.slice(1) || 'charts/bar') ? restored : undefined
+const initialTheme = initialSnapshot?.theme || parameters.get('theme')
+function applyTheme(mode: string, attributes?: ExampleSnapshot['themeAttributes']) {
+  if (embedded && attributes) {
+    const root = document.documentElement
+    // A pinned reference inherits captured production attributes, without writing preferences.
+    root.dataset.colorMode = attributes.colorScheme
+    root.dataset.lightTheme = attributes.lightTheme
+    root.dataset.darkTheme = attributes.darkTheme
+    root.dataset.themePreference = attributes.colorScheme === 'dark' ? attributes.darkTheme : attributes.lightTheme
+    root.style.colorScheme = attributes.colorScheme
+    document.dispatchEvent(new CustomEvent('leapview-theme-applied', { detail: { mode: root.dataset.themePreference, resolvedMode: attributes.colorScheme } }))
+  } else if (!embedded) document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode } }))
+}
+if (initialTheme) applyTheme(initialTheme, initialSnapshot?.themeAttributes)
 
 const groups = [
   { id: 'tokens', label: 'Design tokens', examples: tokenExamples },
@@ -27,6 +55,10 @@ const groups = [
   { id: 'content', label: 'Editors & content', examples: contentExamples },
   { id: 'surfaces', label: 'Layout & identity', examples: surfaceExamples },
   { id: 'filters', label: 'Dashboard filters', examples: filterExamples },
+  { id: 'recipes', label: 'Combined examples', examples: [
+    { id: 'linked-visuals', label: 'Linked dashboard' },
+    { id: 'overlay-form', label: 'Drawer form' },
+  ] },
 ]
 
 class PlaygroundApp extends LitElement {
@@ -34,12 +66,53 @@ class PlaygroundApp extends LitElement {
   @state() private search = ''
   @state() private navigationOpen = false
   @state() private expandedGroups = new Set([this.route.split('/')[0]])
-  @state() private width = ['360', '768', '1200'].includes(parameters.get('width') || '') ? parameters.get('width')! : 'responsive'
-  @state() private height = ['260', '420', '640'].includes(parameters.get('height') || '') ? parameters.get('height')! : '420'
+  @state() private width = initialSnapshot?.width || (['360', '768', '1200'].includes(parameters.get('width') || '') ? parameters.get('width')! : 'responsive')
+  @state() private height = initialSnapshot?.height || (['260', '420', '640'].includes(parameters.get('height') || '') ? parameters.get('height')! : '420')
   @state() private dark = document.documentElement.style.colorScheme === 'dark'
-  @state() private previewOnly = parameters.get('preview') === '1'
+  @state() private previewOnly = embedded || initialSnapshot?.preview || parameters.get('preview') === '1'
+  @state() private shareMessage = ''
+  @state() private shareFallback = ''
+  private readonly beforeReload = () => {
+    if (embedded) return
+    try { sessionStorage.setItem(snapshotKey, JSON.stringify({ href: location.href, state: JSON.stringify(this.snapshot()) })) } catch { /* Storage unavailable. */ }
+  }
+  protected async firstUpdated() { if (initialSnapshot) await this.restore(initialSnapshot) }
+
+  private exampleElement() { return this.renderRoot.querySelector<StatefulExample>('.viewport > *') }
+
+  private readonly snapshot = (): ExampleSnapshot => ({
+    version: 1, route: this.route, width: this.width, height: this.height,
+    theme: document.documentElement.dataset.themePreference || (this.dark ? 'dark' : 'light'),
+    themeAttributes: {
+      colorMode: document.documentElement.dataset.colorMode || 'light',
+      lightTheme: document.documentElement.dataset.lightTheme || 'light',
+      darkTheme: document.documentElement.dataset.darkTheme || 'dark',
+      colorScheme: this.dark ? 'dark' : 'light',
+    },
+    preview: this.previewOnly, example: this.exampleElement()?.getExampleState?.() || {},
+  })
+
+  private async restore(snapshot: ExampleSnapshot) {
+    this.width = snapshot.width; this.height = snapshot.height; this.previewOnly = embedded || snapshot.preview
+    applyTheme(snapshot.theme, snapshot.themeAttributes)
+    await this.updateComplete
+    const example = this.exampleElement()
+    if (example) { await example.updateComplete; await example.restoreExampleState?.(snapshot.example) }
+  }
+
+  private readonly share = async () => {
+    const url = snapshotURL(this.snapshot()).href
+    if (url.length > 8000) {
+      this.shareMessage = 'This example is too large for a link. Use Copy component code instead.'
+      this.shareFallback = ''
+      return
+    }
+    const copied = await copyText(url)
+    this.shareMessage = copied ? 'Link copied.' : 'Select and copy the link below.'
+    this.shareFallback = copied ? '' : url
+  }
   private readonly exitPreview = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape' || event.defaultPrevented) return
+    if (embedded || event.key !== 'Escape' || event.defaultPrevented) return
     // Let the focused production dialog or popup handle its own dismissal.
     if (event.composedPath().some(target => target instanceof Element && target.matches('dialog, [role=dialog], [role=alertdialog], [role=menu], [role=listbox], :popover-open'))) return
     if (this.previewOnly) void this.leavePreview()
@@ -49,11 +122,15 @@ class PlaygroundApp extends LitElement {
     }
   }
   private readonly navigate = async () => {
+    const previousRoute = this.route
     const fromMobileNavigation = this.navigationOpen
     this.navigationOpen = false
     this.route = location.hash.slice(1) || 'charts/bar'
+    this.shareMessage = ''; this.shareFallback = ''
+    const incoming = decodeSnapshot(new URLSearchParams(location.search).get('state'))
     this.expandedGroups = new Set([this.route.split('/')[0]])
     await this.updateComplete
+    if (previousRoute !== this.route && incoming?.route === this.route) await this.restore(incoming)
     const main = this.renderRoot.querySelector<HTMLElement>('main')
     if (main) main.scrollTop = 0
     if (fromMobileNavigation) main?.focus({ preventScroll: true })
@@ -65,14 +142,17 @@ class PlaygroundApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback()
+    this.toggleAttribute('embedded', embedded)
     document.addEventListener('leapview-theme-applied', this.themeApplied)
     window.addEventListener('hashchange', this.navigate)
     window.addEventListener('keydown', this.exitPreview)
+    window.addEventListener('playground-before-reload', this.beforeReload)
   }
   disconnectedCallback() {
     document.removeEventListener('leapview-theme-applied', this.themeApplied)
     window.removeEventListener('hashchange', this.navigate)
     window.removeEventListener('keydown', this.exitPreview)
+    window.removeEventListener('playground-before-reload', this.beforeReload)
     super.disconnectedCallback()
   }
 
@@ -110,6 +190,9 @@ class PlaygroundApp extends LitElement {
     .toolbar .settings-input { max-width: 10rem; }
     .viewport { max-width: 100%; margin: 0 auto; }
     .workspace.solo { grid-template-columns: minmax(0, 1fr); }
+    :host([embedded]) .workspace.solo main { padding: var(--base-size-12); }
+    .share-message { font: var(--lv-type-caption); color: var(--lv-fg-muted); }
+    .share-fallback { width: 100%; margin-bottom: var(--base-size-12); }
     .workspace.solo main { padding-top: var(--base-size-64); }
     .exit-preview { position: fixed; z-index: var(--z-index-toast); top: var(--base-size-12); right: var(--base-size-16); }
     [hidden] { display: none !important; }
@@ -145,6 +228,9 @@ class PlaygroundApp extends LitElement {
       : groupID === 'content' ? html`<playground-content .example=${exampleID} ?preview-only=${this.previewOnly}></playground-content>`
       : groupID === 'surfaces' ? html`<playground-surfaces .example=${exampleID} ?preview-only=${this.previewOnly}></playground-surfaces>`
       : groupID === 'filters' ? html`<playground-filters .example=${exampleID} ?preview-only=${this.previewOnly}></playground-filters>`
+      : groupID === 'recipes' ? exampleID === 'linked-visuals'
+        ? html`<playground-linked-visuals ?preview-only=${this.previewOnly}></playground-linked-visuals>`
+        : html`<playground-overlay-recipe ?preview-only=${this.previewOnly}></playground-overlay-recipe>`
       : groupID === 'controls'
         ? html`<playground-controls .example=${exampleID} ?preview-only=${this.previewOnly}></playground-controls>`
         : html`<playground-tokens .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tokens>`)
@@ -158,7 +244,7 @@ class PlaygroundApp extends LitElement {
         <button type="button" class="settings-button browse-toggle" aria-expanded=${String(this.navigationOpen)} aria-controls="example-navigation" @click=${() => { this.navigationOpen = !this.navigationOpen }}>${lucideIcon(PanelLeft, { size: 16 })} Browse</button>
         <button type="button" class="settings-button theme-toggle" aria-label=${themeAction} title=${themeAction} @click=${this.changeTheme}>${lucideIcon(this.dark ? Sun : Moon, { size: 18 })}</button>
       </header>
-      <button type="button" class="settings-button exit-preview" ?hidden=${!this.previewOnly} @click=${this.leavePreview} title="Exit preview (Escape)">${lucideIcon(Minimize2, { size: 16 })} Exit preview</button>
+      <button type="button" class="settings-button exit-preview" ?hidden=${!this.previewOnly || embedded} @click=${this.leavePreview} title="Exit preview (Escape)">${lucideIcon(Minimize2, { size: 16 })} Exit preview</button>
       <div class=${this.previewOnly ? 'workspace solo' : 'workspace'}>
         <aside id="example-navigation" ?data-open=${this.navigationOpen} ?hidden=${this.previewOnly}><input aria-label="Find an example" placeholder="Search examples…" class="settings-input search" type="search" .value=${this.search} @input=${this.changeSearch}>
           <nav aria-label="Examples">${visibleGroups.map(item => html`<section>
@@ -176,13 +262,17 @@ class PlaygroundApp extends LitElement {
               <label>Width<select aria-label="Preview width" class="settings-input" .value=${this.width} @change=${(event: Event) => { this.width = (event.target as HTMLSelectElement).value }}>
                 <option value="responsive">Responsive</option><option value="360">360 px</option><option value="768">768 px</option><option value="1200">1200 px</option>
               </select></label>
-              ${['charts', 'graphs', 'tables'].includes(groupID) ? html`<label>Height<select aria-label="Preview height" class="settings-input" .value=${this.height} @change=${(event: Event) => { this.height = (event.target as HTMLSelectElement).value }}>
+              ${(['charts', 'graphs', 'tables'].includes(groupID) || this.route === 'recipes/linked-visuals') ? html`<label>Height<select aria-label="Preview height" class="settings-input" .value=${this.height} @change=${(event: Event) => { this.height = (event.target as HTMLSelectElement).value }}>
                 <option value="260">260 px</option><option value="420">420 px</option><option value="640">640 px</option>
               </select></label>` : nothing}
+              <button type="button" class="settings-button" title="Share fixture, options, theme, and size" @click=${this.share}>Copy link</button>
               <button type="button" class="settings-button preview-toggle" aria-label="Preview" title="Hide controls and details" @click=${this.enterPreview}>${lucideIcon(Maximize2, { size: 16 })} Preview</button>
             </div>
           </div>
+          <span class="share-message" role="status" ?hidden=${this.previewOnly}>${this.shareMessage}</span>
+          ${this.shareFallback && !this.previewOnly ? html`<input class="settings-input share-fallback" readonly aria-label="Example link" .value=${this.shareFallback} @focus=${(event: Event) => (event.target as HTMLInputElement).select()}>` : nothing}
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
+          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .getSnapshot=${this.snapshot} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
         </main>
       </div>`
   }

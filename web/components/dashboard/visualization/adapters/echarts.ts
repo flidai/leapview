@@ -198,9 +198,9 @@ export class EChartsHandle implements RendererHandle {
     const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
     const patch = responsiveEChartsPatch(option, this.lastWidth, this.lastHeight, focused)
-    // Exact compact widths only affect scroll legends. Avoid reapplying an
-    // unchanged proportional series while a card is continuously resized.
-    if (!force && compact && sameLayout && patch.legend === undefined) {
+    // Exact compact widths affect scroll legends and category-label budgets.
+    // Avoid reapplying other unchanged layouts during continuous resizing.
+    if (!force && compact && sameLayout && patch.legend === undefined && patch.yAxis === undefined) {
       this.compactWidth = this.lastWidth
       return
     }

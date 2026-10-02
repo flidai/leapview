@@ -1,3 +1,5 @@
+import { previewCode } from './example-code'
+import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
@@ -45,6 +47,33 @@ export class PlaygroundTables extends LitElement {
   @state() private events: Array<{ name: string; detail: unknown }> = []
   @state() private selected = ''
   @state() private instance = 0
+
+  getExampleCode() {
+    return previewCode(this, [
+      "import '../web/components/shared/record-table'",
+      "import '../web/components/shared/windowed-table'",
+      "import '../web/components/shared/entity-list'",
+      "import '../web/components/data/preview-table'",
+      "import '../web/components/data/explore-table'",
+    ])
+  }
+
+  getExampleState() {
+    return {
+      status: this.status,
+      compact: this.compact,
+      grouped: this.grouped,
+      mobileCards: this.mobileCards,
+      truncated: this.truncated,
+      variant: this.variant,
+    }
+  }
+
+  async restoreExampleState(value: Record<string, unknown>) {
+    await this.updateComplete
+    Object.assign(this, readState(value, this.getExampleState(), { status: ['populated', 'empty', 'loading', 'error'], variant: ['minimal', 'primary', 'compact'] }))
+    this.reset()
+  }
 
   static styles = [settingsLayoutStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }

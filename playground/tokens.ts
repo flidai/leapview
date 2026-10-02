@@ -1,3 +1,4 @@
+import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { styleMap } from 'lit/directives/style-map.js'
@@ -58,6 +59,20 @@ export class PlaygroundTokens extends LitElement {
   private names = new Set<string>()
   private observer?: MutationObserver
   private frame = 0
+
+  getExampleCode() {
+    const query = this.search.trim().toLowerCase()
+    const names = this.tokens.filter(token => token.group === this.example && (!this.productOnly || token.name.startsWith('--lv-')) && (!query || `${token.name} ${token.value}`.toLowerCase().includes(query)))
+    return '/* Reference production tokens; import the product stylesheet first. */\n' + names.map(token => `/* ${token.name}: use var(${token.name}) */`).join('\n')
+  }
+
+  getExampleState() { return { search: this.search, productOnly: this.productOnly } }
+
+  async restoreExampleState(value: Record<string, unknown>) {
+    await this.updateComplete
+    Object.assign(this, readState(value, this.getExampleState(), {}))
+    
+  }
 
   static styles = [settingsLayoutStyles, css`
     :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); min-width: 0; }

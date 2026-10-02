@@ -1,3 +1,5 @@
+import { previewCode } from './example-code'
+import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
@@ -10,7 +12,7 @@ import '../web/components/shared/markdown-view'
 import '../web/components/shared/visual-artifact'
 import '../web/components/dashboard/visual-modal'
 import '../web/components/chat/chat-composer'
-import { matchesReferenceQuery, type ChatContextReference, type ChatReferenceSearchDetail, type ChatReferencesChangeDetail } from '../web/components/chat/reference'
+import { matchesReferenceQuery, referenceIdentity, type ChatContextReference, type ChatReferenceSearchDetail, type ChatReferencesChangeDetail } from '../web/components/chat/reference'
 import { codeFixtures, composerReferences, configurationJSON, configurationYAML, createArtifactFixture, markdownFixture, type ArtifactState } from './content-fixtures'
 
 export { contentExamples } from './content-fixtures'
@@ -86,6 +88,49 @@ export class PlaygroundContent extends LitElement {
   @state() private composerRevision = 0
   private acceptedRunSequence = 0
   @state() private logs: string[] = []
+
+  getExampleCode() {
+    return previewCode(this, [
+      "import '../web/components/shared/code-editor'",
+      "import '../web/components/shared/code-block'",
+      "import '../web/components/shared/config-viewer'",
+      "import '../web/components/shared/markdown-view'",
+      "import '../web/components/shared/visual-artifact'",
+      "import '../web/components/dashboard/visual-modal'",
+      "import '../web/components/chat/chat-composer'",
+    ])
+  }
+
+  getExampleState() {
+    return {
+      language: this.language,
+      source: this.source,
+      readOnly: this.readOnly,
+      compact: this.compact,
+      dense: this.dense,
+      inline: this.inline,
+      format: this.format,
+      toolbar: this.toolbar,
+      copy: this.copy,
+      highlight: this.highlight,
+      empty: this.empty,
+      configState: this.configState,
+      configView: this.configView,
+      artifactState: this.artifactState,
+      explorerLink: this.explorerLink,
+      composerState: this.composerState,
+      referenceIds: this.references.map(reference => referenceIdentity(reference)),
+    }
+  }
+
+  async restoreExampleState(value: Record<string, unknown>) {
+    await this.updateComplete
+    const { referenceIds, ...controls } = readState(value, this.getExampleState(), { language: Object.keys(codeFixtures), configState: ['valid', 'invalid', 'empty'], configView: ['outline', 'raw'], artifactState: ['ready', 'limited', 'loading', 'empty', 'error', 'unavailable', 'unsupported'], composerState: ['ready', 'disabled', 'pending', 'running', 'editing', 'continue'], referenceIds: composerReferences.map(reference => referenceIdentity(reference)) })
+    Object.assign(this, controls)
+    this.references = composerReferences.filter(reference => referenceIds.includes(referenceIdentity(reference)))
+    this.artifact = createArtifactFixture(this.artifactState)
+    this.composerRevision++
+  }
 
   static styles = [settingsLayoutStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }

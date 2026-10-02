@@ -80,6 +80,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const movedSide = (compact || focused) && hasPieSeries(option.series) ? proportionalSideLegend(option.legend) : undefined
   const responsiveLegend = movedSide ? compactProportionalSideLegend(option.legend) : option.legend
   const visibleBottomLegend = hasBottomLegend(responsiveLegend)
+  const visibleTopLegend = hasTopLegend(responsiveLegend)
   const bottomLegend = (compact || focused) && visibleBottomLegend
   const narrowWithoutLegend = option.legend === undefined && width < 600 && hasPieSeries(option.series)
   const narrowBottomLegend = visibleBottomLegend && width < 600 && hasPieSeries(option.series)
@@ -92,6 +93,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
   const treeSeries = responsiveSingleNodeTreeSeries(option.series, width, height)
   const gaugeGraphic = responsiveGaugeGraphic(option.graphic, width)
+  const barCategoryAxis = responsiveBarCategoryAxis(option, width, compact)
   const patch: Record<string, any> = {}
   if (option.grid !== undefined) {
     const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
@@ -104,13 +106,15 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
         ...(compact ? {
           left: compactInset(source.left, 8),
           right: compactInset(source.right, 8),
-          top: compactInset(source.top, 10),
+          // The builder reserves this space for a top legend and its title.
+          top: visibleTopLegend ? source.top ?? 10 : compactInset(source.top, 10),
           bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
         } : {}),
       }
     })
     patch.grid = Array.isArray(option.grid) ? grid : grid[0]
   }
+  if (barCategoryAxis !== undefined) patch.yAxis = barCategoryAxis
   if (proportionalSeries !== undefined) patch.series = proportionalSeries
   if (gaugeSeries !== undefined) patch.series = gaugeSeries
   if (graphSeries !== undefined) patch.series = graphSeries
@@ -129,6 +133,31 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
     : stripDataZoomNavigation(option.dataZoom)
   return patch
+}
+
+function responsiveBarCategoryAxis(option: Record<string, any>, width: number, compact: boolean): unknown {
+  if (!Array.isArray(option.series) || !option.series.some((series: Record<string, any>) => series?.type === 'bar')) return undefined
+  const axes = Array.isArray(option.yAxis) ? option.yAxis : [option.yAxis]
+  let hasCategoryAxis = false
+  const result = axes.map((axis: Record<string, any> | undefined) => {
+    if (!axis || axis.type !== 'category') return axis
+    hasCategoryAxis = true
+    const label = axis.axisLabel ?? {}
+    // Bound only the display text. The formatter, category values, and tooltip
+    // keep their full labels, while the plot retains space on narrow cards.
+    const budget = Math.min(160, Math.floor(width * 0.4))
+    return {
+      ...axis,
+      axisLabel: {
+        ...label,
+        width: compact ? Math.min(finiteNumber(label.width) ?? budget, budget) : label.width ?? null,
+        overflow: compact ? 'truncate' : label.overflow ?? null,
+        ellipsis: compact ? label.ellipsis ?? '…' : label.ellipsis ?? null,
+      },
+    }
+  })
+  if (!hasCategoryAxis) return undefined
+  return Array.isArray(option.yAxis) ? result : result[0]
 }
 
 function gaugeTickLabelsHidden(width: number, height: number): boolean {
@@ -528,6 +557,15 @@ function compactBottomInset(value: unknown, fallback: number, preserveExisting: 
 function hasBottomLegend(value: unknown): boolean {
   const legends = Array.isArray(value) ? value : [value]
   return legends.some(isHorizontalBottomLegend)
+}
+
+function hasTopLegend(value: unknown): boolean {
+  const legends = Array.isArray(value) ? value : [value]
+  return legends.some((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
+    const legend = entry as Record<string, unknown>
+    return legend.show !== false && legend.orient !== 'vertical' && legend.top !== undefined && legend.top !== 'auto'
+  })
 }
 
 function isHorizontalBottomLegend(value: unknown): value is Record<string, unknown> {

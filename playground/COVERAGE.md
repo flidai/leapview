@@ -15,7 +15,13 @@ invented for controls that have no such interface.
 | Tables & lists | `lv-record-table`, `lv-windowed-table`, `lv-entity-list`, `lv-data-preview-table`, `lv-data-explore-table` | Deterministic rows, empty/error/loading as supported, sorting, window requests, columns, actions and local search |
 | Editors & content | `lv-code-editor`, `lv-code-block`, `lv-config-viewer`, `lv-markdown-view`, `lv-visual-artifact`, `lv-chat-composer` | Local Monaco editing/read-only, highlighting/copying, outline/source parsing, Markdown, artifact states, composer draft/context events |
 | Layout & identity | Drawer, avatar, brand/field icons, notification stack, one-time secret, empty state, page header, breadcrumbs, settings and entity-detail helpers; dashboard appearance and report view controls | Public properties, native form behavior, modal focus, local actions and production styling |
-| Dashboard filters | `lv-filter-leaf`, `lv-filter-pane-card`, `lv-slicer`, `lv-filter-dock` | Dropdown/list/buttons/text/numeric/date/relative presentations; local mutation, clear/reset, editable/stale/pending and validation. Dock uses immediate application |
+| Dashboard filters | `lv-filter-leaf`, `lv-filter-pane-card`, `lv-slicer`, `lv-filter-dock` | Dropdown/list/buttons/text/numeric/date/relative presentations; local mutation, clear/reset, editable/stale/pending and validation. Dock supports immediate/deferred application, Apply/Cancel, page/report resets and visible applied/draft state |
+
+| Combined examples | Production filter + chart + table + KPI; drawer + select + date picker | Linked highlighting, local filtering/sorting, nested overlays, validation and focus restoration |
+
+Sharing/reload preserve exposed fixture controls. Code snippets export public inputs.
+The collapsed review panel provides a pinned interactive comparison, an opt-in
+axe scan and a manual review checklist; it does not generate screenshot baselines.
 
 ## Deliberate exclusions
 

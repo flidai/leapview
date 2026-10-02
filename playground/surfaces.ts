@@ -1,3 +1,5 @@
+import { previewCode } from './example-code'
+import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
@@ -42,6 +44,47 @@ export class PlaygroundSurfaces extends LitElement {
   private drawerTrigger?: HTMLElement
   private zoomResizeObserver?: ResizeObserver
   @state() private lastToast = 0
+
+  getExampleCode() {
+    return previewCode(this, [
+      "import { settingsLayoutStyles } from '../web/components/shared/settings-layout'",
+      "import { settingsFieldStyles } from '../web/components/shared/settings-field-styles'",
+      "import { emptyStateStyles } from '../web/components/shared/empty-state'",
+      "import { pageHeaderStyles } from '../web/components/shared/page-header'",
+      "import { breadcrumbStyles } from '../web/components/shared/breadcrumb'",
+      "import { entityDetailStyles } from '../web/components/shared/entity-detail'",
+      "import '../web/components/shared/toast'",
+      "import '../web/components/shared/drawer'",
+      "import '../web/components/shared/user-avatar'",
+      "import '../web/components/shared/brand-mark'",
+      "import '../web/components/shared/one-time-secret'",
+      "import '../web/components/app/dashboard-icon-picker'",
+      "import '../web/components/project/dashboard-appearance-editor'",
+      "import '../web/components/dashboard/report-footer'",
+    ], ["settingsLayoutStyles", "settingsFieldStyles", "emptyStateStyles", "pageHeaderStyles", "breadcrumbStyles", "entityDetailStyles"])
+  }
+
+  getExampleState() {
+    return {
+      variant: this.variant,
+      longText: this.longText,
+      disabled: this.disabled,
+      drawerModal: this.drawerModal,
+      drawerWide: this.drawerWide,
+      name: this.name,
+      savedName: this.savedName,
+      actionDone: this.actionDone,
+      icon: this.appearance.icon,
+      color: this.appearance.color,
+    }
+  }
+
+  async restoreExampleState(value: Record<string, unknown>) {
+    await this.updateComplete
+    const { icon, color, ...controls } = readState(value, this.getExampleState(), { variant: ['standard', ...this.variants().map(([value]) => value)] })
+    Object.assign(this, controls)
+    this.appearance = { icon, color, revision: this.appearance.revision + 1 }
+  }
 
   static styles = [settingsLayoutStyles, settingsFieldStyles, emptyStateStyles, pageHeaderStyles, breadcrumbStyles, entityDetailStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }
@@ -159,7 +202,7 @@ export class PlaygroundSurfaces extends LitElement {
     switch (this.example) {
       case 'drawer': return html`<div class="column"><button class="settings-button primary" @click=${this.openDrawer}>Open drawer</button></div>
         <lv-drawer .open=${this.drawerOpen} .modal=${this.drawerModal} .closeOnOutside=${!this.drawerModal} .size=${this.drawerWide ? 'wide' : 'default'} label="Playground settings" @lv-drawer-close=${this.closeDrawer}>
-          <span slot="title">${this.longText ? title : 'Workspace settings'}</span><span slot="subtitle">Local fixture · changes stay in this preview</span>
+          <div slot="title" class="settings-section-heading"><h2>${this.longText ? title : 'Workspace settings'}</h2><p class="settings-description">Local fixture · changes stay in this preview</p></div>
           <div class="drawer-content">${this.settingsContent('plain')}<button class="settings-button" @click=${this.closeDrawer}>Close drawer</button></div>
         </lv-drawer>`
       case 'identity': return html`<div class="identity-samples">

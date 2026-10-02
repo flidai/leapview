@@ -15,15 +15,19 @@ connect to a database, or call application services. Dependency installation may
 need internet access on the first run. No dependency upgrades are required.
 
 Once contracts and dependencies are prepared, `bun run playground` starts the
-same server. Set `PLAYGROUND_PORT=4401` to choose another port. Stop with Ctrl-C;
-restart after changing source files to rebuild. Generated bundles stay under
+same server. Set `PLAYGROUND_PORT=4401` to choose another port. Stop with Ctrl-C. Source edits rebuild automatically and reload connected previews
+on the same port. Builds are serialized; an in-page notice shows build failures
+and recovers after the next successful save. Fixture controls, theme, and size
+survive reload when browser session storage is available. Restart after changing
+the server or build-helper implementation; contract/package changes may also need
+the normal generation or dependency-install command. Generated bundles stay under
 `.tmp/playground`; production asset entrypoints are not changed.
 
 ## Reviewing examples
 
 - Browse **Design tokens**, **UI components**, **Charts & data**,
   **Lineage & models**, **Tables & lists**, **Editors & content**,
-  **Layout & identity**, and **Dashboard filters**, or filter
+  **Layout & identity**, **Dashboard filters**, and **Combined examples**, or filter
   their navigation by name. Every example has a stable hash link such as
   `/#charts/bar`, `/#graphs/asset-lineage`, `/#tables/windowed`, or `/#tokens/colors`.
 - Expand a category to see its examples and count. The current category opens
@@ -44,6 +48,30 @@ restart after changing source files to rebuild. Generated bundles stay under
   Preview stays in the current tab. `?preview=1#charts/bar` still opens a preview
   directly, with default fixtures; optional theme and viewport parameters work
   for shared links.
+- **Copy link** captures the current fixture controls, theme, size, and Preview mode.
+  Links contain a versioned, validated state snapshot; legacy hash links still work.
+  Links over 8,000 characters are rejected with a Copy component code alternative.
+  Native production-internal state (open popovers, graph positions, table scroll,
+  editor selection, and transient event logs) is not serialized. Selection and
+  sort in the linked dashboard are included. Edited code is included in content
+  links; keep the editor's content appropriate for sharing.
+- Expand **Code & review** for current public-input snippets and authored chart YAML
+  links. Snippets use property bindings and production imports; wire their public
+  events in the owner. Native controls require the listed shared Lit styles.
+- **Pin comparison** keeps a reference fixture in an embedded preview in the same
+  tab. Change the live example above to compare options/themes; Replace comparison
+  refreshes the reference. Its captured theme does not change the saved preference.
+  This is an interactive visual reference, not a pixel-diff baseline system.
+- **Check accessibility** loads the existing axe-core dependency on demand and
+  reports findings for the current rendered preview. It never runs automatically.
+  Results are a point-in-time aid, not proof of accessibility; use the manual
+  checklist for keyboard, screen readers, focus, canvas charts, and visual states.
+- **Combined examples → Linked dashboard** connects a status filter, bar, region
+  table and KPI. Select regions with a chart click or the table's keyboard controls;
+  highlights preserve totals, while status filtering changes the underlying rows.
+- **Combined examples → Drawer form** combines the production drawer, dropdown,
+  date picker, and validation. **Dashboard filters → Filter dock** adds immediate
+  or deferred Apply/Cancel and page/report scope resets with local acknowledgements.
 - Usage notes identify the production source, public inputs and emitted events.
   Inspect those files before extending an example; they own the interface.
 
@@ -57,6 +85,14 @@ Do not copy its markup/styles into the playground or introduce a parallel librar
 Use `exampleDetails` and `exampleChromeStyles` from `example-chrome.ts` to keep
 usage information and event logs in the shared disclosure below each preview.
 Keep fixture controls and meaningful selection feedback visible.
+Expose `getExampleState()` and `restoreExampleState()` on the playground renderer
+for sharing/reload. Whitelist bounded controls and reconstruct fixtures; never
+restore arbitrary envelopes or production private state from URLs. Await the
+initial Lit update before restoring controls that `willUpdate` resets.
+`getExampleCode()` returns public input examples. `example-code.ts` can capture
+public Lit properties and authored slots without traversing shadow/runtime UI.
+Keep non-JSON or imperative API examples explicit. The reload client dispatches
+`playground-before-reload` so the shell can save its snapshot to session storage.
 Native buttons and fields use the production `settingsLayoutStyles` and settings
 render helpers because the product does not wrap them in universal custom elements.
 
@@ -119,3 +155,9 @@ Implementation follows the repository's existing Bun builds and the official
 [ECharts sizing](https://echarts.apache.org/handbook/en/concepts/chart-size/)
 documentation. Flid's local Superset examples informed the gallery/interactive
 fixture split; no Storybook dependency or copied implementation is used.
+
+The new workflows also draw on Flid's Superset component stories and ECharts
+event documentation, the official [ECharts event/action contract](https://echarts.apache.org/handbook/en/concepts/event/),
+[ECharts ARIA guidance](https://echarts.apache.org/handbook/en/best-practices/aria/),
+[Bun filesystem watching](https://bun.sh/guides/read-file/watch), and
+[axe API](https://www.deque.com/axe/core-documentation/api-documentation/).

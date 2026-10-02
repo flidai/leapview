@@ -1,3 +1,5 @@
+import { previewCode } from './example-code'
+import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
@@ -23,6 +25,27 @@ export class PlaygroundGraphs extends LitElement {
   @state() private events: Array<{ name: string; detail: unknown }> = []
   @state() private lastSelected = ''
   @state() private instance = 0
+
+  getExampleCode() {
+    return previewCode(this, [
+      "import '../web/components/shared/asset-lineage-graph'",
+      "import '../web/components/shared/semantic-model-graph'",
+    ])
+  }
+
+  getExampleState() {
+    return {
+      scenario: this.scenario,
+      scope: this.scope,
+      animateRun: this.animateRun,
+    }
+  }
+
+  async restoreExampleState(value: Record<string, unknown>) {
+    await this.updateComplete
+    Object.assign(this, readState(value, this.getExampleState(), { scenario: this.example === 'asset-lineage' ? ['dependencies', 'run', 'wide', 'empty'] : ['sales', 'composite', 'disconnected', 'empty'], scope: ['focused', 'full'] }))
+    this.reset()
+  }
 
   static styles = [settingsLayoutStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }
