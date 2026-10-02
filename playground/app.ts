@@ -5,6 +5,11 @@ import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
 import { chartExamples } from './charts'
 import { controlExamples } from './controls'
 import { tokenExamples } from './tokens'
+import { graphExamples } from './graphs'
+import { contentExamples } from './content'
+import { tableExamples } from './tables'
+import { surfaceExamples } from './surfaces'
+import { filterExamples } from './filters'
 
 const parameters = new URLSearchParams(location.search)
 const initialTheme = parameters.get('theme')
@@ -14,6 +19,11 @@ const groups = [
   { id: 'tokens', label: 'Design tokens', examples: tokenExamples },
   { id: 'controls', label: 'UI components', examples: controlExamples },
   { id: 'charts', label: 'Charts & data', examples: chartExamples },
+  { id: 'graphs', label: 'Lineage & models', examples: graphExamples },
+  { id: 'tables', label: 'Tables & lists', examples: tableExamples },
+  { id: 'content', label: 'Editors & content', examples: contentExamples },
+  { id: 'surfaces', label: 'Layout & identity', examples: surfaceExamples },
+  { id: 'filters', label: 'Dashboard filters', examples: filterExamples },
 ]
 
 class PlaygroundApp extends LitElement {
@@ -74,6 +84,11 @@ class PlaygroundApp extends LitElement {
     const example = group?.examples.find(item => item.id === exampleID)
     const preview = example ? keyed(this.route, groupID === 'charts'
       ? html`<playground-charts .example=${exampleID} ?preview-only=${this.previewOnly}></playground-charts>`
+      : groupID === 'graphs' ? html`<playground-graphs .example=${exampleID} ?preview-only=${this.previewOnly}></playground-graphs>`
+      : groupID === 'tables' ? html`<playground-tables .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tables>`
+      : groupID === 'content' ? html`<playground-content .example=${exampleID} ?preview-only=${this.previewOnly}></playground-content>`
+      : groupID === 'surfaces' ? html`<playground-surfaces .example=${exampleID} ?preview-only=${this.previewOnly}></playground-surfaces>`
+      : groupID === 'filters' ? html`<playground-filters .example=${exampleID} ?preview-only=${this.previewOnly}></playground-filters>`
       : groupID === 'controls'
         ? html`<playground-controls .example=${exampleID} ?preview-only=${this.previewOnly}></playground-controls>`
         : html`<playground-tokens .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tokens>`)

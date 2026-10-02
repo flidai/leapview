@@ -80,7 +80,7 @@ export class PlaygroundCharts extends LitElement {
       ${values.map(([value, text]) => html`<option value=${value}>${text}</option>`)}</select></label>`
   }
 
-  private checkbox(key: 'axes' | 'multiSeries' | 'stacked', label: string) {
+  private checkbox(key: 'axes' | 'multiSeries' | 'stacked' | 'smooth' | 'step' | 'symbols', label: string) {
     return html`<label class="check"><input type="checkbox" .checked=${this.options[key]}
       @change=${(event: Event) => this.change(key, (event.target as HTMLInputElement).checked)}>${label}</label>`
   }
@@ -91,6 +91,7 @@ export class PlaygroundCharts extends LitElement {
     const spec = fixture.envelope.spec
     const hasAxes = spec.kind === 'cartesian' || spec.kind === 'point'
     const hasSeries = ['line', 'area', 'bar', 'column', 'combo', 'radar'].includes(this.example)
+    const hasLine = this.example === 'line' || this.example === 'area' || (this.example === 'combo' && this.options.multiSeries)
     const hasPresentation = 'legend' in spec.presentation
     const hasTooltip = spec.kind === 'cartesian' || spec.kind === 'point' || spec.kind === 'proportional'
     const adapter = fixture.envelope.rendererID
@@ -98,6 +99,7 @@ export class PlaygroundCharts extends LitElement {
       <div class="controls" aria-label="Chart fixture controls">
         ${this.select('scenario', 'Data fixture', [['standard', 'Standard'], ['dense', 'Dense data'], ['long-labels', 'Long labels'], ['missing', 'Missing values'], ['single', 'Single datum'], ['zero', 'Zero values'], ['negative', 'Mixed signs'], ['precision', 'High precision']])}
         ${this.select('status', 'State', [['ready', 'Ready'], ['loading', 'Loading'], ['empty', 'Empty'], ['error', 'Error']])}
+        ${spec.kind === 'geographic' ? this.select('mapLayer', 'Map layer', [['point', 'Points'], ['heat', 'Weighted heatmap'], ['density', 'Point density'], ['choropleth', 'Choropleth'], ['path', 'Route lines'], ['reference', 'Reference boundaries']]) : nothing}
         ${hasPresentation ? this.select('legend', 'Legend', [['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right'], ['hidden', 'Hidden']]) : nothing}
         ${hasPresentation && spec.kind !== 'geographic' ? this.select('labels', 'Labels', [['automatic', 'Automatic'], ['hidden', 'Hidden'], ['dense', 'Dense'], ['always', 'Always']]) : nothing}
         ${hasTooltip ? this.select('tooltip', 'Tooltip fields', [['default', 'Default fields'], ['value', 'First metric only']]) : nothing}
@@ -105,10 +107,11 @@ export class PlaygroundCharts extends LitElement {
         ${hasAxes ? this.checkbox('axes', 'Show axes') : nothing}
         ${hasSeries ? this.checkbox('multiSeries', 'Multiple series') : nothing}
         ${['line', 'area', 'bar', 'column'].includes(this.example) ? this.checkbox('stacked', 'Stack series') : nothing}
+        ${hasLine ? html`${this.checkbox('smooth', 'Smooth lines')}${this.checkbox('step', 'Stepped lines')}${this.checkbox('symbols', 'Show symbols')}` : nothing}
         <button class="settings-button" @click=${() => { this.options = { ...defaultChartOptions }; this.events = []; this.rebuild() }}>Reset</button>
       </div>
       <div class="preview" part="preview">
-        ${keyed(this.example, html`<lv-visualization-host .envelope=${fixture.envelope}></lv-visualization-host>`)}
+        ${keyed(spec.kind === 'geographic' ? `${this.example}:${this.options.mapLayer}` : this.example, html`<lv-visualization-host .envelope=${fixture.envelope}></lv-visualization-host>`)}
       </div>
       <lv-visual-modal></lv-visual-modal>
       <div class="documentation">

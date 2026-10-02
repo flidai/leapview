@@ -1,4 +1,4 @@
-import type { VisualizationEnvelope, VisualizationField, VisualizationFieldRef, VisualizationSpec, VisualizationWindowRequest } from '../web/generated/visualization'
+import type { VisualizationEnvelope, VisualizationField, VisualizationFieldRef, VisualizationGeographicLayer, VisualizationGeometryAsset, VisualizationSpec, VisualizationWindowRequest } from '../web/generated/visualization'
 import { currentVisualizationSchemaVersion } from '../web/generated/visualization/schema-version'
 import { defaultRendererContext } from '../web/components/dashboard/visualization/host-controller'
 import catalog from '../docs/visuals/catalog.json'
@@ -18,13 +18,25 @@ export interface ChartOptions {
   multiSeries: boolean
   tooltip: 'default' | 'value'
   stacked: boolean
+  smooth: boolean
+  step: boolean
+  symbols: boolean
+  mapLayer: VisualizationGeographicLayer['kind']
   kpiMode: 'compact' | 'bullet' | 'progress'
 }
 export const defaultChartOptions: ChartOptions = {
   scenario: 'standard', status: 'ready', legend: 'bottom', labels: 'automatic', axes: true,
-  multiSeries: true, tooltip: 'default', stacked: false, kpiMode: 'compact',
+  multiSeries: true, tooltip: 'default', stacked: false, smooth: false, step: false, symbols: true, mapLayer: 'point', kpiMode: 'compact',
 }
 export interface ChartFixture { envelope: VisualizationEnvelope; rows: unknown[][]; note: string }
+
+/** Same immutable asset and provenance as internal/dashboard/visualization/geometry/assets.go. */
+export const playgroundBrazilGeometry: VisualizationGeometryAsset = {
+  id: 'br-states-ibge', digest: 'sha256:48af4bcdf332d11e5ad250f954ffead366791b3738376bafd34f4298c4337b92',
+  source: 'IBGE API de Malhas', license: 'IBGE data reuse terms',
+  attribution: 'Instituto Brasileiro de Geografia e Estatística (IBGE)', identifierSystem: 'br-uf',
+  url: '/static/geometry/br-states-ibge.geojson',
+}
 const ref = (field: string): VisualizationFieldRef => ({ dataset: 'primary', field })
 const field = (id: string, numeric = false, label = id): VisualizationField => ({
   id, role: numeric ? 'metric' : 'dimension', dataType: numeric ? 'decimal' : 'string', nullable: true, label,
@@ -88,10 +100,51 @@ export function createChartFixture(id: string, options: ChartOptions = defaultCh
   } else if (id === 'map') {
     fields = [field('category', false, 'City'), field('latitude', true, 'Latitude'), field('longitude', true, 'Longitude'), field('value', true, 'Orders')]
     const cities: Array<[string, number, number]> = [['Berlin', 52.52, 13.405], ['Paris', 48.857, 2.352], ['Madrid', 40.417, -3.704], ['Rome', 41.903, 12.496], ['Prague', 50.075, 14.438], ['Vienna', 48.208, 16.374], ['Amsterdam', 52.367, 4.904], ['Copenhagen', 55.676, 12.568]]
-    rows = Array.from({ length: count }, (_, i) => { const city = cities[i % cities.length]!; return [options.scenario === 'long-labels' ? category(i) : `${city[0]}${i >= 8 ? ` ${i}` : ''}`, city[1] + Math.floor(i / 8) * 0.15, city[2] + Math.floor(i / 8) * 0.15, value(i)] })
-    spec = { ...common, kind: 'geographic', spatialInteractions: [], layers: [{ id: 'cities', kind: 'point', latitude: ref('latitude'), longitude: ref('longitude'), value: ref('value'), tooltip: [ref('category'), ref('value')], position: 'above_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, size: { minimumRadius: 6, maximumRadius: 20 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: mapColors.nullColor }, stroke: { color: mapColors.stroke, width: 1, opacity: 1 }, cluster: { enabled: false, radius: 40, maximumZoom: 14, minimumPoints: 2, showCount: false }, opacity: 0.85 }],
+    const heat = options.mapLayer === 'heat' || options.mapLayer === 'density'
+    const pointCount = heat && options.scenario !== 'single' ? options.scenario === 'dense' ? 800 : 160 : count
+    rows = Array.from({ length: pointCount }, (_, i) => {
+      const city = cities[i % cities.length]!
+      return [options.scenario === 'long-labels' ? category(i) : `${city[0]}${i >= 8 ? ` ${i}` : ''}`, city[1] + Math.sin(i * 2.3) * Math.floor(i / 8) * 0.025, city[2] + Math.cos(i * 1.7) * Math.floor(i / 8) * 0.025, value(i)]
+    })
+    const layerBase = { id: 'local-map', tooltip: [ref('category'), ref('value')], position: 'above_labels' as const, visibility: { minimumZoom: 0, maximumZoom: 24 } }
+    const color = { kind: options.scenario === 'negative' ? 'diverging' as const : 'sequential' as const, palette: 'blue', reverse: false, nullColor: mapColors.nullColor }
+    const stroke = { color: mapColors.stroke, width: 1, opacity: 1 }
+    let layer: VisualizationGeographicLayer
+    if (options.mapLayer === 'choropleth' || options.mapLayer === 'reference') {
+      const states = [
+        ['AC', 'Acre'], ['AL', 'Alagoas'], ['AP', 'Amapá'], ['AM', 'Amazonas'], ['BA', 'Bahia'], ['CE', 'Ceará'],
+        ['DF', 'Distrito Federal'], ['ES', 'Espírito Santo'], ['GO', 'Goiás'], ['MA', 'Maranhão'], ['MT', 'Mato Grosso'],
+        ['MS', 'Mato Grosso do Sul'], ['MG', 'Minas Gerais'], ['PA', 'Pará'], ['PB', 'Paraíba'], ['PR', 'Paraná'],
+        ['PE', 'Pernambuco'], ['PI', 'Piauí'], ['RJ', 'Rio de Janeiro'], ['RN', 'Rio Grande do Norte'], ['RS', 'Rio Grande do Sul'],
+        ['RO', 'Rondônia'], ['RR', 'Roraima'], ['SC', 'Santa Catarina'], ['SP', 'São Paulo'], ['SE', 'Sergipe'], ['TO', 'Tocantins'],
+      ]
+      fields = [field('category', false, 'State code'), field('name', false, 'State'), field('value', true, 'Orders')]
+      rows = states.slice(0, options.scenario === 'single' ? 1 : states.length).map(([code, name], i) => [code, options.scenario === 'long-labels' ? `${name} — enterprise customers and strategic accounts` : name, value(i)])
+      layer = options.mapLayer === 'choropleth'
+        ? { ...layerBase, tooltip: [ref('name'), ref('value')], kind: 'choropleth', geometry: playgroundBrazilGeometry, join: ref('category'), value: ref('value'), color, stroke, opacity: 0.85 }
+        : { ...layerBase, tooltip: [], kind: 'reference', geometry: playgroundBrazilGeometry, color, stroke, opacity: 0.3 }
+      note = options.mapLayer === 'choropleth'
+        ? 'Brazilian states joined to deterministic local values. Geometry is the bundled IBGE asset; missing values retain the production null color.'
+        : 'Reference boundaries from the bundled IBGE geometry. This production layer supplies geographic context without metric coloring or mark selection.'
+    } else if (options.mapLayer === 'path') {
+      fields.push(field('route', false, 'Route'), field('stop', true, 'Stop order'))
+      rows = rows.map((row, i) => [...row, i % 2 ? 'West route' : 'East route', Math.floor(i / 2)])
+      layer = { ...layerBase, tooltip: [ref('route'), ref('value')], kind: 'path', latitude: ref('latitude'), longitude: ref('longitude'), path: ref('route'), order: ref('stop'), value: ref('value'), color, stroke, line: { width: 4 }, opacity: 0.85 }
+      common.interactions[0]!.mappings = [{ source: ref('route'), targetFieldID: 'route' }]
+      note = 'Two local routes built from ordered coordinates using the production path layer. A single datum has no line because a path needs at least two points.'
+    } else if (options.mapLayer === 'heat' || options.mapLayer === 'density') {
+      layer = { ...layerBase, kind: options.mapLayer, latitude: ref('latitude'), longitude: ref('longitude'), ...(options.mapLayer === 'heat' ? { value: ref('value') } : {}), color, heat: { radius: 36, intensity: 1.2 }, opacity: 0.85 }
+      note = options.mapLayer === 'heat'
+        ? 'Weighted geographic heatmap with deterministic points around eight cities. The production renderer owns weight normalization and heat colors.'
+        : 'Geographic point density around eight cities. Each location contributes equally; the metric is available in tooltips but does not weight this layer.'
+    } else {
+      layer = { ...layerBase, kind: 'point', latitude: ref('latitude'), longitude: ref('longitude'), value: ref('value'), size: { minimumRadius: 6, maximumRadius: 20 }, color, stroke, cluster: { enabled: false, radius: 40, maximumZoom: 14, minimumPoints: 2, showCount: false }, opacity: 0.85 }
+      note = 'Real MapLibre with a blank local basemap and inline coordinates.'
+    }
+    spec = { ...common, kind: 'geographic', spatialInteractions: [], layers: [layer],
       presentation: { ...presentation, roam: true, theme: 'auto', labelDensity: 'hidden', camera: { mode: 'fit_data', padding: 48, minimumZoom: 0, maximumZoom: 18 }, controls: { zoom: true, reset: true, compass: true } } }
-    note = 'Real MapLibre with a blank local basemap and inline coordinates. No external tiles, styles, glyphs, or credentials.'
+    if (options.mapLayer === 'reference') spec.interactions = []
+    note += ' All map data and assets are local; no external tiles, styles, glyphs, or credentials.'
   } else if (id === 'table' || id === 'matrix' || id === 'pivot') {
     const grid = { rowHeight: 34, striped: true, showHeader: true }
     if (id === 'table') {
@@ -129,7 +182,7 @@ export function createChartFixture(id: string, options: ChartOptions = defaultCh
       y = [ref('start'), ref('value')]
     }
     spec = { ...common, kind: 'cartesian', mark, x: ref('category'), y,
-      presentation: { ...presentation, axisVisible: options.axes, smooth: false, stacked: options.stacked, showSymbols: true, dataZoom: options.scenario === 'dense', area: mark === 'area', step: false, orientation: mark === 'bar' ? 'horizontal' : 'vertical',
+      presentation: { ...presentation, axisVisible: options.axes, smooth: options.smooth, stacked: options.stacked, showSymbols: options.symbols, dataZoom: options.scenario === 'dense', area: mark === 'area', step: options.step, orientation: mark === 'bar' ? 'horizontal' : 'vertical',
         ...(mark === 'combo' ? { comboSeries: [{ seriesValue: 'value', mark: 'column', axis: 'primary' }, ...(options.multiSeries ? [{ seriesValue: 'comparison', mark: 'line' as const, axis: 'secondary' as const }] : [])] } : {}) } }
   }
   spec.datasets = [{ id: 'primary', fields: spec.kind === 'matrix' || spec.kind === 'pivot' ? [field('category', false, 'Region'), field('revenue', true, 'Revenue')] : fields }]

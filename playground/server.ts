@@ -13,7 +13,8 @@ export async function buildPlayground() {
   const cssErrors = new Response(css.stderr).text()
   if (await css.exited !== 0) throw new Error(await cssErrors)
   const result = await Bun.build({
-    entrypoints: [resolve(root, 'playground/app.ts')],
+    entrypoints: [resolve(root, 'playground/app.ts'), resolve(root, 'web/components/shared/monaco-editor-worker.ts')],
+    root: root,
     target: 'browser', format: 'esm', splitting: true,
     external: [datastarRuntimeURL],
     outdir: output,
@@ -29,6 +30,10 @@ export async function playgroundResponse(request: Request): Promise<Response> {
   const path = new URL(request.url).pathname
   let filePath: string | undefined
   if (path === '/' || path === '/index.html') filePath = resolve(root, 'playground/index.html')
+  else if (path === '/static/monaco-editor-worker.js') filePath = resolve(output, 'monaco-editor-worker.js')
+  else if (path === '/static/monaco-editor-css.css') return Response.redirect(new URL('/assets/app.css', request.url), 307)
+  else if (path.startsWith('/static/chunks/')) filePath = within(output, path.slice('/static/'.length))
+  else if (path === '/static/geometry/br-states-ibge.geojson') filePath = resolve(root, path.slice(1))
   else if (path.startsWith('/assets/')) filePath = within(output, path.slice('/assets/'.length))
   else if (['/static/app.css', '/static/theme.js', '/static/favicon.svg'].includes(path)) filePath = resolve(root, path.slice(1))
   else if (/^\/static\/files\/inter-[\w-]+\.woff2$/.test(path)) filePath = resolve(root, path.slice(1))

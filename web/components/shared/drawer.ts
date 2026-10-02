@@ -215,13 +215,16 @@ class LeapViewDrawer extends LitElement {
       this.close()
       return
     }
-    if (event.key !== 'Tab' || !this.modal) return
+    if (event.key !== 'Tab' || !this.modal || event.defaultPrevented) return
     const focusable = this.focusableElements()
     if (focusable.length === 0) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    const root = this.getRootNode() as Document | ShadowRoot
-    const active = 'activeElement' in root ? root.activeElement : document.activeElement
+    // Initial focus is content-first, but native Tab traversal visits the
+    // header close button before slotted content. Only wrap at those edges;
+    // nested components retain their own keyboard behavior between them.
+    const close = this.renderRoot.querySelector<HTMLElement>('.close')
+    const first = close ?? focusable[0]
+    const last = focusable.filter(element => element !== close).at(-1) ?? first
+    const active = event.composedPath()[0]
     if (event.shiftKey && active === first) {
       event.preventDefault()
       last.focus()

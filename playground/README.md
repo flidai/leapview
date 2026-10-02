@@ -7,7 +7,7 @@ task playground
 ```
 
 Open <http://127.0.0.1:4400>. The command installs the pinned Bun dependencies,
-generates the canonical visualization and layout contracts, compiles the shared
+generates the canonical visualization/layout contracts and icon catalog, compiles the shared
 CSS and browser components, then starts a loopback-only Bun static server. It
 requires the repository's development tools (Task, Bun, Node/npm and Go for
 contract generation), but does not build or start the Go monolith, authenticate,
@@ -21,9 +21,11 @@ restart after changing source files to rebuild. Generated bundles stay under
 
 ## Reviewing examples
 
-- Browse **Design tokens**, **UI components**, and **Charts & data**, or filter
+- Browse **Design tokens**, **UI components**, **Charts & data**,
+  **Lineage & models**, **Tables & lists**, **Editors & content**,
+  **Layout & identity**, and **Dashboard filters**, or filter
   their navigation by name. Every example has a stable hash link such as
-  `/#charts/bar`, `/#controls/select`, or `/#tokens/colors`.
+  `/#charts/bar`, `/#graphs/asset-lineage`, `/#tables/windowed`, or `/#tokens/colors`.
 - Change theme, preview width, and chart height to inspect responsive behavior.
 - Use each example's controls to select fixtures, variants and supported states.
   Interactions use real component properties and events; event details are shown
@@ -39,8 +41,9 @@ restart after changing source files to rebuild. Generated bundles stay under
 
 ## Structure and extension
 
-`app.ts` owns navigation and the preview viewport. `controls.ts`, `tokens.ts`, and
-`charts.ts` export their navigation entries and render their groups. Add an entry
+`app.ts` owns navigation and the preview viewport. Each group module exports its
+navigation entries and renders its examples; companion `*-fixtures.ts` modules
+keep deterministic data separate from preview controls. Add an entry
 with a stable ID and render the production component with its public properties.
 Do not copy its markup/styles into the playground or introduce a parallel library.
 Native buttons and fields use the production `settingsLayoutStyles` and settings
@@ -71,11 +74,22 @@ results for maps depend on browser WebGL availability.
 The 26 production visual types are covered. Presentation controls cover
 representative supported variations (including multiple/stacked series, legend
 positions, label density, axes, tooltip fields and KPI modes), not every IR
-property. Geographic choropleth/heatmap/tiled-layer variations and remote map
-assets are not included in this initial local point-map example. Only states and
+property. All six supported geographic layer kinds are included: points, heat, density,
+choropleth, reference boundaries and paths. Choropleth/reference fixtures use the
+repository’s pinned IBGE geometry and production attribution. Remote raster tiles,
+map asset services and glyph servers are excluded. Only states and
 presentation options supported by the production component are exposed. A loading or error fixture represents a renderer/component state, not a
 simulated network request. Data values are deterministic; focus, hover, theme,
 viewport dimensions and browser font/rendering differences can affect screenshots.
+
+See [COVERAGE.md](COVERAGE.md) for the component inventory and exclusions.
+
+Graph examples import the product’s React Flow components, including their own
+selection, expansion, relationship inspection and layout persistence. Code editing
+uses the production Monaco runtime and a locally built worker/CSS. Windowed tables
+answer the existing request contract in memory, including sort, reset version and
+request sequence. Filter and composer events update local fixture state; they never
+submit application commands. Drawer and modal examples use real focus behavior.
 
 ## Verification
 
@@ -88,7 +102,9 @@ at the production visualization host boundary.
 
 Implementation follows the repository's existing Bun builds and the official
 [Bun bundler](https://bun.sh/docs/bundler),
-[Lit reactive properties](https://lit.dev/docs/components/properties/), and
+[Lit reactive properties](https://lit.dev/docs/components/properties/),
+[React Flow customization](https://reactflow.dev/learn/customization/theming),
+[Monaco ESM integration](https://github.com/microsoft/monaco-editor/blob/main/docs/integrate-esm.md), and
 [ECharts sizing](https://echarts.apache.org/handbook/en/concepts/chart-size/)
 documentation. Flid's local Superset examples informed the gallery/interactive
 fixture split; no Storybook dependency or copied implementation is used.

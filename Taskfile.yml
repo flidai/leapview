@@ -51,6 +51,7 @@ tasks:
     cmds:
       - task: visualization-ir:generate
       - task: layout-contract:generate
+      - task: lucide-icons:generate
       - bun run playground
 
   dev:reset-login:

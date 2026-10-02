@@ -1,16 +1,17 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
 import { chartExamples } from './chart-fixtures'
-import { startPlayground, playgroundResponse } from './server'
+import { playgroundResponse } from './server'
+import { startTestPlayground } from './test-server'
 
 let browser: Browser
-let server: Awaited<ReturnType<typeof startPlayground>>
+let server: Awaited<ReturnType<typeof startTestPlayground>>
 let page: Page
 let errors: string[]
 let unexpectedRequests: string[]
 
 beforeAll(async () => {
-  server = await startPlayground(0)
+  server = await startTestPlayground()
   browser = await chromium.launch()
 }, 60_000)
 afterAll(async () => { await browser?.close(); await server?.stop(true) })
@@ -166,3 +167,15 @@ test('navigation keeps the preview in view when selecting an example at the end 
   await browserExpect(page.locator('lv-visualization-host')).toBeInViewport()
   await browserExpect(page.locator('main')).toHaveAttribute('aria-label', 'Pivot')
 })
+
+for (const layer of ['point', 'heat', 'density', 'choropleth', 'path', 'reference']) {
+  test(`map ${layer} layer renders with local assets`, async () => {
+    await open('charts/map')
+    await page.getByLabel('Map layer', { exact: true }).selectOption(layer)
+    const host = page.locator('lv-visualization-host')
+    await host.evaluate(async (element: any) => { await element.ensureMounted() })
+    await browserExpect(host.locator('.renderer')).toHaveAttribute('aria-hidden', 'false')
+    await browserExpect(host.locator('.error')).toHaveCount(0)
+    await browserExpect(host.locator('canvas')).toBeVisible()
+  }, 20_000)
+}
