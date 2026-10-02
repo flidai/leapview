@@ -23,22 +23,19 @@ export class PlaygroundLinkedVisuals extends LitElement {
     .composition { display: grid; min-width: 0; gap: var(--base-size-16); }
     .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-12); }
     .summary { flex: 1; min-width: 12rem; margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .summary-row { display: grid; grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); }
-    .summary-row .filter-bar { min-width: 0; padding: var(--base-size-16) var(--base-size-24); }
+    .dashboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'kpi chart' 'table chart'; grid-template-rows: 8rem minmax(310px, auto); gap: var(--base-size-16); }
     .visual { min-width: 0; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); }
-    .chart { height: var(--playground-preview-height, 290px); }
-    .kpi { height: 8rem; border: 0; border-right: var(--lv-border-default); border-radius: 0; background: transparent; }
-    .table { height: 310px; }
+    .chart { grid-area: chart; min-height: var(--playground-preview-height, 290px); }
+    .kpi { grid-area: kpi; }
+    .table { grid-area: table; }
     lv-visualization-host { display: block; width: 100%; height: 100%; }
     .documentation { display: grid; gap: var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
     .log-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--base-size-8); }
     .log-heading h3 { margin: 0; color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); }
     code, pre { font: var(--lv-type-mono); overflow-wrap: anywhere; }
     pre { margin: 0; max-height: 24rem; overflow: auto; padding: var(--base-size-12); white-space: pre-wrap; background: var(--lv-bg-panel-muted); }
-    @container (max-width: 700px) {
-      .summary-row { grid-template-columns: minmax(0, 1fr); }
-      .kpi { border-right: 0; }
-      .summary-row .filter-bar { border-top: var(--lv-border-default); padding: var(--base-size-16); }
+    @container (max-width: 1000px) {
+      .dashboard { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'kpi' 'chart' 'table'; grid-template-rows: 8rem var(--playground-preview-height, 290px) 310px; }
     }
   `, exampleChromeStyles]
 
@@ -99,17 +96,17 @@ export const example = html\`
     const selected = this.model.selectedRegions
     return html`
       <section class="composition" part="preview" aria-label="Linked regional analytics">
-        <div class="summary-row">
-          <div class="visual kpi"><lv-visualization-host .envelope=${this.fixture.kpi}></lv-visualization-host></div>
-          <div class="filter-bar">
-            <lv-filter-menu .menu=${linkedFilterMenu(this.model)}></lv-filter-menu>
-            <p class="summary" role="status">${selected.length ? `${selected.join(', ')} · ${this.fixture.highlightedOrders} of ${this.fixture.orderCount} orders highlighted` : `${this.fixture.orderCount} orders · select a region to highlight`}</p>
-            <button class="settings-button" ?disabled=${!selected.length} @click=${this.clearSelection}>Clear selection</button>
-            <button class="settings-button" @click=${this.reset}>Reset</button>
-          </div>
+        <div class="filter-bar" role="group" aria-label="Dashboard filters and selection">
+          <lv-filter-menu .menu=${linkedFilterMenu(this.model)}></lv-filter-menu>
+          <p class="summary" role="status">${selected.length ? `${selected.join(', ')} · ${this.fixture.highlightedOrders} of ${this.fixture.orderCount} orders highlighted` : `${this.fixture.orderCount} orders · select a region to highlight`}</p>
+          <button class="settings-button" ?disabled=${!selected.length} @click=${this.clearSelection}>Clear selection</button>
+          <button class="settings-button" @click=${this.reset}>Reset</button>
         </div>
-        <div class="visual chart"><lv-visualization-host .envelope=${this.fixture.chart}></lv-visualization-host></div>
-        <div class="visual table"><lv-visualization-host .envelope=${this.fixture.table}></lv-visualization-host></div>
+        <div class="dashboard">
+          <div class="visual kpi"><lv-visualization-host .envelope=${this.fixture.kpi}></lv-visualization-host></div>
+          <div class="visual chart"><lv-visualization-host .envelope=${this.fixture.chart}></lv-visualization-host></div>
+          <div class="visual table"><lv-visualization-host .envelope=${this.fixture.table}></lv-visualization-host></div>
+        </div>
       </section>
       <lv-visual-modal></lv-visual-modal>
       ${exampleDetails(html`<div class="documentation">
