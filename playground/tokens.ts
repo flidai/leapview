@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
+import { exampleChromeStyles, exampleDetails } from './example-chrome'
 
 export const tokenExamples = [
   { id: 'colors', label: 'Colors' },
@@ -74,12 +75,13 @@ export class PlaygroundTokens extends LitElement {
     code { font-family: var(--fontStack-monospace); font-size: .75rem; overflow-wrap: anywhere; }
     .value { color: var(--lv-fg-muted); }
     .aliases { display: grid; gap: var(--base-size-4); }
+    .documentation { display: grid; gap: var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .bar { height: var(--base-size-16); min-width: 1px; max-width: 100%; background: var(--lv-bg-accent); border-radius: var(--base-size-2); }
     .box { width: 6rem; height: 3rem; background: var(--lv-bg-panel); }
     details { min-width: 0; }
     summary { cursor: pointer; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     :host([preview-only]) .toolbar, :host([preview-only]) .note, :host([preview-only]) .count { display: none; }
-  `]
+  `, exampleChromeStyles]
 
   connectedCallback() {
     super.connectedCallback()
@@ -152,10 +154,14 @@ export class PlaygroundTokens extends LitElement {
       grouped.set(token.value, aliases)
     }
     return html`<div class="toolbar"><input class="settings-input" type="search" aria-label="Search token names and values" placeholder="Search tokens…" .value=${this.search} @input=${(event: Event) => { this.search = (event.target as HTMLInputElement).value }}><label><input type="checkbox" .checked=${this.productOnly} @change=${(event: Event) => { this.productOnly = (event.target as HTMLInputElement).checked }}>LeapView tokens only</label><button class="settings-button" @click=${this.discover}>Refresh</button></div>
-      <p class="note">Live values from the loaded production stylesheets. Tokens with the same computed value share a card. Theme changes update these samples.</p>
       <p class="count" role="status">${selected.length} tokens · ${grouped.size} distinct values${this.inaccessible ? ` · ${this.inaccessible} stylesheet(s) inaccessible to the browser` : ''}</p>
       <div class="grid" part="preview">${Array.from(grouped.values()).map((aliases) => html`<article class="token"><div class="sample" aria-hidden="true">${this.sample(aliases[0])}</div><div class="body"><code>${aliases[0].name}</code><code class="value">${aliases[0].value}</code>${aliases.length > 1 ? html`<details><summary>${aliases.length - 1} equivalent token${aliases.length === 2 ? '' : 's'}</summary><div class="aliases">${aliases.slice(1).map((token) => html`<code>${token.name}</code>`)}</div></details>` : nothing}</div></article>`)}</div>
-      ${selected.length ? nothing : html`<p class="note">No matching tokens. Try a different search or include Primer tokens.</p>`}`
+      ${selected.length ? nothing : html`<p class="note">No matching tokens.</p>`}
+      ${exampleDetails(html`<div class="documentation">
+        <p>Live values from the production stylesheets. Matching values share a card; themes update the samples.</p>
+        <p><strong>Source:</strong> <code>static/app.input.css</code> and its imported tokens. Theme: <code>static/theme.js</code>.</p>
+        <p>Search names or values. Turn off “LeapView tokens only” to include Primer tokens. Refresh rescans loaded stylesheets.</p>
+      </div>`)}`
   }
 }
 

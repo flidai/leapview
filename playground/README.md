@@ -27,17 +27,20 @@ restart after changing source files to rebuild. Generated bundles stay under
   their navigation by name. Every example has a stable hash link such as
   `/#charts/bar`, `/#graphs/asset-lineage`, `/#tables/windowed`, or `/#tokens/colors`.
 - Expand a category to see its examples and count. The current category opens
-  automatically; searching opens matching categories and hides empty ones.
+  automatically; searching opens matching categories and hides empty ones. On small
+  screens, use **Browse** to open navigation; selecting an example closes it.
 - Use the sun/moon button to switch between light and dark mode. The choice
   persists through the production theme setting; existing theme-specific preview
-  links still work. Change preview width and chart height to inspect responsiveness.
+  links still work. Change preview width and height to inspect responsiveness.
 - Use each example's controls to select fixtures, variants and supported states.
-  Interactions use real component properties and events; event details are shown
-  alongside the example. Use Tab, arrow keys, Enter and Escape in the production
+  Chart **Display options** holds presentation settings.
+  Interactions use real component properties and events; expand **Usage & events**
+  below the preview for source references, public inputs, and live event details. Use Tab, arrow keys, Enter and Escape in the production
   menus and date picker.
-- **Clean preview** hides navigation, controls and usage notes for
-  screenshots without resetting the current example. Press Escape to return.
-  **Open default preview** opens a new tab with default fixtures and the current
+- **Focus** hides navigation, controls and usage notes for
+  screenshots without resetting the current example. Use **Exit preview** or
+  press Escape to return.
+  **Open preview** opens a new tab with default fixtures and the current
   theme and viewport dimensions. `?preview=1#charts/bar` opens that view directly. Select a theme in
   the main playground to inspect its tokens and chart colors.
 - Usage notes identify the production source, public inputs and emitted events.
@@ -50,6 +53,9 @@ navigation entries and renders its examples; companion `*-fixtures.ts` modules
 keep deterministic data separate from preview controls. Add an entry
 with a stable ID and render the production component with its public properties.
 Do not copy its markup/styles into the playground or introduce a parallel library.
+Use `exampleDetails` and `exampleChromeStyles` from `example-chrome.ts` to keep
+usage information and event logs in the shared disclosure below each preview.
+Keep fixture controls and meaningful selection feedback visible.
 Native buttons and fields use the production `settingsLayoutStyles` and settings
 render helpers because the product does not wrap them in universal custom elements.
 

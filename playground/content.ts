@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { exampleDetails, exampleChromeStyles } from './example-chrome'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
 import '../web/components/shared/code-editor'
 import '../web/components/shared/code-block'
@@ -114,7 +115,7 @@ export class PlaygroundContent extends LitElement {
     :host([preview-only]) .controls, :host([preview-only]) .note, :host([preview-only]) .documentation, :host([preview-only]) .usage, :host([preview-only]) .log { display: none; }
     :host([preview-only]) .preview { border: 0; border-radius: 0; }
     @media (max-width: 500px) { .preview { padding: var(--base-size-12); } }
-  `]
+  `, exampleChromeStyles]
 
   protected willUpdate(changed: Map<PropertyKey, unknown>) {
     if (changed.has('example')) this.reset()
@@ -217,6 +218,7 @@ export class PlaygroundContent extends LitElement {
     return html`<div class="stack">
       ${this.renderControls()}
       <section class="preview" part="preview" aria-label="Interactive content preview">${keyed(this.example, this.renderExample())}</section>
+      ${exampleDetails(html`
       ${doc ? html`<p class="note">${doc.note}</p><dl class="documentation">
         <div><dt>Component</dt><dd><code>&lt;${doc.tag}&gt;</code></dd></div>
         <div><dt>Production source</dt><dd><code>${doc.source}</code></dd></div>
@@ -224,8 +226,9 @@ export class PlaygroundContent extends LitElement {
         <div><dt>Public events</dt><dd>${doc.events}</dd></div>
       </dl><details class="usage"><summary>Usage</summary><pre>${`import '../${doc.source.replace(/\.ts$/, '')}'\n\nhtml\`${doc.usage}\``}</pre></details>` : nothing}
       <section class="log" aria-label="Public event log"><div class="log-heading"><h3>Public event log</h3><button class="settings-button" ?disabled=${!this.logs.length} @click=${() => { this.logs = [] }}>Clear log</button></div>
-        ${this.logs.length ? html`<pre aria-live="polite">${this.logs.join('\n\n')}</pre>` : html`<p class="empty-log">${this.example === 'code-editor' ? 'Edit the document to inspect change events.' : this.example === 'visual-artifact' ? 'Open the visual menu to inspect host events.' : this.example === 'chat-composer' ? 'Send a draft, attach context, or change the composer state to inspect local commands.' : 'This component does not emit custom events.'}</p>`}
+        ${this.logs.length ? html`<pre aria-live="polite">${this.logs.join('\n\n')}</pre>` : nothing}
       </section>
+      `)}
     </div>`
   }
 }

@@ -1,6 +1,7 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { exampleDetails, exampleChromeStyles } from './example-chrome'
 import type { DashboardFilterExpression, DashboardFilterPresentation } from '../web/generated/signals'
 import '../web/components/dashboard/filters/filter-control'
 import '../web/components/dashboard/filters/filter-dock'
@@ -19,14 +20,14 @@ export class PlaygroundFilters extends LitElement {
   @state() private multiple = false
   @state() private pending = false
   @state() private stale = false
-  @state() private log = 'Interact with the filter to inspect its expression.'
+  @state() private log = ''
   static styles = [settingsLayoutStyles, css`
     :host { display:block; min-width:0; } .stack { display:grid; gap:var(--base-size-24); }
     .controls { display:flex; flex-wrap:wrap; gap:var(--base-size-12); align-items:center; }
     .preview { padding:var(--base-size-24); border:var(--lv-border-muted); border-radius:var(--lv-radius-large); background:var(--lv-bg-panel); min-height:15rem; }
     .preview > * { display:block; max-width:38rem; } pre, code { white-space:pre-wrap; overflow-wrap:anywhere; }
     :host([preview-only]) .controls, :host([preview-only]) .documentation { display:none; }
-  `]
+  `, exampleChromeStyles]
   private mutate(event: CustomEvent<{ expression: DashboardFilterExpression }>) {
     this.expression = event.detail.expression
     this.log = `${event.type}: ${JSON.stringify(event.detail, null, 2)}`
@@ -40,12 +41,12 @@ export class PlaygroundFilters extends LitElement {
       ${(['disabled', 'empty', 'multiple', 'pending', 'stale'] as const).filter(key => this.example !== 'dock' || key !== 'stale').map(key => html`<label><input type="checkbox" .checked=${this[key]} @change=${(event: Event) => { this[key] = (event.target as HTMLInputElement).checked }}>${key}</label>`)}
       <button class="settings-button" @click=${() => { this.expression = { kind: 'unfiltered' } }}>Clear expression</button>
     </div><section class="preview" part="preview">${keyed(this.presentationStyle, preview)}</section>
-    <section class="documentation"><h2>${filterExamples.find(item => item.id === this.example)?.label}</h2>
+    ${exampleDetails(html`<section class="documentation">
       <p><code>${this.example === 'dock' ? 'lv-filter-dock' : this.example === 'pane' ? 'lv-filter-pane-card' : this.example === 'slicer' ? 'lv-slicer' : 'lv-filter-leaf'}</code> · Source: <code>web/components/dashboard/filters/${this.example === 'dock' ? 'filter-dock' : 'filter-control'}.ts</code></p>
       <p>Inputs: definition, binding, expression, presentation, pending, stale; slicer autoHeight. Events: lv-filter-mutate { bindingKey, expression }; pane also lv-filter-clear and lv-filter-reset-binding. Dock inputs: contract, filterState, pageId; events also lv-filter-reset-scope and lv-filter-dock-state. The dock uses immediate application with local state.</p>
       <p>Seven production presentations. Static options preserve the generated signal contract without remote option requests. Selection and range commits update local state. Enter a minimum above the maximum to inspect validation; use Enter or move focus outside to commit. Pending is a display state; stale and readerEditable govern editability.</p>
       <pre aria-live="polite">${this.log}</pre><pre>${JSON.stringify(this.expression, null, 2)}</pre>
-    </section></div>`
+    </section>`)}</div>`
   }
 }
 customElements.define('playground-filters', PlaygroundFilters)

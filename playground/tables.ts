@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { exampleDetails, exampleChromeStyles } from './example-chrome'
 import type { DataExploreCommand, DataExplorerCommand } from '../web/generated/signals'
 import type { EntityListItem } from '../web/components/shared/entity-list'
 import type { WindowedTablePayload, WindowedTableRequest } from '../web/components/shared/windowed-table'
@@ -67,7 +68,9 @@ export class PlaygroundTables extends LitElement {
     .entries { display: grid; gap: var(--base-size-8); max-height: 18rem; overflow: auto; }
     h3 { margin: 0; font: var(--lv-type-section-title); }
     :host([preview-only]) .controls, :host([preview-only]) .documentation { display: none; }
-  `]
+    .selection-feedback { color: var(--lv-fg-muted); font: var(--lv-type-caption); margin: var(--base-size-12) 0 0; }
+    :host([preview-only]) .selection-feedback { display: none; }
+  `, exampleChromeStyles]
 
   protected willUpdate(changed: Map<PropertyKey, unknown>) {
     if (changed.has('example')) {
@@ -178,10 +181,10 @@ export class PlaygroundTables extends LitElement {
       <button class="settings-button" @click=${this.reset}>Reload fixture</button>
     </div>
     <section class=${`preview ${windowed ? 'is-windowed' : ''}`} part="preview" aria-label="Interactive table preview">${keyed(`${this.example}:${this.instance}`, this.renderExample())}</section>
-    ${doc ? html`<section class="documentation"><p>${doc.note}</p><dl><div><dt>Component</dt><dd><code>&lt;${doc.tag}&gt;</code></dd></div><div><dt>Source</dt><dd><code>${doc.source}</code></dd></div><div><dt>Properties</dt><dd><code>${doc.properties}</code></dd></div><div><dt>Events</dt><dd><code>${doc.events}</code></dd></div></dl>
-      ${this.selected ? html`<p role="status">Inspecting <strong>${this.selected}</strong>.</p>` : nothing}
-      <div class="log-header"><h3>Event log</h3><button class="settings-button" ?disabled=${!this.events.length} @click=${() => { this.events = [] }}>Clear log</button></div><div class="entries" aria-live="polite">${this.events.length ? this.events.map((event) => html`<pre>${event.name} ${JSON.stringify(event.detail)}</pre>`) : html`<p>Interact with the table to inspect public events.</p>`}</div>
-    </section>` : nothing}`
+    ${this.selected ? html`<p class="selection-feedback" role="status">Inspecting <strong>${this.selected}</strong>.</p>` : nothing}
+    ${doc ? exampleDetails(html`<section class="documentation"><p>${doc.note}</p><dl><div><dt>Component</dt><dd><code>&lt;${doc.tag}&gt;</code></dd></div><div><dt>Source</dt><dd><code>${doc.source}</code></dd></div><div><dt>Properties</dt><dd><code>${doc.properties}</code></dd></div><div><dt>Events</dt><dd><code>${doc.events}</code></dd></div></dl>
+      <div class="log-header"><h3>Event log</h3><button class="settings-button" ?disabled=${!this.events.length} @click=${() => { this.events = [] }}>Clear log</button></div><div class="entries" aria-live="polite">${this.events.map((event) => html`<pre>${event.name} ${JSON.stringify(event.detail)}</pre>`)}</div>
+    </section>`) : nothing}`
   }
 }
 

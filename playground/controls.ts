@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { exampleDetails, exampleChromeStyles } from './example-chrome'
 import type { FilterMenuSignal, FilterMenuOptionSignal } from '../web/generated/signals'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
 import { settingsFieldStyles } from '../web/components/shared/settings-field-styles'
@@ -109,7 +110,7 @@ export class PlaygroundControls extends LitElement {
     :host([preview-only]) .state-panel, :host([preview-only]) .note, :host([preview-only]) .documentation, :host([preview-only]) .log { display: none; }
     :host([preview-only]) .preview { border: 0; border-radius: 0; }
     @media (max-width: 500px) { .preview { padding: var(--base-size-16); } }
-  `]
+  `, exampleChromeStyles]
 
   protected willUpdate(changed: Map<PropertyKey, unknown>) {
     if (changed.has('example')) {
@@ -134,6 +135,7 @@ export class PlaygroundControls extends LitElement {
   }
 
   private renderStates() {
+    if (this.example === 'loading') return nothing
     return html`<div class="state-panel" aria-label="Example states">
       ${['buttons', 'fields', 'select', 'multiselect', 'date-picker'].includes(this.example) ? this.stateControl('Disabled', this.disabled, (value) => { this.disabled = value }) : nothing}
       ${['fields', 'date-picker', 'filter-menu'].includes(this.example) ? this.stateControl('Error', this.invalid, (value) => { this.invalid = value }) : nothing}
@@ -141,13 +143,12 @@ export class PlaygroundControls extends LitElement {
       ${this.example === 'date-picker' ? this.stateControl('Sunday first', this.sunday, (value) => { this.sunday = value }) : nothing}
       ${this.example === 'filter-menu' ? this.stateControl('Loading', this.loading, (value) => { this.loading = value }) : nothing}
       ${this.example === 'toast' ? html`<button class="settings-button" @click=${() => { this.toastVisible = true; this.log('restore-toasts') }}>Restore toasts</button>` : nothing}
-      ${this.example === 'loading' ? html`<span class="caption">Small, medium, and large · system motion preference</span>` : nothing}
     </div>`
   }
 
   private renderExample() {
     switch (this.example) {
-      case 'buttons': return html`<div class="column"><div class="row">${['Default', 'Primary', 'Danger'].map((label, index) => html`<button class=${`settings-button ${['', 'primary', 'danger'][index]}`} ?disabled=${this.disabled} @click=${() => this.log('click', { button: label })}>${label}</button>`)}</div><div class="row"><button class="settings-button" disabled>Disabled</button><button class="settings-button primary" disabled><lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>Saving…</button></div><p class="caption">Tab to inspect focus. Hover and press to see the production interaction states.</p></div>`
+      case 'buttons': return html`<div class="column"><div class="row">${['Default', 'Primary', 'Danger'].map((label, index) => html`<button class=${`settings-button ${['', 'primary', 'danger'][index]}`} ?disabled=${this.disabled} @click=${() => this.log('click', { button: label })}>${label}</button>`)}</div><div class="row"><button class="settings-button" disabled>Disabled</button><button class="settings-button primary" disabled><lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>Saving…</button></div></div>`
       case 'fields': return html`<div class="form" @input=${(event: Event) => { const field = event.target as HTMLInputElement; this.log('input', { field: field.name, value: field.value }) }} @change=${(event: Event) => { const field = event.target as HTMLInputElement; this.log('change', { field: field.name, value: field.type === 'checkbox' ? field.checked : field.value }) }}>
         <label class="field"><span class="settings-label" id="name-label">Display name</span><input aria-labelledby="name-label" class="settings-input" name="name" placeholder="Quarterly revenue" ?disabled=${this.disabled} aria-invalid=${String(this.invalid)} aria-describedby="name-hint"><span id="name-hint" class=${this.invalid ? 'error' : 'settings-description'}>${this.invalid ? 'Enter a display name.' : 'Shown in your workspace.'}</span></label>
         <label class="field"><span class="settings-label">Search</span><input class="settings-input" name="search" type="search" placeholder="Search dashboards…" ?disabled=${this.disabled}></label>
@@ -167,8 +168,8 @@ export class PlaygroundControls extends LitElement {
         error: this.invalid ? 'Options could not be loaded. Try again.' : '', placeholder: 'Search status', emptyLabel: 'No matching statuses.',
         options: (this.empty ? [] : filterOptions).filter((option) => option.label.toLowerCase().includes(this.filterSearch.toLowerCase())).map((option) => ({ ...option, selected: this.filterSelected.includes(option.value) })),
       } satisfies FilterMenuSignal} @lv-filter-menu-command=${this.onFilterCommand}></lv-filter-menu><p class="caption">Selected statuses: <code>${JSON.stringify(this.filterSelected)}</code></p></div>`
-      case 'toast': return html`<div class="column">${this.toastVisible ? html`<lv-toast message="Dashboard saved." tone="success" dismissible @lv-toast-dismiss=${(event: Event) => { this.toastVisible = false; this.record(event) }}></lv-toast><lv-toast message="Refresh is scheduled for tomorrow." tone="info" actionLabel="Undo" @lv-toast-action=${(event: Event) => { this.toastVisible = false; this.record(event) }}></lv-toast><lv-toast message="We could not complete the refresh." tone="error" actionLabel="Retry" @lv-toast-action=${this.record}></lv-toast>` : html`<p class="caption">Toasts dismissed. Use Restore toasts to show them again.</p>`}</div>`
-      case 'loading': return html`<div class="row">${['small', 'medium', 'large'].map((size) => html`<div class="spinner"><lv-loading-spinner .size=${size} aria-label=${`Loading (${size})`}></lv-loading-spinner><span class="caption">${size}</span></div>`)}</div><div class="row"><button class="settings-button primary" disabled><lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>Publishing…</button><span class="caption">An indicator can inherit its surrounding text color.</span></div>`
+      case 'toast': return html`<div class="column">${this.toastVisible ? html`<lv-toast message="Dashboard saved." tone="success" dismissible @lv-toast-dismiss=${(event: Event) => { this.toastVisible = false; this.record(event) }}></lv-toast><lv-toast message="Refresh is scheduled for tomorrow." tone="info" actionLabel="Undo" @lv-toast-action=${(event: Event) => { this.toastVisible = false; this.record(event) }}></lv-toast><lv-toast message="We could not complete the refresh." tone="error" actionLabel="Retry" @lv-toast-action=${this.record}></lv-toast>` : html`<p class="caption">Toasts dismissed.</p>`}</div>`
+      case 'loading': return html`<div class="row">${['small', 'medium', 'large'].map((size) => html`<div class="spinner"><lv-loading-spinner .size=${size} aria-label=${`Loading (${size})`}></lv-loading-spinner><span class="caption">${size}</span></div>`)}</div><div class="row"><button class="settings-button primary" disabled><lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>Publishing…</button></div>`
       default: return html`<p>Choose a control from the navigation.</p>`
     }
   }
@@ -186,8 +187,10 @@ export class PlaygroundControls extends LitElement {
     return html`<div class="stack">
       ${this.renderStates()}
       <section class="preview" part="preview" aria-label="Interactive component preview">${keyed(this.example, this.renderExample())}</section>
-      ${doc ? html`<p class="note">${doc.note}</p><dl class="documentation"><div><dt>Component</dt><dd><code>${componentNames[this.example]}</code></dd></div><div><dt>Source</dt><dd><code>${doc.source}</code></dd></div><div><dt>Properties & variants</dt><dd>${doc.properties}</dd></div><div><dt>Events</dt><dd><code>${doc.events}</code></dd></div></dl>` : nothing}
-      <section class="log" aria-label="Event log"><div class="log-header"><h3>Event log</h3><button class="settings-button" ?disabled=${!this.logs.length} @click=${() => { this.logs = [] }}>Clear log</button></div><div class="entries" aria-live="polite" aria-relevant="additions">${this.logs.length ? this.logs.map((entry) => html`<pre class="entry">${entry}</pre>`) : html`<p class="caption">Interact with the preview to inspect emitted events.</p>`}</div></section>
+      ${exampleDetails(html`
+        ${doc ? html`<p class="note">${doc.note}</p><dl class="documentation"><div><dt>Component</dt><dd><code>${componentNames[this.example]}</code></dd></div><div><dt>Source</dt><dd><code>${doc.source}</code></dd></div><div><dt>Properties & variants</dt><dd>${doc.properties}</dd></div><div><dt>Events</dt><dd><code>${doc.events}</code></dd></div></dl>` : nothing}
+        <section class="log" aria-label="Event log"><div class="log-header"><h3>Event log</h3><button class="settings-button" ?disabled=${!this.logs.length} @click=${() => { this.logs = [] }}>Clear log</button></div><div class="entries" aria-live="polite" aria-relevant="additions">${this.logs.map((entry) => html`<pre class="entry">${entry}</pre>`)}</div></section>
+      `)}
     </div>`
   }
 }

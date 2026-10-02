@@ -7,6 +7,7 @@ import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
 import '../web/components/dashboard/visualization/host'
 import '../web/components/dashboard/visual-modal'
 import { answerChartWindow, chartExamples, createChartFixture, defaultChartOptions, type ChartFixture, type ChartOptions } from './chart-fixtures'
+import { exampleChromeStyles, exampleDetails } from './example-chrome'
 
 export { chartExamples }
 
@@ -39,11 +40,16 @@ export class PlaygroundCharts extends LitElement {
     :host { display: block; min-width: 0; color: var(--lv-fg-default); }
     :host([preview-only]) .controls, :host([preview-only]) .documentation { display: none; }
     .controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--base-size-12); margin-bottom: var(--base-size-16); }
+    .display-options { margin: 0; border: 0; padding: 0; }
+    .display-options > summary { min-height: var(--control-medium-size); align-content: center; padding-inline: var(--base-size-8); color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
+    .display-options > summary:focus-visible { outline: var(--borderWidth-thick) solid var(--focus-outlineColor); outline-offset: var(--base-size-2); }
+    .display-options[open] { flex-basis: 100%; }
+    .display-controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--base-size-12); padding-top: var(--base-size-12); }
     label { display: grid; gap: var(--base-size-4); font: var(--lv-type-caption); }
     label.check { display: flex; align-items: center; min-height: var(--control-medium-size); }
     .preview { height: var(--playground-preview-height, 420px); min-width: 0; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); overflow: hidden; }
     lv-visualization-host { display: block; width: 100%; height: 100%; }
-    .documentation { margin-top: var(--base-size-16); font: var(--lv-type-body-compact); }
+    .documentation { display: grid; gap: var(--base-size-12); margin-top: var(--base-size-16); font: var(--lv-type-body-compact); }
     .documentation p { color: var(--lv-fg-muted); }
     details { margin-top: var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); padding: var(--base-size-12); }
     summary { cursor: pointer; font-weight: var(--base-text-weight-semibold); }
@@ -52,7 +58,7 @@ export class PlaygroundCharts extends LitElement {
     .log-heading { display: flex; justify-content: space-between; align-items: center; gap: var(--base-size-8); margin-top: var(--base-size-16); }
     .log-heading h3 { margin: 0; font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); }
     .empty-log { padding: var(--base-size-12); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); }
-  `]
+  `, exampleChromeStyles]
 
   protected willUpdate(changed: Map<PropertyKey, unknown>): void {
     if (changed.has('example') || !this.fixture) {
@@ -100,21 +106,23 @@ export class PlaygroundCharts extends LitElement {
         ${this.select('scenario', 'Data fixture', [['standard', 'Standard'], ['dense', 'Dense data'], ['long-labels', 'Long labels'], ['missing', 'Missing values'], ['single', 'Single datum'], ['zero', 'Zero values'], ['negative', 'Mixed signs'], ['precision', 'High precision']])}
         ${this.select('status', 'State', [['ready', 'Ready'], ['loading', 'Loading'], ['empty', 'Empty'], ['error', 'Error']])}
         ${spec.kind === 'geographic' ? this.select('mapLayer', 'Map layer', [['point', 'Points'], ['heat', 'Weighted heatmap'], ['density', 'Point density'], ['choropleth', 'Choropleth'], ['path', 'Route lines'], ['reference', 'Reference boundaries']]) : nothing}
-        ${hasPresentation ? this.select('legend', 'Legend', [['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right'], ['hidden', 'Hidden']]) : nothing}
-        ${hasPresentation && spec.kind !== 'geographic' ? this.select('labels', 'Labels', [['automatic', 'Automatic'], ['hidden', 'Hidden'], ['dense', 'Dense'], ['always', 'Always']]) : nothing}
-        ${hasTooltip ? this.select('tooltip', 'Tooltip fields', [['default', 'Default fields'], ['value', 'First metric only']]) : nothing}
         ${spec.kind === 'kpi' ? this.select('kpiMode', 'KPI mode', [['compact', 'Compact'], ['bullet', 'Bullet'], ['progress', 'Progress']]) : nothing}
-        ${hasAxes ? this.checkbox('axes', 'Show axes') : nothing}
-        ${hasSeries ? this.checkbox('multiSeries', 'Multiple series') : nothing}
-        ${['line', 'area', 'bar', 'column'].includes(this.example) ? this.checkbox('stacked', 'Stack series') : nothing}
-        ${hasLine ? html`${this.checkbox('smooth', 'Smooth lines')}${this.checkbox('step', 'Stepped lines')}${this.checkbox('symbols', 'Show symbols')}` : nothing}
         <button class="settings-button" @click=${() => { this.options = { ...defaultChartOptions }; this.events = []; this.rebuild() }}>Reset</button>
+        ${hasPresentation || hasAxes || hasSeries || hasTooltip ? html`<details class="display-options"><summary>Display options</summary><div class="display-controls">
+          ${hasPresentation ? this.select('legend', 'Legend', [['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right'], ['hidden', 'Hidden']]) : nothing}
+          ${hasPresentation && spec.kind !== 'geographic' ? this.select('labels', 'Labels', [['automatic', 'Automatic'], ['hidden', 'Hidden'], ['dense', 'Dense'], ['always', 'Always']]) : nothing}
+          ${hasTooltip ? this.select('tooltip', 'Tooltip fields', [['default', 'Default fields'], ['value', 'First metric only']]) : nothing}
+          ${hasAxes ? this.checkbox('axes', 'Show axes') : nothing}
+          ${hasSeries ? this.checkbox('multiSeries', 'Multiple series') : nothing}
+          ${['line', 'area', 'bar', 'column'].includes(this.example) ? this.checkbox('stacked', 'Stack series') : nothing}
+          ${hasLine ? html`${this.checkbox('smooth', 'Smooth lines')}${this.checkbox('step', 'Stepped lines')}${this.checkbox('symbols', 'Show symbols')}` : nothing}
+        </div></details>` : nothing}
       </div>
       <div class="preview" part="preview">
         ${keyed(spec.kind === 'geographic' ? `${this.example}:${this.options.mapLayer}` : this.example, html`<lv-visualization-host .envelope=${fixture.envelope}></lv-visualization-host>`)}
       </div>
       <lv-visual-modal></lv-visual-modal>
-      <div class="documentation">
+      ${exampleDetails(html`<div class="documentation">
         <p>${fixture.note}</p>
         <p><strong>Production source:</strong> <code>web/components/dashboard/visualization/host.ts</code><br>
           <strong>Adapter:</strong> <code>web/components/dashboard/visualization/adapters/${adapter}.ts</code><br>
@@ -126,8 +134,8 @@ export class PlaygroundCharts extends LitElement {
           <pre>${JSON.stringify(fixture.envelope, null, 2)}</pre>
         </details>
         <div class="log-heading"><h3>Public event log</h3><button class="settings-button" @click=${() => { this.events = [] }}>Clear log</button></div>
-        ${this.events.length ? html`<pre aria-label="Public event log">${this.events.map((event) => `${event.name}\n${JSON.stringify(event.detail, null, 2)}`).join('\n\n')}</pre>` : html`<p class="empty-log">Select a mark or row, sort a table, or open the visual menu to inspect events.</p>`}
-      </div>
+        ${this.events.length ? html`<pre aria-label="Public event log">${this.events.map((event) => `${event.name}\n${JSON.stringify(event.detail, null, 2)}`).join('\n\n')}</pre>` : html`<p class="empty-log">No events yet.</p>`}
+      </div>`)}
     `
   }
 

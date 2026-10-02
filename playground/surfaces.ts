@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { exampleDetails, exampleChromeStyles } from './example-chrome'
 import { CircleAlert, FolderOpen, Search, Users } from 'lucide'
 import type { DashboardAppearanceSignal } from '../web/generated/signals'
 import { lucideIcon } from '../web/components/shared/lucide-icons'
@@ -75,7 +76,7 @@ export class PlaygroundSurfaces extends LitElement {
     :host([preview-only]) .controls, :host([preview-only]) .documentation { display: none; }
     :host([preview-only]) .preview { border: 0; border-radius: 0; }
     @media (max-width: 500px) { .preview { padding: var(--base-size-12); } }
-  `]
+  `, exampleChromeStyles]
 
   protected willUpdate(changed: Map<PropertyKey, unknown>): void {
     if (changed.has('example')) {
@@ -144,19 +145,19 @@ export class PlaygroundSurfaces extends LitElement {
         ${this.example === 'drawer' ? html`<label><input type="checkbox" .checked=${this.drawerModal} @change=${(event: Event) => { this.drawerModal = (event.target as HTMLInputElement).checked }}>Modal</label><label><input type="checkbox" .checked=${this.drawerWide} @change=${(event: Event) => { this.drawerWide = (event.target as HTMLInputElement).checked }}>Wide</label>` : nothing}
       </div>
       <div class="preview" part="preview">${keyed(this.example, this.renderExample())}</div>
-      <div class="documentation">
+      ${exampleDetails(html`<div class="documentation">
         <p>${docs.note}</p><p><strong>Component:</strong> <code>${docs.component}</code></p>
         <p><strong>Source:</strong> <code>${docs.source}</code></p><p><strong>Inputs:</strong> ${docs.inputs}</p><p><strong>Events:</strong> <code>${docs.events}</code></p>
         <div class="log-heading"><h3>Public event log</h3><button class="settings-button" @click=${() => { this.logs = [] }}>Clear log</button></div>
-        <pre aria-label="Public event log">${this.logs.join('\n\n') || 'Interact with the example to inspect its events.'}</pre>
-      </div>
+        <pre aria-label="Public event log">${this.logs.join('\n\n')}</pre>
+      </div>`)}
     </div>`
   }
 
   private renderExample() {
     const title = this.longText ? 'Quarterly operational analytics for enterprise accounts across every region' : 'Operational analytics'
     switch (this.example) {
-      case 'drawer': return html`<div class="column"><p>Open a production drawer with editable local settings.</p><button class="settings-button primary" @click=${this.openDrawer}>Open drawer</button></div>
+      case 'drawer': return html`<div class="column"><button class="settings-button primary" @click=${this.openDrawer}>Open drawer</button></div>
         <lv-drawer .open=${this.drawerOpen} .modal=${this.drawerModal} .closeOnOutside=${!this.drawerModal} .size=${this.drawerWide ? 'wide' : 'default'} label="Playground settings" @lv-drawer-close=${this.closeDrawer}>
           <span slot="title">${this.longText ? title : 'Workspace settings'}</span><span slot="subtitle">Local fixture · changes stay in this preview</span>
           <div class="drawer-content">${this.settingsContent('plain')}<button class="settings-button" @click=${this.closeDrawer}>Close drawer</button></div>
@@ -166,7 +167,7 @@ export class PlaygroundSurfaces extends LitElement {
         <div class="identity-sample"><div class="brand"><lv-brand-mark aria-hidden="true"></lv-brand-mark>LeapView</div><div class="brand accent"><lv-brand-mark large aria-hidden="true"></lv-brand-mark>LeapView</div></div>
         <div class="identity-sample"><strong>Field types</strong>${['string', 'integer', 'date', 'timestamp', 'boolean', 'json', 'binary', 'unknown'].map((type) => html`<span class="row"><span aria-hidden="true">${lucideIcon(fieldTypeIcon(type), { size: 18 })}</span><span>${type}</span></span>`)}</div>
       </div>`
-      case 'toast-region': return html`<div class="column"><p>Notifications use the production fixed stack. Hover or focus a timed notification to pause dismissal.</p><div class="row"><button class="settings-button primary" @click=${this.showNotification}>Show notification</button><button class="settings-button" ?disabled=${!this.lastToast} @click=${() => { this.renderRoot.querySelector<LeapViewToastRegion>('lv-toast-region')?.dismiss(this.lastToast); this.record('dismiss()', { id: this.lastToast }); this.lastToast = 0 }}>Dismiss latest</button></div></div>
+      case 'toast-region': return html`<div class="column"><div class="row"><button class="settings-button primary" @click=${this.showNotification}>Show notification</button><button class="settings-button" ?disabled=${!this.lastToast} @click=${() => { this.renderRoot.querySelector<LeapViewToastRegion>('lv-toast-region')?.dismiss(this.lastToast); this.record('dismiss()', { id: this.lastToast }); this.lastToast = 0 }}>Dismiss latest</button></div></div>
         <lv-toast-region @lv-toast-action=${(event: CustomEvent) => this.record(event.type)} @lv-toast-dismiss=${(event: CustomEvent) => this.record(event.type)}></lv-toast-region>`
       case 'one-time-secret': return html`<lv-one-time-secret .secret=${this.longText ? `${demoSecret}_${'long_example_'.repeat(12)}` : demoSecret} message="Dummy secret for this example. Copy to inspect the production feedback." copy-label="Copy dummy secret"></lv-one-time-secret>`
       case 'empty-state': return renderEmptyState({

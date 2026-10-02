@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { exampleDetails, exampleChromeStyles } from './example-chrome'
 import type { SemanticModelGraphSignal } from '../web/generated/signals'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
 import '../web/components/shared/asset-lineage-graph'
@@ -45,7 +46,9 @@ export class PlaygroundGraphs extends LitElement {
     .log-header { display: flex; justify-content: space-between; align-items: center; gap: var(--base-size-12); }
     h3 { margin: 0; font: var(--lv-type-section-title); }
     :host([preview-only]) .controls, :host([preview-only]) .documentation { display: none; }
-  `]
+    .selection-feedback { color: var(--lv-fg-muted); font: var(--lv-type-caption); margin: var(--base-size-12) 0 0; }
+    :host([preview-only]) .selection-feedback { display: none; }
+  `, exampleChromeStyles]
 
   protected willUpdate(changed: Map<PropertyKey, unknown>) {
     if (changed.has('example')) {
@@ -95,7 +98,8 @@ export class PlaygroundGraphs extends LitElement {
         ` : html`<lv-semantic-model-graph .graph=${this.semantic} .storageKey=${`playground:semantic-model:${this.scenario}`}></lv-semantic-model-graph>`)}
         ${this.scenario === 'empty' ? html`<p class="empty" role="status">No ${isLineage ? 'assets' : 'datasets'} in this fixture. Choose another scenario to explore a connected graph.</p>` : nothing}
       </section>
-      <section class="documentation">
+      ${isLineage && this.lastSelected ? html`<p class="selection-feedback" role="status">Selected asset: <code>${this.lastSelected}</code></p>` : nothing}
+      ${exampleDetails(html`<section class="documentation">
         <p>${isLineage ? 'Select an asset to highlight its path. Switch scope, pan, zoom, or fit the included nodes. Expand graph opens the production dialog; Escape closes it.' : 'Select a dataset or relationship to inspect its connections. Use Related / All to reveal fields, drag datasets to arrange them, and Reset layout to restore the automatic layout.'}</p>
         <dl>
           <div><dt>Component</dt><dd><code>${isLineage ? '<lv-asset-lineage-graph>' : '<lv-semantic-model-graph>'}</code></dd></div>
@@ -104,8 +108,8 @@ export class PlaygroundGraphs extends LitElement {
           <div><dt>Events & state</dt><dd>${isLineage ? html`<code>lv-lineage-select { id } · lv-lineage-scope-change { scope }</code>. Selection and expansion are owned by the component; this preview records selection and synchronizes the scope control. Expansion has no public custom event.` : 'No public custom events. The production component owns node and edge selection, field visibility, and layout changes. Drag positions persist in browser storage under a playground-specific key.'}</dd></div>
         </dl>
         <details><summary>Fixture · ${fixture.nodes.length} nodes, ${fixture.edges.length} edges</summary><pre>${JSON.stringify(fixture, null, 2)}</pre></details>
-        ${isLineage ? html`<div class="log-header"><h3>Event log</h3><button class="settings-button" ?disabled=${this.events.length === 0} @click=${() => { this.events = [] }}>Clear log</button></div><p>Last selected asset: <code>${this.lastSelected || 'No selection event yet'}</code></p><div aria-live="polite">${this.events.length ? this.events.map((event) => html`<pre>${event.name} ${JSON.stringify(event.detail)}</pre>`) : html`<p>Interact with the graph to inspect emitted events.</p>`}</div>` : nothing}
-      </section>
+        ${isLineage ? html`<div class="log-header"><h3>Event log</h3><button class="settings-button" ?disabled=${this.events.length === 0} @click=${() => { this.events = [] }}>Clear log</button></div><div aria-live="polite">${this.events.map((event) => html`<pre>${event.name} ${JSON.stringify(event.detail)}</pre>`)}</div>` : nothing}
+      </section>`)}
     `
   }
 }
