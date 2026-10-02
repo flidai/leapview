@@ -1,0 +1,132 @@
+{
+  "acceptance": {
+    "actual_wrapper_exit_code": 0,
+    "completed_at_ist": "2026-10-02T15:17:08+05:30",
+    "completed_at_utc": "2026-10-02T09:47:08Z",
+    "frozen_source_config_bundle_receipt_run_bindings": "verified",
+    "health_storage_scope_alone_sufficient": false,
+    "receipt_status": "passed",
+    "started_at_utc": "2026-10-02T09:47:00Z",
+    "wrapper_status": "passed"
+  },
+  "as_of_utc": "2026-10-02T09:59:47.531800+00:00",
+  "automatic_vps_activation_enabled": false,
+  "boundary_smokes": {
+    "end": "passed",
+    "scope": "public_adoption_including_metadata_docs_assets_download_links_and_redirects",
+    "start": "passed"
+  },
+  "demo_deployment_in_scope": false,
+  "fallback_748": "open_until_documentation_review_and_merge",
+  "final_readonly_audit": {
+    "active_b": {
+      "config_digest": "sha256:a202c62a47e902f23c4d9cc595d9b956af154ad1f4b44fce4643d701f2918669",
+      "index_digest": "sha256:acc225d4526738b4a7b55609b1a643e31fdbc034dca305f17ca952a973f16e87",
+      "layer_bytes": 264036128,
+      "layer_count": 14,
+      "local_runtime_inspect_passed": true,
+      "oci_content_hashes_verified": true,
+      "platform_digest": "sha256:a54473f74baa138e7c8a74a673d59222bef34fcf38fdebcae7ed4a996ec61bf5",
+      "revision": "0f25215ceb1cc7331701d2f3120da47b66a88714"
+    },
+    "available_bytes": 33355091968,
+    "available_inodes": 2398341,
+    "cached_image_content_hashes": "passed_for_both",
+    "docker_and_containerd_filesystems_after_deduplication": 1,
+    "finished_at_utc": "2026-10-02T09:56:51.318030+00:00",
+    "host_baseline_drift": false,
+    "independent_review": "passed",
+    "legacy_updater": {
+      "service": {
+        "active": "inactive",
+        "enabled": "static"
+      },
+      "timer": {
+        "active": "inactive",
+        "enabled": "disabled"
+      }
+    },
+    "local_protected_archive_hashes": "matched_frozen_reference",
+    "oci_scope": "local_index_selected_linux_amd64_manifest_config_and_all_layer_bytes",
+    "pending_maintenance": false,
+    "pending_operation": false,
+    "prior_a": {
+      "config_digest": "sha256:509026f1f423183f321229b7355bd7117bab708945c78dd63cd79cfab5a65478",
+      "index_digest": "sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec",
+      "layer_bytes": 264036141,
+      "layer_count": 14,
+      "local_runtime_inspect_passed": true,
+      "oci_content_hashes_verified": true,
+      "platform_digest": "sha256:b6a0ef9ae640eb341b51c9e4fbcf25144a10f437952a7f25cf1f97a41aa29150",
+      "revision": "aa823506bf7916f051083cab56dd015cbcadac0d"
+    },
+    "protected_original_backup": {
+      "files_verified": 6,
+      "manifest_sha256": "ef25d478502b26c8159449912babefec30c6b282327b0a84073795e5754a58f2",
+      "permissions_verified": true,
+      "snapshots_verified": 4
+    },
+    "required_free_bytes": 5900624282,
+    "required_free_inodes": 13787,
+    "started_at_utc": "2026-10-02T09:52:23.468518+00:00",
+    "status": "passed",
+    "unexpected_restarts": false,
+    "unresolved_operator_ownership": false
+  },
+  "live_proofs": "passed",
+  "migration_closeout": "pending_documentation_review_merge_and_fallback_retirement",
+  "observation": {
+    "duration_seconds": 86400,
+    "elapsed_seconds": 86402.475,
+    "ended_at_ist": "2026-10-02T15:14:36+05:30",
+    "ended_at_utc": "2026-10-02T09:44:36Z",
+    "endpoint_checks_per_sample": 3,
+    "failed_or_rejected_samples": 0,
+    "host_interval_seconds": 900,
+    "host_sample_count": 97,
+    "minimum_observed_free_bytes": 33355149312,
+    "minimum_observed_free_inodes": 2398341,
+    "observer_log_inspected": "no_io_failure_or_rejection_diagnostics",
+    "observer_source_sha256": "d632a45788bd01729e71e8783072394e5d7ec30854e11e1885b38ebf88b69425",
+    "public_sample_count": 1441,
+    "run_record_hash_bindings_verified": true,
+    "sample_interval_seconds": 60,
+    "september_30_interrupted_interval_included": false,
+    "started_at_ist": "2026-10-01T15:14:34+05:30",
+    "started_at_utc": "2026-10-01T09:44:34Z",
+    "supervised_worker_exit_code": 0,
+    "supported_cli_exit_code": 0
+  },
+  "production_mutations_during_observation_and_closeout": false,
+  "protected_artifact_sha256": {
+    "acceptance_bundle_configuration": "c9cd492bd5a3255e7ef0516dd8ae4ec85cf6e088cb92107d2c523a68c210c8a4",
+    "acceptance_receipt": "3c1427ddfdc655bf067ce276a09d2160d817ff36c1fc92031357bd0346001437",
+    "acceptance_source": "8cf79337e69353e2179a222a9ac4e334769c1e971a15c5d2dd0514ca5f0c70eb",
+    "acceptance_wrapper_result": "5f95755907e0026b7034cc4b863627075166b8de706cbf071831e0b9c38151a1",
+    "end_adoption_output": "2753e8e089839c0553b1fae4a50ab7c0cce318d7f350cc55610264f0c4b24c42",
+    "final_audit": "eded6c4a5336b2dc2455bb961360c3bf89e2f055dcd329b844047c4ff00cd709",
+    "final_host_after_check": "bcb85e138374493886f5ae4803e9cd6cf8b638ca6c664cedc24d9547d752d9ff",
+    "final_oci_and_backup_check": "a9ee1fec203e4bdc1942b298b64489eec01e8810d966a3200a983910bd6a9eb3",
+    "final_public_and_host_check": "c89bc5eac65872a423d642b46cee6692dc41819d9a3f2c359cd546e3ae6ebf4c",
+    "observer_output_log": "2ac80ec7ccb553ee84ee3843b0327d2bb64e9392f7bcb03f68b7e52e82b99d58",
+    "observer_process": "8dbd951e9fe9bad6dcf22b7b2dc79b1545b867efa01b4124e15d4189789fb5a7",
+    "observer_samples": "d7651deae055e560e3e15abd7515873ccaa72a8c08321763fa70fafd7019dd32",
+    "observer_source": "d632a45788bd01729e71e8783072394e5d7ec30854e11e1885b38ebf88b69425",
+    "observer_summary": "1c58782c6e6c2f684ca16d8fc21b0e5c40e7b84581ffb4f29f5c690b9875e5e8",
+    "observer_supervisor": "df161502c330fabd9d02f0ba907f52a7b6366454601cd51f6b1767e858c4e996",
+    "original_backup_receipt": "fd29b63695ca77da1843517e1c9ebc8634d22275e51e4f67508744397d40252f",
+    "outer_cli_exit": "a5df02dbadf23407e34f9e971555b4a4c2e1c0f7b8b8e0d986b24a8397cbb438",
+    "start_adoption_output": "2753e8e089839c0553b1fae4a50ab7c0cce318d7f350cc55610264f0c4b24c42",
+    "supervised_worker_exit": "9b5c25d7ab489a071536124361a518ef5b4277d0194e2af4ee0da78f03e4e8e6",
+    "supervisor_configuration": "fb3c6e9f3cd16eb409ffd804d0d09b10221180f8c2095d0cb8d48a48fcf870f8"
+  },
+  "replacement_prs": [
+    752,
+    751,
+    781,
+    782,
+    790
+  ],
+  "schema": 1,
+  "scope": "manual_public_site_final_live_proofs"
+}

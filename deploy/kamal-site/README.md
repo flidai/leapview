@@ -2,9 +2,12 @@
 
 The operator-controlled production rollout moved the public site to Kamal on
 30 September 2026. Image B is active through Caddy; original Compose restoration,
-offline rollback, Caddy recreation, and real host reboot acceptance passed. The
-24-hour observation is still running, so final acceptance and fallback PR #748
-closure remain pending. See the [sanitized live rollout evidence](evidence/live-rollout-20260930.md).
+offline rollback, Caddy recreation and real host reboot acceptance passed. The
+replacement 24-hour observation, both adoption boundary smokes, frozen acceptance
+with bound command exits, and independent read-only retention/storage/recovery
+audit passed on 2 October. See the [final acceptance evidence](evidence/final-acceptance-20261002.md)
+and the historical [live rollout evidence](evidence/live-rollout-20260930.md).
+Final documentation review/merge and retirement of fallback PR #748 remain pending.
 
 Do not write a handover marker from synthetic test evidence. The [accepted
 completion plan](completion-plan.md) defines the remaining gates. Automatic VPS
@@ -250,7 +253,8 @@ skopeo copy --all --preserve-digests \
 ```
 
 The synthetic test cannot qualify production provenance or a real host reboot.
-Keep #752 draft until the complete matrix in the accepted plan, final hosted
-checks and review are satisfied. Then merge in the plan's sequence, qualify two
-eligible production main images and perform controlled migration. Update #751's
-trial evidence separately; do not label a manual migration as completed CI/CD.
+The operator and trial implementations in #752 and #751 are merged. Their
+historical disposable qualification remains separate from the real production
+handover and [final live acceptance](evidence/final-acceptance-20261002.md).
+Keep normal hosted checks and review for any future change; manual migration
+does not complete automatic CI/CD activation.

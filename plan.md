@@ -1,6 +1,6 @@
 # Live public-website Kamal rollout: remaining plan
 
-Updated: 1 October 2026.
+Updated: 2 October 2026.
 Scope: `leapview.dev` and its `www` redirect. The product demo/NixOS deployment is separate.
 
 ## Objective
@@ -14,6 +14,30 @@ original-Compose restoration, successful Caddy recreation and real host reboot,
 bounded image retention, and 24 hours of recorded healthy operation.
 Automatic VPS activation remains disabled. Merging code or publishing an image
 alone does not complete the live migration.
+
+## Live proofs passed — 2 October 2026
+
+The replacement observation completed a full 24 hours from 1 October at
+15:14:34 IST to 2 October at 15:14:36 IST, with 1,441 public samples,
+97 host samples and no recorded failures. Both public adoption boundary smokes
+passed. The frozen acceptance and its actual command wrapper passed at
+15:17:08 IST on 2 October. Independent inspection verified the supervised and
+outer CLI exit receipts, all run-file bindings and the observer log.
+
+The final read-only audit passed: B remains active, A remains the distinct
+locally recoverable prior, both selected OCI image contents match admission,
+no host/restart/ownership or pending-maintenance drift was found, and the
+retired updater timer remains disabled and its service inactive. The protected
+original backup manifest,
+all six original files, four inspection snapshots and archive hashes match
+frozen references. See the [final acceptance report](deploy/kamal-site/evidence/final-acceptance-20261002.md)
+and [receipt index](deploy/kamal-site/evidence/final-acceptance-20261002.json).
+
+All required live proofs have passed. Final documentation review/merge and
+retirement of fallback [#748](https://github.com/flidai/leapview/pull/748)
+remain pending; the fallback stays open until those steps finish.
+Automatic VPS activation remains deferred. Historical snapshots below retain
+their original dates and excluded intervals.
 
 ## Verified starting point — 29 September baseline
 
@@ -63,8 +87,10 @@ through that point. That 24-hour window was originally due to complete at 10:28:
 1 October (15:58:20 IST); its separate acceptance job was originally queued for 10:31 UTC
 (16:01 IST). Both that job and the old background closeout job were cancelled
 on 1 October after the interruption described below.
-The end adoption smoke and final acceptance receipt, post-observation retention
-audit, completion of the full interval, and closure of #748 remain pending.
+At this historical snapshot the interval, end adoption smoke, acceptance and
+retention audit remained pending. The replacement interval and final live gates
+subsequently passed as recorded in the 2 October acceptance report; documentation
+review/merge and fallback retirement remain pending.
 Automatic VPS activation remains disabled.
 
 The local aggregate `task ci` reports watchdog limitation remains historical
@@ -124,11 +150,10 @@ reboot is needed for this local monitoring recovery. The [sanitized recovery
 receipt](deploy/kamal-site/evidence/observation-recovery-20261001.json) records
 the excluded interval, live preflight, and verified replacement snapshot.
 
-Remaining order: fresh start smoke and verified launch → complete new 24 hours →
-end adoption smoke and acceptance receipt → final image/storage/recovery audit →
-reviewable completion evidence → close #748. Keep the fallback open until all
-required live proofs pass. Normal GitHub checks and approving reviews still apply
-to new PRs.
+The replacement completed all live gates on 2 October. The remaining order is
+review/merge the sanitized completion evidence → retire #748. Normal GitHub
+checks, an approving review and exact-head merge-queue validation apply to the
+closeout documentation PR. The original interrupted interval remains excluded.
 
 ## Execution flow
 
@@ -141,10 +166,10 @@ flowchart TD
     E --> F[Done: prove original Compose restoration and return to A]
     F --> G[Done: deploy B, roll back offline to A, restore B]
     G --> H[Done: recreate Caddy and reboot the real host]
-    H --> I[In progress: fresh 24-hour observation after excluded interruption]
-    I --> J[Pending: end public adoption smoke and final acceptance receipt]
-    J --> K[Pending: post-observation image-retention audit]
-    K --> L[Pending: final closeout and fallback 748 closure]
+    H --> I[Done: full replacement 24-hour observation]
+    I --> J[Done: end adoption smoke and bound acceptance receipt]
+    J --> K[Done: read-only image, storage and recovery audit]
+    K --> L[Pending: documentation review, merge and fallback retirement]
 ```
 
 Proceed in order. A failed exit check blocks the next phase. Existing approval
@@ -331,19 +356,19 @@ Caddy recreation passed, and the real host reboot recovered the intended topolog
   probes public HTTPS/health/readiness every minute and samples disk/inodes,
   service health and restart counts every 15 minutes.
 - [x] Verify the replacement one-shot acceptance and quiet background closeout schedule.
-- [ ] Preserve the complete timestamped results and investigate any failed probes,
+- [x] Preserve the complete timestamped results and investigate any failed probes,
   unexpected restarts, persistent image growth or reserve breaches. Notify on a
   meaningful failure/change; healthy repeated samples need no user notification.
-- [ ] Require a complete 24-hour stable period with no unresolved failure. Restart
+- [x] Require a complete 24-hour stable period with no unresolved failure. Restart
   the period after a failed/interrupted observation, or a deployment, rollback or
   corrective production mutation. Preserve and investigate a failed/interrupted
   one-shot acceptance attempt. A replacement bundle requires an unchanged observer
   still running; if it has finished, start a new full interval.
   A rejected setup/preflight check may be corrected while an unchanged observer
   is still running; an unobserved interval does not count as successful monitoring.
-- [ ] After the full 24-hour period completes, run the end public adoption smoke
+- [x] After the full 24-hour period completes, run the end public adoption smoke
   and finish the final acceptance receipt.
-- [ ] After the observation and end smoke pass, perform the post-observation
+- [x] After the observation and end smoke pass, perform the post-observation
   image-retention audit. Keep #748 open until this audit passes.
 
 **Exit:** recorded 24-hour health/storage acceptance with no unresolved deployment
@@ -357,8 +382,10 @@ or maintenance problem and adequate measured capacity margins.
   details in the protected operator store, outside repository documentation.
 - [x] Attach sanitized qualification, cutover, rollback, reboot and ongoing
   observation evidence; preserve secret-bearing originals only in protected operator storage.
-- [ ] After the 24-hour observation, end adoption smoke, final acceptance receipt
-  and post-observation retention audit pass, close
+- [x] Verify the complete replacement interval, both boundary smokes, bound gate
+  wrapper, observer command exits/log and independent final read-only audit.
+- [ ] Obtain review, pass normal hosted checks and merge the final acceptance
+  documentation. Then close
   [#748](https://github.com/flidai/leapview/pull/748) as superseded, linking the
   merged replacement and successful live acceptance evidence.
 - [x] State explicitly that deployment remains operator-controlled. Treat any

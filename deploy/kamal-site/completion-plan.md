@@ -1,7 +1,12 @@
 # LeapView Public-Site Kamal Completion Plan
 
 Updated: 29 September 2026
-Status: Implementation and disposable qualification in progress; production acceptance pending.
+Status as of 2 October 2026: implementation, qualification and all required live
+proofs passed. Final documentation review/merge and fallback retirement remain
+pending. The [final acceptance report](evidence/final-acceptance-20261002.md)
+records the complete replacement observation, bound acceptance, and independent
+read-only audit. Requirements below remain the accepted execution specification;
+older pre-merge PR descriptions are historical.
 
 ## 1. Goal and scope
 
