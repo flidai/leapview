@@ -531,6 +531,8 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
