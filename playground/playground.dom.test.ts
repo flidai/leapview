@@ -323,3 +323,50 @@ test('chart display options survive collapse and focus mode supports production 
   await page.getByRole('button', { name: 'Exit preview', exact: true }).click()
   await browserExpect(axes).not.toBeChecked()
 })
+
+for (const type of ['bar', 'table']) {
+  test(`expanded ${type} blocks background controls and aligns toolbar actions`, async () => {
+    await open(`charts/${type}`)
+    await page.getByRole('button', { name: 'Focus preview', exact: true }).click()
+    const exit = page.locator('.exit-preview')
+    const exitBounds = (await exit.boundingBox())!
+    const expand = page.getByRole('button', { name: type === 'table' ? 'Expand table' : 'Expand chart', exact: true })
+    await expand.click()
+    const dialog = page.getByRole('dialog')
+    const close = page.getByRole('button', { name: 'Close visual modal', exact: true })
+    const options = page.getByLabel('Visual options', { exact: true })
+    await browserExpect(dialog).toBeVisible()
+    await browserExpect(close).toBeVisible()
+    await page.locator('lv-visualization-host').evaluate(async (element: any) => { await element.ensureMounted() })
+    await browserExpect(close).toBeFocused()
+    await page.keyboard.press('Tab')
+    await browserExpect(exit).not.toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await browserExpect(close).toBeFocused()
+    await browserExpect.poll(async () => {
+      const a = (await close.boundingBox())!, b = (await options.boundingBox())!
+      return Math.abs(a.y + a.height / 2 - b.y - b.height / 2)
+    }).toBeLessThan(1)
+    const a = (await close.boundingBox())!, b = (await options.boundingBox())!
+    expect(Math.abs(a.height - b.height)).toBeLessThan(1)
+    expect(Math.abs(a.width - b.width)).toBeLessThan(1)
+    expect(a.x).toBeGreaterThan(b.x + b.width)
+    await exit.evaluate((element: HTMLElement) => element.focus())
+    await browserExpect(exit).not.toBeFocused()
+    // A real click at the background control hits the modal backdrop instead.
+    await page.mouse.click(exitBounds.x + exitBounds.width / 2, exitBounds.y + exitBounds.height / 2)
+    await browserExpect(dialog).toBeHidden()
+    await browserExpect(exit).toBeVisible()
+    await browserExpect(expand).toBeFocused()
+    await expand.click()
+    await close.click()
+    await browserExpect(dialog).toBeHidden()
+    await browserExpect(page.locator('.preview lv-visualization-host')).toBeVisible()
+    await expand.click()
+    await page.keyboard.press('Escape')
+    await browserExpect(dialog).toBeHidden()
+    await browserExpect(exit).toBeVisible()
+    await exit.click()
+    await browserExpect(page.getByRole('button', { name: 'Focus preview', exact: true })).toBeVisible()
+  })
+}

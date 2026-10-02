@@ -39,7 +39,8 @@ restart after changing source files to rebuild. Generated bundles stay under
   menus and date picker.
 - **Focus** hides navigation, controls and usage notes for
   screenshots without resetting the current example. Use **Exit preview** or
-  press Escape to return.
+  press Escape to return. Expanded visuals block background controls; close the
+  visual with its × button or Escape before leaving Focus.
   **Open preview** opens a new tab with default fixtures and the current
   theme and viewport dimensions. `?preview=1#charts/bar` opens that view directly. Select a theme in
   the main playground to inspect its tokens and chart colors.

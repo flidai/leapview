@@ -800,7 +800,7 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
       await page.evaluate(async variant => {
         const host = document.createElement('lv-visualization-host') as any
         host.id = 'focus-test'
-        host.style.cssText = '--base-size-48:48px;display:block;width:600px;height:400px'
+        host.style.cssText = 'display:block;width:600px;height:400px'
         const source = (window as any).__lvSourceHosts[variant === 'table' ? 'orders' : 'orders_chart']
         host.envelope = { ...source.envelope, status: { kind: 'ready' }, spec: { ...source.envelope.spec, titleVisible: variant !== 'headerless chart' } }
         document.body.append(host)
@@ -809,13 +809,25 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
       const host = page.locator('#focus-test')
       const expand = host.getByRole('button', { name: /^Expand / })
       await expand.waitFor({ state: 'visible' })
-      await host.evaluate(element => element.setAttribute('slot', 'focus-visual'))
+      await host.evaluate(element => {
+        element.setAttribute('slot', 'focus-visual')
+        const close = document.createElement('button')
+        close.slot = 'focus-action'
+        close.textContent = 'Close visual'
+        element.append(close)
+      })
       expect(await expand.count()).toBe(0)
       const options = host.getByLabel('Visual options', { exact: true })
       expect(await options.count()).toBe(1)
-      const reserved = await options.evaluate(node => document.querySelector('#focus-test')!.getBoundingClientRect().right - node.getBoundingClientRect().right)
-      expect(reserved).toBeGreaterThanOrEqual(48)
-      await host.evaluate(element => element.removeAttribute('slot'))
+      const close = host.getByRole('button', { name: 'Close visual', exact: true })
+      await close.waitFor({ state: 'visible' })
+      const menuBounds = (await options.boundingBox())!, closeBounds = (await close.boundingBox())!
+      expect(closeBounds.x).toBeGreaterThanOrEqual(menuBounds.x + menuBounds.width)
+      expect(Math.abs(closeBounds.y + closeBounds.height / 2 - menuBounds.y - menuBounds.height / 2)).toBeLessThan(1)
+      await host.evaluate(element => {
+        element.querySelector('[slot="focus-action"]')?.remove()
+        element.removeAttribute('slot')
+      })
       await expand.waitFor({ state: 'visible' })
     } finally { await page.close() }
   })
