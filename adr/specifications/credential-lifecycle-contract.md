@@ -22,8 +22,9 @@ The 1 October migration roadmap separates D02 ([PR #785](https://github.com/flid
 from D12 completion. Freeze further activation/runtime feature growth in D02
 while maintainers review this scope. This ledger records the existing diff and
 proposed allocation. The activation access-authority and receipt-publication
-adapters have been extracted as recorded in the foundation scope review; the
-remaining split and lifecycle decision are still pending.
+adapters, phase writers and recovery readers have been extracted as recorded
+in the foundation scope review; the remaining split and lifecycle decision
+are still pending.
 
 The [foundation scope review](credential-foundation-review.md) gives concrete
 keep/split candidates, dependencies of installed denial checks, assurance-owner
@@ -32,7 +33,7 @@ handoffs and the decisions needed before the next implementation boundary.
 | Work | D02 disposition | Completion responsibility |
 | --- | --- | --- |
 | Owner/keyring setup, encrypted immutable drafts, scoped metadata/save APIs, validation receipts and transactional audit | Retain as the credential foundation under review. Offline owner/keyring setup is not customer-secret bootstrap or first publication. | D02; D10/D12 compose customer-secret bootstrap through the same authorized, audited service. |
-| Existing access checks, preparation/switch/commit records, pins, source/pool cleanup and publication fences | Review as explicit prerequisites; decide which stay in D02 and which need a separate PR. Some restrictive safeguards are installed; receipt-backed activation is not composed into production. | D11/D12 for combined ownership, drain, publication, installation and restart guarantees. |
+| Existing access checks, retained operation schema, pins, source/pool cleanup and publication fences | Review as explicit prerequisites; decide which stay in D02 and which need a separate PR. Some restrictive safeguards are installed; receipt-backed activation is not composed into production. | D11/D12 for combined ownership, drain, publication, installation and restart guarantees. |
 | Remaining app activation authority callback and production coordinator, source/agent consumption and administration UI | Defer further feature work; review the preserved publication-admission adapter and retained prerequisites for D12. Saved, validated or sealed does not mean in use. | D12 after D01/D02 decisions and the D10/D11 shared contract. |
 | Rotation, retirement, independent key recovery and retained-backup decryption | Required follow-up, not completed by draft-storage tests. | D12 implementation; D13 profile/recovery qualification. |
 | Accumulated CI/browser/security, retained release-provenance and demo-readiness fixes | Separate keep/split review; no removal is implied by this ledger. | Their owning CI, release and deployment reviews; none proves Nix adoption or managed lifecycle acceptance. |
@@ -559,8 +560,12 @@ by this slice. Those are the next coupled activation changes under sections 4–
 
 ### Transactional preparation boundary
 
-The internal preparation primitive now reserves an immutable validation receipt
-for one exact intended source publication. It records an operation ID, expected
+The preparation writer, its lifecycle types and tests have been extracted from
+D02 and preserved at `339f364ca5ccc1ce57049ca54619b40595010027`. This section
+describes that historical implementation, not an installed preparation API.
+
+In that implementation, the internal preparation primitive reserves an immutable
+validation receipt for one exact intended source publication. It records an operation ID, expected
 target revision and predecessor generation, and intended candidate, generation
 and publication IDs. The receipt remains the authoritative source for actor,
 credential version, owner/resource scope, binding revision, destination and
@@ -576,8 +581,9 @@ caller can commit the outer transaction. A repeated request conflicts rather
 than creating or replaying an activation. The read method returns the exact
 historical preparation without renewing the receipt.
 
-Preparation, switching, commit and cancellation remain internal; no production coordinator creates
-these records yet. One unfinished preparation is permitted per deployment.
+Preparation, switching, commit and cancellation were internal primitives; no
+production coordinator created these records. Their writers are now extracted.
+One unfinished preparation is permitted per deployment.
 An explicit authorized cancellation preserves the original intent and permanently
 reserves its receipt while releasing the deployment slot for a new operation
 with a new receipt. The commit primitive described below consumes that reservation
@@ -603,8 +609,10 @@ for the target lock. A repeatable snapshot must not silently miss a newly prepar
 operation. The eventual coordinator must acquire that same target lock before
 preparing or cancelling; credential storage does not query delivery tables.
 
-Cancellation uses a caller-owned transaction and a mandatory current-authority
-callback, with a savepoint covering the terminal record and redacted audit. The
+The cancellation writer and its tests are preserved at `339f364ca` and removed
+from D02; the publication fence above remains installed. In the preserved
+implementation, cancellation uses a caller-owned transaction and a mandatory
+current-authority callback, with a savepoint covering the terminal record and redacted audit. The
 callback must establish the target fence before operation-row mutation and verify
 that candidate work has been safely disposed and the actual authoritative runtime
 has been reconciled. Expired validation does not authorize cancellation, but it
@@ -709,7 +717,11 @@ integration boundaries; Astra reviewed the design before implementation.
 
 ### Durable switching intent and recovery lookup
 
-The internal preparation record now retains a one-time `switching_at` marker.
+The switching writer and both recovery readers, their lifecycle types and tests
+have been extracted from D02 and preserved at `339f364ca`. The schema remains
+unchanged. This section describes that preserved implementation.
+
+The internal preparation record retains a one-time `switching_at` marker.
 `BeginActivationSwitchingTx` reads the exact stored intent, requires its original
 receipt actor, and invokes a mandatory current-authority callback before changing
 the operation row. The callback must acquire the delivery target fence first,
@@ -792,6 +804,10 @@ example. PostgreSQL documents the nested rollback boundary in
 
 ### Atomic credential publication commit
 
+The commit writer, its types and tests have been extracted from D02 and preserved
+at `339f364ca` with the publication adapter. This section describes their
+historical transaction contract; the schema and ordinary denial remain installed.
+
 `CommitActivationPublicationTx` records `committed_at` for the exact switching
 operation in a caller-owned transaction. The preserved publication adapter
 invoked it inside delivery's activation-admission savepoint. The stored immutable
@@ -803,7 +819,6 @@ credential pin. It must retain those locks through the outer commit and perform
 no provider I/O. The ordinary production publication fence remains installed;
 the operation-scoped publication adapter and its integration tests are preserved
 for D12 at `339f364ca5ccc1ce57049ca54619b40595010027`, rather than retained in D02.
-The credential commit writer itself remains pending further extraction review.
 
 Receipt freshness has a precise checkpoint: the transition trigger's database
 wall-clock sample during the conditional update, at the final admission gate
@@ -1915,9 +1930,9 @@ been removed from D02 as the first implemented extraction. Their code and test
 evidence are preserved at `339f364ca5ccc1ce57049ca54619b40595010027` on the
 branch `codex/credential-activation-access-preserved`; no standalone D12 PR is
 implied. The adapter had no production callers. Installed denial checks and
-migrations 051/052 remain unchanged. Other phase writers, runtime/consumer
-integration and supporting changes still await extraction and review; this does
-not accept the lifecycle decision or reconcile ADR-0027 with ADR-0028.
+migrations 051/052 remain unchanged. The phase writers were subsequently
+extracted at the same preservation boundary. Runtime/consumer integration and
+supporting changes still await extraction and review; this does not accept the lifecycle decision or reconcile ADR-0027 with ADR-0028.
 
 In that preserved implementation,
 `access/postgres.AuthorizeCredentialActivationTx` checks both exact

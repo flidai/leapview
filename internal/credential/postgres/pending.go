@@ -34,14 +34,3 @@ func CheckNoPendingActivationTx(ctx context.Context, tx pgx.Tx, deploymentID str
 	}
 	return nil
 }
-
-func requireReadCommitted(ctx context.Context, tx Tx, deploymentID string) error {
-	result, err := credentialdb.New(tx).CheckNoPendingActivation(ctx, deploymentID)
-	if err != nil {
-		return normalizeDatabaseError(err)
-	}
-	if !result.ReadCommitted {
-		return credential.ErrUnavailable
-	}
-	return nil
-}

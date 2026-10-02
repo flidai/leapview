@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
-	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/credential"
 	"github.com/flidai/leapview/internal/credential/encryption"
 	credentialpostgres "github.com/flidai/leapview/internal/credential/postgres"
@@ -17,14 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type credentialFenceAudit struct{}
-
-func (credentialFenceAudit) RecordAuditEvent(ctx context.Context, tx pgx.Tx, intent access.AuditIntent) error {
-	_, err := accesspostgres.New().RecordAuditEvent(ctx, tx, intent)
-	return err
-}
-
-func credentialAdmissionFixture(t *testing.T) (*pgxpool.Pool, *deploymentpostgres.Repository, *credentialpostgres.Repository, credential.ActivationPreparation) {
+func credentialAdmissionFixture(t *testing.T) (*pgxpool.Pool, *deploymentpostgres.Repository, string) {
 	t.Helper()
 	db := generationAdmissionDB(t)
 	tx, err := db.Begin(t.Context())
@@ -42,10 +33,6 @@ func credentialAdmissionFixture(t *testing.T) (*pgxpool.Pool, *deploymentpostgre
 	if _, err := delivery.CreateTarget(t.Context(), deploymentpostgres.TargetInput{TargetID: admissionInstanceID, ProjectID: "project_admission", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := credentialpostgres.New(db, credentialFenceAudit{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	binding := encryption.Binding{DeploymentID: admissionInstanceID, TargetID: admissionInstanceID, OwnerID: "customer", ScopeKind: "connection", ProjectID: "project_admission", Environment: "prod", ResourceID: "warehouse", Purpose: "connection-authentication", Provider: "postgres", Destination: admissionDigest('a'), VersionID: uuid.NewString()}
 	actor := uuid.NewString()
@@ -54,37 +41,25 @@ func credentialAdmissionFixture(t *testing.T) (*pgxpool.Pool, *deploymentpostgre
 		t.Fatal(err)
 	}
 	receipt := credential.ValidationReceipt{ReceiptID: uuid.NewString(), Binding: binding, ActorID: actor, BindingID: "warehouse-prod", BindingRevision: 1, ConfigurationDigest: admissionDigest('b'), ValidatedAt: now, ExpiresAt: now.Add(5 * time.Minute)}
-	audit, err := receipt.AuditIntent()
-	if err != nil {
+	// These are persisted-state fixtures for the admission reader, not an
+	// activation authority. Keep the real schema and transition guards enabled.
+	if _, err := db.Exec(t.Context(), `INSERT INTO credential.validation_receipt
+(receipt_id,deployment_id,version_id,owner_id,scope_kind,target_id,project_id,environment,resource_id,purpose,provider,destination,actor_id,binding_id,binding_revision,configuration_digest,validated_at,expires_at)
+SELECT $1,deployment_id,version_id,owner_id,scope_kind,target_id,project_id,environment,resource_id,purpose,provider,destination,actor_id,$2,$3,$4,$5,$6
+FROM credential.draft_version WHERE version_id=$7`, receipt.ReceiptID, receipt.BindingID, receipt.BindingRevision, receipt.ConfigurationDigest, receipt.ValidatedAt, receipt.ExpiresAt, binding.VersionID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SaveValidation(t.Context(), receipt, audit); err != nil {
-		t.Fatal(err)
-	}
-	preparation := credential.ActivationPreparation{OperationID: uuid.NewString(), Receipt: receipt, ExpectedTargetRevision: 1, CandidateID: uuid.NewString(), GenerationID: uuid.NewString(), PublicationID: uuid.NewString()}
-	return db, delivery, repository, preparation
-}
-
-func credentialPreparationTargetFence(delivery *deploymentpostgres.Repository) func(context.Context, pgx.Tx, credential.ActivationPreparation) error {
-	return func(ctx context.Context, tx pgx.Tx, input credential.ActivationPreparation) error {
-		target, err := delivery.TargetForUpdateTx(ctx, tx, input.Receipt.Binding.TargetID)
-		if err != nil {
-			return err
-		}
-		if target.TargetID != input.Receipt.Binding.DeploymentID || target.ProjectID != input.Receipt.Binding.ProjectID || target.Environment != input.Receipt.Binding.Environment || target.TargetRevision != input.ExpectedTargetRevision || target.ActiveGenerationID != input.PredecessorGenerationID {
-			return credential.ErrConflict
-		}
-		return nil
-	}
+	return db, delivery, receipt.ReceiptID
 }
 
 func TestCredentialPublicationFenceObservesPreparationAfterTargetLockWait(t *testing.T) {
-	t.Run("prepared", func(t *testing.T) { testCredentialPublicationFenceAfterTargetLockWait(t, false) })
-	t.Run("switching", func(t *testing.T) { testCredentialPublicationFenceAfterTargetLockWait(t, true) })
+	for _, state := range []string{"prepared", "switching", "committed", "aborted"} {
+		t.Run(state, func(t *testing.T) { testCredentialPublicationFenceAfterTargetLockWait(t, state) })
+	}
 }
 
-func testCredentialPublicationFenceAfterTargetLockWait(t *testing.T, switching bool) {
-	db, delivery, repository, preparation := credentialAdmissionFixture(t)
+func testCredentialPublicationFenceAfterTargetLockWait(t *testing.T, state string) {
+	db, delivery, receiptID := credentialAdmissionFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	holder, err := db.Begin(ctx)
@@ -92,16 +67,27 @@ func testCredentialPublicationFenceAfterTargetLockWait(t *testing.T, switching b
 		t.Fatal(err)
 	}
 	defer func() { _ = holder.Rollback(context.Background()) }()
-	if _, err := repository.PrepareActivationTx(ctx, holder, preparation, credentialPreparationTargetFence(delivery)); err != nil {
+	if _, err := delivery.TargetForUpdateTx(ctx, holder, admissionInstanceID); err != nil {
 		t.Fatal(err)
 	}
-	if switching {
-		_, err := repository.BeginActivationSwitchingTx(ctx, holder, admissionInstanceID,
-			preparation.OperationID, preparation.Receipt.ActorID,
-			func(ctx context.Context, tx pgx.Tx, current credential.PreparedActivation, _ string) error {
-				return credentialPreparationTargetFence(delivery)(ctx, tx, current.Preparation)
-			})
-		if err != nil {
+	operationID := uuid.NewString()
+	if _, err := holder.Exec(ctx, `INSERT INTO credential.activation_preparation
+(operation_id,deployment_id,receipt_id,expected_target_revision,candidate_id,generation_id,publication_id,created_at)
+VALUES($1,$2,$3,1,$4,$5,$6,clock_timestamp())`, operationID, admissionInstanceID, receiptID, uuid.NewString(), uuid.NewString(), uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	if state == "switching" || state == "committed" {
+		if _, err := holder.Exec(ctx, `UPDATE credential.activation_preparation SET switching_at=clock_timestamp() WHERE operation_id=$1`, operationID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state == "committed" {
+		if _, err := holder.Exec(ctx, `UPDATE credential.activation_preparation SET committed_at=clock_timestamp() WHERE operation_id=$1`, operationID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state == "aborted" {
+		if _, err := holder.Exec(ctx, `UPDATE credential.activation_preparation SET aborted_at=clock_timestamp(), aborted_by=$2 WHERE operation_id=$1`, operationID, uuid.NewString()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -146,8 +132,12 @@ func testCredentialPublicationFenceAfterTargetLockWait(t *testing.T, switching b
 	}
 	select {
 	case err := <-result:
-		if !errors.Is(err, deploymentpostgres.ErrConflict) {
-			t.Fatalf("publication fence after wait = %v", err)
+		if state == "aborted" {
+			if err != nil {
+				t.Fatalf("aborted preparation denied publication after wait: %v", err)
+			}
+		} else if !errors.Is(err, deploymentpostgres.ErrConflict) {
+			t.Fatalf("publication fence after wait = %v, want conflict", err)
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
@@ -177,7 +167,7 @@ func TestCredentialPublicationFenceFailsClosedWithoutSchema(t *testing.T) {
 }
 
 func TestCredentialPublicationFenceRejectsStaleSnapshotIsolation(t *testing.T) {
-	db, delivery, _, _ := credentialAdmissionFixture(t)
+	db, delivery, _ := credentialAdmissionFixture(t)
 	for _, isolation := range []pgx.TxIsoLevel{pgx.RepeatableRead, pgx.Serializable} {
 		t.Run(string(isolation), func(t *testing.T) {
 			tx, err := db.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: isolation})

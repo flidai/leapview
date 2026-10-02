@@ -1,6 +1,6 @@
 # Credential foundation scope review
 
-Status: activation-access and receipt-publication adapters extracted; remaining allocation and maintainer decisions pending
+Status: activation-access, receipt-publication and phase writers extracted; remaining allocation and maintainer decisions pending
 
 Review date: 2026-10-02
 
@@ -43,10 +43,10 @@ not a standalone D12 PR or an accepted lifecycle implementation. Future D12 work
 can recover this slice after review of the shared contract. This extraction does
 not change installed publication or runtime denial, or migrations 051/052.
 
-Activation phase writers, consumer/runtime integration, retirement machinery and
-supporting CI/release/deployment changes remain in D02 pending further extraction
-and review. The allocation below remains proposed for those changes. This first
-slice neither completes the split nor accepts ADR-0027/ADR-0028 reconciliation.
+This first slice did not complete the split or accept ADR-0027/ADR-0028
+reconciliation. The subsequent slices below record further extraction;
+consumer/runtime integration, retirement machinery and supporting
+CI/release/deployment changes still await allocation and review.
 
 ### Second extraction: receipt-backed publication admission
 
@@ -59,8 +59,9 @@ complete local-pin set exactly, as it did before this extraction.
 The shared provenance-reader interface, ordinary publication fixture, pin
 continuity/evidence tests and refresh finalization/runtime tests remain. The
 fixture still installs credential schema because the pending-operation fence
-reads it. Migrations, pending-state checks and activation phase writers are
-unchanged. The removed adapter and tests are preserved at the same
+reads it. That second slice left migrations, pending-state checks and activation
+phase writers unchanged; the third slice below extracts the writers. The removed
+adapter and tests are preserved at the same
 `339f364ca5ccc1ce57049ca54619b40595010027` snapshot above; their files were unchanged
 between that snapshot and the pre-extraction revision `a00b5c61a`.
 
@@ -69,6 +70,30 @@ provider-only jobs with captured-authority checks. It is not unused merely
 because local credentials remain denied by preflight; its extraction requires a
 separate dependency review. This second slice does not complete the wider split
 or resolve the shared lifecycle decisions.
+
+### Third extraction: activation phase writers and recovery readers
+
+The uncomposed preparation, switching, commit and cancellation primitives have
+been removed together: `internal/credential/{preparation,switching,commit,abort}.go`,
+the matching PostgreSQL implementations and all eight private test files. Their
+seven SQL queries include the exact-operation and pending-operation recovery
+readers. The phase-only isolation helper is also removed. All sixteen Go files
+matched the preserved `339f364ca5ccc1ce57049ca54619b40595010027` snapshot before
+extraction; D12 can recover them after the shared lifecycle review.
+
+The installed `CheckNoPendingActivationTx` and its SQL are unchanged. The existing
+app admission test now seeds valid persisted states with the real schema and
+transition guards, under the delivery target lock. It checks prepared, switching
+and committed denial, aborted allowance, and the fresh read after waiting for
+that lock. Missing-schema and stale-isolation rejection remain covered. No
+production writer is retained solely to build these test fixtures.
+
+The current audit inventory no longer lists the removed phase audit producer;
+its transactional guarantees remain historical evidence in the lifecycle contract
+and preservation snapshot. Credential schema and migrations 048–054 are unchanged.
+The pending reader requires 051/052; retaining 053/054 here is not a claim that it
+needs those migrations or that the lifecycle design is accepted. Runtime/consumer
+and supporting changes still need the dependency review below.
 
 ### Retain in D02
 
@@ -102,7 +127,7 @@ D12 must define completion/reopening before changing this conservative denial.
 
 | Work | Concrete extraction candidates and exceptions |
 | --- | --- |
-| Credential phase writers and activation authority | `internal/credential/{preparation,switching,abort,commit}.go`, matching PostgreSQL writers/tests. The uncomposed access-authority adapter and its private queries were extracted in the first slice above. D12 owns their future composition. Review 053/054 switching/commit migrations with these callers; preserve the 051/052 reader dependency above. |
+| Preserved activation authority, phase writers and receipt publication | Extracted in the three slices above and preserved at `339f364ca`. D12 owns their reviewed composition. Schema/migrations remain unchanged in D02; review the 053/054 allocation separately while preserving the 051/052 reader dependency above. |
 | Credential consumption and candidate publication | `internal/credential/runtime.go`, `internal/credential/module/runtime_contracts.go`; consumer portions of `internal/app/credential_runtime*.go`, `candidate_local_connections.go`; native candidate/refresh integration tests. The receipt-backed publication adapter is preserved for D12 follow-up as described above; the app activation authority callback remains missing. Keep installed ordinary publication denial and provider-only refresh behavior. |
 | Pool/source/worker lifetime and restart | Retirement and cleanup changes in `internal/analytics/connectionbinding/`, `internal/analytics/duckdb/`, `internal/analytics/sourcework/`, `internal/runtimehost/`, and refresh execution/completion under `internal/refresh/` and `internal/app/refreshpostgres/`. D11/D12 must agree cross-process ownership and drain first. Existing ordinary-runtime correctness fixes need separate review before extraction. |
 | CI, browser stability and advisory evidence | Shard changes in `Taskfile.yml`, `.github/workflows/{merge-validation,nightly}.yml`, `internal/platform/ci/`, `scripts/frontend_ci_contract.test.ts`, `package.json`, related CI docs and browser tests; `.security/javascript-vulnerability-evidence.json`. Prefer separate CI/security review; retain foundation-specific generation and transport coverage. Each `.gitleaks.toml` exception follows its exact non-secret fixture. |
@@ -171,7 +196,7 @@ install-before-completion failure, a remaining old consumer, process overlap,
 and restoration of an older backup after revocation. Record answers in the
 existing lifecycle contract rather than introduce a new coordination framework.
 
-Next: review these two extractions and the remaining allocation and shared
+Next: review these three extractions and the remaining allocation and shared
 decisions, then complete the remaining dependency-complete extractions,
 foundation validation and D02 closeout. D12 then
 implements the agreed lifecycle in separate reviewable work. No approval,
