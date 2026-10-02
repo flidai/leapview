@@ -81,6 +81,8 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const responsiveLegend = movedSide ? compactProportionalSideLegend(option.legend) : option.legend
   const visibleBottomLegend = hasBottomLegend(responsiveLegend)
   const visibleTopLegend = hasTopLegend(responsiveLegend)
+  const visibleVisualMap = (Array.isArray(option.visualMap) ? option.visualMap : [option.visualMap])
+    .some((visualMap: Record<string, any> | undefined) => visualMap && visualMap.show !== false)
   const bottomLegend = (compact || focused) && visibleBottomLegend
   const narrowWithoutLegend = option.legend === undefined && width < 600 && hasPieSeries(option.series)
   const narrowBottomLegend = visibleBottomLegend && width < 600 && hasPieSeries(option.series)
@@ -108,7 +110,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
           right: compactInset(source.right, 8),
           // The builder reserves this space for a top legend and its title.
           top: visibleTopLegend ? source.top ?? 10 : compactInset(source.top, 10),
-          bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
+          bottom: compactBottomInset(source.bottom, compactBottom, visibleVisualMap),
         } : {}),
       }
     })
@@ -130,7 +132,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(responsiveLegend, hasPieSeries(option.series))
   }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
-    ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
+    ? compactDataZoom(option.dataZoom, bottomLegend, visibleVisualMap)
     : stripDataZoomNavigation(option.dataZoom)
   return patch
 }
