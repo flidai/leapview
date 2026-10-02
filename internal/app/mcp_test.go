@@ -19,7 +19,7 @@ import (
 
 func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 	store := testStore(t)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{MCPEnabled: true,
 		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 	}))
 	handler := server.Routes()
@@ -190,7 +190,7 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 
 func TestMCPGoSDKClientInteroperability(t *testing.T) {
 	store := testStore(t)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{MCPEnabled: true,
 		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 	}))
 	live := httptest.NewServer(server.Routes())
@@ -258,7 +258,7 @@ func (t bearerRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 
 func TestMCPReturnsValidationFailuresAsToolErrorsAndRejectsOrigins(t *testing.T) {
 	store := testStore(t)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{MCPEnabled: true,
 
 		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 	}))
@@ -309,7 +309,7 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 		t.Fatalf("create REST API token: %v", err)
 	}
 
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{MCPEnabled: true,
 		Auth:     testAuth(store, accessmodule.AuthConfig{APITokenOnly: true}),
 		MCPOAuth: MCPOAuthConfig{PublicURL: "https://leapview.example"},
 	}))
@@ -357,7 +357,7 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 // boundary when that native authority is not composed.
 func TestMCPOAuthFailsClosedWithoutNativePersistence(t *testing.T) {
 	store := testStore(t)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{MCPEnabled: true,
 		Auth:     testAuth(store, accessmodule.AuthConfig{LocalAuth: true, CSRFKey: "0123456789abcdef0123456789abcdef"}),
 		MCPOAuth: MCPOAuthConfig{PublicURL: "https://leapview.example"},
 	}))
@@ -394,7 +394,7 @@ func issueMCPUserToken(t *testing.T, server *appTestHarness, principalID string)
 
 func TestMCPUsesAPIRateAndBodyLimits(t *testing.T) {
 	store := testStore(t)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{MCPEnabled: true,
 
 		Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 		RateLimits: apihttpmiddleware.RateLimitConfig{
@@ -414,7 +414,7 @@ func TestMCPUsesAPIRateAndBodyLimits(t *testing.T) {
 	}
 
 	bodyStore := testStore(t)
-	bodyLimited := assembleRuntime(fakeMetrics{}, testStoreOptions(bodyStore, assemblyConfig{
+	bodyLimited := assembleRuntime(fakeMetrics{}, testStoreOptions(bodyStore, assemblyConfig{MCPEnabled: true,
 
 		Auth:             testAuth(bodyStore, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "mcp-secret"}),
 		RequestBodyLimit: apihttpmiddleware.RequestBodyLimitConfig{Enabled: true, MaxBytes: 16},

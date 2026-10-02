@@ -771,3 +771,27 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestManagedProtocolAndMetricsConfiguration(t *testing.T) {
+	cfg, err := LoadEnvironment(map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MCPEnabled || cfg.MetricsAddr != "" {
+		t.Fatalf("optional disclosures enabled by default")
+	}
+	cfg, err = LoadEnvironment(map[string]string{"LEAPVIEW_MCP_ENABLED": "true", "LEAPVIEW_METRICS_ADDR": "127.0.0.1:9090"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCPEnabled || cfg.MetricsAddr != "127.0.0.1:9090" {
+		t.Fatalf("explicit settings not loaded")
+	}
+	for _, addr := range []string{"http://public.test/metrics", "127.0.0.1:0", "127.0.0.1:99999"} {
+		candidate := cfg
+		candidate.MetricsAddr = addr
+		if err := candidate.Validate(ProfileServe); err == nil {
+			t.Fatalf("invalid metrics address %q accepted", addr)
+		}
+	}
+}

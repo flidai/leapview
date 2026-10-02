@@ -41,7 +41,7 @@ func testStoreOptions(store *testControlStore, options assemblyConfig) assemblyC
 			publicURL = options.MCPOAuth.PublicURL
 		}
 		module, err := accessmodule.Build(context.Background(), accessmodule.Config{
-			ExistingAuth: options.Auth, PublicURL: publicURL,
+			ExistingAuth: options.Auth, PublicURL: publicURL, MCPEnabled: options.MCPEnabled,
 			Profile:      accessmodule.NewProfileSurface(options.AccessRepo, options.MCPResource),
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
 		})

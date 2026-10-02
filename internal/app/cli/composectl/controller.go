@@ -673,6 +673,8 @@ func initializationEnvironment(existing []byte, options InitOptions, csrfKey, me
 	values["LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL"] = options.AdminEmail
 	for key, generated := range map[string]string{
 		"LEAPVIEW_CSRF_KEY":             csrfKey,
+		"LEAPVIEW_METRICS_ADDR":         ":9090",
+		"LEAPVIEW_MCP_ENABLED":          "false",
 		"LEAPVIEW_METRICS_BEARER_TOKEN": metricsToken,
 	} {
 		current := strings.TrimSpace(values[key])

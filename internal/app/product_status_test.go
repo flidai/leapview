@@ -70,3 +70,12 @@ func TestProductAdministrationStatusAgentConfigurationRequiresKeyAndModel(t *tes
 		})
 	}
 }
+
+func TestProductAdministrationStatusMCPFollowsDeploymentSetting(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		status := productAdministrationStatus(config.Config{MCPEnabled: enabled, MCPOAuthIssuerURL: "https://issuer.test"}, "", "", "", buildinfo.Identity{})
+		if !status.API.MCP.Available || status.API.MCP.Enabled != enabled || status.API.ExternalMCPIssuer != enabled {
+			t.Fatalf("MCP status=%#v", status.API)
+		}
+	}
+}

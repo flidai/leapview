@@ -9,6 +9,8 @@ class ManagedKamalConfigurationTest < Minitest::Test
     ENV["KAMAL_APP_HOST"] = "example-app.invalid"
     ENV["KAMAL_APP_HOSTNAME"] = "dash.example.com"
     ENV["KAMAL_REGISTRY_USERNAME"] = "example"
+    ENV["LEAPVIEW_OIDC_ISSUER_URL"] = "https://login.microsoftonline.com/fixture-tenant/v2.0"
+    ENV["LEAPVIEW_OIDC_CLIENT_ID"] = "fixture-client"
     ENV["LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID"] = "fixture-pool"
     ENV["LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST"] = "fixture-digest"
     @config = Kamal::Configuration.create_from(
@@ -43,10 +45,33 @@ class ManagedKamalConfigurationTest < Minitest::Test
     assert_includes proxy.deploy_command_args(target: "container-id"), '--health-check-host="dash.example.com"'
   end
 
+  def test_managed_disclosure_and_sign_in_baseline
+    clear = @config.raw_config.env["clear"]
+    assert_equal "0", clear["LEAPVIEW_LOCAL_AUTH"]
+    assert_equal "false", clear["LEAPVIEW_MCP_ENABLED"]
+    assert_equal ":9090", clear["LEAPVIEW_METRICS_ADDR"]
+    assert_equal "https://dash.example.com/auth/oidc/callback", clear["LEAPVIEW_OIDC_CALLBACK_URL"]
+    assert_includes @config.raw_config.env["secret"], "LEAPVIEW_OIDC_CLIENT_SECRET"
+    refute @config.raw_config.servers["web"]["options"].key?("publish")
+  end
+
   def test_missing_inventory_fails_closed
     ENV.delete("KAMAL_APP_HOST")
     assert_raises(KeyError) do
       Kamal::Configuration.create_from(config_file: Pathname.new(__dir__).join("deploy.yml.example"))
+    end
+  end
+
+  def test_missing_customer_identity_fails_closed
+    %w[LEAPVIEW_OIDC_ISSUER_URL LEAPVIEW_OIDC_CLIENT_ID].each do |key|
+      previous = ENV.delete(key)
+      begin
+        assert_raises(KeyError) do
+          Kamal::Configuration.create_from(config_file: Pathname.new(__dir__).join("deploy.yml.example"))
+        end
+      ensure
+        ENV[key] = previous
+      end
     end
   end
 end

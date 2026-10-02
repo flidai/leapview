@@ -16,7 +16,7 @@ import (
 // mounted route. Generated public API routes come from TypeSpec; browser and
 // operational routes are deliberately enumerated here.
 func TestRouteInventory(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, assemblyConfig{})
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{MCPEnabled: true})
 	server.runtime.persistenceConfigured = true
 	routes, ok := server.Routes().(chi.Routes)
 	if !ok {
@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "2f9e916deaa7ff02eb58766e264b7bf1a433786581922733b2a003ffca7ddfeb"
+	const expectedRouteContractDigest = "7dfe3173c91188eaa67ff73ec2b0a7cbd086a8a000112ea71b8d3d7768037964"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -109,7 +109,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/.well-known/leapview":
 		public.owner = "platform"
 		return public, true
-	case path == "/healthz" || path == "/readyz" || path == "/metrics" || strings.HasPrefix(path, "/__dev/"):
+	case path == "/healthz" || path == "/readyz" || strings.HasPrefix(path, "/__dev/"):
 		public.owner = "platform"
 		return public, true
 	case path == "/api/docs" || path == "/api/openapi.json":
@@ -244,10 +244,8 @@ func apiOwner(tags []string) (string, bool) {
 }
 
 const nonAPIRouteInventory = `
-CONNECT /metrics
 CONNECT /static/*
 DELETE /profile/avatar
-DELETE /metrics
 DELETE /static/*
 GET /
 GET /.well-known/leapview
@@ -327,7 +325,6 @@ GET /login
 GET /profile/avatars/{principal}/{digest}
 GET /product/logo/{digest}
 GET /search
-GET /metrics
 GET /models
 GET /models/{asset}/{section}
 GET /pipelines
@@ -347,12 +344,9 @@ GET /semantic-models
 GET /semantic-models/{asset}/{section}
 GET /static/*
 GET /updates
-HEAD /metrics
 HEAD /static/*
-OPTIONS /metrics
 OPTIONS /static/*
 PATCH /admin/agent/config
-PATCH /metrics
 PATCH /static/*
 POST /admin/audit/command
 POST /admin/access/command
@@ -401,7 +395,6 @@ POST /models/{asset}/data/command
 GET /semantic-models/search
 POST /semantic-models/{asset}/data/command
 POST /device
-POST /metrics
 POST /oauth/register
 POST /oauth/device/code
 POST /oauth/revoke
@@ -416,10 +409,7 @@ POST /public/dashboards/{publicId}/commands/select
 POST /public/dashboards/{publicId}/commands/spatial-select
 POST /public/dashboards/{publicId}/commands/visual-window
 POST /static/*
-PUT /metrics
 PUT /static/*
-QUERY /metrics
 QUERY /static/*
-TRACE /metrics
 TRACE /static/*
 `

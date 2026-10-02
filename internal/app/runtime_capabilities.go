@@ -107,6 +107,7 @@ type accessCapabilityConfig struct {
 	InstanceID       string
 	Environment      string
 	MCPIssuerURL     string
+	MCPEnabled       bool
 	CurrentProject   func(context.Context) (projectgraph.ResourceID, error)
 	AuthoringProject func(context.Context) (projectgraph.ResourceID, error)
 }
@@ -123,7 +124,7 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 		Production:  cfg.Production,
 		Auth:        cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, AuthorizationPolicyTargetID: cfg.InstanceID,
-		AuthorizationPolicyEnvironment: cfg.Environment, MCPIssuerURL: cfg.MCPIssuerURL,
+		AuthorizationPolicyEnvironment: cfg.Environment, MCPEnabled: cfg.MCPEnabled, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID:   cfg.CurrentProject,
 		AuthoringProjectID: cfg.AuthoringProject,
 		Presentation:       page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},

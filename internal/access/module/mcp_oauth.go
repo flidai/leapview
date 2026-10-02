@@ -80,6 +80,10 @@ func requestTargetsAuthoringOAuthRevoke(r *http.Request) bool {
 }
 
 func (s *Module) MCPProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
+	if !s.MCPEnabled() {
+		http.NotFound(w, r)
+		return
+	}
 	if s.oauthResource == nil {
 		http.Error(w, "MCP OAuth is unavailable", http.StatusServiceUnavailable)
 		return
@@ -88,6 +92,10 @@ func (s *Module) MCPProtectedResourceMetadata(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Module) MCPAuthorizationServerMetadata(w http.ResponseWriter, r *http.Request) {
+	if !s.MCPEnabled() {
+		http.NotFound(w, r)
+		return
+	}
 	if s.oauth == nil {
 		http.Error(w, "MCP OAuth is unavailable", http.StatusServiceUnavailable)
 		return
@@ -96,6 +104,10 @@ func (s *Module) MCPAuthorizationServerMetadata(w http.ResponseWriter, r *http.R
 }
 
 func (s *Module) MCPOAuthRegister(w http.ResponseWriter, r *http.Request) {
+	if !s.MCPEnabled() {
+		http.NotFound(w, r)
+		return
+	}
 	if s.oauth == nil {
 		http.Error(w, "MCP OAuth is unavailable", http.StatusServiceUnavailable)
 		return
@@ -104,6 +116,10 @@ func (s *Module) MCPOAuthRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Module) MCPOAuthToken(w http.ResponseWriter, r *http.Request) {
+	if !s.MCPEnabled() {
+		http.NotFound(w, r)
+		return
+	}
 	if s.oauth == nil {
 		http.Error(w, "MCP OAuth is unavailable", http.StatusServiceUnavailable)
 		return
@@ -112,6 +128,10 @@ func (s *Module) MCPOAuthToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Module) MCPOAuthRevoke(w http.ResponseWriter, r *http.Request) {
+	if !s.MCPEnabled() {
+		http.NotFound(w, r)
+		return
+	}
 	if s.oauth == nil {
 		http.Error(w, "MCP OAuth is unavailable", http.StatusServiceUnavailable)
 		return
@@ -120,6 +140,10 @@ func (s *Module) MCPOAuthRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Module) MCPOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
+	if !s.MCPEnabled() {
+		http.NotFound(w, r)
+		return
+	}
 	if s.oauth == nil || s.auth == nil {
 		http.Error(w, "MCP OAuth is unavailable", http.StatusServiceUnavailable)
 		return

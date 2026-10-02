@@ -26,6 +26,7 @@ type Module struct {
 	currentPrincipal                  func(*http.Request) (Principal, bool)
 	repository                        func() (access.Repository, error)
 	oauth                             mcpOAuthService
+	mcpEnabled                        bool
 	oauthResource                     mcpoauth.ResourceServer
 	desktopAuth                       *desktopauth.Service
 	authoringAuth                     *access.AuthoringAuthService
@@ -78,6 +79,7 @@ type surfaceConfig struct {
 	Auth                              *Auth
 	Logger                            *slog.Logger
 	OAuth                             mcpOAuthService
+	MCPEnabled                        bool
 	OAuthResource                     mcpOAuthResource
 	AuthoringAuth                     *access.AuthoringAuthService
 	Avatar                            *avatar.Service
@@ -135,7 +137,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		return session.ID, true
 	}
 	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
-		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
+		mcpEnabled: config.MCPEnabled, oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
 		currentEffectiveCapabilities:      config.CurrentEffectiveCapabilities,
 		currentEffectivePermissionOptions: config.CurrentEffectivePermissionOptions,
 		currentProjectID:                  config.CurrentProjectID,
