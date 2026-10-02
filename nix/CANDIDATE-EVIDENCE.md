@@ -149,6 +149,59 @@ The pinned [Skopeo copy contract](https://github.com/podman-container-tools/skop
 defines digest preservation and full-index copying. No published builder or
 protected candidate authorization is changed.
 
+### Trusted provenance and runtime SPDX
+
+`scripts/nix_signed_evidence.py` composes the read-only registry-content adapter
+with live GitHub attestation verification. It verifies SLSA v1 provenance for the
+root manifest/index and SPDX 2.3 for **each platform manifest**, then compares each
+verified SPDX predicate with that platform's exact bound runtime document. The
+SPDX JSON representation may differ, but the canonical document, namespace,
+packages and all other fields must be identical. The receipt retains both the
+original report hash and the canonical predicate/statement hashes.
+
+```sh
+nix develop --no-update-lock-file .#runtime-security -c \
+  python3 scripts/nix_signed_evidence.py \
+  --image ghcr.io/flidai/leapview@sha256:FULL_MANIFEST_DIGEST \
+  --kind application-image --platform linux/amd64 \
+  --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security \
+  --expected-workflow flidai/leapview/.github/workflows/artifacts.yml \
+  --signer-revision FULL_PROTECTED_WORKFLOW_EVENT_SHA \
+  --output .tmp/nix-runtime-security/signed-evidence-binding.json
+```
+
+Repeat candidate/platform arguments for the whole matrix. Authenticate GitHub CLI
+and the registry separately before verification. The locked runtime-security shell
+supplies GitHub CLI as well as Skopeo. Approved signers are the existing protected
+application artifact/release workflows and the site image workflow, selected by
+output kind. Verification requires the exact signing revision, `refs/heads/main`,
+GitHub-hosted runners and registry-discoverable bundles. It accepts no offline
+bundle, pre-verified JSON file, alternative signer or hermetic success flag.
+
+For protected `workflow_dispatch`, `--signer-revision` is the workflow event SHA
+(`github.sha` on main), **not** the checked-out candidate head. The candidate source
+is independently bound by the clean checkout, archive identity, locked inputs and
+registry content. Preserve the existing exact-open-PR-head/direct-main-base gate;
+this command does not implement or replace that authorization. The GitHub CLI
+[verification contract](https://cli.github.com/manual/gh_attestation_verify) defines
+the signer/source constraints and verified statement output used here.
+
+Replace `--output` with `--verify` to perform fresh registry/signature checks and
+compare a retained receipt. A changed selected statement requires fresh evidence.
+Missing signatures, changed inventories, wrong subjects/predicates, tool failures,
+oversized verifier JSON and expired/changed candidate inputs all fail. Tool calls
+have bounded timeouts and suppress credential-bearing diagnostics. Verification
+outputs are not accepted as an independent trust authority: the receipt is unsigned
+and must be regenerated under the protected admission caller.
+
+Protected **Nix** builders still need to publish immutable candidates, sign their
+provenance and attest each platform's already-bound `sbom.spdx.json` without
+rebuilding or replacing its inventory. Existing Buildx SPDX cannot stand in for
+the Nix runtime document. No Nix producer or release adoption is enabled by this
+adapter. Both its receipt and the registry-content receipt retain
+`releaseAdmission: false`; Go/embedded-native coverage, full platform and host
+qualification, installation/recovery and exact-artifact promotion remain required.
+
 ### Remaining release authority
 
 The manifest is unsigned. Its hashes detect accidental substitution when checked
@@ -163,8 +216,9 @@ selected. The runtime SPDX export is not a trusted SPDX attestation discoverable
 by that action, and Nix runtime evidence covers neither Go vulnerabilities nor
 embedded DuckDB and extension libraries.
 
-D04's remaining admission adapters must bind trusted provenance, discoverable
-SPDX evidence, the existing Trivy/Go/embedded-native checks, supported-host
+D04's remaining protected producer and admission composition must supply trusted
+provenance and discoverable SPDX for these adapters and bind the existing
+Trivy/Go/embedded-native checks, supported-host
 compatibility and installation/upgrade/rollback/recovery results to the exact
 candidate, with canonical release identity across the supported platform matrix.
 They must then promote the admitted immutable artifact without

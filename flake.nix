@@ -106,6 +106,7 @@
             pkgs.syft
             pkgs.grype
             pkgs.skopeo
+            pkgs.gh
             pkgs.python3
           ];
         };
