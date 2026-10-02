@@ -21,7 +21,11 @@ func (r credentialOwnerReader) CustomerOwner(context.Context) (string, error) { 
 
 func TestCredentialSetupFailsClosedOnPartialOrMismatchedSetup(t *testing.T) {
 	const instance = "lvinst_0123456789abcdefghijklmnopqrstuv"
-	path := filepath.Join(t.TempDir(), "keyring.json")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "keyring.json")
 	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))
 	body := fmt.Sprintf(`{"format":"credential-keyring-v1","deployment_id":%q,"active_write_key_id":"key-1","keys":[{"key_id":"key-1","key_base64":%q,"state":"active_write"}]}`, instance, key)
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {

@@ -100,7 +100,11 @@ func testKeyCommitment(keyID string) encryption.KeyCommitment {
 
 func loadTestCredentialKeyring(t *testing.T, deploymentID, keyID string, material []byte) *encryption.Keyring {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "credential-keyring.json")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "credential-keyring.json")
 	document := fmt.Sprintf(`{"format":"credential-keyring-v1","deployment_id":%q,"active_write_key_id":%q,"keys":[{"key_id":%q,"key_base64":%q,"state":"active_write"}]}`, deploymentID, keyID, keyID, base64.StdEncoding.EncodeToString(material))
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)

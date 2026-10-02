@@ -880,11 +880,11 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
 	tokenEvidence, tokenEvidenceSupported := accessBundle.Repository.(access.APITokenAuthorityEvidenceReader)
 	if !tokenEvidenceSupported {
-		return nil, errors.New("PostgreSQL access repository does not support credential-validation token authority evidence")
+		return fail(errors.New("PostgreSQL access repository does not support credential-validation token authority evidence"))
 	}
 	sessionEvidence, sessionEvidenceSupported := accessBundle.Repository.(access.SessionAuthorityEvidenceReader)
 	if !sessionEvidenceSupported {
-		return nil, errors.New("PostgreSQL access repository does not support credential-validation browser-session authority evidence")
+		return fail(errors.New("PostgreSQL access repository does not support credential-validation browser-session authority evidence"))
 	}
 	credentialServices, err := credentialmodule.Build(ctx, credentialmodule.Config{
 		Pool: bootstrap.RuntimePool().NativePool(), Audit: graph.ConnectionBindingAudit.RecordAuditEvent,
@@ -899,7 +899,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		RecheckCredential: accessmodule.CredentialAuthorityRechecker(tokenEvidence, sessionEvidence),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("build customer credential services: %w", err)
+		return fail(fmt.Errorf("build customer credential services: %w", err))
 	}
 	refreshCredentials.readers = credentialServices
 	nativeRefreshExecutor, err := apprefreshpostgres.NewPostgresNativeRefreshExecutor(refreshCandidateMutationFactory{

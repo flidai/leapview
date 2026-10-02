@@ -127,7 +127,11 @@ func TestCredentialSetupChecksInitializationAndKeyringBeforeDeclaration(t *testi
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := customerSetupDB(t)
-			cfg := productionAdminConfig(t.TempDir())
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := productionAdminConfig(root)
 			cfg.CredentialKeyringFile = filepath.Join(cfg.HomeDir, "keyring.json")
 			key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))
 			body := fmt.Sprintf(`{"format":"credential-keyring-v1","deployment_id":%q,"active_write_key_id":"key-1","keys":[{"key_id":"key-1","key_base64":%q,"state":"active_write"}]}`, tc.keyInstance, key)
@@ -146,7 +150,7 @@ func TestCredentialSetupChecksInitializationAndKeyringBeforeDeclaration(t *testi
 				},
 			})
 			var out bytes.Buffer
-			err := operations.SetupCredentials(t.Context(), admincli.CredentialSetupRequest{OwnerID: "customer:one"}, &out)
+			err = operations.SetupCredentials(t.Context(), admincli.CredentialSetupRequest{OwnerID: "customer:one"}, &out)
 			if (err != nil) != tc.wantError {
 				t.Fatalf("error=%v", err)
 			}

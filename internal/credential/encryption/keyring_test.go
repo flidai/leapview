@@ -128,6 +128,10 @@ func TestEncryptRequiresBudgetAndDoesNotEncryptWhenReservationFails(t *testing.T
 }
 
 func TestLoadRequiresStrictKeyringAndDoesNotEchoInput(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	secretKey := base64.StdEncoding.EncodeToString(bytes32(9))
 	valid := `{"format":"credential-keyring-v1","deployment_id":"deployment-a","active_write_key_id":"write-a","keys":[{"key_id":"write-a","key_base64":"` + secretKey + `","state":"active_write"}]}`
 	malformed := []string{
@@ -139,7 +143,7 @@ func TestLoadRequiresStrictKeyringAndDoesNotEchoInput(t *testing.T) {
 		strings.Replace(valid, `"keys":[`, `"unexpected":"secret-input","keys":[`, 1),
 	}
 	for i, raw := range malformed {
-		path := filepath.Join(t.TempDir(), fmt.Sprintf("keyring-%d.json", i))
+		path := filepath.Join(root, fmt.Sprintf("keyring-%d.json", i))
 		writeKeyring(t, path, []byte(raw), 0o600)
 		if _, err := Load(path); err == nil {
 			t.Errorf("malformed keyring %d was accepted", i)
@@ -152,7 +156,7 @@ func TestLoadRequiresStrictKeyringAndDoesNotEchoInput(t *testing.T) {
 		{id: "write-a", key: bytes32(1), state: "active_write"},
 		{id: "write-a", key: bytes32(2), state: "decrypt_only"},
 	})
-	path := filepath.Join(t.TempDir(), "duplicate-id.json")
+	path := filepath.Join(root, "duplicate-id.json")
 	writeKeyring(t, path, []byte(duplicateKeyID), 0o600)
 	if _, err := Load(path); err == nil {
 		t.Fatal("duplicate key ID was accepted")
@@ -161,7 +165,7 @@ func TestLoadRequiresStrictKeyringAndDoesNotEchoInput(t *testing.T) {
 		{id: "write-a", key: bytes32(1), state: "active_write"},
 		{id: "old-a", key: bytes32(1), state: "decrypt_only"},
 	})
-	path = filepath.Join(t.TempDir(), "duplicate-material.json")
+	path = filepath.Join(root, "duplicate-material.json")
 	writeKeyring(t, path, []byte(duplicateMaterial), 0o600)
 	if _, err := Load(path); err == nil {
 		t.Fatal("same key material under multiple IDs was accepted")
@@ -169,22 +173,26 @@ func TestLoadRequiresStrictKeyringAndDoesNotEchoInput(t *testing.T) {
 }
 
 func TestLoadChecksExactPrivatePermissionsOwnerAndSymlinks(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	contents := []byte(testKeyringJSON(t, "deployment-a", "write-a", []testKey{{id: "write-a", key: bytes32(1), state: "active_write"}}))
 	for _, mode := range []os.FileMode{0o600, 0o400} {
-		path := filepath.Join(t.TempDir(), "ring.json")
+		path := filepath.Join(root, fmt.Sprintf("ring-%04o.json", mode))
 		writeKeyring(t, path, contents, mode)
 		if _, err := Load(path); err != nil {
 			t.Errorf("mode %04o rejected: %v", mode, err)
 		}
 	}
 	for _, mode := range []os.FileMode{0o640, 0o644, 0o000} {
-		path := filepath.Join(t.TempDir(), "ring.json")
+		path := filepath.Join(root, fmt.Sprintf("ring-%04o.json", mode))
 		writeKeyring(t, path, contents, mode)
 		if _, err := Load(path); err == nil {
 			t.Errorf("mode %04o accepted", mode)
 		}
 	}
-	setuidPath := filepath.Join(t.TempDir(), "setuid-ring.json")
+	setuidPath := filepath.Join(root, "setuid-ring.json")
 	writeKeyring(t, setuidPath, contents, os.ModeSetuid|0o600)
 	setuidInfo, err := os.Stat(setuidPath)
 	if err != nil {
@@ -195,7 +203,7 @@ func TestLoadChecksExactPrivatePermissionsOwnerAndSymlinks(t *testing.T) {
 			t.Fatal("keyring with a special permission bit was accepted")
 		}
 	}
-	path := filepath.Join(t.TempDir(), "real.json")
+	path := filepath.Join(root, "real.json")
 	writeKeyring(t, path, contents, 0o600)
 	link := filepath.Join(filepath.Dir(path), "link.json")
 	if err := os.Symlink(path, link); err != nil {
@@ -204,7 +212,7 @@ func TestLoadChecksExactPrivatePermissionsOwnerAndSymlinks(t *testing.T) {
 	if _, err := Load(link); err == nil {
 		t.Fatal("symlink keyring was accepted")
 	}
-	symlinkDirectory := filepath.Join(t.TempDir(), "linked-directory")
+	symlinkDirectory := filepath.Join(root, "linked-directory")
 	if err := os.Symlink(filepath.Dir(path), symlinkDirectory); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +313,11 @@ func testBindingWithDeployment(deploymentID string) Binding {
 
 func loadTestKeyring(t *testing.T, contents string, mode os.FileMode) *Keyring {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "keyring.json")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "keyring.json")
 	writeKeyring(t, path, []byte(contents), mode)
 	keyring, err := Load(path)
 	if err != nil {
