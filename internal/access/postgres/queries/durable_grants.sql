@@ -169,30 +169,6 @@ SELECT EXISTS (
       AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL
 );
 
--- name: LockActivePrincipalForShare :one
-SELECT id
-FROM access.principal
-WHERE id = sqlc.arg(id)::uuid AND status = 'active'
-  AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL
-FOR SHARE;
-
--- name: ListActivePrincipalGroupIDsForShare :many
-SELECT g.id::text AS group_id
-FROM access.access_group AS g
-JOIN access.principal_group AS pg ON pg.group_id = g.id
-WHERE pg.principal_id = sqlc.arg(principal_id)::uuid
-  AND pg.revoked_at IS NULL AND g.revoked_at IS NULL
-ORDER BY g.id
-FOR SHARE OF g;
-
--- name: LockActivePrincipalGroupMembershipForShare :one
-SELECT group_id
-FROM access.principal_group
-WHERE group_id = sqlc.arg(group_id)::uuid
-  AND principal_id = sqlc.arg(principal_id)::uuid
-  AND revoked_at IS NULL
-FOR SHARE;
-
 -- name: IsCurrentGroup :one
 SELECT EXISTS (
     SELECT 1 FROM access.access_group
@@ -206,35 +182,6 @@ WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
   AND token_fingerprint = sqlc.arg(fingerprint)::bytea
   AND revoked_at IS NULL AND expires_at > clock_timestamp()
 FOR SHARE;
-
--- Credential activation accepts only a browser session. Desktop sessions are
--- bound to their own instance/profile authority and cannot authorize this path.
--- name: LockActiveBrowserSessionCredential :one
-SELECT id
-FROM access.session
-WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
-  AND token_fingerprint = sqlc.arg(fingerprint)::bytea AND kind = 'browser'
-  AND revoked_at IS NULL AND expires_at > clock_timestamp()
-FOR SHARE;
-
--- These final checks run after activation has acquired every authority lock.
--- The database clock is evaluated again after any lock wait; row locks do not
--- keep a credential unexpired.
--- name: IsActiveBrowserSessionCredential :one
-SELECT EXISTS (
-    SELECT 1 FROM access.session
-    WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
-      AND token_fingerprint = sqlc.arg(fingerprint)::bytea AND kind = 'browser'
-      AND revoked_at IS NULL AND expires_at > clock_timestamp()
-);
-
--- name: IsActiveAPITokenCredential :one
-SELECT EXISTS (
-    SELECT 1 FROM access.api_token
-    WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
-      AND token_fingerprint = sqlc.arg(fingerprint)::bytea
-      AND revoked_at IS NULL AND expires_at > clock_timestamp()
-);
 
 -- name: LockActiveAPITokenCredential :one
 SELECT id

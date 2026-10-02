@@ -21,7 +21,9 @@ document remain evidence for their individual checkpoints, not current decisions
 The 1 October migration roadmap separates D02 ([PR #785](https://github.com/flidai/leapview/pull/785))
 from D12 completion. Freeze further activation/runtime feature growth in D02
 while maintainers review this scope. This ledger records the existing diff and
-proposed allocation; it neither extracts code nor accepts the lifecycle decision.
+proposed allocation. The activation access-authority slice has been extracted as
+recorded in the foundation scope review; the remaining split and lifecycle
+decision are still pending.
 
 The [foundation scope review](credential-foundation-review.md) gives concrete
 keep/split candidates, dependencies of installed denial checks, assurance-owner
@@ -1902,8 +1904,18 @@ refresh pipeline, crash recovery during an incomplete build, publication or
 consumer activation. Production local-credential preflight remains closed and is
 asserted separately. Those boundaries must be joined before enabling local pins.
 
-### Transaction-bound activation access authority
+### Transaction-bound activation access authority (preserved follow-up)
 
+This adapter, its three test files and seven private access SQL queries have
+been removed from D02 as the first implemented extraction. Their code and test
+evidence are preserved at `339f364ca5ccc1ce57049ca54619b40595010027` on the
+branch `codex/credential-activation-access-preserved`; no standalone D12 PR is
+implied. The adapter had no production callers. Installed denial checks and
+migrations 051/052 remain unchanged. Other phase writers, runtime/consumer
+integration and supporting changes still await extraction and review; this does
+not accept the lifecycle decision or reconcile ADR-0027 with ADR-0028.
+
+In that preserved implementation,
 `access/postgres.AuthorizeCredentialActivationTx` checks both exact
 `connection.manage` and `connection.use` permissions in a caller-owned
 READ COMMITTED transaction. It binds the supplied generation snapshot to its
@@ -1914,8 +1926,9 @@ ceiling. Locks fence revocation through the caller's transaction; concurrent
 membership additions are conservatively ignored. Credential expiry is checked
 with the database clock after potentially blocking authority reads.
 
-PostgreSQL tests cover exact scope, current policy and membership revocation,
-API-token attenuation, caller-owned transaction lifetime and revocation locks.
+The preserved PostgreSQL tests cover exact scope, current policy and membership
+revocation, API-token attenuation, caller-owned transaction lifetime and
+revocation locks.
 The expiry regression holds a token row lock until the database clock passes
 expiry and requires rejection after release.
 

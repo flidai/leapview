@@ -1,6 +1,6 @@
 # Credential foundation scope review
 
-Status: proposed allocation; maintainer decisions pending; no code extracted
+Status: first activation-access slice extracted; remaining allocation and maintainer decisions pending
 
 Review date: 2026-10-02
 
@@ -25,6 +25,28 @@ D10/D11 interfaces are reviewed. Separate independently useful CI, release and
 deployment fixes under their existing owners. The tables identify concrete
 files and related test families; they are not a patch or an exhaustive assignment
 of every changed hunk. No file is safe to delete solely because of its directory.
+
+### First extraction: activation access authority
+
+The uncomposed `AuthorizeCredentialActivationTx` adapter has been removed from
+D02 together with its three test files and seven private SQL queries in
+`internal/access/postgres/queries/{authorization_policy,durable_grants}.sql`.
+The removed Go files are `internal/access/postgres/activation_authority.go`,
+`activation_authority_test.go`, `activation_authority_lock_test.go` and
+`activation_authority_scope_test.go`. The adapter had no production callers;
+its helpers and added queries were used only by this implementation and tests.
+
+The code and test evidence remain preserved at
+`339f364ca5ccc1ce57049ca54619b40595010027` on the branch
+`codex/credential-activation-access-preserved`. This is a preservation snapshot,
+not a standalone D12 PR or an accepted lifecycle implementation. Future D12 work
+can recover this slice after review of the shared contract. This extraction does
+not change installed publication or runtime denial, or migrations 051/052.
+
+Activation phase writers, consumer/runtime integration, retirement machinery and
+supporting CI/release/deployment changes remain in D02 pending further extraction
+and review. The allocation below remains proposed for those changes. This first
+slice neither completes the split nor accepts ADR-0027/ADR-0028 reconciliation.
 
 ### Retain in D02
 
@@ -58,7 +80,7 @@ D12 must define completion/reopening before changing this conservative denial.
 
 | Work | Concrete extraction candidates and exceptions |
 | --- | --- |
-| Credential phase writers and activation authority | `internal/credential/{preparation,switching,abort,commit}.go`, matching PostgreSQL writers/tests, and `internal/access/postgres/activation_authority.go` plus activation-only query changes. D12 owns their composition. Review 053/054 switching/commit migrations with these callers; preserve the 051/052 reader dependency above. |
+| Credential phase writers and activation authority | `internal/credential/{preparation,switching,abort,commit}.go`, matching PostgreSQL writers/tests. The uncomposed access-authority adapter and its private queries were extracted in the first slice above. D12 owns their future composition. Review 053/054 switching/commit migrations with these callers; preserve the 051/052 reader dependency above. |
 | Credential consumption and candidate publication | `internal/credential/runtime.go`, `internal/credential/module/runtime_contracts.go`; consumer portions of `internal/app/credential_runtime*.go`, `candidate_local_connections.go`; `internal/app/deploymentpostgres/credential_publication_admission.go` and native candidate/refresh integration tests. Reuse the existing adapter; the remaining app activation authority callback is still missing. Keep ordinary publication denial separately. |
 | Pool/source/worker lifetime and restart | Retirement and cleanup changes in `internal/analytics/connectionbinding/`, `internal/analytics/duckdb/`, `internal/analytics/sourcework/`, `internal/runtimehost/`, and refresh execution/completion under `internal/refresh/` and `internal/app/refreshpostgres/`. D11/D12 must agree cross-process ownership and drain first. Existing ordinary-runtime correctness fixes need separate review before extraction. |
 | CI, browser stability and advisory evidence | Shard changes in `Taskfile.yml`, `.github/workflows/{merge-validation,nightly}.yml`, `internal/platform/ci/`, `scripts/frontend_ci_contract.test.ts`, `package.json`, related CI docs and browser tests; `.security/javascript-vulnerability-evidence.json`. Prefer separate CI/security review; retain foundation-specific generation and transport coverage. Each `.gitleaks.toml` exception follows its exact non-secret fixture. |
@@ -127,8 +149,9 @@ install-before-completion failure, a remaining old consumer, process overlap,
 and restoration of an older backup after revocation. Record answers in the
 existing lifecycle contract rather than introduce a new coordination framework.
 
-Next: maintainer review of this allocation and the shared decisions, followed by
-dependency-complete extraction/foundation validation and D02 closeout. D12 then
+Next: review this first extraction and the remaining allocation and shared
+decisions, then complete the remaining dependency-complete extractions,
+foundation validation and D02 closeout. D12 then
 implements the agreed lifecycle in separate reviewable work. No approval,
 production gate opening, managed qualification or programme restart is recorded
 by this document.
