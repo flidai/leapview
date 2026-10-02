@@ -17,7 +17,9 @@ tasks:
   nix:qualify:
     desc: Qualify the Nix image through the existing production deployment checks
     cmds:
-      - nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
+      - task: nix:build
+      - task: nix:image
+      - nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh result-image result-app
 
   nix:check:
     desc: Check the locked Nix toolchain and real browser integration
@@ -533,6 +535,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts

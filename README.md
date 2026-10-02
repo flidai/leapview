@@ -39,6 +39,11 @@ for the supported Compose deployment, database bootstrap, and first project.
 The repository also contains a release-oriented
 [Docker Compose package](deploy/compose/README.md) for self-hosted deployments.
 
+The public website uses the [manual Kamal operator](deploy/kamal-site/README.md).
+Its [2 October live acceptance evidence](deploy/kamal-site/evidence/final-acceptance-20261002.md)
+records the completed observation and recovery audit. Automatic VPS activation
+remains deferred.
+
 ## Development
 
 On x86_64 Linux, use `./scripts/develop.sh` to enter the default locked Nix

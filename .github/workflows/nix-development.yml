@@ -30,6 +30,9 @@ on:
       - 'scripts/tests/test_nix_registry_content.py'
       - 'scripts/nix_signed_evidence.py'
       - 'scripts/tests/test_nix_signed_evidence.py'
+      - 'scripts/nix_candidate_publication.py'
+      - 'scripts/tests/test_nix_candidate_publication.py'
+      - '.github/workflows/nix-candidate.yml'
       - 'scripts/generate_build_sources.sh'
       - 'pkg/apigen/**'
       - 'scripts/ensure_playwright*'
@@ -109,9 +112,11 @@ jobs:
             experimental-features = nix-command flakes
             sandbox = true
       - name: Build application and container without undeclared network access
-        run: nix build --no-update-lock-file .#leapview .#leapview-image --no-link -L
+        run: |
+          nix build --no-update-lock-file .#leapview --out-link result-app -L
+          nix build --no-update-lock-file .#leapview-image --out-link result-image -L
       - name: Qualify the exact image with PostgreSQL and browser workflows
-        run: nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
+        run: nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh result-image result-app
       - name: Test runtime inventory and vulnerability coverage guards
         run: |
           python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
@@ -119,8 +124,11 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
           python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
           python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
           nix develop --no-update-lock-file .#runtime-security -c \
             env LEAPVIEW_TEST_NIX_REGISTRY=1 python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
+          nix develop --no-update-lock-file .#runtime-security -c \
+            env LEAPVIEW_TEST_NIX_REGISTRY=1 python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
       - name: Enforce assessed Nix runtime findings (not release clearance)
         run: >-
           nix develop --no-update-lock-file .#runtime-security -c
