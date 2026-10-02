@@ -107,6 +107,7 @@ pkgs.dockerTools.buildLayeredImage {
       "org.opencontainers.image.created" = buildTime;
       "dev.leapview.build.dirty" = if dirty then "true" else "false";
       "dev.leapview.build.release" = "false";
+      "dev.leapview.build.kind" = "application-image";
     };
   };
 }

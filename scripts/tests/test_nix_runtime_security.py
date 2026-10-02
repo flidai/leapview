@@ -2,6 +2,9 @@ import copy
 import datetime
 import importlib.util
 import io
+import json
+import hashlib
+import subprocess
 import tarfile
 import tempfile
 import pathlib
@@ -15,6 +18,51 @@ spec.loader.exec_module(m)
 
 
 class CoverageTests(unittest.TestCase):
+    def test_spdx_export_and_partial_scan_evidence_fail_closed(self):
+        for coverage_only, export in [(False, 'SPDX-2.3'), (True, 'SPDX-2.2'), (False, 'command-failure')]:
+            with self.subTest(coverage_only=coverage_only, export=export), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                archive = root / 'image.tar'
+                with tarfile.open(archive, 'w'):
+                    pass
+                evidence = root / 'evidence'
+
+                def run(*args, **kwargs):
+                    if args[1] == 'version':
+                        return json.dumps({'version': m.POLICY[args[0] + 'Version']})
+                    if args[0] == 'nix':
+                        return '/nix/store/' + 'a' * 32 + '-glibc-2.42-84'
+                    output = pathlib.Path(args[-1].split('=', 1)[1])
+                    if 'convert' in args:
+                        original = pathlib.Path(args[args.index('convert') + 1])
+                        self.assertEqual(original, evidence / 'sbom.syft.json')
+                        self.assertEqual(json.loads(original.read_bytes()), {'artifacts': []})
+                        if export == 'command-failure':
+                            raise subprocess.CalledProcessError(1, args)
+                        output.write_text(json.dumps({'spdxVersion': export}))
+                    else:
+                        output.write_text('{"artifacts": []}')
+                    return ''
+
+                argv = ['scan', str(archive), '--evidence-dir', str(evidence)]
+                if coverage_only:
+                    argv.append('--coverage-only')
+                with patch('sys.argv', argv), patch.object(m, 'run', side_effect=run):
+                    with self.assertRaises(SystemExit):
+                        m.main()
+                summary = json.loads((evidence / 'summary.json').read_bytes())
+                self.assertEqual(summary['enforcementMode'], 'coverage-only' if coverage_only else 'enforce')
+                self.assertFalse(summary['coverageQualified'])
+                self.assertFalse(summary['releaseReady'])
+                self.assertIn('error', summary)
+                self.assertEqual((evidence / 'sbom.syft.json').read_bytes(), b'{"artifacts": []}')
+                names = {'sbom.syft.json', 'grype-config.json', 'syft-config.json'}
+                if export != 'command-failure':
+                    names.add('sbom.spdx.json')
+                self.assertEqual(set(summary['reportSHA256']), names)
+                for name, digest in summary['reportSHA256'].items():
+                    self.assertEqual(digest, hashlib.sha256((evidence / name).read_bytes()).hexdigest())
+
     def package(self, name='glibc', version='2.42-84'):
         path = '/nix/store/' + 'a' * 32 + '-' + name + '-' + version
         return {'id': name, 'name': name, 'version': version, 'type': 'nix',
