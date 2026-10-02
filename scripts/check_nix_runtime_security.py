@@ -179,6 +179,7 @@ def main():
     evidence = args.evidence_dir.resolve()
     evidence.mkdir(parents=True, exist_ok=False)  # Never reuse stale evidence.
     summary = {'schemaVersion': 1, 'coverageQualified': False, 'releaseReady': False,
+               'enforcementMode': 'coverage-only' if args.coverage_only else 'enforce',
                'scanners': {}, 'policySHA256': hashlib.sha256(
                    (ROOT / 'nix/runtime-security-policy.json').read_bytes()).hexdigest()}
     try:
@@ -197,7 +198,8 @@ def main():
         config = evidence / 'grype-config.json'
         write(config, {'match': {'stock': {'using-cpes': True}}, 'ignore': [],
                        'only-fixed': False, 'db': {'validate-age': True,
-                       'max-allowed-built-age': '120h', 'validate-by-hash-on-start': True}})
+                       'max-allowed-built-age': str(POLICY['databaseMaxAgeHours']) + 'h',
+                       'validate-by-hash-on-start': True}})
         syft_config = evidence / 'syft-config.json'
         write(syft_config, {})
         raw_path = evidence / 'sbom.syft.json'
@@ -213,6 +215,13 @@ def main():
                     shutil.copyfileobj(source, target)
             run('syft', '--config', str(syft_config), 'docker-archive:' + str(scan_archive), '-o', 'syft-json=' + str(raw_path), env=env)
         sbom = json.loads(raw_path.read_text())
+        # Keep native Syft evidence intact while exporting the release contract's
+        # SPDX representation from that same inventory, without a second scan.
+        spdx_path = evidence / 'sbom.spdx.json'
+        run('syft', '--config', str(syft_config), 'convert', str(raw_path),
+            '-o', 'spdx-json=' + str(spdx_path), env=env)
+        if json.loads(spdx_path.read_text()).get('spdxVersion') != 'SPDX-2.3':
+            raise ValueError('runtime SPDX export has an unsupported version')
         expected_glibc_path = run(
             'nix', 'eval', '--no-update-lock-file', '--raw',
             '.#packages.x86_64-linux.glibc-runtime.outPath', env=env).strip()
@@ -272,6 +281,13 @@ def main():
         summary['error'] = str(error)
         raise SystemExit(str(error)) from error
     finally:
+        # Partial scans retain their actual files; only complete, enforced scans
+        # can be joined into candidate evidence by the shared collector.
+        summary['reportSHA256'] = {}
+        for path in sorted(evidence.glob('*.json')):
+            if path.name != 'summary.json':
+                with path.open('rb') as stream:
+                    summary['reportSHA256'][path.name] = hashlib.file_digest(stream, 'sha256').hexdigest()
         write(evidence / 'summary.json', summary)
     print(json.dumps({k: v for k, v in summary.items() if k not in ('image', 'inventory', 'blockingFindings', 'database')}, indent=2))
 

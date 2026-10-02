@@ -76,3 +76,32 @@ test('fresh full and nightly qualification provision the deployment Terraform de
   const contractIndex = development.findIndex((step: any) => step.env?.CONTRACT)
   expect(development.indexOf(terraform)).toBeLessThan(contractIndex)
 })
+
+test('Nix candidate collection follows enforcement and retains all bound evidence', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const image = workflow.jobs.image.steps
+  const enforcement = image.findIndex((step: any) => step.run?.includes('check_nix_runtime_security.py result-image'))
+  const collection = image.findIndex((step: any) => step.run?.includes('nix_candidate_manifest.py result-image'))
+  expect(enforcement).toBeGreaterThan(-1)
+  expect(collection).toBeGreaterThan(enforcement)
+  expect(image[collection].if).toBeUndefined() // The default success gate rejects incomplete scans.
+  expect(image[collection].run).toContain('--kind application-image')
+  expect(image[collection].run).toContain('--verify .tmp/nix-runtime-security/candidate-manifest.json')
+  const binding = image.findIndex((step: any) => step.run?.includes('scripts/nix_oci_content.py'))
+  expect(binding).toBeGreaterThan(collection)
+  expect(image[binding].if).toBeUndefined()
+  expect(image[binding].run).toContain('scripts/nix_oci_content.py export')
+  expect(image[binding].run).toContain('skopeo copy --preserve-digests oci:.tmp/nix-exported-oci:candidate')
+  expect(image[binding].run).toContain('open(".tmp/nix-exported-oci/index.json")')
+  expect(image[binding].run).toContain('--platform linux/amd64 --kind application-image')
+  expect(image[binding].run).toContain('--candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security')
+  expect(image[binding].run).toContain('--verify .tmp/nix-runtime-security/oci-content-binding.json')
+  const retention = image.find((step: any) => step.with?.name?.startsWith('nix-runtime-security-'))
+  expect(retention.if).toBe('always()')
+  for (const name of ['candidate-manifest', 'oci-content-binding', 'summary', 'sbom.syft', 'sbom.spdx', 'runtime.syft',
+    'runtime.grype', 'runtime.assessed.grype', 'controls.synthetic.syft', 'controls.grype',
+    'assessments.vex', 'syft-config', 'grype-config']) {
+    expect(retention.with.path).toContain(`.tmp/nix-runtime-security/${name}.json`)
+  }
+  expect(workflow.permissions).toEqual({ contents: 'read' })
+})

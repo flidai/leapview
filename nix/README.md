@@ -210,6 +210,12 @@ still requires review of those assessments and integration with the published
 digest and other release gates. The build checks that Go module
 metadata remains readable after native fixups and conventional Linux export.
 
+The qualification workflow also records [common candidate evidence](CANDIDATE-EVIDENCE.md):
+the exact archive, config/layer content, source, locked input and runtime report
+hashes. Verification rejects substituted or incomplete evidence. This unsigned
+record always leaves release admission false; protected final-artifact admission
+and each output's compatibility and lifecycle gates remain required.
+
 The historical fixture uses a private synthetic CA. Its Python publication client
 receives `DEMO_GENERATION_CA_CERT` explicitly, because Nix OpenSSL's default trust
 store can prefer `NIX_SSL_CERT_FILE` over `SSL_CERT_FILE`. Certificate and hostname

@@ -318,3 +318,31 @@ func TestPlanWireBindingHasNoUnintendedCoreJSONShape(t *testing.T) {
 		t.Fatal("neutral warehouse field leaked into the artifact")
 	}
 }
+
+func TestPRWorkflowConcurrencyPreservesOtherStackLayers(t *testing.T) {
+	for _, workflow := range []string{"ci", "security"} {
+		t.Run(workflow, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", ".github", "workflows", workflow+".yml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Concurrency struct {
+					Group  string `yaml:"group"`
+					Cancel bool   `yaml:"cancel-in-progress"`
+				} `yaml:"concurrency"`
+			}
+			if err := yaml.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			// Every PR owns required checks, even when its validation is
+			// deferred. A different layer must not cancel that feedback.
+			if strings.Contains(config.Concurrency.Group, "stack.id") || !strings.Contains(config.Concurrency.Group, "github.ref") {
+				t.Fatalf("concurrency can cancel another stack layer: %s", config.Concurrency.Group)
+			}
+			if !config.Concurrency.Cancel {
+				t.Fatal("new revisions must still cancel obsolete runs for the same PR")
+			}
+		})
+	}
+}
