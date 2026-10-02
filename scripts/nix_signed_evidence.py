@@ -17,7 +17,8 @@ SPDX = 'https://spdx.dev/Document/v2.3'
 MAX_ATTESTATION_BYTES = candidate.MAX_REPORT_BYTES
 WORKFLOWS = {
     'application-image': {'flidai/leapview/.github/workflows/artifacts.yml',
-                          'flidai/leapview/.github/workflows/release.yml'},
+                          'flidai/leapview/.github/workflows/release.yml',
+                          'flidai/leapview/.github/workflows/nix-candidate.yml'},
     'site-image': {'flidai/leapview/.github/workflows/site-image.yml'},
 }
 

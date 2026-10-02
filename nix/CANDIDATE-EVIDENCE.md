@@ -13,7 +13,7 @@ Build from a clean Git checkout. For an application image, first run image
 qualification and the enforced runtime scan:
 
 ```sh
-nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
+task nix:qualify
 nix develop --no-update-lock-file .#runtime-security -c \
   python3 scripts/check_nix_runtime_security.py result-image \
   --evidence-dir .tmp/nix-runtime-security
@@ -201,6 +201,49 @@ the Nix runtime document. No Nix producer or release adoption is enabled by this
 adapter. Both its receipt and the registry-content receipt retain
 `releaseAdmission: false`; Go/embedded-native coverage, full platform and host
 qualification, installation/recovery and exact-artifact promotion remain required.
+
+### Protected candidate producer
+
+`.github/workflows/nix-candidate.yml` is a manual, main-only producer for the
+AMD64 application candidate. It must first be reviewed and land on main; do not
+dispatch its feature-branch copy. `source_revision` must be the exact head of one
+open PR directly based on main. A stacked child is ineligible until its
+prerequisites land and it is directly based on main. The producer repeats that
+authorization before publication.
+
+Candidate recipes run only in a read-only build job. A separate read-only job
+downloads that build's immutable artifact ID, generates inventory and assessment
+evidence with the protected workflow revision's scanners/policy, and qualifies
+the already-built archive with protected PostgreSQL/browser fixtures and CLI.
+`check_nix_image.sh ARCHIVE TRUSTED_APPLICATION` performs qualification without
+building; `task nix:qualify` retains Task-owned build ordering for local use.
+
+The privileged publisher imports only protected verifier code and locked tools.
+Its separate source checkout supplies identity, never executable scripts or
+policy. Proposed runtime-policy or glibc-baseline changes must land on main
+before publication against that new protected policy. It downloads the exact
+qualification artifact ID, rechecks archive/source/runtime bytes and freshness,
+exports preserved OCI content, and pushes only a unique
+`nix-candidate-RUN_ID-ATTEMPT` tag. It refetches and verifies the immutable digest
+before signing SLSA provenance and the exact platform runtime SPDX. SPDX must fit
+the attestation action's 16 MiB predicate limit. The single-platform root and
+platform manifest are the same digest here; this is not ARM64 qualification.
+
+`scripts/nix_candidate_publication.py` supplies the protected `record`, `prepare`,
+`publish` and `verify-signed` operations. All require an explicit clean candidate
+source checkout and exact authorized revision. The imported verifier's root stays
+at the protected checkout for policy and assessments. Signing is followed by live
+registry-discoverable verification under the main workflow event SHA. Receipts
+retain `releaseAdmission: false`; no production tag, deployment or promotion is
+performed. Archive/scan transfer artifacts expire after seven days, bindings
+and the protected image qualification report after fourteen days. These are
+candidate evidence, not durable release storage.
+
+No live producer success is claimed by adding the workflow. Protected dispatch
+and positive Nix SPDX/signature evidence remain required after it is eligible on
+main. Go/embedded-native coverage, complete platform/host and installation/recovery
+admission, canonical release identity and exact-artifact promotion remain separate
+D04 and output-specific gates before adopting a replacement builder.
 
 ### Remaining release authority
 
