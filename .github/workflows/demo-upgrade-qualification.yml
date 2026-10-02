@@ -85,21 +85,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build a local candidate image for pre-merge transition testing
+      - name: Set up Buildx for the local transition candidate
+        if: ${{ !inputs.final_artifact }}
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Resolve the exact local candidate build identity
+        id: local-identity
         if: ${{ !inputs.final_artifact }}
         env:
           SOURCE_REVISION: ${{ inputs.candidate_revision || github.sha }}
         run: |
           set -euo pipefail
           [[ "${SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${SOURCE_REVISION}"
           build_time="$(git show -s --format=%cI "${SOURCE_REVISION}")"
-          docker buildx build --load --platform linux/amd64 --file Dockerfile \
-            --tag leapview:historical-transition-local \
-            --build-arg BUILD_VERSION=historical-transition \
-            --build-arg BUILD_REVISION="${SOURCE_REVISION}" \
-            --build-arg BUILD_TIME="${build_time}" \
-            --build-arg BUILD_DIRTY=false \
-            --build-arg BUILD_RELEASE=false .
+          echo "build_time=${build_time}" >> "$GITHUB_OUTPUT"
+
+      - name: Build a local candidate image for pre-merge transition testing
+        if: ${{ !inputs.final_artifact }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: leapview:historical-transition-local
+          build-args: |
+            BUILD_VERSION=historical-transition
+            BUILD_REVISION=${{ inputs.candidate_revision || github.sha }}
+            BUILD_TIME=${{ steps.local-identity.outputs.build_time }}
+            BUILD_DIRTY=false
+            BUILD_RELEASE=false
+          # Restore compatible default-branch layers. Candidates do not publish
+          # new cache namespaces or persistent Go cache mounts.
+          cache-from: type=gha,scope=production-amd64
+
+      - name: Verify the local candidate revision
+        if: ${{ !inputs.final_artifact }}
+        env:
+          SOURCE_REVISION: ${{ inputs.candidate_revision || github.sha }}
+        run: |
+          set -euo pipefail
           docker run --rm leapview:historical-transition-local version --json \
             | jq -e --arg revision "${SOURCE_REVISION}" '.revision == $revision and .dirty == false' >/dev/null
 

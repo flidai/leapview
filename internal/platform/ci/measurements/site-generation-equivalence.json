@@ -1,0 +1,33 @@
+{
+  "environment": "local prepared sourcegen inputs; hosted clean container build still required",
+  "equivalent": true,
+  "artifact": "docs/visuals/examples.gen.json",
+  "runs": [
+    {
+      "command": "go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
+      "seconds": 6.964,
+      "artifact_sha256": "77f7fa194e9eb0830627eb1f77fc56457679241ecbd6f4bf02415db32841c4c3"
+    },
+    {
+      "command": "go run ./internal/app/tools/clidocgen",
+      "seconds": 10.807
+    },
+    {
+      "command": "go run ./internal/app/tools/schemadocgen",
+      "seconds": 0.445
+    },
+    {
+      "command": "go run ./internal/app/tools/openapidocgen",
+      "seconds": 0.799
+    },
+    {
+      "command": "go run ./internal/app/tools/docsitegen",
+      "seconds": 0.445
+    },
+    {
+      "command": "go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
+      "seconds": 6.295,
+      "artifact_sha256": "77f7fa194e9eb0830627eb1f77fc56457679241ecbd6f4bf02415db32841c4c3"
+    }
+  ]
+}

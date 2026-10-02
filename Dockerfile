@@ -48,6 +48,7 @@ WORKDIR /src
 
 COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 COPY package.json bun.lock tsconfig.json ./
+RUN bun install --frozen-lockfile --no-cache
 COPY scripts ./scripts
 COPY static ./static
 COPY web ./web
@@ -55,7 +56,6 @@ COPY --from=sourcegen /src/api/gen ./api/gen
 COPY --from=sourcegen /src/api/visualization ./api/visualization
 COPY --from=sourcegen /src/web/generated ./web/generated
 
-RUN bun install --frozen-lockfile --no-cache
 RUN mkdir -p internal/dashboard/appearance && \
     bun scripts/generate_lucide_icon_catalog.ts && \
     bun scripts/generate_visualization_validator.ts && \
