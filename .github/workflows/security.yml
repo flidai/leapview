@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.event.pull_request.stack.id || github.ref }}
+  group: security-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
