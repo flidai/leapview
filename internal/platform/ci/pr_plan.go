@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-var frontendShards = []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data", "site"}
+var frontendShards = []string{"core", "reports", "chat", "data", "site"}
 
 // PRPlan adapts the existing dependency classifier to the hosted PR contract.
 // Legacy Jobs remain in artifacts for historical compatibility; only this typed

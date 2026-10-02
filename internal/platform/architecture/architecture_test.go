@@ -2954,7 +2954,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	for _, want := range []string{
 		"name: Frontend tests (merge queue, ${{ matrix.shard }})",
 		"fail-fast: false",
-		"shard: [core, reports, reports-viewer, reports-builder, chat, data, site]",
+		"shard: [core, reports, chat, data, site]",
 		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
 	} {
 		if !strings.Contains(mergeFrontendCI, want) {
@@ -3427,7 +3427,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		}
 
 		frontend := workflowJobBlock(t, text, "frontend-validation")
-		matrix := "shard: [core, reports, reports-viewer, reports-builder, chat, data, site]"
+		matrix := "shard: [core, reports, chat, data, site]"
 		if workflow == "ci.yml" {
 			matrix = "matrix: ${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}"
 		}
@@ -3448,7 +3448,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	require.NoError(t, err)
 	frontendShard := taskfileTaskBlock(t, string(taskfile), "ci:lane:frontend:shard")
 	for _, want := range []string{
-		"enum: [core, reports, reports-viewer, reports-builder, chat, data, site]",
+		"enum: [core, reports, chat, data, site]",
 		`node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}`,
 	} {
 		if !strings.Contains(frontendShard, want) {

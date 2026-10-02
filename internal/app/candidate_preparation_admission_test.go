@@ -1,39 +1,11 @@
 package app
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	"github.com/flidai/leapview/internal/workload"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 )
-
-func TestCandidatePreparationPauseRejectsCanceledWaiter(t *testing.T) {
-	controller, err := workload.New(workload.Config{MaxRunning: 1, Classes: map[workload.Class]workload.Policy{
-		workload.Control: {MaximumRunning: 1},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(controller.Close)
-	admitter := candidatePreparationAdmitter(controller, workloadmodule.ControlRequest("candidate.prepare"))
-	pause, err := admitter.Pause()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := admitter.AcquireCandidatePreparation(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("paused canceled acquisition = %v, want context.Canceled", err)
-	}
-	if err := pause.WaitDrained(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := pause.Resume(); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestCandidatePreparationReusesOuterRefreshAdmission(t *testing.T) {
 	controller, err := workload.New(workload.Config{MaxRunning: 2, Classes: map[workload.Class]workload.Policy{

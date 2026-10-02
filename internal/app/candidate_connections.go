@@ -20,35 +20,24 @@ func (adapter candidateConnectionLeaser) Acquire(
 	ctx context.Context,
 	request deploymentmodule.CandidateConnectionRequest,
 ) (deploymentmodule.CandidateConnectionLeases, error) {
-	return adapter.acquire(ctx, request, nil)
-}
-
-func (adapter candidateConnectionLeaser) acquire(ctx context.Context, request deploymentmodule.CandidateConnectionRequest, local []analyticsmodule.CandidateLocalConnection) (deploymentmodule.CandidateConnectionLeases, error) {
-	if adapter.module == nil {
-		return nil, connectionbinding.ErrProviderUnavailable
-	}
 	requirements := make([]analyticsmodule.ConnectionRequirement, 0, len(request.Requirements))
 	for _, requirement := range request.Requirements {
 		requirements = append(requirements, analyticsmodule.ConnectionRequirement{
 			ConnectionID: requirement.ConnectionID, ConnectorKind: requirement.ConnectorKind, Access: requirement.Access,
 		})
 	}
-	leases := &analyticsmodule.RuntimeBindingLeases{}
-	if len(requirements) > 0 || len(local) == 0 {
-		var err error
-		leases, err = adapter.leaser.Acquire(ctx, analyticsmodule.RuntimeBindingRequest{
-			Actor: request.Actor, Identity: request.Identity, TargetID: connectionbinding.TargetID(request.TargetID), Requirements: requirements,
-		})
-		if err != nil {
-			return nil, err
-		}
+	leases, err := adapter.leaser.Acquire(ctx, analyticsmodule.RuntimeBindingRequest{
+		Actor:    request.Actor,
+		Identity: request.Identity, TargetID: connectionbinding.TargetID(request.TargetID), Requirements: requirements,
+	})
+	if err != nil {
+		return nil, err
 	}
 	registration, err := adapter.module.BindCandidateRuntime(
 		request.CandidateID,
 		request.Identity.ProjectID,
 		leases,
 		candidateAuthoredConnections(request.AuthoredConnections),
-		local,
 	)
 	if err != nil {
 		_ = leases.Close()
@@ -132,13 +121,7 @@ type candidateConnectionLeases struct {
 
 func (leases candidateConnectionLeases) Evidence() []deploymentmodule.CandidateConnectionEvidence {
 	source := leases.RuntimeBindingRegistration.Evidence()
-	result := make([]deploymentmodule.CandidateConnectionEvidence, 0, len(source))
-	for _, item := range source {
-		values := candidateConnectionEvidence([]analyticsmodule.ConnectionBindingEvidence{item.Binding})
-		values[0].CredentialVersionID = item.CredentialVersionID
-		result = append(result, values[0])
-	}
-	return result
+	return candidateConnectionEvidence(source)
 }
 
 func candidateConnectionEvidence(source []analyticsmodule.ConnectionBindingEvidence) []deploymentmodule.CandidateConnectionEvidence {

@@ -42,9 +42,7 @@ func (e *duckDBProjectMaterializer) MaterializeWithObservationWriter(ctx context
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
 		CredentialResolver: e.credentials,
-		ExtensionAdmission: e.module.extensionAdmission,
 		ConnectionResolver: e.connectionResolver(request),
-		SourceWork:         e.module.sourceWorkGate(),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
 		CandidateID:       request.CandidateID,
 		Environment:       string(servingstate.NormalizeEnvironment(request.Environment)),
@@ -100,9 +98,7 @@ func (e *duckDBProjectMaterializer) MaterializeWithObservations(ctx context.Cont
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
 		CredentialResolver: e.credentials,
-		ExtensionAdmission: e.module.extensionAdmission,
 		ConnectionResolver: e.connectionResolver(request),
-		SourceWork:         e.module.sourceWorkGate(),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
 		CandidateID:       request.CandidateID,
 		Environment:       string(servingstate.NormalizeEnvironment(request.Environment)),
@@ -246,10 +242,10 @@ func (e *duckDBProjectMaterializer) connectionResolver(request analyticsmaterial
 // candidate evidence.
 type unavailableConnectionResolver struct{}
 
-func (unavailableConnectionResolver) WithConnection(
-	context.Context, string, semanticmodel.Connection, func(semanticmodel.Connection) error,
-) error {
-	return connectionbinding.ErrProviderUnavailable
+func (unavailableConnectionResolver) Resolve(
+	context.Context, string, semanticmodel.Connection,
+) (semanticmodel.Connection, error) {
+	return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 }
 
 var _ analyticsruntime.ConnectionResolver = unavailableConnectionResolver{}

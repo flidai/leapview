@@ -394,16 +394,6 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if err := validateDelegatedExecutablePlan(input.Authority, pipelinePlan); err != nil {
 		return QueueAssetResult{}, fmt.Errorf("refresh delegated executable authority: %w", err)
 	}
-	if !input.Authority.IsZero() {
-		connectionIDs, err := refreshplan.RequiredConnectionIDs(loaded.Definition, plan)
-		if err != nil {
-			return QueueAssetResult{}, fmt.Errorf("refresh connection closure: %w", err)
-		}
-		input.Authority, err = s.captureConnectionAuthority(ctx, input.Authority, connectionIDs)
-		if err != nil {
-			return QueueAssetResult{}, fmt.Errorf("refresh connection authority: %w", err)
-		}
-	}
 	payload, err := json.Marshal(struct {
 		PipelineID    string `json:"pipelineId"`
 		SemanticModel string `json:"semanticModel"`
@@ -489,62 +479,62 @@ func (s Service) activeForIdentity(ctx context.Context, identity projectgraph.Se
 // currentExecutablePipelinePlan rebuilds the canonical plan from the current
 // active artifact. It intentionally resolves the active serving state afresh
 // instead of trusting the queued generation: a deployment cutover or editor
-// change must invalidate queued work before any protected unit runs.
-func (s Service) currentExecutablePipelinePlan(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID, invocationSource, triggerID, runAsPrincipalID string, matchingScheduleIDs []string) (projectpipelineplan.Plan, []projectgraph.ResourceID, error) {
+// change must invalidate delegated work before any protected unit runs.
+func (s Service) currentExecutablePipelinePlan(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID, invocationSource, triggerID, runAsPrincipalID string, matchingScheduleIDs []string) (projectpipelineplan.Plan, error) {
 	if s.ServingStates == nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("serving state reader is required to revalidate executable plan")
+		return projectpipelineplan.Plan{}, fmt.Errorf("serving state reader is required to revalidate executable plan")
 	}
 	if s.Artifacts == nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("refresh artifact loader is required to revalidate executable plan")
+		return projectpipelineplan.Plan{}, fmt.Errorf("refresh artifact loader is required to revalidate executable plan")
 	}
 	activeState, activeArtifact, err := s.ServingStates.ActiveArtifact(ctx, identity.ProjectID, servingstate.Environment(identity.Environment))
 	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("resolve current executable artifact: %w", err)
+		return projectpipelineplan.Plan{}, fmt.Errorf("resolve current executable artifact: %w", err)
 	}
 	if activeArtifact.ServingStateID != activeState.ID {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("current executable artifact does not match serving state")
+		return projectpipelineplan.Plan{}, fmt.Errorf("current executable artifact does not match serving state")
 	}
 	activeIdentity, err := stateIdentity(activeState)
 	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("resolve current executable serving identity: %w", err)
+		return projectpipelineplan.Plan{}, fmt.Errorf("resolve current executable serving identity: %w", err)
 	}
 	if activeIdentity.ProjectID != identity.ProjectID || activeIdentity.Environment != identity.Environment {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("current executable serving scope does not match queued identity")
+		return projectpipelineplan.Plan{}, fmt.Errorf("current executable serving scope does not match queued identity")
 	}
 	loaded, err := s.Artifacts.Load(ctx, activeArtifact)
 	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("load current executable artifact: %w", err)
+		return projectpipelineplan.Plan{}, fmt.Errorf("load current executable artifact: %w", err)
 	}
 	if loaded.Definition == nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("current compiled project definition is required")
+		return projectpipelineplan.Plan{}, fmt.Errorf("current compiled project definition is required")
 	}
 	pipeline, ok := loaded.Definition.Pipelines[pipelineID.String()]
 	if !ok {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("current executable artifact has no refresh pipeline %q", pipelineID)
+		return projectpipelineplan.Plan{}, fmt.Errorf("current executable artifact has no refresh pipeline %q", pipelineID)
 	}
 
 	refreshPlan, err := refreshplan.ForPipeline(loaded.Definition, activeIdentity.ProjectID, pipelineID)
 	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("rebuild current refresh plan: %w", err)
+		return projectpipelineplan.Plan{}, fmt.Errorf("rebuild current refresh plan: %w", err)
 	}
 	if s.ResolveSourceDigest == nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("canonical refresh source digest resolver is required to revalidate executable plan")
+		return projectpipelineplan.Plan{}, fmt.Errorf("canonical refresh source digest resolver is required to revalidate executable plan")
 	}
 	sourceDigest, err := s.ResolveSourceDigest(ctx, activeIdentity)
 	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("resolve current refresh source digest: %w", err)
+		return projectpipelineplan.Plan{}, fmt.Errorf("resolve current refresh source digest: %w", err)
 	}
 	refreshPlan, err = refreshPlan.BindGeneration(activeIdentity, sourceDigest)
 	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("bind current refresh plan: %w", err)
+		return projectpipelineplan.Plan{}, fmt.Errorf("bind current refresh plan: %w", err)
 	}
 	policy := refreshplan.InvocationPolicy{InvocationSource: strings.TrimSpace(invocationSource), TriggerID: strings.TrimSpace(triggerID), RunAsPrincipalID: strings.TrimSpace(runAsPrincipalID)}
 	if policy.InvocationSource == "" {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("current executable invocation source is required")
+		return projectpipelineplan.Plan{}, fmt.Errorf("current executable invocation source is required")
 	}
 	if policy.InvocationSource == TriggerSchedule {
 		if len(matchingScheduleIDs) == 0 {
-			return projectpipelineplan.Plan{}, nil, fmt.Errorf("current scheduled executable plan has no matching schedule evidence")
+			return projectpipelineplan.Plan{}, fmt.Errorf("current scheduled executable plan has no matching schedule evidence")
 		}
 		currentInput := QueuePipelineInput{
 			PipelineID:  pipelineID,
@@ -552,7 +542,7 @@ func (s Service) currentExecutablePipelinePlan(ctx context.Context, identity pro
 			Occurrence:  &refreshschedule.Occurrence{MatchingScheduleIDs: append([]string(nil), matchingScheduleIDs...)},
 		}
 		if err := validatePipelineInvocation(pipeline, &currentInput); err != nil {
-			return projectpipelineplan.Plan{}, nil, fmt.Errorf("validate current executable schedule: %w", err)
+			return projectpipelineplan.Plan{}, fmt.Errorf("validate current executable schedule: %w", err)
 		}
 		policy.MatchingScheduleIDs = append([]string(nil), matchingScheduleIDs...)
 		policy.StartingDeadlineSeconds = pipeline.StartingDeadlineSeconds
@@ -560,24 +550,20 @@ func (s Service) currentExecutablePipelinePlan(ctx context.Context, identity pro
 	}
 	current, err := refreshPlan.DeliveryPipelinePlan(policy)
 	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("build current executable pipeline plan: %w", err)
+		return projectpipelineplan.Plan{}, fmt.Errorf("build current executable pipeline plan: %w", err)
 	}
-	connectionIDs, err := refreshplan.RequiredConnectionIDs(loaded.Definition, refreshPlan)
-	if err != nil {
-		return projectpipelineplan.Plan{}, nil, fmt.Errorf("current executable connection closure: %w", err)
-	}
-	return current, connectionIDs, nil
+	return current, nil
 }
 
 // revalidateExecutableAuthority compares both sides of the durable closure
 // fence. The queued plan is immutable evidence, while current is rebuilt from
 // the active artifact and its generation-bound source plan at each boundary.
 func (s Service) revalidateExecutableAuthority(ctx context.Context, job JobRecord) error {
-	if job.Authority.IsZero() {
+	if job.Authority.Mode != jobs.DelegatedWorkloadMode {
 		return nil
 	}
 	if job.PipelinePlan == nil {
-		return fmt.Errorf("executable plan evidence is required")
+		return fmt.Errorf("delegated executable plan evidence is required")
 	}
 	invocationSource := strings.TrimSpace(job.InvocationSource)
 	if invocationSource == "" {
@@ -587,20 +573,15 @@ func (s Service) revalidateExecutableAuthority(ctx context.Context, job JobRecor
 	if strings.TrimSpace(runAsPrincipalID) == "" {
 		runAsPrincipalID = job.PrincipalID
 	}
-	current, connectionIDs, err := s.currentExecutablePipelinePlan(ctx, job.Identity, job.PipelineID, invocationSource, job.TriggerID, runAsPrincipalID, job.MatchingScheduleIDs)
+	current, err := s.currentExecutablePipelinePlan(ctx, job.Identity, job.PipelineID, invocationSource, job.TriggerID, runAsPrincipalID, job.MatchingScheduleIDs)
 	if err != nil {
 		return err
 	}
 	if current.Digest != job.PipelinePlan.Digest {
 		return fmt.Errorf("current executable pipeline plan does not match queued plan")
 	}
-	if err := validateConnectionAuthority(job.Authority, connectionIDs); err != nil {
+	if err := validateDelegatedClosureEvidence(job.Authority, *job.PipelinePlan); err != nil {
 		return err
-	}
-	if job.Authority.Mode == jobs.DelegatedWorkloadMode {
-		if err := validateDelegatedClosureEvidence(job.Authority, *job.PipelinePlan); err != nil {
-			return err
-		}
 	}
 	if err := validateDelegatedExecutablePlan(job.Authority, current); err != nil {
 		return err

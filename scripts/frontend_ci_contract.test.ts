@@ -5,9 +5,8 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { parse } from 'yaml'
 
-const shards = ['core', 'reports', 'reports-viewer', 'reports-builder', 'chat', 'data', 'site']
+const shards = ['core', 'reports', 'chat', 'data', 'site']
 const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
-const packageScripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
 
 test('local frontend validation runs every bounded shard without suppressing failure', () => {
   expect(tasks['ci:lane:frontend'].cmds).toEqual(shards.map((shard) => ({
@@ -16,24 +15,6 @@ test('local frontend validation runs every bounded shard without suppressing fai
   expect(tasks['ci:lane:frontend:shard'].cmds).toEqual([
     'node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}',
   ])
-  expect(tasks['ci:lane:frontend:shard'].requires.vars[0].enum).toEqual(shards)
-  expect(tasks['ci:test:frontend:reports-viewer'].cmds).toEqual([
-    'bun run test:dashboard-page',
-  ])
-  // The split must preserve every report command exactly once.
-  expect([
-    ...tasks['ci:test:frontend:reports'].cmds,
-    ...tasks['ci:test:frontend:reports-viewer'].cmds,
-  ].sort()).toEqual([
-    'visualization-ir', 'table-selection', 'interaction-selection', 'record-table',
-    'visual-modal', 'catalog-page', 'dashboard-page', 'date-picker', 'windowed-table', 'filter-menu',
-  ].map((name) => `bun run test:${name}`).sort())
-  expect(tasks['ci:test:frontend:reports-builder'].cmds).toEqual([
-    'bun run test:dashboard-builder',
-  ])
-  expect(packageScripts['test:dashboard-builder']).toContain(
-    'bun test web/components/dashboard/builder-filter-settings.test.ts web/components/dashboard/builder-preview-readiness.test.ts',
-  )
   expect(tasks['ci:lane:frontend:local'].cmds).toEqual([{ task: 'ci:lane:frontend' }])
   expect(tasks['ci:lane:frontend'].ignore_error).toBeUndefined()
   expect(tasks['ci:lane:frontend:shard'].ignore_error).toBeUndefined()

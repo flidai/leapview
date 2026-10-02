@@ -32,9 +32,6 @@ type CredentialAuthorityRechecker func(context.Context, string, access.Permissio
 type Services struct {
 	Drafts     *credential.Service
 	Validation *credential.ValidationService
-
-	runtimeRepository credential.RuntimeRepository
-	runtimeKeys       credential.ValidationKeyring
 }
 
 // Config contains process-owned dependencies. Request data cannot select the
@@ -99,7 +96,6 @@ func Build(ctx context.Context, config Config) (*Services, error) {
 	}
 	return &Services{
 		Drafts: drafts, Validation: validation,
-		runtimeRepository: repository, runtimeKeys: keys,
 	}, nil
 }
 

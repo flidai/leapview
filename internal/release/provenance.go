@@ -24,9 +24,6 @@ const ProvenanceVersion = 6
 
 const legacyProvenanceVersion = 4
 
-// authorizationProvenanceVersion is retained for validating immutable v5 records.
-const authorizationProvenanceVersion = 5
-
 var (
 	ErrProvenanceInvalid = errors.New("release provenance invalid")
 )
@@ -172,7 +169,7 @@ func newProvenance(input ProvenanceInput) (Provenance, error) {
 }
 
 func newProvenanceVersion(input ProvenanceInput, version int) (Provenance, error) {
-	if version != legacyProvenanceVersion && version != authorizationProvenanceVersion && version != ProvenanceVersion {
+	if version != legacyProvenanceVersion && version != ProvenanceVersion {
 		return Provenance{}, provenanceInvalid(fmt.Errorf("unsupported version %d", version))
 	}
 	artifact, err := normalizeProjectArtifactProvenance(input.Artifact)
@@ -191,13 +188,10 @@ func newProvenanceVersion(input ProvenanceInput, version int) (Provenance, error
 	if err != nil {
 		return Provenance{}, err
 	}
-	if version <= authorizationProvenanceVersion && hasCredentialVersionPin(plan.Bindings) {
-		if version == authorizationProvenanceVersion {
-			return Provenance{}, provenanceInvalid(errors.New("version-5 provenance cannot carry local credential version pins"))
-		}
+	if version == legacyProvenanceVersion && hasCredentialVersionPin(plan.Bindings) {
 		return Provenance{}, provenanceInvalid(errors.New("legacy provenance cannot carry local credential version pins"))
 	}
-	if version >= authorizationProvenanceVersion {
+	if version == ProvenanceVersion {
 		if plan.PolicyRevision < 1 || platformdigest.ValidateSHA256Identity(plan.AuthorizationDigest) != nil {
 			return Provenance{}, provenanceInvalid(errors.New("target authorization policy revision and compiled digest are required"))
 		}
@@ -235,7 +229,7 @@ func (p Provenance) Validate() error {
 }
 
 func (p Provenance) validate() error {
-	if p.Version != legacyProvenanceVersion && p.Version != authorizationProvenanceVersion && p.Version != ProvenanceVersion {
+	if p.Version != legacyProvenanceVersion && p.Version != ProvenanceVersion {
 		return provenanceInvalid(fmt.Errorf("unsupported version %d", p.Version))
 	}
 	expected, err := newProvenanceVersion(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan}, p.Version)

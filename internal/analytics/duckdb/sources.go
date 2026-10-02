@@ -66,12 +66,10 @@ func prepareRefreshSourceAccess(ctx context.Context, db analyticsresource.Sessio
 		if stmt == "" {
 			continue
 		}
-		// An error or panic can arrive after native ATTACH took effect. Record
-		// the attempted alias first so cleanup must confirm it is absent.
-		attachedConnections[source.Connection] = struct{}{}
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("attaching source connection %s: %w", source.Connection, err)
 		}
+		attachedConnections[source.Connection] = struct{}{}
 	}
 	return nil
 }

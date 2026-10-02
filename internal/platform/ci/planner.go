@@ -102,7 +102,7 @@ func FullJobs() Jobs {
 		Prepare:             true,
 		Docs:                true,
 		GoMatrix:            allGoShards(),
-		Frontend:            []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data", "site"},
+		Frontend:            []string{"core", "reports", "chat", "data", "site"},
 		GoAnalysis:          true,
 		UIRouteQA:           true,
 		NodeAudit:           true,
@@ -343,11 +343,8 @@ func classifyFrontend(changedPath string, jobs *Jobs) {
 		strings.Contains(changedPath, "/visualization/"),
 		strings.Contains(changedPath, "datastar"):
 		classifySharedFrontend(jobs)
-	case strings.HasPrefix(changedPath, "web/components/dashboard/dashboard-builder"),
-		strings.HasPrefix(changedPath, "web/components/dashboard/builder-"):
-		jobs.Frontend = unionStrings(jobs.Frontend, []string{"reports-builder"})
 	case strings.HasPrefix(changedPath, "web/components/dashboard/"):
-		jobs.Frontend = unionStrings(jobs.Frontend, []string{"reports", "reports-viewer"})
+		jobs.Frontend = unionStrings(jobs.Frontend, []string{"reports"})
 	case strings.HasPrefix(changedPath, "web/components/chat/"):
 		jobs.Frontend = unionStrings(jobs.Frontend, []string{"chat"})
 	case strings.HasPrefix(changedPath, "web/components/data/"),
@@ -363,7 +360,7 @@ func classifyFrontend(changedPath string, jobs *Jobs) {
 func classifySharedFrontend(jobs *Jobs) {
 	jobs.Prepare = true
 	jobs.FrontendPrepare = true
-	jobs.Frontend = unionStrings(jobs.Frontend, []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data"})
+	jobs.Frontend = unionStrings(jobs.Frontend, []string{"core", "reports", "chat", "data"})
 	jobs.UIRouteQA = true
 	jobs.Docs = true
 	jobs.SiteImage = true
@@ -388,7 +385,7 @@ func normalizeJobs(jobs *Jobs) {
 	if jobs.Prepare {
 		jobs.FrontendPrepare = false
 	}
-	jobs.Frontend = orderedStrings(jobs.Frontend, []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data", "site"})
+	jobs.Frontend = orderedStrings(jobs.Frontend, []string{"core", "reports", "chat", "data", "site"})
 	jobs.GoMatrix = orderedGoShards(jobs.GoMatrix)
 }
 

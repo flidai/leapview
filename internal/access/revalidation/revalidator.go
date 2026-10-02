@@ -110,21 +110,18 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 	if err != nil {
 		return fmt.Errorf("%w: typed operation requirement: %v", jobs.ErrAuthorityInvalid, err)
 	}
+	if len(permissionPairs) != len(expectedPairs) {
+		return fmt.Errorf("%w: typed operation permission set changed", jobs.ErrAuthorityInvalid)
+	}
 	expectedSet := make(map[access.PermissionPair]struct{}, len(expectedPairs))
 	for _, pair := range expectedPairs {
 		expectedSet[pair] = struct{}{}
 	}
 	for _, pair := range permissionPairs {
-		if _, ok := expectedSet[pair]; ok {
-			delete(expectedSet, pair)
-			continue
-		}
-		if !isCallerRefreshConnectionDependency(r.requirement, authority.Mode, pair, authority.Target.ProjectID) {
+		if _, ok := expectedSet[pair]; !ok {
 			return fmt.Errorf("%w: typed operation permission set changed", jobs.ErrAuthorityInvalid)
 		}
-	}
-	if len(expectedSet) != 0 {
-		return fmt.Errorf("%w: typed operation permission set changed", jobs.ErrAuthorityInvalid)
+		delete(expectedSet, pair)
 	}
 	now := time.Now().UTC()
 	switch authority.Credential.Class {
@@ -174,20 +171,15 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 		return fmt.Errorf("%w: unsupported caller credential class", jobs.ErrAuthorityInvalid)
 	}
 	for _, pair := range permissionPairs {
-		if pair.Target.Scope != access.PermissionScopeResource || pair.Target.ProjectID.String() != authority.Target.ProjectID || pair.Target.IncludeFuture || pair.Target.ResourceKind == "" || pair.Target.ResourceID == "" {
-			return fmt.Errorf("%w: authority permission does not bind an exact project resource", jobs.ErrAuthorityInvalid)
+		if pair.Target.Scope != access.PermissionScopeResource || pair.Target.ProjectID.String() != authority.Target.ProjectID || string(pair.Target.ResourceKind) != authority.Target.ResourceKind || pair.Target.ResourceID.String() != authority.Target.ResourceID || pair.Target.ResourceKind == "" || pair.Target.ResourceID == "" {
+			return fmt.Errorf("%w: authority target does not bind an exact project resource", jobs.ErrAuthorityInvalid)
 		}
 		resource, err := access.NewResourceRef(pair.Target.ResourceID, pair.Target.ResourceKind)
 		if err != nil {
 			return fmt.Errorf("%w: authority resource: %v", jobs.ErrAuthorityInvalid, err)
 		}
-		if !isCallerRefreshConnectionDependency(r.requirement, authority.Mode, pair, authority.Target.ProjectID) {
-			if pair.Target.ResourceID.String() != authority.Target.ResourceID || string(pair.Target.ResourceKind) != authority.Target.ResourceKind {
-				return fmt.Errorf("%w: authority target does not bind the typed operation resource", jobs.ErrAuthorityInvalid)
-			}
-			if err := r.requirement.ValidateResource(resource); err != nil {
-				return fmt.Errorf("%w: typed operation requirement: %v", jobs.ErrAuthorityInvalid, err)
-			}
+		if err := r.requirement.ValidateResource(resource); err != nil {
+			return fmt.Errorf("%w: typed operation requirement: %v", jobs.ErrAuthorityInvalid, err)
 		}
 		allowed, err := r.current(ctx, authority.ActorPrincipalID, pair, authority.Target.Environment)
 		if err != nil {
@@ -198,18 +190,6 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 		}
 	}
 	return nil
-}
-
-// isCallerRefreshConnectionDependency admits only the server-derived runtime
-// connections needed by caller-authority pipeline refresh. The generated
-// pipeline.run typed requirement remains mandatory, and this narrow extension
-// never applies to delegated work or other typed operations.
-func isCallerRefreshConnectionDependency(requirement access.TypedOperationRequirement, mode jobs.AuthorityMode, pair access.PermissionPair, projectID string) bool {
-	return mode == jobs.CallerAuthorityMode &&
-		requirement.Action == access.ActionPipelineRun && requirement.Resolver == access.TypedOperationResolverPipeline &&
-		pair.Action == access.ActionConnectionUse && pair.Target.Scope == access.PermissionScopeResource &&
-		pair.Target.ProjectID.String() == projectID && !pair.Target.IncludeFuture &&
-		pair.Target.ResourceKind == projectgraph.KindConnection && pair.Target.ResourceID.String() != ""
 }
 
 func (r delegatedWorkloadRevalidator) Revalidate(ctx context.Context, authority jobs.AuthorityEnvelope) error {

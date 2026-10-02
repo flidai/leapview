@@ -144,10 +144,11 @@ type RuntimeInput struct {
 	DuckDBDir   string
 	RuntimeDir  string
 	Candidate   *CandidateRuntimeContext
-	// Candidate carries private candidate identity/evidence to runtime factories.
-	// SealedActivationCandidate instead selects an exact durable generation for
-	// native refresh completion before publication. Candidate remains nil on
-	// that path, and the resulting Prepared is publishable by ActivatePrepared.
+	// Candidate carries candidate identity/evidence to runtime factories. It is
+	// normally supplied for private candidate preparation; when
+	// SealedActivationCandidate is also set, the same candidate is an explicit
+	// durable-generation preparation for native refresh completion and the
+	// resulting Prepared remains publishable by ActivatePrepared.
 	SealedActivationCandidate *CandidateRuntimeContext
 	// OnLeaseRenewalFailure is a runtime-owned health signal. Factories that
 	// hold durable query roots invoke it promptly when their heartbeat fails;
@@ -229,10 +230,6 @@ type Manager struct {
 	releaseQueue           *snapshotLeaseReleaseQueue
 	releaseShutdownTimeout time.Duration
 	requireSealedCatalog   bool
-
-	// The first retired-runtime cleanup failure survives removal from retired.
-	// It conservatively prevents completion evidence for this manager lifetime.
-	retiredCleanupErr error
 }
 
 type Prepared struct {
@@ -806,9 +803,9 @@ func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servin
 	}
 	if sealedActivationCandidate != nil {
 		// Keep activation candidate evidence in its dedicated field. The regular
-		// Candidate field also selects private candidate runtime identity. Native
-		// activation uses separately verified sealed-candidate dependency metadata
-		// while retaining production runtime identity before pointer publication.
+		// Candidate field selects candidate-specific dependency evidence in
+		// factories; native activation must instead use the persisted generation's
+		// release provenance while the target pointer is still on its base.
 		input.Candidate = nil
 		input.SealedActivationCandidate = candidateInput
 	}

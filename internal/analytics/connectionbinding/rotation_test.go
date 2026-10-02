@@ -288,62 +288,6 @@ func TestPoolManagerAuditsActivationDegradationRecoveryAndExplicitRefreshActor(t
 	}
 }
 
-func TestPoolManagerRejectsLocalCredentialIdentityWithoutProviderActivationEvidence(t *testing.T) {
-	now := time.Date(2026, 7, 29, 17, 0, 0, 0, time.UTC)
-	localVersionID := "8b8d2f2e-92dd-4f2a-85ac-154831c16a4d"
-	localSnapshot, err := NewLocalCredentialSnapshot(
-		map[string]string{"password": "source-secret"}, localVersionID, now.Add(time.Minute), now.Add(time.Hour),
-	)
-	require.NoError(t, err)
-	resolver := &sequenceResolver{snapshots: []CredentialSnapshot{
-		testSnapshot(t, "provider-version-1", now), localSnapshot,
-	}}
-	factory := &recordingPoolFactory{}
-	store := &recordingBindingStore{}
-	audit := &recordingRotationAudit{}
-	manager, err := NewPoolManager(PoolManagerConfig{
-		Binding: validTargetBinding(t), Resolver: resolver, Factory: factory, Store: store,
-		Audit: audit, Now: func() time.Time { return now }, StaleAfter: time.Hour,
-	})
-	require.NoError(t, err)
-	if err := manager.RefreshNow(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	previous, err := manager.Lease()
-	require.NoError(t, err)
-	previousPool := previous.Pool()
-	previous.Release()
-
-	now = now.Add(time.Minute)
-	err = manager.RefreshNow(context.Background())
-	if !errors.Is(err, ErrInvalidCredentialBundle) || strings.Contains(err.Error(), localVersionID) {
-		t.Fatalf("local credential refresh error = %v", err)
-	}
-	if len(factory.pools) != 1 {
-		t.Fatalf("pool factory prepared %d pools; local credential must be rejected before preparation", len(factory.pools))
-	}
-	if got := manager.Evidence(); got.ValidatedVersion != "provider-version-1" || got.Health != HealthDegraded {
-		t.Fatalf("binding evidence after local credential rejection = %#v", got)
-	}
-	current, err := manager.Lease()
-	require.NoError(t, err)
-	defer current.Release()
-	if current.Pool() != previousPool {
-		t.Fatal("local credential rejection replaced the active provider pool")
-	}
-	if store.binding.ValidatedVersion != "provider-version-1" {
-		t.Fatalf("durable validated version = %q", store.binding.ValidatedVersion)
-	}
-	if len(audit.events) != 2 {
-		t.Fatalf("rotation audit events = %#v", audit.events)
-	}
-	lastAudit := audit.events[1]
-	if lastAudit.Outcome != RotationDegraded || lastAudit.ProviderVersion == localVersionID ||
-		lastAudit.ProviderVersion != "provider-version-1" || lastAudit.Reason != "LOCAL_CREDENTIAL_VERSION_UNSUPPORTED" {
-		t.Fatalf("local credential audit evidence = %#v", lastAudit)
-	}
-}
-
 func TestPoolManagerCancellationDoesNotDegradeOrPersist(t *testing.T) {
 	now := time.Date(2026, 7, 29, 17, 0, 0, 0, time.UTC)
 	manager, err := NewPoolManager(PoolManagerConfig{

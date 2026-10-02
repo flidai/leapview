@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"maps"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -26,7 +25,6 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
-	"github.com/flidai/leapview/internal/analytics/sourcework"
 	extensiondomain "github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -37,7 +35,6 @@ type SourceRuntime struct {
 	resolver           CredentialResolver
 	connectionResolver analyticsruntime.ConnectionResolver
 	extensionAdmission ExtensionAdmission
-	sourceWork         *sourcework.Gate
 }
 
 // AdmittedExtension is immutable evidence for one exact, already verified
@@ -53,8 +50,6 @@ type ExtensionAdmission = extensiondomain.Admission
 type fatalReporter interface {
 	MarkFatal(error)
 }
-
-var errSourceCleanupFailed = analyticsruntime.ErrConnectionCleanupFailed
 
 type refreshTelemetry interface {
 	ObserveSourceAcquisition(connector, outcome string)
@@ -98,158 +93,64 @@ type PreparedSources struct {
 	telemetry       refreshTelemetry
 }
 
-func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model) (result analyticsmaterialize.PreparedSources, resultErr error) {
+func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model) (analyticsmaterialize.PreparedSources, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("source preparer is not initialized")
 	}
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
-	var sourceWorkLease *sourcework.Lease
-	if r.sourceWork != nil {
-		var err error
-		sourceWorkLease, err = r.sourceWork.Acquire(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var session analyticsresource.Session
-	closeSession := false
-	quarantineLease := false
-	cleanupUncertain := false
-	var prepared *PreparedSources
-	var activeSourceModel *semanticmodel.Model
-	var activeAttached map[string]struct{}
-	activeSourceAccess := false
-	var telemetry refreshTelemetry
-	operationPanicked := false
-	defer func() {
-		panicking := recover() != nil || operationPanicked
-		if panicking {
-			quarantineLease = true
-			markSourceCleanupFatal(r.db)
-			result = nil
-			resultErr = errSourceCleanupFailed
-		}
-
-		// A panic can interrupt preparation after a secret or attachment has
-		// been created. Make one best-effort synchronous cleanup attempt before
-		// closing the session; any uncertainty quarantines the admission lease.
-		if activeSourceAccess {
-			activeSourceAccess = false
-			cleanupErr, cleanupPanic := tryCleanupSourceAccess(session, activeSourceModel, activeAttached)
-			if cleanupPanic {
-				cleanupUncertain = true
-				reportCleanup(r.db, telemetry, errSourceCleanupFailed)
-				panicking = true
-				result = nil
-				resultErr = errSourceCleanupFailed
-			} else {
-				reportCleanup(r.db, telemetry, cleanupErr)
-				if cleanupErr != nil {
-					cleanupUncertain = true
-					if !panicking {
-						result = nil
-						resultErr = joinSourceCleanupFailure(resultErr)
-					}
-				}
-			}
-		}
-
-		if resultErr != nil && prepared != nil {
-			closeErr, closePanic := tryCloseSourceSession(prepared)
-			if closePanic {
-				cleanupUncertain = true
-				quarantineLease = true
-				reportCleanup(r.db, telemetry, errSourceCleanupFailed)
-				result = nil
-				resultErr = errSourceCleanupFailed
-			} else if closeErr != nil {
-				cleanupUncertain = true
-				result = nil
-				resultErr = joinSourceCleanupFailure(resultErr)
-			}
-		}
-		if closeSession && session != nil {
-			if closer, ok := session.(interface{ Close() error }); ok {
-				closeErr, closePanic := tryCloseSourceSession(closer)
-				if closePanic {
-					quarantineLease = true
-					markSourceCleanupFatal(r.db)
-					panicking = true
-					result = nil
-					resultErr = errSourceCleanupFailed
-				} else if closeErr != nil {
-					quarantineLease = true
-					markSourceCleanupFatal(r.db)
-					if !panicking {
-						result = nil
-						resultErr = joinSourceCleanupFailure(resultErr)
-					}
-				}
-			}
-		}
-		if cleanupUncertain || panicking {
-			quarantineLease = true
-		}
-		if sourceWorkLease != nil && !quarantineLease {
-			sourceWorkLease.Release()
-		}
-	}()
-
-	if err := sourcework.Revalidate(ctx); err != nil {
-		return nil, fmt.Errorf("revalidating source authority before session acquisition: %w", err)
-	}
 	session, err := r.db.Session(ctx)
-	closeSession = session != nil
 	if err != nil {
 		return nil, err
 	}
-	telemetry, _ = r.db.(refreshTelemetry)
-	resolved := sourcePreparationModel(model)
-	prepared = &PreparedSources{model: resolved, session: session, relations: map[string]stagedRelation{}, relationQueries: map[string]string{}, telemetry: telemetry}
-	prepared.reporter, _ = r.db.(fatalReporter)
-	finishSourceAccess := func() error {
-		if !activeSourceAccess {
-			return nil
+	closeSession := true
+	defer func() {
+		if closeSession {
+			if closer, ok := session.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
 		}
-		// Mark the attempt before entering DuckDB so a panic cannot cause a
-		// second cleanup attempt from the deferred finalizer.
-		activeSourceAccess = false
-		cleanupErr, cleanupPanic := tryCleanupSourceAccess(session, activeSourceModel, activeAttached)
-		activeSourceModel = nil
-		activeAttached = nil
-		if cleanupPanic {
-			cleanupUncertain = true
-			operationPanicked = true
-			reportCleanup(r.db, telemetry, errSourceCleanupFailed)
-			return errSourceCleanupFailed
-		}
-		reportCleanup(r.db, telemetry, cleanupErr)
-		if cleanupErr != nil {
-			cleanupUncertain = true
-			return errSourceCleanupFailed
-		}
-		return nil
+	}()
+	resolved, err := r.resolveCredentials(ctx, model)
+	if err != nil {
+		return nil, err
 	}
-	loadedExtensions := map[string]struct{}{}
-	for _, sourceName := range sortedKeys(resolved.Sources) {
-		source := resolved.Sources[sourceName]
-		connection, ok := resolved.Connections[source.Connection]
-		if !ok {
-			return nil, fmt.Errorf("source %q references an unknown connection", sourceName)
+	telemetry, _ := r.db.(refreshTelemetry)
+	requiredExtensions := RequiredExtensions(resolved)
+	if len(requiredExtensions) > 0 {
+		if r.extensionAdmission == nil {
+			return nil, fmt.Errorf("source preparation requires extension admission for %s", strings.Join(requiredExtensions, ", "))
 		}
-		if connection.Kind == "managed" {
-			sourceModel := refreshSourceModel(resolved, sourceName, source, source.Connection, connection)
-			if err := r.loadSourceExtensions(ctx, session, sourceModel, loadedExtensions); err != nil {
+		for _, extension := range requiredExtensions {
+			admitted, err := r.extensionAdmission.AdmitExtension(ctx, extension)
+			if err != nil {
+				return nil, fmt.Errorf("extension %s was not admitted: %w", extension, err)
+			}
+			if err := validateAdmittedExtension(extension, admitted); err != nil {
 				return nil, err
 			}
-			relation, err := SourceRelation(sourceModel, sourceModel.Sources[sourceName])
+			if _, err := session.ExecContext(ctx, loadExtensionStatement(admitted.Path)); err != nil {
+				return nil, fmt.Errorf("loading admitted extension %s: %w", extension, err)
+			}
+		}
+	}
+	releaseScopes := lockSourceScopes(resolved, telemetry)
+	defer releaseScopes()
+	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]stagedRelation{}, relationQueries: map[string]string{}, telemetry: telemetry}
+	prepared.reporter, _ = r.db.(fatalReporter)
+	for _, sourceName := range sortedKeys(resolved.Sources) {
+		source := resolved.Sources[sourceName]
+		connection := resolved.Connections[source.Connection]
+		if connection.Kind == "managed" {
+			relation, err := SourceRelation(resolved, source)
 			if err != nil {
+				_ = prepared.Close()
 				return nil, safeSourceError(sourceName, err)
 			}
 			columns, err := describeRelationSchema(ctx, session, "("+relation+")")
 			if err != nil {
+				_ = prepared.Close()
 				return nil, safeSourceError(sourceName, err)
 			}
 			source.Schema = semanticmodel.TableSchema{Columns: columns}
@@ -264,159 +165,67 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 			model.Sources[sourceName] = original
 			continue
 		}
-		if err := sourcework.Revalidate(ctx); err != nil {
-			return nil, fmt.Errorf("revalidating source authority before source %q connection resolution: %w", sourceName, err)
+		sourceModel := refreshSourceModel(resolved, sourceName, source)
+		attached := map[string]struct{}{}
+		if err := prepareRefreshSourceAccess(ctx, session, sourceModel, attached); err != nil {
+			observeSource(telemetry, connection.Kind, "failed")
+			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
+			reportCleanup(r.db, telemetry, cleanupErr)
+			return nil, fmt.Errorf("preparing refresh source %q failed", sourceName)
 		}
-		sourceKind := connection.Kind
-		if err := r.withResolvedConnection(ctx, source.Connection, connection, func(resolvedConnection semanticmodel.Connection) (sourceErr error) {
-			sourceKind = resolvedConnection.Kind
-			defer func() {
-				if panicked := recover(); panicked != nil {
-					operationPanicked = true
-					_ = finishSourceAccess()
-					panic(panicked)
-				}
-			}()
-			resolvedConnectionName := fmt.Sprintf("%s_r%d", source.Connection, refreshSessionSequence.Add(1))
-			sourceModel := refreshSourceModel(resolved, sourceName, source, resolvedConnectionName, resolvedConnection)
-			if err := r.loadSourceExtensions(ctx, session, sourceModel, loadedExtensions); err != nil {
-				return err
-			}
-
-			releaseSourceScope := lockSourceScope(resolvedConnection, source.Connection, telemetry)
-			defer releaseSourceScope()
-			if err := sourcework.Revalidate(ctx); err != nil {
-				return fmt.Errorf("revalidating source authority before source %q access: %w", sourceName, err)
-			}
-
-			attached := map[string]struct{}{}
-			activeSourceModel = sourceModel
-			activeAttached = attached
-			activeSourceAccess = true
-			defer func() {
-				if cleanupErr := finishSourceAccess(); cleanupErr != nil {
-					sourceErr = joinSourceCleanupFailureIfNeeded(sourceErr, cleanupErr)
-				}
-			}()
-
-			if err := prepareRefreshSourceAccess(ctx, session, sourceModel, attached); err != nil {
-				return fmt.Errorf("preparing refresh source %q failed", sourceName)
-			}
-			relation, err := SourceRelation(sourceModel, sourceModel.Sources[sourceName])
-			if err != nil {
-				return safeSourceError(sourceName, err)
-			}
-			table := fmt.Sprintf("leapview_stage_%d_%s", sourceStageSequence.Add(1), sourceName)
-			if err := validateIdentifier(table); err != nil {
-				return err
-			}
-			if _, err := session.ExecContext(ctx, "CREATE TEMP TABLE "+quoteIdentifier(table)+" AS SELECT * FROM ("+relation+")"); err != nil {
-				return safeSourceError(sourceName, err)
-			}
-			prepared.tables = append(prepared.tables, table)
-			prepared.relations[sourceName] = stagedRelation{value: quoteIdentifier(table), kind: stagedRelationTable}
-			prepared.relationQueries[sourceName] = quoteIdentifier(table)
-			columns, err := describeRelationSchema(ctx, session, quoteIdentifier(table))
-			if err != nil {
-				return safeSourceError(sourceName, err)
-			}
-			source.Schema = semanticmodel.TableSchema{Columns: columns}
-			resolved.Sources[sourceName] = source
-			original := model.Sources[sourceName]
-			original.Schema = source.Schema
-			model.Sources[sourceName] = original
-			return nil
-		}); err != nil {
-			if errors.Is(err, errSourceCleanupFailed) {
-				if !cleanupUncertain {
-					reportCleanup(r.db, telemetry, errSourceCleanupFailed)
-				}
-				cleanupUncertain = true
-			}
-			observeSource(telemetry, sourceKind, "failed")
+		relation, err := SourceRelation(sourceModel, source)
+		if err != nil {
+			observeSource(telemetry, connection.Kind, "failed")
+			_ = prepared.Close()
+			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
+			reportCleanup(r.db, telemetry, cleanupErr)
+			return nil, safeSourceError(sourceName, err)
+		}
+		table := fmt.Sprintf("leapview_stage_%d_%s", sourceStageSequence.Add(1), sourceName)
+		if err := validateIdentifier(table); err != nil {
+			observeSource(telemetry, connection.Kind, "failed")
+			_ = prepared.Close()
+			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
+			reportCleanup(r.db, telemetry, cleanupErr)
 			return nil, err
 		}
-		observeSource(telemetry, sourceKind, "succeeded")
+		if _, err := session.ExecContext(ctx, "CREATE TEMP TABLE "+quoteIdentifier(table)+" AS SELECT * FROM ("+relation+")"); err != nil {
+			observeSource(telemetry, connection.Kind, "failed")
+			_ = prepared.Close()
+			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
+			reportCleanup(r.db, telemetry, cleanupErr)
+			return nil, safeSourceError(sourceName, err)
+		}
+		prepared.tables = append(prepared.tables, table)
+		prepared.relations[sourceName] = stagedRelation{value: quoteIdentifier(table), kind: stagedRelationTable}
+		prepared.relationQueries[sourceName] = quoteIdentifier(table)
+		columns, err := describeRelationSchema(ctx, session, quoteIdentifier(table))
+		if err != nil {
+			observeSource(telemetry, connection.Kind, "failed")
+			_ = prepared.Close()
+			cleanupErr := cleanupSourceAccess(session, sourceModel, attached)
+			reportCleanup(r.db, telemetry, cleanupErr)
+			return nil, safeSourceError(sourceName, err)
+		}
+		source.Schema = semanticmodel.TableSchema{Columns: columns}
+		resolved.Sources[sourceName] = source
+		original := model.Sources[sourceName]
+		original.Schema = source.Schema
+		model.Sources[sourceName] = original
+		if err := cleanupSourceAccess(session, sourceModel, attached); err != nil {
+			reportCleanup(r.db, telemetry, err)
+			_ = prepared.Close()
+			return nil, fmt.Errorf("cleaning refresh source %q access failed", sourceName)
+		}
+		reportCleanup(r.db, telemetry, nil)
+		observeSource(telemetry, connection.Kind, "succeeded")
 	}
 	if err := resolved.ValidateDiscoveredSourceSchemas(); err != nil {
+		_ = prepared.Close()
 		return nil, fmt.Errorf("validating staged source schemas: %w", err)
 	}
 	closeSession = false
 	return prepared, nil
-}
-
-func (r *SourceRuntime) loadSourceExtensions(ctx context.Context, session analyticsresource.Session, model *semanticmodel.Model, loaded map[string]struct{}) error {
-	required := RequiredExtensions(model)
-	for _, extension := range required {
-		if _, ok := loaded[extension]; ok {
-			continue
-		}
-		if r.extensionAdmission == nil {
-			return fmt.Errorf("source preparation requires extension admission for %s", strings.Join(required, ", "))
-		}
-		admitted, err := r.extensionAdmission.AdmitExtension(ctx, extension)
-		if err != nil {
-			return fmt.Errorf("extension %s was not admitted: %w", extension, err)
-		}
-		if err := validateAdmittedExtension(extension, admitted); err != nil {
-			return err
-		}
-		if _, err := session.ExecContext(ctx, loadExtensionStatement(admitted.Path)); err != nil {
-			return fmt.Errorf("loading admitted extension %s: %w", extension, err)
-		}
-		loaded[extension] = struct{}{}
-	}
-	return nil
-}
-
-func tryCleanupSourceAccess(session analyticsresource.Session, model *semanticmodel.Model, attached map[string]struct{}) (err error, panicked bool) {
-	returned := false
-	func() {
-		defer func() {
-			if !returned {
-				_ = recover()
-				panicked = true
-			}
-		}()
-		err = cleanupSourceAccess(session, model, attached)
-		returned = true
-	}()
-	return err, panicked
-}
-
-func tryCloseSourceSession(closer interface{ Close() error }) (err error, panicked bool) {
-	returned := false
-	func() {
-		defer func() {
-			if !returned {
-				_ = recover()
-				panicked = true
-			}
-		}()
-		err = closer.Close()
-		returned = true
-	}()
-	return err, panicked
-}
-
-func joinSourceCleanupFailure(primary error) error {
-	if primary == nil {
-		return errSourceCleanupFailed
-	}
-	return errors.Join(primary, errSourceCleanupFailed)
-}
-
-func joinSourceCleanupFailureIfNeeded(primary, cleanupErr error) error {
-	if cleanupErr == nil {
-		return primary
-	}
-	return joinSourceCleanupFailure(primary)
-}
-
-func markSourceCleanupFatal(provider analyticsresource.SessionProvider) {
-	if reporter, ok := provider.(fatalReporter); ok {
-		reporter.MarkFatal(errSourceCleanupFailed)
-	}
 }
 
 func validateAdmittedExtension(requested string, admitted AdmittedExtension) error {
@@ -449,46 +258,44 @@ func loadExtensionStatement(path string) string {
 	return "LOAD '" + strings.ReplaceAll(filepath.ToSlash(path), "'", "''") + "'"
 }
 
-func sourcePreparationModel(model *semanticmodel.Model) *semanticmodel.Model {
-	resolved := *model
-	resolved.Connections = make(map[string]semanticmodel.Connection, len(model.Connections))
-	for name, connection := range model.Connections {
-		connection.Auth = nil
-		resolved.Connections[name] = connection
-	}
-	resolved.Sources = maps.Clone(model.Sources)
-	return &resolved
-}
-
-func refreshSourceModel(model *semanticmodel.Model, sourceName string, source semanticmodel.Source, connectionName string, connection semanticmodel.Connection) *semanticmodel.Model {
-	source.Connection = connectionName
+func refreshSourceModel(model *semanticmodel.Model, sourceName string, source semanticmodel.Source) *semanticmodel.Model {
+	connection := model.Connections[source.Connection]
 	return &semanticmodel.Model{
-		Name: model.Name, DefaultConnection: connectionName,
-		Connections: map[string]semanticmodel.Connection{connectionName: connection},
+		Name: model.Name, DefaultConnection: source.Connection,
+		Connections: map[string]semanticmodel.Connection{source.Connection: connection},
 		Sources:     map[string]semanticmodel.Source{sourceName: source},
 	}
 }
 
-func lockSourceScope(connection semanticmodel.Connection, logicalName string, telemetry refreshTelemetry) func() {
-	if connection.Kind == "managed" {
-		return func() {}
-	}
-	key := sourceScopeLockKey(connection, logicalName)
-	value, _ := sourceScopeLocks.LoadOrStore(key, &sync.Mutex{})
-	lock := value.(*sync.Mutex)
-	if !lock.TryLock() {
-		connector, _, _ := strings.Cut(key, "\x00")
-		if telemetry != nil {
-			telemetry.ObserveSecretScopeContention(connector)
+func lockSourceScopes(model *semanticmodel.Model, telemetry refreshTelemetry) func() {
+	keys := map[string]struct{}{}
+	for _, source := range model.Sources {
+		connection := model.Connections[source.Connection]
+		if connection.Kind == "managed" {
+			continue
 		}
-		lock.Lock()
+		scope := firstNonEmpty(connection.Scope, connection.Path, connection.Host, source.Connection)
+		keys[connection.Kind+"\x00"+scope] = struct{}{}
 	}
-	return lock.Unlock
-}
-
-func sourceScopeLockKey(connection semanticmodel.Connection, logicalName string) string {
-	scope := firstNonEmpty(connection.Scope, connection.Path, connection.Host, logicalName)
-	return connection.Kind + "\x00" + scope
+	ordered := sortedKeys(keys)
+	locks := make([]*sync.Mutex, 0, len(ordered))
+	for _, key := range ordered {
+		value, _ := sourceScopeLocks.LoadOrStore(key, &sync.Mutex{})
+		lock := value.(*sync.Mutex)
+		if !lock.TryLock() {
+			connector, _, _ := strings.Cut(key, "\x00")
+			if telemetry != nil {
+				telemetry.ObserveSecretScopeContention(connector)
+			}
+			lock.Lock()
+		}
+		locks = append(locks, lock)
+	}
+	return func() {
+		for index := len(locks) - 1; index >= 0; index-- {
+			locks[index].Unlock()
+		}
+	}
 }
 
 func observeSource(telemetry refreshTelemetry, connector, outcome string) {
@@ -506,7 +313,9 @@ func observeCleanup(telemetry refreshTelemetry, err error) {
 func reportCleanup(provider analyticsresource.SessionProvider, telemetry refreshTelemetry, err error) {
 	observeCleanup(telemetry, err)
 	if err != nil {
-		markSourceCleanupFatal(provider)
+		if reporter, ok := provider.(fatalReporter); ok {
+			reporter.MarkFatal(err)
+		}
 	}
 }
 
@@ -522,43 +331,49 @@ func (r *SourceRuntime) ResolveSourcePath(model *semanticmodel.Model, source sem
 	return ResolveSourcePath(model, source)
 }
 
-func (r *SourceRuntime) withResolvedConnection(
-	ctx context.Context,
-	name string,
-	connection semanticmodel.Connection,
-	consume func(semanticmodel.Connection) error,
-) error {
-	if consume == nil {
-		return fmt.Errorf("source connection consumer is required")
-	}
-	connection.Auth = nil
-	if connection.Kind == "managed" || connection.Access == semanticmodel.ConnectionAccessPublic && r.connectionResolver == nil {
-		return consume(connection)
-	}
-	if r.connectionResolver != nil {
-		return r.connectionResolver.WithConnection(ctx, name, connection, func(target semanticmodel.Connection) error {
-			target.Auth = maps.Clone(target.Auth)
-			if target.Access == semanticmodel.ConnectionAccessPublic {
-				clear(target.Auth)
-				target.Auth = nil
+func (r *SourceRuntime) resolveCredentials(ctx context.Context, model *semanticmodel.Model) (*semanticmodel.Model, error) {
+	resolved := *model
+	suffix := fmt.Sprintf("_r%d", refreshSessionSequence.Add(1))
+	resolved.Connections = make(map[string]semanticmodel.Connection, len(model.Connections))
+	connectionNames := make(map[string]string, len(model.Connections))
+	for name, connection := range model.Connections {
+		if connection.Kind == "managed" {
+			// Managed-data roots are already resolved from immutable
+			// serving-state bindings by Runtime Host. They must never be
+			// replaced by a secret-backed target connection.
+		} else if r.connectionResolver != nil {
+			// The target-bound resolver supplies endpoint/scope even for public
+			// connections; its no-auth binding deliberately contributes no Auth.
+			var err error
+			connection, err = r.connectionResolver.Resolve(ctx, name, connection)
+			if err != nil {
+				return nil, err
 			}
-			defer clear(target.Auth)
-			return consume(target)
-		})
+		} else if connection.Access == semanticmodel.ConnectionAccessPublic {
+			// Authored public connectors need no resolver and carry no auth.
+			connection.Auth = nil
+		} else {
+			auth, err := r.resolver.Resolve(ctx, name, connection)
+			if err != nil {
+				return nil, err
+			}
+			connection.Auth = auth
+		}
+		resolvedName := name + suffix
+		connectionNames[name] = resolvedName
+		resolved.Connections[resolvedName] = connection
 	}
-	if connection.Access == semanticmodel.ConnectionAccessPublic {
-		return consume(connection)
+	if remapped := connectionNames[model.DefaultConnection]; remapped != "" {
+		resolved.DefaultConnection = remapped
 	}
-	if r.resolver == nil {
-		return fmt.Errorf("source credential resolver is unavailable")
+	resolved.Sources = make(map[string]semanticmodel.Source, len(model.Sources))
+	for name, source := range model.Sources {
+		if remapped := connectionNames[source.Connection]; remapped != "" {
+			source.Connection = remapped
+		}
+		resolved.Sources[name] = source
 	}
-	auth, err := r.resolver.Resolve(ctx, name, connection)
-	if err != nil {
-		return err
-	}
-	connection.Auth = maps.Clone(auth)
-	defer clear(connection.Auth)
-	return consume(connection)
+	return &resolved, nil
 }
 
 func (p *PreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {
@@ -626,14 +441,14 @@ func cleanupSourceAccess(session analyticsresource.Session, model *semanticmodel
 	for _, name := range connections {
 		alias, err := databaseAlias(name)
 		if err == nil {
-			_, err = session.ExecContext(cleanupCtx, "DETACH DATABASE IF EXISTS "+alias)
+			_, err = session.ExecContext(cleanupCtx, "DETACH "+alias)
 		}
 		result = errors.Join(result, err)
 	}
 	secrets := map[string]struct{}{}
 	for name, connection := range model.Connections {
 		spec, ok := connectors.LookupConnection(connection.Kind)
-		if ok && spec.SecretType != "" {
+		if ok && spec.SecretType != "" && spec.AttachKind != connectors.AttachDatabase {
 			if secret, err := connectionSecretName(name); err == nil {
 				secrets[secret] = struct{}{}
 			}
@@ -663,7 +478,6 @@ type ProjectRuntimeConfig struct {
 	Models             map[string]*semanticmodel.Model
 	ModelTables        map[string]semanticmodel.Table
 	Database           analyticsruntime.ProjectDatabase
-	SourceWork         *sourcework.Gate
 	CredentialResolver CredentialResolver
 	ConnectionResolver analyticsruntime.ConnectionResolver
 	ExtensionAdmission ExtensionAdmission
@@ -782,7 +596,6 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 			sources.extensionAdmission = config.ExtensionAdmission
 		}
 	}
-	sources.sourceWork = config.SourceWork
 	materializationModel, err := physicalProjectModel(config.Models, config.ModelTables)
 	if err != nil {
 		return nil, err

@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	"github.com/flidai/leapview/internal/analytics/connectors"
-	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
@@ -53,57 +51,52 @@ type activeRuntimeConnectionResolver struct {
 	evidence map[string]ActiveRuntimeBindingEvidence
 }
 
-func (r *activeRuntimeConnectionResolver) WithConnection(
+func (r *activeRuntimeConnectionResolver) Resolve(
 	ctx context.Context,
 	name string,
 	logical semanticmodel.Connection,
-	consume func(semanticmodel.Connection) error,
-) (resultErr error) {
-	if r == nil || r.module == nil || consume == nil {
-		return connectionbinding.ErrProviderUnavailable
+) (semanticmodel.Connection, error) {
+	if r == nil || r.module == nil {
+		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 	}
 	spec, ok := connectors.LookupConnection(strings.TrimSpace(logical.Kind))
 	if !ok {
-		return connectionbinding.ErrIncompatibleBinding
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	if logical.Access != "" && logical.Access != semanticmodel.ConnectionAccessPublic {
-		return connectionbinding.ErrIncompatibleBinding
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	if logical.Access == semanticmodel.ConnectionAccessPublic && !spec.AllowPublicAccess {
-		return connectionbinding.ErrIncompatibleBinding
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	switch spec.ActivationMode {
 	case connectors.AuthoredActivation:
-		logical.Auth = nil
-		return consume(logical)
+		return logical, nil
 	case connectors.TargetBindingActivation:
 		if r.module.activeRuntimeBindingEvidence == nil || r.module.connectionBindings == nil || r.module.connectionFactory == nil {
-			return connectionbinding.ErrProviderUnavailable
+			return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 		}
 	case connectors.ManagedActivation:
-		return connectionbinding.ErrIncompatibleBinding
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	default:
-		return connectionbinding.ErrIncompatibleBinding
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	evidence, err := r.evidenceFor(ctx, name)
 	if err != nil {
-		return err
+		return semanticmodel.Connection{}, err
 	}
 	if evidence.CredentialVersionID != "" {
-		// Local pins are distinct publication evidence. Enabling their use also
-		// requires governed runtime authority and the activation admission barrier;
-		// they must never be interpreted by an external provider resolver.
-		return connectionbinding.ErrProviderUnavailable
+		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 	}
 	connectionID, err := connectionbinding.ParseConnectionID(strings.TrimSpace(name))
 	if err != nil {
-		return connectionbinding.ErrBindingNotFound
+		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	binding, err := r.module.connectionBindings.Binding(ctx, connectionbinding.BindingScope{
 		ProjectID: r.projectID, Environment: r.environment,
 	}, connectionbinding.TargetID(r.module.targetID), connectionID)
 	if err != nil {
-		return err
+		return semanticmodel.Connection{}, err
 	}
 	actual := binding.Evidence()
 	if !binding.Enabled || binding.ID != evidence.BindingID ||
@@ -111,75 +104,50 @@ func (r *activeRuntimeConnectionResolver) WithConnection(
 		binding.ConnectorKind != evidence.ConnectorKind || binding.Revision < evidence.Revision ||
 		actual.EndpointConfigHash != evidence.EndpointConfigHash || evidence.Access != logical.Access ||
 		strings.TrimSpace(evidence.ValidatedVersion) == "" {
-		return connectionbinding.ErrIncompatibleBinding
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	var snapshot connectionbinding.CredentialSnapshot
 	if logical.Access == semanticmodel.ConnectionAccessPublic {
 		if binding.AuthenticationMode != connectionbinding.AuthenticationNone {
-			return connectionbinding.ErrIncompatibleBinding
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 		}
 		snapshot = connectionbinding.NewNoAuthCredentialSnapshot(time.Now())
 	} else {
 		if binding.AuthenticationMode == connectionbinding.AuthenticationNone {
-			return connectionbinding.ErrIncompatibleBinding
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 		}
 		resolver, resolverErr := connectionbinding.SelectResolver(connectionbinding.ResolverSelection{
 			TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
 			TargetClass: r.module.targetClass, Kind: r.module.connectionResolverKind(),
 		}, r.module.targetResolvers)
 		if resolverErr != nil {
-			return resolverErr
+			return semanticmodel.Connection{}, resolverErr
 		}
 		versioned, ok := resolver.(connectionbinding.VersionedCredentialResolver)
 		if !ok {
-			return connectionbinding.ErrProviderUnavailable
+			return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 		}
 		snapshot, err = versioned.ResolveVersion(ctx, binding.CredentialReference, evidence.ValidatedVersion)
 		if err != nil {
-			return err
+			return semanticmodel.Connection{}, err
 		}
 	}
 	defer snapshot.Destroy()
 	pool, err := r.module.connectionFactory.Prepare(ctx, binding, snapshot)
-	if pool != nil {
-		// Keep the temporary generation alive through the entire native consumer.
-		// A cleanup failure must remain visible to the source admission barrier.
-		defer func() {
-			if recover() != nil {
-				resultErr = analyticsruntime.ErrConnectionCleanupFailed
-			}
-			if closeActiveRuntimePool(pool) != nil {
-				resultErr = analyticsruntime.ErrConnectionCleanupFailed
-			}
-		}()
-	}
-	if errors.Is(err, analyticsduckdb.ErrTargetPoolCleanupFailed) {
-		return analyticsruntime.ErrConnectionCleanupFailed
-	}
 	if err != nil || pool == nil {
-		return connectionbinding.ErrProviderUnavailable
+		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 	}
+	// The prepared pool is an activation probe, not shared mutable binding state.
+	// Resolve returns an isolated connection copy before the probe is destroyed.
+	defer pool.Close()
 	if err := pool.HealthCheck(ctx); err != nil {
-		return connectionbinding.ErrProviderUnavailable
+		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 	}
 	target, ok := pool.(analyticsruntime.ConnectionResolver)
 	if !ok {
-		return connectionbinding.ErrProviderUnavailable
+		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 	}
-	return target.WithConnection(ctx, name, logical, consume)
-}
-
-// Cleanup has its own bounded context so cancellation of the source read does
-// not prevent closing its temporary owner. Drivers never escape as diagnostics.
-func closeActiveRuntimePool(pool connectionbinding.RuntimePool) (resultErr error) {
-	defer func() {
-		if recover() != nil {
-			resultErr = analyticsruntime.ErrConnectionCleanupFailed
-		}
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), credentialProbeTimeout)
-	defer cancel()
-	return closeCredentialProbe(pool, ctx)
+	return target.Resolve(ctx, name, logical)
 }
 
 func (r *activeRuntimeConnectionResolver) evidenceFor(

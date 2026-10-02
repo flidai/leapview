@@ -544,6 +544,7 @@ tasks:
       - bun run test:datastar-lit
       - bun run test:ui-command-boundaries
       - bun run test:command-failure
+      - node scripts/ensure_playwright.mjs && bun test web/components/shared/command.dom.test.ts
       - bun run test:app-shell
       - bun run test:settings
       - bun run typecheck:app
@@ -555,7 +556,7 @@ tasks:
       - bun run test:public-site-smoke
 
   ci:test:frontend:reports:
-    desc: Run report controls, catalog, and visualization contract tests
+    desc: Run dashboard, visualization, and report browser tests
     cmds:
       - bun run test:visualization-ir
       - bun run test:table-selection
@@ -563,19 +564,11 @@ tasks:
       - bun run test:record-table
       - bun run test:visual-modal
       - bun run test:catalog-page
+      - bun run test:dashboard-page
       - bun run test:date-picker
+      - bun run test:dashboard-builder
       - bun run test:windowed-table
       - bun run test:filter-menu
-
-  ci:test:frontend:reports-viewer:
-    desc: Run dashboard viewer and visualization host browser tests
-    cmds:
-      - bun run test:dashboard-page
-
-  ci:test:frontend:reports-builder:
-    desc: Run dashboard-builder browser tests
-    cmds:
-      - bun run test:dashboard-builder
 
   ci:test:frontend:chat:
     desc: Run chat and shared content browser tests
@@ -1991,10 +1984,6 @@ tasks:
       - task: ci:lane:frontend:shard
         vars: { SHARD: reports }
       - task: ci:lane:frontend:shard
-        vars: { SHARD: reports-viewer }
-      - task: ci:lane:frontend:shard
-        vars: { SHARD: reports-builder }
-      - task: ci:lane:frontend:shard
         vars: { SHARD: chat }
       - task: ci:lane:frontend:shard
         vars: { SHARD: data }
@@ -2006,11 +1995,11 @@ tasks:
     requires:
       vars:
         - name: SHARD
-          enum: [core, reports, reports-viewer, reports-builder, chat, data, site]
+          enum: [core, reports, chat, data, site]
     cmds:
-      # Bound a single unit of work, not the cumulative runtime of all seven.
+      # Bound a single unit of work, not the cumulative runtime of all five.
       # Hosted CI gives each shard its own runner; local CI avoids CPU contention.
-      # Keep the longer timeout after the combined reports suite's repeated 180s expirations.
+      # The reports shard includes the full viewer and builder browser suites.
       - node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}
 
   ci:lane:frontend:local:

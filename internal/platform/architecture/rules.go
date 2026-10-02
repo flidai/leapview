@@ -114,7 +114,6 @@ var CompositionContractPrefixes = map[string]struct{}{
 	"internal/access/revalidation":         {},
 	"internal/access/snapshot":             {},
 	"internal/analytics/connectionbinding": {},
-	"internal/analytics/sourcework":        {}, // Separate candidate-preparation gate owned by composition.
 	"internal/analytics/gates":             {},
 	"internal/analytics/materialize":       {},
 	"internal/analytics/model":             {},

@@ -79,8 +79,8 @@ func TestProjectMaterializerResolvesConnectionsAgainstActiveReleaseState(t *test
 
 type projectMaterializerConnectionResolver struct{}
 
-func (projectMaterializerConnectionResolver) WithConnection(context.Context, string, semanticmodel.Connection, func(semanticmodel.Connection) error) error {
-	return errors.New("candidate resolver called")
+func (projectMaterializerConnectionResolver) Resolve(context.Context, string, semanticmodel.Connection) (semanticmodel.Connection, error) {
+	return semanticmodel.Connection{}, errors.New("candidate resolver called")
 }
 
 var _ analyticsruntime.ConnectionResolver = projectMaterializerConnectionResolver{}
@@ -110,7 +110,7 @@ func TestProjectMaterializerFailsClosedForMissingCandidateRuntime(t *testing.T) 
 		ConnectionEvidenceServingStateID: "state_active",
 	})
 	require.NotNil(t, resolver)
-	_, err := resolveTestConnection(resolver, t.Context(), "warehouse", semanticmodel.Connection{Kind: "postgres"})
+	_, err := resolver.Resolve(t.Context(), "warehouse", semanticmodel.Connection{Kind: "postgres"})
 	require.ErrorIs(t, err, connectionbinding.ErrProviderUnavailable)
 	_, active := resolver.(*activeRuntimeConnectionResolver)
 	require.False(t, active)
@@ -125,7 +125,7 @@ func TestProjectMaterializerRejectsNonCanonicalCandidateIdentity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			resolver := (&duckDBProjectMaterializer{module: module}).connectionResolver(request)
 			require.NotNil(t, resolver)
-			_, err := resolveTestConnection(resolver, t.Context(), "warehouse", semanticmodel.Connection{Kind: "postgres"})
+			_, err := resolver.Resolve(t.Context(), "warehouse", semanticmodel.Connection{Kind: "postgres"})
 			require.ErrorIs(t, err, connectionbinding.ErrProviderUnavailable)
 		})
 	}

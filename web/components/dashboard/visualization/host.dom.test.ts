@@ -773,16 +773,13 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
       await page.evaluate(async () => {
         const source = (window as any).__lvSourceHosts.orders_kpi
         const deferred = document.createElement('lv-visualization-host') as any
-        deferred.id = 'intersection-fallback-host'
+        deferred.id = 'deferred-fallback'
         deferred.deferMount = true
         deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
         document.body.append(deferred)
         await deferred.updateComplete
       })
-      // When the lazy renderer chunk is held, fallback mounting waits for the
-      // chunk. Releasing it must let the deferred host mount without a manual
-      // ensureMounted() call.
-      const renderer = page.locator('#intersection-fallback-host .renderer > *')
+      const renderer = page.locator('#deferred-fallback .renderer > *')
       if (rendererChunkRequested) expect(await renderer.count()).toBe(0)
       releaseRendererChunk()
       await renderer.waitFor({ state: 'attached' })

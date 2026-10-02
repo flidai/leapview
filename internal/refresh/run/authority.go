@@ -6,80 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flidai/leapview/internal/access"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
-	"github.com/flidai/leapview/pkg/permissions"
 )
-
-// captureConnectionAuthority adds only server-derived dependencies, before the
-// envelope is persisted. The live revalidator checks both current resource
-// authority and the initiating credential's ceiling for the complete set.
-func (s Service) captureConnectionAuthority(ctx context.Context, authority jobs.AuthorityEnvelope, connectionIDs []projectgraph.ResourceID) (jobs.AuthorityEnvelope, error) {
-	if authority.IsZero() {
-		return authority, nil
-	}
-	authority.Permissions = append([]permissions.Pair(nil), authority.Permissions...)
-	if authority.Mode == jobs.CallerAuthorityMode {
-		// Manual capture supplies the generated operation's root pair. Any
-		// dependency permissions are selected here from the compiled closure.
-		if len(authority.Permissions) != 1 || authority.Permissions[0].Action != permissions.Action(access.ActionPipelineRun) {
-			return jobs.AuthorityEnvelope{}, errors.New("caller refresh capture requires only its pipeline permission")
-		}
-		for _, id := range connectionIDs {
-			pair, err := connectionPermission(authority.Target.ProjectID, id)
-			if err != nil {
-				return jobs.AuthorityEnvelope{}, err
-			}
-			authority.Permissions = append(authority.Permissions, pair)
-		}
-	}
-	if err := validateConnectionAuthority(authority, connectionIDs); err != nil {
-		return jobs.AuthorityEnvelope{}, err
-	}
-	if s.AuthorityRevalidator == nil {
-		return jobs.AuthorityEnvelope{}, jobs.ErrAuthorityRevalidator
-	}
-	if err := s.AuthorityRevalidator.Revalidate(ctx, authority); err != nil {
-		return jobs.AuthorityEnvelope{}, err
-	}
-	return authority, nil
-}
-
-func connectionPermission(projectID string, id projectgraph.ResourceID) (permissions.Pair, error) {
-	return permissions.NewExactPair(access.PermissionCatalogProfile, permissions.Action(access.ActionConnectionUse), projectID, permissions.Kind(projectgraph.KindConnection), id.String())
-}
-
-// Callers capture exactly the executable connection set. Delegated grants may
-// carry additional permissions, but must explicitly contain every dependency;
-// their entire immutable set is separately matched against the live grant.
-func validateConnectionAuthority(authority jobs.AuthorityEnvelope, connectionIDs []projectgraph.ResourceID) error {
-	if err := authority.Validate(); err != nil {
-		return err
-	}
-	expected := make(map[permissions.Pair]struct{}, len(connectionIDs))
-	for _, id := range connectionIDs {
-		pair, err := connectionPermission(authority.Target.ProjectID, id)
-		if err != nil {
-			return err
-		}
-		expected[pair] = struct{}{}
-	}
-	for _, pair := range authority.Permissions {
-		if pair.Action != permissions.Action(access.ActionConnectionUse) {
-			continue
-		}
-		if _, ok := expected[pair]; !ok && authority.Mode == jobs.CallerAuthorityMode {
-			return errors.New("captured connection authority exceeds executable closure")
-		}
-		delete(expected, pair)
-	}
-	if len(expected) != 0 {
-		return errors.New("executable connection authority was not captured")
-	}
-	return nil
-}
 
 func validatePipelineAuthorityTarget(authority jobs.AuthorityEnvelope, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID, principalID string) error {
 	if authority.IsZero() {
@@ -171,15 +101,6 @@ func (s Service) revalidateBoundary(ctx context.Context, job JobRecord, boundary
 	}
 	if err := s.AuthorityRevalidator.Revalidate(ctx, job.Authority); err != nil {
 		return fmt.Errorf("refresh authority before %s boundary: %w", boundary, err)
-	}
-	// Publication may have installed the result generation before output.
-	// Output consumes no source connection: recheck live captured authority
-	// above, without requiring the retired base generation to remain active.
-	if boundary == "output" {
-		if job.PipelinePlan == nil {
-			return errors.New("output executable plan evidence is required")
-		}
-		return validateDelegatedExecutablePlan(job.Authority, *job.PipelinePlan)
 	}
 	if err := s.revalidateExecutableAuthority(ctx, job); err != nil {
 		return fmt.Errorf("refresh executable authority before %s boundary: %w", boundary, err)

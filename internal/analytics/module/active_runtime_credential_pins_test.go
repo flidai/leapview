@@ -29,7 +29,7 @@ func TestActiveRuntimeResolverNeverTreatsLocalCredentialPinAsExternalVersion(t *
 		if mixed {
 			want = connectionbinding.ErrIncompatibleBinding
 		}
-		if _, err := resolveTestConnection(resolver, t.Context(), "quack", semanticmodel.Connection{Kind: "postgres"}); !errors.Is(err, want) {
+		if _, err := resolver.Resolve(t.Context(), "quack", semanticmodel.Connection{Kind: "postgres"}); !errors.Is(err, want) {
 			t.Fatalf("local credential pin error = %v, want %v", err, want)
 		}
 		if versioned.calls != 0 || module.connectionFactory.(*activePoolFactory).healthChecks != 0 {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,7 +63,7 @@ func TestPoolManagerRetireBoundedDrainsBeforeDeadlineAndRejectsNewLeases(t *test
 	}
 }
 
-func TestPoolManagerRetireBoundedRequestsForceCloseAtDeadline(t *testing.T) {
+func TestPoolManagerRetireBoundedForceClosesAtDeadline(t *testing.T) {
 	now := time.Now().UTC()
 	factory := &recordingPoolFactory{}
 	manager := newRetirementTestManager(t, now, factory)
@@ -75,11 +74,10 @@ func TestPoolManagerRetireBoundedRequestsForceCloseAtDeadline(t *testing.T) {
 
 	err = manager.RetireBounded(context.Background(), time.Now().Add(40*time.Millisecond))
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("RetireBounded() error = %v, want deadline exceeded after requesting forced close", err)
+		t.Fatalf("RetireBounded() error = %v, want deadline exceeded after forced close", err)
 	}
-	waitForManagerRetirement(t, manager)
 	if !pool.closed {
-		t.Fatal("pool was not force-closed after the deadline")
+		t.Fatal("pool was not force-closed at retirement deadline")
 	}
 
 	// A late reader release must not close the runtime a second time or reopen
@@ -111,7 +109,6 @@ func TestPoolManagerDisableBoundedPersistsFenceAndForceClosesReaders(t *testing.
 	err = manager.DisableBounded(context.Background(), now.Add(time.Minute), time.Now().Add(40*time.Millisecond))
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.False(t, store.binding.Enabled)
-	waitForManagerRetirement(t, manager)
 	require.True(t, pool.closed)
 	_, err = manager.Lease()
 	require.ErrorIs(t, err, ErrProviderUnavailable)
@@ -136,7 +133,6 @@ func TestPoolManagerDisableBoundedClosesPoolAfterPostFencePersistenceErrors(t *t
 			err = manager.DisableBounded(context.Background(), now.Add(time.Minute), time.Now().Add(40*time.Millisecond))
 			require.ErrorIs(t, err, failure)
 			require.ErrorIs(t, err, context.DeadlineExceeded)
-			waitForManagerRetirement(t, manager)
 			require.True(t, pool.closed)
 			require.ErrorIs(t, func() error { _, leaseErr := manager.Lease(); return leaseErr }(), ErrProviderUnavailable)
 			lease.Release()
@@ -173,7 +169,7 @@ func TestPoolManagerRetireBoundedIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestPoolManagerRetireBoundedCancellationRequestsForcedClose(t *testing.T) {
+func TestPoolManagerRetireBoundedCancellationFailsClosed(t *testing.T) {
 	now := time.Now().UTC()
 	factory := &recordingPoolFactory{}
 	manager := newRetirementTestManager(t, now, factory)
@@ -206,9 +202,8 @@ func TestPoolManagerRetireBoundedCancellationRequestsForcedClose(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("RetireBounded() cancellation error = %v, want context canceled", err)
 	}
-	waitForManagerRetirement(t, manager)
 	if !pool.closed {
-		t.Fatal("canceled retirement did not finish its requested close")
+		t.Fatal("canceled retirement left the credential-bearing pool open")
 	}
 	lease.Release()
 }
@@ -279,94 +274,7 @@ func TestPoolManagerRetirementFencesProviderFailurePersistence(t *testing.T) {
 	}
 }
 
-func TestPoolManagerRetirementWaitsForEarlierDrainingGeneration(t *testing.T) {
-	now := time.Now().UTC()
-	factory := &recordingPoolFactory{}
-	manager, err := NewPoolManager(PoolManagerConfig{
-		Binding: validTargetBinding(t),
-		Resolver: &sequenceResolver{snapshots: []CredentialSnapshot{
-			testSnapshot(t, "version-before-rotation", now),
-			testSnapshot(t, "version-after-rotation", now.Add(time.Minute)),
-		}},
-		Factory: factory, Store: &recordingBindingStore{}, Audit: noOpRotationAudit{},
-		Now: func() time.Time { return now }, StaleAfter: time.Hour,
-	})
-	require.NoError(t, err)
-	require.NoError(t, manager.RefreshNow(context.Background()))
-	oldLease, err := manager.Lease()
-	require.NoError(t, err)
-	oldPool := oldLease.Pool().(*recordingRuntimePool)
-	now = now.Add(time.Minute)
-	require.NoError(t, manager.RefreshNow(context.Background()))
-	factory.mu.Lock()
-	currentPool := factory.pools[1]
-	factory.mu.Unlock()
-
-	retired := make(chan error, 1)
-	go func() { retired <- manager.RetireBounded(context.Background(), time.Now().Add(time.Second)) }()
-	select {
-	case err := <-retired:
-		t.Fatalf("retirement completed while an earlier generation still had a lease: %v", err)
-	case <-time.After(25 * time.Millisecond):
-	}
-	if oldPool.closed {
-		t.Fatal("earlier generation closed while its lease was held")
-	}
-
-	oldLease.Release()
-	select {
-	case err := <-retired:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("retirement did not finish after the earlier generation drained")
-	}
-	if !oldPool.closed || !currentPool.closed {
-		t.Fatalf("retired generations closed old=%t current=%t", oldPool.closed, currentPool.closed)
-	}
-}
-
-func TestPoolManagerRetirementWaitsForDiscardedCandidateClose(t *testing.T) {
-	now := time.Now().UTC()
-	closeErr := errors.New("secret-bearing driver close failure")
-	pool := newRetirementBlockingClosePool(closeErr)
-	t.Cleanup(pool.allowClose)
-	pool.healthErr = errors.New("candidate health check failed")
-	manager := newRetirementManagerWithPool(t, now, pool)
-
-	refreshDone := make(chan error, 1)
-	go func() { refreshDone <- manager.RefreshNow(context.Background()) }()
-	select {
-	case <-pool.started:
-	case <-time.After(time.Second):
-		t.Fatal("refresh did not begin closing its rejected candidate")
-	}
-
-	retired := make(chan error, 1)
-	go func() { retired <- manager.RetireBounded(context.Background(), time.Now().Add(35*time.Millisecond)) }()
-	if err := <-retired; !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("RetireBounded() error = %v, want deadline while candidate cleanup is running", err)
-	}
-	select {
-	case <-manager.retireDone:
-		t.Fatal("retirement published completion before the admitted candidate cleanup returned")
-	default:
-	}
-
-	pool.allowClose()
-	refreshErr := <-refreshDone
-	if !errors.Is(refreshErr, ErrProviderUnavailable) {
-		t.Fatalf("refresh error = %v, want safe provider failure", refreshErr)
-	}
-	if errors.Is(refreshErr, closeErr) {
-		t.Fatalf("refresh exposed raw driver close failure: %v", refreshErr)
-	}
-	waitForManagerRetirement(t, manager)
-	if err := manager.RetireBounded(context.Background(), time.Now().Add(time.Second)); !errors.Is(err, closeErr) {
-		t.Fatalf("retirement result = %v, want retained internal cleanup error %v", err, closeErr)
-	}
-}
-
-func TestPoolManagerRetirementWaitsForBlockedPersistenceExit(t *testing.T) {
+func TestPoolManagerRetirementDoesNotWaitForBlockedPersistence(t *testing.T) {
 	now := time.Now().UTC()
 	store := &retirementBlockingStore{started: make(chan struct{}), release: make(chan struct{})}
 	manager, err := NewPoolManager(PoolManagerConfig{
@@ -389,21 +297,15 @@ func TestPoolManagerRetirementWaitsForBlockedPersistenceExit(t *testing.T) {
 	}
 
 	retireDone := make(chan error, 1)
-	go func() { retireDone <- manager.RetireBounded(context.Background(), time.Now().Add(40*time.Millisecond)) }()
+	go func() { retireDone <- manager.RetireBounded(context.Background(), time.Now().Add(time.Second)) }()
 	select {
 	case err := <-retireDone:
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-	case <-time.After(time.Second):
-		t.Fatal("bounded retirement did not return at its deadline")
-	}
-	select {
-	case <-manager.retireDone:
-		t.Fatal("retirement published completion while persistence remained blocked")
-	default:
+		require.NoError(t, err)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("retirement waited behind blocked persistence")
 	}
 	close(store.release)
 	require.ErrorIs(t, <-refreshDone, ErrProviderUnavailable)
-	waitForManagerRetirement(t, manager)
 }
 
 func TestPoolManagerRetireBoundedCancelsResolverAndWaitsForExit(t *testing.T) {
@@ -531,155 +433,6 @@ func TestPoolManagerRetireBoundedTimeoutDoesNotPublishLiveRefreshCompletion(t *t
 	}
 }
 
-func TestPoolManagerRetirementTimeoutWaitsForCloseCompletion(t *testing.T) {
-	now := time.Now().UTC()
-	closeErr := errors.New("runtime close failed after timeout")
-	pool := newRetirementBlockingClosePool(closeErr)
-	t.Cleanup(pool.allowClose)
-	manager := newRetirementManagerWithPool(t, now, pool)
-	require.NoError(t, manager.RefreshNow(context.Background()))
-
-	retired := make(chan error, 1)
-	go func() {
-		retired <- manager.RetireBounded(context.Background(), time.Now().Add(35*time.Millisecond))
-	}()
-	select {
-	case <-pool.started:
-	case <-time.After(time.Second):
-		t.Fatal("retirement did not request the pool close")
-	}
-	if err := <-retired; !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("RetireBounded() error = %v, want deadline while close is still running", err)
-	}
-	select {
-	case <-manager.retireDone:
-		t.Fatal("retirement published completion before RuntimePool.Close returned")
-	default:
-	}
-
-	retry := make(chan error, 1)
-	go func() {
-		retry <- manager.RetireBounded(context.Background(), time.Now().Add(time.Second))
-	}()
-	select {
-	case err := <-retry:
-		t.Fatalf("retry completed before RuntimePool.Close returned: %v", err)
-	case <-time.After(20 * time.Millisecond):
-	}
-	pool.allowClose()
-	if err := <-retry; !errors.Is(err, closeErr) {
-		t.Fatalf("retry close result = %v, want %v", err, closeErr)
-	}
-	if err := manager.RetireBounded(context.Background(), time.Now().Add(time.Second)); !errors.Is(err, closeErr) {
-		t.Fatalf("completed retirement result = %v, want persisted close result %v", err, closeErr)
-	}
-	if calls := pool.calls.Load(); calls != 1 {
-		t.Fatalf("RuntimePool.Close() calls = %d, want 1", calls)
-	}
-}
-
-func TestPoolManagerConcurrentRetirementTimesOutWithLeaseThenCompletesClose(t *testing.T) {
-	now := time.Now().UTC()
-	pool := newRetirementBlockingClosePool(nil)
-	t.Cleanup(pool.allowClose)
-	manager := newRetirementManagerWithPool(t, now, pool)
-	require.NoError(t, manager.RefreshNow(context.Background()))
-	lease, err := manager.Lease()
-	require.NoError(t, err)
-
-	first := make(chan error, 1)
-	go func() {
-		first <- manager.RetireBounded(context.Background(), time.Now().Add(40*time.Millisecond))
-	}()
-	secondStarted := make(chan struct{})
-	second := make(chan error, 1)
-	go func() {
-		close(secondStarted)
-		second <- manager.RetireBounded(context.Background(), time.Now().Add(time.Second))
-	}()
-	<-secondStarted
-	if err := <-first; !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("first RetireBounded() error = %v, want deadline", err)
-	}
-	select {
-	case <-pool.started:
-	case <-time.After(time.Second):
-		t.Fatal("expired retirement did not request forced close")
-	}
-	select {
-	case <-manager.retireDone:
-		t.Fatal("retirement published completion while RuntimePool.Close was blocked")
-	default:
-	}
-	select {
-	case err := <-second:
-		t.Fatalf("concurrent retirement completed before RuntimePool.Close returned: %v", err)
-	default:
-	}
-
-	pool.allowClose()
-	select {
-	case err := <-second:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("concurrent retirement did not complete after RuntimePool.Close returned")
-	}
-	lease.Release()
-	if calls := pool.calls.Load(); calls != 1 {
-		t.Fatalf("RuntimePool.Close() calls = %d, want 1", calls)
-	}
-}
-
-func newRetirementManagerWithPool(t *testing.T, now time.Time, pool *retirementBlockingClosePool) *PoolManager {
-	t.Helper()
-	manager, err := NewPoolManager(PoolManagerConfig{
-		Binding:  validTargetBinding(t),
-		Resolver: &sequenceResolver{snapshots: []CredentialSnapshot{testSnapshot(t, "version-retirement", now)}},
-		Factory:  retirementFixedPoolFactory{pool: pool},
-		Store:    &recordingBindingStore{}, Audit: noOpRotationAudit{},
-		Now: func() time.Time { return now }, StaleAfter: time.Hour,
-	})
-	require.NoError(t, err)
-	return manager
-}
-
-type retirementFixedPoolFactory struct {
-	pool *retirementBlockingClosePool
-}
-
-func (factory retirementFixedPoolFactory) Prepare(context.Context, TargetBinding, CredentialSnapshot) (RuntimePool, error) {
-	return factory.pool, nil
-}
-
-type retirementBlockingClosePool struct {
-	started   chan struct{}
-	release   chan struct{}
-	closeErr  error
-	healthErr error
-	calls     atomic.Int32
-	start     sync.Once
-	releaseDo sync.Once
-}
-
-func newRetirementBlockingClosePool(closeErr error) *retirementBlockingClosePool {
-	return &retirementBlockingClosePool{
-		started: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr,
-	}
-}
-
-func (pool *retirementBlockingClosePool) HealthCheck(context.Context) error { return pool.healthErr }
-
-func (pool *retirementBlockingClosePool) allowClose() {
-	pool.releaseDo.Do(func() { close(pool.release) })
-}
-
-func (pool *retirementBlockingClosePool) Close() error {
-	pool.calls.Add(1)
-	pool.start.Do(func() { close(pool.started) })
-	<-pool.release
-	return pool.closeErr
-}
-
 func newRetirementTestManager(t *testing.T, now time.Time, factory *recordingPoolFactory) *PoolManager {
 	t.Helper()
 	manager, err := NewPoolManager(PoolManagerConfig{
@@ -690,15 +443,6 @@ func newRetirementTestManager(t *testing.T, now time.Time, factory *recordingPoo
 	})
 	require.NoError(t, err)
 	return manager
-}
-
-func waitForManagerRetirement(t *testing.T, manager *PoolManager) {
-	t.Helper()
-	select {
-	case <-manager.retireDone:
-	case <-time.After(time.Second):
-		t.Fatal("retirement did not finish actual cleanup")
-	}
 }
 
 type retirementBlockingResolver struct {
@@ -811,7 +555,11 @@ func (store *retirementBlockingStore) Save(ctx context.Context, binding TargetBi
 	store.mu.Unlock()
 	if call == 2 {
 		close(store.started)
-		<-store.release
+		select {
+		case <-ctx.Done():
+			return TargetBinding{}, ctx.Err()
+		case <-store.release:
+		}
 	}
 	return store.recordingBindingStore.Save(ctx, binding, expectedRevision)
 }

@@ -12,7 +12,6 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
-	"github.com/flidai/leapview/internal/analytics/sourcework"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -21,9 +20,8 @@ type RuntimePool interface {
 	Close() error
 }
 
-// ContextRuntimePool offers context-bounded cleanup for temporary runtime-pool
-// operations. Managed generations use one shared true Close task so each
-// retirement caller can bound its own wait without canceling cleanup.
+// ContextRuntimePool is implemented by production pools whose forced
+// retirement can cancel in-flight provider work and obey the caller's bound.
 type ContextRuntimePool interface {
 	RuntimePool
 	CloseContext(context.Context) error
@@ -47,40 +45,35 @@ type PoolManagerConfig struct {
 	Now        func() time.Time
 	StaleAfter time.Duration
 	Schedule   RefreshSchedule
-	SourceWork *sourcework.Gate
 }
 
 type PoolManager struct {
-	resolver   CredentialResolver
-	factory    RuntimePoolFactory
-	store      BindingStateStore
-	audit      RotationAuditRecorder
-	logger     *slog.Logger
-	now        func() time.Time
-	stale      time.Duration
-	schedule   RefreshSchedule
-	sourceWork *sourcework.Gate
+	resolver CredentialResolver
+	factory  RuntimePoolFactory
+	store    BindingStateStore
+	audit    RotationAuditRecorder
+	logger   *slog.Logger
+	now      func() time.Time
+	stale    time.Duration
+	schedule RefreshSchedule
 
 	refreshGroup       singleflight.Group
 	refreshMu          sync.Mutex
 	mu                 sync.Mutex
 	binding            TargetBinding
 	active             *poolGeneration
-	draining           []*poolGeneration
 	lastRun            time.Time
 	retired            bool
+	retireOnce         sync.Once
 	retireOnceComplete sync.Once
-	retireCloseWait    sync.Once
 	retireDone         chan struct{}
 	retireErr          error
 	retireCompleted    bool
 	retireForced       bool
-	retireGens         []*poolGeneration
+	retireGen          *poolGeneration
 	retireCtx          context.Context
 	retireCancel       context.CancelFunc
 	refreshes          int
-	refreshCleanupErr  error
-	generationCloseErr error
 	refreshDone        chan struct{}
 }
 
@@ -103,7 +96,6 @@ type poolGeneration struct {
 	leases          int
 	draining        bool
 	closeOnce       sync.Once
-	closeDone       chan struct{}
 	closeErr        error
 }
 
@@ -127,8 +119,7 @@ func NewPoolManager(config PoolManagerConfig) (*PoolManager, error) {
 	return &PoolManager{
 		resolver: config.Resolver, factory: config.Factory, store: config.Store,
 		audit: config.Audit, logger: logger, now: config.Now, stale: config.StaleAfter,
-		schedule: config.Schedule, sourceWork: config.SourceWork,
-		binding: config.Binding, retireDone: make(chan struct{}),
+		schedule: config.Schedule, binding: config.Binding, retireDone: make(chan struct{}),
 		retireCtx: retireCtx, retireCancel: retireCancel, refreshDone: refreshDone,
 	}, nil
 }
@@ -149,28 +140,11 @@ func (manager *PoolManager) Refresh(ctx context.Context, request RefreshRequest)
 		return ErrProviderUnavailable
 	}
 	defer finish()
-	var sourceLease *sourcework.Lease
-	if manager.sourceWork != nil {
-		var err error
-		sourceLease, err = manager.sourceWork.Acquire(refreshCtx)
-		if err != nil {
-			return err
-		}
-		defer sourceLease.Release()
-	}
-	if err := sourcework.Revalidate(refreshCtx); err != nil {
-		return err
-	}
 	_, err, _ := manager.refreshGroup.Do("refresh", func() (any, error) {
-		return nil, manager.refresh(refreshCtx, request, sourceLease)
+		return nil, manager.refresh(refreshCtx, request)
 	})
 	if manager.isRetired() {
-		return errors.Join(ErrProviderUnavailable, err)
-	}
-	// Every caller revalidates after singleflight returns. A waiter must not
-	// inherit the leader's authority merely because it shared the same refresh.
-	if revalidationErr := sourcework.Revalidate(refreshCtx); revalidationErr != nil {
-		return errors.Join(err, revalidationErr)
+		return ErrProviderUnavailable
 	}
 	return err
 }
@@ -207,7 +181,7 @@ func (manager *PoolManager) Run(ctx context.Context) error {
 	}
 }
 
-func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest, sourceLease *sourcework.Lease) error {
+func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest) error {
 	manager.refreshMu.Lock()
 	defer manager.refreshMu.Unlock()
 	now := manager.now().UTC()
@@ -223,9 +197,6 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest,
 	}
 	binding := manager.binding
 	manager.mu.Unlock()
-	if err := sourcework.Revalidate(ctx); err != nil {
-		return err
-	}
 
 	var snapshot CredentialSnapshot
 	var err error
@@ -233,12 +204,6 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest,
 		snapshot = NewNoAuthCredentialSnapshot(now)
 	} else {
 		snapshot, err = manager.resolver.Resolve(ctx, binding.CredentialReference)
-	}
-	defer snapshot.Destroy()
-	// Resolver calls may block while caller authority changes. Revalidate even
-	// on a failed resolve before recording degradation or writing audit state.
-	if revalidationErr := sourcework.Revalidate(ctx); revalidationErr != nil {
-		return revalidationErr
 	}
 	if err != nil {
 		manager.recordRefresh(now)
@@ -252,20 +217,8 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest,
 		result := manager.degrade(ctx, reason, now, err)
 		return manager.withAudit(ctx, request, RotationDegraded, binding.ValidatedVersion, reason, now, result)
 	}
-	identity := snapshot.Identity()
-	if err := identity.Validate(); err != nil {
-		manager.recordRefresh(now)
-		reason := "INVALID_CREDENTIAL_IDENTITY"
-		result := manager.degrade(ctx, reason, now, ErrInvalidCredentialBundle)
-		return manager.withAudit(ctx, request, RotationDegraded, binding.ValidatedVersion, reason, now, result)
-	}
-	if identity.CredentialVersionID != "" {
-		manager.recordRefresh(now)
-		reason := "LOCAL_CREDENTIAL_VERSION_UNSUPPORTED"
-		result := manager.degrade(ctx, reason, now, ErrInvalidCredentialBundle)
-		return manager.withAudit(ctx, request, RotationDegraded, binding.ValidatedVersion, reason, now, result)
-	}
-	version := identity.ProviderVersion
+	defer snapshot.Destroy()
+	version := snapshot.ProviderVersion()
 
 	manager.mu.Lock()
 	if manager.retired {
@@ -285,9 +238,6 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest,
 				return ErrProviderUnavailable
 			}
 			manager.mu.Unlock()
-			if err := sourcework.Revalidate(ctx); err != nil {
-				return err
-			}
 			saved, err := manager.store.Save(ctx, validated, binding.Revision)
 			if err != nil {
 				return err
@@ -304,40 +254,23 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest,
 			manager.lastRun = now
 			manager.mu.Unlock()
 		} else {
-			if err := sourcework.Revalidate(ctx); err != nil {
-				return err
-			}
 			manager.recordRefresh(now)
 		}
 		return manager.withAudit(ctx, request, RotationUnchanged, version, "", now, nil)
 	}
 	manager.mu.Unlock()
 
-	if err := sourcework.Revalidate(ctx); err != nil {
-		return err
-	}
 	replacement, err := manager.factory.Prepare(ctx, binding, snapshot)
-	prepareAuthorityErr := sourcework.Revalidate(ctx)
-	if prepareAuthorityErr != nil {
-		return errors.Join(prepareAuthorityErr, manager.closeUncommittedPool(ctx, replacement, sourceLease))
-	}
 	if err != nil {
-		cleanupErr := manager.closeUncommittedPool(ctx, replacement, sourceLease)
-		if revalidationErr := sourcework.Revalidate(ctx); revalidationErr != nil {
-			return errors.Join(revalidationErr, cleanupErr)
-		}
 		if isContextError(err) || ctx.Err() != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return errors.Join(ctxErr, cleanupErr)
+				return ctxErr
 			}
-			return errors.Join(err, cleanupErr)
+			return err
 		}
 		manager.recordRefresh(now)
 		result := manager.degrade(ctx, "POOL_PREPARE_FAILED", now, ErrInvalidCredentialBundle)
-		return errors.Join(
-			manager.withAudit(ctx, request, RotationDegraded, version, "POOL_PREPARE_FAILED", now, result),
-			cleanupErr,
-		)
+		return manager.withAudit(ctx, request, RotationDegraded, version, "POOL_PREPARE_FAILED", now, result)
 	}
 	if replacement == nil {
 		if err := ctx.Err(); err != nil {
@@ -347,54 +280,46 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest,
 		result := manager.degrade(ctx, "POOL_PREPARE_FAILED", now, ErrInvalidCredentialBundle)
 		return manager.withAudit(ctx, request, RotationDegraded, version, "POOL_PREPARE_FAILED", now, result)
 	}
-	healthErr := replacement.HealthCheck(ctx)
-	if revalidationErr := sourcework.Revalidate(ctx); revalidationErr != nil {
-		return errors.Join(revalidationErr, manager.closeUncommittedPool(ctx, replacement, sourceLease))
-	}
-	if healthErr != nil {
-		cleanupErr := manager.closeUncommittedPool(ctx, replacement, sourceLease)
-		if revalidationErr := sourcework.Revalidate(ctx); revalidationErr != nil {
-			return errors.Join(revalidationErr, cleanupErr)
-		}
-		if isContextError(healthErr) || ctx.Err() != nil {
+	if err := replacement.HealthCheck(ctx); err != nil {
+		_ = closeRuntimePool(ctx, replacement)
+		if isContextError(err) || ctx.Err() != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return errors.Join(ctxErr, cleanupErr)
+				return ctxErr
 			}
-			return errors.Join(healthErr, cleanupErr)
+			return err
 		}
 		manager.recordRefresh(now)
 		result := manager.degrade(ctx, "POOL_HEALTH_CHECK_FAILED", now, ErrInvalidCredentialBundle)
-		return errors.Join(
-			manager.withAudit(ctx, request, RotationDegraded, version, "POOL_HEALTH_CHECK_FAILED", now, result),
-			cleanupErr,
-		)
+		return manager.withAudit(ctx, request, RotationDegraded, version, "POOL_HEALTH_CHECK_FAILED", now, result)
 	}
 
 	validated, err := binding.MarkValidated(version, now)
 	if err != nil {
-		return errors.Join(err, manager.closeUncommittedPool(ctx, replacement, sourceLease))
+		_ = closeRuntimePool(ctx, replacement)
+		return err
 	}
 	manager.mu.Lock()
 	if manager.retired {
 		manager.mu.Unlock()
-		return errors.Join(ErrProviderUnavailable, manager.closeUncommittedPool(ctx, replacement, sourceLease))
+		_ = closeRuntimePool(ctx, replacement)
+		return ErrProviderUnavailable
 	}
 	if !manager.binding.Enabled || manager.binding.Revision != binding.Revision {
 		manager.mu.Unlock()
-		return errors.Join(ErrIncompatibleBinding, manager.closeUncommittedPool(ctx, replacement, sourceLease))
+		_ = closeRuntimePool(ctx, replacement)
+		return ErrIncompatibleBinding
 	}
 	manager.mu.Unlock()
-	if err := sourcework.Revalidate(ctx); err != nil {
-		return errors.Join(err, manager.closeUncommittedPool(ctx, replacement, sourceLease))
-	}
 	saved, err := manager.store.Save(ctx, validated, binding.Revision)
 	if err != nil {
-		return errors.Join(err, manager.closeUncommittedPool(ctx, replacement, sourceLease))
+		_ = closeRuntimePool(ctx, replacement)
+		return err
 	}
 	manager.mu.Lock()
 	if manager.retired || !manager.binding.Enabled || manager.binding.Revision != binding.Revision {
 		manager.mu.Unlock()
-		return errors.Join(ErrProviderUnavailable, manager.closeUncommittedPool(ctx, replacement, sourceLease))
+		_ = closeRuntimePool(ctx, replacement)
+		return ErrProviderUnavailable
 	}
 	previous := manager.active
 	manager.binding = saved
@@ -403,10 +328,9 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest,
 	}
 	manager.lastRun = now
 	closePrevious := markDraining(previous)
-	manager.trackDrainingLocked(previous)
 	manager.mu.Unlock()
 	if closePrevious != nil {
-		manager.closeDrainingGeneration(closePrevious)
+		_ = closeGeneration(closePrevious)
 	}
 	return manager.withAudit(ctx, request, RotationActivated, version, "", now, nil)
 }
@@ -569,18 +493,18 @@ func (manager *PoolManager) Disable(ctx context.Context, now time.Time) error {
 	previous := manager.active
 	manager.active = nil
 	closePrevious := markDraining(previous)
-	manager.trackDrainingLocked(previous)
 	manager.mu.Unlock()
 	if closePrevious != nil {
-		return manager.closeDrainingGeneration(closePrevious)
+		return closeGeneration(closePrevious)
 	}
 	return nil
 }
 
 // DisableBounded persists the disabled binding revision, fences all new pool
 // work, and bounds the lifetime of leases that still hold credential-bearing
-// runtime state. A timeout or cancellation requests forced cleanup, which
-// continues until actual pool close and admitted refresh work finish.
+// runtime state. A timeout or cancellation is returned only after the pool has
+// been force-closed, so callers can safely persist an incomplete recovery
+// checkpoint without leaving the old principal eligible for new work.
 func (manager *PoolManager) DisableBounded(ctx context.Context, now, deadline time.Time) error {
 	if manager == nil || ctx == nil {
 		return ErrProviderUnavailable
@@ -639,45 +563,33 @@ func (manager *PoolManager) waitForRefreshExit(ctx context.Context, deadline tim
 	}
 }
 
-// Retire fences this manager without changing persisted binding metadata. It
-// returns after immediate cleanup when possible; nil does not prove outstanding
-// readers or refresh work have finished. Use RetireBounded when callers need
-// completion evidence.
+// Retire removes this manager from service without changing persisted binding
+// metadata. Existing leases may finish; the retired generation closes as soon
+// as its final lease is released.
 func (manager *PoolManager) Retire() error {
 	if manager == nil {
 		return nil
 	}
-	started := manager.beginRetirement()
+	_, started := manager.beginRetirement()
 	if !started {
+		// Retire historically returned immediately for an already-retired
+		// manager. Keep that idempotent behavior; callers that need to await
+		// readers should use RetireBounded.
 		return nil
 	}
-	if err := manager.tryCompleteRetirement(); err != nil {
-		return err
-	}
-	manager.mu.Lock()
-	ready := manager.refreshes == 0
-	for _, generation := range manager.retireGens {
-		if generation.leases != 0 {
-			ready = false
-			break
-		}
-	}
-	manager.mu.Unlock()
-	if !ready {
-		return nil
-	}
-	<-manager.retireDone
-	return manager.retirementResult()
+	return manager.tryCompleteRetirement()
 }
 
 // RetireBounded fences new work immediately, then waits for existing leases to
-// drain until deadline. If the deadline or ctx is reached first, it requests
-// forced close and returns when the caller's bound expires, even if the actual
-// pool close is still running. A later caller can wait for its true result.
+// drain until deadline. If the deadline or ctx is reached first, the retired
+// runtime pool is force-closed before this method returns. The explicit
+// deadline is intentionally required so a caller cannot accidentally wait
+// forever while credential-bearing runtime state remains reachable.
 //
-// Cancellation fences admission and requests the same single close task as
-// every other caller. Timeouts and cancellation are never stored as close
-// results. Repeated calls wait for actual completion within their own bounds.
+// A cancellation is fail-closed: the pool is force-closed and the cancellation
+// error is returned after retirement has completed. Repeated calls do not
+// reopen or close another generation; a call made after completion returns the
+// recorded close result (or nil).
 func (manager *PoolManager) RetireBounded(ctx context.Context, deadline time.Time) error {
 	if manager == nil {
 		return nil
@@ -692,9 +604,16 @@ func (manager *PoolManager) RetireBounded(ctx context.Context, deadline time.Tim
 }
 
 func (manager *PoolManager) retireBounded(ctx context.Context, deadline time.Time) error {
-	manager.beginRetirement()
+	_, _ = manager.beginRetirement()
 	if err := manager.tryCompleteRetirement(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return errors.Join(ctxErr, err)
+		}
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		closeErr := manager.forceRetiredContext(ctx)
+		return manager.awaitForcedRetirement(err, closeErr, deadline)
 	}
 
 	select {
@@ -702,14 +621,12 @@ func (manager *PoolManager) retireBounded(ctx context.Context, deadline time.Tim
 		return manager.retirementResult()
 	default:
 	}
-	if err := ctx.Err(); err != nil {
-		manager.forceRetired()
-		return manager.forcedRetirementResult(err)
-	}
 	remaining := time.Until(deadline)
 	if remaining <= 0 {
-		manager.forceRetired()
-		return manager.forcedRetirementResult(context.DeadlineExceeded)
+		forceContext, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		closeErr := manager.forceRetiredContext(forceContext)
+		return errors.Join(context.DeadlineExceeded, closeErr)
 	}
 	timer := time.NewTimer(remaining)
 	defer timer.Stop()
@@ -717,134 +634,97 @@ func (manager *PoolManager) retireBounded(ctx context.Context, deadline time.Tim
 	case <-manager.retireDone:
 		return manager.retirementResult()
 	case <-ctx.Done():
-		manager.forceRetired()
-		return manager.forcedRetirementResult(ctx.Err())
+		closeErr := manager.forceRetiredContext(ctx)
+		return manager.awaitForcedRetirement(ctx.Err(), closeErr, deadline)
 	case <-timer.C:
-		manager.forceRetired()
-		return manager.forcedRetirementResult(context.DeadlineExceeded)
+		forceContext, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		closeErr := manager.forceRetiredContext(forceContext)
+		return errors.Join(context.DeadlineExceeded, closeErr)
 	}
 }
 
-func (manager *PoolManager) forcedRetirementResult(reason error) error {
+func (manager *PoolManager) awaitForcedRetirement(reason, closeErr error, deadline time.Time) error {
 	select {
 	case <-manager.retireDone:
 		return errors.Join(reason, manager.retirementResult())
 	default:
 	}
-	return reason
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return errors.Join(reason, closeErr)
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-manager.retireDone:
+		return errors.Join(reason, manager.retirementResult())
+	case <-timer.C:
+		return errors.Join(reason, closeErr)
+	}
 }
 
 // beginRetirement is the single retirement fence. It deliberately does not
 // take refreshMu: callers must stop admitting leases as soon as retirement is
 // requested, even if a refresh is currently blocked in provider or pool work.
-func (manager *PoolManager) beginRetirement() bool {
+func (manager *PoolManager) beginRetirement() (*poolGeneration, bool) {
+	started := false
+	manager.retireOnce.Do(func() {
+		started = true
+		manager.mu.Lock()
+		if manager.retireDone == nil {
+			manager.retireDone = make(chan struct{})
+		}
+		manager.retired = true
+		manager.retireGen = manager.active
+		manager.active = nil
+		if manager.retireGen != nil {
+			manager.retireGen.draining = true
+		}
+		cancel := manager.retireCancel
+		manager.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+	})
+
 	manager.mu.Lock()
-	started := !manager.retired
-	cancel := manager.beginRetirementLocked()
+	generation := manager.retireGen
 	manager.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	return started
+	return generation, started
 }
 
-// beginRetirementLocked allows exact identity comparison and the retirement
-// fence to share one critical section. The caller invokes cancel after unlocking.
-func (manager *PoolManager) beginRetirementLocked() context.CancelFunc {
-	if manager.retired {
-		return nil
-	}
-	if manager.retireDone == nil {
-		manager.retireDone = make(chan struct{})
-	}
-	manager.retired = true
-	active := manager.active
-	manager.active = nil
-	manager.retireGens = append(manager.retireGens[:0], manager.draining...)
-	if active != nil {
-		active.draining = true
-		manager.retireGens = append(manager.retireGens, active)
-	}
-	for _, generation := range manager.retireGens {
-		generation.draining = true
-	}
-	manager.draining = nil
-	return manager.retireCancel
-}
-
-func (manager *PoolManager) forceRetired() {
+func (manager *PoolManager) forceRetiredContext(ctx context.Context) error {
 	manager.mu.Lock()
 	manager.retireForced = true
+	generation := manager.retireGen
 	manager.mu.Unlock()
-	_ = manager.tryCompleteRetirement()
+	closeErr := closeGenerationContext(ctx, generation)
+	if completeErr := manager.tryCompleteRetirement(); completeErr != nil {
+		return completeErr
+	}
+	return closeErr
 }
 
-// tryCompleteRetirement starts the retired generations' shared close tasks
-// after refresh work exits, unless a caller forces close first. Completion
-// still waits for every close task and admitted refresh to finish.
+// tryCompleteRetirement closes the retired generation only after all admitted
+// refresh callers have exited. A forced retirement may close a generation
+// while leases are still held, but it still waits for refresh work to stop
+// before publishing completion to callers.
 func (manager *PoolManager) tryCompleteRetirement() error {
-	manager.mu.Lock()
-	if !manager.retired || manager.retireCompleted {
-		manager.mu.Unlock()
-		return nil
-	}
-	if manager.refreshes != 0 && !manager.retireForced {
-		manager.mu.Unlock()
-		return nil
-	}
-	generations := append([]*poolGeneration(nil), manager.retireGens...)
-	forced := manager.retireForced
-	if !forced {
-		for _, generation := range generations {
-			if generation.leases != 0 {
-				manager.mu.Unlock()
-				return nil
-			}
-		}
-	}
-	manager.mu.Unlock()
-
-	dones := make([]<-chan struct{}, 0, len(generations))
-	for _, generation := range generations {
-		dones = append(dones, generationCloseDone(generation))
-	}
-	manager.retireCloseWait.Do(func() {
-		go func() {
-			for _, done := range dones {
-				<-done
-			}
-			_ = manager.completeRetirementIfReady()
-		}()
-	})
-	return manager.completeRetirementIfReady()
-}
-
-func (manager *PoolManager) completeRetirementIfReady() error {
 	manager.mu.Lock()
 	if !manager.retired || manager.retireCompleted || manager.refreshes != 0 {
 		manager.mu.Unlock()
 		return nil
 	}
-	if !manager.retireForced {
-		for _, generation := range manager.retireGens {
-			if generation.leases != 0 {
-				manager.mu.Unlock()
-				return nil
-			}
-		}
+	generation := manager.retireGen
+	forced := manager.retireForced
+	if !forced && generation != nil && generation.leases != 0 {
+		manager.mu.Unlock()
+		return nil
 	}
-	generations := append([]*poolGeneration(nil), manager.retireGens...)
-	closeErr := errors.Join(manager.generationCloseErr, manager.refreshCleanupErr)
 	manager.mu.Unlock()
 
-	for _, generation := range generations {
-		select {
-		case <-generationCloseDone(generation):
-			closeErr = errors.Join(closeErr, generation.closeErr)
-		default:
-			return nil
-		}
-	}
+	closeErr := closeGeneration(generation)
 	manager.completeRetirement(closeErr)
 	return closeErr
 }
@@ -858,9 +738,6 @@ func (manager *PoolManager) completeRetirement(closeErr error) {
 		manager.mu.Lock()
 		manager.retireErr = closeErr
 		manager.retireCompleted = true
-		manager.retireGens = nil
-		manager.generationCloseErr = nil
-		manager.refreshCleanupErr = nil
 		done := manager.retireDone
 		manager.mu.Unlock()
 		close(done)

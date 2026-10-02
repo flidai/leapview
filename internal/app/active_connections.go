@@ -9,6 +9,7 @@ import (
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
+	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -66,7 +67,22 @@ func (source activeConnectionEvidenceSource) ResultIdentityEvidence(
 	if err != nil {
 		return appruntimefactory.ActivationEvidence{}, err
 	}
-	return resultIdentityEvidenceFromProvenance(provenance), nil
+	kinds := make(map[string]string, len(provenance.Plan.Bindings)+len(provenance.Plan.AuthoredConnections)+len(provenance.Plan.ManagedDataPins))
+	for _, binding := range provenance.Plan.Bindings {
+		kinds[binding.ConnectionID] = binding.ConnectorKind
+	}
+	for _, authored := range provenance.Plan.AuthoredConnections {
+		kinds[authored.ConnectionID] = authored.ConnectorKind
+	}
+	for _, managed := range provenance.Plan.ManagedDataPins {
+		kinds[managed.ConnectionID] = "managed"
+	}
+	return appruntimefactory.ActivationEvidence{
+		RuntimeVersion:     provenance.Plan.RuntimeVersion,
+		BindingFingerprint: release.BindingFingerprint(provenance.Plan.Bindings),
+		BindingKinds:       kinds,
+		Capabilities:       deployment.RuntimeCapabilityEvidence(provenance.Plan.Extensions),
+	}, nil
 }
 
 func (source activeConnectionEvidenceSource) provenance(

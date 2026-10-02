@@ -41,12 +41,9 @@ validated against the server-owned revision rather than accepting a
 caller-supplied query shape.
 
 The asynchronous slice persists an immutable authority envelope with Pipeline
-refresh work. Caller-authority refresh records the generated exact `pipeline.run` pair and
-exact `connection.use` pairs for the pipeline's source dependencies, actor,
-execution principal, target, and non-secret browser-session or typed-token
-evidence. Admission derives those connections from the compiled source closure
-and checks the complete set against current authority and the initiating
-credential ceiling before persisting work. The envelope participates in the job request digest and
+refresh work. Caller-authority refresh records an exact `pipeline.run` pair,
+actor, execution principal, target, and non-secret browser-session or
+typed-token evidence. The envelope participates in the job request digest and
 is revalidated against live credential lifecycle and current exact resource
 authority before worker admission and protected refresh boundaries. Unknown
 credential classes, missing evidence, legacy token scopes, expiry, revocation,
@@ -73,11 +70,9 @@ Scheduled refresh composition selects exactly one active, unexpired execution
 grant for the instance, Project, Pipeline UID, and workload principal; missing
 or ambiguous selection fails closed and never falls back to a scheduler or
 worker identity. Queue admission binds the grant's closure digest to the
-canonical generation-bound Pipeline plan. Prepare, execute, and publish boundaries rebuild that plan from the current
-active artifact, so executable or source drift stops queued work. Caller jobs
-also compare the rebuilt plan and exact captured connection set. Output follows
-the job's own generation cutover: it rechecks live captured authority and
-immutable delegated plan evidence without requiring the old base to stay active. The plan now seals parameter, connection
+canonical generation-bound Pipeline plan. Prepare, execute, publish, and output
+boundaries rebuild that plan from the current active artifact, so executable or
+source drift stops queued work. The plan now seals parameter, connection
 binding, run-as principal, environment, destination, trigger, workflow revision,
 and complete closure evidence. Every protected boundary exact-matches that
 evidence; missing or changed evidence fails closed.

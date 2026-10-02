@@ -8,11 +8,11 @@ Proposal date: 2026-09-27
 
 Review: pending; the date records this proposal, not maintainer acceptance.
 
-Implementation: partial D02 foundation; encrypted draft setup/API, validation
-receipts, and internal authorization, publication and consumer-lifetime
-prerequisites. Production activation and end-to-end credential consumption,
-coordinator/restart recovery, and credential UI remain pending. The companion
-contract records which safeguards are installed and which pieces are not composed.
+Implementation: D02 encrypted draft setup/API, isolated validation receipts,
+transactional audit and non-replayable secret transport, with installed denial
+checks. Activation writers and runtime/lifetime consumers are preserved for D12,
+not exposed in production. The companion scope review records the retained
+operation-schema exception and the separate maintainer acceptance gate.
 
 Deciders: LeapView maintainers
 
@@ -52,10 +52,10 @@ those references safe to overwrite.
 The 1 October 2026 migration roadmap assigns [PR #785](https://github.com/flidai/leapview/pull/785)
 to D02, the credential ADR and foundation. D12 owns completion of the customer
 credential lifecycle, coordinated with D10 bootstrap and D11 application lifecycle.
-Keep further activation/runtime feature growth out of D02 while maintainers review
-the existing prerequisites and supporting fixes against the
-[scope ledger](specifications/credential-lifecycle-contract.md#delivery-scope-and-shared-decisions).
-This boundary does not remove existing code or accept the proposed decision.
+Keep activation/runtime feature work out of D02. The
+[scope review](specifications/credential-foundation-review.md) records the
+implementation split and retained denial dependencies. Extraction and passing
+tests do not accept this proposed decision.
 
 The current [ADR-0028 deployment proposal](https://github.com/flidai/leapview/blob/b305bcc616892538a27bd3d255fe0b4e9fa66dff/adr/0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md#decision-reconciliation-and-acceptance-boundary)
 retains candidate-first Kamal overlap. The single-process assumptions below limit

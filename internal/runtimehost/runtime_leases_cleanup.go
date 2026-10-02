@@ -112,9 +112,7 @@ func (m *Manager) close(skipReleaseQueue bool) error {
 		// Keep the release queue alive while reader-draining generations still
 		// own persistent snapshot leases. A later Release can then enqueue its
 		// cleanup after the caller resolves the shutdown timeout.
-		if !skipReleaseQueue {
-			go m.closeReleaseQueueAfterCleanup(waiting)
-		}
+		go m.closeReleaseQueueAfterCleanup(waiting)
 		return cleanupErr
 	}
 	var queueErr error
@@ -235,9 +233,6 @@ func (m *Manager) runCleanupWorker() {
 			errs = append(errs, result.err)
 		}
 		runtime.cleanupErr = errors.Join(errs...)
-		if runtime.cleanupErr != nil && m.retiredCleanupErr == nil {
-			m.retiredCleanupErr = fmt.Errorf("retired runtime %s cleanup failed: %w", runtime.servingStateID, runtime.cleanupErr)
-		}
 		runtime.cleanupState = generationCleanupFinished
 		m.removeRetiredLocked(runtime)
 		close(runtime.cleanupDone)

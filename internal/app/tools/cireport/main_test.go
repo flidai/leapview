@@ -385,7 +385,7 @@ func TestDecodePlanRejectsPartialSchemaAndTrailingData(t *testing.T) {
 
 func TestModernDeferralRequiresCompleteSkippedInventory(t *testing.T) {
 	names := []string{"APIGen tests (PR)", "Go package tests (PR)", "Go application tests (PR)", "PostgreSQL topology isolation (PR)", "Spatial tile benchmarks (PR)", "dbt physical contract (PR)"}
-	for _, shard := range []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data", "site"} {
+	for _, shard := range []string{"core", "reports", "chat", "data", "site"} {
 		names = append(names, "Frontend tests (PR, "+shard+")")
 	}
 	jobs := []githubJob{{Name: "CI gate", Conclusion: "success"}}

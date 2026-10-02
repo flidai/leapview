@@ -69,7 +69,7 @@ type Config struct {
 	// ExecutionGrantID is the default; the resolver supports per-occurrence grants.
 	ExecutionGrantID                 string
 	ResolveScheduledExecutionGrantID func(context.Context, refreshschedule.Occurrence) (string, error)
-	// InstanceID binds caller and delegated envelopes to this durable process target.
+	// InstanceID binds delegated envelopes to this durable process target.
 	InstanceID string
 	// AuthorityRevalidator protects refresh boundaries after dequeue.
 	AuthorityRevalidator jobs.AuthorityRevalidator
@@ -149,7 +149,6 @@ type Module struct {
 	events                        EventStore
 	durableAudit                  bool
 	refreshExecution              apigencommand.AsyncExecutionContract
-	instanceID                    string
 	resolveIdentity               func(context.Context) (projectgraph.ServingIdentity, error)
 	currentCredential             func(context.Context) (access.APICredential, bool)
 	currentSessionEvidence        func(context.Context) (access.CredentialEvidence, bool)
@@ -237,7 +236,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		// command guarantee without the legacy post-commit audit recorder.
 		durableAudit:           durableRefreshAudit(config),
 		refreshExecution:       refreshExecution,
-		instanceID:             config.InstanceID,
 		resolveIdentity:        config.ResolveIdentity,
 		currentCredential:      config.CurrentCredential,
 		currentSessionEvidence: config.CurrentSessionEvidence,

@@ -5,8 +5,6 @@ import (
 	"errors"
 	"sync"
 	"time"
-
-	"github.com/flidai/leapview/internal/analytics/sourcework"
 )
 
 func (manager *PoolManager) isRetired() bool {
@@ -88,10 +86,10 @@ func (lease *PoolLease) Release() {
 			generation.leases--
 		}
 		closing := generation.draining && generation.leases == 0
-		retiring := manager.retired
+		retiring := manager.retired && manager.retireGen == generation
 		manager.mu.Unlock()
-		if closing && !retiring {
-			_ = manager.closeDrainingGeneration(generation)
+		if closing {
+			_ = closeGeneration(generation)
 		}
 		if retiring {
 			_ = manager.tryCompleteRetirement()
@@ -114,122 +112,30 @@ func closeGeneration(generation *poolGeneration) error {
 	if generation == nil || generation.pool == nil {
 		return nil
 	}
-	<-generationCloseDone(generation)
+	generation.closeOnce.Do(func() {
+		generation.closeErr = generation.pool.Close()
+	})
 	return generation.closeErr
 }
 
-func generationCloseDone(generation *poolGeneration) <-chan struct{} {
+func closeGenerationContext(ctx context.Context, generation *poolGeneration) error {
 	if generation == nil || generation.pool == nil {
-		done := make(chan struct{})
-		close(done)
-		return done
+		return nil
 	}
 	generation.closeOnce.Do(func() {
-		generation.closeDone = make(chan struct{})
-		done := generation.closeDone
-		go func() {
-			generation.closeErr = generation.pool.Close()
-			close(done)
-		}()
+		generation.closeErr = closeRuntimePool(ctx, generation.pool)
 	})
-	return generation.closeDone
+	return generation.closeErr
 }
 
-func (manager *PoolManager) trackDrainingLocked(generation *poolGeneration) {
-	if generation == nil {
-		return
-	}
-	for _, current := range manager.draining {
-		if current == generation {
-			return
-		}
-	}
-	manager.draining = append(manager.draining, generation)
-}
-
-func (manager *PoolManager) closeDrainingGeneration(generation *poolGeneration) error {
-	err := closeGeneration(generation)
-	manager.mu.Lock()
-	for index, current := range manager.draining {
-		if current == generation {
-			manager.draining = append(manager.draining[:index], manager.draining[index+1:]...)
-			break
-		}
-	}
-	retired := manager.retired
-	if err != nil && !retired {
-		manager.generationCloseErr = errors.Join(manager.generationCloseErr, err)
-	}
-	manager.mu.Unlock()
-	if retired {
-		_ = manager.tryCompleteRetirement()
-	}
-	return err
-}
-
-func (manager *PoolManager) closeUncommittedPool(
-	ctx context.Context,
-	pool RuntimePool,
-	sourceLease *sourcework.Lease,
-) error {
+func closeRuntimePool(ctx context.Context, pool RuntimePool) error {
 	if pool == nil {
 		return nil
 	}
-	var cleanupLease *sourcework.Lease
-	if sourceLease != nil {
-		var err error
-		cleanupLease, err = sourceLease.Retain()
-		if err != nil {
-			// The admitted refresh still owns its root lease, so finish cleanup
-			// synchronously if a child lease cannot be retained. Returning while
-			// cleanup runs would let the shared source-work gate drain too early.
-			closeErr := pool.Close()
-			manager.mu.Lock()
-			if closeErr != nil {
-				manager.refreshCleanupErr = errors.Join(manager.refreshCleanupErr, closeErr)
-			}
-			manager.mu.Unlock()
-			if closeErr != nil {
-				manager.logger.ErrorContext(ctx, "failed to close discarded runtime pool")
-			}
-			return ErrProviderUnavailable
-		}
+	if bounded, ok := pool.(ContextRuntimePool); ok {
+		return bounded.CloseContext(ctx)
 	}
-	manager.mu.Lock()
-	if manager.refreshes == 0 {
-		manager.refreshDone = make(chan struct{})
-	}
-	manager.refreshes++
-	manager.mu.Unlock()
-
-	// A discarded candidate is still owned refresh work. Its task keeps the
-	// retirement barrier open after a bounded refresh caller has returned.
-	done := make(chan error, 1)
-	go func() {
-		defer cleanupLease.Release()
-		err := pool.Close()
-		manager.mu.Lock()
-		if err != nil {
-			manager.refreshCleanupErr = errors.Join(manager.refreshCleanupErr, err)
-		}
-		manager.mu.Unlock()
-		if err != nil {
-			manager.logger.ErrorContext(ctx, "failed to close discarded runtime pool")
-		}
-		manager.finishRefresh()
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			// Do not expose driver close details through the refresh/API error.
-			return ErrProviderUnavailable
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return pool.Close()
 }
 
 func providerFailureReason(err error) string {

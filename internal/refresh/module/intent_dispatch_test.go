@@ -477,9 +477,7 @@ func TestManualIntentPersistsAndRevalidatesCallerAuthorityAtDispatch(t *testing.
 	if err := m.dispatchOneManualIntent(t.Context()); err != nil {
 		t.Fatalf("dispatch authorized intent: %v", err)
 	}
-	// Acceptance, dispatch, and run admission each revalidate authority. Run
-	// admission revalidates after deriving the executable connection closure.
-	if checks != 3 || len(runs.created) != 1 || runs.created[0].Root.Authority.Credential == nil || runs.created[0].Root.Authority.Credential.ID != "session-1" {
+	if checks != 2 || len(runs.created) != 1 || runs.created[0].Root.Authority.Credential == nil || runs.created[0].Root.Authority.Credential.ID != "session-1" {
 		t.Fatalf("dispatched authority checks=%d run trees=%#v", checks, runs.created)
 	}
 }

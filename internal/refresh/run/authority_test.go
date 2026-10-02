@@ -34,14 +34,9 @@ func TestServiceExecuteClaimedJobRevalidatesProtectedBoundaries(t *testing.T) {
 			return nil
 		},
 	}
-	base := canonicalQueueService(repo)
-	service.ServingStates = base.ServingStates
-	service.Artifacts = base.Artifacts
-	service.ResolveSourceDigest = base.ResolveSourceDigest
-	plan := testAuthorityPipelinePlan(t, repo, refreshTestDefinition(), "principal:test")
 	job := JobRecord{
 		ID: "job-boundary", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
-		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: &plan,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
 		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
 		Authority: jobs.AuthorityEnvelope{
 			Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode, ActorPrincipalID: "principal:test", ExecutionPrincipalID: "principal:test",
@@ -112,14 +107,9 @@ func TestServiceExecuteClaimedJobRevalidatesOutputWithoutReconciler(t *testing.T
 		},
 		Publication: fakePublication{repo: repo},
 	}
-	base := canonicalQueueService(repo)
-	service.ServingStates = base.ServingStates
-	service.Artifacts = base.Artifacts
-	service.ResolveSourceDigest = base.ResolveSourceDigest
-	plan := testAuthorityPipelinePlan(t, repo, refreshTestDefinition(), "principal:test")
 	job := JobRecord{
 		ID: "job-output", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 1,
-		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: &plan,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
 		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
 		Authority: jobs.AuthorityEnvelope{
 			Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode, ActorPrincipalID: "principal:test", ExecutionPrincipalID: "principal:test",

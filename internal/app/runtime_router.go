@@ -2224,7 +2224,25 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if runtime.runtimeHostModule == nil {
 				return errors.New("runtime host is missing")
 			}
-			return checkActiveRuntimeIdentity(ctx, runtime.runtimeHostModule)
+			// ProjectID is configured at process startup, so it does not by
+			// itself prove that this exact project/environment has an active
+			// serving generation. Check the repository-backed scope first and
+			// only acquire a lease once one exists.
+			if _, _, err := runtime.runtimeHostModule.ActiveArtifact(ctx); err != nil {
+				if errors.Is(err, servingstate.ErrNotFound) {
+					return errNoActiveDeployment
+				}
+				return err
+			}
+			lease, err := runtime.runtimeHostModule.Acquire(ctx)
+			if err != nil {
+				return err
+			}
+			if lease == nil {
+				return errors.New("runtime host returned a nil lease")
+			}
+			lease.Release()
+			return nil
 		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})

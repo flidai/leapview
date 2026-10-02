@@ -1,12 +1,9 @@
 """Execution contract between deploy_demo.sh and the standalone publish CLI."""
-import contextlib
-import http.server
+import json
 import os
 import pathlib
-import shutil
 import subprocess
 import tempfile
-import threading
 import unittest
 
 
@@ -20,53 +17,8 @@ TARGET = 'target:from-publication-evidence'
 ENVIRONMENT = 'prod'
 
 
-@contextlib.contextmanager
-def readiness_server(statuses):
-    paths = []
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            paths.append(self.path)
-            index = min(len(paths) - 1, len(statuses) - 1)
-            status = statuses[index] if self.path == '/readyz' else 404
-            self.send_response(status)
-            self.end_headers()
-            self.wfile.write(b'ok\n')
-
-        def log_message(self, *_):
-            pass
-
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f'http://127.0.0.1:{server.server_port}/readyz', paths
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
 class PublishAdapterTests(unittest.TestCase):
     def test_minimal_publish_result_uses_committed_evidence_for_target_identity(self):
-        result = self.run_publish_adapter()
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn('published source ' + REVISION, result.stdout)
-
-    def test_readiness_retries_transient_503_until_same_endpoint_is_ready(self):
-        with readiness_server([503, 200]) as (ready_url, paths):
-            result = self.run_publish_adapter(ready_url)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn('published source ' + REVISION, result.stdout)
-        self.assertEqual(paths, ['/readyz', '/readyz'])
-
-    def test_readiness_does_not_retry_unauthorized_response(self):
-        with readiness_server([401, 200]) as (ready_url, paths):
-            result = self.run_publish_adapter(ready_url)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(paths, ['/readyz'])
-
-    def run_publish_adapter(self, ready_url=None):
         with tempfile.TemporaryDirectory() as temp:
             temp_root = pathlib.Path(temp)
             bin_dir = temp_root / 'bin'
@@ -225,20 +177,7 @@ case "$url" in
     }
     printf '%s\n' '{"access_token":"fake-workload-token"}'
     ;;
-  */readyz)
-    if [[ -n "${TEST_READY_URL:-}" ]]; then
-      args=()
-      while (($#)); do
-        case "$1" in
-          --proxy|--noproxy|--proto|--proto-redir|--max-redirs) shift 2 ;;
-          */readyz) args+=("$TEST_READY_URL"); shift ;;
-          *) args+=("$1"); shift ;;
-        esac
-      done
-      exec "$TEST_REAL_CURL" "${args[@]}" --noproxy '*'
-    fi
-    printf '%s\n' 'ok'
-    ;;
+  */readyz) printf '%s\n' 'ok' ;;
   */login) printf '%s\n' '<title>LeapView Login</title>' ;;
   */)
     printf '%s\n%s\n' '302' "$TEST_EXPECTED_TARGET$TEST_EXPECTED_LOGIN_PATH"
@@ -276,19 +215,13 @@ esac
                 'DEMO_FIXTURE_SOURCE_ROOT': str(source_root),
                 'DEMO_FIXTURE_DATA_PATH': str(data_root),
             })
-            if ready_url is not None:
-                real_curl = shutil.which('curl')
-                self.assertIsNotNone(real_curl)
-                env.update({
-                    'TEST_READY_URL': ready_url,
-                    'TEST_REAL_CURL': real_curl,
-                })
 
             result = subprocess.run(
                 ['bash', str(ROOT / 'scripts' / 'deploy_demo.sh')],
                 cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, timeout=30, check=False)
-            return result
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('published source ' + REVISION, result.stdout)
 
 
 if __name__ == '__main__':

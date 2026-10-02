@@ -350,10 +350,6 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		releases: release, targetID: instanceID, environment: string(environment),
 		commitments: appdeploymentpostgres.NewNativeReader(graph.DeploymentRepository),
 	}
-	sealedCandidateRuntimeEvidence := sealedCandidateEvidenceSource{
-		delivery: appdeploymentpostgres.NewNativeReader(graph.DeploymentRepository),
-		releases: release, targetID: instanceID, environment: string(environment),
-	}
 
 	// Runtime factory resolution is entirely root-driven. No catalog database,
 	// pool ID, UUID, or snapshot is synthesized from configuration.
@@ -420,7 +416,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		GuardOutbound: cfg.Production,
 		Base: appruntimefactory.FactoryConfig{
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(),
-			ActivationEvidence: activeRuntimeEvidence, SealedCandidateEvidence: sealedCandidateRuntimeEvidence,
+			ActivationEvidence: activeRuntimeEvidence,
 		},
 		ServingArtifacts: nativeProjectSource.Objects,
 		Resolve:          appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool, graph.Lineage), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
@@ -764,16 +760,6 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		return fail(fmt.Errorf("build native delivery coordinator: %w", err))
 	}
 	nativeDeliveryReader := appdeploymentpostgres.NewNativeReader(graph.DeploymentRepository)
-	refreshAuthorityRevalidator := jobs.AuthorityRevalidatorFunc(func(authCtx context.Context, authority jobs.AuthorityEnvelope) error {
-		return workloadBundle.Jobs.RevalidateAuthority(authCtx, refreshrun.JobKindRefreshPipeline, authority)
-	})
-	// This preflight reads committed metadata only. Local credential consumption
-	// remains disabled until candidate acquisition preserves the exact base pin.
-	refreshCredentials := refreshRuntimeCredentialReaderFactory{authority: refreshRuntimeCredentialAuthority{
-		instanceID: instanceID, environment: string(environment), provider: runtimeHost.Provider(),
-		evidence: activeRuntimeEvidence, owners: graph.Bootstrap, bindings: graph.ConnectionBinding,
-		subjects: accessBundle.Module.AuthorizationSubjects, revalidator: refreshAuthorityRevalidator,
-	}}
 	// DuckLake physical retention is a distinct authority from graph.Retention:
 	// its control repository uses the control maintenance pool and each native
 	// pass opens one pinned DuckDB connection with the dedicated catalog
@@ -866,14 +852,31 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		}
 		return semanticActivation.ValidatePublication(ctx, tx, publication)
 	}
-	canonicalCompletionCoordinator, err := apprefreshpostgres.NewNativeCanonicalCompletionCoordinator(
-		instanceID, nativeDeliveryReader,
-		func(completionCtx context.Context, candidate deployment.Deployment) error {
-			return reconciler.Reconcile(completionCtx, graph.ServingState, candidate)
-		}, runtimeHost,
-	)
-	if err != nil {
-		return fail(fmt.Errorf("build canonical refresh completion coordinator: %w", err))
+	canonicalCompletionCoordinator := func(completionCtx context.Context, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, complete func() error) error {
+		if result.ServingStateID == "" || result.ServingStateID != result.NativeGenerationID {
+			return errors.New("canonical refresh result has no exact native serving generation")
+		}
+		generation, err := nativeDeliveryReader.LoadGeneration(completionCtx, result.NativeGenerationID)
+		if err != nil {
+			return fmt.Errorf("resolve canonical refresh generation: %w", err)
+		}
+		if generation.GenerationID != result.NativeGenerationID || generation.TargetID != instanceID || generation.PlanID != result.PlanID || generation.CandidateID == "" {
+			return errors.New("canonical refresh generation has no exact native candidate binding")
+		}
+		candidate := deployment.Deployment{ServingIdentity: projectgraph.ServingIdentity{
+			ProjectID: job.Identity.ProjectID, Environment: job.Identity.Environment, GenerationID: result.ServingStateID,
+		}}
+		if err := reconciler.Reconcile(completionCtx, graph.ServingState, candidate); err != nil {
+			return fmt.Errorf("validate canonical refresh dashboard publication ownership: %w", err)
+		}
+		prepared, err := runtimeHost.PrepareSealedActivation(completionCtx, result.ServingStateID, generation.CandidateID)
+		if err != nil {
+			return fmt.Errorf("prepare canonical refresh runtime: %w", err)
+		}
+		if err := runtimeHost.ActivatePreparedContext(completionCtx, prepared, complete); err != nil {
+			return fmt.Errorf("activate canonical refresh runtime: %w", err)
+		}
+		return nil
 	}
 	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()
 	rateLimits.Enabled = cfg.RateLimitingEnabled()
@@ -901,10 +904,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	if err != nil {
 		return fail(fmt.Errorf("build customer credential services: %w", err))
 	}
-	refreshCredentials.readers = credentialServices
-	nativeRefreshExecutor, err := apprefreshpostgres.NewPostgresNativeRefreshExecutor(refreshCandidateMutationFactory{
-		delivery: nativeDelivery, base: candidateConnections, credentials: refreshCredentials,
-	}, nativeDeliveryReader, instanceID, refreshAuthorityRevalidator, refreshCredentials.checkBaseCredentials)
+	nativeRefreshExecutor, err := apprefreshpostgres.NewPostgresNativeRefreshExecutor(nativeDelivery, nativeDeliveryReader, instanceID, refreshBaseCredentialCheck(activeRuntimeEvidence))
 	if err != nil {
 		return fail(fmt.Errorf("build native refresh executor: %w", err))
 	}

@@ -27,7 +27,7 @@
         "credential.draft.saved"
       ],
       "guarantee": "transactional",
-      "implementationStatus": "Encrypted draft storage and authorized non-replayable connection API; public validation and runtime integration pending.",
+      "implementationStatus": "Encrypted draft storage and authorized non-replayable connection API; isolated validation is a separate operation; runtime integration remains deferred.",
       "failureBehavior": "Draft metadata, encrypted envelope and audit commit together; audit failure rolls back the draft. The separately committed encryption reservation remains consumed.",
       "implementation": [
         "internal/credential/service.go",

@@ -5,7 +5,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
@@ -25,16 +24,10 @@ type ProjectDatabase interface {
 	CommitTransaction(context.Context, string, map[string]string, func(transaction.Transaction) error) (int64, error)
 }
 
-// ErrConnectionCleanupFailed means derived native access could not be confirmed
-// closed. Callers must quarantine admission and never report clean retirement.
-var ErrConnectionCleanupFailed = errors.New("runtime connection cleanup failed")
-
-// ConnectionResolver supplies a target-bound connection for one synchronous
-// source consumer. The consumer must finish native access and cleanup before
-// returning and must not retain authentication fields. Implementations keep
-// the supplying pool generation owned through that callback.
+// ConnectionResolver supplies a fully target-bound connection only while an
+// admitted Analytics runtime holds the validated pool generation that owns it.
 type ConnectionResolver interface {
-	WithConnection(context.Context, string, semanticmodel.Connection, func(semanticmodel.Connection) error) error
+	Resolve(context.Context, string, semanticmodel.Connection) (semanticmodel.Connection, error)
 }
 
 // ProjectRequest describes a governed analytical project without exposing

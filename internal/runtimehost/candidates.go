@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +17,6 @@ import (
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	"github.com/google/uuid"
 )
 
 var (
@@ -115,9 +115,6 @@ type candidateRuntimeRegistry struct {
 	current map[candidateRuntimeKey]*candidateGeneration
 	retired map[*candidateGeneration]struct{}
 	closed  bool
-
-	// Keep the first cleanup failure after its generation leaves retired.
-	cleanupErr error
 }
 
 func newCandidateRuntimeRegistry(now func() time.Time) *candidateRuntimeRegistry {
@@ -583,6 +580,14 @@ func (r *candidateRuntimeRegistry) resolveOwned(candidateID, ownerID string, pro
 	}
 	return OwnedCandidateView{CandidateID: g.key.candidateID, ProjectID: g.projectID, Provider: &candidateRuntimeProvider{registry: registry, candidateID: g.key.candidateID, ownerID: g.ownerID}, Restrictions: append([]CandidateRestriction(nil), g.compatibility.Restrictions...), AuthorizationFingerprint: g.compatibility.AuthorizationFingerprint}, nil, nil
 }
+func (r *candidateRuntimeRegistry) retire(id string) ([]*candidateGeneration, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if g := r.current[candidateRuntimeKey{candidateID: id}]; g != nil {
+		return r.retireLockedList(g), 1
+	}
+	return nil, 0
+}
 func (r *candidateRuntimeRegistry) reap(now time.Time) ([]*candidateGeneration, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -625,6 +630,7 @@ func (r *candidateRuntimeRegistry) release(g *candidateGeneration) *candidateGen
 	}
 	g.refs--
 	if g.refs == 0 && g.closing {
+		delete(r.retired, g)
 		return g
 	}
 	return nil

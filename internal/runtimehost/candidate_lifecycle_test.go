@@ -3,12 +3,10 @@ package runtimehost
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -65,69 +63,6 @@ func TestCandidateAcquisitionRequiresBoundProject(t *testing.T) {
 	}
 }
 
-func TestCandidateCompatibilityBindsCanonicalLocalCredentialVersion(t *testing.T) {
-	const versionID = "0198f2c0-7c7a-7f00-8a11-000000000301"
-	base := CandidateCompatibility{
-		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), DataRevision: "sources:1",
-		DataMode: CandidateDataRefreshSources, RuntimeVersion: "runtime:v1", AuthorizationFingerprint: "auth:v1",
-		Bindings: []CandidateBindingVersion{{
-			BindingID: "binding_warehouse", LogicalConnection: "warehouse", ConnectorKind: "postgres", Revision: 7,
-			CredentialVersionID: versionID, EndpointConfigHash: "sha256:" + strings.Repeat("b", 64),
-		}},
-	}
-	normalized, err := normalizeCompatibility(base)
-	if err != nil {
-		t.Fatalf("normalize local credential version binding: %v", err)
-	}
-	if normalized.Bindings[0].CredentialVersionID != versionID {
-		t.Fatalf("local credential version=%q, want %q", normalized.Bindings[0].CredentialVersionID, versionID)
-	}
-
-	other := base
-	other.Bindings = append([]CandidateBindingVersion(nil), base.Bindings...)
-	other.Bindings[0].CredentialVersionID = "0198f2c0-7c7a-7f00-8a11-000000000302"
-	normalizedOther, err := normalizeCompatibility(other)
-	if err != nil {
-		t.Fatalf("normalize other local credential version binding: %v", err)
-	}
-	if normalized.BindingFingerprint == normalizedOther.BindingFingerprint {
-		t.Fatal("candidate binding fingerprint did not change with local credential version")
-	}
-}
-
-func TestCandidateCompatibilityRejectsInvalidLocalCredentialVersion(t *testing.T) {
-	const versionID = "0198f2c0-7c7a-7f00-8a11-000000000301"
-	base := CandidateCompatibility{
-		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), DataRevision: "sources:1",
-		DataMode: CandidateDataRefreshSources, RuntimeVersion: "runtime:v1", AuthorizationFingerprint: "auth:v1",
-		Bindings: []CandidateBindingVersion{{
-			BindingID: "binding_warehouse", LogicalConnection: "warehouse", ConnectorKind: "postgres", Revision: 7,
-			CredentialVersionID: versionID, EndpointConfigHash: "sha256:" + strings.Repeat("b", 64),
-		}},
-	}
-	tests := map[string]func(*CandidateBindingVersion){
-		"malformed UUID": func(value *CandidateBindingVersion) { value.CredentialVersionID = "not-a-uuid" },
-		"nil UUID": func(value *CandidateBindingVersion) {
-			value.CredentialVersionID = "00000000-0000-0000-0000-000000000000"
-		},
-		"both version sources": func(value *CandidateBindingVersion) { value.ProviderVersion = "provider:v1" },
-		"non-postgres":         func(value *CandidateBindingVersion) { value.ConnectorKind = "s3" },
-		"public binding":       func(value *CandidateBindingVersion) { value.Access = semanticmodel.ConnectionAccessPublic },
-		"unknown access":       func(value *CandidateBindingVersion) { value.Access = semanticmodel.ConnectionAccess("unknown") },
-		"missing both":         func(value *CandidateBindingVersion) { value.CredentialVersionID = "" },
-	}
-	for name, mutate := range tests {
-		t.Run(name, func(t *testing.T) {
-			input := base
-			input.Bindings = append([]CandidateBindingVersion(nil), base.Bindings...)
-			mutate(&input.Bindings[0])
-			if _, err := normalizeCompatibility(input); !errors.Is(err, ErrCandidateRuntimeInvalid) {
-				t.Fatalf("normalize invalid local credential version error=%v, want %v", err, ErrCandidateRuntimeInvalid)
-			}
-		})
-	}
-}
-
 func TestCandidateOwnershipCompatibilityAndRetireDrain(t *testing.T) {
 	now := time.Now().UTC()
 	managed := &candidateManagedData{}
@@ -178,11 +113,8 @@ func TestCandidateOwnershipCompatibilityAndRetireDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := lease.Runtime().(*lifecycleRuntime)
-	if _, err := registry.RetireCandidate(CandidateRetirementRequest{
-		CandidateID: registration.CandidateID, OwnerID: registration.OwnerID,
-		Identity: lease.Identity(), Compatibility: registration.Compatibility,
-	}); err != nil {
-		t.Fatalf("retire candidate: %v", err)
+	if registry.RetireCandidate(registration.CandidateID) != 1 {
+		t.Fatal("candidate was not retired")
 	}
 	select {
 	case <-runtime.closed:

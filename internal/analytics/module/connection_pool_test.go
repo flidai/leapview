@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"sync"
 	"testing"
 	"time"
 
@@ -156,7 +155,6 @@ func TestCandidateRuntimeBindingRegistrationMakesOnlyItsValidatedGenerationAvail
 		binding.Scope.ProjectID,
 		leases,
 		nil,
-		nil,
 	)
 	require.NoError(t, err)
 	resolver, ok := module.candidateRuntimeConnectionResolver(
@@ -166,7 +164,7 @@ func TestCandidateRuntimeBindingRegistrationMakesOnlyItsValidatedGenerationAvail
 	if !ok {
 		t.Fatal("candidate resolver was not registered")
 	}
-	resolved, err := resolveTestConnection(resolver,
+	resolved, err := resolver.Resolve(
 		t.Context(),
 		binding.ConnectionID.String(),
 		semanticmodel.Connection{Kind: binding.ConnectorKind},
@@ -177,51 +175,8 @@ func TestCandidateRuntimeBindingRegistrationMakesOnlyItsValidatedGenerationAvail
 		t.Fatalf("resolved candidate connection = %#v", resolved)
 	}
 	clear(resolved.Auth)
-	// Closing the candidate must wait through the consumer, including its
-	// synchronous native cleanup, before releasing the validated generation.
-	entered := make(chan struct{})
-	finish := make(chan struct{})
-	var finishOnce sync.Once
-	t.Cleanup(func() { finishOnce.Do(func() { close(finish) }) })
-	used := make(chan error, 1)
-	go func() {
-		used <- resolver.WithConnection(t.Context(), binding.ConnectionID.String(), semanticmodel.Connection{Kind: binding.ConnectorKind}, func(connection semanticmodel.Connection) error {
-			close(entered)
-			<-finish
-			if connection.Auth["password"] != "source-secret" {
-				return errors.New("credential owner ended during consumption")
-			}
-			return nil
-		})
-	}()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("consumer not entered")
-	}
-	closed := make(chan error, 1)
-	go func() { closed <- registration.Close() }()
-	require.Eventually(t, func() bool {
-		_, exists := module.candidateRuntimeConnectionResolver("cand_1", binding.Scope.ProjectID)
-		return !exists
-	}, time.Second, time.Millisecond)
-	select {
-	case err := <-closed:
-		t.Fatalf("candidate released while consumer is using it: %v", err)
-	default:
-	}
-	finishOnce.Do(func() { close(finish) })
-	select {
-	case err := <-used:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("consumer failed to finish")
-	}
-	select {
-	case err := <-closed:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("candidate failed to release")
+	if err := registration.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if _, ok := module.candidateRuntimeConnectionResolver(
 		"cand_1",
@@ -264,14 +219,12 @@ func TestCandidateRuntimeBindingReplacementRemovalIsGenerationSafe(t *testing.T)
 		binding.Scope.ProjectID,
 		acquire(),
 		nil,
-		nil,
 	)
 	require.NoError(t, err)
 	second, err := module.BindCandidateRuntime(
 		"cand_1",
 		binding.Scope.ProjectID,
 		acquire(),
-		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -300,18 +253,15 @@ func TestCandidateRuntimeResolverPassesThroughOnlyDeclaredAuthoredConnections(t 
 		authored: map[string]string{"public_http": "http"},
 	}
 	logical := semanticmodel.Connection{
-		Kind: "http", Scope: "https://example.test/public/", Auth: semanticmodel.ConnectionAuth{"token": "stale-runtime-value"},
+		Kind: "http", Scope: "https://example.test/public/",
 	}
-	resolved, err := resolveTestConnection(resolver, t.Context(), "public_http", logical)
+	resolved, err := resolver.Resolve(t.Context(), "public_http", logical)
 	require.NoError(t, err)
-	require.Equal(t, "stale-runtime-value", logical.Auth["token"])
-	require.Nil(t, resolved.Auth)
-	logical.Auth = nil
 	require.Equal(t, logical, resolved)
 
-	_, err = resolveTestConnection(resolver, t.Context(), "undeclared", logical)
+	_, err = resolver.Resolve(t.Context(), "undeclared", logical)
 	require.ErrorIs(t, err, connectionbinding.ErrBindingNotFound)
-	_, err = resolveTestConnection(resolver,
+	_, err = resolver.Resolve(
 		t.Context(), "public_http", semanticmodel.Connection{Kind: "quack"},
 	)
 	require.ErrorIs(t, err, connectionbinding.ErrIncompatibleBinding)
@@ -471,17 +421,15 @@ type moduleRuntimePool struct {
 }
 
 func (*moduleRuntimePool) HealthCheck(context.Context) error { return nil }
-func (pool *moduleRuntimePool) WithConnection(
+func (pool *moduleRuntimePool) Resolve(
 	_ context.Context,
 	_ string,
 	logical semanticmodel.Connection,
-	consume func(semanticmodel.Connection) error,
-) error {
+) (semanticmodel.Connection, error) {
 	resolved := pool.connection
 	resolved.Path = logical.Path
 	resolved.Auth = maps.Clone(pool.connection.Auth)
-	defer clear(resolved.Auth)
-	return consume(resolved)
+	return resolved, nil
 }
 func (pool *moduleRuntimePool) Close() error {
 	clear(pool.connection.Auth)

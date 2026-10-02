@@ -24,21 +24,19 @@ import (
 )
 
 type FactoryConfig struct {
-	DuckDBDir               string
-	RuntimeDir              string
-	DashboardRuntime        dashboardruntimefactory.Builder
-	SealedLeaseHolder       string
-	ActivationEvidence      ActivationEvidenceSource
-	SealedCandidateEvidence SealedCandidateEvidenceSource
+	DuckDBDir          string
+	RuntimeDir         string
+	DashboardRuntime   dashboardruntimefactory.Builder
+	SealedLeaseHolder  string
+	ActivationEvidence ActivationEvidenceSource
 }
 
 type servingStateRuntimeFactory struct {
-	duckDBDir               string
-	runtimeDir              string
-	dashboardRuntime        dashboardruntimefactory.Builder
-	activationEvidence      ActivationEvidenceSource
-	sealedCandidateEvidence SealedCandidateEvidenceSource
-	servingArtifacts        ServingArtifactReader
+	duckDBDir          string
+	runtimeDir         string
+	dashboardRuntime   dashboardruntimefactory.Builder
+	activationEvidence ActivationEvidenceSource
+	servingArtifacts   ServingArtifactReader
 }
 
 // ServingArtifactReader is the least-privilege object capability needed to
@@ -50,14 +48,11 @@ type ServingArtifactReader = projectbundle.ArtifactObjectReader
 func NewFactory(config FactoryConfig) runtimehost.RuntimeFactory {
 	return servingStateRuntimeFactory{
 		duckDBDir: config.DuckDBDir, runtimeDir: config.RuntimeDir, dashboardRuntime: config.DashboardRuntime,
-		activationEvidence: config.ActivationEvidence, sealedCandidateEvidence: config.SealedCandidateEvidence,
+		activationEvidence: config.ActivationEvidence,
 	}
 }
 
 func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
-	if input.SealedActivationCandidate != nil {
-		return nil, errSealedCandidateEvidenceUnavailable
-	}
 	duckDBDir := runtimeFirstNonEmpty(input.DuckDBDir, f.duckDBDir)
 	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.runtimeDir)
 	targetDir := filepath.Join(
@@ -203,7 +198,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if err != nil {
 		return nil, err
 	}
-	dependencyEvidence, err := dependencyEvidenceForRuntimeInput(ctx, identity, compiled, compiledProject, input.ManagedData, input, snapshotSealID, f.activationEvidence, f.sealedCandidateEvidence)
+	dependencyEvidence, err := dependencyEvidenceForRuntime(ctx, identity, compiled, compiledProject, input.ManagedData, input.Candidate, f.activationEvidence)
 	if err != nil {
 		return nil, fmt.Errorf("resolve runtime dependency evidence: %w", err)
 	}

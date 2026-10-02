@@ -895,9 +895,7 @@ func validateNativeBuildArtifacts(artifacts release.CandidateArtifactSet, reques
 	if platformdigest.ValidateSHA256Identity(artifacts.Artifact.ProjectDigest) != nil {
 		return fmt.Errorf("%w: candidate artifact project digest is invalid", deploymentdomain.ErrDeliveryInvalid)
 	}
-	// The same artifact check gates fresh execution, recovery and successor
-	// builds before connection inspection or managed-data resolution.
-	return validateNativeRefreshScope(artifacts, plan.PipelinePlan)
+	return nil
 }
 
 func nativeBuildMarker(deliveryID, generationID, attemptID, requestDigest string, request deploymentmodule.NativeDeliveryBuildRequest, planDigest, physicalPool string, epoch int64) catalogartifact.CommitMarker {

@@ -154,60 +154,6 @@ func ForPipeline(definition *refreshartifact.Definition, projectID, pipelineID p
 	return result, nil
 }
 
-// RequiredConnectionIDs projects the exact Connections referenced by a
-// pipeline plan's source closure. The returned IDs are authorization targets,
-// so unlike connectionBindingEvidence this helper does not accept a name-only
-// fallback when the compiled artifact lacks a canonical Connection ID.
-func RequiredConnectionIDs(definition *refreshartifact.Definition, plan Plan) ([]projectgraph.ResourceID, error) {
-	if definition == nil {
-		return nil, fmt.Errorf("project definition is required to resolve pipeline Connections")
-	}
-	if len(plan.SourceInputs) == 0 {
-		return nil, nil
-	}
-	model, ok := definition.Models[plan.SemanticModelID.String()]
-	if !ok || model == nil {
-		return nil, fmt.Errorf("pipeline semantic model %q is unavailable for Connection resolution", plan.SemanticModelID)
-	}
-
-	connections := make(map[projectgraph.ResourceID]struct{}, len(plan.SourceInputs))
-	seenSources := make(map[string]struct{}, len(plan.SourceInputs))
-	for _, sourceID := range plan.SourceInputs {
-		if strings.TrimSpace(sourceID) == "" || strings.TrimSpace(sourceID) != sourceID {
-			return nil, fmt.Errorf("pipeline source input %q is not canonical", sourceID)
-		}
-		if _, duplicate := seenSources[sourceID]; duplicate {
-			return nil, fmt.Errorf("pipeline source input %q is duplicated", sourceID)
-		}
-		seenSources[sourceID] = struct{}{}
-
-		source, ok := model.Sources[sourceID]
-		if !ok {
-			return nil, fmt.Errorf("pipeline source input %q is unavailable in semantic model %q", sourceID, plan.SemanticModelID)
-		}
-		connectionName := strings.TrimSpace(source.Connection)
-		if connectionName == "" || connectionName != source.Connection {
-			return nil, fmt.Errorf("pipeline source input %q has no canonical Connection", sourceID)
-		}
-		connectionIDValue, ok := definition.ConnectionIDs[connectionName]
-		if !ok || strings.TrimSpace(connectionIDValue) == "" || strings.TrimSpace(connectionIDValue) != connectionIDValue {
-			return nil, fmt.Errorf("pipeline source input %q Connection %q has no canonical resource ID", sourceID, connectionName)
-		}
-		connectionID, err := projectgraph.NewResourceID(connectionIDValue)
-		if err != nil {
-			return nil, fmt.Errorf("pipeline source input %q Connection %q resource ID: %w", sourceID, connectionName, err)
-		}
-		connections[connectionID] = struct{}{}
-	}
-
-	result := make([]projectgraph.ResourceID, 0, len(connections))
-	for connectionID := range connections {
-		result = append(result, connectionID)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].String() < result[j].String() })
-	return result, nil
-}
-
 // BindGeneration makes a compiled selection immutable for one serving
 // generation and source artifact. The same selection against a different
 // generation or artifact receives a different plan digest.
