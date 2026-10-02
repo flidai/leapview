@@ -1,6 +1,8 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { ChevronDown, Moon, Sun } from 'lucide'
+import { lucideIcon } from '../web/components/shared/lucide-icons'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
 import { chartExamples } from './charts'
 import { controlExamples } from './controls'
@@ -29,19 +31,31 @@ const groups = [
 class PlaygroundApp extends LitElement {
   @state() private route = location.hash.slice(1) || 'charts/bar'
   @state() private search = ''
+  @state() private expandedGroups = new Set([this.route.split('/')[0]])
   @state() private width = ['360', '768', '1200'].includes(parameters.get('width') || '') ? parameters.get('width')! : 'responsive'
   @state() private height = ['260', '420', '640'].includes(parameters.get('height') || '') ? parameters.get('height')! : '420'
   @state() private theme = document.documentElement.dataset.themePreference || 'light'
+  @state() private dark = document.documentElement.style.colorScheme === 'dark'
   @state() private previewOnly = parameters.get('preview') === '1'
   private readonly exitPreview = (event: KeyboardEvent) => { if (event.key === 'Escape') this.previewOnly = false }
-  private readonly navigate = () => { this.route = location.hash.slice(1) || 'charts/bar' }
+  private readonly navigate = () => {
+    this.route = location.hash.slice(1) || 'charts/bar'
+    this.expandedGroups = new Set([...this.expandedGroups, this.route.split('/')[0]])
+  }
+  private readonly themeApplied = (event: Event) => {
+    const { mode, resolvedMode } = (event as CustomEvent<{ mode: string; resolvedMode: string }>).detail
+    this.theme = mode
+    this.dark = resolvedMode === 'dark'
+  }
 
   connectedCallback() {
     super.connectedCallback()
+    document.addEventListener('leapview-theme-applied', this.themeApplied)
     window.addEventListener('hashchange', this.navigate)
     window.addEventListener('keydown', this.exitPreview)
   }
   disconnectedCallback() {
+    document.removeEventListener('leapview-theme-applied', this.themeApplied)
     window.removeEventListener('hashchange', this.navigate)
     window.removeEventListener('keydown', this.exitPreview)
     super.disconnectedCallback()
@@ -55,12 +69,19 @@ class PlaygroundApp extends LitElement {
     p { margin: var(--base-size-4) 0 0; color: var(--lv-fg-muted); }
     .workspace { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: calc(100vh - 100px); }
     aside { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding: var(--base-size-16); border-right: var(--lv-border-muted); }
-    nav { display: grid; gap: var(--base-size-20); margin-top: var(--base-size-20); }
-    nav h2 { color: var(--lv-fg-muted); font: var(--lv-type-caption); margin: 0 0 var(--base-size-8); }
+    nav { display: grid; gap: var(--base-size-8); margin-top: var(--base-size-20); }
+    .group-button { display: flex; align-items: center; gap: var(--base-size-8); width: 100%; min-height: var(--control-medium-size); padding: var(--base-size-8); border: 0; border-radius: var(--lv-radius-small); color: var(--lv-fg-default); background: transparent; font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); text-align: left; cursor: pointer; }
+    .group-button:hover { background: var(--lv-bg-panel-muted); }
+    .group-label { flex: 1; min-width: 0; }
+    .count { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .chevron { display: inline-flex; transform: rotate(-90deg); }
+    .group-button[aria-expanded='true'] .chevron { transform: none; }
+    .group-links { padding: var(--base-size-4) 0 var(--base-size-8) var(--base-size-12); }
+    .theme-toggle { width: var(--control-large-size); height: var(--control-large-size); padding: 0; flex-shrink: 0; }
     nav a { display: block; padding: var(--base-size-6) var(--base-size-8); border-radius: var(--lv-radius-small); color: var(--lv-fg-default); text-decoration: none; font: var(--lv-type-body-compact); }
     nav a:hover { background: var(--lv-bg-panel-muted); }
     nav a[aria-current='page'] { background: var(--lv-bg-accent-muted); color: var(--lv-fg-accent); font-weight: var(--base-text-weight-semibold); }
-    a:focus-visible, input:focus-visible { outline: var(--borderWidth-thick) solid var(--focus-outlineColor); outline-offset: var(--base-size-2); }
+    a:focus-visible, input:focus-visible, button:focus-visible { outline: var(--borderWidth-thick) solid var(--focus-outlineColor); outline-offset: var(--base-size-2); }
     main { min-width: 0; padding: var(--base-size-24); }
     .toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: var(--base-size-16); margin-bottom: var(--base-size-24); }
     label { display: grid; gap: var(--base-size-4); font: var(--lv-type-caption); }
@@ -73,7 +94,7 @@ class PlaygroundApp extends LitElement {
     @media (max-width: 720px) {
       .workspace { grid-template-columns: minmax(0, 1fr); }
       aside { position: static; max-height: none; overflow: visible; border-right: 0; border-bottom: var(--lv-border-muted); }
-      nav { max-height: 190px; overflow: auto; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      nav { max-height: 240px; overflow: auto; }
       main { padding: var(--base-size-12); }
     }
   `]
@@ -93,16 +114,24 @@ class PlaygroundApp extends LitElement {
         ? html`<playground-controls .example=${exampleID} ?preview-only=${this.previewOnly}></playground-controls>`
         : html`<playground-tokens .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tokens>`)
       : html`<h2>Example not found</h2><p>Choose an example from the navigation.</p>`
+    const visibleGroups = groups.map(item => ({ ...item, examples: this.matchingExamples(item) })).filter(item => item.examples.length > 0)
+    const themeAction = this.dark ? 'Switch to light mode' : 'Switch to dark mode'
     return html`
       <a class="skip" ?hidden=${this.previewOnly} href="#main" @click=${(event: Event) => { event.preventDefault(); this.renderRoot.querySelector<HTMLElement>('main')?.focus() }}>Skip to preview</a>
       <header ?hidden=${this.previewOnly}><div><h1>LeapView playground</h1><p>Production components. Local fixtures. One shared design language.</p></div>
-        <label>Theme<select aria-label="Theme" class="settings-input" .value=${this.theme} @change=${this.changeTheme}>
-          ${['light', 'dark', 'dark_dimmed', 'light_colorblind', 'dark_colorblind', 'light_tritanopia', 'dark_tritanopia'].map(theme => html`<option value=${theme}>${theme.replaceAll('_', ' ')}</option>`)}
-        </select></label>
+        <button type="button" class="settings-button theme-toggle" aria-label=${themeAction} title=${themeAction} @click=${this.changeTheme}>
+          <span aria-hidden="true">${lucideIcon(this.dark ? Sun : Moon, { size: 20 })}</span>
+        </button>
       </header>
       <div class=${this.previewOnly ? 'workspace solo' : 'workspace'}>
-        <aside ?hidden=${this.previewOnly}><label>Find an example<input class="settings-input search" type="search" .value=${this.search} @input=${(event: Event) => { this.search = (event.target as HTMLInputElement).value }}></label>
-          <nav aria-label="Examples">${groups.map(item => html`<section><h2>${item.label}</h2>${item.examples.filter(entry => `${entry.label} ${entry.id}`.toLowerCase().includes(this.search.toLowerCase())).map(entry => html`<a href=${`#${item.id}/${entry.id}`} aria-current=${this.route === `${item.id}/${entry.id}` ? 'page' : nothing}>${entry.label}</a>`)}</section>`)}</nav>
+        <aside ?hidden=${this.previewOnly}><label>Find an example<input class="settings-input search" type="search" .value=${this.search} @input=${this.changeSearch}></label>
+          <nav aria-label="Examples">${visibleGroups.map(item => html`<section>
+            <button type="button" class="group-button" aria-expanded=${String(this.expandedGroups.has(item.id))} aria-controls=${`examples-${item.id}`} @click=${() => this.toggleGroup(item.id)}>
+              <span class="chevron" aria-hidden="true">${lucideIcon(ChevronDown, { size: 16 })}</span><span class="group-label">${item.label}</span><span class="count" aria-hidden="true">${item.examples.length}</span>
+            </button>
+            <div class="group-links" id=${`examples-${item.id}`} ?hidden=${!this.expandedGroups.has(item.id)}>${item.examples.map(entry => html`<a href=${`#${item.id}/${entry.id}`} aria-current=${this.route === `${item.id}/${entry.id}` ? 'page' : nothing}>${entry.label}</a>`)}</div>
+          </section>`)}</nav>
+          ${visibleGroups.length === 0 ? html`<p role="status">No examples match “${this.search.trim()}”.</p>` : nothing}
         </aside>
         <main id="main" tabindex="-1" aria-label=${example?.label || 'Preview'}>
           <div class="toolbar" ?hidden=${this.previewOnly}>
@@ -120,9 +149,27 @@ class PlaygroundApp extends LitElement {
       </div>`
   }
 
-  private changeTheme(event: Event) {
-    this.theme = (event.target as HTMLSelectElement).value
-    document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: this.theme } }))
+  private matchingExamples(group: typeof groups[number]) {
+    const query = this.search.trim().toLowerCase()
+    return group.examples.filter(entry => `${group.label} ${entry.label} ${entry.id}`.toLowerCase().includes(query))
+  }
+
+  private changeSearch(event: Event) {
+    this.search = (event.target as HTMLInputElement).value
+    this.expandedGroups = new Set(this.search.trim()
+      ? groups.filter(group => this.matchingExamples(group).length > 0).map(group => group.id)
+      : [this.route.split('/')[0]])
+  }
+
+  private toggleGroup(id: string) {
+    const expanded = new Set(this.expandedGroups)
+    if (expanded.has(id)) expanded.delete(id)
+    else expanded.add(id)
+    this.expandedGroups = expanded
+  }
+
+  private changeTheme() {
+    document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: this.dark ? 'light' : 'dark' } }))
   }
 }
 customElements.define('playground-app', PlaygroundApp)

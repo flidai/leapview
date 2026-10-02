@@ -26,7 +26,11 @@ restart after changing source files to rebuild. Generated bundles stay under
   **Layout & identity**, and **Dashboard filters**, or filter
   their navigation by name. Every example has a stable hash link such as
   `/#charts/bar`, `/#graphs/asset-lineage`, `/#tables/windowed`, or `/#tokens/colors`.
-- Change theme, preview width, and chart height to inspect responsive behavior.
+- Expand a category to see its examples and count. The current category opens
+  automatically; searching opens matching categories and hides empty ones.
+- Use the sun/moon button to switch between light and dark mode. The choice
+  persists through the production theme setting; existing theme-specific preview
+  links still work. Change preview width and chart height to inspect responsiveness.
 - Use each example's controls to select fixtures, variants and supported states.
   Interactions use real component properties and events; event details are shown
   alongside the example. Use Tab, arrow keys, Enter and Escape in the production
