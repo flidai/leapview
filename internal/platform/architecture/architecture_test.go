@@ -2496,7 +2496,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"COPY --from=sourcegen /src/docs ./docs",
 		"CGO_ENABLED=1 go build",
 		"CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags=\"$BUILD_LDFLAGS\" -o /out/leapviewctl ./cmd/leapviewctl",
-		"FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:",
+		"FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:",
 		"USER leapview:leapview",
 		"WORKDIR /app",
 		"COPY --from=web /src/static ./static",

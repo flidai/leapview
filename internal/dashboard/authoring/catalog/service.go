@@ -95,6 +95,9 @@ type ListResult struct {
 type ListRequest struct {
 	ProjectID graph.ResourceID
 	ActorID   string
+	// IncludeEditableDrafts includes unpublished drafts using EDIT authorization.
+	// Serving consumers leave this false to retain VIEW-only discovery.
+	IncludeEditableDrafts bool
 }
 
 type GetRequest struct {
@@ -143,7 +146,8 @@ func NewService(options Options) (*Service, error) {
 }
 
 // List returns only non-archived dashboards for which the actor has exact
-// dashboard VIEW authorization. A provider lease is acquired once and held
+// dashboard VIEW authorization, or EDIT for drafts when explicitly requested.
+// A provider lease is acquired once and held
 // while all project and project candidates are composed.
 func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, error) {
 	projectID, actorID, err := normalizeRequest(request.ProjectID, request.ActorID)
@@ -171,7 +175,7 @@ func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, er
 	if err != nil {
 		return ListResult{}, err
 	}
-	visible, err := s.authorizeCandidates(ctx, actorID, project, instance)
+	visible, err := s.authorizeCandidates(ctx, actorID, request.IncludeEditableDrafts, project, instance)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -238,7 +242,7 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 	if instance != nil {
 		candidates = append(candidates, *instance)
 	}
-	visible, err := s.authorizeCandidates(ctx, actorID, candidates)
+	visible, err := s.authorizeCandidates(ctx, actorID, false, candidates)
 	if err != nil {
 		return Dashboard{}, err
 	}
@@ -498,19 +502,23 @@ func currentRevision(lifecycle authoring.DashboardLifecycle) (authoring.Revision
 	return authoring.RevisionToken{}, authoring.Provenance{}, fmt.Errorf("dashboard %q has no current revision", lifecycle.ID)
 }
 
-func (s *Service) authorizeCandidates(ctx context.Context, actorID string, groups ...[]Dashboard) ([]Dashboard, error) {
+func (s *Service) authorizeCandidates(ctx context.Context, actorID string, includeEditableDrafts bool, groups ...[]Dashboard) ([]Dashboard, error) {
 	var visible []Dashboard
 	for _, group := range groups {
 		for _, item := range group {
+			action := authoring.AuthorizationActionView
 			target := authoringservice.AuthorizationTargetProjectDashboard
 			if item.Source == SourceInstance {
 				target = authoringservice.AuthorizationTargetAuthoredDashboard
+				if includeEditableDrafts && item.Status == authoring.LifecycleStatusDraft {
+					action = authoring.AuthorizationActionEdit
+				}
 			}
 			err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 				ActorID: actorID, ProjectID: item.ProjectID, DashboardID: authoring.DashboardID(item.ID),
 				OwnerPrincipalID: item.Owner, SemanticModel: item.SemanticModel,
 				Target: target, Visibility: item.Visibility,
-				Action: authoring.AuthorizationActionView,
+				Action: action,
 			})
 			if err != nil {
 				if errors.Is(err, access.ErrForbidden) {

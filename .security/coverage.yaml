@@ -70,6 +70,10 @@ surfaces:
     kind: ruby-lock
     updater: {ecosystem: bundler, directory: /deploy/kamal-trial}
     scanners: [trivy]
+  - path: deploy/managed/kamal/Gemfile.lock
+    kind: ruby-lock
+    updater: {ecosystem: bundler, directory: /deploy/managed/kamal}
+    scanners: [trivy]
 
   - path: deploy/hetzner
     kind: terraform-root
@@ -79,13 +83,17 @@ surfaces:
     kind: terraform-root
     updater: {ecosystem: terraform, directory: /deploy/hetzner-site}
     scanners: [trivy]
+  - path: deploy/managed/hetzner
+    kind: terraform-root
+    updater: {ecosystem: terraform, directory: /deploy/managed/hetzner}
+    scanners: [trivy]
 
   - path: Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /}
     scanners: [trivy]
     images:
-      - gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc
+      - gcr.io/distroless/cc-debian13:debug-nonroot@sha256:f525a9a37aed3e8a848f46cfe055999782d66ed797e9e2886928c8caaaa4fc52
       - golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
       - node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
       - oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
@@ -192,6 +200,10 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/workflows/merge-validation.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/managed-scaffold.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

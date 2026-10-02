@@ -31,6 +31,9 @@ inputs:
   output:
     description: Optional path for the verified admission record.
     required: false
+  vulnerability-report:
+    description: Optional path for a sanitized vulnerability diagnostic report.
+    required: false
 
 outputs:
   image:
@@ -62,6 +65,7 @@ runs:
         MODE: ${{ inputs.mode }}
         EVIDENCE: ${{ inputs.evidence }}
         ADMISSION_OUTPUT: ${{ inputs.output }}
+        VULNERABILITY_REPORT: ${{ inputs.vulnerability-report }}
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
@@ -74,6 +78,10 @@ runs:
         if [[ -n "$PLATFORM" ]]; then
           platform_args=(--platform "$PLATFORM")
         fi
+        vulnerability_report_args=()
+        if [[ -n "$VULNERABILITY_REPORT" ]]; then
+          vulnerability_report_args=(--vulnerability-report "$VULNERABILITY_REPORT")
+        fi
         go run ./internal/app/tools/ociadmission \
           --image "$IMAGE" \
           --repository "$OCI_REPOSITORY" \
@@ -81,6 +89,7 @@ runs:
           --source-revision "$SOURCE_REVISION" \
           --policy "$POLICY" \
           "${platform_args[@]}" \
+          "${vulnerability_report_args[@]}" \
           --mode "$MODE" \
           --evidence "$EVIDENCE" \
           --output "$output_path"

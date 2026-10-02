@@ -1,0 +1,6 @@
+customer       = "example"
+location       = "fsn1"
+ssh_key_ids    = ["existing-operator-key"]
+operator_cidrs = ["203.0.113.10/32"] # Replace with the operator's real egress CIDR.
+private_cidr   = "10.42.0.0/24"
+server_types   = { app = "cpx32", database = "cpx32" }

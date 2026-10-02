@@ -1,0 +1,4 @@
+Host *
+  StrictHostKeyChecking yes
+  UserKnownHostsFile ~/.ssh/known_hosts
+  ForwardAgent no

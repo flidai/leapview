@@ -1,6 +1,6 @@
 # Live public-website Kamal rollout: remaining plan
 
-Updated: 30 September 2026.
+Updated: 1 October 2026.
 Scope: `leapview.dev` and its `www` redirect. The product demo/NixOS deployment is separate.
 
 ## Objective
@@ -56,12 +56,13 @@ recreation, and a real host reboot all passed. Post-boot acceptance completed at
 25 endpoint samples failed across 13 sampled seconds. This does not establish a
 continuous outage duration; zero downtime is not claimed.
 
-The v4 public-health observer started at 10:28:20 UTC (15:58:20 IST) and is
-still running. Its latest recorded sample is 11:17:20 UTC (16:47:20 IST): 50
+The historical v4 public-health observer started at 10:28:20 UTC (15:58:20 IST).
+At the 30 September evidence snapshot it was still running. Its latest recorded sample is 11:17:20 UTC (16:47:20 IST): 50
 public samples and four host samples, with no recorded public-sample failures
-through that point. The 24-hour window is due to complete at 10:28:20 UTC on
-1 October (15:58:20 IST); its separate acceptance job is queued for 10:31 UTC
-(16:01 IST).
+through that point. That 24-hour window was originally due to complete at 10:28:20 UTC on
+1 October (15:58:20 IST); its separate acceptance job was originally queued for 10:31 UTC
+(16:01 IST). Both that job and the old background closeout job were cancelled
+on 1 October after the interruption described below.
 The end adoption smoke and final acceptance receipt, post-observation retention
 audit, completion of the full interval, and closure of #748 remain pending.
 Automatic VPS activation remains disabled.
@@ -90,6 +91,45 @@ pre-correction images retain the broken desktop download links found by the full
 adoption smoke and are historical only. The website correction in [#776](https://github.com/flidai/leapview/pull/776)
 was applied before selecting and qualifying the live A/B digests above.
 
+## Observation recovery — 1 October 2026
+
+The previous observer stopped at 02:19:20 UTC (07:49:20 IST) after 15 hours
+51 minutes. It recorded only `OSError`, without errno or the failing operation;
+the precise cause cannot be established. The original temporary run directory
+is now missing. Surviving protected summaries and audit hashes document the
+interruption, but do not replace the missing raw event evidence. This run is
+excluded from acceptance, and its scheduled acceptance/closeout jobs were
+cancelled. No website outage is established by the observer failure.
+
+Read-only checks on 1 October confirmed the expected B website, locally retained
+A/B images, healthy proxy/Caddy, disabled legacy updater, and no pending work.
+The checked server filesystem had 33,363,365,888 free bytes and 2,398,342 free
+inodes, above the qualified thresholds. These checks do not prove the missing
+observation interval.
+
+The recovery change reports a sanitized failing stage and errno, keeps run
+artifacts in durable private operator storage, and requires independently
+supervised successful observer exit before acceptance. A saved passed summary
+alone is insufficient. Start a fresh full 24-hour observation after a new public
+adoption smoke, freeze its acceptance inputs, and arrange a one-shot acceptance
+and quiet background closeout. The replacement started at 09:44:34 UTC (15:14:34 IST) on 1 October after
+a fresh public adoption smoke. Its first public/host samples and frozen scheduler
+preflight passed. The full interval is due at 09:44:34 UTC (15:14:34 IST) on
+2 October. The one-shot acceptance is scheduled for 09:47 UTC (15:17 IST) on 2 October.
+The quiet watcher is verified running; it wakes the background closeout task after
+a meaningful failure or completed gate. A deduplicated backup check is scheduled
+for 10:20 UTC (15:50 IST) on 2 October. These local jobs require the operator
+machine to remain available; the old cancelled schedule is not reused. No production deployment, pruning, rollback or
+reboot is needed for this local monitoring recovery. The [sanitized recovery
+receipt](deploy/kamal-site/evidence/observation-recovery-20261001.json) records
+the excluded interval, live preflight, and verified replacement snapshot.
+
+Remaining order: fresh start smoke and verified launch → complete new 24 hours →
+end adoption smoke and acceptance receipt → final image/storage/recovery audit →
+reviewable completion evidence → close #748. Keep the fallback open until all
+required live proofs pass. Normal GitHub checks and approving reviews still apply
+to new PRs.
+
 ## Execution flow
 
 ```mermaid
@@ -101,7 +141,7 @@ flowchart TD
     E --> F[Done: prove original Compose restoration and return to A]
     F --> G[Done: deploy B, roll back offline to A, restore B]
     G --> H[Done: recreate Caddy and reboot the real host]
-    H --> I[In progress: complete 24-hour health and storage observation]
+    H --> I[In progress: fresh 24-hour observation after excluded interruption]
     I --> J[Pending: end public adoption smoke and final acceptance receipt]
     J --> K[Pending: post-observation image-retention audit]
     K --> L[Pending: final closeout and fallback 748 closure]
@@ -284,10 +324,13 @@ Caddy recreation passed, and the real host reboot recovered the intended topolog
   verified prior, and no pending operation or maintenance. Preserve unrelated
   images/containers, Caddy data and protected configuration/audit records.
 - [x] Record the live capacity policy, A/B digests and observer-start baseline.
-- [x] Start a timestamped 24-hour observation after the final planned mutation.
-  Its frozen preflight passed with start-smoke evidence bound by hash. The monitor
+- [x] Start the original timestamped observation after the final planned mutation;
+  preserve its interrupted status and exclude it from acceptance.
+- [x] Verify a fresh start smoke and supervised replacement observation in durable
+  private storage, with frozen acceptance inputs. The monitor
   probes public HTTPS/health/readiness every minute and samples disk/inodes,
   service health and restart counts every 15 minutes.
+- [x] Verify the replacement one-shot acceptance and quiet background closeout schedule.
 - [ ] Preserve the complete timestamped results and investigate any failed probes,
   unexpected restarts, persistent image growth or reserve breaches. Notify on a
   meaningful failure/change; healthy repeated samples need no user notification.

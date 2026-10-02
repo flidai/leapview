@@ -148,7 +148,44 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     go run ./internal/app/tools/extensionsupply --out /out/extension-supply
 
-FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc AS runtime
+# Keep the pinned distroless runtime, but apply Debian's fixed OpenSSL packages
+# while the upstream image catches up. The package payload and control metadata
+# are both checksum-verified inputs; this stage is not part of the final image.
+FROM node AS runtime-security-update
+ARG TARGETARCH
+RUN set -eu; \
+    openssl_deb_version=3.5.7-1~deb13u3; \
+    case "$TARGETARCH" in \
+      amd64) \
+        libssl_sha256=ff16bc048bcd7d1b256094450b79c77947d8e76fe2a24bd99b91021d591fa074; \
+        provider_sha256=c12e0266c4780749a4702b8959ac979689f4182e18eed85a8a5eb90ed0e16eab ;; \
+      arm64) \
+        libssl_sha256=d0681293a160392186c6ef85a165e40603d1628a099936137d24d391bd591f97; \
+        provider_sha256=dae4ab96be3a1fc8fd490bbeb3938ecd102d360555d4af8ee2728b42ce9f1059 ;; \
+      *) printf 'unsupported runtime package architecture: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /out/runtime-security/var/lib/dpkg/status.d /tmp/runtime-security-control; \
+    for package in libssl3t64 openssl-provider-legacy; do \
+      case "$package" in \
+        libssl3t64) checksum="$libssl_sha256" ;; \
+        openssl-provider-legacy) checksum="$provider_sha256" ;; \
+      esac; \
+      archive="/tmp/${package}.deb"; \
+      url="https://security.debian.org/debian-security/pool/updates/main/o/openssl/${package}_${openssl_deb_version}_${TARGETARCH}.deb"; \
+      curl --fail --location --proto '=https' --proto-redir '=https' --retry 4 --retry-all-errors --silent --show-error --output "$archive" "$url"; \
+      printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status || { printf 'checksum verification failed for %s\n' "$package" >&2; exit 1; }; \
+      dpkg-deb --extract "$archive" /out/runtime-security; \
+      control_dir="/tmp/runtime-security-control/$package"; \
+      dpkg-deb --control "$archive" "$control_dir"; \
+      test -f "$control_dir/control" && test -f "$control_dir/md5sums"; \
+      install -m 0644 "$control_dir/control" "/out/runtime-security/var/lib/dpkg/status.d/$package"; \
+      install -m 0644 "$control_dir/md5sums" "/out/runtime-security/var/lib/dpkg/status.d/$package.md5sums"; \
+    done
+
+FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:f525a9a37aed3e8a848f46cfe055999782d66ed797e9e2886928c8caaaa4fc52 AS runtime-base
+COPY --from=runtime-security-update /out/runtime-security/ /
+
+FROM runtime-base AS runtime
 
 USER root
 SHELL ["/busybox/sh", "-c"]
@@ -159,7 +196,8 @@ ARG BUILD_TIME=unknown
 ARG BUILD_DIRTY=true
 ARG BUILD_RELEASE=false
 
-LABEL org.opencontainers.image.title="LeapView" \
+LABEL service="leapview" \
+      org.opencontainers.image.title="LeapView" \
       org.opencontainers.image.description="LeapView business intelligence server" \
       org.opencontainers.image.source="https://github.com/flidai/leapview" \
       org.opencontainers.image.licenses="Apache-2.0" \

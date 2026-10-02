@@ -114,7 +114,18 @@ jobs:
           # Dispatch candidates are attested by the protected caller's event
           # SHA. The fixture separately checks the image's candidate revision.
           source-revision: ${{ github.sha }}
+          platform: linux/amd64
           output: ${{ runner.temp }}/oci-admission.json
+          vulnerability-report: ${{ runner.temp }}/oci-vulnerability-report.json
+
+      - name: Upload OCI vulnerability diagnostic
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-vulnerability-diagnostic-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/oci-vulnerability-report.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Pull the admitted final candidate image
         if: ${{ inputs.final_artifact }}
