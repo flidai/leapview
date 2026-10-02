@@ -273,7 +273,8 @@ test('personal API tokens use exact typed permission selectors', async () => {
           selected: expirationOptions.find((option) => option.getAttribute('aria-selected') === 'true')?.dataset.value,
           triggerHeight: Math.round(expirationTrigger.getBoundingClientRect().height),
           triggerWidth: Math.round(expirationTrigger.getBoundingClientRect().width),
-          optionRowsLargeEnough: expirationOptions.every((option) => option.getBoundingClientRect().height >= 32),
+          // Popover scaling can introduce subpixel fractions; compare CSS pixels like the trigger above.
+          optionRowsLargeEnough: expirationOptions.every((option) => Math.round(option.getBoundingClientRect().height) >= 32),
         },
         rawProjectField: Boolean(root.querySelector('input[placeholder*="Project ID"]')),
         rawPrivilegeField: Boolean(root.querySelector('input[placeholder*="Privileges"]')),
