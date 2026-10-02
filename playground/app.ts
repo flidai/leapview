@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
-import { ChevronDown, ExternalLink, Maximize2, Minimize2, Moon, PanelLeft, Sun } from 'lucide'
+import { ChevronDown, Maximize2, Minimize2, Moon, PanelLeft, Sun } from 'lucide'
 import { lucideIcon } from '../web/components/shared/lucide-icons'
 import '../web/components/shared/brand-mark'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
@@ -36,7 +36,6 @@ class PlaygroundApp extends LitElement {
   @state() private expandedGroups = new Set([this.route.split('/')[0]])
   @state() private width = ['360', '768', '1200'].includes(parameters.get('width') || '') ? parameters.get('width')! : 'responsive'
   @state() private height = ['260', '420', '640'].includes(parameters.get('height') || '') ? parameters.get('height')! : '420'
-  @state() private theme = document.documentElement.dataset.themePreference || 'light'
   @state() private dark = document.documentElement.style.colorScheme === 'dark'
   @state() private previewOnly = parameters.get('preview') === '1'
   private readonly exitPreview = (event: KeyboardEvent) => {
@@ -60,8 +59,7 @@ class PlaygroundApp extends LitElement {
     if (fromMobileNavigation) main?.focus({ preventScroll: true })
   }
   private readonly themeApplied = (event: Event) => {
-    const { mode, resolvedMode } = (event as CustomEvent<{ mode: string; resolvedMode: string }>).detail
-    this.theme = mode
+    const { resolvedMode } = (event as CustomEvent<{ mode: string; resolvedMode: string }>).detail
     this.dark = resolvedMode === 'dark'
   }
 
@@ -133,8 +131,6 @@ class PlaygroundApp extends LitElement {
       .heading { flex-basis: 100%; }
       .toolbar { width: 100%; }
       .toolbar .settings-input { max-width: 8rem; }
-      .open-preview { width: var(--control-medium-size); padding: 0; }
-      .open-preview .action-label { display: none; }
     }
   `]
 
@@ -183,8 +179,7 @@ class PlaygroundApp extends LitElement {
               ${['charts', 'graphs', 'tables'].includes(groupID) ? html`<label>Height<select aria-label="Preview height" class="settings-input" .value=${this.height} @change=${(event: Event) => { this.height = (event.target as HTMLSelectElement).value }}>
                 <option value="260">260 px</option><option value="420">420 px</option><option value="640">640 px</option>
               </select></label>` : nothing}
-              <button type="button" class="settings-button focus-preview" aria-label="Focus preview" title="Hide controls and details" @click=${this.enterPreview}>${lucideIcon(Maximize2, { size: 16 })} Focus</button>
-              <a class="settings-button open-preview" aria-label="Open default preview" title="Open default preview in a new tab" href=${`?preview=1&theme=${this.theme}&width=${this.width}&height=${this.height}#${this.route}`} target="_blank" rel="noopener">${lucideIcon(ExternalLink, { size: 16 })}<span class="action-label">Open preview</span></a>
+              <button type="button" class="settings-button preview-toggle" aria-label="Preview" title="Hide controls and details" @click=${this.enterPreview}>${lucideIcon(Maximize2, { size: 16 })} Preview</button>
             </div>
           </div>
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
@@ -201,7 +196,7 @@ class PlaygroundApp extends LitElement {
   private async leavePreview() {
     this.previewOnly = false
     await this.updateComplete
-    this.renderRoot.querySelector<HTMLElement>('.focus-preview')?.focus()
+    this.renderRoot.querySelector<HTMLElement>('.preview-toggle')?.focus()
   }
 
   private matchingExamples(group: typeof groups[number]) {

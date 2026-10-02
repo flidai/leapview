@@ -104,7 +104,7 @@ test('token values follow the shared theme and clean preview preserves control s
   await page.getByRole('button', { name: 'UI components', exact: true }).click()
   await page.getByRole('link', { name: 'Select menu', exact: true }).click()
   await page.getByLabel('Disabled', { exact: true }).check()
-  await page.getByRole('button', { name: 'Focus preview', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview', exact: true }).click()
   await browserExpect(page.getByRole('navigation', { name: 'Examples' })).toBeHidden()
   await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeDisabled()
   await page.keyboard.press('Escape')
@@ -270,8 +270,12 @@ test('mobile Browse preserves preview space and closes on selection or Escape', 
   await browserExpect(browse).toBeFocused()
 })
 
-test('usage disclosure preserves events and focus preview restores the interactive state', async () => {
+test('usage disclosure preserves events and same-tab preview restores the interactive state', async () => {
   await open('controls/select')
+  const originalURL = page.url()
+  const originalPages = page.context().pages().length
+  await browserExpect(page.getByRole('button', { name: 'Preview', exact: true })).toHaveCount(1)
+  await browserExpect(page.locator('.toolbar a[target="_blank"]')).toHaveCount(0)
   const summary = page.locator('.example-details > summary')
   const log = page.getByRole('region', { name: 'Event log' })
   await browserExpect(log).toBeHidden()
@@ -286,20 +290,22 @@ test('usage disclosure preserves events and focus preview restores the interacti
   await page.keyboard.press('Space')
   await browserExpect(log).toBeHidden()
   await page.getByLabel('Disabled', { exact: true }).check()
-  await page.getByRole('button', { name: 'Focus preview', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview', exact: true }).click()
   const exit = page.getByRole('button', { name: 'Exit preview', exact: true })
   await browserExpect(exit).toBeFocused()
+  expect(page.url()).toBe(originalURL)
+  expect(page.context().pages().length).toBe(originalPages)
   await browserExpect(summary).toBeHidden()
   await browserExpect(page.getByLabel('Disabled', { exact: true })).toBeHidden()
   await browserExpect(trigger).toBeDisabled()
   await exit.click()
-  await browserExpect(page.getByRole('button', { name: 'Focus preview', exact: true })).toBeFocused()
+  await browserExpect(page.getByRole('button', { name: 'Preview', exact: true })).toBeFocused()
   await browserExpect(page.getByLabel('Disabled', { exact: true })).toBeChecked()
   await summary.click()
   await browserExpect(log).toContainText('lv-select-change')
 })
 
-test('chart display options survive collapse and focus mode supports production dialogs', async () => {
+test('chart display options survive collapse and preview supports production dialogs', async () => {
   await open('charts/bar')
   const summary = page.locator('.display-options > summary')
   const axes = page.getByLabel('Show axes', { exact: true })
@@ -313,7 +319,7 @@ test('chart display options survive collapse and focus mode supports production 
   await summary.click()
   await browserExpect(axes).not.toBeChecked()
   await browserExpect(page.getByLabel('Legend', { exact: true })).toHaveValue('hidden')
-  await page.getByRole('button', { name: 'Focus preview', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview', exact: true }).click()
   await page.getByLabel('Visual options', { exact: true }).click()
   await page.getByRole('menuitem', { name: 'Show data', exact: true }).click()
   await browserExpect(page.getByRole('dialog')).toBeVisible()
@@ -327,7 +333,7 @@ test('chart display options survive collapse and focus mode supports production 
 for (const type of ['bar', 'table']) {
   test(`expanded ${type} blocks background controls and aligns toolbar actions`, async () => {
     await open(`charts/${type}`)
-    await page.getByRole('button', { name: 'Focus preview', exact: true }).click()
+    await page.getByRole('button', { name: 'Preview', exact: true }).click()
     const exit = page.locator('.exit-preview')
     const exitBounds = (await exit.boundingBox())!
     const expand = page.getByRole('button', { name: type === 'table' ? 'Expand table' : 'Expand chart', exact: true })
@@ -367,6 +373,6 @@ for (const type of ['bar', 'table']) {
     await browserExpect(dialog).toBeHidden()
     await browserExpect(exit).toBeVisible()
     await exit.click()
-    await browserExpect(page.getByRole('button', { name: 'Focus preview', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('button', { name: 'Preview', exact: true })).toBeVisible()
   })
 }

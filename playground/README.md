@@ -37,13 +37,13 @@ restart after changing source files to rebuild. Generated bundles stay under
   Interactions use real component properties and events; expand **Usage & events**
   below the preview for source references, public inputs, and live event details. Use Tab, arrow keys, Enter and Escape in the production
   menus and date picker.
-- **Focus** hides navigation, controls and usage notes for
+- **Preview** hides navigation, controls and usage notes for
   screenshots without resetting the current example. Use **Exit preview** or
   press Escape to return. Expanded visuals block background controls; close the
-  visual with its × button or Escape before leaving Focus.
-  **Open preview** opens a new tab with default fixtures and the current
-  theme and viewport dimensions. `?preview=1#charts/bar` opens that view directly. Select a theme in
-  the main playground to inspect its tokens and chart colors.
+  visual with its × button or Escape before leaving Preview.
+  Preview stays in the current tab. `?preview=1#charts/bar` still opens a preview
+  directly, with default fixtures; optional theme and viewport parameters work
+  for shared links.
 - Usage notes identify the production source, public inputs and emitted events.
   Inspect those files before extending an example; they own the interface.
 
