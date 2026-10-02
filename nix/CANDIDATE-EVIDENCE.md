@@ -114,6 +114,41 @@ builder provenance. Publication and promotion must independently verify the
 actual immutable registry digest and platform manifests. `releaseAdmission`
 remains `false`, and all existing release gates remain required.
 
+### Final registry content
+
+`scripts/nix_registry_content.py` reads the actual immutable registry image and
+recomputes the content binding against freshly verified local candidate archives
+and runtime evidence. Run it inside the locked runtime-security shell, which
+supplies Skopeo. Authenticate separately using Skopeo's credential file; no token
+is accepted on the command line and TLS verification remains enabled.
+
+```sh
+nix develop --no-update-lock-file .#runtime-security -c \
+  python3 scripts/nix_registry_content.py \
+  --image ghcr.io/flidai/leapview@sha256:FULL_MANIFEST_DIGEST \
+  --kind application-image --platform linux/amd64 \
+  --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security \
+  --output .tmp/nix-runtime-security/registry-content-binding.json
+```
+
+Replace `--output` with `--verify` to refetch and compare a retained receipt.
+Repeat `--candidate` and `--platform` for the entire declared platform matrix.
+The application and site use their respective repositories; tags, tag-plus-digest
+references and other repositories fail before a network request. Skopeo copies
+every platform with `--all --preserve-digests --src-tls-verify=true`; the existing bounded OCI verifier
+then checks the requested root digest and all config/layer bytes. Missing platforms,
+normalization or substituted content fail. Network operations have a five-minute
+timeout, tool diagnostics are suppressed, and temporary layouts are removed.
+Candidate bytes, clean source and time-limited runtime evidence are checked again
+after downloading, before a receipt is written.
+
+This adapter only reads the registry. Its unsigned receipt always retains
+`releaseAdmission: false`; content matching does not establish trusted provenance,
+an authenticated SPDX statement or the remaining security and installation gates.
+The pinned [Skopeo copy contract](https://github.com/podman-container-tools/skopeo/blob/main/docs/skopeo-copy.1.md)
+defines digest preservation and full-index copying. No published builder or
+protected candidate authorization is changed.
+
 ### Remaining release authority
 
 The manifest is unsigned. Its hashes detect accidental substitution when checked
