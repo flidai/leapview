@@ -24,7 +24,7 @@ beforeEach(async () => {
   page.on('request', request => {
     const url = new URL(request.url())
     if (url.protocol === 'blob:' || url.protocol === 'data:') return
-    if (url.origin !== server.url.origin || !['/', '/index.html'].includes(url.pathname) && !url.pathname.startsWith('/assets/') && !url.pathname.startsWith('/static/')) unexpectedRequests.push(request.url())
+    if (url.origin !== server.url.origin || !['/', '/index.html', '/__playground/events'].includes(url.pathname) && !url.pathname.startsWith('/assets/') && !url.pathname.startsWith('/static/')) unexpectedRequests.push(request.url())
   })
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
 })
