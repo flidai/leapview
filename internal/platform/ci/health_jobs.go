@@ -26,7 +26,7 @@ var healthLanes = []healthLane{
 	{"go-packages-validation", []string{"Go package tests"}, []string{"ci.yml", "merge-validation.yml", "nightly.yml"}},
 	{"go-application-validation", []string{"Go application tests"}, []string{"ci.yml", "merge-validation.yml", "nightly.yml"}},
 	{"postgres-isolation-validation", []string{"PostgreSQL topology isolation"}, []string{"ci.yml"}},
-	{hostRecoveryHealthLane, []string{hostRecoveryHealthLane, "Isolated host recovery and migration boundary contracts"}, []string{"ci.yml", "merge-validation.yml"}},
+	{hostRecoveryHealthLane, []string{hostRecoveryHealthLane, "Isolated host recovery and migration boundary contracts"}, []string{"ci.yml", "merge-validation.yml", "nightly.yml"}},
 	{"spatial-tile-benchmarks", []string{"Spatial tile benchmarks"}, []string{"ci.yml"}},
 	{"warehouse-validation", []string{"Warehouse physical contract"}, []string{"ci.yml"}},
 	{"full-validation", []string{"Full merge validation", "Full nightly validation"}, []string{"merge-validation.yml", "nightly.yml"}},
