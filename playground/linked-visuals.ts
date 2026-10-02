@@ -23,11 +23,11 @@ export class PlaygroundLinkedVisuals extends LitElement {
     .composition { display: grid; min-width: 0; gap: var(--base-size-16); }
     .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-12); }
     .summary { flex: 1; min-width: 12rem; margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .summary-row { display: grid; grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); align-items: center; gap: var(--base-size-24); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); }
-    .summary-row .filter-bar { padding: var(--base-size-16); }
+    .summary-row { display: grid; grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); }
+    .summary-row .filter-bar { min-width: 0; padding: var(--base-size-16) var(--base-size-24); }
     .visual { min-width: 0; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); }
     .chart { height: var(--playground-preview-height, 290px); }
-    .kpi { height: 8rem; border: 0; background: transparent; }
+    .kpi { height: 8rem; border: 0; border-right: var(--lv-border-default); border-radius: 0; background: transparent; }
     .table { height: 310px; }
     lv-visualization-host { display: block; width: 100%; height: 100%; }
     .documentation { display: grid; gap: var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
@@ -36,8 +36,9 @@ export class PlaygroundLinkedVisuals extends LitElement {
     code, pre { font: var(--lv-type-mono); overflow-wrap: anywhere; }
     pre { margin: 0; max-height: 24rem; overflow: auto; padding: var(--base-size-12); white-space: pre-wrap; background: var(--lv-bg-panel-muted); }
     @container (max-width: 700px) {
-      .summary-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
-      .summary-row .filter-bar { border-top: var(--lv-border-default); }
+      .summary-row { grid-template-columns: minmax(0, 1fr); }
+      .kpi { border-right: 0; }
+      .summary-row .filter-bar { border-top: var(--lv-border-default); padding: var(--base-size-16); }
     }
   `, exampleChromeStyles]
 
