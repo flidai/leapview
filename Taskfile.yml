@@ -14,6 +14,13 @@ tasks:
     cmds:
       - nix build --no-update-lock-file .#leapview-image --out-link result-image
 
+  nix:cli:
+    desc: Build CGO-disabled Linux deployment controller candidates for AMD64 and ARM64
+    cmds:
+      - nix build --no-update-lock-file .#leapviewctl-linux-amd64 --out-link result-cli-amd64
+      # Nix adds the selected output's -arm64 suffix to this prefix.
+      - nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli
+
   nix:qualify:
     desc: Qualify the Nix image through the existing production deployment checks
     cmds:
@@ -532,6 +539,7 @@ tasks:
       - bun test scripts/nix_ci_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py

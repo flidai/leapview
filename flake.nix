@@ -55,6 +55,16 @@
         application = applicationBuild;
       };
       application = patchedRuntime.application;
+      deploymentCLI = import ./nix/deployment-cli.nix {
+        inherit
+          pkgs
+          toolchain
+          revision
+          dirty
+          buildTime
+          ;
+        src = source;
+      };
       portable = import ./nix/portable.nix { inherit pkgs application toolchain; };
       image = import ./nix/image.nix {
         inherit
@@ -86,6 +96,8 @@
         leapview = application;
         leapview-image = image;
         leapview-linux = portable;
+        leapviewctl-linux-amd64 = deploymentCLI;
+        leapviewctl-linux-arm64 = deploymentCLI.arm64;
         map-assets = assets.maps;
         extension-supply = assets.extensions;
         glibc-runtime = patchedRuntime.glibc;

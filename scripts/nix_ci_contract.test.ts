@@ -10,6 +10,28 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('static controller qualification preserves the host baseline and exact artifact transfer', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = jobs['cli-build']
+  const qualify = jobs['cli-compatibility']
+  expect(build.outputs.artifact_id).toBe('${{ steps.upload.outputs.artifact-id }}')
+  expect(qualify.needs).toBe('cli-build')
+  expect(qualify.strategy['fail-fast']).toBe(false)
+  expect(qualify.strategy.matrix.include.map((row: any) => [row.arch, row.runner]))
+    .toEqual([['amd64', 'ubuntu-24.04'], ['arm64', 'ubuntu-24.04-arm']])
+  const download = qualify.steps.find((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(download.with['artifact-ids']).toBe('${{ needs.cli-build.outputs.artifact_id }}')
+  expect(download.with['merge-multiple']).toBe(true)
+  const probe = qualify.steps.find((step: any) => step.env?.ARCH)
+  const baseline = readFileSync('deploy/compose/qualification/Dockerfile.authoring-client', 'utf8')
+    .match(/^FROM (debian:bookworm-slim@sha256:[a-f0-9]{64})$/m)![1]
+  expect(probe.run).toContain(`host=${baseline}`)
+  expect(probe.run).toContain('--network none --read-only')
+  expect(probe.run).toContain('--kind cli-archive')
+  expect(probe.run).toContain('--verify .tmp/nix-cli-evidence/candidate-manifest.json')
+  expect(probe.run).toContain("'releaseAdmission': False")
+})
+
 test('Linux validation selects locked tools and excludes duplicate installers', () => {
   expect(action.inputs.toolchain.default).toBe('auto')
   const install = steps.find((step: any) => step.name === 'Install locked Nix')
