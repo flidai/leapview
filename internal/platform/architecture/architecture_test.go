@@ -2823,7 +2823,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"pull_request:",
 		"types: [opened, synchronize, reopened, ready_for_review, stacked, labeled, unlabeled]",
 		"workflow_dispatch:",
-		"group: ci-${{ github.workflow }}-${{ github.event.pull_request.stack.id || github.ref }}",
+		"group: ci-${{ github.workflow }}-${{ github.ref }}",
 		"apigen-validation:",
 		"name: APIGen tests (PR)",
 		"go-packages-validation:",
