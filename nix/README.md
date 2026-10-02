@@ -118,7 +118,7 @@ nix build --no-update-lock-file .#leapview --out-link result-app
 nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop -c docker load --input "$(readlink -f result-image)"
 # Full production-image qualification using disposable Docker fixtures:
-nix develop -c bash scripts/check_nix_image.sh
+task nix:qualify
 ```
 
 `task nix:build`, `task nix:image`, and `task nix:qualify` expose the same paths.
