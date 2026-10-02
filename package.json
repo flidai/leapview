@@ -59,7 +59,10 @@
     "qa:datastar-lit-routes": "node scripts/ensure_playwright.mjs && bun scripts/datastar_lit_route_qa.ts",
     "qa:dashboard-performance": "node scripts/ensure_playwright.mjs && bun scripts/dashboard_performance.ts",
     "qa:movielens-performance": "LEAPVIEW_PERF_SCENARIO=scripts/performance/movielens.json bun run qa:dashboard-performance",
-    "qa:viewport-qualification": "node scripts/ensure_playwright.mjs && bun scripts/viewport_qualification.ts"
+    "qa:viewport-qualification": "node scripts/ensure_playwright.mjs && bun scripts/viewport_qualification.ts",
+    "playground": "bun playground/server.ts",
+    "typecheck:playground": "tsc --noEmit --project tsconfig.playground.json",
+    "test:playground": "node scripts/ensure_playwright.mjs && bun test --timeout 30000 playground/chart-fixtures.test.ts playground/playground.dom.test.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
