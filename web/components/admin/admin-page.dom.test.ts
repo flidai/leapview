@@ -212,6 +212,50 @@ test('profile settings renders the signed-in identity and editable local fields'
   }
 })
 
+test('select popovers preserve row size for fractional widths and actual ancestor scale', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 640, height: 520 } })
+  try {
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-select-menu'))
+    const cases = await page.evaluate(async () => {
+      const results = []
+      for (const boxSizing of ['border-box', 'content-box']) {
+        for (const scale of [1, 0.8, 1.25]) {
+          const parent = document.createElement('div')
+          parent.style.transform = `scale(${scale})`
+          parent.style.transformOrigin = 'top left'
+          const select = document.createElement('lv-select-menu') as any
+          select.options = [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }]
+          parent.append(select)
+          document.body.append(parent)
+          await select.updateComplete
+          const root = select.shadowRoot as ShadowRoot
+          const trigger = root.querySelector('.trigger') as HTMLButtonElement
+          Object.assign(trigger.style, { width: '220.75px', boxSizing, padding: '0 8px', border: '1px solid' })
+          trigger.click()
+          await select.updateComplete
+          const menu = root.querySelector('.menu') as HTMLElement
+          results.push({
+            boxSizing, scale,
+            triggerWidth: trigger.getBoundingClientRect().width,
+            menuWidth: menu.getBoundingClientRect().width,
+            rows: Array.from(root.querySelectorAll<HTMLElement>('.option')).map(option => option.getBoundingClientRect().height),
+          })
+          select.close()
+          parent.remove()
+        }
+      }
+      return results
+    })
+    for (const result of cases) {
+      expect(result.menuWidth).toBeCloseTo(result.triggerWidth, 1)
+      for (const height of result.rows) expect(height).toBeCloseTo(32 * result.scale, 2)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
 test('personal API tokens use exact typed permission selectors', async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 700 } })
   try {
