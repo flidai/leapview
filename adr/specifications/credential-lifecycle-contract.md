@@ -23,6 +23,10 @@ from D12 completion. Freeze further activation/runtime feature growth in D02
 while maintainers review this scope. This ledger records the existing diff and
 proposed allocation; it neither extracts code nor accepts the lifecycle decision.
 
+The [foundation scope review](credential-foundation-review.md) gives concrete
+keep/split candidates, dependencies of installed denial checks, assurance-owner
+handoffs and the decisions needed before the next implementation boundary.
+
 | Work | D02 disposition | Completion responsibility |
 | --- | --- | --- |
 | Owner/keyring setup, encrypted immutable drafts, scoped metadata/save APIs, validation receipts and transactional audit | Retain as the credential foundation under review. Offline owner/keyring setup is not customer-secret bootstrap or first publication. | D02; D10/D12 compose customer-secret bootstrap through the same authorized, audited service. |
