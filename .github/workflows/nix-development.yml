@@ -28,6 +28,8 @@ on:
       - 'scripts/tests/test_nix_oci_content.py'
       - 'scripts/nix_registry_content.py'
       - 'scripts/tests/test_nix_registry_content.py'
+      - 'scripts/nix_signed_evidence.py'
+      - 'scripts/tests/test_nix_signed_evidence.py'
       - 'scripts/generate_build_sources.sh'
       - 'pkg/apigen/**'
       - 'scripts/ensure_playwright*'
@@ -116,6 +118,7 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
           python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
           python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
           nix develop --no-update-lock-file .#runtime-security -c \
             env LEAPVIEW_TEST_NIX_REGISTRY=1 python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - name: Enforce assessed Nix runtime findings (not release clearance)
