@@ -1,6 +1,6 @@
 # Credential foundation scope review
 
-Status: first activation-access slice extracted; remaining allocation and maintainer decisions pending
+Status: activation-access and receipt-publication adapters extracted; remaining allocation and maintainer decisions pending
 
 Review date: 2026-10-02
 
@@ -48,6 +48,28 @@ supporting CI/release/deployment changes remain in D02 pending further extractio
 and review. The allocation below remains proposed for those changes. This first
 slice neither completes the split nor accepts ADR-0027/ADR-0028 reconciliation.
 
+### Second extraction: receipt-backed publication admission
+
+The uncomposed `newCredentialPublicationAdmission` adapter and its candidate-pin
+verification have been removed from D02, along with their receipt-only tests and
+helpers. The single-connection replacement exception has also been removed from
+`verifyPublicationCredentialContinuity`: ordinary publication still compares the
+complete local-pin set exactly, as it did before this extraction.
+
+The shared provenance-reader interface, ordinary publication fixture, pin
+continuity/evidence tests and refresh finalization/runtime tests remain. The
+fixture still installs credential schema because the pending-operation fence
+reads it. Migrations, pending-state checks and activation phase writers are
+unchanged. The removed adapter and tests are preserved at the same
+`339f364ca5ccc1ce57049ca54619b40595010027` snapshot above; their files were unchanged
+between that snapshot and the pre-extraction revision `a00b5c61a`.
+
+The candidate refresh factory is installed in `postgres_build.go` and also serves
+provider-only jobs with captured-authority checks. It is not unused merely
+because local credentials remain denied by preflight; its extraction requires a
+separate dependency review. This second slice does not complete the wider split
+or resolve the shared lifecycle decisions.
+
 ### Retain in D02
 
 Paths below are repository-relative; matching tests travel with their behavior.
@@ -81,7 +103,7 @@ D12 must define completion/reopening before changing this conservative denial.
 | Work | Concrete extraction candidates and exceptions |
 | --- | --- |
 | Credential phase writers and activation authority | `internal/credential/{preparation,switching,abort,commit}.go`, matching PostgreSQL writers/tests. The uncomposed access-authority adapter and its private queries were extracted in the first slice above. D12 owns their future composition. Review 053/054 switching/commit migrations with these callers; preserve the 051/052 reader dependency above. |
-| Credential consumption and candidate publication | `internal/credential/runtime.go`, `internal/credential/module/runtime_contracts.go`; consumer portions of `internal/app/credential_runtime*.go`, `candidate_local_connections.go`; `internal/app/deploymentpostgres/credential_publication_admission.go` and native candidate/refresh integration tests. Reuse the existing adapter; the remaining app activation authority callback is still missing. Keep ordinary publication denial separately. |
+| Credential consumption and candidate publication | `internal/credential/runtime.go`, `internal/credential/module/runtime_contracts.go`; consumer portions of `internal/app/credential_runtime*.go`, `candidate_local_connections.go`; native candidate/refresh integration tests. The receipt-backed publication adapter is preserved for D12 follow-up as described above; the app activation authority callback remains missing. Keep installed ordinary publication denial and provider-only refresh behavior. |
 | Pool/source/worker lifetime and restart | Retirement and cleanup changes in `internal/analytics/connectionbinding/`, `internal/analytics/duckdb/`, `internal/analytics/sourcework/`, `internal/runtimehost/`, and refresh execution/completion under `internal/refresh/` and `internal/app/refreshpostgres/`. D11/D12 must agree cross-process ownership and drain first. Existing ordinary-runtime correctness fixes need separate review before extraction. |
 | CI, browser stability and advisory evidence | Shard changes in `Taskfile.yml`, `.github/workflows/{merge-validation,nightly}.yml`, `internal/platform/ci/`, `scripts/frontend_ci_contract.test.ts`, `package.json`, related CI docs and browser tests; `.security/javascript-vulnerability-evidence.json`. Prefer separate CI/security review; retain foundation-specific generation and transport coverage. Each `.gitleaks.toml` exception follows its exact non-secret fixture. |
 | Generic release compatibility | Historical version-five support in `internal/release/provenance.go`, `provenance_test.go`, `testdata/provenance_v5.json` and the compose historical-transition test. Review under the release owner; separate these hunks from current credential-pin evidence. This is not a legacy credential-format reader. |
@@ -149,7 +171,7 @@ install-before-completion failure, a remaining old consumer, process overlap,
 and restoration of an older backup after revocation. Record answers in the
 existing lifecycle contract rather than introduce a new coordination framework.
 
-Next: review this first extraction and the remaining allocation and shared
+Next: review these two extractions and the remaining allocation and shared
 decisions, then complete the remaining dependency-complete extractions,
 foundation validation and D02 closeout. D12 then
 implements the agreed lifecycle in separate reviewable work. No approval,

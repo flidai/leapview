@@ -41,7 +41,7 @@ func TestPublicationLocalPinEvidenceRequiresUnambiguousSealedBindings(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{
-				candidateVersionMatches: true, localPin: true, editInput: test.edit,
+				localPin: true, editInput: test.edit,
 			})
 			tx, err := fixture.db.Begin(t.Context())
 			if err != nil {

@@ -10,8 +10,6 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
-	"github.com/flidai/leapview/internal/credential"
-	"github.com/flidai/leapview/internal/credential/encryption"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
@@ -19,7 +17,6 @@ import (
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
-	"github.com/jackc/pgx/v5"
 )
 
 func ordinaryCredentialPublicationRepository(t *testing.T, fixture credentialPublicationFixture) *deploymentpostgres.Repository {
@@ -39,7 +36,7 @@ func ordinaryCredentialPublicationRepository(t *testing.T, fixture credentialPub
 }
 
 func TestOrdinaryPublicationRequiresReceiptForFirstLocalCredentialPin(t *testing.T) {
-	fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{candidateVersionMatches: true, localPin: true})
+	fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{localPin: true})
 	repository := ordinaryCredentialPublicationRepository(t, fixture)
 	tx, err := fixture.db.Begin(t.Context())
 	if err != nil {
@@ -56,7 +53,7 @@ func TestOrdinaryPublicationRequiresReceiptForFirstLocalCredentialPin(t *testing
 }
 
 func TestOrdinaryProviderOnlyPublicationRemainsAllowed(t *testing.T) {
-	fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{candidateVersionMatches: true})
+	fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{})
 	repository := ordinaryCredentialPublicationRepository(t, fixture)
 	tx, err := fixture.db.Begin(t.Context())
 	if err != nil {
@@ -74,131 +71,6 @@ func TestOrdinaryProviderOnlyPublicationRemainsAllowed(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestCredentialReceiptCannotSmuggleAnotherLocalPin(t *testing.T) {
-	fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{candidateVersionMatches: true, prepareCredential: true, localPin: true, extraLocalPin: true})
-	repository, authorizeCalls := fixture.repository(t, deploymentaudit.NewWithRepository(accesspostgres.New()), credentialPublicationCurrentAuthority(fixture))
-	tx, err := fixture.db.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.ActivateTx(t.Context(), tx, fixture.activation); !errors.Is(err, deploymentpostgres.ErrConflict) {
-		_ = tx.Rollback(context.Background())
-		t.Fatalf("receipt-backed activation with an extra local pin = %v, want conflict", err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatalf("caller commit after denied extra pin: %v", err)
-	}
-	if *authorizeCalls != 0 {
-		t.Fatalf("credential commit authority ran before continuity denial: %d calls", *authorizeCalls)
-	}
-	assertCredentialPublicationUnchanged(t, fixture, false)
-	assertCredentialCommitAuditCount(t, fixture, 0)
-}
-
-func TestCredentialReceiptCanReplaceOneExistingLocalPin(t *testing.T) {
-	fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{candidateVersionMatches: true, localPin: true, extraLocalPin: true})
-	activateCredentialPinnedBaseForContinuityTest(t, fixture)
-	basePins := fixture.generationInput.Provenance.Plan.Bindings
-	if len(basePins) != 2 {
-		t.Fatalf("base local pins = %d, want 2", len(basePins))
-	}
-	replacement := basePins[0]
-	replacement.CredentialVersionID = credentialPublicationUUID(t)
-	replacement.Revision++
-	replacement.EndpointConfigHash = admissionDigest('d')
-	bindings := []release.BindingEvidence{replacement, basePins[1]}
-	publication, activation := createCredentialPublicationSuccessor(t, fixture, bindings)
-	successorFixture := prepareCredentialPublicationSuccessor(t, fixture, publication, activation, replacement)
-	repository, _ := successorFixture.repository(t, deploymentaudit.NewWithRepository(accesspostgres.New()), credentialPublicationCurrentAuthority(successorFixture))
-	tx, err := fixture.db.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	activated, err := repository.ActivateTx(t.Context(), tx, activation)
-	if err != nil {
-		_ = tx.Rollback(context.Background())
-		t.Fatalf("receipt-backed replacement of one local pin: %v", err)
-	}
-	if activated.Pointer.ActiveGenerationID != activation.GenerationID || activated.Pointer.TargetRevision != 3 {
-		_ = tx.Rollback(context.Background())
-		t.Fatalf("receipt-backed replacement result = %#v", activated)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func prepareCredentialPublicationSuccessor(
-	t *testing.T,
-	fixture credentialPublicationFixture,
-	publication deploymentpostgres.DeliveryPublication,
-	activation deploymentpostgres.ActivationInput,
-	bindingEvidence release.BindingEvidence,
-) credentialPublicationFixture {
-	t.Helper()
-	actorID := fixture.activation.ActorID
-	binding := encryption.Binding{
-		DeploymentID: admissionInstanceID, TargetID: admissionInstanceID, OwnerID: "customer", ScopeKind: "connection",
-		ProjectID: "project_admission", Environment: "prod", ResourceID: bindingEvidence.ConnectionID,
-		Purpose: "connection-authentication", Provider: "postgres", Destination: bindingEvidence.EndpointConfigHash,
-		VersionID: bindingEvidence.CredentialVersionID,
-	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	if _, err := fixture.db.Exec(t.Context(), `INSERT INTO credential.draft_version(version_id,deployment_id,owner_id,scope_kind,target_id,project_id,environment,resource_id,purpose,provider,destination,actor_id,created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, binding.VersionID, binding.DeploymentID, binding.OwnerID, binding.ScopeKind, binding.TargetID, binding.ProjectID, binding.Environment, binding.ResourceID, binding.Purpose, binding.Provider, binding.Destination, actorID, now); err != nil {
-		t.Fatal(err)
-	}
-	receipt := credential.ValidationReceipt{
-		ReceiptID: credentialPublicationUUID(t), Binding: binding, ActorID: actorID,
-		BindingID: bindingEvidence.BindingID, BindingRevision: bindingEvidence.Revision,
-		ConfigurationDigest: admissionDigest('c'), ValidatedAt: now, ExpiresAt: now.Add(5 * time.Minute),
-	}
-	auditIntent, err := receipt.AuditIntent()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.credentials.SaveValidation(t.Context(), receipt, auditIntent); err != nil {
-		t.Fatalf("save successor pin validation receipt: %v", err)
-	}
-	operationID := credentialPublicationUUID(t)
-	preparation := credential.ActivationPreparation{
-		OperationID: operationID, Receipt: receipt, ExpectedTargetRevision: publication.ExpectedTargetRevision,
-		PredecessorGenerationID: publication.ExpectedBaseGenerationID, CandidateID: publication.CandidateID,
-		GenerationID: publication.GenerationID, PublicationID: publication.PublicationID,
-	}
-	prepareTx, err := fixture.db.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.credentials.PrepareActivationTx(t.Context(), prepareTx, preparation, credentialPreparationTargetFence(fixture.delivery)); err != nil {
-		_ = prepareTx.Rollback(context.Background())
-		t.Fatalf("prepare successor local pin: %v", err)
-	}
-	if err := prepareTx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	switchTx, err := fixture.db.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = fixture.credentials.BeginActivationSwitchingTx(t.Context(), switchTx, admissionInstanceID, operationID, actorID,
-		func(ctx context.Context, tx pgx.Tx, prepared credential.PreparedActivation, actor string) error {
-			if actor != prepared.Preparation.Receipt.ActorID {
-				return credential.ErrForbidden
-			}
-			return credentialPreparationTargetFence(fixture.delivery)(ctx, tx, prepared.Preparation)
-		})
-	if err != nil {
-		_ = switchTx.Rollback(context.Background())
-		t.Fatalf("begin successor local pin switching: %v", err)
-	}
-	if err := switchTx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	fixture.publication, fixture.activation, fixture.operationID, fixture.prepared = publication, activation, operationID, preparation
-	return fixture
 }
 
 func TestLocalCredentialPinsMustMatchCommittedPredecessor(t *testing.T) {
@@ -256,7 +128,7 @@ func TestLocalCredentialPinsMustMatchCommittedPredecessor(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{candidateVersionMatches: true, localPin: true})
+			fixture := newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{localPin: true})
 			activateCredentialPinnedBaseForContinuityTest(t, fixture)
 			basePin := fixture.generationInput.Provenance.Plan.Bindings[0]
 			bindings := test.successor(basePin)

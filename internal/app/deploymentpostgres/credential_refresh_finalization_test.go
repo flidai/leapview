@@ -81,7 +81,7 @@ func (f credentialRefreshFixture) persistence(t *testing.T, queue refreshmodule.
 
 func newCredentialRefreshFixture(t *testing.T, change func(*release.BindingEvidence)) credentialRefreshFixture {
 	t.Helper()
-	f := credentialRefreshFixture{credentialPublicationFixture: newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{candidateVersionMatches: true, localPin: true})}
+	f := credentialRefreshFixture{credentialPublicationFixture: newCredentialPublicationFixtureWithOptions(t, credentialPublicationFixtureOptions{localPin: true})}
 	activateCredentialPinnedBaseForContinuityTest(t, f.credentialPublicationFixture)
 	pin := f.generationInput.Provenance.Plan.Bindings[0]
 	if change != nil {

@@ -13,10 +13,9 @@ import (
 )
 
 // verifyPublicationCredentialContinuity runs under activation's target lock,
-// after its predecessor CAS check. A receipt-backed caller must first verify
-// the exact successor pin for allowedConnectionID; all other local pins remain
-// immutable across this publication. It never resolves or decrypts credentials.
-func verifyPublicationCredentialContinuity(ctx context.Context, tx deploymentpostgres.Tx, delivery *deploymentpostgres.Repository, provenance candidateProvenanceTransactionReader, publication deploymentpostgres.DeliveryPublication, allowedConnectionID string) error {
+// after its predecessor CAS check. Local credential pins must remain unchanged
+// across ordinary publication. It never resolves or decrypts credentials.
+func verifyPublicationCredentialContinuity(ctx context.Context, tx deploymentpostgres.Tx, delivery *deploymentpostgres.Repository, provenance candidateProvenanceTransactionReader, publication deploymentpostgres.DeliveryPublication) error {
 	if ctx == nil || typednil.IsNil(tx) || publication.State != "pending" {
 		return deploymentpostgres.ErrInvalid
 	}
@@ -59,13 +58,6 @@ func verifyPublicationCredentialContinuity(ctx context.Context, tx deploymentpos
 			return credentialPinContinuityConflict()
 		}
 		previous = predecessorPins
-	}
-	if allowedConnectionID != "" {
-		if _, ok := pins[allowedConnectionID]; !ok {
-			return credentialPinContinuityConflict()
-		}
-		delete(previous, allowedConnectionID)
-		delete(pins, allowedConnectionID)
 	}
 	if !maps.Equal(previous, pins) {
 		return credentialPinContinuityConflict()

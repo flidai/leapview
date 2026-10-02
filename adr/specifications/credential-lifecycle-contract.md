@@ -21,9 +21,9 @@ document remain evidence for their individual checkpoints, not current decisions
 The 1 October migration roadmap separates D02 ([PR #785](https://github.com/flidai/leapview/pull/785))
 from D12 completion. Freeze further activation/runtime feature growth in D02
 while maintainers review this scope. This ledger records the existing diff and
-proposed allocation. The activation access-authority slice has been extracted as
-recorded in the foundation scope review; the remaining split and lifecycle
-decision are still pending.
+proposed allocation. The activation access-authority and receipt-publication
+adapters have been extracted as recorded in the foundation scope review; the
+remaining split and lifecycle decision are still pending.
 
 The [foundation scope review](credential-foundation-review.md) gives concrete
 keep/split candidates, dependencies of installed denial checks, assurance-owner
@@ -33,7 +33,7 @@ handoffs and the decisions needed before the next implementation boundary.
 | --- | --- | --- |
 | Owner/keyring setup, encrypted immutable drafts, scoped metadata/save APIs, validation receipts and transactional audit | Retain as the credential foundation under review. Offline owner/keyring setup is not customer-secret bootstrap or first publication. | D02; D10/D12 compose customer-secret bootstrap through the same authorized, audited service. |
 | Existing access checks, preparation/switch/commit records, pins, source/pool cleanup and publication fences | Review as explicit prerequisites; decide which stay in D02 and which need a separate PR. Some restrictive safeguards are installed; receipt-backed activation is not composed into production. | D11/D12 for combined ownership, drain, publication, installation and restart guarantees. |
-| Remaining app activation authority callback and production coordinator, source/agent consumption and administration UI | Defer further feature work; reuse the existing publication-admission adapter and reviewed prerequisites. Saved, validated or sealed does not mean in use. | D12 after D01/D02 decisions and the D10/D11 shared contract. |
+| Remaining app activation authority callback and production coordinator, source/agent consumption and administration UI | Defer further feature work; review the preserved publication-admission adapter and retained prerequisites for D12. Saved, validated or sealed does not mean in use. | D12 after D01/D02 decisions and the D10/D11 shared contract. |
 | Rotation, retirement, independent key recovery and retained-backup decryption | Required follow-up, not completed by draft-storage tests. | D12 implementation; D13 profile/recovery qualification. |
 | Accumulated CI/browser/security, retained release-provenance and demo-readiness fixes | Separate keep/split review; no removal is implied by this ledger. | Their owning CI, release and deployment reviews; none proves Nix adoption or managed lifecycle acceptance. |
 
@@ -793,14 +793,17 @@ example. PostgreSQL documents the nested rollback boundary in
 ### Atomic credential publication commit
 
 `CommitActivationPublicationTx` records `committed_at` for the exact switching
-operation inside delivery's activation-admission savepoint. The stored immutable
+operation in a caller-owned transaction. The preserved publication adapter
+invoked it inside delivery's activation-admission savepoint. The stored immutable
 intent must match the publication's target, expected revision, predecessor,
 candidate, generation, publication ID and original receipt actor. A required
 transaction-bound authority callback rechecks and locks current actor, customer
 owner, binding and configuration authority and verifies the candidate's exact
 credential pin. It must retain those locks through the outer commit and perform
 no provider I/O. The ordinary production publication fence remains installed;
-the internal operation-scoped adapter is not yet wired to a live coordinator.
+the operation-scoped publication adapter and its integration tests are preserved
+for D12 at `339f364ca5ccc1ce57049ca54619b40595010027`, rather than retained in D02.
+The credential commit writer itself remains pending further extraction review.
 
 Receipt freshness has a precise checkpoint: the transition trigger's database
 wall-clock sample during the conditional update, at the final admission gate
@@ -1577,9 +1580,10 @@ Production local refresh remains denied by the committed-base preflight. The
 local candidate branch is integrated and tested behind that gate; this does not
 enable publication, active-serving resolution or credential replacement. The
 transactional publication admission below compares
-successor local pins with the exact committed predecessor (or an explicit
-credential activation receipt for changed pins). The existing post-commit
-generation proof and semantic admission hook alone do not provide that comparison.
+successor local pins with the exact committed predecessor. The receipt-backed
+exception for changed pins is preserved for D12 follow-up and is absent from D02.
+The existing post-commit generation proof and semantic admission hook alone do
+not provide that comparison.
 
 Research: PR #744 at `5938aeaa8a02c2b84084036961d7ce7edc29ddd9` keeps
 deployment/bootstrap secrets in protected configuration and customer credentials
@@ -1597,10 +1601,9 @@ identity and revision, connector, credential version and endpoint digest inside
 the existing activation transaction, after the target lock and predecessor CAS
 check and before changing the active pointer. Adding or removing a local pin,
 switching it to a provider credential, or changing any part of its tuple requires
-an explicit credential lifecycle operation. The current prepared-activation
-path only adds or replaces a local pin; removal and a switch to provider
-authentication remain denied. Provider-only changes retain their existing
-publication rules.
+an explicit credential lifecycle operation. D02 has no receipt-backed publication
+path; changed local pins remain denied. Provider-only changes retain their
+existing publication rules.
 
 The comparison reads immutable candidate provenance through the caller's
 transaction and binds it to the target, serving generation, candidate revision,
@@ -1608,10 +1611,11 @@ artifact and sealed binding fingerprint. The predecessor also needs durable
 committed-publication proof. Missing or ambiguous evidence denies publication;
 a qualified candidate or a matching version string alone is insufficient.
 
-An explicit prepared credential activation permits only the connection covered
-by its exact validation receipt to differ. Every other local pin must remain
-identical. The existing receipt, current-authority and pending-operation checks
-still apply. A receipt for one connection cannot authorize changes to another.
+In the preserved D12 adapter at `339f364ca5ccc1ce57049ca54619b40595010027`, an
+explicit prepared credential activation permitted only the connection covered
+by its exact validation receipt to differ. That adapter, its private exception
+and receipt-only tests have been extracted. D02 retains the ordinary checks and
+tests, with no connection exempt from the pin comparison.
 
 Rejection stays inside activation's savepoint, so a caller committing its outer
 transaction cannot retain a partial pointer, operation, event or audit change.

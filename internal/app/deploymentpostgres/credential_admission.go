@@ -9,7 +9,17 @@ import (
 	credentialpostgres "github.com/flidai/leapview/internal/credential/postgres"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/typednil"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
+	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 )
+
+// candidateProvenanceTransactionReader reads immutable release provenance for
+// ordinary publication's credential pin continuity check.
+type candidateProvenanceTransactionReader interface {
+	Configured() bool
+	CandidateProvenanceTx(context.Context, releasepostgres.DBTX, projectgraph.ResourceID, string, int64) (release.Provenance, error)
+}
 
 func newOrdinaryCredentialPublicationAdmission(delivery *deploymentpostgres.Repository, provenance candidateProvenanceTransactionReader) (deploymentpostgres.ActivationAdmissionPort, error) {
 	if delivery == nil || !delivery.Configured() || typednil.IsNil(provenance) || !provenance.Configured() {
@@ -19,7 +29,7 @@ func newOrdinaryCredentialPublicationAdmission(delivery *deploymentpostgres.Repo
 		if err := admitPublicationWithoutCredentialOperation(ctx, tx, publication); err != nil {
 			return err
 		}
-		return verifyPublicationCredentialContinuity(ctx, tx, delivery, provenance, publication, "")
+		return verifyPublicationCredentialContinuity(ctx, tx, delivery, provenance, publication)
 	}, nil
 }
 
