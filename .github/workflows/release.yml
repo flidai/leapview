@@ -945,3 +945,27 @@ jobs:
             candidate/dist/*.tar.gz.sha256 \
             candidate/authoring/*.tar.gz \
             candidate/authoring/*.tar.gz.sha256
+
+  # Successful publication remains complete when a qualification is rerun.
+  # GitHub's release publication token does not trigger release-event workflows.
+  installed-qualification:
+    name: Qualify the published installation
+    needs: [image, publish]
+    uses: ./.github/workflows/installed-candidate.yml
+    with:
+      release_tag: ${{ needs.image.outputs.release_tag }}
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+      issues: write
+
+  authoring-qualification:
+    name: Qualify the published authoring package
+    needs: [image, publish]
+    uses: ./.github/workflows/authoring-package-qualification.yml
+    with:
+      release_tag: ${{ needs.image.outputs.release_tag }}
+      run_lifecycle: false
+    permissions:
+      contents: read

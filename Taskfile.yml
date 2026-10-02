@@ -530,6 +530,7 @@ tasks:
       - node --test scripts/ci_watchdog.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/nix_ci_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
