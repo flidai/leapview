@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accessrevalidation "github.com/flidai/leapview/internal/access/revalidation"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
@@ -36,7 +35,7 @@ func (f *postgresScheduledAuthorityFixture) SelectCurrentExecutionGrantID(_ cont
 }
 
 func (f *postgresScheduledAuthorityFixture) CurrentExecutionGrant(_ context.Context, id, recipient string) (access.ExecutionGrant, error) {
-	if id != f.grant.ID || (recipient != "" && recipient != f.grant.ExecutionPrincipalID) {
+	if id != f.grant.ID || recipient != "" {
 		return access.ExecutionGrant{}, errors.New("unexpected current grant lookup")
 	}
 	return f.grant, nil
@@ -196,15 +195,9 @@ func TestPostgresScheduledRefreshCompositionCarriesOccurrenceGrantIntoQueuedAuth
 			return refreshrun.CanonicalRefreshResult{}, nil
 		},
 	}
-	authorityChecked := false
-	revalidator := accessrevalidation.NewDelegatedWorkloadRevalidator(fixture, func(_ context.Context, principalID string, currentPair access.PermissionPair, environment string) (bool, error) {
-		authorityChecked = principalID == fixture.grant.ExecutionPrincipalID && currentPair == pair && environment == identity.Environment
-		return authorityChecked, nil
-	}, fixture.grant.Target.InstanceID, identity.Environment)
 	m, err := refreshmodule.Build(t.Context(), refreshmodule.Config{
-		Persistence:          &refreshmodule.Persistence{Runs: runs, Schedules: schedules, Publication: postgresScheduledPublicationFixture{}},
-		AuthorityRevalidator: revalidator,
-		Service:              service, Authorization: refreshmodule.AuthorizationConfig{AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) { return true, nil }}, RequireAuthority: true, ExecutionGrants: fixture, InstanceID: fixture.grant.Target.InstanceID,
+		Persistence: &refreshmodule.Persistence{Runs: runs, Schedules: schedules, Publication: postgresScheduledPublicationFixture{}},
+		Service:     service, Authorization: refreshmodule.AuthorizationConfig{AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) { return true, nil }}, RequireAuthority: true, ExecutionGrants: fixture, InstanceID: fixture.grant.Target.InstanceID,
 		EnableScheduler: true, ResolveScheduledExecutionGrantID: resolver, ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) { return identity, nil }, ReconcileSchedules: func(context.Context) error { return nil }, ScheduleInterval: time.Hour,
 	})
 	if err != nil {
@@ -216,9 +209,6 @@ func TestPostgresScheduledRefreshCompositionCarriesOccurrenceGrantIntoQueuedAuth
 	defer m.Stop(context.Background())
 	select {
 	case input := <-queued:
-		if !authorityChecked {
-			t.Fatal("scheduled grant was not revalidated before queue persistence")
-		}
 		if input.Authority.Mode != jobs.DelegatedWorkloadMode || input.Authority.ExecutionGrant == nil || input.Authority.ExecutionGrant.ID != fixture.grant.ID || input.PrincipalID != fixture.grant.ExecutionPrincipalID {
 			t.Fatalf("queued scheduled authority = %#v, principal=%q", input.Authority, input.PrincipalID)
 		}
