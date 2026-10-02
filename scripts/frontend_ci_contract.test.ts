@@ -8,6 +8,15 @@ import { parse } from 'yaml'
 const shards = ['core', 'reports', 'chat', 'data', 'site']
 const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
 
+test('catalog page browser fixtures run in separate test processes', () => {
+  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
+  const testProcesses = scripts['test:catalog-page'].split(' && ').filter((command: string) => command.startsWith('bun test '))
+  for (const fixture of ['catalog-page.dom.test.ts', 'catalog-page.pins.dom.test.ts']) {
+    expect(testProcesses.filter((command: string) => command.includes(fixture)))
+      .toEqual([`bun test web/components/app/${fixture}`])
+  }
+})
+
 test('local frontend validation runs every bounded shard without suppressing failure', () => {
   expect(tasks['ci:lane:frontend'].cmds).toEqual(shards.map((shard) => ({
     task: 'ci:lane:frontend:shard', vars: { SHARD: shard },
