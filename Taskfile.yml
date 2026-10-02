@@ -809,6 +809,7 @@ tasks:
   generate:
     desc: Generate all checked-out derived code needed for local development
     cmds:
+      - task: go:deps
       - task: adr0016-conformance:generate
       - task: duckdbsql:generate
       - task: db:generate
@@ -1804,10 +1805,20 @@ tasks:
   test:go:app:shards:
     desc: Run stable application shards with three-process parallelism
     cmds:
+      - task: go:deps
       - task --parallel --concurrency 3 test:go:app:0 test:go:app:1 test:go:app:2 test:go:app:3
+
+  go:deps:
+    desc: Prepare the locked module graph before parallel test compilation
+    run: once
+    cmds:
+      # Match sqlc's proxy transport setting only for module acquisition.
+      # Test processes retain the caller's GODEBUG and HTTP/2 behavior.
+      - GODEBUG=http2client=0 go mod download
 
   test:go:packages:
     cmds:
+      - task: go:deps
       # Container-backed PostgreSQL tests are run once, fail closed, by the
       # dedicated conformance lane. Derive the exclusion by source so a new
       # harness user cannot silently run in both lanes. App tests use the same
@@ -2022,6 +2033,7 @@ tasks:
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
+      - task: go:deps
       - task: ci:extensions:prepare
       - task: generate
       - task: build
