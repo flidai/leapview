@@ -215,7 +215,7 @@ test('category dropdowns support keyboard navigation, active routes and search',
   await search.fill('ui components')
   await browserExpect(nav.getByRole('link', { name: 'Select menu', exact: true })).toBeVisible()
   await search.fill('no-such-example')
-  await browserExpect(page.getByRole('status')).toContainText('No examples match')
+  await browserExpect(page.locator('#example-navigation').getByRole('status')).toContainText('No examples match')
   await search.fill('')
   await browserExpect(nav.getByRole('button', { name: 'Lineage & models', exact: true })).toHaveAttribute('aria-expanded', 'true')
   await page.setViewportSize({ width: 390, height: 844 })

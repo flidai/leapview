@@ -335,8 +335,8 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
       await host.ensureMounted()
       let action: any
       host.addEventListener('lv-visual-action', (event: CustomEvent) => { action = event.detail });
-      (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.visual-options summary')!.click();
-      (host.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.visual-options button')!.click()
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.options-trigger')!.click();
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.visual-options [role="menuitem"]')!.click()
       const state = {
         signalRevision: host.envelope.dataRevision,
         rendererRevision: host.controller.envelope.dataRevision,
