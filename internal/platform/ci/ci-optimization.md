@@ -49,6 +49,44 @@ orchestration and task ownership; image-layer reuse. Existing Go cache ownership
 release/deployment policy, the full Nix development suite, and independent
 security checks remain in place.
 
+## Orchestration and deterministic cleanup
+
+The planner and gate use the explicit `orchestration` setup profile. Its
+`mkShellNoCC` environment contains the same locked Go compiler plus Git, jq,
+Python, Bash and coreutils. It restores no application caches or Bun downloads
+and does not realize browsers or unrelated validation tools. Unsupported
+platform/toolchain/browser/Terraform combinations fail explicitly. The default
+`validation` profile retains the full development shell and exports/validates
+compiler, CGO, font and browser settings.
+
+`measurements/orchestration-closure.json` records a local warm-store screening
+sample: orchestration has 124 store paths / 657,007,400 NAR bytes, versus 347 paths
+/ 4,440,607,648 bytes for the full shell. Warm realization was 1.137s and 2.793s.
+The hosted PR baseline's planner and gate setup steps were 270s and 255s. Local
+realization excludes installation, network transfers and cache production; these
+figures are **not** paired before/after evidence or a hosted speedup claim. No
+GitHub-backed Nix cache is adopted from this sample. Transfer/compression/upload
+costs, cold misses and a measured retention budget still require hosted evidence.
+
+Direct-shell and exported-environment execution both pass the CI planner/gate
+test suites. The exporter requires explicit profiles and exports only
+`GOTOOLCHAIN` and PATH for orchestration; validation retains its allowlist and
+rejects missing compiler/browser inputs.
+
+Electron packaging chooses its Linux-only PR matrix before runner allocation;
+merge/main/manual events retain all four native targets. Nightly live-model
+diagnostics detect credentials before installing tools. Local Docker macOS
+checks include dependency-file changes and cancel superseded runs of the same PR.
+The dbt reference consumes the existing shared requirements without changing
+versions or publication boundaries.
+
+Hosted documentation uses `ci:test:docs` for forced regeneration/snapshot checks,
+observation, documentation verification and site Go tests. The site frontend shard
+owns browser/diagram tests and uses `test:site:prepared`. The standalone
+`ci:test:docs-site` composes preparation, docs checks and that shard, preserving
+complete local coverage. Every projected docs selection includes the site shard;
+generated checks and all other shards remain mandatory.
+
 Higher-risk experiments remain measurement-gated:
 
 - Nix caching: first measure the orchestration closure and realization cost.

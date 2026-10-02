@@ -46,11 +46,8 @@ jobs:
           cache: pip
           cache-dependency-path: examples/dbt-warehouse-boundary/dbt/requirements.txt
 
-      - name: Install pinned dbt Core
-        run: python -m pip install --disable-pip-version-check 'dbt-core==1.11.14'
-
-      - name: Install pinned dbt-duckdb
-        run: python -m pip install --disable-pip-version-check 'dbt-duckdb==1.11.0'
+      - name: Install pinned dbt dependencies
+        run: python -m pip install --disable-pip-version-check --requirement examples/dbt-warehouse-boundary/dbt/requirements.txt
 
       - name: Authenticate the producer with Azure OIDC
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0

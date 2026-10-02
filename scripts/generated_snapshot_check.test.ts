@@ -72,7 +72,7 @@ test('ci:pr checks snapshots before preparation and after validation lanes', () 
   expect(generatedCheck.cmds[0]).toContain('check_generated_snapshots.sh')
   expect(generatedCheck.cmds[0]).toContain('-- task --force generate')
 
-  const docsSiteCommands = tasks['ci:test:docs-site'].cmds as Array<string | { task?: string }>
+  const docsSiteCommands = tasks['ci:test:docs'].cmds as Array<string | { task?: string }>
   expect(docsSiteCommands[0]).toContain('check_generated_snapshots.sh')
   expect(docsSiteCommands[0]).toContain('-- task --force docs:generate')
   expect(docsSiteCommands.some((command) => typeof command === 'string' && command.includes('git status --porcelain')))
