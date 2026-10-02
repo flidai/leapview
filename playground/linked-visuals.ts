@@ -23,9 +23,9 @@ export class PlaygroundLinkedVisuals extends LitElement {
     .composition { display: grid; min-width: 0; gap: var(--base-size-16); }
     .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-12); }
     .summary { flex: 1; min-width: 12rem; margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .dashboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'kpi chart' 'table chart'; grid-template-rows: 8rem minmax(310px, auto); gap: var(--base-size-16); }
-    .visual { min-width: 0; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); }
-    .chart { grid-area: chart; min-height: var(--playground-preview-height, 290px); }
+    .dashboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'kpi chart' 'table chart'; grid-template-rows: 8rem minmax(0, 1fr); height: max(calc(8rem + var(--base-size-16) + 310px), var(--playground-preview-height, 420px)); gap: var(--base-size-16); }
+    .visual { min-width: 0; min-height: 0; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-chart-surface); }
+    .chart { grid-area: chart; }
     .kpi { grid-area: kpi; }
     .table { grid-area: table; }
     lv-visualization-host { display: block; width: 100%; height: 100%; }
@@ -35,7 +35,7 @@ export class PlaygroundLinkedVisuals extends LitElement {
     code, pre { font: var(--lv-type-mono); overflow-wrap: anywhere; }
     pre { margin: 0; max-height: 24rem; overflow: auto; padding: var(--base-size-12); white-space: pre-wrap; background: var(--lv-bg-panel-muted); }
     @container (max-width: 1000px) {
-      .dashboard { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'kpi' 'chart' 'table'; grid-template-rows: 8rem var(--playground-preview-height, 290px) 310px; }
+      .dashboard { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-areas: 'kpi' 'chart' 'table'; grid-template-rows: 8rem var(--playground-preview-height, 290px) 310px; }
     }
   `, exampleChromeStyles]
 

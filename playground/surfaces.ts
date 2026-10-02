@@ -76,14 +76,19 @@ export class PlaygroundSurfaces extends LitElement {
       actionDone: this.actionDone,
       icon: this.appearance.icon,
       color: this.appearance.color,
+      zoomLayout: this.zoom.layoutMode,
+      zoomMode: this.zoom.mode,
+      zoomScale: this.zoom.scale,
     }
   }
 
   async restoreExampleState(value: Record<string, unknown>) {
     await this.updateComplete
-    const { icon, color, ...controls } = readState(value, this.getExampleState(), { variant: ['standard', ...this.variants().map(([value]) => value)] })
+    const { icon, color, zoomLayout, zoomMode, zoomScale, ...controls } = readState(value, this.getExampleState(), { variant: ['standard', ...this.variants().map(([value]) => value)], zoomLayout: ['auto', 'desktop', 'mobile'], zoomMode: ['fit-width', 'fit-page', 'actual-size', 'custom', 'mobile'] })
     Object.assign(this, controls)
     this.appearance = { icon, color, revision: this.appearance.revision + 1 }
+    await this.updateComplete
+    if (this.example === 'report-footer') this.applyZoom({ layout: zoomLayout, mode: zoomMode === 'mobile' ? 'actual-size' : zoomMode, scale: zoomScale })
   }
 
   static styles = [settingsLayoutStyles, settingsFieldStyles, emptyStateStyles, pageHeaderStyles, breadcrumbStyles, entityDetailStyles, css`

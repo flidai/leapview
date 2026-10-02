@@ -5,8 +5,8 @@ const text = (value: string) => literal(value.replace(/&/g, '&amp;').replace(/</
 const attribute = (value: string) => text(value).replace(/"/g, '&quot;')
 const voidTags = new Set(['input', 'br', 'hr', 'img', 'wbr'])
 
-/** Capture only public Lit inputs and light DOM; never serialize a component's shadow UI. */
-export function previewCode(host: LitElement, imports: string[], styles: string[] = []): string {
+/** Capture public Lit inputs and light DOM. Optional element overrides supply current values from public APIs. */
+export function previewCode(host: LitElement, imports: string[], styles: string[] = [], inputOverrides?: ReadonlyMap<Element, Readonly<Record<string, unknown>>>): string {
   const preview = host.renderRoot.querySelector('[part~=preview]')
   if (!preview) return '// This example has no declarative preview. See Usage & events.'
   const serialize = (node: Node): string => {
@@ -18,7 +18,8 @@ export function previewCode(host: LitElement, imports: string[], styles: string[
       const ctor = node.constructor as typeof LitElement
       for (const [name, options] of ctor.elementProperties) {
         if (typeof name !== 'string' || options.state) continue
-        const value = (node as unknown as Record<string, unknown>)[name]
+        const overrides = inputOverrides?.get(node)
+        const value = overrides && Object.hasOwn(overrides, name) ? overrides[name] : (node as unknown as Record<string, unknown>)[name]
         if (value === undefined || typeof value === 'function' || value instanceof Node) continue
         try {
           const json = JSON.stringify(value)

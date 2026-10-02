@@ -19,6 +19,9 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
       throw new Error('Gauge targets and thresholds require an explicit minimum and maximum')
     }
     const dataset = inlineDataset(envelope, spec.value.dataset)
+    // An empty result has no gauge datum. Leave the shared no-data/status
+    // graphic visible instead of passing undefined into numeric formatters.
+    if (!dataset?.rows.length) return { series: [] }
     const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
     const value = valueIndex >= 0 ? dataset?.rows[0]?.[valueIndex] : undefined
     const approximateValue = approximateNumericValue(value)

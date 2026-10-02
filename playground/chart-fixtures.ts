@@ -56,7 +56,7 @@ export function createChartFixture(id: string, options: ChartOptions = defaultCh
     if (options.scenario === 'precision') return `90071992547409${91 + index}.125`
     return 24 + ((index * 31 + 17) % 73)
   }
-  let fields = [field('category', false, 'Region'), field('value', true, 'Revenue'), field('comparison', true, 'Previous period')]
+  let fields: VisualizationField[] = [{ ...field('category', false, 'Region'), role: 'identity' }, field('value', true, 'Revenue'), field('comparison', true, 'Previous period')]
   let rows: unknown[][] = Array.from({ length: count }, (_, i) => [category(i), value(i), 15 + i * 8])
   const presentation = { legend: options.legend, labelPolicy: { density: options.labels, priority: [] as Array<'selected' | 'anomaly' | 'threshold'>, maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true } }
   const common = {

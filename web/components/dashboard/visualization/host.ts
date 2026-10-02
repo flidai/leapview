@@ -1,6 +1,7 @@
 import { LitElement, html } from 'lit'
 import { EllipsisVertical } from 'lucide'
 import { lucideIcon } from '../../shared/lucide-icons'
+import { toggleAnchoredPopover } from '../../shared/anchored-popover'
 import { property, query, state } from 'lit/decorators.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import validateGeneratedEnvelope from '../../../generated/visualization/validate'
@@ -56,6 +57,7 @@ export class VisualizationHost extends LitElement {
   @state() private applying = false
   @state() private presented = false
   @state() private announcement = ''
+  @state() private optionsOpen = false
   private controller?: VisualizationController
   private resizeObserver?: ResizeObserver
   private applyGeneration = 0
@@ -68,6 +70,7 @@ export class VisualizationHost extends LitElement {
   private pendingApply?: Promise<void>
   private applyQueued = false
   private mountEpoch = 0
+  private optionsScrollRoots: Array<Document | ShadowRoot> = []
 
   static styles = [visualActionStyles, visualizationHostStyles]
 
@@ -156,6 +159,8 @@ export class VisualizationHost extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.closeOptions()
+    this.removeOptionsListeners()
     const generation = ++this.connectionGeneration
     super.disconnectedCallback()
     // A synchronous DOM move fires disconnected/connected callbacks even though
@@ -361,21 +366,86 @@ export class VisualizationHost extends LitElement {
   private visualActions() {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return null
-    return html`<details class="visual-options">
-      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
-      <div class="menu" role="menu">
+    return html`<div class="visual-options">
+      <button class="options-trigger" type="button" aria-label="Visual options" aria-haspopup="menu" aria-expanded=${String(this.optionsOpen)} popovertarget="visual-options-menu" title="Visual options" @click=${this.toggleOptions} @keydown=${this.optionsTriggerKeydown}>${lucideIcon(EllipsisVertical)}</button>
+      <div id="visual-options-menu" class="menu" popover="auto" role="menu" aria-label="Visualization actions" @toggle=${this.optionsToggled} @keydown=${this.optionsKeydown}>
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
         ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
       </div>
-    </details>`
+    </div>`
+  }
+
+  private toggleOptions = (event: Event): void => {
+    event.preventDefault()
+    const trigger = this.renderRoot.querySelector<HTMLElement>('.options-trigger')
+    const menu = this.renderRoot.querySelector<HTMLElement>('.menu')
+    if (trigger && menu && toggleAnchoredPopover(trigger, menu, { minWidth: 220, align: 'end' })) {
+      menu.querySelector<HTMLElement>('[role=menuitem]')?.focus()
+    }
+  }
+
+  private optionsTriggerKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    this.toggleOptions(event)
+    if (event.key === 'ArrowUp') this.renderRoot.querySelector<HTMLElement>('.menu [role=menuitem]:last-child')?.focus()
+  }
+
+  private closeOptions = (): void => {
+    const menu = this.renderRoot.querySelector<HTMLElement>('.menu')
+    if (menu?.matches(':popover-open')) menu.hidePopover()
+  }
+
+  private optionsToggled = (event: Event): void => {
+    this.optionsOpen = (event.currentTarget as HTMLElement).matches(':popover-open')
+    this.removeOptionsListeners()
+    if (this.optionsOpen && this.isConnected) {
+      // Scroll events do not cross shadow boundaries. Observe each ancestor root.
+      let root: Node = this.renderRoot
+      while (root instanceof ShadowRoot || root instanceof Document) {
+        root.addEventListener('scroll', this.dismissOptionsOnScroll, true)
+        this.optionsScrollRoots.push(root)
+        if (root instanceof Document) break
+        root = root.host.getRootNode()
+      }
+      window.addEventListener('resize', this.closeOptions)
+    }
+  }
+
+  private removeOptionsListeners(): void {
+    for (const root of this.optionsScrollRoots) root.removeEventListener('scroll', this.dismissOptionsOnScroll, true)
+    this.optionsScrollRoots = []
+    window.removeEventListener('resize', this.closeOptions)
+  }
+
+  private dismissOptionsOnScroll = (event: Event): void => {
+    const menu = this.renderRoot.querySelector('.menu')
+    if (!menu || !event.composedPath().includes(menu)) this.closeOptions()
+  }
+
+  private optionsKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      this.closeOptions()
+      this.renderRoot.querySelector<HTMLElement>('.options-trigger')?.focus({ preventScroll: true })
+      return
+    }
+    if (event.key === 'Tab') { queueMicrotask(this.closeOptions); return }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const items = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role=menuitem]:not(:disabled)'))
+    const current = items.indexOf(event.target as HTMLElement)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
+    items[next]?.focus()
   }
 
   private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return
-    this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.removeAttribute('open')
+    this.closeOptions()
+    this.renderRoot.querySelector<HTMLElement>('.options-trigger')?.focus({ preventScroll: true })
     const data = accessibleVisualizationData(envelope, this.rendererContext())
     const metadata = resolveVisualizationMetadata(envelope)
     if (action === 'clear-selection') {

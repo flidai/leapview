@@ -53,3 +53,43 @@ existing public contract, do not patch private component state or recreate its
 markup. Document the source, inputs, events and meaningful limitations beside the
 example. Add focused browser tests for new behavior after implementation and source
 review are complete, then run the checks documented in README.md.
+
+## Browser walkthrough — 2026-10-02
+
+All 71 routes were visited in the standalone Chromium preview. Disposable browser
+drivers exercised real controls and captured screenshots; no automated test cases
+were added or changed, and no test suites, typechecks or CI were run for this pass.
+
+| Area | Exercised |
+| --- | --- |
+| All 26 visual types | Exposed data fixtures and states, relevant display options, menus, data dialogs, clipboard and CSV actions, expansion/dismissal; 52 CSV downloads across menu and dialog exports |
+| Five reusable table/list examples | Fixture states, enabled sorting, selection, local search/actions, window scrolling and column controls |
+| 33 UI, filter, content, graph and drawer examples | Fixture controls, purposeful button and keyboard workflows; desktop and 390px screenshots |
+| Six token examples | Production/all-token toggle, search/no results, refresh, aliases and theme changes |
+| Shell and linked dashboard | Navigation/search, mobile Browse, preview/focus return, sizing, selection/filter/reset, share links, component code, comparison replacement and checklist controls |
+| Responsive layouts | All visual types at 390px in both themes; token and component layouts at representative narrow/wide sizes |
+
+The walkthrough reproduced and repaired menu dismissal/focus and short-card
+clipping, pinned-comparison replacement, linked dashboard height reduction,
+empty gauge/tree rendering, stale map value ranges and large-decimal slider
+keyboard input, missing selection styling in the regional chart fixture, and
+lost native field, composer draft and report zoom state in shared links. Copied
+composer code also uses the current draft. Fixes to production behavior
+live in the shared components/adapters; preview state remains in the playground.
+
+The review panel's accessibility button was exercised on the linked dashboard:
+zero rule violations and one rule requiring manual review. This is a single
+rendered-state result, not an accessibility certification for the catalog.
+
+Coverage is not exhaustive: equivalent icon choices, dates, nodes and chart marks
+were sampled. Every state/theme/viewport combination, browser engine, OS clipboard
+denial, editor shortcut, toast timer and backend integration was not verified.
+Disabled controls were inspected rather than force-clicked. Full route/service
+workflows remain outside the standalone fixture contract.
+
+Lit development-mode/update warnings and headless WebGL performance messages
+remain in diagnostic logs; they are not a production performance qualification.
+
+Before merging, run the checks in README.md and update existing expectations for
+the corrected bar highlight mapping, native popover action menu, and map range
+expressions. These test-case updates remain deferred at the task owner's request.

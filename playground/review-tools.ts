@@ -24,6 +24,7 @@ class PlaygroundReviewTools extends LitElement {
   @state() private message = ''
   @state() private pinned = ''
   @state() private pinnedLabel = ''
+  @state() private pinRevision = 0
   @state() private scanning = false
   @state() private findings: Array<{ id: string; help: string; helpUrl: string; nodes: number; targets: string[] }> = []
   @state() private scanSummary = ''
@@ -65,6 +66,7 @@ class PlaygroundReviewTools extends LitElement {
     url.searchParams.set('embedded', '1')
     if (url.href.length > 8000) { this.message = 'This example is too large to pin. Reduce the edited content first.'; return }
     this.pinned = url.href
+    this.pinRevision++
     this.pinnedLabel = `${state.route} · ${state.theme} · ${state.width === 'responsive' ? 'responsive width' : state.width + ' px'}`
   }
 
@@ -101,7 +103,7 @@ class PlaygroundReviewTools extends LitElement {
       ${chart ? html`<a href=${`https://github.com/flidai/leapview/blob/main/docs/visuals/${encodeURIComponent(chart)}.md`}>Authored ${chart} YAML examples</a>` : nothing}
       ${this.message ? html`<span role="status">${this.message}</span>` : nothing}
       ${this.code ? html`<pre tabindex="0" aria-label="Current component code">${this.code}</pre>` : nothing}
-      ${this.pinned ? html`<div class="reference"><strong>Pinned reference · ${this.pinnedLabel}</strong><iframe title="Pinned example comparison" src=${this.pinned}></iframe></div>` : nothing}
+      ${this.pinned ? html`<div class="reference"><strong>Pinned reference · ${this.pinnedLabel}</strong>${keyed(this.pinRevision, html`<iframe title="Pinned example comparison" src=${this.pinned}></iframe>`)}</div>` : nothing}
       ${keyed(this.route, html`<div class="checks" role="group" aria-label="Manual review checklist">
         <label><input type="checkbox">Keyboard: Tab order, visible focus, Enter, arrows, and Escape.</label>
         <label><input type="checkbox">Layout: narrow and wide containers, long labels, and both themes.</label>

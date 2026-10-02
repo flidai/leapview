@@ -80,6 +80,7 @@ export class PlaygroundContent extends LitElement {
   @state() private explorerLink = true
   @state() private artifact = createArtifactFixture('ready')
   @state() private composerState = 'ready'
+  @state() private composerDraft = 'Summarize revenue by region.'
   @state() private references: ChatContextReference[] = []
   @state() private suggestions: ChatContextReference[] = []
   @state() private suggestionQuery = ''
@@ -90,6 +91,9 @@ export class PlaygroundContent extends LitElement {
   @state() private logs: string[] = []
 
   getExampleCode() {
+    const composer = this.renderRoot.querySelector<HTMLElement & { getDraft(): string }>('lv-chat-composer')
+    const inputs = new Map<Element, Record<string, unknown>>()
+    if (composer) inputs.set(composer, { value: composer.getDraft() })
     return previewCode(this, [
       "import '../web/components/shared/code-editor'",
       "import '../web/components/shared/code-block'",
@@ -98,7 +102,7 @@ export class PlaygroundContent extends LitElement {
       "import '../web/components/shared/visual-artifact'",
       "import '../web/components/dashboard/visual-modal'",
       "import '../web/components/chat/chat-composer'",
-    ])
+    ], [], inputs)
   }
 
   getExampleState() {
@@ -119,6 +123,7 @@ export class PlaygroundContent extends LitElement {
       artifactState: this.artifactState,
       explorerLink: this.explorerLink,
       composerState: this.composerState,
+      composerDraft: this.renderRoot.querySelector<HTMLElement & { getDraft(): string }>('lv-chat-composer')?.getDraft() ?? this.composerDraft,
       referenceIds: this.references.map(reference => referenceIdentity(reference)),
     }
   }
@@ -176,6 +181,7 @@ export class PlaygroundContent extends LitElement {
     this.artifactState = 'ready'
     this.artifact = createArtifactFixture('ready')
     this.composerState = 'ready'
+    this.composerDraft = 'Summarize revenue by region.'
     this.references = []
     this.suggestions = []
     this.suggestionQuery = ''
@@ -224,9 +230,9 @@ export class PlaygroundContent extends LitElement {
         ${this.check('Explorer link', this.explorerLink, (value) => { this.explorerLink = value })}
       ` : nothing}
       ${this.example === 'chat-composer' ? html`
-        ${this.select('Composer state', this.composerState, ['ready', 'disabled', 'pending', 'running', 'editing', 'continue'], (value) => { this.composerState = value; this.acceptedRunId = ''; this.composerRevision += 1 })}
+        ${this.select('Composer state', this.composerState, ['ready', 'disabled', 'pending', 'running', 'editing', 'continue'], (value) => { this.composerState = value; this.composerDraft = value === 'continue' ? '' : 'Summarize revenue by region.'; this.acceptedRunId = ''; this.composerRevision += 1 })}
         ${this.check('Attached context', this.references.length > 0, (value) => { this.references = value ? [composerReferences[0]!] : [] })}
-        <button class="settings-button" @click=${() => { this.acceptedRunId = `local-accepted-${++this.acceptedRunSequence}`; this.composerState = 'ready' }}>Accept draft</button>
+        <button class="settings-button" @click=${() => { this.acceptedRunId = `local-accepted-${++this.acceptedRunSequence}`; this.composerDraft = ''; this.composerState = 'ready' }}>Accept draft</button>
       ` : nothing}
       <button class="settings-button" @click=${this.reset}>Reset</button>
     </div>`
@@ -240,7 +246,7 @@ export class PlaygroundContent extends LitElement {
       case 'markdown-view': return html`<lv-markdown-view .value=${this.empty ? '' : markdownFixture} ?compact=${this.compact} emptyText="No notes yet. Add a summary to get started."></lv-markdown-view>`
       case 'visual-artifact': return html`<div class="artifact"><lv-visual-artifact .type=${this.artifactState === 'unsupported' ? '' : 'bar'} artifact-id="regional-revenue" .payload=${this.artifactState === 'unavailable' ? undefined : this.artifact} .explorerHref=${this.explorerLink ? '#charts/bar' : ''} @lv-visual-action=${this.record} @lv-visualization-observation=${this.record}></lv-visual-artifact></div><lv-visual-modal></lv-visual-modal>`
       case 'chat-composer': return html`<div class="composer-preview">${keyed(this.composerRevision, html`<lv-chat-composer
-        .value=${this.composerState === 'continue' || this.acceptedRunId ? '' : 'Summarize revenue by region.'}
+        .value=${this.composerDraft}
         ?disabled=${this.composerState === 'disabled'} ?pending=${this.composerState === 'pending'}
         ?running=${this.composerState === 'running'} .runId=${this.composerState === 'running' ? 'local-run-1' : ''}
         .canContinue=${this.composerState === 'continue'} ?editing=${this.composerState === 'editing'}
@@ -250,7 +256,7 @@ export class PlaygroundContent extends LitElement {
         .suggestions=${this.suggestions} .suggestionQuery=${this.suggestionQuery} .suggestionRequestId=${this.suggestionRequestId}
         @lv-chat-submit=${this.record}
         @lv-chat-stop=${(event: CustomEvent) => { this.composerState = 'ready'; this.record(event) }}
-        @lv-chat-edit-cancel=${(event: CustomEvent) => { this.composerState = 'ready'; this.record(event) }}
+        @lv-chat-edit-cancel=${(event: CustomEvent) => { this.composerDraft = ''; this.composerState = 'ready'; this.record(event) }}
         @lv-chat-references-change=${(event: CustomEvent<ChatReferencesChangeDetail>) => { this.references = event.detail.references; this.record(event) }}
         @lv-chat-reference-search=${(event: CustomEvent<ChatReferenceSearchDetail>) => { this.suggestionQuery = event.detail.query; this.suggestionRequestId = event.detail.requestId; this.suggestions = composerReferences.filter((reference) => matchesReferenceQuery(reference, event.detail.query)); this.record(event) }}
       ></lv-chat-composer>`)}</div>`

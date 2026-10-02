@@ -326,7 +326,14 @@ export class EChartsHandle implements RendererHandle {
     const value = state as EChartsViewState
     const patch: Record<string, any> = {}
     if (restoreDataZoom && Array.isArray(value.dataZoom) && value.dataZoom.length > 0) patch.dataZoom = value.dataZoom
-    if (Array.isArray(value.series) && value.series.length > 0) patch.series = value.series
+    if (Array.isArray(value.series) && value.series.length > 0) {
+      // Empty hierarchy frames omit their series. Restoring a camera entry for
+      // a removed series would create a typeless ECharts series instead.
+      const currentSeries = this.responsiveOption?.series ?? []
+      const currentIDs = new Set(currentSeries.map((series: Record<string, any>) => series.id))
+      const retained = value.series.filter((series) => currentIDs.has(series.id))
+      if (retained.length > 0) patch.series = retained
+    }
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: false })
   }
 

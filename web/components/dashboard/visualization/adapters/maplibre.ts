@@ -739,14 +739,24 @@ export class MapLibreHandle implements RendererHandle {
     minimum.dataset.mapRangeMinimum = ''; maximum.dataset.mapRangeMaximum = ''
     track.append(rail, fill, minimum, maximum)
     item.append(values, track)
+    let selectedMinimum = initial.selectedMinimum, selectedMaximum = initial.selectedMaximum
     const sync = (changed?: 'minimum' | 'maximum') => {
-      let lower = Number(minimum.value), upper = Number(maximum.value)
+      // Native range inputs round very large absolute values. Store small
+      // integer positions in the controls and retain actual values in state.
+      const valueAt = (input: HTMLInputElement) => {
+        const position = Number(input.value), positions = Number(input.max)
+        if (position <= 0) return initial.minimum
+        if (position >= positions) return initial.maximum
+        return initial.minimum + (initial.maximum - initial.minimum) * position / positions
+      }
+      let lower = changed === 'minimum' ? valueAt(minimum) : selectedMinimum
+      let upper = changed === 'maximum' ? valueAt(maximum) : selectedMaximum
       if (lower > upper) {
-        if (changed === 'minimum') { upper = lower; maximum.value = String(upper) }
-        else { lower = upper; minimum.value = String(lower) }
+        if (changed === 'minimum') { upper = lower; maximum.value = minimum.value }
+        else { lower = upper; minimum.value = maximum.value }
       }
       const next = withMapValueSelection(initial, lower, upper)
-      minimum.max = String(next.selectedMaximum); maximum.min = String(next.selectedMinimum)
+      selectedMinimum = next.selectedMinimum; selectedMaximum = next.selectedMaximum
       minimumValue.value = formatMapRangeValue(next.selectedMinimum); maximumValue.value = formatMapRangeValue(next.selectedMaximum)
       minimum.setAttribute('aria-valuetext', minimumValue.value); maximum.setAttribute('aria-valuetext', maximumValue.value)
       const left = mapValueRangePercent(next.selectedMinimum, next), right = mapValueRangePercent(next.selectedMaximum, next)
@@ -1092,10 +1102,13 @@ function rangeInput(label: string, range: MapValueRange, value: number): HTMLInp
   const input = document.createElement('input')
   input.type = 'range'
   input.className = 'lv-map-range-input'
-  input.min = String(range.minimum)
-  input.max = String(range.maximum)
-  input.step = String(range.step)
-  input.value = String(value)
+  const span = range.maximum - range.minimum
+  const positions = Math.max(1, Math.floor(span / range.step))
+  input.min = '0'
+  input.max = String(positions)
+  // Integer positions keep both endpoints reachable without native rounding.
+  input.step = '1'
+  input.value = String((value - range.minimum) / span * positions)
   input.setAttribute('aria-label', label)
   return input
 }

@@ -262,7 +262,7 @@ class PlaygroundApp extends LitElement {
               <label>Width<select aria-label="Preview width" class="settings-input" .value=${this.width} @change=${(event: Event) => { this.width = (event.target as HTMLSelectElement).value }}>
                 <option value="responsive">Responsive</option><option value="360">360 px</option><option value="768">768 px</option><option value="1200">1200 px</option>
               </select></label>
-              ${(['charts', 'graphs', 'tables'].includes(groupID) || this.route === 'recipes/linked-visuals') ? html`<label>Height<select aria-label="Preview height" class="settings-input" .value=${this.height} @change=${(event: Event) => { this.height = (event.target as HTMLSelectElement).value }}>
+              ${(['charts', 'graphs', 'tables'].includes(groupID) || this.route === 'recipes/linked-visuals') ? html`<label>Height<select aria-label="Preview height" title=${this.route === 'recipes/linked-visuals' ? 'Minimum chart height; wide layouts also fit the KPI and table.' : 'Preview height'} class="settings-input" .value=${this.height} @change=${(event: Event) => { this.height = (event.target as HTMLSelectElement).value }}>
                 <option value="260">260 px</option><option value="420">420 px</option><option value="640">640 px</option>
               </select></label>` : nothing}
               <button type="button" class="settings-button" title="Share fixture, options, theme, and size" @click=${this.share}>Copy link</button>

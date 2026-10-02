@@ -131,6 +131,10 @@ viewport dimensions and browser font/rendering differences can affect screenshot
 
 See [COVERAGE.md](COVERAGE.md) for the component inventory and exclusions.
 
+In the linked dashboard recipe, the height control is a minimum chart height.
+Wide layouts also reserve room for the compact KPI and regional table beside the
+chart; narrow layouts stack the three views.
+
 Graph examples import the product’s React Flow components, including their own
 selection, expansion, relationship inspection and layout persistence. Code editing
 uses the production Monaco runtime and a locally built worker/CSS. Windowed tables

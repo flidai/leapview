@@ -77,6 +77,13 @@ export class PlaygroundControls extends LitElement {
   @state() private filterSearch = ''
   @state() private toastVisible = true
   @state() private logs: string[] = []
+  @state() private fieldName = ''
+  @state() private fieldSearch = ''
+  @state() private fieldLimit = '100'
+  @state() private fieldSchedule = 'Daily'
+  @state() private fieldDescription = ''
+  @state() private fieldNotifications = false
+  @state() private fieldVisibility = 'private'
 
   getExampleCode() {
     return previewCode(this, [
@@ -104,12 +111,19 @@ export class PlaygroundControls extends LitElement {
       filterSelected: this.filterSelected,
       filterSearch: this.filterSearch,
       toastVisible: this.toastVisible,
+      fieldName: this.fieldName,
+      fieldSearch: this.fieldSearch,
+      fieldLimit: this.fieldLimit,
+      fieldSchedule: this.fieldSchedule,
+      fieldDescription: this.fieldDescription,
+      fieldNotifications: this.fieldNotifications,
+      fieldVisibility: this.fieldVisibility,
     }
   }
 
   async restoreExampleState(value: Record<string, unknown>) {
     await this.updateComplete
-    Object.assign(this, readState(value, this.getExampleState(), { selected: ['daily', 'weekly', 'monthly'], selectedIds: ['alex', 'sam', 'analytics'], filterSelected: ['active', 'draft'] }))
+    Object.assign(this, readState(value, this.getExampleState(), { selected: ['daily', 'weekly', 'monthly'], selectedIds: ['alex', 'sam', 'analytics'], filterSelected: ['active', 'draft'], fieldSchedule: ['Daily', 'Weekly', 'Monthly'], fieldVisibility: ['private', 'team'] }))
   }
 
   static styles = [settingsLayoutStyles, settingsFieldStyles, css`
@@ -166,6 +180,20 @@ export class PlaygroundControls extends LitElement {
     this.logs = [`${name}${detail === undefined ? '' : `  ${JSON.stringify(detail)}`}`, ...this.logs].slice(0, 20)
   }
 
+  private updateField(event: Event): void {
+    const field = event.target as HTMLInputElement
+    switch (field.name) {
+      case 'name': this.fieldName = field.value; break
+      case 'search': this.fieldSearch = field.value; break
+      case 'limit': this.fieldLimit = field.value; break
+      case 'schedule': this.fieldSchedule = field.value; break
+      case 'description': this.fieldDescription = field.value; break
+      case 'notifications': this.fieldNotifications = field.checked; break
+      case 'visibility': this.fieldVisibility = field.value; break
+    }
+    this.log(event.type, { field: field.name, value: field.type === 'checkbox' ? field.checked : field.value })
+  }
+
   private stateControl(label: string, checked: boolean, change: (checked: boolean) => void) {
     return html`<label><input type="checkbox" .checked=${checked} @change=${(event: Event) => change((event.target as HTMLInputElement).checked)}>${label}</label>`
   }
@@ -185,15 +213,15 @@ export class PlaygroundControls extends LitElement {
   private renderExample() {
     switch (this.example) {
       case 'buttons': return html`<div class="column"><div class="row">${['Default', 'Primary', 'Danger'].map((label, index) => html`<button class=${`settings-button ${['', 'primary', 'danger'][index]}`} ?disabled=${this.disabled} @click=${() => this.log('click', { button: label })}>${label}</button>`)}</div><div class="row"><button class="settings-button" disabled>Disabled</button><button class="settings-button primary" disabled><lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>Saving…</button></div></div>`
-      case 'fields': return html`<div class="form" @input=${(event: Event) => { const field = event.target as HTMLInputElement; this.log('input', { field: field.name, value: field.value }) }} @change=${(event: Event) => { const field = event.target as HTMLInputElement; this.log('change', { field: field.name, value: field.type === 'checkbox' ? field.checked : field.value }) }}>
-        <label class="field"><span class="settings-label" id="name-label">Display name</span><input aria-labelledby="name-label" class="settings-input" name="name" placeholder="Quarterly revenue" ?disabled=${this.disabled} aria-invalid=${String(this.invalid)} aria-describedby="name-hint"><span id="name-hint" class=${this.invalid ? 'error' : 'settings-description'}>${this.invalid ? 'Enter a display name.' : 'Shown in your workspace.'}</span></label>
-        <label class="field"><span class="settings-label">Search</span><input class="settings-input" name="search" type="search" placeholder="Search dashboards…" ?disabled=${this.disabled}></label>
-        <label class="field"><span class="settings-label">Row limit</span><input class="settings-input" name="limit" type="number" min="1" max="1000" value="100" ?disabled=${this.disabled}></label>
-        <label class="field"><span class="settings-label">Refresh schedule</span><select class="settings-input" name="schedule" ?disabled=${this.disabled}><option>Daily</option><option>Weekly</option><option>Monthly</option></select></label>
-        <label class="field"><span class="settings-label">Description</span><textarea class="settings-input" name="description" rows="3" placeholder="Add a short description" ?disabled=${this.disabled}></textarea></label>
+      case 'fields': return html`<div class="form" @input=${this.updateField} @change=${this.updateField}>
+        <label class="field"><span class="settings-label" id="name-label">Display name</span><input aria-labelledby="name-label" class="settings-input" name="name" .value=${this.fieldName} placeholder="Quarterly revenue" ?disabled=${this.disabled} aria-invalid=${String(this.invalid)} aria-describedby="name-hint"><span id="name-hint" class=${this.invalid ? 'error' : 'settings-description'}>${this.invalid ? 'Enter a display name.' : 'Shown in your workspace.'}</span></label>
+        <label class="field"><span class="settings-label">Search</span><input class="settings-input" name="search" type="search" .value=${this.fieldSearch} placeholder="Search dashboards…" ?disabled=${this.disabled}></label>
+        <label class="field"><span class="settings-label">Row limit</span><input class="settings-input" name="limit" type="number" min="1" max="1000" .value=${this.fieldLimit} ?disabled=${this.disabled}></label>
+        <label class="field"><span class="settings-label">Refresh schedule</span><select class="settings-input" name="schedule" .value=${this.fieldSchedule} ?disabled=${this.disabled}><option>Daily</option><option>Weekly</option><option>Monthly</option></select></label>
+        <label class="field"><span class="settings-label">Description</span><textarea class="settings-input" name="description" .value=${this.fieldDescription} rows="3" placeholder="Add a short description" ?disabled=${this.disabled}></textarea></label>
         <label class="field"><span class="settings-label">Read-only identifier</span><input class="settings-input" name="identifier" value="revenue_overview" readonly ?disabled=${this.disabled}></label>
-        <label class="check"><input type="checkbox" name="notifications" ?disabled=${this.disabled}>Email notifications</label>
-        <div class="row" role="group" aria-label="Visibility"><label class="check"><input type="radio" name="visibility" value="private" checked ?disabled=${this.disabled}>Private</label><label class="check"><input type="radio" name="visibility" value="team" ?disabled=${this.disabled}>Team</label></div>
+        <label class="check"><input type="checkbox" name="notifications" .checked=${this.fieldNotifications} ?disabled=${this.disabled}>Email notifications</label>
+        <div class="row" role="group" aria-label="Visibility"><label class="check"><input type="radio" name="visibility" value="private" .checked=${this.fieldVisibility === 'private'} ?disabled=${this.disabled}>Private</label><label class="check"><input type="radio" name="visibility" value="team" .checked=${this.fieldVisibility === 'team'} ?disabled=${this.disabled}>Team</label></div>
       </div>`
       case 'select': return html`<div class="column"><lv-select-menu label="Refresh frequency" .options=${this.empty ? [] : options} .value=${this.selected} ?disabled=${this.disabled} @lv-select-change=${(event: CustomEvent<{ value: string }>) => { this.selected = event.detail.value; this.record(event) }} @lv-select-toggle=${this.record}></lv-select-menu><p class="caption">Selected value: <code>${this.selected}</code></p></div>`
       case 'multiselect': return html`<div class="column"><lv-entity-multi-select label="Workspace members" .items=${this.empty ? [] : entities} .selectedIds=${this.selectedIds} ?disabled=${this.disabled} @lv-entity-selection-change=${(event: CustomEvent<{ selectedIds: string[] }>) => { this.selectedIds = event.detail.selectedIds; this.record(event) }} @lv-entity-search=${this.record}></lv-entity-multi-select><p class="caption">Selected IDs: <code>${JSON.stringify(this.selectedIds)}</code></p></div>`
