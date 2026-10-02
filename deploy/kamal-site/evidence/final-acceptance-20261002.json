@@ -9,7 +9,7 @@
     "started_at_utc": "2026-10-02T09:47:00Z",
     "wrapper_status": "passed"
   },
-  "as_of_utc": "2026-10-02T09:59:47.531800+00:00",
+  "as_of_utc": "2026-10-02T11:17:48.122593+00:00",
   "automatic_vps_activation_enabled": false,
   "boundary_smokes": {
     "end": "passed",
@@ -17,7 +17,15 @@
     "start": "passed"
   },
   "demo_deployment_in_scope": false,
-  "fallback_748": "open_until_documentation_review_and_merge",
+  "fallback_748": {
+    "closed_at_ist": "2026-10-02T16:07:20+05:30",
+    "closed_at_utc": "2026-10-02T10:37:20Z",
+    "closure_comment": "https://github.com/flidai/leapview/pull/748#issuecomment-5950542382",
+    "evidence_cited": "https://github.com/flidai/leapview/pull/803",
+    "installed_or_merged": false,
+    "performed_by_this_closeout_task": false,
+    "status": "closed_as_superseded"
+  },
   "final_readonly_audit": {
     "active_b": {
       "config_digest": "sha256:a202c62a47e902f23c4d9cc595d9b956af154ad1f4b44fce4643d701f2918669",
@@ -74,7 +82,7 @@
     "unresolved_operator_ownership": false
   },
   "live_proofs": "passed",
-  "migration_closeout": "pending_documentation_review_merge_and_fallback_retirement",
+  "migration_closeout": "pending_documentation_review_and_protected_merge",
   "observation": {
     "duration_seconds": 86400,
     "elapsed_seconds": 86402.475,

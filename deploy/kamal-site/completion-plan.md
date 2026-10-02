@@ -2,8 +2,8 @@
 
 Updated: 29 September 2026
 Status as of 2 October 2026: implementation, qualification and all required live
-proofs passed. Final documentation review/merge and fallback retirement remain
-pending. The [final acceptance report](evidence/final-acceptance-20261002.md)
+proofs passed. Fallback #748 was closed externally as superseded at 16:07:20 IST.
+Final documentation review and protected merge remain pending. The [final acceptance report](evidence/final-acceptance-20261002.md)
 records the complete replacement observation, bound acceptance, and independent
 read-only audit. Requirements below remain the accepted execution specification;
 older pre-merge PR descriptions are historical.
@@ -171,7 +171,7 @@ Run focused tests, `task ci`, workflow linting and required hosted checks on the
 2. Update #751’s stale disk/production status and record the real VPS results. Retain reproducible evidence, run normal checks and obtain review.
 3. Drain old production workflow runs, then merge #752 with automatic activation absent. Wait for its production image build and admission to succeed before selecting image A.
 4. Merge reviewed #751 afterward and qualify a second distinct production image B. If an intervening main change supersedes either build, select eligible successfully qualified main revisions instead; never deploy an incomplete build merely to preserve this merge sequence.
-5. Keep #748 uninstalled as the fallback until permanent acceptance, then close it as superseded with links to the replacement and evidence.
+5. Keep #748 uninstalled until the live proofs pass, then retire it as superseded with replacement and evidence references. **Completed 2 October:** #748 was closed externally at 16:07:20 IST, citing the reviewable live evidence in #803; final documentation review/merge remains pending.
 
 Both selected images must include the required service label and pass production admission. Trial-package images do not qualify for permanent deployment.
 
@@ -186,7 +186,7 @@ Both selected images must include the required service label and pass production
 7. Verify Caddy recreation and controlled host restart against the permanent configuration. Confirm the old application is not recreated and HTTPS recovers through Kamal.
 8. Verify pruning leaves B plus distinct verified A. Remove migration-only application containers/image references after recovery acceptance. Retain Caddy’s data and protected textual recovery/audit records.
 9. Record final digests, runtime versions, capacity margins, retained images, operator commands and interrupted-operation recovery instructions. Leave automatic deployment disabled.
-10. Observe website health and disk usage for 24 hours before closing #748. Any unresolved deployment or maintenance failure postpones closure.
+10. Observe website health and disk usage for 24 hours before closing #748. Any unresolved deployment or maintenance failure postpones closure. **Completed 2 October:** the full replacement interval and final audit passed; the interrupted September 30 interval remains excluded, and #748 was subsequently retired externally.
 
 ### Definition of done
 

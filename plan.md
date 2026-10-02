@@ -33,9 +33,10 @@ all six original files, four inspection snapshots and archive hashes match
 frozen references. See the [final acceptance report](deploy/kamal-site/evidence/final-acceptance-20261002.md)
 and [receipt index](deploy/kamal-site/evidence/final-acceptance-20261002.json).
 
-All required live proofs have passed. Final documentation review/merge and
-retirement of fallback [#748](https://github.com/flidai/leapview/pull/748)
-remain pending; the fallback stays open until those steps finish.
+All required live proofs have passed. Fallback [#748](https://github.com/flidai/leapview/pull/748)
+was closed externally as superseded at 16:07:20 IST on 2 October; its
+[closure comment](https://github.com/flidai/leapview/pull/748#issuecomment-5950542382) cites the reviewable evidence in #803.
+Final documentation review and protected merge remain pending.
 Automatic VPS activation remains deferred. Historical snapshots below retain
 their original dates and excluded intervals.
 
@@ -89,8 +90,9 @@ through that point. That 24-hour window was originally due to complete at 10:28:
 on 1 October after the interruption described below.
 At this historical snapshot the interval, end adoption smoke, acceptance and
 retention audit remained pending. The replacement interval and final live gates
-subsequently passed as recorded in the 2 October acceptance report; documentation
-review/merge and fallback retirement remain pending.
+subsequently passed as recorded in the 2 October acceptance report. Fallback #748
+was later retired externally; final documentation review and protected merge
+remain pending.
 Automatic VPS activation remains disabled.
 
 The local aggregate `task ci` reports watchdog limitation remains historical
@@ -151,7 +153,8 @@ receipt](deploy/kamal-site/evidence/observation-recovery-20261001.json) records
 the excluded interval, live preflight, and verified replacement snapshot.
 
 The replacement completed all live gates on 2 October. The remaining order is
-review/merge the sanitized completion evidence → retire #748. Normal GitHub
+review/merge the sanitized completion evidence. Fallback #748 was subsequently
+retired externally after the live proofs passed. Normal GitHub
 checks, an approving review and exact-head merge-queue validation apply to the
 closeout documentation PR. The original interrupted interval remains excluded.
 
@@ -169,7 +172,8 @@ flowchart TD
     H --> I[Done: full replacement 24-hour observation]
     I --> J[Done: end adoption smoke and bound acceptance receipt]
     J --> K[Done: read-only image, storage and recovery audit]
-    K --> L[Pending: documentation review, merge and fallback retirement]
+    K --> L[Done: fallback retired after live proofs]
+    L --> M[Pending: documentation review and protected merge]
 ```
 
 Proceed in order. A failed exit check blocks the next phase. Existing approval
@@ -384,10 +388,11 @@ or maintenance problem and adequate measured capacity margins.
   observation evidence; preserve secret-bearing originals only in protected operator storage.
 - [x] Verify the complete replacement interval, both boundary smokes, bound gate
   wrapper, observer command exits/log and independent final read-only audit.
+- [x] Record external retirement of [#748](https://github.com/flidai/leapview/pull/748)
+  as superseded at 16:07:20 IST on 2 October. Its closure comment cites the
+  reviewable acceptance evidence in #803. The fallback was not installed or merged.
 - [ ] Obtain review, pass normal hosted checks and merge the final acceptance
-  documentation. Then close
-  [#748](https://github.com/flidai/leapview/pull/748) as superseded, linking the
-  merged replacement and successful live acceptance evidence.
+  documentation under normal repository protections.
 - [x] State explicitly that deployment remains operator-controlled. Treat any
   future automatic deployment proposal as separate work.
 

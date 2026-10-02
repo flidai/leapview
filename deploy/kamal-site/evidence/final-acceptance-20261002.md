@@ -3,8 +3,9 @@
 All required live proofs passed for the manually operated Caddy/Kamal website.
 The replacement observation covered a full 24 hours, both adoption boundary
 smokes passed, and the frozen acceptance and independent final read-only audit
-passed. Final documentation review/merge and fallback PR #748 retirement remain
-pending at this snapshot. Automatic VPS activation remains deferred; the demo
+passed. Fallback PR #748 was closed externally as superseded at 16:07:20 IST
+on 2 October, citing the reviewable evidence in #803. Final documentation review
+and protected merge remain pending. Automatic VPS activation remains deferred; the demo
 was outside scope.
 
 The [sanitized receipt index](final-acceptance-20261002.json) binds these results
@@ -70,6 +71,8 @@ PR #790 passed [exact-head merge validation](https://github.com/flidai/leapview/
 [security](https://github.com/flidai/leapview/actions/runs/36847865869) and
 [Electron](https://github.com/flidai/leapview/actions/runs/36847865864) before merging.
 The final documentation requires its own normal checks, approving review and
-protected merge. Retire [fallback #748](https://github.com/flidai/leapview/pull/748)
-after that review and merge, citing this acceptance evidence and the merged
-replacement. Manual live acceptance does not complete automatic CI/CD activation.
+protected merge. The [fallback closure comment](https://github.com/flidai/leapview/pull/748#issuecomment-5950542382)
+records its external retirement after all required live proofs passed and the
+acceptance evidence became reviewable in [#803](https://github.com/flidai/leapview/pull/803).
+This task did not close or install the fallback. Manual live acceptance does not
+complete automatic CI/CD activation.

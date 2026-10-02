@@ -7,7 +7,9 @@ replacement 24-hour observation, both adoption boundary smokes, frozen acceptanc
 with bound command exits, and independent read-only retention/storage/recovery
 audit passed on 2 October. See the [final acceptance evidence](evidence/final-acceptance-20261002.md)
 and the historical [live rollout evidence](evidence/live-rollout-20260930.md).
-Final documentation review/merge and retirement of fallback PR #748 remain pending.
+Fallback [#748](https://github.com/flidai/leapview/pull/748) was closed externally
+as superseded at 16:07:20 IST on 2 October, citing the reviewable live evidence.
+Final documentation review and protected merge remain pending.
 
 Do not write a handover marker from synthetic test evidence. The [accepted
 completion plan](completion-plan.md) defines the remaining gates. Automatic VPS
