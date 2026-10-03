@@ -64,6 +64,7 @@ func TestAllPRWorkflowsSkipDraftsAndAllowRequestedRuns(t *testing.T) {
 					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'image') }}",
 					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'development') }}",
 					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all') }}",
+					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.event_name == 'workflow_dispatch' && inputs.execution == 'parallel' }}",
 					"${{ github.event_name != 'pull_request' }}", "${{ github.event_name == 'push' }}":
 				default:
 					t.Errorf("job %s can start on a draft PR: %q", id, job.If)

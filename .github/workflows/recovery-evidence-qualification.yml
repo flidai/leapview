@@ -10,12 +10,30 @@ on:
       - 'go.mod'
       - 'go.sum'
   workflow_dispatch:
+    inputs:
+      execution:
+        description: Isolated measurement only; this branch does not change production policy
+        type: choice
+        default: serial
+        options: [serial, parallel]
+      sample:
+        description: Paired sample identity
+        type: choice
+        default: '1'
+        options: ['1', '2', '3']
+      provider_result:
+        description: Measure provider failure cost without changing its tests
+        type: choice
+        default: success
+        options: [success, failure]
 
 permissions:
   contents: read
 
+cache-mode: read
+
 concurrency:
-  group: recovery-evidence-${{ github.event.pull_request.number || github.ref }}
+  group: recovery-screen-${{ github.ref }}-${{ inputs.execution }}-${{ inputs.sample }}-${{ inputs.provider_result }}
   cancel-in-progress: true
 
 jobs:
@@ -46,12 +64,16 @@ jobs:
           ./internal/recoveryset/observationstore
           -run '^(TestFAI520|TestProviderObservation)'
           -count=2 -timeout=15m -v
+      - name: Inject explicit provider failure for the isolated cost experiment
+        if: github.event_name == 'workflow_dispatch' && inputs.provider_result == 'failure'
+        run: exit 1
       - name: Verify generated snapshots
         run: task generated:check
 
   full-validation:
     name: Recovery candidate full validation
     needs: evidence-qualification
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && inputs.execution != 'parallel' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -62,6 +84,28 @@ jobs:
       - name: Set up the pinned CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: full-validation
+          browser: 'true'
+          terraform: 'true'
+      - name: Prepare generated and embedded assets
+        run: task ci:prepare
+      - name: Run the existing full-validation extras
+        run: task ci:full:extras
+
+  parallel-full-validation:
+    name: Recovery candidate full validation
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.event_name == 'workflow_dispatch' && inputs.execution == 'parallel' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up the pinned CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          go-cache-restore-workload: full-validation
           browser: 'true'
           terraform: 'true'
       - name: Prepare generated and embedded assets
