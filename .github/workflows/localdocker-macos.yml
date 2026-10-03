@@ -85,7 +85,7 @@ jobs:
           push: false
           no-cache-filters: sourcegen,build,extension-supply
           cache-from: type=gha,scope=production-amd64
-      - name: Extract only the two Go cache mounts without loading a duplicate extraction image
+      - name: Extract the compiler mount without loading a duplicate extraction image
         env:
           BUILDER: ${{ steps.builder.outputs.name }}
         run: |
@@ -95,8 +95,7 @@ jobs:
           cat > "$RUNNER_TEMP/mount-helper/Dockerfile" <<'DOCKER'
           FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS extract
           RUN --mount=type=cache,target=/root/.cache/go-build \
-              --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,sharing=locked \
-              mkdir -p /out/build /out/modules && cp -a /root/.cache/go-build/. /out/build/ && cp -a /go/pkg/mod/. /out/modules/
+              mkdir -p /out/build && cp -a /root/.cache/go-build/. /out/build/
           FROM scratch
           COPY --from=extract /out/ /
           DOCKER
@@ -111,18 +110,17 @@ jobs:
           with tarfile.open(archive) as data:
               files = [member for member in data.getmembers() if member.isfile()]
           build = [member for member in files if PurePosixPath(member.name).parts[0] == 'build']
-          modules = [member for member in files if PurePosixPath(member.name).parts[0] == 'modules']
-          assert len(build) > 100 and len(modules) > 100, 'incomplete Go mount extraction'
+          print('extracted compiler files:', len(build), 'logical bytes:', sum(member.size for member in build))
+          assert len(build) > 100, 'incomplete compiler mount extraction'
           # Measurement storage bound; no production retention policy is implied.
           assert archive.stat().st_size < 2_000_000_000
           with archive.open('rb') as stream:
               checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
           (root / 'manifest.json').write_text(json.dumps({
               'schemaVersion': 1, 'sourceRevision': os.environ['GITHUB_SHA'],
-              'context': 'application-linux-amd64-CGO1-duckdb_arrow-go1.27.1-bookworm-69a7b9788769',
+              'context': 'compiler-application-linux-amd64-CGO1-duckdb_arrow-go1.27.1-bookworm-69a7b9788769',
               'archiveSHA256': checksum, 'archiveBytes': archive.stat().st_size,
               'buildFiles': len(build), 'buildLogicalBytes': sum(member.size for member in build),
-              'moduleFiles': len(modules), 'moduleLogicalBytes': sum(member.size for member in modules),
           }, indent=2) + '\n')
           MANIFEST
       - name: Transfer the isolated mount data for this run only
@@ -177,7 +175,7 @@ jobs:
           assert manifest['schemaVersion'] == 1
           assert manifest['archiveBytes'] == (root / 'go-mounts.tar.gz').stat().st_size
           assert manifest['sourceRevision'] == os.environ['EXPECTED_REVISION']
-          assert manifest['context'] == 'application-linux-amd64-CGO1-duckdb_arrow-go1.27.1-bookworm-69a7b9788769'
+          assert manifest['context'] == 'compiler-application-linux-amd64-CGO1-duckdb_arrow-go1.27.1-bookworm-69a7b9788769'
           archive = root / 'go-mounts.tar.gz'
           with archive.open('rb') as stream:
               assert hashlib.file_digest(stream, 'sha256').hexdigest() == manifest['archiveSHA256']
@@ -188,7 +186,7 @@ jobs:
                   if not path.parts:
                       assert member.isdir(), 'archive root must be a directory'
                       continue
-                  assert path.parts[0] in ('build', 'modules')
+                  assert path.parts[0] == 'build'
                   assert member.isdir() or member.isfile() or member.issym() or member.islnk()
               data.extractall(root / 'seed', filter='data')
           RESTORE
@@ -196,8 +194,7 @@ jobs:
           FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
           COPY . /seed
           RUN --mount=type=cache,target=/root/.cache/go-build \
-              --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,sharing=locked \
-              cp -a /seed/build/. /root/.cache/go-build/ && cp -a /seed/modules/. /go/pkg/mod/
+              cp -a /seed/build/. /root/.cache/go-build/
           DOCKER
           docker buildx build --builder "$BUILDER" --platform linux/amd64 "$RUNNER_TEMP/mount-restore/seed"
       - name: Build the same local candidate with identical ordinary-layer reads
@@ -247,7 +244,7 @@ jobs:
               'schemaVersion': 1, 'sample': os.environ['SAMPLE'], 'treatment': os.environ['TREATMENT'],
               'sourceRevision': runtime['revision'], 'runID': os.environ['GITHUB_RUN_ID'],
               'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
-              'scope': 'isolated artifact-based Go mount screening; no production cache publisher or release admission',
+              'scope': 'isolated compiler mount screening; original from=go-deps module initialization retained; no production publisher or release admission',
           }, indent=2) + '\n')
           IDENTITY
       - name: Retain consumer outcome
