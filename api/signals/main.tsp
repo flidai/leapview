@@ -1810,6 +1810,9 @@ model DataExploreSignal {
   `semanticModels`: DataExploreSemanticModelSignal[];
   `result`: DataExploreResultSignal;
   `status`: DataExploreStatusSignal;
+  /** Validated views projected only from the current governed result. */
+  `views`?: Record<LeapViewVisualization.VisualizationEnvelope>;
+  `recommendedView`?: string;
   `filterSuggestions`?: DataExploreFilterSuggestionsSignal;
   `selectedDataset`?: DataExploreDatasetSignal;
   `selectedSemanticModel`?: DataExploreSemanticModelSignal;

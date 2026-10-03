@@ -296,6 +296,91 @@ func TestDataExplorerBrowseDocumentDefersPreviewToCanonicalUpdates(t *testing.T)
 	}
 }
 
+func TestDataExplorerBrowseRunKeepsProjectedFilterCommand(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	definition := h.ProjectDefinitionReader.(browserProjectDefinitionStub)
+	definition.definition.SemanticModels["semantic:other"] = definition.definition.SemanticModels["semantic:sales"]
+	definition.compiled["semantic:other"] = definition.compiled["semantic:sales"]
+	h.ProjectDefinitionReader = definition
+	graph := h.Graph.(browserGraphStub)
+	graph.graph.Assets = append(graph.graph.Assets, servingstate.Asset{
+		ID: "semantic:other", ProjectID: "project:test", ServingStateID: "state", Type: "semantic_model", Key: "other", Title: "Other", PayloadJSON: `{}`,
+	})
+	h.Graph = graph
+
+	initial := httptest.NewRecorder()
+	_, catalog, ok := h.dataExplorerSignalsForCommandWithOptions(initial, httptest.NewRequest(http.MethodGet, "/explore", nil), projectsignals.DataExplorerCommand{}, false, false)
+	if !ok {
+		t.Fatalf("browse catalog failed: status=%d", initial.Code)
+	}
+	selectedKey := ""
+	for _, object := range catalog.Objects {
+		if projectsignals.ValueOrZero(object.SemanticModelID) == "semantic:sales" && projectsignals.ValueOrZero(object.DatasetID) == "orders" {
+			selectedKey = object.Key
+			break
+		}
+	}
+	if selectedKey == "" {
+		t.Fatal("sales browse object is missing")
+	}
+	spec := defaultExplorationSpec()
+	spec.ModelID = "semantic:other"
+	spec.DatasetID = projectsignals.Optional("orders")
+	command := projectsignals.DataExplorerCommand{
+		Mode: projectsignals.Optional("browse"), ObjectKey: projectsignals.Optional(selectedKey),
+		ClientID: projectsignals.Optional("browse-run-projection-test"), RequestSeq: 1,
+		Count: 100, Limit: 100, Block: projectsignals.Optional("all"),
+		Explore: &projectsignals.DataExploreCommand{Spec: spec},
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForCommandWithOptions(recorder, httptest.NewRequest(http.MethodGet, "/updates?route=data&surface=explore", nil), command, true, false)
+	if !ok || executor.calls != 1 {
+		t.Fatalf("browse execution failed: ok=%t, status=%d, calls=%d", ok, recorder.Code, executor.calls)
+	}
+	if projectsignals.ValueOrZero(explorer.Command.RunID) == "" {
+		t.Fatal("browse run ID was not returned")
+	}
+	if explorer.Command.Explore == nil || explorer.Command.Explore.Spec.ModelID != "semantic:sales" || projectsignals.ValueOrZero(explorer.Command.Explore.Spec.DatasetID) != "orders" {
+		t.Fatalf("browse command lost the selected semantic projection: %#v", explorer.Command.Explore)
+	}
+	if explorer.Command.Explore.Spec.ModelID != explorer.Explore.Command.Spec.ModelID {
+		t.Fatalf("browse command and filter pane disagree: %#v / %#v", explorer.Command.Explore, explorer.Explore.Command)
+	}
+}
+
+func TestDataExplorerSuccessfulRunPublishesGovernedResultViews(t *testing.T) {
+	h, _ := newDataExplorerURLTestHandler(t)
+	h.QueryExecutor = &browserDataQueryStub{result: dataquery.Result{
+		Columns: []dataquery.Column{{Name: "status"}, {Name: "revenue"}},
+		Rows: []dataquery.Row{{"status": "delivered", "revenue": 42.0}},
+		SQL: "select status, sum(revenue)",
+	}}
+	spec := defaultExplorationSpec()
+	spec.ModelID = "semantic:sales"
+	spec.DatasetID = projectsignals.Optional("orders")
+	spec.Dimensions = []exploration.ExplorationDimensionRef{{Field: "orders.status"}}
+	spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue"}}
+	exploreCommand := projectsignals.DataExploreCommand{Spec: spec, RequestSeq: 1}
+	command := projectsignals.DataExplorerCommand{
+		Mode: projectsignals.Optional("explore"), Action: projectsignals.Optional("run"),
+		ClientID: projectsignals.Optional("governed-views-test"), RequestSeq: 1, Explore: &exploreCommand,
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForCommandWithOptions(recorder, httptest.NewRequest(http.MethodGet, "/updates?route=data&surface=explore", nil), command, true, false)
+	if !ok || explorer.Explore.Status.State != "success" {
+		t.Fatalf("governed exploration did not complete: ok=%t status=%d explore=%#v", ok, recorder.Code, explorer.Explore.Status)
+	}
+	if explorer.Explore.Views == nil {
+		t.Fatalf("successful result did not publish eligible views: %#v", explorer.Explore.Views)
+	}
+	if _, duplicated := (*explorer.Explore.Views)["table"]; duplicated {
+		t.Fatalf("native table rows were duplicated in the view payload: %#v", explorer.Explore.Views)
+	}
+	if (*explorer.Explore.Views)["chart"].RendererID == "" {
+		t.Fatalf("metric result did not publish an eligible chart view: views=%#v warnings=%#v", explorer.Explore.Views, explorer.Explore.Result.Warnings)
+	}
+}
+
 func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperands(t *testing.T) {
 	fields := map[string]projectsignals.DataExploreFieldSignal{
 		"orders.status":       {ID: "orders.status", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("string")},

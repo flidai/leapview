@@ -649,7 +649,10 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
       canvas.append(deferred)
       document.body.append(canvas)
       await deferred.updateComplete
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      const deadline = Date.now() + 2_000
+      while (((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
       return {
         mounted: ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         disconnected: (window as any).__lvIntersectionObservers[0]?.disconnected,

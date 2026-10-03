@@ -64,6 +64,30 @@ func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	}
 }
 
+func TestDataExplorerUpdatesURLPreservesBrowseFilters(t *testing.T) {
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("browse"), ObjectKey: uisignals.Pointer("model:zip"), Explore: &uisignals.DataExploreCommand{
+		SemanticModelID: uisignals.Pointer("semantic-model:visuals"), DatasetID: uisignals.Pointer("zip_geolocations"),
+		Dimensions: []string{}, Metrics: []string{}, Filters: []uisignals.DataExploreFilterSignal{{Field: "zip_geolocations.state", Operator: "equals", Values: []string{"SP"}}},
+		Sort: []uisignals.DataExploreSortSignal{}, Limit: 100,
+	}}
+	values, err := url.Parse(dataExplorerUpdatesURL(command))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := values.Query()
+	if query.Get("object") != "model:zip" || query.Get("mode") != "browse" || query.Get("v") != "2" {
+		t.Fatalf("browse update URL = %#v", query)
+	}
+	var spec map[string]any
+	if err := json.Unmarshal([]byte(query.Get("state")), &spec); err != nil {
+		t.Fatal(err)
+	}
+	filters, ok := spec["filters"].([]any)
+	if !ok || len(filters) != 1 {
+		t.Fatalf("browse filters lost from update URL: %#v", spec)
+	}
+}
+
 func catalogFixture() catalog.Catalog {
 	return catalog.Catalog{Project: catalog.Project{ID: "sales", Title: "Sales"}}
 }

@@ -140,6 +140,15 @@ func dataExplorerUpdatesURLWithOptions(command uisignals.DataExplorerCommand, sa
 		if object := uisignals.ValueOrZero(command.ObjectKey); object != "" {
 			values.Set("object", object)
 		}
+		if command.Explore != nil {
+			spec := dataExplorerCanonicalSpec(*command.Explore)
+			if len(spec.Filters) > 0 {
+				values.Set("mode", "browse")
+				values.Set("v", "2")
+				encoded, _ := canonicalExplorationJSON(spec)
+				values.Set("state", string(encoded))
+			}
+		}
 		return "/updates?" + values.Encode()
 	}
 	explore := command.Explore

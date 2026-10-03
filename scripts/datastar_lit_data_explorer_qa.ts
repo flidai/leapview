@@ -101,7 +101,7 @@ export async function verifyDataExplorerRecoveryActions({
   }
 }
 
-async function enterDataExplorerAnalyzeMode(page: Page): Promise<{ explorer: Locator; controls: Locator }> {
+async function enterDataExplorerAnalyzeMode(page: Page): Promise<{ explorer: Locator }> {
   const explorer = page.locator('lv-data-explorer')
   await explorer.waitFor()
   const analyze = explorer.getByRole('button', { name: 'Analyze', exact: true })
@@ -124,9 +124,8 @@ async function enterDataExplorerAnalyzeMode(page: Page): Promise<{ explorer: Loc
   }
   await expect(analyze).toHaveAttribute('aria-pressed', 'true')
   await expect(explorer.locator('.route')).toHaveClass(/semantic/)
-  const controls = explorer.locator('lv-data-explorer-query-controls')
-  await controls.waitFor({ state: 'visible' })
-  return { explorer, controls }
+  await explorer.locator('.semantic-filter-rail').waitFor({ state: 'visible' })
+  return { explorer }
 }
 
 export async function verifyDataExplorerKeyboardJourney({
@@ -172,24 +171,30 @@ export async function verifyDataExplorerKeyboardJourney({
     await expect(explorer.locator('.route')).toHaveClass(/semantic/)
     await assertElementFocused(page, analyze, 'Analyze mode button after activation')
 
-    const controls = explorer.locator('lv-data-explorer-query-controls')
+    const filterRail = explorer.locator('.semantic-filter-rail')
+    await focusByTab(page, filterRail, 'Filters rail', 220)
+    await assertElementFocused(page, filterRail, 'Filters rail')
+    await page.keyboard.press('Enter')
+    await expect(explorer.locator('.semantic-filter-panel'), 'Enter must open the Filters panel').toBeVisible()
+    const controls = explorer.locator('.semantic-filter-dock lv-data-explorer-query-controls:not([filtereditoronly])')
     await controls.waitFor({ state: 'visible' })
     const queryConfig = controls.locator('details.query-config')
     const queryConfigSummary = queryConfig.locator(':scope > summary')
     await focusByTab(page, queryConfigSummary, 'Query configuration disclosure', 220)
     await assertElementFocused(page, queryConfigSummary, 'Query configuration disclosure')
+    await expect(queryConfig).not.toHaveAttribute('open', '')
+    await page.keyboard.press('Enter')
+    await expect(queryConfig, 'query configuration must open from its focused summary').toHaveAttribute('open', '')
     await page.keyboard.press('Enter')
     await expect(queryConfig, 'query configuration must close from its focused summary').not.toHaveAttribute('open', '')
-    await page.keyboard.press('Enter')
-    await expect(queryConfig, 'query configuration must reopen from its focused summary').toHaveAttribute('open', '')
 
-    const firstField = controls.locator('button.field-button:not(:disabled)').first()
+    const firstField = explorer.locator('.semantic-fields .semantic-field input[type="checkbox"]:visible:not(:disabled)').first()
     if (await firstField.count() === 0) throw new Error('Analyze query builder rendered no selectable semantic fields')
     await focusByTab(page, firstField, 'first selectable semantic field', 220)
     await assertElementFocused(page, firstField, 'first selectable semantic field')
-    const initiallySelected = await firstField.getAttribute('aria-pressed') === 'true'
-    await page.keyboard.press('Enter')
-    await expect(firstField, 'Enter must toggle the focused semantic field').toHaveAttribute('aria-pressed', String(!initiallySelected))
+    const initiallySelected = await firstField.isChecked()
+    await page.keyboard.press('Space')
+    await expect(firstField, 'Space must toggle the focused semantic field').toBeChecked({ checked: !initiallySelected })
     await assertElementFocused(page, firstField, 'toggled semantic field')
 
     const run = explorer.getByRole('button', { name: 'Run', exact: true })
@@ -214,10 +219,11 @@ export async function verifyDataExplorerResponsiveLayout({
   try {
     const response = await page.goto(new URL('/explore', baseURL).toString(), { waitUntil: 'domcontentloaded' })
     if (!response?.ok()) throw new Error(`responsive /explore: status ${response?.status() ?? 'unknown'}`)
-    const { explorer, controls } = await enterDataExplorerAnalyzeMode(page)
-    const filterAction = controls.locator('button.field-action').first()
+    const { explorer } = await enterDataExplorerAnalyzeMode(page)
+    const filterAction = explorer.locator('.semantic-fields button.field-action:visible').first()
     if (await filterAction.count() === 0) throw new Error('responsive Analyze query builder rendered no dimension filter action')
     await filterAction.click()
+    const controls = explorer.locator('.semantic-filter-dock lv-data-explorer-query-controls[filtereditoronly]')
     const filterEditor = controls.getByRole('region', { name: 'Add filter', exact: true })
     await expect(filterEditor).toBeVisible()
 
@@ -226,7 +232,7 @@ export async function verifyDataExplorerResponsiveLayout({
       const route = root.shadowRoot?.querySelector('.route') as HTMLElement | null
       const explorer = root.shadowRoot?.querySelector('.explorer') as HTMLElement | null
       const browserResizer = root.shadowRoot?.querySelector('.browser-resizer') as HTMLElement | null
-      const controls = root.shadowRoot?.querySelector('lv-data-explorer-query-controls') as HTMLElement & { shadowRoot: ShadowRoot } | null
+      const controls = root.shadowRoot?.querySelector('.semantic-filter-dock lv-data-explorer-query-controls[filtereditoronly]') as HTMLElement & { shadowRoot: ShadowRoot } | null
       const filterEditor = controls?.shadowRoot?.querySelector('.filter-editor') as HTMLElement | null
       const targets = Array.from(controls?.shadowRoot?.querySelectorAll('button, input, select, summary') ?? [])
         .filter((element) => {
