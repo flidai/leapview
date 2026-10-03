@@ -494,8 +494,26 @@ func TestSavedExplorationArchiveResponseKeepsArchivedMetadata(t *testing.T) {
 	if !strings.Contains(body, `"includeArchived":true`) || !strings.Contains(body, `"selectedId":"exploration:orders"`) || !strings.Contains(body, `"status":"archived"`) {
 		t.Fatalf("archive response omitted archived metadata: %q", body)
 	}
-	if strings.Contains(body, `"spec"`) {
-		t.Fatalf("archive response trusted or exposed a browser spec: %q", body)
+	_, encoded, ok := strings.Cut(body, "data: signals ")
+	if !ok {
+		t.Fatalf("archive response omitted its signal patch: %q", body)
+	}
+	type specClear struct {
+		Spec json.RawMessage `json:"spec"`
+	}
+	var patch struct {
+		SavedExplorations struct {
+			Current specClear `json:"current"`
+			Command specClear `json:"command"`
+		} `json:"savedExplorations"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(encoded)), &patch); err != nil {
+		t.Fatal(err)
+	}
+	// Explicit nulls remove stale client specs; no browser-authored query may
+	// be accepted as the archived revision's authoritative content.
+	if string(patch.SavedExplorations.Current.Spec) != "null" || string(patch.SavedExplorations.Command.Spec) != "null" {
+		t.Fatalf("archive response did not clear unverified browser specs: %q", body)
 	}
 }
 
