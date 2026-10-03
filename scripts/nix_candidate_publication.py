@@ -1,6 +1,7 @@
 """Publish a verified AMD64 Nix candidate; retain no production release authority."""
 
 import argparse
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,8 @@ KIND = 'application-image'
 PLATFORM = 'linux/amd64'
 WORKFLOW = 'flidai/leapview/.github/workflows/nix-candidate.yml'
 MAX_PREDICATE_BYTES = 16 * 1024 * 1024
+IMAGE_PHASES = [('image bundle', 1200), ('target bootstrap', 1200),
+                ('enterprise authoring', 1800), ('performance', 2700)]
 
 
 def verified_record(source_root, paths, binary_verifier):
@@ -113,9 +116,71 @@ def verify_signed(source_root, paths, image, signer_revision, binary_verifier):
     return result
 
 
+def regular_json_bytes(path):
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError('qualification evidence must be a regular file')
+    with path.open('rb') as stream:
+        data = stream.read(candidate.MAX_JSON_BYTES + 1)
+    candidate.read_json(data)
+    return data
+
+
+def qualification_report(path, image):
+    data = regular_json_bytes(path)
+    report = candidate.read_json(data)
+    if (not isinstance(report, dict) or set(report) != {'schemaVersion', 'result', 'image', 'phases'}
+            or type(report['schemaVersion']) is not int or report['schemaVersion'] != 1
+            or report['result'] != 'success' or report['image'] != image
+            or not isinstance(report['phases'], list) or len(report['phases']) != len(IMAGE_PHASES)):
+        raise ValueError('qualification must succeed for the exact published image')
+    now, previous_end = candidate.current_time(), None
+    for phase, (name, timeout) in zip(report['phases'], IMAGE_PHASES):
+        if (not isinstance(phase, dict) or set(phase) != {'name', 'result', 'startedAt',
+                'durationMillis', 'timeoutSeconds', 'cleanupGuaranteed'}
+                or phase['name'] != name or phase['result'] != 'success'
+                or phase['cleanupGuaranteed'] is not True or type(phase['timeoutSeconds']) is not int
+                or phase['timeoutSeconds'] != timeout or type(phase['durationMillis']) is not int
+                or not 0 <= phase['durationMillis'] <= timeout * 1000
+                or not isinstance(phase['startedAt'], str)):
+            raise ValueError('qualification phases are incomplete or outside their bounded contract')
+        started = datetime.fromisoformat(phase['startedAt'])
+        if started.tzinfo is None:
+            raise ValueError('qualification phase timestamps must include a timezone')
+        ended = started + timedelta(milliseconds=phase['durationMillis'])
+        if (started > now or ended > now or now - started >= timedelta(hours=120)
+                or (previous_end is not None and started < previous_end)):
+            raise ValueError('qualification phases are stale, future-dated or overlapping')
+        previous_end = ended
+    return data
+
+
+def bind_qualified(source_root, paths, image, signer_revision, binary_verifier,
+                   signed_evidence, report_path):
+    registry.image_digest(image, KIND)
+    report = qualification_report(report_path, image)
+    receipt = regular_json_bytes(signed_evidence)
+    live = verify_signed(source_root, paths, image, signer_revision, binary_verifier)
+    if candidate.canonical_bytes(candidate.read_json(receipt)) != candidate.canonical_bytes(live):
+        raise ValueError('retained signature evidence differs from live protected verification')
+    if (qualification_report(report_path, image) != report
+            or regular_json_bytes(signed_evidence) != receipt):
+        raise ValueError('qualification or signature reports changed during verification')
+    result = {'schemaVersion': 1, 'image': image, 'platform': PLATFORM, 'source': live['source'],
+              'candidateDigest': live['spdx'][0]['candidateDigest'],
+              'signedEvidenceBindingDigest': live['signedEvidenceBindingDigest'],
+              'qualifierRevision': signer_revision,
+              'qualification': {'path': 'image-qualification-report.json',
+                                'sha256': candidate.digest_bytes(report)},
+              'releaseAdmission': False}
+    result['qualifiedEvidenceBindingDigest'] = candidate.digest_bytes(
+        b'leapview/nix-published-qualification/v1\n' + candidate.canonical_bytes(result))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['record', 'prepare', 'publish', 'verify-signed'])
+    parser.add_argument('operation', choices=['record', 'prepare', 'publish', 'verify-signed', 'bind-qualified'])
     parser.add_argument('--source-root', type=Path, required=True)
     parser.add_argument('--source-revision', required=True)
     parser.add_argument('--binary-verifier', type=Path, required=True)
@@ -126,6 +191,8 @@ def main():
     parser.add_argument('--run-attempt', type=int)
     parser.add_argument('--image')
     parser.add_argument('--signer-revision')
+    parser.add_argument('--signed-evidence', type=Path)
+    parser.add_argument('--qualification-report', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--github-output', type=Path)
     args = parser.parse_args()
@@ -136,18 +203,26 @@ def main():
             raise ValueError('checkout differs from authorized exact candidate revision')
         if args.output.exists():
             raise ValueError('refusing to overwrite publication evidence')
+        if args.operation != 'bind-qualified' and (args.signed_evidence or args.qualification_report):
+            raise ValueError('qualification reports require the bind-qualified operation')
         if args.operation == 'record':
             if (args.layout or args.run_id is not None or args.run_attempt is not None
                     or args.image or args.signer_revision or args.github_output
                     or args.output.resolve() != Path(args.candidate[1]).resolve()):
                 raise ValueError('record requires the candidate manifest as its only output')
             result = record(args.source_root, args.candidate, args.binary_verifier)
-        elif args.operation == 'verify-signed':
+        elif args.operation in {'verify-signed', 'bind-qualified'}:
             if (not args.image or not args.signer_revision or args.layout
                     or args.run_id is not None or args.run_attempt is not None or args.github_output):
                 raise ValueError('signature verification requires image and protected signer revision only')
-            result = verify_signed(args.source_root, args.candidate, args.image, args.signer_revision,
-                                   args.binary_verifier)
+            if args.operation == 'bind-qualified':
+                if not args.signed_evidence or not args.qualification_report:
+                    raise ValueError('qualified binding requires retained signatures and the exact image report')
+                result = bind_qualified(args.source_root, args.candidate, args.image, args.signer_revision,
+                                        args.binary_verifier, args.signed_evidence, args.qualification_report)
+            else:
+                result = verify_signed(args.source_root, args.candidate, args.image, args.signer_revision,
+                                       args.binary_verifier)
         else:
             if not args.layout or args.image or args.signer_revision:
                 raise ValueError('content publication requires a layout and no signed-image arguments')

@@ -351,6 +351,73 @@ test('protected producer scans Go binaries only in qualification and reverifies 
   expect(commands).not.toContain('nix build')
 })
 
+test('published qualification verifies the final signed digest in a separate read-only job', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
+  const final = jobs['qualify-published']
+  expect(final.needs).toEqual(['qualify', 'publish'])
+  expect(final.permissions).toEqual({ contents: 'read', packages: 'read' })
+  expect(final.environment).toBeUndefined()
+  expect(jobs.publish.outputs.image).toBe('${{ steps.publish.outputs.image }}')
+  expect(jobs.publish.outputs.bindings_artifact_id).toBe('${{ steps.bindings.outputs.artifact-id }}')
+  const downloads = final.steps.filter((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(downloads.map((step: any) => step.with['artifact-ids']))
+    .toEqual(['${{ needs.qualify.outputs.artifact_id }}', '${{ needs.publish.outputs.bindings_artifact_id }}'])
+  const verify = final.steps.findIndex((step: any) => step.run?.includes('nix_candidate_publication.py verify-signed'))
+  const run = final.steps.findIndex((step: any) => step.run?.includes('check_nix_registry_image.sh'))
+  const bind = final.steps.findIndex((step: any) => step.run?.includes('bind-qualified'))
+  expect(verify).toBeGreaterThan(-1)
+  expect(run).toBeGreaterThan(verify)
+  expect(bind).toBeGreaterThan(run)
+  for (const index of [verify, run, bind]) {
+    expect(final.steps[index].env.IMAGE).toBe('${{ needs.publish.outputs.image }}')
+    expect(final.steps[index].if).toBeUndefined()
+  }
+  expect(final.steps[bind].run).toContain('--signed-evidence bindings/nix-signed.json')
+  expect(final.steps[bind].run).toContain('--qualification-report candidate/final/image-qualification-report.json')
+  const retain = final.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(retain.if).toBe('always()')
+  expect(retain.with.path).toBe('candidate/final/')
+})
+
+test('registry image qualification retains the immutable reference and stops on pull failure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nix-published-image-'))
+  const script = join(root, 'scripts', 'check_nix_registry_image.sh')
+  const calls = join(root, 'calls')
+  const image = `ghcr.io/flidai/leapview@sha256:${'a'.repeat(64)}`
+  try {
+    mkdirSync(join(root, 'scripts'))
+    mkdirSync(join(root, 'bin'))
+    mkdirSync(join(root, 'application', 'bin'), { recursive: true })
+    copyFileSync(resolve('scripts/check_nix_registry_image.sh'), script)
+    writeFileSync(join(root, 'bin', 'docker'), '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$CALLS"\nif [ "$1" = pull ]; then exit "$PULL_STATUS"; fi\n[ "$1" = run ]\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'cc'), '#!/bin/sh\ntouch "$3"\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'patchelf'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(root, 'application', 'bin', 'leapviewctl'), '#!/bin/sh\nprintf "cli %s\\n" "$*" >> "$CALLS"\n', { mode: 0o755 })
+    for (const fixture of [
+      { image: 'ghcr.io/flidai/leapview:latest', pull: '0', status: 1, expected: [] },
+      { image: `example.com/leapview@sha256:${'a'.repeat(64)}`, pull: '0', status: 1, expected: [] },
+      { image, pull: '17', status: 17, expected: [`docker pull --platform linux/amd64 ${image}`] },
+      { image, pull: '0', status: 0, expected: [`docker pull --platform linux/amd64 ${image}`] },
+    ]) {
+      rmSync(calls, { force: true })
+      const run = spawnSync('bash', [script, fixture.image, join(root, 'application')], {
+        env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, CALLS: calls, PULL_STATUS: fixture.pull },
+      })
+      expect(run.status).toBe(fixture.status)
+      const commands = fixture.expected.length ? readFileSync(calls, 'utf8').trim().split('\n') : []
+      if (!fixture.expected.length) expect(() => readFileSync(calls)).toThrow()
+      expect(commands.slice(0, fixture.expected.length)).toEqual(fixture.expected)
+      if (fixture.status === 0) {
+        expect(commands).toHaveLength(3)
+        expect(commands[1]).toEndWith(image)
+        expect(commands[2]).toContain(`qualify image --image ${image} --require-immutable`)
+        expect(commands.join('\n')).not.toContain('docker push')
+        expect(commands.join('\n')).not.toContain('docker tag')
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
 test('image qualification rejects fixture tags and uses the normalized Docker image ID', () => {
   const root = mkdtempSync(join(tmpdir(), 'nix-image-import-'))
   const script = join(root, 'scripts', 'check_nix_image.sh')

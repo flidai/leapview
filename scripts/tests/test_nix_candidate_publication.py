@@ -1,6 +1,8 @@
 import copy
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import itertools
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import sys
 import threading
 import unittest
 from unittest.mock import patch
+from contextlib import redirect_stdout
 from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -170,6 +173,128 @@ class PublicationTests(unittest.TestCase):
                 publication.main()
             publish.assert_not_called()
         self.assertEqual(output.read_text(), 'retained receipt')
+
+    def qualification_fixture(self):
+        self.now = datetime(2026, 10, 3, 9, tzinfo=timezone.utc)
+        self.qualification = self.root.parent / 'image-qualification-report.json'
+        self.signed_receipt = self.root.parent / 'signed.json'
+        self.live = {'source': self.record['source'], 'image': self.image,
+                     'signedEvidenceBindingDigest': 'sha256:' + 'd' * 64,
+                     'spdx': [{'platform': 'linux/amd64', 'candidateDigest': self.record['candidateDigest']}]}
+        self.signed_receipt.write_text(json.dumps(self.live))
+        self.report = {'schemaVersion': 1, 'image': self.image, 'result': 'success', 'phases': []}
+        for index, (name, timeout) in enumerate([('image bundle', 1200), ('target bootstrap', 1200),
+                                               ('enterprise authoring', 1800), ('performance', 2700)]):
+            self.report['phases'].append({'name': name, 'result': 'success', 'cleanupGuaranteed': True,
+                                         'startedAt': (self.now - timedelta(minutes=10-index)).isoformat(),
+                                         'durationMillis': 1000, 'timeoutSeconds': timeout})
+        self.qualification.write_text(json.dumps(self.report))
+
+    def qualified(self):
+        return publication.bind_qualified(self.source_root, self.paths, self.image, 'c' * 40,
+                                          self.verifier, self.signed_receipt, self.qualification)
+
+    def test_qualified_receipt_binds_live_signature_candidate_and_exact_report(self):
+        self.qualification_fixture()
+        with patch.object(publication, 'verify_signed', return_value=self.live) as verify, \
+                patch.object(candidate, 'current_time', return_value=self.now):
+            result = self.qualified()
+        self.assertEqual(result['image'], self.image)
+        self.assertEqual(result['candidateDigest'], self.record['candidateDigest'])
+        self.assertEqual(result['signedEvidenceBindingDigest'], self.live['signedEvidenceBindingDigest'])
+        self.assertEqual(result['qualification']['sha256'], candidate.digest_file(self.qualification))
+        self.assertFalse(result['releaseAdmission'])
+        verify.assert_called_once_with(self.source_root, self.paths, self.image, 'c' * 40, self.verifier)
+
+    def test_wrong_digest_missing_failed_or_stale_phases_cannot_qualify(self):
+        self.qualification_fixture()
+        def failed_phase(report):
+            report['phases'][0]['result'] = 'failure'
+        mutations = [lambda r: r.update(image='ghcr.io/flidai/leapview@sha256:' + 'f' * 64),
+                     lambda r: r.update(result='failure'), lambda r: r.update(schemaVersion=True),
+                     lambda r: r.update(phases=[]), lambda r: r['phases'].pop(), failed_phase,
+                     lambda r: r['phases'][0].update(cleanupGuaranteed=False),
+                     lambda r: r['phases'][0].update(timeoutSeconds=0),
+                     lambda r: r['phases'][0].update(durationMillis=-1),
+                     lambda r: r['phases'][0].update(durationMillis=True),
+                     lambda r: r['phases'][0].update(durationMillis=1200001),
+                     lambda r: r['phases'][1].update(startedAt=r['phases'][0]['startedAt']),
+                     lambda r: r['phases'][0].update(startedAt='2020-01-01T00:00:00Z'),
+                     lambda r: r['phases'][0].update(startedAt='2026-10-04T00:00:00Z'),
+                     lambda r: r['phases'][0].update(startedAt='2026-10-03T08:50:00')]
+        for mutate in mutations:
+            report = copy.deepcopy(self.report)
+            mutate(report)
+            self.qualification.write_text(json.dumps(report))
+            with self.subTest(report=report), patch.object(publication, 'verify_signed') as verify, \
+                    patch.object(candidate, 'current_time', return_value=self.now), self.assertRaises(ValueError):
+                self.qualified()
+            verify.assert_not_called()
+
+    def test_nanosecond_timestamps_preserve_sequential_millisecond_phases(self):
+        self.qualification_fixture()
+        starts = ['00.123456789', '01.623456789', '03.123456789', '04.623456789']
+        for phase, started in zip(self.report['phases'], starts):
+            phase.update(startedAt='2026-10-03T08:50:' + started + 'Z', durationMillis=1500)
+        self.qualification.write_text(json.dumps(self.report))
+        with patch.object(publication, 'verify_signed', return_value=self.live), \
+                patch.object(candidate, 'current_time', return_value=self.now):
+            self.assertFalse(self.qualified()['releaseAdmission'])
+
+    def test_cli_qualified_binding_writes_only_successful_complete_evidence(self):
+        self.qualification_fixture()
+        output = self.root.parent / 'qualified.json'
+        args = ['publication', 'bind-qualified', '--source-root', str(self.source_root),
+                '--source-revision', 'a' * 40, '--binary-verifier', str(self.verifier),
+                '--candidate', *self.paths, '--image', self.image, '--signer-revision', 'c' * 40,
+                '--signed-evidence', str(self.signed_receipt), '--qualification-report', str(self.qualification),
+                '--output', str(output)]
+        for result in ['failure', 'success']:
+            self.report['result'] = result
+            self.qualification.write_text(json.dumps(self.report))
+            with patch.object(sys, 'argv', args), \
+                    patch.object(candidate, 'checkout_source', return_value=self.record['source']), \
+                    patch.object(candidate, 'current_time', return_value=self.now), \
+                    patch.object(publication, 'verify_signed', return_value=self.live), redirect_stdout(io.StringIO()):
+                if result == 'failure':
+                    with self.assertRaises(SystemExit):
+                        publication.main()
+                    self.assertFalse(output.exists())
+                else:
+                    publication.main()
+                    record = json.loads(output.read_text())
+                    self.assertFalse(record['releaseAdmission'])
+                    self.assertEqual(record['platform'], 'linux/amd64')
+
+    def test_changed_signature_or_reports_during_live_verification_fail(self):
+        for target in ['signature', 'report', 'stored signature']:
+            self.qualification_fixture()
+            def verify(*args):
+                if target == 'signature':
+                    return {**self.live, 'signedEvidenceBindingDigest': 'sha256:' + 'f' * 64}
+                path = self.qualification if target == 'report' else self.signed_receipt
+                path.write_text('{}')
+                return self.live
+            with self.subTest(target=target), patch.object(publication, 'verify_signed', side_effect=verify), \
+                    patch.object(candidate, 'current_time', return_value=self.now), self.assertRaises(ValueError):
+                self.qualified()
+
+    def test_symlink_duplicate_json_and_oversized_qualification_reports_fail(self):
+        self.qualification_fixture()
+        valid = self.qualification.read_bytes()
+        target = self.root.parent / 'redirect.json'
+        target.write_bytes(valid)
+        self.qualification.unlink()
+        self.qualification.symlink_to(target)
+        with patch.object(publication, 'verify_signed') as verify, self.assertRaises(ValueError):
+            self.qualified()
+        verify.assert_not_called()
+        self.qualification.unlink()
+        for data in [b'{"result":"failure","result":"success"}', b'x' * (candidate.MAX_JSON_BYTES + 1)]:
+            self.qualification.write_bytes(data)
+            with patch.object(publication, 'verify_signed') as verify, self.assertRaises(ValueError):
+                self.qualified()
+            verify.assert_not_called()
 
     @unittest.skipUnless(os.environ.get('LEAPVIEW_TEST_NIX_REGISTRY') == '1', 'requires locked Skopeo')
     def test_real_skopeo_publishes_over_tls_and_refetches_preserved_content(self):

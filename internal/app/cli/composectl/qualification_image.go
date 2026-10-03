@@ -607,5 +607,5 @@ func ignoreQualificationNotFound(err error) error {
 }
 
 func qualificationStartedAt(now time.Time) string {
-	return now.UTC().Format(time.RFC3339)
+	return now.UTC().Format(time.RFC3339Nano)
 }

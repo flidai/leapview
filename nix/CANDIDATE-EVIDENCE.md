@@ -218,6 +218,37 @@ the already-built archive with protected PostgreSQL/browser fixtures and CLI.
 `check_nix_image.sh ARCHIVE TRUSTED_APPLICATION` performs qualification without
 building; `task nix:qualify` retains Task-owned build ordering for local use.
 
+After publication and live signature verification, `qualify-published` downloads
+the exact qualification and publisher-binding artifact IDs. Its commands,
+verifier and qualification CLI come from the same protected workflow revision.
+It has only read access to repository contents and packages, and no signing or
+publication authority. Before execution, it reverifies the archive, Go/runtime
+reports, preserved registry content, provenance and exact SPDX.
+
+`check_nix_registry_image.sh` pulls only an immutable application reference and
+keeps that exact reference in the loader probe and enterprise image qualification.
+It does not retag or repush the image, or substitute Docker's normalized daemon
+ID. The existing pre-publication archive qualification also remains enforced.
+
+`nix_candidate_publication.py bind-qualified` requires a successful schema-1
+image report for that same registry digest, all four current bounded phases and
+fresh, ordered phase timestamps. The qualifier preserves fractional-second UTC
+timestamps so millisecond phase durations can be checked for ordering without
+rounding a phase start backward.
+It repeats live signed-content verification, matches the publisher's retained
+signature receipt, and rejects changed report bytes. Its receipt binds the
+source, AMD64 candidate digest, signed-evidence
+digest, protected qualifier revision and exact qualification-report hash. The
+report and receipt are retained together for fourteen days, including the report
+when qualification fails; a failed run cannot produce a successful binding.
+
+This is AMD64 candidate image evidence and still sets `releaseAdmission: false`.
+The Nix authoring fixture's Ubuntu baseline does not replace the advertised
+Debian host matrix. Full platform/host, installation/upgrade/rollback/recovery,
+embedded native coverage, canonical release identity and exact production
+promotion remain separate gates. Live positive qualification of this protected
+path must run after the workflow and verifier changes land on main.
+
 The privileged publisher imports only protected verifier code and locked tools.
 Its separate source checkout supplies identity, never executable scripts or
 policy. Proposed runtime-policy or glibc-baseline changes must land on main
