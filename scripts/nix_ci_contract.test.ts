@@ -5,6 +5,13 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 
+test('protected controller adversarial checks run in local and hosted CI', () => {
+  const command = 'python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py'
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain(command)
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
+})
+
 const action = parse(readFileSync('.github/actions/setup-ci/action.yml', 'utf8'))
 const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"

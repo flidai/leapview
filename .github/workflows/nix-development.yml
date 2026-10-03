@@ -325,6 +325,7 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
           python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
           python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
           nix develop --no-update-lock-file .#runtime-security -c \
             env LEAPVIEW_TEST_NIX_REGISTRY=1 python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
           nix develop --no-update-lock-file .#runtime-security -c \
