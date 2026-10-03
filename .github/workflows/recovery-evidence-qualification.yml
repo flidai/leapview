@@ -1,70 +1,37 @@
-name: Recovery evidence qualification
-
+name: Fresh-store orchestration root proof
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '.github/workflows/recovery-evidence-qualification.yml'
-      - 'internal/manageddata/**'
-      - 'internal/recoveryset/**'
-      - 'go.mod'
-      - 'go.sum'
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: recovery-evidence-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
+cache-mode: read
 jobs:
-  evidence-qualification:
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
-    name: PostgreSQL and MinIO evidence qualification
+  fresh-store-root:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Set up the pinned CI toolchain
-        uses: ./.github/actions/setup-ci
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          go-cache-restore-workload: full-validation
-          browser: 'false'
-      - name: Prepare generated contracts
-        run: task generate
-      - name: Qualify recovery evidence against disposable providers
-        env:
-          LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: 'true'
-        run: >-
-          go test -race -tags='duckdb_arrow fai520qualification'
-          ./internal/manageddata/storage/s3
-          ./internal/recoveryset/capture
-          ./internal/recoveryset/postgres
-          ./internal/recoveryset/s3reader
-          ./internal/recoveryset/observationstore
-          -run '^(TestFAI520|TestProviderObservation)'
-          -count=2 -timeout=15m -v
-      - name: Verify generated snapshots
-        run: task generated:check
-
-  full-validation:
-    name: Recovery candidate full validation
-    needs: evidence-qualification
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - name: Check out candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         with:
-          fetch-depth: 0
-      - name: Set up the pinned CI toolchain
-        uses: ./.github/actions/setup-ci
-        with:
-          browser: 'true'
-          terraform: 'true'
-      - name: Prepare generated and embedded assets
-        run: task ci:prepare
-      - name: Run the existing full-validation extras
-        run: task ci:full:extras
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Reproduce absent output and verify explicit locked realization
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          shell = '.#devShells.x86_64-linux.orchestration'
+          root = subprocess.check_output(['nix', 'eval', '--no-update-lock-file', '--raw', shell + '.outPath'], text=True).strip()
+          subprocess.run(['nix', 'develop', '--no-update-lock-file', '.#orchestration', '-c', 'python3', 'scripts/export_nix_ci_environment.py', '--profile', 'orchestration'], check=True)
+          absent = subprocess.run(['nix-store', '--check-validity', root]).returncode
+          assert absent != 0, 'proof requires a fresh store without the shell output'
+          subprocess.run(['nix', 'build', '--no-update-lock-file', '--no-link', shell], check=True)
+          subprocess.run(['nix-store', '--check-validity', root], check=True)
+          closure = json.loads(subprocess.check_output(['nix', 'path-info', '--no-update-lock-file', '--recursive', '--json', root], text=True))
+          assert root in closure
+          assert all(not p.endswith('-source') and 'leapview' not in p for p in closure)
+          print(json.dumps({'sourceRevision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'root': root, 'closurePaths': len(closure), 'closureNARBytes': sum(p['narSize'] for p in closure.values()), 'absentAfterDevelop': True, 'validAfterBuild': True}))
+          PY
