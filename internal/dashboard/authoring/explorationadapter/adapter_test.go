@@ -317,9 +317,9 @@ func TestConvertTranslatesComparisonOperatorAndPreservesPointChannels(t *testing
 	if result.Filters[0].Default == nil {
 		t.Fatal("comparison filter default is nil")
 	}
-	comparison, ok := result.Filters[0].Default.Value.(*document.ComparisonDashboardFilterExpression)
-	if !ok || comparison.Operator != document.DashboardFilterOperatorGreaterThan {
-		t.Fatalf("comparison operator = %#v, want greaterThan", result.Filters[0].Default.Value)
+	bounded, ok := result.Filters[0].Default.Value.(*document.RangeDashboardFilterExpression)
+	if !ok || bounded.Lower == nil || bounded.Lower.Inclusive || bounded.Upper != nil {
+		t.Fatalf("comparison range = %#v, want exclusive lower bound", result.Filters[0].Default.Value)
 	}
 }
 

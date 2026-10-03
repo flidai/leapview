@@ -211,9 +211,13 @@ export class DataExplorerQueryController {
   exploreSpec(current: DataExploreCommand, next: Partial<ExplorationSpec>): DataExploreCommand {
     const currentSpec = explorationSpecFor(current)
     const datasetID = Object.prototype.hasOwnProperty.call(next, 'datasetId') ? next.datasetId : currentSpec.datasetId
+    const time = Object.prototype.hasOwnProperty.call(next, 'time') ? next.time : currentSpec.time
     return {
       ...current,
       action: 'configure',
+      // Compatibility edits must not restore a time selection that the
+      // canonical query just cleared or replaced.
+      time: time ? { field: time.field, grain: time.grain, alias: time.alias } : undefined,
       spec: {
         ...currentSpec,
         ...next,

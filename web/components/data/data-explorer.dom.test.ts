@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard/dashboard-page-test-fixtures'
+import { assertDataExplorerResponsiveDrawers } from '../../test/data-explorer-responsive'
 
 let server: Server
 let baseURL = ''
@@ -655,6 +656,91 @@ test('data explorer prompts for a selection when objects are available', async (
   }
 })
 
+test('SQL line wrapping can be enabled and disabled without changing the query', async () => {
+  const page = await browser.newPage({ viewport: { width: 500, height: 700 } })
+  const sql = `SELECT '${'a long SQL value '.repeat(40)}' AS description FROM orders`
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer-sql'))
+    await page.evaluate((query) => {
+      const element = document.createElement('lv-data-explorer-sql') as any
+      element.sql = query
+      document.body.append(element)
+    }, sql)
+    const viewer = page.locator('lv-data-explorer-sql')
+    await viewer.getByRole('button', { name: 'Format SQL', exact: true }).click()
+    await viewer.locator('lv-code-block').evaluate(async (element) => { await (element as any).updateComplete })
+    const code = viewer.locator('pre')
+    await code.waitFor()
+    const dimensions = () => code.evaluate((element) => ({
+      whiteSpace: getComputedStyle(element).whiteSpace,
+      height: element.scrollHeight,
+      width: element.clientWidth,
+      contentWidth: element.scrollWidth,
+      text: element.textContent,
+    }))
+    const unwrapped = await dimensions()
+    expect(unwrapped.whiteSpace).toBe('pre')
+    expect(unwrapped.contentWidth).toBeGreaterThan(unwrapped.width)
+    const wrap = viewer.getByRole('button', { name: 'Wrap SQL lines', exact: true })
+    await wrap.click()
+    expect(await wrap.getAttribute('aria-pressed')).toBe('true')
+    const wrapped = await dimensions()
+    expect(wrapped.whiteSpace).toBe('pre-wrap')
+    expect(wrapped.height).toBeGreaterThan(unwrapped.height)
+    expect(wrapped.contentWidth).toBeLessThanOrEqual(wrapped.width + 1)
+    expect(wrapped.text).toBe(sql)
+    await wrap.click()
+    expect(await wrap.getAttribute('aria-pressed')).toBe('false')
+    const restored = await dimensions()
+    expect(restored.whiteSpace).toBe('pre')
+    expect(restored.contentWidth).toBeGreaterThan(restored.width)
+    expect(restored.height).toBe(unwrapped.height)
+    expect(restored.text).toBe(sql)
+  } finally { await page.close() }
+})
+
+test('filter suggestions support keyboard and pointer selection before Apply', async () => {
+  const page = await browser.newPage({ viewport: { width: 500, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer-query-controls'))
+    await page.evaluate(() => {
+      const element = document.createElement('lv-data-explorer-query-controls') as any
+      element.filterEditorOnly = true
+      element.filterField = 'orders.quantity'
+      element.fields = [{ id: 'orders.quantity', label: 'Quantity', kind: 'dimension', datasetId: 'orders', type: 'integer', compatible: true, selected: false }]
+      element.suggestionRequestSeq = 1
+      element.suggestions = {
+        field: 'orders.quantity', requestSeq: 0, suggestionRequestSeq: 1, loading: false, stale: false, truncated: false,
+        values: [{ label: 'Ten items', value: { kind: 'integer', value: '10' } }, { label: 'Twenty items', value: { kind: 'integer', value: '20' } }],
+      }
+      ;(window as any).filterChanges = []
+      element.addEventListener('lv-data-explorer-filter-change', (event: Event) => (window as any).filterChanges.push((event as CustomEvent).detail))
+      document.body.append(element)
+    })
+    const editor = page.locator('lv-data-explorer-query-controls')
+    const value = editor.getByRole('combobox', { name: 'Value', exact: true })
+    await value.click()
+    expect(await value.getAttribute('aria-expanded')).toBe('true')
+    await value.press('ArrowDown')
+    expect(await editor.getByRole('option', { name: 'Ten items' }).getAttribute('aria-selected')).toBe('true')
+    await value.press('ArrowDown')
+    await value.press('Enter')
+    expect(await value.inputValue()).toBe('20')
+    expect(await value.getAttribute('aria-expanded')).toBe('false')
+    expect(await page.evaluate(() => (window as any).filterChanges)).toEqual([{ action: 'value', value: '20' }])
+    await value.click()
+    await editor.getByRole('option', { name: 'Ten items' }).click()
+    expect(await value.inputValue()).toBe('10')
+    expect(await value.getAttribute('aria-expanded')).toBe('false')
+    await editor.getByRole('button', { name: 'Apply', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).filterChanges)).toEqual([
+      { action: 'value', value: '20' }, { action: 'value', value: '10' }, { action: 'apply' },
+    ])
+  } finally { await page.close() }
+})
+
 test('query controls hydrate canonical select values on their first render', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -799,6 +885,8 @@ test('governed result views switch locally and disappear when the result becomes
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-data-explorer'))
     const chartEnvelope = testVisualizationEnvelopes().orders_chart
+    if (chartEnvelope.dataState.kind !== 'inline') throw new Error('Expected inline chart fixture')
+    chartEnvelope.dataState.datasets[0].rows = Array.from({ length: 55 }, (_, index) => [`Status ${index + 1}`, index + 1])
     const state = await page.evaluate(async (chart) => {
       const element = document.createElement('lv-data-explorer') as any
       const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'revenue' }], filters: [], sort: [], limit: 100 }
@@ -837,15 +925,43 @@ test('governed result views switch locally and disappear when the result becomes
         table: Boolean(root.querySelector('lv-data-explore-table')),
         actions: chartHost?.shadowRoot?.querySelectorAll('.visual-actions button, .visual-options summary').length ?? 0,
       }
+      const categoryPages = root.querySelector<HTMLElement>('[aria-label="Chart category pages"]')!
+      const previous = categoryPages.querySelector<HTMLButtonElement>('[aria-label="Previous chart categories"]')!
+      const next = categoryPages.querySelector<HTMLButtonElement>('[aria-label="Next chart categories"]')!
+      const readPage = () => ({
+        label: categoryPages.querySelector('[role="status"]')?.textContent?.trim(),
+        previousDisabled: previous.disabled, nextDisabled: next.disabled,
+      })
+      const firstPage = readPage()
+      const chartRegion = root.querySelector<HTMLElement>('[aria-label="Chart results"]')!
+      const readability = {
+        height: chartHost!.getBoundingClientRect().height,
+        viewportHeight: chartRegion.clientHeight,
+        scrollHeight: chartRegion.scrollHeight,
+        overflow: getComputedStyle(chartRegion).overflowY,
+      }
+      next.click()
+      await element.updateComplete
+      const lastPage = readPage()
+      previous.click()
+      await element.updateComplete
+      const returnedPage = readPage()
       mergePatch({ dataExplorer: { explore: { views: {}, status: { state: 'stale', requestSeq: 2, loading: false, stale: true } } } })
       await element.updateComplete
       const stale = { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')), buttons: viewButtons().map((button) => button.textContent?.trim()) }
       mergePatch({ dataExplorer: { explore: { views: {}, result: { requestSeq: 2, rows: [{ status: 'shipped', revenue: 7 }] }, status: { state: 'success', requestSeq: 2, loading: false, stale: false } } } })
       await element.updateComplete
-      return { initial, chartView, stale, nextRunWithoutChart: { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')) } }
+      return { initial, chartView, firstPage, lastPage, returnedPage, readability, stale, nextRunWithoutChart: { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')) } }
     }, chartEnvelope)
     expect(state.initial).toEqual({ buttons: ['Table', 'Chart', 'SQL / Details'], table: true })
     expect(state.chartView).toEqual({ host: true, table: false, actions: 0 })
+    expect(state.firstPage).toEqual({ label: 'Showing 1–50 of 55 categories', previousDisabled: true, nextDisabled: false })
+    expect(state.lastPage).toEqual({ label: 'Showing 51–55 of 55 categories', previousDisabled: false, nextDisabled: true })
+    expect(state.returnedPage).toEqual(state.firstPage)
+    expect(state.readability.height).toBeGreaterThanOrEqual(50 * 32)
+    expect(state.readability.height).toBeLessThanOrEqual(4096)
+    expect(state.readability.scrollHeight).toBeGreaterThan(state.readability.viewportHeight)
+    expect(state.readability.overflow).toBe('auto')
     expect(state.stale).toEqual({ host: false, table: true, buttons: [] })
     expect(state.nextRunWithoutChart).toEqual({ host: false, table: true })
   } finally {
@@ -1065,6 +1181,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.rebaseField.title).toContain('change grain from Customers to Orders')
     expect(state.rebaseCommand.spec.datasetId).toBe('orders')
     expect(state.rebaseCommand.spec.dimensions).toEqual([{ field: 'customers.state' }, { field: 'orders.status' }])
+    await assertDataExplorerResponsiveDrawers(page)
     expect(state.tableSelectionCommand.datasetId).toBe('customers')
     expect(state.tableSelectionCommand.dimensions).toEqual(['customers.customer_id', 'customers.state'])
     expect(state.tableSelectionCommand.metrics).toEqual([])
@@ -1078,7 +1195,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
   } finally {
     await page.close()
   }
-})
+}, 15_000)
 
 test('data preview and semantic query failures expose retry and reset actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })

@@ -33,7 +33,7 @@ Exports default to at most 10,000 rows and 32 MiB, with the same independent row
 
 Executed exports produce a governed query event plus an export-preparation outcome (format, status, bounded row/byte counts, and stable error class). Preparation success does not prove the client received the file. Terminal failures are audited when the recorder is available; parse/authentication failures before execution and an unavailable audit recorder cannot produce an event. The metadata does not record SQL, filters, plans, or result values.
 
-Parquet preserves signed/unsigned integers, fixed-scale decimal128 values up to 38 digits, booleans, nulls, and strings. Because the result contract carries names but no declared column types, all-null or empty columns conservatively use nullable UTF-8; mixed or unsupported values are rejected rather than coerced lossily.
+Parquet preserves signed/unsigned integers, fixed-scale decimal128 values up to 38 digits, booleans, nulls, and strings. Decimal precision and scale are retained from the query result, including for all-null or empty decimal columns. Other all-null or empty columns without declared type metadata conservatively use nullable UTF-8; mixed or unsupported values are rejected rather than coerced lossily.
 
 ## Verify the result
 

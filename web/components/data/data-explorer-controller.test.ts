@@ -87,6 +87,35 @@ test('data explorer client identity is stable only for the current document', ()
   expect(second).toBe(first)
 })
 
+test('stale configure payloads cannot replace the last good result with retained SQL only', () => {
+  const client = new DataExplorerClientState()
+  const command: DataExploreCommand = {
+    spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 },
+    requestSeq: 4, resetVersion: 4, columnWidths: {}, dimensions: ['orders.status'], metrics: [], filters: [], sort: [], limit: 100,
+  }
+  const context = { projectId: 'project-1', generationId: 'generation-1' }
+  const successful = {
+    columns: [{ key: 'status', label: 'Status' }], rows: [{ status: 'delivered' }], rowsReturned: 1,
+    durationMs: 8, requestSeq: 4, truncated: false, warnings: [], sql: 'SELECT status FROM orders',
+  }
+  const successStatus = { loading: false, stale: false, requestSeq: 4, state: 'success' as const }
+  client.semanticResult(command, successful, successStatus, context)
+
+  // Datastar recursively merges the suggestion response, so the omitted SQL
+  // field can remain while its empty row and column arrays replace the result.
+  const suggestionOnly = { ...command, action: 'configure' as const, filterSuggestions: { field: 'orders.status', limit: 50, search: '', suggestionRequestSeq: 1 } }
+  const staleResult = {
+    columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 4, truncated: false, warnings: [],
+    sql: successful.sql,
+  }
+  const staleStatus = { loading: false, stale: true, requestSeq: 4, state: 'stale' as const }
+  const retained = client.semanticResult(suggestionOnly, staleResult, staleStatus, context)
+
+  expect(retained.columns).toEqual(successful.columns)
+  expect(retained.rows).toEqual(successful.rows)
+  expect(retained.rowsReturned).toBe(1)
+})
+
 test('unknown-outcome recovery omits the run ID and latest retries get a fresh ID', () => {
   const query = new DataExplorerQueryController()
   const client = new DataExplorerClientState()

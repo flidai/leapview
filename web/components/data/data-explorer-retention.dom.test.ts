@@ -72,7 +72,7 @@ test('Data Explorer retains the last good result through draft and run lifecycle
       const result = (requestSeq: number, error = '') => ({
         columns: error ? [] : [{ key: 'status', label: 'Status' }],
         rows: error ? [] : [{ status: 'delivered' }], rowsReturned: error ? 0 : 1,
-        durationMs: error ? 0 : 4, requestSeq, truncated: false, warnings: [], error,
+        durationMs: error ? 0 : 4, requestSeq, truncated: false, warnings: [], error, sql: error ? '' : 'select status from orders',
       })
       const status = (requestSeq: number, state: string, message = '') => ({
         loading: state === 'loading', stale: state === 'stale', requestSeq, state, error: '', message,
@@ -111,6 +111,8 @@ test('Data Explorer retains the last good result through draft and run lifecycle
           failure: element.shadowRoot?.querySelector('.result-failure')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
           actions: Array.from(element.shadowRoot?.querySelectorAll('.query-actions .text-button') ?? []).map((button: any) => button.textContent?.replace(/\s+/g, ' ').trim() ?? ''),
           execution: element.shadowRoot?.querySelector('.execution-state')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+          columns: element.shadowRoot?.querySelector('.header-columns summary')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+          views: Array.from(element.shadowRoot?.querySelectorAll('[aria-label="Result views"] button') ?? []).map((button: any) => button.textContent?.trim()),
         }
       }
       const update = (next: any, nextResult: any, nextStatus: any, selectedObject = orders) => mergePatch({
@@ -121,6 +123,12 @@ test('Data Explorer retains the last good result through draft and run lifecycle
         },
       })
       const initial = await settle()
+      update({ ...command, action: 'configure', filterSuggestions: { field: 'orders.status', suggestionRequestSeq: 1 } },
+        { ...result(1), columns: [], rows: [], rowsReturned: 0 }, status(1, 'stale'))
+      const suggestions = await settle()
+      if (!suggestions.table.includes('delivered') || !suggestions.columns.includes('1/1') || !suggestions.views.includes('SQL / Details')) {
+        throw new Error(`Suggestions cleared the unchanged result controls: ${JSON.stringify(suggestions)}`)
+      }
       const configured = {
         ...command,
         action: 'configure',
@@ -217,6 +225,7 @@ test('Data Explorer retains the last good result through draft and run lifecycle
 
     expect(state.initial.table).toContain('delivered')
     expect(state.draft.table).toContain('delivered')
+    expect(state.draft.views).not.toContain('SQL / Details')
     expect(state.loading.table).toContain('delivered')
     expect(state.suggestionDuringRun.actions).toEqual(['Stop'])
     expect(state.suggestionDuringRun.execution).toContain('Running exploration')

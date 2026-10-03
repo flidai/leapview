@@ -41,7 +41,11 @@ func (c converter) filters(visualID string) ([]document.DashboardFilter, error) 
 			return nil, err
 		}
 		targets := []string{visualID}
-		filters = append(filters, document.DashboardFilter{ID: id, Label: field, Dimension: field, Control: document.DashboardFilterControl{Value: &document.DateRangeDashboardFilterControl{DashboardFilterControlBase: document.DashboardFilterControlBase{Type: "dateRange"}, Type: "dateRange"}}, Default: expression, Targets: &targets})
+		control := document.DashboardFilterControl{Value: &document.DateRangeDashboardFilterControl{DashboardFilterControlBase: document.DashboardFilterControlBase{Type: "dateRange"}, Type: "dateRange"}}
+		if _, relative := expression.Value.(*document.RelativePeriodDashboardFilterExpression); relative {
+			control = document.DashboardFilterControl{Value: &document.RelativePeriodDashboardFilterControl{DashboardFilterControlBase: document.DashboardFilterControlBase{Type: "relativePeriod"}, Type: "relativePeriod"}}
+		}
+		filters = append(filters, document.DashboardFilter{ID: id, Label: field, Dimension: field, Control: control, Default: expression, Targets: &targets})
 	}
 	return filters, nil
 }
@@ -90,6 +94,9 @@ func filterExpression(value exploration.ExplorationFilterExpression) (*document.
 		if err != nil {
 			return nil, document.DashboardFilterControl{}, nil, err
 		}
+		if operator != document.DashboardFilterOperatorIsNull && operator != document.DashboardFilterOperatorIsNotNull {
+			return nil, document.DashboardFilterControl{}, nil, fmt.Errorf("invalid null-check operator %q", expr.Operator)
+		}
 		return base(&document.NullCheckDashboardFilterExpression{DashboardFilterExpressionBase: document.DashboardFilterExpressionBase{Type: "nullCheck"}, Type: "nullCheck", Operator: operator}), document.DashboardFilterControl{Value: &document.TextDashboardFilterControl{DashboardFilterControlBase: document.DashboardFilterControlBase{Type: "text"}, Type: "text"}}, &[]document.DashboardFilterOperator{operator}, nil
 	case *exploration.SetExplorationFilterExpression:
 		if expr == nil {
@@ -120,7 +127,7 @@ func filterExpression(value exploration.ExplorationFilterExpression) (*document.
 		if err != nil {
 			return nil, document.DashboardFilterControl{}, nil, err
 		}
-		return base(&document.ComparisonDashboardFilterExpression{DashboardFilterExpressionBase: document.DashboardFilterExpressionBase{Type: "comparison"}, Type: "comparison", Operator: operator, Value: value}), document.DashboardFilterControl{Value: &document.TextDashboardFilterControl{DashboardFilterControlBase: document.DashboardFilterControlBase{Type: "text"}, Type: "text"}}, &[]document.DashboardFilterOperator{operator}, nil
+		return comparisonFilterExpression(operator, value)
 	case *exploration.RangeExplorationFilterExpression:
 		if expr == nil {
 			return nil, document.DashboardFilterControl{}, nil, fmt.Errorf("range expression is nil")
@@ -413,4 +420,40 @@ func rangeFilterControl(lower, upper *document.DashboardFilterBound) (document.D
 		}
 	}
 	return document.DashboardFilterControl{Value: &document.NumericRangeDashboardFilterControl{DashboardFilterControlBase: document.DashboardFilterControlBase{Type: "numericRange"}, Type: "numericRange"}}, nil
+}
+
+// comparisonFilterExpression chooses a control whose canonical predicate policy
+// admits the default. Ordered numeric and temporal comparisons are equivalent
+// to one-sided ranges; typed equality and inequality retain text controls.
+func comparisonFilterExpression(operator document.DashboardFilterOperator, value document.DashboardFilterValue) (*document.DashboardFilterExpression, document.DashboardFilterControl, *[]document.DashboardFilterOperator, error) {
+	_, text := value.Value.(*document.StringDashboardFilterValue)
+	if text || operator == document.DashboardFilterOperatorEquals || operator == document.DashboardFilterOperatorNotEquals {
+		switch operator {
+		case document.DashboardFilterOperatorEquals, document.DashboardFilterOperatorNotEquals, document.DashboardFilterOperatorContains, document.DashboardFilterOperatorNotContains, document.DashboardFilterOperatorStartsWith, document.DashboardFilterOperatorEndsWith:
+			return &document.DashboardFilterExpression{Value: &document.ComparisonDashboardFilterExpression{DashboardFilterExpressionBase: document.DashboardFilterExpressionBase{Type: "comparison"}, Type: "comparison", Operator: operator, Value: value}}, document.DashboardFilterControl{Value: &document.TextDashboardFilterControl{DashboardFilterControlBase: document.DashboardFilterControlBase{Type: "text"}, Type: "text"}}, &[]document.DashboardFilterOperator{operator}, nil
+		}
+		return nil, document.DashboardFilterControl{}, nil, fmt.Errorf("comparison operator %q cannot be represented by a text control", operator)
+	}
+	switch value.Value.(type) {
+	case *document.IntegerDashboardFilterValue, *document.DecimalDashboardFilterValue, *document.DateDashboardFilterValue, *document.TimestampDashboardFilterValue:
+	default:
+		return nil, document.DashboardFilterControl{}, nil, fmt.Errorf("comparison operator %q requires a numeric or temporal value", operator)
+	}
+	bound := &document.DashboardFilterBound{Value: value}
+	var lower, upper *document.DashboardFilterBound
+	switch operator {
+	case document.DashboardFilterOperatorGreaterThan, document.DashboardFilterOperatorGreaterThanOrEqual:
+		bound.Inclusive = operator == document.DashboardFilterOperatorGreaterThanOrEqual
+		lower = bound
+	case document.DashboardFilterOperatorLessThan, document.DashboardFilterOperatorLessThanOrEqual:
+		bound.Inclusive = operator == document.DashboardFilterOperatorLessThanOrEqual
+		upper = bound
+	default:
+		return nil, document.DashboardFilterControl{}, nil, fmt.Errorf("comparison operator %q cannot be represented by a range control", operator)
+	}
+	control, err := rangeFilterControl(lower, upper)
+	if err != nil {
+		return nil, document.DashboardFilterControl{}, nil, err
+	}
+	return &document.DashboardFilterExpression{Value: &document.RangeDashboardFilterExpression{DashboardFilterExpressionBase: document.DashboardFilterExpressionBase{Type: "range"}, Type: "range", Lower: lower, Upper: upper}}, control, nil, nil
 }

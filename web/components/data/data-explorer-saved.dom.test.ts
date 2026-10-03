@@ -18,7 +18,7 @@ beforeAll(async () => {
       response.end(testDocument())
       return
     }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
+    const fileRoot = url.pathname.startsWith('/static/') ? projectRoot : root
     const file = normalize(join(fileRoot, url.pathname))
     if (!file.startsWith(fileRoot)) {
       response.writeHead(404)
@@ -26,7 +26,7 @@ beforeAll(async () => {
       return
     }
     try {
-      response.setHeader('content-type', 'text/javascript')
+      response.setHeader('content-type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript')
       response.end(await readFile(file))
     } catch {
       response.writeHead(404)
@@ -130,10 +130,25 @@ test('saved explorations render in their own row and emit the canonical current 
     expect(state.exportFormats).toEqual(['csv', 'parquet'])
     expect(state.truncatedExportLinks).toBe(0)
     expect(state.truncatedExportMessage).toBe('Increase row limit, then run to export.')
+    await page.locator('.saved-exploration-sharing > summary').focus()
+    await page.keyboard.press('Escape')
     await page.setViewportSize({ width: 390, height: 820 })
+    expect(await page.locator('.saved-exploration-actions').isVisible()).toBe(false)
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    expect(await page.locator('.saved-exploration-actions').isVisible()).toBe(true)
+    await page.keyboard.press('Escape')
+    expect(await page.locator('.saved-exploration-actions').isVisible()).toBe(false)
+    await page.locator('.saved-exploration-sharing > summary').click()
     const shareMenuBounds = await page.evaluate(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector('.saved-exploration-sharing-actions')?.getBoundingClientRect().toJSON())
+    expect(shareMenuBounds?.width).toBeGreaterThan(200)
     expect(shareMenuBounds?.left).toBeGreaterThanOrEqual(0)
     expect(shareMenuBounds?.right).toBeLessThanOrEqual(390)
+    await page.locator('.saved-exploration-sharing > summary').focus()
+    await page.keyboard.press('Escape')
+    expect(await page.locator('.saved-exploration-sharing').evaluate((menu: HTMLDetailsElement) => menu.open)).toBe(false)
+    await page.locator('.saved-exploration-sharing > summary').click()
+    await page.locator('h1').click()
+    expect(await page.locator('.saved-exploration-sharing').evaluate((menu: HTMLDetailsElement) => menu.open)).toBe(false)
   } finally {
     await page.close()
   }
@@ -175,11 +190,97 @@ test('empty saved controls stay hidden while browsing raw rows', async () => {
   }
 })
 
+test('saved actions stay compact, preserve command semantics, and remain usable after an error', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    await page.evaluate(async () => {
+      const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 }
+      const command = { spec, semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const revision = { revisionId: 'rev-1', revision: 1 }
+      const object = { key: 'model:orders', resourceId: 'model:orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1, columns: [{ key: 'status', label: 'Status' }] }
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [object], selectedObject: object, selectedKey: object.key, command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: command },
+          explore: { command, semanticModels: [], datasets: [], fields: [], result: { columns: object.columns, rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, warnings: [],
+        },
+        savedExplorations: {
+          enabled: true, list: { items: [{ id: 'saved-1', title: 'Orders by status', status: 'active' }], selectedId: 'saved-1', includeArchived: false }, command: { action: 'create' }, save: { state: 'saved' },
+          current: { id: 'saved-1', title: 'Orders by status', slug: 'orders-by-status', visibility: 'private', status: 'active', detached: true, revision, spec },
+        },
+      })
+      const element = document.createElement('lv-data-explorer')
+      ;(window as any).savedCommands = []
+      element.addEventListener('lv-saved-exploration-command', (event: Event) => (window as any).savedCommands.push((event as CustomEvent).detail))
+      document.body.append(element)
+    })
+    const bar = page.getByRole('region', { name: 'Saved explorations', exact: true })
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).savedCommands.at(-1))).toMatchObject({ action: 'update', explorationId: 'saved-1', spec: { limit: 100 }, expectedRevision: { revisionId: 'rev-1' } })
+    expect(await bar.getByRole('textbox').count()).toBe(0)
+    await page.getByRole('button', { name: 'Save as…', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Current query name', exact: true }).fill('Current draft copy')
+    await page.getByRole('button', { name: 'Save current query as a copy', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).savedCommands.at(-1))).toMatchObject({ action: 'create', title: 'Current draft copy', visibility: 'private', spec: { limit: 100 } })
+    await page.keyboard.press('Escape')
+    expect(await page.getByRole('button', { name: 'Save as…', exact: true }).evaluate((button) => button.matches(':focus'))).toBe(true)
+    await page.getByRole('button', { name: 'More saved exploration actions' }).click()
+    await page.getByLabel('Saved exploration visibility', { exact: true }).selectOption('organization')
+    expect(await page.getByRole('button', { name: 'Archive', exact: true }).isDisabled()).toBe(true)
+    await page.getByLabel('Saved exploration visibility', { exact: true }).selectOption('private')
+    expect(await page.getByRole('button', { name: 'Archive', exact: true }).isEnabled()).toBe(true)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ savedExplorations: { save: { state: 'saving' } } })
+    })
+    expect(await page.getByLabel('Saved exploration visibility', { exact: true }).isDisabled()).toBe(true)
+    expect(await page.getByRole('button', { name: 'Save', exact: true }).isDisabled()).toBe(true)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ savedExplorations: { save: { state: 'saved' } } })
+    })
+    await page.getByRole('textbox', { name: 'Duplicate saved exploration name' }).fill('Stored version copy')
+    await page.getByRole('button', { name: 'Duplicate saved version', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).savedCommands.at(-1))).toMatchObject({ action: 'duplicate', sourceExplorationId: 'saved-1', title: 'Stored version copy' })
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ savedExplorations: { save: { state: 'dirty' } } })
+    })
+    expect(await page.getByRole('button', { name: 'Archive', exact: true }).isDisabled()).toBe(true)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ savedExplorations: { save: { state: 'error', message: 'Save failed. Try again.' } } })
+    })
+    expect(await page.getByRole('alert').textContent()).toContain('Save failed')
+    expect(await page.getByRole('button', { name: 'Save', exact: true }).isVisible()).toBe(true)
+    await page.setViewportSize({ width: 500, height: 620 })
+    await page.getByLabel('Share or export exploration').click()
+    const share = await page.locator('.saved-exploration-sharing-actions').boundingBox()
+    expect(share!.x).toBeGreaterThanOrEqual(0)
+    expect(share!.x + share!.width).toBeLessThanOrEqual(500)
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'More saved exploration actions' }).click()
+    await page.setViewportSize({ width: 390, height: 620 })
+    const menu = await page.locator('#saved-version-actions').boundingBox()
+    expect(menu!.x).toBeGreaterThanOrEqual(0)
+    expect(menu!.x + menu!.width).toBeLessThanOrEqual(390)
+    await page.locator('h1').click()
+    expect(await page.locator('#saved-version-actions').isVisible()).toBe(false)
+    await page.getByLabel('Open saved explorations', { exact: true }).click()
+    await page.keyboard.press('Escape')
+    expect(await page.locator('.saved-exploration-picker').evaluate((menu: HTMLDetailsElement) => menu.open)).toBe(false)
+  } finally { await page.close() }
+}, 15_000)
+
 function testDocument() {
   return `
     <!doctype html>
     <html>
       <head>
+        <link rel="stylesheet" href="/static/app.css" />
         <style>
           html, body { margin: 0; min-height: 100%; }
           body { font-family: Inter, system-ui, sans-serif; }

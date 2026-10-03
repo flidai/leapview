@@ -91,14 +91,51 @@ export const dataExplorerResultStyles = css`
     color: var(--lv-fg-accent);
   }
 
-  .result-visual {
+  .result-visual-layout {
+    display: grid;
     min-width: 0;
-    min-height: 18rem;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .result-visual-layout.paginated { grid-template-rows: auto minmax(0, 1fr); }
+
+  .chart-pagination,
+  .chart-page-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--base-size-8);
+  }
+
+  .chart-pagination {
+    justify-content: space-between;
+    padding: var(--base-size-8) var(--base-size-12);
+    border-bottom: var(--lv-border-muted);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  .result-visual {
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
     overflow: auto;
+    overscroll-behavior: contain;
     padding: var(--base-size-12);
   }
 
-  .result-visual lv-visualization-host { display: block; min-height: 18rem; height: 100%; }
+  .result-visual:focus-visible {
+    outline: 2px solid var(--lv-fg-accent);
+    outline-offset: -2px;
+  }
+
+  .result-visual lv-visualization-host {
+    display: block;
+    min-height: max(18rem, var(--explorer-visual-min-height, 0px));
+    height: 100%;
+  }
 
   .execution-state {
     display: inline-flex;

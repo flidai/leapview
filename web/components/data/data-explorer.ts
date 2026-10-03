@@ -17,6 +17,8 @@ import type { ExplorationSpec } from '../../generated/exploration'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { dataExplorerResultStyles } from './data-explorer-result-styles'
+import { explorerVisualization, type ExplorerVisualizationPage } from './data-explorer-visualization'
+import { dataExplorerResponsiveStyles } from './data-explorer-responsive-styles'
 import { dataExplorerHandoffStyles } from './data-explorer-handoff-styles'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { agentIcon } from '../chat/agent-icon'
@@ -36,7 +38,7 @@ import {
   toggleVisibleColumns,
 } from './data-explorer-controller'
 import { dashboardReturnPath, updateDataExplorerURL } from './data-explorer-url'
-import { renderSelectedFieldRows, renderSemanticFieldPane, renderSemanticFilterDock, semanticLayoutStyles } from './data-explorer-semantic-layout'
+import { isOutsideSemanticFields, renderSelectedFieldRows, renderSemanticFieldPane, renderSemanticFilterDock, renderSemanticFilterTrigger, semanticLayoutStyles } from './data-explorer-semantic-layout'
 import {
   emptySavedExplorations,
   renderExplorationShareMenu,
@@ -45,12 +47,14 @@ import {
   SavedExplorationViewController,
   savedExplorationSelectionIncludesArchived,
   savedExplorationStyles,
+  explorationDisplayTitle,
   type SavedExplorationViewOptions,
 } from './data-explorer-saved'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
 import './data-explorer-query-controls'
+import './data-explorer-sql'
 import '../dashboard/visualization/host'
 import { DataExplorerClientState } from './data-explorer-client'
 import type { DataExplorerFilterControlDetail } from './data-explorer-query-controls'
@@ -121,11 +125,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) embedded = false
   @state() private search = ''
   @state() private semanticFieldSearch = ''
-  @state() private semanticFiltersOpen = false
+  @state() private semanticPanel: 'fields' | 'filters' | null = null
   @state() private showSQL = false
   @state() private filterField = ''
   @state() private filterOperator = 'equals'
   @state() private filterValue = ''
+  @state() private filterSuggestionRequestSeq = 0
   @state() private optimisticExplore: DataExploreCommand | null = null
   @state() private agentDrawerOpen = false
   @state() private browserCollapsed = false
@@ -133,6 +138,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private browseVisibleColumns: { objectKey: string; keys: string[] } | null = null
   @state() private exploreVisibleColumns: string[] = []
   @state() private resultView: 'table' | 'chart' | 'pivot' | 'details' = 'table'
+  @state() private chartPage?: ExplorerVisualizationPage
   @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' | 'uncertain' = 'idle'
   @state() private exploreTransportFailure: BrowserCommandFailure | null = null
   private exploreTransportAction: 'run' | 'stop' | null = null
@@ -345,6 +351,30 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       font: var(--lv-type-body);
       font-weight: var(--base-text-weight-medium);
     }
+
+    .selected-fields-heading .query-actions {
+      flex-wrap: wrap;
+      min-width: 0;
+      max-width: 100%;
+      justify-content: flex-end;
+    }
+
+    .text-button.run-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-6);
+      border: var(--borderWidth-default) solid var(--lv-button-accent-border-rest);
+      background: var(--lv-button-accent-bg-rest);
+      color: var(--lv-button-accent-fg-rest);
+      white-space: nowrap;
+    }
+
+    .text-button.run-button:hover:not(:disabled) { background: var(--lv-button-accent-bg-hover); }
+    .text-button.run-button:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
+    .text-button.run-button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .execution-state[data-state="success"] { color: var(--lv-fg-success); }
+    .execution-state[data-state="running"] { color: var(--lv-fg-accent); }
 
     h1,
     h2,
@@ -978,21 +1008,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       font: var(--lv-type-body);
     }
 
-    @media (max-width: 760px) {
-      .header { grid-template-columns: minmax(0, 1fr); }
-      .header-actions { flex-wrap: wrap; gap: var(--base-size-4); }
-      .explorer { display: block; position: relative; min-height: 0; }
-      .browser-resizer { display: none; }
-      .browser, .main { min-height: 0; }
-      .browser {
-        position: absolute; z-index: var(--zIndex-sticky, 50); inset: 0 auto 0 0;
-        width: min(320px, calc(100% - 44px)) !important; box-shadow: var(--lv-shadow-floating-sm);
-      }
-      .browser-collapsed .browser { bottom: auto; width: 44px !important; height: 44px; box-shadow: none; }
-      .main { width: calc(100% - 44px); height: 100%; margin-left: 44px; }
-      .filter-editor, .diagnostics { grid-template-columns: 1fr; }
-    }
-  `, dataExplorerResultStyles]
+  `, dataExplorerResultStyles, dataExplorerResponsiveStyles]
 
   private readonly handleDatastarFetch = (event: Event) => {
     const action = this.exploreTransportAction
@@ -1012,6 +1028,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.requestUpdate()
   }
 
+  private handleSemanticFieldsOutsidePointer = (event: PointerEvent) => {
+    if (this.semanticPanel === 'fields' && isOutsideSemanticFields(event, this.renderRoot)) this.semanticPanel = null
+  }
+
   connectedCallback(): void {
     if (!this.embedded && window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
     if (!this.agentStateInitialized) {
@@ -1021,6 +1041,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.agentStateInitialized = true
     }
     if (typeof document !== 'undefined') document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+    document.addEventListener('pointerdown', this.savedViewController.handleOutsidePointer)
+    document.addEventListener('pointerdown', this.handleSemanticFieldsOutsidePointer)
     super.connectedCallback()
   }
 
@@ -1029,6 +1051,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     window.clearTimeout(this.filterSuggestionTimer)
     this.browserResizeCleanup?.()
     if (typeof document !== 'undefined') document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    document.removeEventListener('pointerdown', this.savedViewController.handleOutsidePointer)
+    document.removeEventListener('pointerdown', this.handleSemanticFieldsOutsidePointer)
     super.disconnectedCallback()
   }
 
@@ -1137,6 +1161,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const savedViewOptions: SavedExplorationViewOptions = this.savedViewController.options(
       canSaveCurrent, activeSpec,
       dashboardAppendEnabled ? () => this.dashboardAppend.render(true, activeSpec) : undefined,
+      currentExplore?.fields ?? [],
     )
     const shareVisible = savedVisible || dashboardAppendEnabled
     return html`
@@ -1144,7 +1169,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <header class="header">
           <div class="header-title">
             ${returnPath ? html`<a class="return-link" href=${returnPath} title="Back to dashboard">${lucideIcon(ArrowLeft)}<span>Dashboard</span></a><span class="header-divider" aria-hidden="true">/</span>` : nothing}
-            <h1>${page?.title ?? 'Data Explorer'}</h1>
+            <h1 title=${semanticActive ? savedExplorations.current?.title ?? '' : ''}>${semanticActive ? explorationDisplayTitle(savedExplorations.current, activeSpec, currentExplore?.fields ?? []) : page?.title ?? 'Data Explorer'}</h1>
           </div>
           <div class="header-actions">
             ${selected ? html`
@@ -1253,37 +1278,44 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     `
   }
 
-  private editExploreFilter(filter: ExplorationSpec['filters'][number], fields: DataExploreFieldSignal[]) {
+  private editExploreFilter(filter: ExplorationSpec['filters'][number], fields: DataExploreFieldSignal[], command?: DataExploreCommand) {
     const field = fields.find((candidate) => candidate.id === filter.field)
     if (!field) return
     this.openFilter(field)
     this.filterOperator = this.panelController.setFilterOperator(filterOperator(filter)).filterOperator
     this.filterValue = this.panelController.setFilterValue(filterValues(filter).join(', ')).filterValue
+    if (command) this.requestFilterSuggestions(this.optimisticExplore ?? command, this.filterValue)
   }
 
-  private renderExecutionState(command: DataExploreCommand, result: DataExploreSignal['result'], status?: DataExploreSignal['status'], transportError?: string) {
+  private renderExecutionState(command: DataExploreCommand, result: DataExploreSignal['result'], status?: DataExploreSignal['status'], transportError?: string, displayedResult = result) {
     const expected = Math.max(command.requestSeq ?? 0, this.latestExploreRequestSeq)
     const currentSemanticRequestSeq = Math.max(this.latestExploreRequestSeq, this.optimisticExplore?.requestSeq ?? 0)
     const currentStatus = status && (status.requestSeq ?? 0) >= currentSemanticRequestSeq ? status : undefined
     const currentResultError = (result.requestSeq ?? 0) >= currentSemanticRequestSeq ? result.error : undefined
-    const actual = Math.max(result.requestSeq ?? 0, currentStatus?.requestSeq ?? 0)
+    const hasResult = Boolean(displayedResult.columns.length || displayedResult.rows.length || displayedResult.sql || displayedResult.plan)
     if (this.exploreExecutionState === 'uncertain') {
       return html`<span class="execution-state" data-state="uncertain" role="status">${transportError || 'The exploration outcome is unknown. Choose Stop or Run latest to recover.'}</span>`
     }
     if (currentStatus?.state === 'cancelled' || this.exploreExecutionState === 'stopped') {
-      return html`<span class="execution-state" role="status">Run stopped; draft is preserved</span>`
+      return html`<span class="execution-state" data-state="stopped" role="status">Run stopped; draft is preserved</span>`
     }
     if (transportError || currentResultError || currentStatus?.error || currentStatus?.state === 'error') {
       return html`<span class="execution-state" data-state="error" role="status">${currentStatus?.error || transportError || currentResultError || 'Query failed'}</span>`
     }
     if (currentStatus?.loading || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running') {
       const progress = currentStatus?.progressPercent === undefined ? '' : ` ${Math.round(currentStatus.progressPercent)}%`
-      return html`<span class="execution-state" role="status">${currentStatus?.message || (this.exploreExecutionState === 'pending' ? 'Waiting to run…' : 'Running exploration…')}${progress}</span>`
+      return html`<span class="execution-state" data-state="running" role="status">${currentStatus?.message || (this.exploreExecutionState === 'pending' ? 'Waiting to run…' : 'Running exploration…')}${progress}</span>`
     }
-    if (currentStatus?.stale || currentStatus?.state === 'stale' || expected > actual) {
+    if (hasResult && expected > displayedResult.requestSeq) {
+      return html`<span class="execution-state" data-state="stale" role="status">Query edited · run to update results</span>`
+    }
+    if (hasResult && (currentStatus?.stale || currentStatus?.state === 'stale')) {
       return html`<span class="execution-state" data-state="stale" role="status">Results are stale — run to refresh</span>`
     }
-    return html`<span class="execution-state" role="status">Ready</span>`
+    if (hasResult && currentStatus?.state === 'success' && displayedResult.requestSeq === expected && currentStatus.requestSeq === expected) {
+      return html`<span class="execution-state" data-state="success" role="status">Results up to date</span>`
+    }
+    return html`<span class="execution-state" data-state="ready" role="status">Ready to run</span>`
   }
 
   private renderExploreFailure(error: string, command: DataExploreCommand) {
@@ -1393,9 +1425,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private openFilter(field: DataExploreFieldSignal) {
-    this.semanticFiltersOpen = true
+    this.semanticPanel = 'filters'
     window.clearTimeout(this.filterSuggestionTimer)
     this.clientState.invalidateSuggestions()
+    this.filterSuggestionRequestSeq = 0
     const state = this.panelController.openFilter(field.id)
     this.filterField = state.filterField
     this.filterOperator = state.filterOperator
@@ -1405,6 +1438,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private closeFilter() {
     window.clearTimeout(this.filterSuggestionTimer)
     this.clientState.invalidateSuggestions()
+    this.filterSuggestionRequestSeq = 0
     const state = this.panelController.closeFilter()
     this.filterField = state.filterField
     this.filterOperator = state.filterOperator
@@ -1494,10 +1528,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (!this.filterField) return
     window.clearTimeout(this.filterSuggestionTimer)
     const requestSeq = this.clientState.nextSuggestionSequence(this.dataExplorer.command.clientId)
+    this.filterSuggestionRequestSeq = requestSeq
+    const searchValue = this.filterOperator === 'in' || this.filterOperator === 'not_in' ? search.split(',').at(-1) ?? '' : search
     const suggestionCommand: DataExploreCommand = {
       ...command,
       action: 'configure',
-      filterSuggestions: { field: this.filterField, limit: 50, search: search.trim(), suggestionRequestSeq: requestSeq },
+      filterSuggestions: { field: this.filterField, limit: 50, search: searchValue.trim(), suggestionRequestSeq: requestSeq },
     }
     this.filterSuggestionTimer = window.setTimeout(() => {
       if (!this.clientState.isSuggestionCurrent(requestSeq)) return
@@ -1578,7 +1614,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private headerColumns(explorer: DataExplorerSignal, semanticActive: boolean): ExplorerColumn[] {
-    if (semanticActive) return explorer.explore?.result?.columns ?? []
+    if (semanticActive) {
+      const explore = explorer.explore
+      return explore?.result ? this.clientState.semanticResult(this.optimisticExplore ?? explore.command, explore.result, explore.status, this.page?.context).columns ?? [] : []
+    }
     const previewColumns = explorer.preview?.columns ?? []
     return previewColumns.length ? previewColumns : explorer.selectedObject?.columns ?? []
   }
@@ -1748,7 +1787,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const spec = { ...explorationSpecFor(base), modelId: object.semanticModelId ?? '', datasetId: objectDatasetID(object) }
     const filterCommand = { ...base, spec }
     return html`
-      <div class=${`content${filterable ? ` browse-layout${this.semanticFiltersOpen ? ' filters-open' : ''}` : ''}`} aria-label="Data preview">
+      <div class=${`content${filterable ? ` browse-layout${this.semanticPanel === 'filters' ? ' filters-open' : ''}` : ''}`} aria-label="Data preview">
         <lv-data-preview-table
           .preview=${preview}
           .command=${this.browseVisibleColumns?.objectKey === object.key
@@ -1756,9 +1795,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             : command}
           @lv-data-preview-table-command=${(event: CustomEvent<Partial<DataExplorerCommand>>) => this.emitCommand(event.detail)}
         ></lv-data-preview-table>
-        ${filterable ? renderSemanticFilterDock(spec, browseExplore, filterCommand, this.semanticFiltersOpen,
+        ${filterable ? renderSemanticFilterDock(spec, browseExplore, filterCommand, this.semanticPanel === 'filters',
           { field: this.filterField, operator: this.filterOperator, value: this.filterValue }, {
-            toggle: () => this.semanticFiltersOpen = !this.semanticFiltersOpen,
+            toggle: () => this.semanticPanel = this.semanticPanel === 'filters' ? null : 'filters',
             add: (id) => { const field = browseFields.find((candidate) => candidate.id === id); if (field) this.openFilter(field) },
             clear: () => this.emitBrowseFilters({ ...spec, filters: [] }, filterCommand),
             editFilter: (filter) => this.editExploreFilter(filter, browseFields),
@@ -1796,27 +1835,36 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const hasQuery = queryFields.size > 0 || Boolean(spec.time)
     const runValidation = explorationRunValidation(spec, explore.fields)
     const suggestionOnlyStatus = explore.command?.action === 'configure' && Boolean(explore.command.filterSuggestions)
-    const currentSemanticRequestSeq = Math.max(this.latestExploreRequestSeq, this.optimisticExplore?.requestSeq ?? 0)
+    const currentSemanticRequestSeq = Math.max(command.requestSeq ?? 0, this.latestExploreRequestSeq, this.optimisticExplore?.requestSeq ?? 0)
+    // Suggestion-only replies do not invalidate a result from the same query request.
     const currentStatus = !suggestionOnlyStatus && explore.status && (explore.status.requestSeq ?? 0) >= currentSemanticRequestSeq
       ? explore.status
-      : undefined
+      : suggestionOnlyStatus && explore.status?.state === 'stale' && result.columns.length > 0 && result.requestSeq === currentSemanticRequestSeq && !rawResult.error
+        ? { state: 'success' as const, requestSeq: result.requestSeq, loading: false, stale: false }
+        : undefined
     const exploreRunning = currentStatus?.loading === true || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running'
     const views: Record<string, VisualizationEnvelope> = {}
-    if (currentStatus?.state === 'success' && rawResult.requestSeq === currentStatus.requestSeq) {
+    if (currentStatus?.state === 'success' && result.requestSeq === currentStatus.requestSeq) {
       for (const [view, envelope] of Object.entries(explore.views ?? {})) {
         // A recursive signal patch may retain an old map key after a newer
         // run omits that view. Never present an envelope from another run.
-        if (envelope.dataRevision === rawResult.requestSeq) views[view] = envelope
+        if (envelope.dataRevision === result.requestSeq) views[view] = envelope
       }
     }
     const canShowChart = Boolean(views.chart)
     const canShowPivot = Boolean(views.pivot)
-    const canShowDetails = currentStatus?.state === 'success' && rawResult.requestSeq === currentStatus.requestSeq && Boolean(rawResult.sql || rawResult.plan)
+    const canShowDetails = currentStatus?.state === 'success' && result.requestSeq === currentStatus.requestSeq && Boolean(result.sql || result.plan)
     const resultView = (this.resultView === 'chart' && canShowChart) || (this.resultView === 'pivot' && canShowPivot) || (this.resultView === 'details' && canShowDetails)
       ? this.resultView : 'table'
+    const resultVisualization = resultView === 'chart' || resultView === 'pivot'
+      ? explorerVisualization(views[resultView]!, explorationDisplayTitle(this.savedExplorations.current, spec, explore.fields), this.chartPage)
+      : undefined
+    const categoryPage = resultVisualization?.categoryPage
     return html`
-      <div class=${`content semantic-layout${this.semanticFiltersOpen ? ' filters-open' : ''}`} aria-label="Data exploration">
+      <div class=${`content semantic-layout${this.semanticPanel === 'filters' ? ' filters-open' : ''}`} aria-label="Data exploration">
         ${renderSemanticFieldPane(spec, explore, queryFields, this.semanticFieldSearch, {
+          expanded: this.semanticPanel === 'fields',
+          togglePane: () => this.semanticPanel = this.semanticPanel === 'fields' ? null : 'fields',
           model: (modelId) => {
             const next = this.dataExplorer.objects.find((candidate) => candidate.semanticModelId === modelId)
             if (next) this.selectObject(next)
@@ -1833,17 +1881,18 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <div class="selected-fields-heading">
                 <strong>Selected fields</strong>
                 <span class="query-summary">${queryFields.size} ${queryFields.size === 1 ? 'column' : 'columns'}</span>
-                ${this.renderExecutionState(command, rawResult, currentStatus, this.exploreExecutionState === 'uncertain' ? this.exploreTransportFailure?.message : undefined)}
+                ${this.renderExecutionState(command, rawResult, currentStatus, this.exploreExecutionState === 'uncertain' ? this.exploreTransportFailure?.message : undefined, result)}
                 <div class="query-actions">
+                  ${renderSemanticFilterTrigger(spec.filters.length, this.semanticPanel === 'filters', () => this.semanticPanel = this.semanticPanel === 'filters' ? null : 'filters')}
                   <select aria-label="Result limit" .value=${String(spec.limit)} @change=${(event: Event) => this.emitExploreSpec({ ...spec, limit: Number((event.target as HTMLSelectElement).value) }, command)}>
                     ${Array.from(new Set([50, 100, 250, 500, 1000, spec.limit])).map((limit) => html`<option value=${limit} .selected=${limit === spec.limit}>${limit} rows</option>`)}
                   </select>
                   ${this.exploreExecutionState === 'uncertain'
                     ? html`<button type="button" class="text-button" title="Stop the possibly running exploration" @click=${() => this.stopExplore(command)}>${lucideIcon(X, { size: 14 })} Stop</button>
-                      <button type="button" class="text-button" title="Run the latest query draft" @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run latest</button>`
+                      <button type="button" class="text-button run-button" title="Run the latest query draft" ?disabled=${Boolean(runValidation.length)} @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run latest</button>`
                     : exploreRunning
                     ? html`<button type="button" class="text-button" title="Stop the running exploration" @click=${() => this.stopExplore(command)}>${lucideIcon(X, { size: 14 })} Stop</button>`
-                    : html`<button type="button" class="text-button" title=${runValidation.length ? runValidation.join(' ') : 'Run exploration'} ?disabled=${Boolean(runValidation.length)} @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run</button>`}
+                    : html`<button type="button" class="text-button run-button" title=${runValidation.length ? runValidation.join(' ') : 'Run exploration'} ?disabled=${Boolean(runValidation.length)} @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run</button>`}
                   <button type="button" class="icon-button" title="Return to all table columns" aria-label="Return to all table columns" @click=${() => this.selectObject(object)}>${lucideIcon(RotateCcw, { size: 16 })}</button>
                 </div>
               </div>
@@ -1863,8 +1912,27 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               </div>` : nothing}
             </div>
             ${hasQuery
-              ? resultView === 'details' ? this.renderExploreQueryDetails(object, explore, command)
-              : resultView !== 'table' ? html`<div class="result-visual" aria-label=${resultView === 'chart' ? 'Chart results' : 'Pivot results'}><lv-visualization-host .envelope=${views[resultView]} .actionsEnabled=${false}></lv-visualization-host></div>`
+              ? resultView === 'details' ? this.renderExploreQueryDetails(object, { ...explore, result }, command)
+              : resultVisualization ? html`
+                  <div class=${`result-visual-layout${categoryPage ? ' paginated' : ''}`}>
+                    ${categoryPage ? html`
+                      <nav class="chart-pagination" aria-label="Chart category pages">
+                        <span role="status" aria-live="polite">Showing ${categoryPage.first}–${categoryPage.last} of ${categoryPage.total} categories</span>
+                        <div class="chart-page-actions">
+                          <button type="button" class="text-button" aria-label="Previous chart categories" ?disabled=${categoryPage.index === 0}
+                            @click=${() => this.setChartPage({ key: categoryPage.key, index: categoryPage.index - 1 })}>Previous</button>
+                          <button type="button" class="text-button" aria-label="Next chart categories" ?disabled=${categoryPage.index + 1 >= categoryPage.count}
+                            @click=${() => this.setChartPage({ key: categoryPage.key, index: categoryPage.index + 1 })}>Next</button>
+                        </div>
+                      </nav>` : nothing}
+                    <div class="result-visual" role="region" tabindex="0" aria-label=${resultView === 'chart' ? 'Chart results' : 'Pivot results'}>
+                      <lv-visualization-host
+                        style=${`--explorer-visual-min-height: ${resultVisualization.minimumHeight}px`}
+                        .envelope=${resultVisualization.envelope}
+                        .actionsEnabled=${false}
+                      ></lv-visualization-host>
+                    </div>
+                  </div>`
               : html`<lv-data-explore-table
                   .command=${command}
                   .result=${result}
@@ -1873,18 +1941,23 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 ></lv-data-explore-table>`
               : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
         </section>
-        ${renderSemanticFilterDock(spec, explore, command, this.semanticFiltersOpen,
-          { field: this.filterField, operator: this.filterOperator, value: this.filterValue }, {
-            toggle: () => this.semanticFiltersOpen = !this.semanticFiltersOpen,
+        ${renderSemanticFilterDock(spec, explore, command, this.semanticPanel === 'filters',
+          { field: this.filterField, operator: this.filterOperator, value: this.filterValue, suggestionRequestSeq: this.filterSuggestionRequestSeq }, {
+            toggle: () => this.semanticPanel = this.semanticPanel === 'filters' ? null : 'filters',
             add: (id) => this.handleExploreFilterOpen(new CustomEvent('filter', { detail: id }), command),
             clear: () => this.emitExploreSpec({ ...spec, filters: [] }, command),
-            editFilter: (filter) => this.editExploreFilter(filter, explore.fields),
+            editFilter: (filter) => this.editExploreFilter(filter, explore.fields, command),
             removeFilter: (index) => this.removeExploreFilter(index, command),
             changeFilter: (detail) => this.handleExploreFilterChange(new CustomEvent('filter-change', { detail }), command),
             changeSpec: (next) => this.emitExploreSpec({ ...next, time: next.time }, command),
           })}
       </div>
     `
+  }
+
+  private setChartPage(page: ExplorerVisualizationPage) {
+    this.chartPage = page
+    this.renderRoot.querySelector('.result-visual')?.scrollTo({ top: 0 })
   }
 
   private renderExploreQueryDetails(object: DataExplorerObjectSignal, explore: DataExploreSignal, command: DataExploreCommand) {
@@ -1899,7 +1972,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         </dl>
         <h3 class="query-heading">${lucideIcon(Code2, { size: 17 })} Generated SQL</h3>
         <p class="query-copy">This is the governed query generated from the selected fields, relationships, filters, and metrics.</p>
-        <pre class="query-code">${result.sql || 'Select fields to generate a query.'}</pre>
+        <lv-data-explorer-sql .sql=${result.sql ?? ''} emptyMessage="Run an exploration to generate SQL."></lv-data-explorer-sql>
         ${result.plan ? html`<h3 class="query-heading">Query plan</h3><pre class="query-code">${result.plan}</pre>` : nothing}
         ${object.description ? html`<p class="query-copy">${object.description}</p>` : nothing}
       </section>
@@ -1989,7 +2062,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         </dl>
         <h3 class="query-heading">${lucideIcon(Code2, { size: 17 })} Generated SQL</h3>
         <p class="query-copy">This is the governed query executed for the current preview. Sorting and pagination are applied by the explorer.</p>
-        <pre class="query-code">${preview.sql || 'No SQL is available for this preview.'}</pre>
+        <lv-data-explorer-sql .sql=${preview.sql ?? ''} emptyMessage="No SQL is available for this preview."></lv-data-explorer-sql>
       </section>
     `
   }

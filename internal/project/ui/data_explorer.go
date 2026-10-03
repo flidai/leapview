@@ -267,18 +267,18 @@ func dataExplorerBootstrapSignalsWithSaved(page uisignals.DataExplorerPageSignal
 	}
 	state := map[string]any{
 		"page":                page,
-		"dataExplorer":        explorer,
-		"dataExplorerCommand": explorer.Command,
+		"dataExplorer":        DataExplorerPayload(explorer),
+		"dataExplorerCommand": DataExplorerCommandPayload(explorer.Command),
 		"status":              dashboard.Status{},
 		"agent":               agent.Agent,
-		"agentContext":        context,
+		"agentContext":        DataExplorerAgentContextPayload(context),
 		"agentReferenceSearch": uisignals.AgentReferenceSearchSignal{
 			Results: []uisignals.AgentReferenceSignal{},
 		},
 		"agentVisuals": agent.Visuals,
 	}
 	saved.State = normalizeDataExplorerSavedExplorationState(saved.State, saved.Enabled)
-	state["savedExplorations"] = saved.State
+	state["savedExplorations"] = DataExplorerSavedExplorationPayload(saved.State)
 	return webpage.WithSignal(layout, state)
 }
 

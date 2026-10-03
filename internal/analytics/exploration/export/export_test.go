@@ -201,3 +201,85 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestEncodeParquetHonorsDeclaredDecimals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []dataquery.Row
+	}{
+		{name: "values", rows: []dataquery.Row{
+			{"fractional": "12345678901234567890.1234567890", "integral": "99999999999999999999999999999999999999", "zero": "0", "null": nil, "id": "00123.4500"},
+			{"fractional": "-0.0000000001", "integral": "-99999999999999999999999999999999999999", "zero": "0", "null": nil, "id": "00000"},
+		}},
+		{name: "nulls", rows: []dataquery.Row{{"fractional": nil, "integral": nil, "zero": nil, "null": nil, "id": nil}}},
+		{name: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := dataquery.Result{Columns: []dataquery.Column{
+				{Name: "fractional", DecimalPrecision: 38, DecimalScale: 10},
+				{Name: "integral", DecimalPrecision: 38},
+				{Name: "zero", DecimalPrecision: 1},
+				{Name: "null", DecimalPrecision: 12, DecimalScale: 4},
+				{Name: "id"},
+			}, Rows: tc.rows}
+			body, err := Encode(context.Background(), result, Parquet, testLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			table, err := pqarrow.ReadTable(context.Background(), bytes.NewReader(body), nil, pqarrow.ArrowReadProperties{}, memory.DefaultAllocator)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer table.Release()
+			if table.NumRows() != int64(len(tc.rows)) {
+				t.Fatalf("rows = %d, want %d", table.NumRows(), len(tc.rows))
+			}
+			for index, column := range result.Columns {
+				if column.DecimalPrecision == 0 {
+					if table.Column(index).DataType().ID() != arrow.STRING {
+						t.Fatal("numeric-looking ID changed type")
+					}
+				} else if !arrow.TypeEqual(table.Column(index).DataType(), &arrow.Decimal128Type{Precision: column.DecimalPrecision, Scale: column.DecimalScale}) {
+					t.Fatalf("column %s type = %s", column.Name, table.Column(index).DataType())
+				}
+				for rowIndex, row := range tc.rows {
+					values := table.Column(index).Data().Chunk(0)
+					if row[column.Name] == nil {
+						if !values.IsNull(rowIndex) {
+							t.Fatalf("column %s row %d lost null", column.Name, rowIndex)
+						}
+						continue
+					}
+					var got string
+					if decimals, ok := values.(*array.Decimal128); ok {
+						got = decimals.Value(rowIndex).ToString(column.DecimalScale)
+					} else {
+						got = values.(*array.String).Value(rowIndex)
+					}
+					if got != row[column.Name] {
+						t.Fatalf("column %s row %d = %q, want %q", column.Name, rowIndex, got, row[column.Name])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestEncodeParquetRejectsInexactDeclaredDecimals(t *testing.T) {
+	for _, value := range []any{"1.234", "123.45", "no decimal", "+-1.23", ".", float64(1.23), int64(1)} {
+		result := dataquery.Result{Columns: []dataquery.Column{{Name: "amount", DecimalPrecision: 4, DecimalScale: 2}}, Rows: []dataquery.Row{{"amount": value}}}
+		if _, err := Encode(context.Background(), result, Parquet, testLimits()); err == nil {
+			t.Errorf("accepted inexact/incompatible declared decimal %#v", value)
+		}
+	}
+	for _, column := range []dataquery.Column{
+		{Name: "amount", DecimalPrecision: 39},
+		{Name: "amount", DecimalPrecision: 3, DecimalScale: 4},
+		{Name: "amount", DecimalPrecision: 3, DecimalScale: -1},
+		{Name: "amount", DecimalScale: 2},
+	} {
+		if _, err := Encode(context.Background(), dataquery.Result{Columns: []dataquery.Column{column}}, Parquet, testLimits()); err == nil {
+			t.Errorf("accepted unsupported decimal metadata %#v", column)
+		}
+	}
+}

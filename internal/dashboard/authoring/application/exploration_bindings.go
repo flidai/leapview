@@ -67,6 +67,16 @@ func deriveExplorationAdapterOptions(spec exploration.ExplorationSpec, model *se
 				}
 			}
 			if matched != "" {
+				semantic, _ := compiled.SemanticDimension(matched)
+				// Physical temporal queries use UTC, Gregorian calendar, and
+				// Sunday weeks. Dashboard queries inherit the semantic contract;
+				// they cannot override it to preserve a physical selection.
+				switch semantic.Datatype {
+				case semanticmodel.DataTypeDate, semanticmodel.DataTypeDateTime, semanticmodel.DataTypeDateTimeTZ:
+					if semantic.Timezone != "UTC" || semantic.Calendar != "gregorian" || semantic.WeekStart != "sunday" {
+						return fmt.Errorf("physical temporal field %q cannot preserve UTC/gregorian/sunday semantics through dimension %q", field, matched)
+					}
+				}
 				options.Bindings[field], options.Bindings[matched] = matched, matched
 				return nil
 			}
@@ -135,6 +145,18 @@ func deriveExplorationAdapterOptions(spec exploration.ExplorationSpec, model *se
 	for _, metric := range spec.Metrics {
 		if err := addMetric(metric.Field); err != nil {
 			return explorationadapter.Options{}, err
+		}
+	}
+	if spec.Pivot != nil {
+		for _, dimension := range append(append([]exploration.ExplorationDimensionRef{}, spec.Pivot.Rows...), spec.Pivot.Columns...) {
+			if err := addDimension(dimension.Field); err != nil {
+				return explorationadapter.Options{}, err
+			}
+		}
+		for _, metric := range spec.Pivot.Metrics {
+			if err := addMetric(metric.Field); err != nil {
+				return explorationadapter.Options{}, err
+			}
 		}
 	}
 	for _, filter := range spec.Filters {

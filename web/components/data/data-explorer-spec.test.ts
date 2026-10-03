@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
 import type { ExplorationSpec } from '../../generated/exploration'
+import { testVisualizationEnvelopes } from '../dashboard/dashboard-page-test-fixtures'
+import { explorerVisualization } from './data-explorer-visualization'
 import { DashboardAppendController } from './data-explorer-dashboard'
 import {
   boundedExplorationLimit,
@@ -199,5 +201,88 @@ test('dashboard append shows a safe unsupported-query message for 422 responses'
     globalThis.fetch = originalFetch
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow)
     else Reflect.deleteProperty(globalThis, 'window')
+  }
+})
+
+
+function paginatedChartFixture() {
+  const envelope = testVisualizationEnvelopes().orders_chart
+  if (envelope.spec.kind !== 'cartesian' || envelope.dataState.kind !== 'inline') throw new Error('Expected inline cartesian fixture')
+  return { ...envelope, spec: envelope.spec, dataState: envelope.dataState }
+}
+
+test('Explorer chart pages keep grouped categories together and share the full result value scale', () => {
+  const source = paginatedChartFixture()
+  source.spec.series = { dataset: 'primary', field: 'series' }
+  source.spec.datasets[0].fields.push({ id: 'series', label: 'Series', role: 'identity', dataType: 'string', nullable: false })
+  source.dataState.datasets[0].columns = ['label', 'value', 'series']
+  source.dataState.datasets[0].rows = Array.from({ length: 55 }, (_, index) => [
+    [`Status ${index + 1}`, index === 54 ? 1000 : 10, 'A'],
+    [`Status ${index + 1}`, -25, 'B'],
+  ]).flat()
+  const original = structuredClone(source)
+  const first = explorerVisualization(source, 'Orders by status')
+  const last = explorerVisualization(source, 'Orders by status', { key: first.categoryPage!.key, index: 1 })
+  expect(first.categoryPage).toMatchObject({ first: 1, last: 50, total: 55, count: 2 })
+  expect(last.categoryPage).toMatchObject({ first: 51, last: 55, total: 55, count: 2 })
+  if (first.envelope.dataState.kind !== 'inline' || last.envelope.dataState.kind !== 'inline') throw new Error('Expected inline pages')
+  const firstRows = first.envelope.dataState.datasets[0].rows
+  const lastRows = last.envelope.dataState.datasets[0].rows
+  expect(firstRows).toHaveLength(100)
+  expect(lastRows).toHaveLength(10)
+  expect([...firstRows, ...lastRows]).toEqual(source.dataState.datasets[0].rows)
+  expect(first.minimumHeight).toBeGreaterThanOrEqual(50 * 32)
+  expect(first.minimumHeight).toBeLessThanOrEqual(4096)
+  for (const page of [first, last]) {
+    if (page.envelope.spec.kind !== 'cartesian') throw new Error('Expected cartesian page')
+    expect(page.envelope.spec.axes?.find((axis) => axis.id === 'primary_y')).toMatchObject({ minimum: -25, maximum: 1000 })
+  }
+  const refreshed = explorerVisualization({ ...source, dataRevision: 2 }, 'Orders by status', { key: first.categoryPage!.key, index: 1 })
+  expect(refreshed.categoryPage?.index).toBe(0)
+  expect(source).toEqual(original)
+})
+
+test('Explorer paged stacked charts use global positive and negative totals and percentage bounds', () => {
+  const source = paginatedChartFixture()
+  source.spec.series = { dataset: 'primary', field: 'series' }
+  source.spec.datasets[0].fields.push({ id: 'series', label: 'Series', role: 'identity', dataType: 'string', nullable: false })
+  source.dataState.datasets[0].columns = ['label', 'value', 'series']
+  source.dataState.datasets[0].rows = Array.from({ length: 55 }, (_, index) => [
+    [`Status ${index + 1}`, index === 54 ? 1000 : 10, 'A'],
+    [`Status ${index + 1}`, 20, 'B'], [`Status ${index + 1}`, -3, 'C'], [`Status ${index + 1}`, -7, 'D'],
+  ]).flat()
+  for (const stacking of ['normal', 'percent'] as const) {
+    source.spec.presentation.stacking = stacking
+    const first = explorerVisualization(source, 'Stacked orders')
+    const last = explorerVisualization(source, 'Stacked orders', { key: first.categoryPage!.key, index: 1 })
+    for (const page of [first, last]) {
+      if (page.envelope.spec.kind !== 'cartesian') throw new Error('Expected cartesian page')
+      expect(page.envelope.spec.axes?.find((axis) => axis.id === 'primary_y')).toMatchObject(
+        stacking === 'percent' ? { minimum: -100, maximum: 100 } : { minimum: -10, maximum: 1020 },
+      )
+    }
+  }
+})
+
+test('Explorer chart pagination retains authored value bounds and caps grouped chart height', () => {
+  const source = paginatedChartFixture()
+  source.spec.series = { dataset: 'primary', field: 'series' }
+  source.spec.datasets[0].fields.push({ id: 'series', label: 'Series', role: 'identity', dataType: 'string', nullable: false })
+  source.dataState.datasets[0].columns = ['label', 'value', 'series']
+  source.dataState.datasets[0].rows = Array.from({ length: 100 }, (_, index) =>
+    Array.from({ length: 20 }, (_, series) => [`Status ${index + 1}`, series + 1, `Series ${series + 1}`]),
+  ).flat()
+  const automatic = explorerVisualization(source, 'Grouped orders')
+  if (automatic.envelope.spec.kind !== 'cartesian') throw new Error('Expected cartesian page')
+  const automaticAxis = automatic.envelope.spec.axes!.find((axis) => axis.id === 'primary_y')!
+  source.spec.axes = [{ ...automaticAxis, minimum: -100, maximum: 200 }]
+  const first = explorerVisualization(source, 'Grouped orders')
+  expect(first.minimumHeight).toBeLessThanOrEqual(4096)
+  expect(first.minimumHeight).toBeGreaterThanOrEqual(first.categoryPage!.last * 20 * 16)
+  expect(first.categoryPage!.count).toBeGreaterThan(2)
+  const last = explorerVisualization(source, 'Grouped orders', { key: first.categoryPage!.key, index: first.categoryPage!.count - 1 })
+  for (const page of [first, last]) {
+    if (page.envelope.spec.kind !== 'cartesian') throw new Error('Expected cartesian page')
+    expect(page.envelope.spec.axes).toEqual(source.spec.axes)
   }
 })

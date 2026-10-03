@@ -506,10 +506,26 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 }
 
 func dataExplorerSignalPatch(page projectsignals.DataExplorerPageSignal, explorer projectsignals.DataExplorerSignal) pagestream.SignalPatch {
-	return pagestream.SignalPatch{
-		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
-		"agentContext": projectui.DataExplorerAgentContext(page, explorer),
+	if patch := dataExplorerSuggestionsPatch(explorer); patch != nil {
+		return patch
 	}
+	return pagestream.SignalPatch{
+		"page": page, "dataExplorer": projectui.DataExplorerPayload(explorer), "dataExplorerCommand": projectui.DataExplorerCommandPayload(explorer.Command),
+		"agentContext": projectui.DataExplorerAgentContextPayload(projectui.DataExplorerAgentContext(page, explorer)),
+	}
+}
+
+// Suggestions belong to an independent request lane. Replacing the semantic
+// command, status, or result here would invalidate a completed chart (or a run
+// still in flight) even though the query itself has not changed.
+func dataExplorerSuggestionsPatch(explorer projectsignals.DataExplorerSignal) pagestream.SignalPatch {
+	command := explorer.Explore.Command
+	if command.Action == nil || *command.Action != "configure" || command.FilterSuggestions == nil {
+		return nil
+	}
+	return pagestream.SignalPatch{"dataExplorer": map[string]any{
+		"explore": map[string]any{"filterSuggestions": explorer.Explore.FilterSuggestions},
+	}}
 }
 
 func (h *BrowserHandler) ModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -549,8 +565,12 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		return
 	}
 	defer unlock()
+	if patch := dataExplorerSuggestionsPatch(explorer); patch != nil {
+		_ = pagestream.PatchResponse(w, r, patch)
+		return
+	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-		"dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
+		"dataExplorer": projectui.DataExplorerPayload(explorer), "dataExplorerCommand": projectui.DataExplorerCommandPayload(explorer.Command),
 	})
 }
 
@@ -1019,8 +1039,8 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 			if !explorerOK {
 				return nil, false
 			}
-			patch["dataExplorer"] = explorer
-			patch["dataExplorerCommand"] = explorer.Command
+			patch["dataExplorer"] = projectui.DataExplorerPayload(explorer)
+			patch["dataExplorerCommand"] = projectui.DataExplorerCommandPayload(explorer.Command)
 		}
 		return patch, true
 	}

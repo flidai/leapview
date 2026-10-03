@@ -238,7 +238,11 @@ func TestAppendExplorationPropagatesConcurrentDraftCASConflict(t *testing.T) {
 func TestAppendExplorationCompilesDefaultAggregateForLocalSalesDimensions(t *testing.T) {
 	for _, field := range []string{"orders.category", "orders.purchase_date"} {
 		t.Run(field, func(t *testing.T) {
-			app, repo, _, _, initial := newExplorationAppendApplication(t, nil)
+			model := explorationAppendModel()
+			date := model.Dimensions["purchase_date"]
+			date.Calendar = "gregorian"
+			model.Dimensions["purchase_date"] = date
+			app, repo, _, _, initial := newExplorationAppendApplicationForModel(t, nil, model)
 			target, err := app.ExplorationTarget(t.Context(), application.ExplorationTargetRequest{
 				ProjectID: "sales", ActorID: "actor", SourceModelID: "semantic-model:sales", DashboardID: initial.ID,
 			})

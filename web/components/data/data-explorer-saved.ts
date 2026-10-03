@@ -1,6 +1,6 @@
 import { css, html, nothing, type TemplateResult } from 'lit'
-import { ChevronDown, Share2 } from 'lucide'
-import type { DataExplorerCommand, SavedExplorationCommandSignal, SavedExplorationStateSignal } from '../../generated/signals'
+import { ChevronDown, Download, Ellipsis, Link, Share2 } from 'lucide'
+import type { DataExploreFieldSignal, DataExplorerCommand, SavedExplorationCommandSignal, SavedExplorationStateSignal } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
 import { lucideIcon } from '../shared/lucide-icons'
 import { dataExplorerExportURL, dataExplorerURL, savedExplorationShareURL, updateDataExplorerURL, type DataExplorerHistoryMode } from './data-explorer-url'
@@ -14,6 +14,7 @@ export const emptySavedExplorations: SavedExplorationStateSignal = {
 
 export const savedExplorationStyles = css`
   .saved-explorations {
+    position: relative;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -30,9 +31,27 @@ export const savedExplorationStyles = css`
   }
 
   .saved-exploration-actions {
-    flex-wrap: wrap;
-    justify-content: flex-start;
+    display: grid;
+    position: absolute;
+    z-index: var(--zIndex-overlay);
+    top: 100%;
+    right: var(--base-size-12);
+    width: min(20rem, calc(100% - 24px));
+    max-height: min(24rem, 60svh);
+    overflow: auto;
+    box-sizing: border-box;
+    padding: var(--base-size-12);
+    border: var(--lv-border-default);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-overlay);
+    box-shadow: var(--lv-shadow-floating-sm);
   }
+
+  .saved-exploration-actions[hidden] { display: none; }
+  .saved-exploration-actions label { display: grid; gap: var(--base-size-4); font: var(--lv-type-caption); }
+  .saved-exploration-actions .archive-action { border-top: var(--lv-border-muted); margin-top: var(--base-size-4); }
+  .saved-exploration-toolbar { display: flex; gap: var(--base-size-4); margin-left: auto; flex: none; }
+  .saved-actions-toggle { display: inline-flex; align-items: center; gap: var(--base-size-4); }
 
   .saved-exploration-actions input,
   .saved-exploration-actions select {
@@ -46,16 +65,21 @@ export const savedExplorationStyles = css`
   }
 
   .saved-exploration-actions input {
-    width: 10rem;
-    min-width: 8rem;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
   }
 
   .saved-exploration-actions .text-button {
     white-space: nowrap;
+    justify-content: flex-start;
+    text-align: left;
   }
 
   .saved-explorations-header {
-    flex: none;
+    flex: 1;
+    flex-wrap: wrap;
+    min-width: 0;
   }
 
   .saved-explorations-title {
@@ -79,7 +103,11 @@ export const savedExplorationStyles = css`
     font: var(--lv-type-caption);
     font-weight: var(--base-text-weight-medium);
     list-style: none;
+    max-width: 100%;
+    text-transform: none;
   }
+  .saved-exploration-picker summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .saved-exploration-picker summary svg { flex: none; }
 
   .saved-exploration-picker summary::-webkit-details-marker {
     display: none;
@@ -131,19 +159,21 @@ export const savedExplorationStyles = css`
   }
 
   .saved-exploration-status {
-    margin-left: auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
   }
 
+  .header { position: relative; }
   .saved-exploration-sharing {
-    position: relative;
+    position: static;
     min-width: 0;
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
   }
 
-  .saved-exploration-sharing summary {
+  .saved-exploration-sharing > summary {
     display: inline-flex;
     min-height: var(--control-medium-size);
     align-items: center;
@@ -165,8 +195,8 @@ export const savedExplorationStyles = css`
     display: none;
   }
 
-  .saved-exploration-sharing summary:hover,
-  .saved-exploration-sharing[open] summary {
+  .saved-exploration-sharing > summary:hover,
+  .saved-exploration-sharing[open] > summary {
     background: var(--lv-bg-control-hover);
   }
 
@@ -176,13 +206,14 @@ export const savedExplorationStyles = css`
   }
 
   .saved-exploration-sharing-actions {
+    box-sizing: border-box;
     position: absolute;
     top: calc(100% + var(--base-size-4));
-    right: 0;
+    right: var(--base-size-12);
     z-index: var(--zIndex-overlay);
     display: grid;
-    width: min(20rem, calc(100vw - 2rem));
-    max-height: min(26rem, calc(100vh - 6rem));
+    width: min(20rem, calc(100% - 24px));
+    max-height: min(32rem, 65svh);
     gap: var(--base-size-4);
     overflow: auto;
     border: var(--lv-border-default);
@@ -200,12 +231,20 @@ export const savedExplorationStyles = css`
     text-transform: uppercase;
   }
 
+  .saved-exploration-sharing-label.export-label {
+    border-top: var(--lv-border-muted);
+    margin-top: var(--base-size-4);
+    padding-top: var(--base-size-12);
+  }
+
   .saved-exploration-sharing-actions .text-button,
   .saved-exploration-download,
   .saved-exploration-share-fallback {
     display: flex;
+    box-sizing: border-box;
     width: 100%;
     align-items: center;
+    gap: var(--base-size-8);
     min-height: var(--control-medium-size);
     border: 0;
     border-radius: var(--lv-radius-default);
@@ -218,6 +257,12 @@ export const savedExplorationStyles = css`
     text-align: left;
     cursor: pointer;
   }
+
+  .saved-exploration-sharing-actions svg { flex: none; color: var(--lv-fg-muted); }
+  .saved-exploration-sharing-actions .dashboard-append-picker > summary { font: var(--lv-type-body); text-transform: none; }
+  .saved-exploration-sharing-actions .dashboard-append-chevron { margin-left: auto; }
+  .saved-exploration-sharing-actions .dashboard-append-picker[open] .dashboard-append-chevron { transform: rotate(180deg); }
+  .saved-exploration-sharing-actions [role='status'] { padding: var(--base-size-4) var(--base-size-8); }
 
   .saved-exploration-sharing-actions .text-button:hover,
   .saved-exploration-sharing-actions .text-button:focus-visible,
@@ -239,15 +284,6 @@ export const savedExplorationStyles = css`
     padding: var(--base-size-6) var(--base-size-8);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-  }
-
-  @media (max-width: 600px) {
-    .saved-exploration-sharing-actions {
-      right: auto;
-      left: 0;
-      box-sizing: border-box;
-      width: min(20rem, calc(100vw - 4rem));
-    }
   }
 
 `
@@ -286,7 +322,10 @@ export class SavedExplorationTracker {
 }
 
 export type SavedExplorationViewOptions = {
+  actionPanel(): 'save' | 'more' | undefined
+  onToggleActions(panel?: 'save' | 'more'): void
   savedTitle(): string
+  suggestedTitle?(): string
   savedDuplicateTitle(): string
   savedVisibility(): SavedExplorationVisibility
   currentSavedVisibility(current: SavedExplorationCurrent): SavedExplorationVisibility
@@ -305,6 +344,7 @@ export type SavedExplorationViewOptions = {
 }
 
 export class SavedExplorationViewController {
+  savedActionPanel: 'save' | 'more' | undefined
   savedTitle = ''
   savedDuplicateTitle = ''
   savedVisibility: SavedExplorationVisibility = 'private'
@@ -314,7 +354,20 @@ export class SavedExplorationViewController {
 
   constructor(private readonly host: EventTarget, private readonly refresh: () => void) {}
 
+  readonly handleOutsidePointer = (event: PointerEvent): void => {
+    const root = (this.host as HTMLElement).shadowRoot
+    root?.querySelectorAll<HTMLDetailsElement>('.saved-exploration-sharing, .saved-exploration-picker').forEach((menu) => {
+      if (menu.open && !event.composedPath().includes(menu)) menu.open = false
+    })
+    const saved = root?.querySelector('.saved-explorations')
+    if (this.savedActionPanel && saved && !event.composedPath().includes(saved)) {
+      this.savedActionPanel = undefined
+      this.refresh()
+    }
+  }
+
   baselineChanged(current: SavedExplorationCurrent | null | undefined): void {
+    this.savedActionPanel = undefined
     this.savedDuplicateTitle = ''
     this.currentSavedVisibility = current?.visibility ?? 'private'
     this.refresh()
@@ -324,10 +377,19 @@ export class SavedExplorationViewController {
     canSaveCurrent: boolean,
     activeSpec: ExplorationSpec,
     dashboardAppend?: () => TemplateResult | typeof nothing,
+    fields: DataExploreFieldSignal[] = [],
   ): SavedExplorationViewOptions {
     const update = <T>(setter: (value: T) => void) => (value: T) => { setter(value); this.refresh() }
     return {
+      actionPanel: () => this.savedActionPanel,
+      onToggleActions: (panel) => {
+        const picker = (this.host as HTMLElement).shadowRoot?.querySelector<HTMLDetailsElement>('.saved-exploration-picker')
+        if (panel && picker) picker.open = false
+        this.savedActionPanel = this.savedActionPanel === panel ? undefined : panel
+        this.refresh()
+      },
       savedTitle: () => this.savedTitle,
+      suggestedTitle: () => suggestedExplorationTitle(activeSpec, fields),
       savedDuplicateTitle: () => this.savedDuplicateTitle,
       savedVisibility: () => this.savedVisibility,
       currentSavedVisibility: (current) => this.currentSavedVisibility || current.visibility,
@@ -365,42 +427,85 @@ export function updateSavedExplorationURL(command: DataExplorerCommand, mode: Da
   updateDataExplorerURL(command, mode, state.list?.selectedId, savedExplorationSelectionIncludesArchived(state))
 }
 
+// Field labels carry authored meaning; the field contract does not expose aggregation.
+export function suggestedExplorationTitle(spec: ExplorationSpec, fields: DataExploreFieldSignal[] = []): string {
+  const fieldTitle = (id: string) => fields.find((field) => field.id === id)?.label?.trim()
+    || id.split('.').at(-1)?.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'Field'
+  const summarize = (names: string[]) => {
+    const compact = names.slice(0, 2).map((name) => name.length > 32 ? `${name.slice(0, 31)}…` : name).join(', ')
+    return names.length > 2 ? `${compact} +${names.length - 2}` : compact
+  }
+  const metrics = summarize(spec.metrics.map((field) => fieldTitle(field.field)))
+  const dimensions = spec.dimensions.map((field) => fieldTitle(field.field))
+  if (spec.time && !spec.dimensions.some((field) => field.field === spec.time?.field)) dimensions.push(fieldTitle(spec.time.field))
+  const grouping = summarize(dimensions)
+  return metrics ? grouping ? `${metrics} by ${grouping}` : metrics : grouping ? `Explore ${grouping}` : 'Untitled exploration'
+}
+
+export function explorationDisplayTitle(
+  current: SavedExplorationCurrent | null | undefined,
+  spec: ExplorationSpec,
+  fields: DataExploreFieldSignal[] = [],
+): string {
+  if (current && current.title !== `Exploration · ${current.spec?.modelId || 'untitled'}`) return current.title
+  return suggestedExplorationTitle(spec, fields)
+}
+
 export function renderSavedExplorations(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions) {
   const current = state.current
   const items = state.list?.items ?? []
   const unavailable = state.save?.state === 'error'
   if (!state.enabled) return nothing
   const hasCanonicalState = options.canSaveCurrent() && Boolean(options.activeSpec().modelId?.trim())
+  const saving = state.save?.state === 'saving'
+  const unsaved = state.save?.state === 'dirty' || (current && options.currentSavedVisibility(current) !== current.visibility)
+    || (current?.spec && hasCanonicalState && JSON.stringify(current.spec) !== JSON.stringify(options.activeSpec()))
+  const saveStatus = unavailable ? state.save.message || 'Could not save'
+    : saving ? 'Saving…'
+    : !current ? 'Not saved'
+    : unsaved ? 'Unsaved changes'
+    : current.status === 'archived' ? 'Archived · read only' : 'Saved'
   return html`
-    <section class="saved-explorations" aria-label="Saved explorations">
+    <section class="saved-explorations" aria-label="Saved explorations" @keydown=${(event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      const section = event.currentTarget as HTMLElement
+      const trigger = section.querySelector<HTMLButtonElement>('.saved-actions-toggle[aria-expanded="true"]')
+      if (trigger) { options.onToggleActions(); trigger.focus() }
+      const picker = section.querySelector<HTMLDetailsElement>('.saved-exploration-picker[open]')
+      if (picker) { picker.open = false; picker.querySelector('summary')?.focus() }
+      event.stopPropagation()
+    }}>
       <div class="saved-explorations-header">
+        <span class="saved-exploration-status" role=${unavailable ? 'alert' : 'status'}>${saveStatus}</span>
         ${items.length ? html`
           <details class="saved-exploration-picker">
-            <summary aria-label="Open saved explorations">Saved explorations (${items.length})${lucideIcon(ChevronDown, { size: 13 })}</summary>
+            <summary aria-label="Open saved explorations" title="Open saved explorations" @click=${() => options.onToggleActions()}><span>Saved explorations (${items.length})</span>${lucideIcon(ChevronDown, { size: 13 })}</summary>
             <div class="saved-exploration-list">
               ${items.map((item) => html`<a class="saved-exploration-item" href=${savedExplorationShareURL(item.id, item.status === 'archived')} aria-current=${item.id === current?.id ? 'page' : nothing}>${item.title}</a>`)}
             </div>
           </details>
-        ` : html`<span class="saved-explorations-title">Saved explorations</span>`}
+        ` : nothing}
       </div>
-      ${unavailable ? nothing : current ? html`
-        <div class="saved-exploration-actions" role="group" aria-label=${`Saved exploration actions for ${current.title}`}>
-            <input type="text" aria-label="Duplicate saved exploration name" placeholder="Copy name (optional)" .value=${options.savedDuplicateTitle()} @input=${(event: Event) => options.onDuplicateTitleInput((event.target as HTMLInputElement).value)} />
-            ${current.status === 'active' && current.detached ? savedVisibilitySelect(options.currentSavedVisibility(current), options.onCurrentSavedVisibilityInput) : nothing}
-            ${current.detached
-              ? current.status === 'active'
-                ? html`<button type="button" class="text-button" @click=${() => saveSavedExploration(current, options)}>Save</button>`
-                : html`<span class="saved-exploration-status">Read-only archived copy</span>`
-              : html`<button type="button" class="text-button" @click=${() => options.onReopen(current)}>Reopen</button>`}
-            ${hasCanonicalState ? html`
-              <input type="text" aria-label="Current query name" placeholder="Name current query (optional)" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />
-              <button type="button" class="text-button" @click=${() => saveCurrentQuery(options)}>Save as current query</button>
-            ` : nothing}
-            <button type="button" class="text-button" @click=${() => duplicateSavedExploration(current, options)}>Duplicate saved version</button>
-            ${current.status === 'active' ? html`<button type="button" class="text-button" @click=${() => archiveSavedExploration(current, options)}>Archive</button>` : nothing}
+      ${html`
+        <div class="saved-exploration-toolbar">
+          ${current?.detached && current.status === 'active' ? html`<button type="button" class="text-button" ?disabled=${saving} @click=${() => saveSavedExploration(current, options)}>Save</button>` : nothing}
+          ${hasCanonicalState ? html`<button type="button" class="text-button saved-actions-toggle" aria-expanded=${String(options.actionPanel() === 'save')} aria-controls="saved-query-form" @click=${() => options.onToggleActions('save')}>${current ? 'Save as…' : 'Save'}</button>` : nothing}
+          ${current ? html`<button type="button" class="text-button saved-actions-toggle" aria-label="More saved exploration actions" title="More saved exploration actions" aria-expanded=${String(options.actionPanel() === 'more')} aria-controls="saved-version-actions" @click=${() => options.onToggleActions('more')}>${lucideIcon(Ellipsis, { size: 18 })}</button>` : nothing}
         </div>
-      ` : hasCanonicalState ? html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />${savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput)}<button type="button" class="text-button" aria-label="Save current exploration" @click=${() => createSavedExploration(options)}>Save</button></div>` : nothing}
-      ${unavailable || state.save?.message || (state.save?.state && state.save.state !== 'saved') ? html`<span class="saved-exploration-status" role=${unavailable ? 'alert' : nothing}>${state.save?.message ?? state.save?.state}</span>` : nothing}
+        ${hasCanonicalState ? html`<div id="saved-query-form" class="saved-exploration-actions" role="group" aria-label=${current ? 'Save current query as a copy' : 'Save exploration'} ?hidden=${options.actionPanel() !== 'save'}>
+          <label>Name<input type="text" aria-label=${current ? 'Current query name' : 'Saved exploration name'} placeholder=${options.suggestedTitle?.() || suggestedExplorationTitle(options.activeSpec())} .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} /></label>
+          ${current ? nothing : savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput, saving)}
+          <button type="button" class="text-button" ?disabled=${saving} aria-label=${current ? 'Save current query as a copy' : 'Save current exploration'} @click=${() => current ? saveCurrentQuery(options) : createSavedExploration(options)}>${current ? 'Save copy' : 'Save'}</button>
+        </div>` : nothing}
+        ${current ? html`<div id="saved-version-actions" class="saved-exploration-actions" role="group" aria-label=${`Saved exploration actions for ${current.title}`} ?hidden=${options.actionPanel() !== 'more'}>
+          ${current.status === 'archived' ? html`<span class="saved-exploration-status">Archived · read only</span>` : nothing}
+          <button type="button" class="text-button" @click=${() => options.onReopen(current)}>Reopen saved version</button>
+          ${current.status === 'active' && current.detached ? html`${savedVisibilitySelect(options.currentSavedVisibility(current), options.onCurrentSavedVisibilityInput, saving)}<button type="button" class="text-button" ?disabled=${saving} @click=${() => saveSavedExploration(current, options)}>Save changes</button>` : nothing}
+          <label>Copy name<input type="text" aria-label="Duplicate saved exploration name" placeholder=${`Copy of ${current.title}`} .value=${options.savedDuplicateTitle()} @input=${(event: Event) => options.onDuplicateTitleInput((event.target as HTMLInputElement).value)} /></label>
+          <button type="button" class="text-button" ?disabled=${saving} @click=${() => duplicateSavedExploration(current, options)}>Duplicate saved version</button>
+          ${current.status === 'active' ? html`<button type="button" class="text-button archive-action" ?disabled=${unsaved || saving} title=${unsaved ? 'Save your changes before archiving' : 'Archive saved exploration'} @click=${() => archiveSavedExploration(current, options)}>Archive</button>` : nothing}
+        </div>` : nothing}
+      `}
     </section>
   `
 }
@@ -413,18 +518,26 @@ export function renderExplorationShareMenu(state: SavedExplorationStateSignal, o
   const savedURL = state.current ? savedExplorationShareURL(state.current.id, state.current.status === 'archived') : ''
   if (!currentQueryURL && !savedURL && !options.dashboardAppend) return nothing
   return html`
-    <details class="saved-exploration-sharing">
-      <summary aria-label="Share or export exploration">${lucideIcon(Share2, { size: 15 })}<span>Share</span></summary>
+    <details class="saved-exploration-sharing" @keydown=${(event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      const menu = event.currentTarget as HTMLDetailsElement
+      menu.open = false
+      menu.querySelector<HTMLElement>(':scope > summary')?.focus()
+      event.stopPropagation()
+    }}>
+      <summary aria-label="Share or export exploration" @click=${(event: Event) => {
+        if (!(event.currentTarget as HTMLElement).closest('details')?.open) options.onShareStatus('', '')
+      }}>${lucideIcon(Share2, { size: 15 })}<span>Share</span></summary>
       <div class="saved-exploration-sharing-actions">
         <span class="saved-exploration-sharing-label">Share</span>
-        ${currentQueryURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(currentQueryURL, options)}>Copy current query link</button>` : nothing}
-        ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>Copy saved version link</button>` : nothing}
+        ${currentQueryURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(currentQueryURL, options)}>${lucideIcon(Link, { size: 16 })}Copy current query link</button>` : nothing}
+        ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>${lucideIcon(Link, { size: 16 })}Copy saved version link</button>` : nothing}
         ${options.dashboardAppend?.() ?? nothing}
         ${currentQueryURL ? html`
-          <span class="saved-exploration-sharing-label">Export</span>
+          <span class="saved-exploration-sharing-label export-label">Export</span>
           ${exportTruncated ? html`<span class="saved-exploration-export-unavailable">Increase row limit, then run to export.</span>` : html`
-            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
-            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
+            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>${lucideIcon(Download, { size: 16 })}Download CSV</a>
+            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>${lucideIcon(Download, { size: 16 })}Download Parquet</a>
           `}
         ` : nothing}
         <span class="saved-exploration-sharing-hint">Links run live data with the viewer’s access.</span>
@@ -448,8 +561,9 @@ export async function copyExplorationLink(path: string, options: Pick<SavedExplo
 function savedVisibilitySelect(
   value: SavedExplorationVisibility,
   onChange: (value: SavedExplorationVisibility) => void,
+  disabled = false,
 ) {
-  return html`<label>Visibility <select aria-label="Saved exploration visibility" .value=${value} @change=${(event: Event) => onChange((event.target as HTMLSelectElement).value as SavedExplorationVisibility)}><option value="private">Personal</option><option value="organization">Organization</option></select></label>`
+  return html`<label>Visibility <select aria-label="Saved exploration visibility" .value=${value} ?disabled=${disabled} @change=${(event: Event) => onChange((event.target as HTMLSelectElement).value as SavedExplorationVisibility)}><option value="private">Personal</option><option value="organization">Organization</option></select></label>`
 }
 
 function saveSavedExploration(current: SavedExplorationCurrent, options: SavedExplorationViewOptions): void {
@@ -460,13 +574,13 @@ function saveSavedExploration(current: SavedExplorationCurrent, options: SavedEx
 
 function createSavedExploration(options: SavedExplorationViewOptions): void {
   const activeSpec = options.activeSpec()
-  const title = options.savedTitle().trim() || `Exploration · ${activeSpec.modelId || 'untitled'}`
+  const title = options.savedTitle().trim() || options.suggestedTitle?.() || suggestedExplorationTitle(activeSpec)
   options.onCommand({ action: 'create', title, visibility: options.savedVisibility(), spec: activeSpec })
 }
 
 function saveCurrentQuery(options: SavedExplorationViewOptions): void {
   const activeSpec = options.activeSpec()
-  const title = options.savedTitle().trim() || `Exploration · ${activeSpec.modelId || 'untitled'}`
+  const title = options.savedTitle().trim() || options.suggestedTitle?.() || suggestedExplorationTitle(activeSpec)
   options.onCommand({ action: 'create', title, visibility: 'private', spec: activeSpec })
 }
 

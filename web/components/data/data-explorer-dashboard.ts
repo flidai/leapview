@@ -1,4 +1,6 @@
 import { css, html, nothing, type TemplateResult } from 'lit'
+import { ChevronDown, LayoutDashboard } from 'lucide'
+import { lucideIcon } from '../shared/lucide-icons'
 import type { ExplorationSpec } from '../../generated/exploration'
 import '../shared/command'
 
@@ -24,6 +26,7 @@ export interface DashboardAppendPickerOptions {
   placementChoice: 'half' | 'full'
   loading: boolean
   saving: boolean
+  pendingTitle?: string
   status: string
   successDashboardURL: string
   onToggle(open: boolean): void
@@ -34,6 +37,15 @@ export interface DashboardAppendPickerOptions {
 }
 
 type PlacementChoice = 'half' | 'full'
+
+type PendingAppend = {
+  endpoint: string
+  body: string
+  idempotencyKey: string
+  target: DashboardAppendTarget & { draftId: string; revisionToken: string }
+  modelID: string
+  uncertain: boolean
+}
 
 /** Owns dashboard picker requests and invalidates results when its source model changes. */
 export class DashboardAppendController {
@@ -48,6 +60,7 @@ export class DashboardAppendController {
   targetsLoaded = false
   private modelID = ''
   private requestVersion = 0
+  private pendingAppend?: PendingAppend
 
   constructor(private readonly host: HTMLElement, private readonly refresh: () => void) {}
 
@@ -63,8 +76,9 @@ export class DashboardAppendController {
     result: { requestSeq?: number; error?: unknown } | undefined,
     validSpec: boolean,
   ): boolean {
-    return enabled && configured && status?.state === 'success' && !status.loading && !status.stale &&
+    return enabled && configured && (Boolean(this.pendingAppend) || (status?.state === 'success' && !status.loading && !status.stale &&
       status.requestSeq === expectedRequest && result?.requestSeq === expectedRequest && !result.error && validSpec
+    ))
   }
 
   render(enabled: boolean, spec: ExplorationSpec): TemplateResult | typeof nothing {
@@ -76,9 +90,10 @@ export class DashboardAppendController {
       placementChoice: this.placementChoice,
       loading: this.loading,
       saving: this.saving,
+      pendingTitle: this.pendingAppend ? this.pendingAppend.target.title || this.pendingAppend.target.id : undefined,
       status: this.status,
       successDashboardURL: this.successDashboardURL,
-      onToggle: (open) => { if (open && !this.targetsLoaded) void this.loadTargets(spec.modelId?.trim() ?? '') },
+      onToggle: (open) => { if (open && !this.targetsLoaded && !this.pendingAppend) void this.loadTargets(spec.modelId?.trim() ?? '') },
       onDashboardChange: (id) => void this.selectTarget(id, spec.modelId?.trim() ?? ''),
       onPageChange: (id) => { this.selectedPageID = id; this.refresh() },
       onPlacementChange: (value) => { this.placementChoice = value; this.refresh() },
@@ -170,28 +185,49 @@ export class DashboardAppendController {
   }
 
   async append(spec: ExplorationSpec): Promise<void> {
-    if (!spec.metrics.length && !spec.pivot?.metrics.length) {
+    if (this.saving) return
+    if (!this.pendingAppend && !spec.metrics.length && !spec.pivot?.metrics.length) {
       this.status = 'Add at least one metric before adding an exploration to a dashboard.'
       this.refresh()
       return
     }
-    const target = this.targets.find((item) => item.id === this.selectedDashboardID)
-    const operationID = this.attribute('data-dashboard-append-operation-id')
-    const endpoint = this.attribute('data-dashboard-append-url')
-	if (!target || !target.draftId || !this.selectedPageID || !target.revisionToken || operationID !== 'executeDashboardAuthoringCommand' || !endpoint || spec.modelId?.trim() !== this.modelID) return
+    let attempt = this.pendingAppend
+    if (!attempt) {
+      const target = this.targets.find((item) => item.id === this.selectedDashboardID)
+      const operationID = this.attribute('data-dashboard-append-operation-id')
+      const endpoint = this.attribute('data-dashboard-append-url')
+      if (!target?.draftId || !this.selectedPageID || !target.revisionToken || operationID !== 'executeDashboardAuthoringCommand' || !endpoint || spec.modelId?.trim() !== this.modelID) return
+      // Snapshot the complete intent before sending it. A retry must not pick up
+      // a newer query, page, placement, or revision under the original key.
+      attempt = {
+        endpoint, target: { ...target, draftId: target.draftId, revisionToken: target.revisionToken }, modelID: this.modelID, uncertain: false,
+        body: JSON.stringify(dashboardAppendRequest(spec, target, this.selectedPageID, this.placementChoice)),
+        idempotencyKey: window.LeapViewCommand.headers()['Idempotency-Key']!,
+      }
+      this.pendingAppend = attempt
+    }
+    const { target } = attempt
     this.saving = true
     this.status = ''
     this.successDashboardURL = ''
     this.refresh()
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetch(attempt.endpoint, {
         method: 'POST',
-		headers: { ...window.LeapViewCommand.headers('executeDashboardAuthoringCommand'), 'Content-Type': 'application/json' },
-        body: JSON.stringify(dashboardAppendRequest(spec, target, this.selectedPageID, this.placementChoice)),
+        headers: { ...window.LeapViewCommand.headers('executeDashboardAuthoringCommand'), 'Idempotency-Key': attempt.idempotencyKey, 'Content-Type': 'application/json' },
+        body: attempt.body,
       })
       if (!response.ok) {
-        if (response.status === 409) {
-          await this.selectTarget(target.id, spec.modelId?.trim() ?? '')
+        // Protocol conflicts can mean the original write is still unresolved.
+        // Never turn those (or a conflict after a lost response) into a new add.
+        const protocolConflict = response.status === 409 && response.headers.get('content-type')?.includes('application/problem+json')
+        if (response.status === 409 && !attempt.uncertain && !protocolConflict) {
+          this.pendingAppend = undefined
+          if (attempt.modelID !== this.modelID) {
+            this.status = 'The original dashboard changed; no tile was added.'
+            return
+          }
+          await this.selectTarget(target.id, attempt.modelID)
           const refreshed = this.targets.find((item) => item.id === target.id)
           if (this.selectedDashboardID === target.id && refreshed?.draftId && refreshed.revisionToken) {
             this.status = 'Dashboard changed. The target was refreshed; review the page and retry.'
@@ -199,19 +235,29 @@ export class DashboardAppendController {
           }
           return
         }
+        if (response.status >= 500 || response.status === 408 || response.status === 429 || response.status === 409 || attempt.uncertain) {
+          throw new Error('The addition is not confirmed. Retry the previous addition to check its outcome without creating another tile.')
+        }
+        this.pendingAppend = undefined
         if (response.status === 403) throw new Error('You no longer have access to this dashboard or model.')
         if (response.status === 422) throw new Error('The selected fields or display settings are not supported for dashboard tiles. Review the exploration and try again.')
         throw new Error('Could not add this exploration to the selected dashboard.')
       }
       const result = await response.json() as { dashboardId?: string }
       if (result.dashboardId !== target.id) throw new Error('The dashboard update response was invalid.')
+      this.pendingAppend = undefined
       this.status = 'Exploration added as an independent tile.'
       this.successDashboardURL = `/dashboards/${encodeURIComponent(target.id)}/edit?draft=${encodeURIComponent(target.draftId)}`
       this.targetsLoaded = false
       this.selectedDashboardID = ''
       this.selectedPageID = ''
     } catch (error) {
-      this.status = error instanceof Error ? error.message : 'Could not add this exploration to the selected dashboard.'
+      if (this.pendingAppend === attempt) {
+        attempt.uncertain = true
+        this.status = 'The addition is not confirmed. Retry the previous addition to check its outcome without creating another tile.'
+      } else {
+        this.status = error instanceof Error ? error.message : 'Could not add this exploration to the selected dashboard.'
+      }
     } finally {
       this.saving = false
       this.refresh()
@@ -224,6 +270,7 @@ export const dashboardAppendStyles = css`
   .dashboard-append-picker > summary { list-style: none; cursor: pointer; }
   .dashboard-append-picker > summary::-webkit-details-marker { display: none; }
   .dashboard-append-picker-panel {
+    box-sizing: border-box;
     position: static; display: grid; gap: var(--base-size-8); width: 100%; min-width: 0; max-width: none;
     padding: var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default);
     color: var(--lv-fg-default); background: var(--lv-bg-overlay);
@@ -232,6 +279,7 @@ export const dashboardAppendStyles = css`
   .dashboard-append-picker-panel label { display: grid; gap: 4px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
   .dashboard-append-picker-panel select,
   .dashboard-append-picker-panel button {
+    min-width: 0; max-width: 100%;
     min-height: 32px; padding: 4px 8px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default);
     color: var(--lv-fg-default); background: var(--lv-bg-panel); font: var(--lv-type-caption);
   }
@@ -247,15 +295,16 @@ export function renderDashboardAppendPicker(options: DashboardAppendPickerOption
   const pages = selected?.pages ?? []
   return html`
     <details class="dashboard-append-picker" @toggle=${(event: Event) => options.onToggle((event.currentTarget as HTMLDetailsElement).open)}>
-      <summary class="text-button">Add to dashboard</summary>
+      <summary class="text-button">${lucideIcon(LayoutDashboard, { size: 16 })}Add to dashboard<span class="dashboard-append-chevron">${lucideIcon(ChevronDown, { size: 14 })}</span></summary>
       <div class="dashboard-append-picker-panel" role="group" aria-label="Add exploration to dashboard">
         <label>Dashboard
-          <select aria-label="Choose dashboard" ?disabled=${options.loading || options.saving} @change=${(event: Event) => options.onDashboardChange((event.target as HTMLSelectElement).value)}>
+          <select aria-label="Choose dashboard" ?disabled=${options.loading || options.saving || Boolean(options.pendingTitle)} @change=${(event: Event) => options.onDashboardChange((event.target as HTMLSelectElement).value)}>
             <option value="" ?selected=${!options.selectedDashboardID}>${options.loading ? 'Loading dashboards…' : 'Choose a dashboard'}</option>
             ${options.targets.map((target) => html`<option value=${target.id} ?selected=${target.id === options.selectedDashboardID}>${target.title}</option>`)}
           </select>
         </label>
-        ${selected ? html`
+        ${options.pendingTitle ? html`<span class="dashboard-append-status">Confirm the previous addition to ${options.pendingTitle} before adding another tile.</span>
+          <button type="button" ?disabled=${options.saving} @click=${options.onAppend}>${options.saving ? 'Confirming…' : 'Retry previous addition'}</button>` : selected ? html`
           <label>Page
             <select aria-label="Choose dashboard page" ?disabled=${options.loading || options.saving} @change=${(event: Event) => options.onPageChange((event.target as HTMLSelectElement).value)}>
               <option value="" ?selected=${!options.selectedPageID}>Choose a page</option>
