@@ -31,8 +31,22 @@ recorded in `measurements/release-layer-screening.json`. These are controlled lo
 candidate builds on hosted runners. They do not establish published-release
 admission or identical image digests across independent builders.
 
-Ten later comparable confirmations and protected qualification are still pending.
-There is no p95 conclusion. Required admission/publication assertions remain
+Twelve later comparable baseline/treatment consumers per mode passed across
+[runs 37098047199](https://github.com/flidai/leapview/actions/runs/37098047199),
+[37098777888](https://github.com/flidai/leapview/actions/runs/37098777888),
+[37099481025](https://github.com/flidai/leapview/actions/runs/37099481025) and
+[37100477556](https://github.com/flidai/leapview/actions/runs/37100477556).
+All 30 input and runtime receipts match; Docker client/server remained 28.0.4 and
+BuildKit v0.33.1. Later median build execution was 560.5 → 270 seconds (51.83%
+improvement); complete consumer runner time was 611 → 303.5 seconds. Applying
+the same entire-producer / three-consumer allocation gives 609.83 seconds, 0.19%
+below baseline. The final batch alone had a 5.07% allocated runner regression;
+the 12-observation confirmation median meets the limit with little margin.
+Per-batch and individual observations are in `measurements/release-layer-confirmations.json`.
+The cost allocation does not establish release cadence or billing savings.
+
+Protected qualification of the adoption commit is still pending. There are 15
+observations per mode in total and no p95 conclusion. Required admission/publication assertions remain
 independent of cache performance, and normal builds remain required on misses.
 Persistent compiler mounts are evaluated separately with their full seed,
 extraction/injection, compression, transfer and storage costs.

@@ -57,7 +57,7 @@
   "fullyAllocatedTreatmentMedianRunnerSeconds": 600.3333333333333,
   "fullyAllocatedRunnerImprovementPercent": 2.5432900432900465,
   "allSixInputDigestsEqual": true,
-  "screeningStatus": "three successful pairs; >=10 later comparable confirmations still pending; no p95 claim",
+  "screeningStatus": "three successful screening pairs; twelve subsequent comparable consumers per mode confirmed in release-layer-confirmations.json; protected adoption qualification pending; no p95 claim",
   "compilerContext": {
     "application": "Dockerfile",
     "platform": "linux/amd64",

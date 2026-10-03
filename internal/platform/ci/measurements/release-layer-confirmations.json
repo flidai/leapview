@@ -1,0 +1,367 @@
+{
+  "sourceRevision": "50f63f20598ec8c4d9478a6dee2e0d313c4a35d4",
+  "initialScreeningRunID": 37096704297,
+  "subsequentRunIDs": [
+    37098047199,
+    37098777888,
+    37099481025,
+    37100477556
+  ],
+  "subsequentComparableConsumersPerMode": 12,
+  "compilerContext": [
+    "28.0.4",
+    "28.0.4",
+    "v0.33.1"
+  ],
+  "allThirtyInputDigestsAndRuntimeIdentitiesEqual": true,
+  "subsequentMedians": {
+    "baseline": {
+      "runnerSeconds": 611.0,
+      "buildSeconds": 560.5
+    },
+    "main-read": {
+      "runnerSeconds": 303.5,
+      "buildSeconds": 270.0
+    },
+    "executionImprovementPercent": 51.82872435325603,
+    "fullyAllocatedRunnerImprovementPercent": 0.1909438079650938
+  },
+  "producerRunID": 37094287650,
+  "producerBuildRunnerSeconds": 919,
+  "allocationConsumers": 3,
+  "note": "entire producer build allocated to every three-consumer batch; producer transfer/export and complete consumer import/load/teardown included; queue reported separately; 15 observations per mode total, no p95 claim; no release publication/admission performance claim",
+  "batches": [
+    {
+      "baseline": {
+        "runnerSeconds": 616.0,
+        "buildSeconds": 566.0
+      },
+      "main-read": {
+        "runnerSeconds": 294.0,
+        "buildSeconds": 259.0
+      },
+      "runID": 37096704297,
+      "initialWorkflowQueueSeconds": 0.0
+    },
+    {
+      "baseline": {
+        "runnerSeconds": 617.0,
+        "buildSeconds": 562.0
+      },
+      "main-read": {
+        "runnerSeconds": 310.0,
+        "buildSeconds": 271.0
+      },
+      "runID": 37098047199,
+      "initialWorkflowQueueSeconds": 0.0
+    },
+    {
+      "baseline": {
+        "runnerSeconds": 610.0,
+        "buildSeconds": 559.0
+      },
+      "main-read": {
+        "runnerSeconds": 308.0,
+        "buildSeconds": 270.0
+      },
+      "runID": 37098777888,
+      "initialWorkflowQueueSeconds": 0.0
+    },
+    {
+      "baseline": {
+        "runnerSeconds": 617.0,
+        "buildSeconds": 565.0
+      },
+      "main-read": {
+        "runnerSeconds": 304.0,
+        "buildSeconds": 270.0
+      },
+      "runID": 37099481025,
+      "initialWorkflowQueueSeconds": 0.0
+    },
+    {
+      "baseline": {
+        "runnerSeconds": 559.0,
+        "buildSeconds": 485.0
+      },
+      "main-read": {
+        "runnerSeconds": 281.0,
+        "buildSeconds": 252.0
+      },
+      "runID": 37100477556,
+      "initialWorkflowQueueSeconds": 0.0
+    }
+  ],
+  "observations": [
+    {
+      "runID": 37096704297,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "baseline",
+      "runnerSeconds": 624.0,
+      "buildSeconds": 566.0,
+      "jobID": 111127996786
+    },
+    {
+      "runID": 37096704297,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "baseline",
+      "runnerSeconds": 616.0,
+      "buildSeconds": 568.0,
+      "jobID": 111127996793
+    },
+    {
+      "runID": 37096704297,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "baseline",
+      "runnerSeconds": 610.0,
+      "buildSeconds": 561.0,
+      "jobID": 111127996846
+    },
+    {
+      "runID": 37096704297,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "main-read",
+      "runnerSeconds": 294.0,
+      "buildSeconds": 259.0,
+      "jobID": 111127996813
+    },
+    {
+      "runID": 37096704297,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "main-read",
+      "runnerSeconds": 279.0,
+      "buildSeconds": 246.0,
+      "jobID": 111127996800
+    },
+    {
+      "runID": 37096704297,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "main-read",
+      "runnerSeconds": 310.0,
+      "buildSeconds": 277.0,
+      "jobID": 111127996834
+    },
+    {
+      "runID": 37098047199,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "main-read",
+      "runnerSeconds": 321.0,
+      "buildSeconds": 276.0,
+      "jobID": 111131906726
+    },
+    {
+      "runID": 37098047199,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "baseline",
+      "runnerSeconds": 621.0,
+      "buildSeconds": 567.0,
+      "jobID": 111131906699
+    },
+    {
+      "runID": 37098047199,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "baseline",
+      "runnerSeconds": 501.0,
+      "buildSeconds": 426.0,
+      "jobID": 111131906720
+    },
+    {
+      "runID": 37098047199,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "main-read",
+      "runnerSeconds": 287.0,
+      "buildSeconds": 257.0,
+      "jobID": 111131906733
+    },
+    {
+      "runID": 37098047199,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "main-read",
+      "runnerSeconds": 310.0,
+      "buildSeconds": 271.0,
+      "jobID": 111131906683
+    },
+    {
+      "runID": 37098047199,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "baseline",
+      "runnerSeconds": 617.0,
+      "buildSeconds": 562.0,
+      "jobID": 111131906693
+    },
+    {
+      "runID": 37098777888,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "baseline",
+      "runnerSeconds": 585.0,
+      "buildSeconds": 518.0,
+      "jobID": 111134015251
+    },
+    {
+      "runID": 37098777888,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "main-read",
+      "runnerSeconds": 284.0,
+      "buildSeconds": 245.0,
+      "jobID": 111134015138
+    },
+    {
+      "runID": 37098777888,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "main-read",
+      "runnerSeconds": 308.0,
+      "buildSeconds": 270.0,
+      "jobID": 111134015117
+    },
+    {
+      "runID": 37098777888,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "baseline",
+      "runnerSeconds": 621.0,
+      "buildSeconds": 566.0,
+      "jobID": 111134015152
+    },
+    {
+      "runID": 37098777888,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "main-read",
+      "runnerSeconds": 319.0,
+      "buildSeconds": 283.0,
+      "jobID": 111134015188
+    },
+    {
+      "runID": 37098777888,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "baseline",
+      "runnerSeconds": 610.0,
+      "buildSeconds": 559.0,
+      "jobID": 111134015199
+    },
+    {
+      "runID": 37099481025,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "main-read",
+      "runnerSeconds": 333.0,
+      "buildSeconds": 297.0,
+      "jobID": 111136040739
+    },
+    {
+      "runID": 37099481025,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "baseline",
+      "runnerSeconds": 617.0,
+      "buildSeconds": 567.0,
+      "jobID": 111136040733
+    },
+    {
+      "runID": 37099481025,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "baseline",
+      "runnerSeconds": 604.0,
+      "buildSeconds": 556.0,
+      "jobID": 111136040749
+    },
+    {
+      "runID": 37099481025,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "main-read",
+      "runnerSeconds": 300.0,
+      "buildSeconds": 257.0,
+      "jobID": 111136040722
+    },
+    {
+      "runID": 37099481025,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "baseline",
+      "runnerSeconds": 622.0,
+      "buildSeconds": 565.0,
+      "jobID": 111136040738
+    },
+    {
+      "runID": 37099481025,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "main-read",
+      "runnerSeconds": 304.0,
+      "buildSeconds": 270.0,
+      "jobID": 111136040725
+    },
+    {
+      "runID": 37100477556,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "main-read",
+      "runnerSeconds": 245.0,
+      "buildSeconds": 207.0,
+      "jobID": 111138855089
+    },
+    {
+      "runID": 37100477556,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "baseline",
+      "runnerSeconds": 531.0,
+      "buildSeconds": 458.0,
+      "jobID": 111138855012
+    },
+    {
+      "runID": 37100477556,
+      "attempt": 1,
+      "sample": "2",
+      "treatment": "main-read",
+      "runnerSeconds": 281.0,
+      "buildSeconds": 252.0,
+      "jobID": 111138855056
+    },
+    {
+      "runID": 37100477556,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "baseline",
+      "runnerSeconds": 612.0,
+      "buildSeconds": 563.0,
+      "jobID": 111138855060
+    },
+    {
+      "runID": 37100477556,
+      "attempt": 1,
+      "sample": "3",
+      "treatment": "main-read",
+      "runnerSeconds": 303.0,
+      "buildSeconds": 270.0,
+      "jobID": 111138855114
+    },
+    {
+      "runID": 37100477556,
+      "attempt": 1,
+      "sample": "1",
+      "treatment": "baseline",
+      "runnerSeconds": 559.0,
+      "buildSeconds": 485.0,
+      "jobID": 111138855030
+    }
+  ]
+}
