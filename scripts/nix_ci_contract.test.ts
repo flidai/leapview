@@ -62,6 +62,15 @@ test('Nix application binaries retain function symbols for exact vulnerability c
   expect(recipe).toContain('dontStrip = true;')
 })
 
+test('Nix application startup and healthcheck execute the scanned absolute path', () => {
+  const recipe = readFileSync('nix/image.nix', 'utf8')
+  expect(recipe).toMatch(/Entrypoint = \[ "\/usr\/local\/bin\/leapview" \];/)
+  expect(recipe).toMatch(/Healthcheck = \{\s+Test = \[\s+"CMD"\s+"\/usr\/local\/bin\/leapview"\s+"healthcheck"/)
+  const compose = parse(readFileSync('deploy/compose/compose.yaml', 'utf8'))
+  expect(compose.services.leapview.healthcheck.test)
+    .toEqual(['CMD', '/usr/local/bin/leapview', 'healthcheck'])
+})
+
 test('static controller qualification preserves the host baseline and exact artifact transfer', () => {
   const { jobs } = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const build = jobs['cli-build']

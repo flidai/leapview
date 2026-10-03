@@ -32,6 +32,24 @@ def layer(entries, mode=0o755):
     return output.getvalue()
 
 
+def raw_member(name, data, kind=tarfile.REGTYPE):
+    member = tarfile.TarInfo(name)
+    member.type, member.mode, member.size = kind, 0o755, len(data)
+    return (member.tobuf(format=tarfile.USTAR_FORMAT) + data
+            + b'\0' * (-len(data) % tarfile.BLOCKSIZE))
+
+
+def pax_header(fields, kind=tarfile.XHDTYPE):
+    records = b''
+    for key, value in fields.items():
+        data = (key + '=' + value + '\n').encode()
+        length = len(data) + 2
+        while length != len(str(length)) + 1 + len(data):
+            length = len(str(length)) + 1 + len(data)
+        records += str(length).encode() + b' ' + data
+    return raw_member('PaxHeaders/entry', records, kind)
+
+
 class ArchiveGoEvidenceTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -47,8 +65,8 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
     def write_archive(self, layers, order=None, config_override=None):
         config = {'os': 'linux', 'architecture': 'amd64',
                   'rootfs': {'type': 'layers', 'diff_ids': [candidate.digest_bytes(data) for data in layers]},
-                  'config': {'Entrypoint': ['leapview'], 'Env': ['PATH=/usr/local/bin:/busybox/bin'],
-                             'Healthcheck': {'Test': ['CMD', 'leapview', 'healthcheck']}, 'Labels': {
+                  'config': {'Entrypoint': ['/usr/local/bin/leapview'], 'Env': ['PATH=/usr/local/bin:/busybox/bin'],
+                             'Healthcheck': {'Test': ['CMD', '/usr/local/bin/leapview', 'healthcheck']}, 'Labels': {
                       'org.opencontainers.image.source': 'https://github.com/flidai/leapview',
                       'org.opencontainers.image.revision': self.source['revision'],
                       'org.opencontainers.image.version': 'test', 'dev.leapview.build.dirty': 'false',
@@ -89,12 +107,93 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
         self.assertEqual(result['leapview'].read_bytes(), b'new-app')
         self.assertEqual(result['leapviewctl'].read_bytes(), b'new-controller')
 
+    def test_conflicting_extended_headers_cannot_hide_the_runtime_binary(self):
+        app = evidence.ENTRYPOINTS[0]['path']
+        pax = pax_header({'path': app})
+        gnu = raw_member('././@LongLink', b'usr/local/bin/unused\0', tarfile.GNUTYPE_LONGNAME)
+        chains = [pax + gnu, gnu + pax,
+                  pax + pax_header({'path': 'usr/local/bin/unused'}),
+                  gnu + raw_member('././@LongLink', app.encode() + b'\0', tarfile.GNUTYPE_LONGNAME)]
+        for index, headers in enumerate(chains):
+            with self.subTest(chain=index):
+                replacement = headers + raw_member('placeholder', b'clean-replacement') + b'\0' * 1024
+                self.write_archive([layer(self.files), replacement])
+                try:
+                    with self.assertRaisesRegex(ValueError, 'extended header'):
+                        self.extract()
+                finally:
+                    shutil.rmtree(self.root / 'binaries')
+
+    def test_global_pax_path_cannot_replace_the_scanned_path(self):
+        replacement = (pax_header({'path': evidence.ENTRYPOINTS[0]['path']}, tarfile.XGLTYPE)
+                       + raw_member('usr/local/bin/unused', b'clean-replacement') + b'\0' * 1024)
+        self.write_archive([layer(self.files), replacement])
+        with self.assertRaisesRegex(ValueError, 'extended header'):
+            self.extract()
+
+    def test_independent_pax_and_gnu_headers_and_gnu_name_link_pair_are_supported(self):
+        app = evidence.ENTRYPOINTS[0]['path']
+        replacement = pax_header({'path': app}) + raw_member('placeholder', b'new-app')
+        # Normal GNU archives can need both a long name and a long link target.
+        replacement += raw_member('././@LongLink', b'elsewhere/' + b'x' * 120 + b'\0', tarfile.GNUTYPE_LONGNAME)
+        replacement += raw_member('././@LongLink', b'/nix/store/' + b'y' * 120 + b'\0', tarfile.GNUTYPE_LONGLINK)
+        replacement += raw_member('placeholder', b'', tarfile.SYMTYPE) + b'\0' * 1024
+        self.write_archive([layer(self.files), replacement])
+        self.assertEqual(self.extract()['leapview'].read_bytes(), b'new-app')
+
+    def test_single_extended_header_replacement_is_supported_and_bounded(self):
+        app = evidence.ENTRYPOINTS[0]['path']
+        for header in [pax_header({'path': app}), raw_member('././@LongLink', app.encode() + b'\0', tarfile.GNUTYPE_LONGNAME)]:
+            self.write_archive([layer(self.files), header + raw_member('placeholder', b'new-app') + b'\0' * 1024])
+            self.assertEqual(self.extract()['leapview'].read_bytes(), b'new-app')
+            shutil.rmtree(self.root / 'binaries')
+            with patch.object(evidence, 'MAX_EXTENDED_HEADER_BYTES', 2), self.assertRaisesRegex(ValueError, 'byte limit'):
+                self.extract()
+            shutil.rmtree(self.root / 'binaries')
+
+    def test_pax_sparse_name_without_a_sparse_map_cannot_redirect_the_scan(self):
+        replacement = (pax_header({'GNU.sparse.name': evidence.ENTRYPOINTS[0]['path']})
+                       + raw_member('usr/local/bin/unused', b'clean-replacement') + b'\0' * 1024)
+        self.write_archive([layer(self.files), replacement])
+        with self.assertRaisesRegex(ValueError, 'extended header'):
+            self.extract()
+
+    def test_pax_size_override_cannot_expose_fake_headers_inside_a_file(self):
+        hidden = raw_member(evidence.ENTRYPOINTS[0]['path'], b'clean-replacement') + b'\0' * 1024
+        replacement = pax_header({'size': ''}) + raw_member('unrelated', hidden) + b'\0' * 1024
+        self.write_archive([layer(self.files), replacement])
+        with self.assertRaisesRegex(ValueError, 'extended header'):
+            self.extract()
+
+    def test_basename_launch_cannot_fall_through_to_an_unscanned_path(self):
+        content = io.BytesIO()
+        with tarfile.open(fileobj=content, mode='w') as archive:
+            for name, data in [*self.files, ('alternate/leapview', b'unscanned')]:
+                member = tarfile.TarInfo(name)
+                member.uid = member.gid = 1000
+                member.mode = 0o001 if name == self.files[0][0] else 0o755
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+        for override in [{'Entrypoint': ['leapview']},
+                         {'Healthcheck': {'Test': ['CMD', 'leapview', 'healthcheck']}}]:
+            self.write_archive([content.getvalue()], config_override={
+                'User': '1000:1000', 'Env': ['PATH=/usr/local/bin:/alternate'], **override})
+            with self.subTest(override=override), self.assertRaisesRegex(ValueError, 'redirects'):
+                self.extract()
+            shutil.rmtree(self.root / 'binaries')
+
+    def test_absolute_launch_keeps_additional_path_binaries_outside_scan_selection(self):
+        self.write_archive([layer([*self.files, ('alternate/leapview', b'unscanned')])], config_override={
+            'Env': ['PATH=/usr/local/bin:/alternate']})
+        self.assertEqual(self.extract()['leapview'].read_bytes(), b'app')
+
     def test_container_absolute_paths_are_canonicalized_without_host_extraction(self):
         self.write_archive([layer([('/' + path, data) for path, data in self.files])])
         self.assertEqual(self.extract()['leapview'].read_bytes(), b'app')
 
     def test_runtime_entrypoint_path_or_healthcheck_redirection_is_rejected(self):
-        for override in [{'Entrypoint': ['/evil']}, {'Env': ['PATH=/evil:/usr/local/bin']},
+        for override in [{'Entrypoint': ['/evil']}, {'Entrypoint': ['/usr/local/bin/leapview', 'serve']},
+                         {'Env': ['PATH=/evil:/usr/local/bin']},
                          {'Env': ['PATH=/usr/local/bin', 'PATH=/evil']},
                          {'Healthcheck': {'Test': ['CMD', '/evil', 'healthcheck']}}]:
             self.write_archive([layer(self.files)], config_override=override)

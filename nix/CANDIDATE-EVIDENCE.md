@@ -294,8 +294,16 @@ be byte-identical. `scripts/nix_archive_go_evidence.py` reads the nested layer
 archives without extracting arbitrary paths or executing candidate binaries.
 Regular overlays use final manifest layer order; links, non-directory ancestors,
 whiteouts affecting these paths, missing/non-executable files and oversized inputs
-are rejected. Image startup/healthcheck and PATH must select the declared application
-binary; configuration redirection is rejected. Absolute container-root paths in
+are rejected. Image startup and healthcheck must use the absolute
+`/usr/local/bin/leapview` path, so a permissions failure cannot make PATH lookup
+select an unscanned binary. The standard Compose healthcheck also uses that
+absolute path. PATH must still start with `/usr/local/bin` for container CLI
+operations that use command names. Configuration redirection is rejected.
+Layer metadata rejects global PAX headers, PAX size/sparse overrides, sparse files,
+mixed PAX/GNU headers and repeated headers of the same type, which Python and
+Docker's Go layer reader can interpret differently.
+Independent PAX headers and GNU long names/links remain supported; each extended
+header is bounded to 1 MiB. Absolute container-root paths in
 dockerTools store layers are normalized for lookup only, never used as host
 extraction paths. Extracted files use fixed private names without execute
 permissions. Each parsed layer must match

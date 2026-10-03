@@ -61,7 +61,7 @@ pkgs.dockerTools.buildLayeredImage {
   config = {
     User = "leapview:leapview";
     WorkingDir = "/app";
-    Entrypoint = [ "leapview" ];
+    Entrypoint = [ "/usr/local/bin/leapview" ];
     Cmd = [
       "serve"
       "--production"
@@ -89,7 +89,7 @@ pkgs.dockerTools.buildLayeredImage {
     Healthcheck = {
       Test = [
         "CMD"
-        "leapview"
+        "/usr/local/bin/leapview"
         "healthcheck"
       ];
       Interval = 30000000000;

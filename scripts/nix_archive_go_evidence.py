@@ -23,6 +23,44 @@ MAX_BINARY_BYTES = 256 * 1024**2
 MAX_REPORT_BYTES = 32 * 1024**2
 MAX_LAYER_BYTES = 8 * 1024**3
 MAX_ENTRIES = 200_000
+MAX_EXTENDED_HEADER_BYTES = 1024**2
+
+
+class LayerTarInfo(tarfile.TarInfo):
+    """Reject metadata that Python and Docker's Go reader interpret differently."""
+
+    def _apply_pax_info(self, headers, encoding, errors):
+        # Bounded layer entries fit the base tar size field. In particular, Go
+        # ignores an empty PAX size while Python uses zero and reads file payload
+        # as headers. Python also applies sparse names without a sparse map.
+        if 'size' in headers or any(key.startswith('GNU.sparse.') for key in headers):
+            raise ValueError('unsupported size or sparse image layer extended header')
+        super()._apply_pax_info(headers, encoding, errors)
+
+    def _proc_member(self, archive):
+        # Inspect raw metadata headers before tarfile recursively consumes them.
+        # Docker ignores global PAX headers; Python applies them to later files.
+        if self.type in (tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE, tarfile.GNUTYPE_SPARSE):
+            raise ValueError('unsupported image layer extended header')
+        extensions = getattr(archive, '_leapview_extensions', ())
+        if self.type in (tarfile.XHDTYPE, tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK):
+            # Python applies outer headers last; Go gives GNU names precedence
+            # over PAX and applies repeated headers in the opposite order.
+            if (self.type in extensions or (extensions and
+                    (self.type == tarfile.XHDTYPE or tarfile.XHDTYPE in extensions))):
+                raise ValueError('ambiguous image layer extended headers')
+            if not 0 < self.size <= MAX_EXTENDED_HEADER_BYTES:
+                raise ValueError('image layer extended header exceeds byte limit')
+            archive._leapview_extensions = (*extensions, self.type)
+            try:
+                result = super()._proc_member(archive)
+            finally:
+                archive._leapview_extensions = extensions
+        else:
+            result = super()._proc_member(archive)
+        if result.sparse is not None:
+            raise ValueError('unsupported sparse image layer extended header')
+        return result
 
 
 class HashedLayer:
@@ -94,10 +132,11 @@ def check_entrypoint_config(archive, artifact):
                 raise ValueError('image environment is missing or malformed')
             paths = [value[5:] for value in environment if value.startswith('PATH=')]
             healthcheck = config.get('Healthcheck')
-            if (config.get('Entrypoint') != ['leapview'] or len(paths) != 1
-                    or paths[0].split(':')[0] != '/usr/local/bin'
+            executable = '/' + ENTRYPOINTS[0]['path']
+            if (config.get('Entrypoint') != [executable]
+                    or len(paths) != 1 or paths[0].split(':')[0] != '/usr/local/bin'
                     or not isinstance(healthcheck, dict)
-                    or healthcheck.get('Test') != ['CMD', 'leapview', 'healthcheck']):
+                    or healthcheck.get('Test') != ['CMD', executable, 'healthcheck']):
                 raise ValueError('image redirects a declared Go entrypoint')
             return
     raise ValueError('missing image entrypoint configuration')
@@ -130,7 +169,7 @@ def extract(archive, artifact, destination):
             index = indexes[name]
             source = HashedLayer(outer.extractfile(member))
             seen_paths = set()
-            with tarfile.open(fileobj=source, mode='r|') as layer:
+            with tarfile.open(fileobj=source, mode='r|', tarinfo=LayerTarInfo) as layer:
                 for entry in layer:
                     count += 1
                     total += entry.size
