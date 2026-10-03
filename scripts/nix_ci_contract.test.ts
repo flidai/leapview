@@ -10,6 +10,50 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('orchestration archive manifest checks run in the CI contract lane', () => {
+  const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_orchestration_cache.py'], { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stdout + result.stderr)
+  expect(result.status).toBe(0)
+})
+
+test('orchestration cache experiment authorizes only the exact main producer', () => {
+  const workflow = parse(readFileSync('.github/workflows/orchestration-cache-experiment.yml', 'utf8'))
+  const identity = workflow.jobs.resolve.steps.find((step: any) => step.id === 'identity')
+  const root = mkdtempSync(join(tmpdir(), 'nix-cache-authority-'))
+  try {
+    writeFileSync(join(root, 'git'), '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_HEAD"\n', { mode: 0o755 })
+    const head = 'a'.repeat(40)
+    for (const fixture of [
+      { operation: 'produce', ref: 'refs/heads/main', source: '', sha: head, ok: true },
+      { operation: 'produce', ref: 'refs/heads/experiment', source: '', sha: head, ok: false },
+      { operation: 'produce', ref: 'refs/heads/main', source: head, sha: head, ok: false },
+      { operation: 'produce', ref: 'refs/heads/main', source: '', sha: 'b'.repeat(40), ok: false },
+      { operation: 'measure', ref: 'refs/heads/experiment', source: head, sha: 'b'.repeat(40), ok: true },
+      { operation: 'measure', ref: 'refs/heads/experiment', source: 'b'.repeat(40), sha: head, ok: false },
+      { operation: 'unknown', ref: 'refs/heads/main', source: '', sha: head, ok: false },
+    ]) {
+      const result = spawnSync('bash', ['-c', identity.run], { encoding: 'utf8', env: {
+        ...process.env, PATH: `${root}:${process.env.PATH}`, FIXTURE_HEAD: head,
+        OPERATION: fixture.operation, SOURCE_REVISION: fixture.source,
+        GITHUB_REF: fixture.ref, GITHUB_SHA: fixture.sha, DEFAULT_BRANCH: 'main',
+        INPUT_ID: 'c'.repeat(64), GITHUB_OUTPUT: join(root, 'outputs'),
+      } })
+      expect(result.status === 0).toBe(fixture.ok)
+    }
+    const saves = Object.entries(workflow.jobs).flatMap(([job, value]: [string, any]) =>
+      (value.steps ?? []).filter((step: any) => step.uses?.startsWith('actions/cache/save@')).map(() => job))
+    expect(saves).toEqual(['producer'])
+    expect(workflow['cache-mode']).toBe('read')
+    expect(workflow.jobs.producer['cache-mode']).toBe('write-only')
+    expect(Object.entries(workflow.jobs).filter(([job, value]: [string, any]) =>
+      job !== 'producer' && value['cache-mode'] !== undefined)).toEqual([])
+    expect(workflow.jobs.producer.needs).toBe('resolve')
+    expect(workflow.jobs.measure.strategy.matrix.sample).toEqual(['1', '2', '3'])
+    expect(workflow.jobs.measure.strategy.matrix.treatment).toEqual(['baseline', 'restore'])
+    expect(workflow.jobs.measure.steps.find((step: any) => step.id === 'restore').with['restore-keys']).toBeUndefined()
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
 test('static controller qualification preserves the host baseline and exact artifact transfer', () => {
   const { jobs } = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const build = jobs['cli-build']
