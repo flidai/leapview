@@ -45,6 +45,9 @@ customer site.
 | [ADR-0024](0024-use-named-lists-for-authored-definitions.md) | Use named lists for authored definitions | Accepted | 2026-09-14 | Complete | — |
 | [ADR-0025](0025-adopt-typed-resource-permissions-and-scoped-api-credentials.md) | Adopt typed resource permissions and scoped API credentials | Accepted | 2026-09-17 | Partial; typed contracts, assignments, durable grants, private operation slices, and native delivery planning/build qualified | [ADR-0026](0026-preserve-authority-across-governed-operations.md), authority flow, reference emphasis, and implementation sequencing |
 | [ADR-0026](0026-preserve-authority-across-governed-operations.md) | Preserve authority across governed operations | Accepted | 2026-09-17 | Partial; restricted consumption, scheduled/delegated refresh, delivery planning/build, discovery, cache, and rollback slices qualified | — |
+| [ADR-0028](0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md) | Share an open deployment stack for self-hosted and managed LeapView | Proposed | 2026-09-28 | Pending | — |
+
+ADR-0027 is reserved by the [credential lifecycle proposal in PR #785](https://github.com/flidai/leapview/pull/785); it is not accepted by this deployment proposal.
 
 ## Companion specifications
 
@@ -68,6 +71,8 @@ historical records.
 - [Project namespace conformance](specifications/project-namespace-conformance.md)
 - [ADR-0018 final conformance evidence reconciliation](specifications/project-namespace-final-conformance-evidence.md)
 - [Analytics development CLI contract](specifications/analytics-development-cli-contract.md)
+- [Deployment stack reuse research](specifications/deployment-stack-reuse-research.md)
+- [Deployment profile qualification](specifications/deployment-profile-qualification.md)
 - [Resource authorization authority flow](specifications/resource-authorization-authority-flow.md)
 
 ## Conventions

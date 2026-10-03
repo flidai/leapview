@@ -1,6 +1,6 @@
 # Managed deployment scaffold
 
-First implementation of the [target deployment architecture (ADR-0025, PR #744)](https://github.com/flidai/leapview/pull/744).
+First implementation of the [target deployment architecture (ADR-0028, PR #744)](https://github.com/flidai/leapview/pull/744).
 This is an **operator scaffold, not a qualified production installation**. It
 creates no live resources through CI. Keep using the existing deployment path
 until the lifecycle integration and recovery exercises below are complete.
