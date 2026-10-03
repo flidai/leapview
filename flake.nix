@@ -119,12 +119,14 @@
         };
         runtime-security = pkgs.mkShell {
           packages = [
+            toolchain.go
             pkgs.syft
             pkgs.grype
             pkgs.skopeo
             pkgs.gh
             pkgs.python3
           ];
+          inherit (toolchain) GOTOOLCHAIN;
         };
       };
       checks.${system}.toolchain = import ./nix/check-toolchain.nix {

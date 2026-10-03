@@ -19,13 +19,13 @@ WORKFLOW = 'flidai/leapview/.github/workflows/nix-candidate.yml'
 MAX_PREDICATE_BYTES = 16 * 1024 * 1024
 
 
-def verified_record(source_root, paths):
+def verified_record(source_root, paths, binary_verifier):
     # Only source identity comes from the candidate checkout. candidate.ROOT,
     # imported verifier code, policy and assessments stay at the protected revision.
     archive, manifest, runtime = map(Path, paths)
     return candidate.verify(candidate.read_json_file(manifest), archive,
                             candidate.checkout_source(source_root), kind=KIND,
-                            runtime_dir=runtime)
+                            runtime_dir=runtime, go_dir=runtime / 'go', binary_verifier=binary_verifier)
 
 
 def bound_spdx(record, paths):
@@ -44,32 +44,33 @@ def bound_spdx(record, paths):
     return candidate.read_json(data, MAX_PREDICATE_BYTES)
 
 
-def unchanged(source_root, paths, before):
-    after = verified_record(source_root, paths)
+def unchanged(source_root, paths, before, binary_verifier):
+    after = verified_record(source_root, paths, binary_verifier)
     if candidate.canonical_bytes(before) != candidate.canonical_bytes(after):
         raise ValueError('candidate changed during publication verification')
 
 
-def record(source_root, paths):
+def record(source_root, paths, binary_verifier):
     result = candidate.collect(Path(paths[0]), KIND, candidate.checkout_source(source_root),
-                               runtime_dir=Path(paths[2]))
+                               runtime_dir=Path(paths[2]), go_dir=Path(paths[2]) / 'go',
+                               binary_verifier=binary_verifier)
     bound_spdx(result, paths)
     return result
 
 
-def prepare(source_root, paths, layout):
-    record = verified_record(source_root, paths)
+def prepare(source_root, paths, layout, binary_verifier):
+    record = verified_record(source_root, paths, binary_verifier)
     bound_spdx(record, paths)
     digest = oci.export_layout(Path(paths[0]), record, layout)
     result = oci.bind(layout, digest, [record], [PLATFORM])
-    unchanged(source_root, paths, record)
+    unchanged(source_root, paths, record, binary_verifier)
     return result
 
 
-def publish(source_root, paths, layout, run_id, attempt):
+def publish(source_root, paths, layout, run_id, attempt, binary_verifier):
     if any(type(value) is not int or value <= 0 for value in [run_id, attempt]):
         raise ValueError('publication requires a positive workflow run and attempt identity')
-    record = verified_record(source_root, paths)
+    record = verified_record(source_root, paths, binary_verifier)
     bound_spdx(record, paths)
     descriptor = candidate.read_json_file(oci.local_file(layout, 'index.json'))['manifests'][0]
     digest = descriptor['digest']
@@ -91,7 +92,7 @@ def publish(source_root, paths, layout, run_id, attempt):
             raise ValueError('published registry digest differs from verified OCI content')
     image = repository + '@' + digest
     binding = registry.bind_registry(image, KIND, [record], [PLATFORM])
-    unchanged(source_root, paths, record)
+    unchanged(source_root, paths, record, binary_verifier)
     result = {'schemaVersion': 1, 'image': image, 'tag': tag,
               'source': record['source'], 'candidateDigest': record['candidateDigest'],
               'registryBindingDigest': binding['registryBindingDigest'], 'releaseAdmission': False}
@@ -100,15 +101,15 @@ def publish(source_root, paths, layout, run_id, attempt):
     return result
 
 
-def verify_signed(source_root, paths, image, signer_revision):
-    record = verified_record(source_root, paths)
+def verify_signed(source_root, paths, image, signer_revision, binary_verifier):
+    record = verified_record(source_root, paths, binary_verifier)
     document = bound_spdx(record, paths)
     result = signed.collect(image, KIND, [record], [paths], [PLATFORM], WORKFLOW, signer_revision)
     # collect also matches SPDX against the bound report; retain this explicit
     # read before any network call to enforce the producer's smaller size budget.
     if candidate.digest_bytes(candidate.canonical_bytes(document)) != result['spdx'][0]['predicateSHA256']:
         raise ValueError('signed SPDX differs from the producer document')
-    unchanged(source_root, paths, record)
+    unchanged(source_root, paths, record, binary_verifier)
     return result
 
 
@@ -117,6 +118,7 @@ def main():
     parser.add_argument('operation', choices=['record', 'prepare', 'publish', 'verify-signed'])
     parser.add_argument('--source-root', type=Path, required=True)
     parser.add_argument('--source-revision', required=True)
+    parser.add_argument('--binary-verifier', type=Path, required=True)
     parser.add_argument('--candidate', nargs=3, required=True,
                         metavar=('ARCHIVE', 'MANIFEST', 'RUNTIME_EVIDENCE'))
     parser.add_argument('--layout', type=Path)
@@ -139,21 +141,23 @@ def main():
                     or args.image or args.signer_revision or args.github_output
                     or args.output.resolve() != Path(args.candidate[1]).resolve()):
                 raise ValueError('record requires the candidate manifest as its only output')
-            result = record(args.source_root, args.candidate)
+            result = record(args.source_root, args.candidate, args.binary_verifier)
         elif args.operation == 'verify-signed':
             if (not args.image or not args.signer_revision or args.layout
                     or args.run_id is not None or args.run_attempt is not None or args.github_output):
                 raise ValueError('signature verification requires image and protected signer revision only')
-            result = verify_signed(args.source_root, args.candidate, args.image, args.signer_revision)
+            result = verify_signed(args.source_root, args.candidate, args.image, args.signer_revision,
+                                   args.binary_verifier)
         else:
             if not args.layout or args.image or args.signer_revision:
                 raise ValueError('content publication requires a layout and no signed-image arguments')
             if args.operation == 'prepare':
                 if args.run_id is not None or args.run_attempt is not None or args.github_output:
                     raise ValueError('preparation cannot publish or export signing outputs')
-                result = prepare(args.source_root, args.candidate, args.layout)
+                result = prepare(args.source_root, args.candidate, args.layout, args.binary_verifier)
             else:
-                result = publish(args.source_root, args.candidate, args.layout, args.run_id, args.run_attempt)
+                result = publish(args.source_root, args.candidate, args.layout, args.run_id, args.run_attempt,
+                                 args.binary_verifier)
         if candidate.canonical_bytes(candidate.checkout_source(args.source_root)) != candidate.canonical_bytes(source):
             raise ValueError('candidate source changed during publication verification')
         if len(json.dumps(result, indent=2).encode()) + 1 > candidate.MAX_JSON_BYTES:

@@ -234,6 +234,7 @@ def main():
     parser.add_argument('--layout', type=Path, required=True)
     parser.add_argument('--manifest-digest')
     parser.add_argument('--platform', action='append', required=True)
+    parser.add_argument('--binary-verifier', type=Path)
     parser.add_argument('--kind', choices=['application-image', 'site-image'], required=True)
     parser.add_argument('--candidate', nargs=3, action='append', required=True,
                         metavar=('ARCHIVE', 'MANIFEST', 'RUNTIME_EVIDENCE'))
@@ -245,7 +246,9 @@ def main():
     try:
         source = candidate.checkout_source(candidate.ROOT)
         records = [candidate.verify(candidate.read_json_file(Path(manifest)), Path(archive), source,
-                                    kind=args.kind, runtime_dir=Path(runtime))
+                                    kind=args.kind, runtime_dir=Path(runtime),
+                                    go_dir=Path(runtime) / 'go' if args.binary_verifier is not None else None,
+                                    binary_verifier=args.binary_verifier)
                    for archive, manifest, runtime in args.candidate]
         if args.operation == 'export':
             if len(records) != 1 or args.platform != [records[0]['artifact']['platform']] or args.output or args.verify or args.manifest_digest:
