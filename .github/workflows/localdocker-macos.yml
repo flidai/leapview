@@ -13,6 +13,8 @@ on:
 permissions:
   contents: read
 
+cache-mode: read
+
 concurrency:
   group: localdocker-macos-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -33,3 +35,226 @@ jobs:
           cache: false
       - name: Test local Docker endpoint policy
         run: go test -count=1 ./internal/app/cli/localdocker
+
+  mount-seed:
+    if: ${{ github.event_name != 'pull_request' }}
+    name: Isolated amd64 Go mount seed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      revision: ${{ steps.identity.outputs.revision }}
+      version: ${{ steps.identity.outputs.version }}
+      build_time: ${{ steps.identity.outputs.build_time }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind the isolated producer to current application and compiler inputs
+        id: identity
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          test "$revision" = "$GITHUB_SHA"
+          git diff --quiet HEAD^ HEAD -- . ':(exclude).github'
+          version="$(tr -d '[:space:]' < VERSION)+candidate.${revision:0:12}"
+          {
+            echo "revision=$revision"
+            echo "version=$version"
+            echo "build_time=$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/mount-evidence"
+          docker version > "$RUNNER_TEMP/mount-evidence/docker-version.txt"
+          sha256sum Dockerfile go.mod go.sum > "$RUNNER_TEMP/mount-evidence/inputs.sha256"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        id: builder
+      - name: Recreate code-only Go mounts using compatible main-layer reads
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            BUILD_VERSION=${{ steps.identity.outputs.version }}
+            BUILD_REVISION=${{ steps.identity.outputs.revision }}
+            BUILD_TIME=${{ steps.identity.outputs.build_time }}
+            BUILD_DIRTY=false
+            BUILD_RELEASE=false
+          outputs: type=cacheonly
+          push: false
+          no-cache-filters: sourcegen,build,extension-supply
+          cache-from: type=gha,scope=production-amd64
+      - name: Extract only the two Go cache mounts without loading a duplicate extraction image
+        env:
+          BUILDER: ${{ steps.builder.outputs.name }}
+        run: |
+          set -euo pipefail
+          docker buildx inspect "$BUILDER" > "$RUNNER_TEMP/mount-evidence/builder.txt"
+          mkdir -p "$RUNNER_TEMP/mount-helper"
+          cat > "$RUNNER_TEMP/mount-helper/Dockerfile" <<'DOCKER'
+          FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS extract
+          RUN --mount=type=cache,target=/root/.cache/go-build \
+              --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,sharing=locked \
+              mkdir -p /out/build /out/modules && cp -a /root/.cache/go-build/. /out/build/ && cp -a /go/pkg/mod/. /out/modules/
+          FROM scratch
+          COPY --from=extract /out/ /
+          DOCKER
+          docker buildx build --builder "$BUILDER" --platform linux/amd64 \
+            --output type=tar,dest=- "$RUNNER_TEMP/mount-helper" \
+            | gzip -6 > "$RUNNER_TEMP/mount-evidence/go-mounts.tar.gz"
+          python3 - <<'MANIFEST'
+          import hashlib, json, os, tarfile
+          from pathlib import Path, PurePosixPath
+          root = Path(os.environ['RUNNER_TEMP']) / 'mount-evidence'
+          archive = root / 'go-mounts.tar.gz'
+          with tarfile.open(archive) as data:
+              files = [member for member in data.getmembers() if member.isfile()]
+          build = [member for member in files if PurePosixPath(member.name).parts[0] == 'build']
+          modules = [member for member in files if PurePosixPath(member.name).parts[0] == 'modules']
+          assert len(build) > 100 and len(modules) > 100, 'incomplete Go mount extraction'
+          # Measurement storage bound; no production retention policy is implied.
+          assert archive.stat().st_size < 2_000_000_000
+          with archive.open('rb') as stream:
+              checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
+          (root / 'manifest.json').write_text(json.dumps({
+              'schemaVersion': 1, 'sourceRevision': os.environ['GITHUB_SHA'],
+              'context': 'application-linux-amd64-CGO1-duckdb_arrow-go1.27.1-bookworm-69a7b9788769',
+              'archiveSHA256': checksum, 'archiveBytes': archive.stat().st_size,
+              'buildFiles': len(build), 'buildLogicalBytes': sum(member.size for member in build),
+              'moduleFiles': len(modules), 'moduleLogicalBytes': sum(member.size for member in modules),
+          }, indent=2) + '\n')
+          MANIFEST
+      - name: Transfer the isolated mount data for this run only
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: isolated-mount-seed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mount-evidence/
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  mount-screen:
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: mount-seed
+    name: Persistent amd64 Go mounts (${{ matrix.treatment }}, pair ${{ matrix.sample }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: ['1', '2', '3']
+        treatment: [baseline, mounts]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.mount-seed.outputs.revision }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        id: builder
+      - name: Restore only this run's hash-bound archive
+        if: matrix.treatment == 'mounts'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.mount-seed.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/mount-restore
+      - name: Validate and inject into the fresh compiler context
+        if: matrix.treatment == 'mounts'
+        env:
+          BUILDER: ${{ steps.builder.outputs.name }}
+          EXPECTED_REVISION: ${{ needs.mount-seed.outputs.revision }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+          sha256sum -c "$RUNNER_TEMP/mount-restore/inputs.sha256"
+          python3 - <<'RESTORE'
+          import hashlib, json, os, tarfile
+          from pathlib import Path, PurePosixPath
+          root = Path(os.environ['RUNNER_TEMP']) / 'mount-restore'
+          manifest = json.loads((root / 'manifest.json').read_text())
+          assert manifest['schemaVersion'] == 1
+          assert manifest['archiveBytes'] == (root / 'go-mounts.tar.gz').stat().st_size
+          assert manifest['sourceRevision'] == os.environ['EXPECTED_REVISION']
+          assert manifest['context'] == 'application-linux-amd64-CGO1-duckdb_arrow-go1.27.1-bookworm-69a7b9788769'
+          archive = root / 'go-mounts.tar.gz'
+          with archive.open('rb') as stream:
+              assert hashlib.file_digest(stream, 'sha256').hexdigest() == manifest['archiveSHA256']
+          with tarfile.open(archive) as data:
+              for member in data.getmembers():
+                  path = PurePosixPath(member.name)
+                  assert not path.is_absolute() and '..' not in path.parts
+                  if not path.parts:
+                      assert member.isdir(), 'archive root must be a directory'
+                      continue
+                  assert path.parts[0] in ('build', 'modules')
+                  assert member.isdir() or member.isfile() or member.issym() or member.islnk()
+              data.extractall(root / 'seed', filter='data')
+          RESTORE
+          cat > "$RUNNER_TEMP/mount-restore/seed/Dockerfile" <<'DOCKER'
+          FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
+          COPY . /seed
+          RUN --mount=type=cache,target=/root/.cache/go-build \
+              --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,sharing=locked \
+              cp -a /seed/build/. /root/.cache/go-build/ && cp -a /seed/modules/. /go/pkg/mod/
+          DOCKER
+          docker buildx build --builder "$BUILDER" --platform linux/amd64 "$RUNNER_TEMP/mount-restore/seed"
+      - name: Build the same local candidate with identical ordinary-layer reads
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            BUILD_VERSION=${{ needs.mount-seed.outputs.version }}
+            BUILD_REVISION=${{ needs.mount-seed.outputs.revision }}
+            BUILD_TIME=${{ needs.mount-seed.outputs.build_time }}
+            BUILD_DIRTY=false
+            BUILD_RELEASE=false
+          load: true
+          push: false
+          tags: leapview-mount-screen:local
+          cache-from: type=gha,scope=production-amd64
+      - name: Verify exact runtime identity and retain the outcome
+        env:
+          EXPECTED_REVISION: ${{ needs.mount-seed.outputs.revision }}
+          EXPECTED_VERSION: ${{ needs.mount-seed.outputs.version }}
+          SAMPLE: ${{ matrix.sample }}
+          TREATMENT: ${{ matrix.treatment }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mount-result"
+          docker version > "$RUNNER_TEMP/mount-result/docker-version.txt"
+          docker buildx inspect > "$RUNNER_TEMP/mount-result/builder.txt"
+          sha256sum Dockerfile go.mod go.sum > "$RUNNER_TEMP/mount-result/inputs.sha256"
+          docker image inspect leapview-mount-screen:local > "$RUNNER_TEMP/mount-result/image.json"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --entrypoint /usr/local/libexec/leapviewctl leapview-mount-screen:local version --json \
+            > "$RUNNER_TEMP/mount-result/runtime.json"
+          python3 - <<'IDENTITY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'mount-result'
+          image = json.loads((root / 'image.json').read_text())[0]
+          assert image['Architecture'] == 'amd64' and image['Os'] == 'linux'
+          assert image['Config']['Labels']['org.opencontainers.image.revision'] == os.environ['EXPECTED_REVISION']
+          runtime = json.loads((root / 'runtime.json').read_text())
+          assert runtime['revision'] == os.environ['EXPECTED_REVISION']
+          assert runtime['version'] == os.environ['EXPECTED_VERSION']
+          assert runtime['dirty'] is False and runtime['development'] is True
+          (root / 'measurement.json').write_text(json.dumps({
+              'schemaVersion': 1, 'sample': os.environ['SAMPLE'], 'treatment': os.environ['TREATMENT'],
+              'sourceRevision': runtime['revision'], 'runID': os.environ['GITHUB_RUN_ID'],
+              'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'scope': 'isolated artifact-based Go mount screening; no production cache publisher or release admission',
+          }, indent=2) + '\n')
+          IDENTITY
+      - name: Retain consumer outcome
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-mount-${{ matrix.treatment }}-${{ matrix.sample }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mount-result/
+          retention-days: 14
+          if-no-files-found: warn
