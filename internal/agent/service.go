@@ -28,7 +28,7 @@ const (
 )
 
 func IsBusy(err error) bool {
-	return errors.Is(err, ErrBusy)
+	return errors.Is(err, ErrBusy) || agentcore.IsCode(err, agentcore.ErrorCodeBusy)
 }
 
 type Scope struct {
