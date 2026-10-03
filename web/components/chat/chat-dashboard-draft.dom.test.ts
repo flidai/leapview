@@ -158,6 +158,13 @@ test(`visual Preview edits and closes safely at width ${width}`, async () => {
     await page.waitForFunction(() => !document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-dashboard-draft'))
     await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', { detail: { artifactId: 'artifact_sales', title: 'Sales by region' }, bubbles: true, composed: true })))
     const details = page.locator('lv-chat-visual-panel')
+    if (width > 768) {
+      const normal = await page.locator('lv-chat-page').evaluate((host: any) => ({
+        chat: host.shadowRoot.querySelector('.main').getBoundingClientRect().x,
+        visual: host.shadowRoot.querySelector('lv-chat-visual-panel').getBoundingClientRect().x,
+      }))
+      expect(normal.chat).toBeLessThan(normal.visual)
+    }
     await details.getByRole('button', { name: 'Preview', exact: true }).click()
     const preview = page.locator('lv-chat-dashboard-draft')
     await preview.getByRole('heading', { name: 'Dashboard preview', exact: true }).waitFor()
@@ -181,7 +188,17 @@ test(`visual Preview edits and closes safely at width ${width}`, async () => {
       return event.detail.previewArtifactId
     })
     expect(focus).toBe('artifact_sales')
+    await page.locator('lv-chat-page').evaluate(async (host: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const original = host.visuals.artifact_sales
+      mergePatch({
+        visuals: { artifact_edited: { ...original, visualID: 'artifact_edited', spec: { ...original.spec, title: 'Edited sales' } } },
+        agent: { transcript: [...host.agent.transcript, { id: 'tool-edited', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'artifact_edited', type: 'bar' } }] },
+      })
+      await host.updateComplete
+    })
     if (width <= 768) await page.locator('.mobile-dashboard-toggle').click()
+    expect(await preview.evaluate((host: any) => host.sourceArtifactId)).toBe('artifact_edited')
     await preview.getByRole('button', { name: 'Back to chat', exact: true }).click()
     await details.getByRole('button', { name: 'Preview', exact: true }).waitFor()
     expect(await preview.count()).toBe(0)
@@ -364,6 +381,62 @@ test('chat dashboard draft moves side legends below the chart without hiding the
   } finally {
     await page.close()
   }
+})
+
+test('composed drafts stay beside chat until Preview and preserve explicit workspace across edits', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    const visuals = [{ id: 'revenue', artifactId: 'revenue_artifact', title: 'Revenue' }]
+    const positions = () => page.locator('lv-chat-page').evaluate((host: any) => ({
+      chat: host.shadowRoot.querySelector('.main').getBoundingClientRect().x,
+      canvas: host.shadowRoot.querySelector('lv-chat-dashboard-draft').getBoundingClientRect().x,
+      overflow: document.documentElement.scrollWidth > innerWidth,
+    }))
+    await publishDashboardDraft(page, 'loaded', 'Revenue dashboard', visuals)
+    let layout = await positions()
+    expect(layout.chat).toBeLessThan(layout.canvas)
+    expect(await page.locator('lv-chat-page').locator('h1').innerText()).not.toBe('Agent')
+    await publishDashboardDraft(page, 'updated', 'Revenue dashboard', visuals)
+    layout = await positions()
+    expect(layout.chat).toBeLessThan(layout.canvas)
+    const draft = page.locator('lv-chat-dashboard-draft')
+    await draft.getByRole('button', { name: 'Preview', exact: true }).click()
+    layout = await positions()
+    expect(layout.canvas).toBeLessThan(layout.chat)
+    await publishDashboardDraft(page, 'edited-in-workspace', 'Revenue dashboard', visuals)
+    layout = await positions()
+    expect(layout.canvas).toBeLessThan(layout.chat)
+    expect(layout.overflow).toBe(false)
+    await draft.getByRole('button', { name: 'Back to chat', exact: true }).click()
+    layout = await positions()
+    expect(layout.chat).toBeLessThan(layout.canvas)
+    expect(await draft.getByRole('button', { name: 'Preview', exact: true }).evaluate((button: HTMLElement) => button === (button.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+    await draft.getByRole('button', { name: 'Preview', exact: true }).click()
+    await page.locator('lv-chat-page').evaluate((host: any) => host.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', { detail: { artifactId: 'revenue_artifact' }, bubbles: true, composed: true })))
+    layout = await positions()
+    expect(layout.chat).toBeLessThan(layout.canvas)
+    await draft.getByRole('button', { name: 'Back to chat', exact: true }).click()
+    await draft.waitFor({ state: 'detached' })
+  } finally { await page.close() }
+})
+
+test('mobile composed workspace closes to an interactive chat in one action', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    await publishDashboardDraft(page, 'mobile-workspace', 'Revenue', [{ id: 'revenue', artifactId: 'revenue_artifact', title: 'Revenue' }])
+    const draft = page.locator('lv-chat-dashboard-draft')
+    await draft.getByRole('button', { name: 'Preview', exact: true }).click()
+    await draft.getByRole('button', { name: 'Back to chat', exact: true }).click()
+    await draft.waitFor({ state: 'detached' })
+    expect(await page.locator('lv-chat-page').evaluate((host: any) => host.shadowRoot.querySelector('.main').inert)).toBe(false)
+    await page.locator('lv-chat-composer').getByRole('combobox').fill('Next question')
+    await page.locator('.mobile-dashboard-toggle').click()
+    await draft.getByRole('button', { name: 'Preview', exact: true }).waitFor()
+  } finally { await page.close() }
 })
 
 test('always-labelled trend previews scroll inside mobile cards without changing authored labels', async () => {

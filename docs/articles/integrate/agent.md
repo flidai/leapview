@@ -22,7 +22,8 @@ See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, h
 ## Build a dashboard in chat
 
 Ask the agent to build a dashboard and describe the charts you need. A dashboard
-preview fills the main workspace, with the agent on the right. Continue chatting to add a chart, change
+draft appears beside the main chat. Choose **Preview** to fill the main workspace
+with the dashboard canvas and move the agent to the right. Continue chatting to add a chart, change
 one, or apply a filter. Select **Ask about visual** on a chart to put its identity
 in the composer, then describe the change before sending.
 

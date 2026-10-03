@@ -46,6 +46,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   @state() private dashboardPickerOpen = false
   @state() private dashboardDestination?: ChatDashboardResult
   @state() private dashboardPreviewOpen = false
+  @state() private dashboardWorkspace = false
   @state() private selectedDraftVisualID = ''
   @state() private previewArtifactID = ''
   private requestedPreviewID = ''
@@ -147,6 +148,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		if (this.trackedConversationID !== null && this.trackedConversationID !== conversationID) {
       this.closeVisual(false)
       this.dashboardDestination = undefined
+      this.dashboardWorkspace = false
       this.previewArtifactID = ''
       this.requestedPreviewID = ''
       this.dashboardPreviewOpen = false
@@ -246,7 +248,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const showVisualPanel = !this.dashboardPreviewOpen && !this.previewEditing && Boolean(selectedVisual && !isList && !isNew && (!this.dashboardDraft || !draftContainsSelectedVisual))
     const showDashboardDraft = Boolean(dashboardDraft && !showVisualPanel) && !isList && !isNew && this.dashboardPreviewOpen
     return html`
-      <div class=${showDashboardDraft ? 'route dashboard-open' : showVisualPanel ? 'route visual-open' : 'route'} @lv-chat-submit=${this.preparePreviewTurn}>
+      <div class=${showDashboardDraft ? this.dashboardWorkspace ? 'route dashboard-open dashboard-workspace' : 'route dashboard-open' : showVisualPanel ? 'route visual-open' : 'route'} @lv-chat-submit=${this.preparePreviewTurn}>
         <section class=${['main', isList ? 'list-main' : '', isNew ? chatReturnHref() ? 'new-main with-return' : 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats" ?inert=${Boolean((showDashboardDraft || showVisualPanel) && this.compactViewport)}>
           ${isList || isNew && !chatReturnHref() ? null : this.renderConversationTitlebar(isNew ? 'New chat' : title, Boolean(dashboardDraft && !this.dashboardPreviewOpen))}
           <div class="body">
@@ -261,6 +263,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             .selectedVisualId=${this.selectedDraftVisualID}
             .busy=${this.pending}
             .sourceArtifactId=${this.previewArtifactID}
+            .workspace=${this.dashboardWorkspace}
+            @lv-chat-dashboard-preview=${this.enterDashboardWorkspace}
             @lv-chat-dashboard-save-visual=${() => { this.dashboardPickerOpen = true }}
             conversation-id=${agent.activeConversationId ?? ''}
             .modal=${this.compactViewport}
@@ -302,7 +306,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private renderConversationTitlebar(title: string, showDraftToggle = false) {
     return html`
       <div class="conversation-titlebar">
-        <h1>${this.dashboardPreviewOpen ? 'Agent' : title}</h1>
+        <h1>${this.dashboardWorkspace ? 'Agent' : title}</h1>
         ${chatReturnHref() ? html`<a class="return-chat" href=${chatReturnHref()!} aria-label="Return to page" title="Return to page" @click=${(event: MouseEvent) => { event.preventDefault(); returnFromFullChat() }}>${lucideIcon(X, { size: 16 })}</a>` : null}
         ${showDraftToggle && this.previewDraft ? html`
           <button class="mobile-dashboard-toggle" type="button" @click=${this.openDashboardPreview}>
@@ -370,6 +374,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const artifactId = event.detail?.artifactId ?? ''
     if (!artifactId || !this.visuals[artifactId]) return
     this.previewEditing = false
+    this.dashboardWorkspace = false
     this.previewArtifactID = ''
     this.dashboardPreviewOpen = false
     this.clearPreviewURL()
@@ -416,6 +421,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private addAnotherVisual = (event: CustomEvent<ChatDashboardResult>): void => {
     this.dashboardDestination = event.detail
+    this.dashboardWorkspace = false
     this.dashboardPreviewOpen = false
     this.previewArtifactID = ''
     this.requestedPreviewID = ''
@@ -449,6 +455,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private previewSelectedVisual = (): void => {
     if (this.pending || !this.selectedVisualID || !this.isPreviewableArtifact(this.selectedVisualID)) return
     this.previewArtifactID = this.selectedVisualID
+    this.dashboardWorkspace = true
     this.previewEditing = false
     this.previewConversationID = this.agent.activeConversationId
     this.previewQueryRevision = this.latestQueryArtifactID()
@@ -474,6 +481,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
     if (this.requestedPreviewID && this.isPreviewableArtifact(this.requestedPreviewID)) {
       this.previewArtifactID = this.requestedPreviewID
+      this.dashboardWorkspace = true
       this.selectedVisualID = this.requestedPreviewID
       this.requestedPreviewID = ''
       this.previewConversationID = conversationId
@@ -488,7 +496,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       return
     }
     const latest = this.latestQueryArtifactID()
-    if (this.dashboardPreviewOpen && latest && latest !== this.previewQueryRevision) {
+    if ((this.dashboardPreviewOpen || this.previewEditing) && latest && latest !== this.previewQueryRevision) {
       this.previewArtifactID = latest
       this.selectedVisualID = latest
       this.selectedDraftVisualID = latest
@@ -520,7 +528,18 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     if (this.previewArtifactID) this.persistPreviewURL()
   }
 
+  private enterDashboardWorkspace = (): void => {
+    this.dashboardWorkspace = true
+    this.dashboardPreviewOpen = true
+  }
+
   private closeDashboardPreview = (): void => {
+    if (this.dashboardWorkspace && !this.previewArtifactID && !this.compactViewport) {
+      this.dashboardWorkspace = false
+      void this.updateComplete.then(() => this.shadowRoot?.querySelector<HTMLElement & { focusPreview(): void }>('lv-chat-dashboard-draft')?.focusPreview())
+      return
+    }
+    this.dashboardWorkspace = false
     this.previewEditing = false
     this.dashboardPreviewOpen = false
     this.dashboardPickerOpen = false

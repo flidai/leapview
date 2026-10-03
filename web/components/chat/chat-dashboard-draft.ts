@@ -28,6 +28,7 @@ export class ChatDashboardDraft extends LitElement {
   @property({ type: Boolean, reflect: true }) modal = false
   @property({ attribute: false }) selectedVisualId = ''
   @property({ type: Boolean }) busy = false
+  @property({ type: Boolean }) workspace = false
   @property({ attribute: 'source-artifact-id' }) sourceArtifactId = ''
 
   @state() private saveDialogOpen = false
@@ -246,6 +247,7 @@ export class ChatDashboardDraft extends LitElement {
               <span class="count">${draftVisuals.length} ${draftVisuals.length === 1 ? 'visual' : 'visuals'} · Draft</span>
             </div>
             <div class="actions">
+              ${!this.workspace && !this.sourceArtifactId ? html`<button class="preview" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-dashboard-preview', { bubbles: true, composed: true }))}>Preview</button>` : nothing}
               ${this.saved ? html`<a class="saved-link" href=${this.saved.result.href}>Open saved dashboard ${lucideIcon(ArrowUpRight, { size: 14 })}</a>` : nothing}
               <button class="primary" type="button" ?disabled=${this.busy || this.saving || savedForCurrentRevision || draftVisuals.length === 0} @click=${this.openSaveDialog}>
                 ${this.saving ? 'Saving…' : savedForCurrentRevision ? 'Saved' : savedFromEarlierRevision ? 'Save as new dashboard' : html`${lucideIcon(Save, { size: 15 })} Save dashboard`}
@@ -414,6 +416,10 @@ export class ChatDashboardDraft extends LitElement {
 
   focusSave(): void {
     this.renderRoot.querySelector<HTMLButtonElement>('.header .primary')?.focus()
+  }
+
+  focusPreview(): void {
+    this.renderRoot.querySelector<HTMLButtonElement>('.preview')?.focus()
   }
 
   focusClose(): void {
