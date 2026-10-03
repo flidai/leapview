@@ -26,7 +26,6 @@ type integrationBinding struct {
 	Lane struct {
 		NeutralID  string `json:"neutral_id"`
 		WorkflowID string `json:"workflow_id"`
-		Display    string `json:"display"`
 	} `json:"lane"`
 }
 
@@ -41,7 +40,7 @@ func loadBinding() integrationBinding {
 	}
 	if loaded.PR.NeutralField == "" || loaded.PR.WireField == "" ||
 		loaded.PR.NeutralField == loaded.PR.WireField || loaded.Lane.NeutralID == "" ||
-		loaded.Lane.WorkflowID == "" || loaded.Lane.Display == "" {
+		loaded.Lane.WorkflowID == "" {
 		panic("invalid CI integration binding")
 	}
 	return loaded
@@ -103,20 +102,6 @@ func InternalJobID(workflow string) string {
 		return binding.Lane.NeutralID
 	}
 	return workflow
-}
-
-// HealthJobName normalizes GitHub display names at the workflow boundary and
-// returns only neutral core lane IDs.
-func HealthJobName(display string) string {
-	if display == binding.Lane.Display {
-		return binding.Lane.NeutralID
-	}
-	for _, tier := range []string{"PR", "merge queue", "nightly"} {
-		if display == binding.Lane.Display+" ("+tier+")" {
-			return binding.Lane.NeutralID
-		}
-	}
-	return platformci.HealthJobName(display)
 }
 
 // WorkflowText translates neutral lane IDs in generated diagnostics and

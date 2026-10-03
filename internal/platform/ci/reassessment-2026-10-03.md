@@ -66,16 +66,27 @@ continue to use the stable YAML paths.
 | Live deployment environments differ from documented protection | The read-only governance audit fails demo main-only restrictions and required reviewers for demo, ephemeral qualification, and site production. The qualification allow-list retains an unprotected temporary branch; site production allows administrator bypass. Configure owner-designated independent reviewers and documented branch/self-review/bypass policy, then rerun the read-only audit. | [FAI-1066](https://linear.app/flid/issue/FAI-1066) |
 | Shared release aliases can move backward | Per-ref concurrency allows separate version releases to qualify concurrently and update the same `latest`/major-minor aliases out of order. Define and enforce stable-channel ordering at promotion. | [FAI-1068](https://linear.app/flid/issue/FAI-1068) |
 | Clean local CI requires generation warm-up | The first `task ci` compares absent ignored generated contracts against newly created outputs and fails with a clean tracked tree. Initialize build-only outputs while preserving tracked snapshot drift and nondeterminism checks. | [FAI-1069](https://linear.app/flid/issue/FAI-1069) |
-| Whole-CI latency objectives remain open | The seven-day report has full-PR p95 28m38s (212 samples) and merge p95 25m35s (73), above the 12-minute thresholds; reruns are 4.1% against 3%. Rebaseline after reporting corrections, reconcile audit misses, and choose further improvements from comparable measurements. | [FAI-1067](https://linear.app/flid/issue/FAI-1067) |
+| Whole-CI latency objectives remain open | The seven-day report has full-PR p95 28m38s (212 samples) and merge p95 25m35s (73), above the 12-minute thresholds; reruns are 4.1% against 3%. Rebaseline after reporting corrections, retain canceled audit evidence as inconclusive, and choose further improvements from comparable measurements. | [FAI-1067](https://linear.app/flid/issue/FAI-1067) |
 
-The read-only report collected 502 runs, with 181 incomplete-evidence records and
-six selection-audit misses. These are raw diagnostics from the current reporter,
-not proof of six present-day selection defects: historical contracts, cancelled
-runs and missing artifacts require reconciliation. Historical reusable jobs carrying
-the old callee display label may also be unknown after renaming; revision-aware
-observation is needed rather than a parallel legacy name alias. The first API attempt failed
-with HTTP 502; a complete retry succeeded. Green latest-main qualification does
-not establish a passing rolling latency SLO.
+The original read-only report collected 502 runs, with 181 incomplete-evidence
+records and six raw selection-audit misses. Reconciliation found all six were
+cancelled audit-only jobs in canceled run `36968039247`; none is evidence of a
+selector defect. Cancellation is inconclusive and must remain incomplete
+evidence, while only observed failures or timeouts count as potential misses.
+Historical workflow names and required jobs are now reconstructed from each
+run's immutable workflow revision; unavailable provenance stays incomplete. The
+first API attempt failed with HTTP 502; a complete retry succeeded. Green
+latest-main qualification does not establish a passing rolling latency SLO.
+
+The corrected seven-day collection (3 October 2026) contains 515 runs, 203
+incomplete-evidence records, and zero potential audit misses across 15 audit
+samples. All available immutable workflow sources were fetched and parsed
+without collection errors; missing provenance remains visible. Full-PR p95 is
+29m21s (216 samples), merge p95 is 25m35s (73), and reruns are 3.6%. Selective and
+nightly p95 remain unavailable at 13 samples each. The changed reporting
+population and elapsed collection window make this a corrected baseline, not
+measured performance improvement. FAI-1067 remains open against the unchanged
+12-minute p95 and 3% rerun objectives.
 
 The live main ruleset retains independent review, required CI/security checks,
 linear history and the protected merge queue. No deployment, Terraform apply,

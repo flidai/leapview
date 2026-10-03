@@ -88,17 +88,6 @@ func TestWorkflowAndInternalLaneMappings(t *testing.T) {
 			t.Errorf("InternalJobID(%q) = %q, want %q", workflow, got, neutral)
 		}
 	}
-	for _, display := range []string{"dbt physical contract", "dbt physical contract (PR)", "dbt physical contract (nightly)"} {
-		if got := HealthJobName(display); got != "warehouse-validation" {
-			t.Errorf("HealthJobName(%q) = %q, want warehouse-validation", display, got)
-		}
-	}
-	if got := HealthJobName("dbt physical contract (unexpected)"); got == "warehouse-validation" {
-		t.Fatal("accepted an unknown workflow display-name suffix")
-	}
-	if got := HealthJobName("Warehouse physical contract (PR)"); got != "warehouse-validation" {
-		t.Fatalf("neutral display name = %q", got)
-	}
 	for text, want := range map[string]string{
 		"warehouse-validation failed":         "dbt-warehouse-boundary-validation failed",
 		"unknown/warehouse-validation-legacy": "unknown/warehouse-validation-legacy",
@@ -129,91 +118,6 @@ func TestWorkflowAndInternalLaneMappings(t *testing.T) {
 	}
 	if _, err := InternalResults(map[string]string{"warehouse-validation": "success"}); err == nil {
 		t.Fatal("accepted a neutral result key at the workflow boundary")
-	}
-}
-
-// Reading the real workflows makes a renamed lane or added required matrix
-// member fail locally before health reports silently lose its evidence.
-func TestHealthRegistryMatchesCurrentWorkflows(t *testing.T) {
-	root := filepath.Join("..", "..", "..", "..")
-	for _, workflow := range []string{"ci.yml", "merge-validation.yml", "nightly.yml"} {
-		t.Run(workflow, func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var config struct {
-				Jobs map[string]struct {
-					Name     string `yaml:"name"`
-					Uses     string `yaml:"uses"`
-					Strategy struct {
-						Matrix yaml.Node `yaml:"matrix"`
-					} `yaml:"strategy"`
-				} `yaml:"jobs"`
-			}
-			if err := yaml.Unmarshal(data, &config); err != nil {
-				t.Fatal(err)
-			}
-			var actual []string
-			for id, job := range config.Jobs {
-				names := []string{job.Name}
-				var matrix struct {
-					Shards []string `yaml:"shard"`
-				}
-				if job.Strategy.Matrix.Kind == yaml.ScalarNode {
-					if workflow != "ci.yml" || job.Strategy.Matrix.Value != "${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}" {
-						t.Fatal("unexpected dynamic matrix")
-					}
-					matrix.Shards = platformci.FullPRJobs().Frontend
-				} else if job.Strategy.Matrix.Kind != 0 {
-					if err := job.Strategy.Matrix.Decode(&matrix); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if len(matrix.Shards) > 0 {
-					names = nil
-					for _, shard := range matrix.Shards {
-						names = append(names, strings.ReplaceAll(job.Name, "${{ matrix.shard }}", shard))
-					}
-				}
-				for _, name := range names {
-					normalized := HealthJobName(name)
-					if strings.HasPrefix(normalized, "unknown/") {
-						t.Errorf("unmapped lane %s", name)
-					}
-					if id != "agent-tool-evaluation" {
-						actual = append(actual, normalized)
-					}
-				}
-				if strings.HasPrefix(job.Uses, "./.github/workflows/") {
-					reusablePath := filepath.Join(root, ".github", "workflows", strings.TrimPrefix(job.Uses, "./.github/workflows/"))
-					reusableData, err := os.ReadFile(reusablePath)
-					if err != nil {
-						t.Fatal(err)
-					}
-					var reusable struct {
-						Jobs map[string]struct {
-							Name string `yaml:"name"`
-						} `yaml:"jobs"`
-					}
-					if err := yaml.Unmarshal(reusableData, &reusable); err != nil {
-						t.Fatal(err)
-					}
-					for _, child := range reusable.Jobs {
-						if child.Name == "" {
-							continue
-						}
-						actual = append(actual, HealthJobName(job.Name+" / "+child.Name))
-					}
-				}
-			}
-			expected := platformci.ExpectedHealthJobs(workflow)
-			slices.Sort(actual)
-			slices.Sort(expected)
-			if !slices.Equal(actual, expected) {
-				t.Fatalf("expected inventory %v != workflow %v", expected, actual)
-			}
-		})
 	}
 }
 

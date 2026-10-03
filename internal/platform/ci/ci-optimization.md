@@ -131,8 +131,9 @@ Each adoption requires at least three paired runs holding source, toolchain,
 platform, and selected work constant: at least 10% median improvement in execution
 time or runner usage, with at most 5% regression in the other. Include producer and
 transfer costs and separate queues. Confirm over ten comparable subsequent runs;
-do not report p95 from fewer than twenty observations. No hosted performance
-experiment or release publication is implied by local contract tests.
+do not report p95 from fewer than twenty observations. The CI health report omits
+p95 below that count while retaining sample counts and p50 diagnostics. No hosted
+performance experiment or release publication is implied by local contract tests.
 
 Release qualification jobs are downstream of publication. Use GitHub's failed-job
 or individual-job rerun controls to retry qualification while retaining successful
