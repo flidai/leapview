@@ -42,11 +42,6 @@ func TestNightlyRecoveryCannotPassWithNonSuccess(t *testing.T) {
 			}
 		})
 	}
-	for _, job := range expectedHealthLaneJobs(hostRecoveryHealthLane) {
-		if !slices.Contains(ExpectedHealthJobs("nightly.yml"), job) {
-			t.Fatalf("nightly health omits %s", job)
-		}
-	}
 }
 
 func TestPublishedQualificationsAreIndependentRerunnableJobs(t *testing.T) {

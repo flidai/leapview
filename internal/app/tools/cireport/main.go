@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,16 +24,17 @@ import (
 )
 
 type githubRun struct {
-	TestedSHA  string    `json:"-"`
-	HeadSHA    string    `json:"head_sha"`
-	ID         int64     `json:"id"`
-	Workflow   string    `json:"-"`
-	StartedAt  time.Time `json:"run_started_at"`
-	Event      string    `json:"event"`
-	Attempt    int       `json:"run_attempt"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	Conclusion string    `json:"conclusion"`
+	TestedSHA   string    `json:"-"`
+	WorkflowSHA string    `json:"-"`
+	HeadSHA     string    `json:"head_sha"`
+	ID          int64     `json:"id"`
+	Workflow    string    `json:"-"`
+	StartedAt   time.Time `json:"run_started_at"`
+	Event       string    `json:"event"`
+	Attempt     int       `json:"run_attempt"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Conclusion  string    `json:"conclusion"`
 }
 
 type githubRevision struct {
@@ -52,8 +55,16 @@ type githubArtifact struct {
 }
 
 type client struct {
-	http  *http.Client
-	token string
+	http          *http.Client
+	token         string
+	workflowMu    sync.Mutex
+	workflowCache map[string]*workflowCacheEntry
+}
+
+type workflowCacheEntry struct {
+	ready    chan struct{}
+	contents []byte
+	err      error
 }
 
 func main() {
@@ -195,16 +206,123 @@ func (c *client) healthRun(ctx context.Context, repo string, run githubRun) (pla
 		}
 		run.StartedAt = attempt.StartedAt
 	}
-	jobs, err := c.jobs(ctx, repo, run.ID, run.Attempt)
-	if err != nil {
-		return platformci.HealthRun{}, err
-	}
 	plan, err := c.plan(ctx, repo, run.ID)
 	if err != nil {
 		return platformci.HealthRun{}, err
 	}
 	run.TestedSHA = c.testedCandidate(ctx, repo, run, plan)
-	return observedRun(run, jobs, plan), nil
+	run.WorkflowSHA, err = workflowRevision(run, plan)
+	var contract *ciadapter.HealthWorkflowContract
+	contractIssue := ""
+	if err != nil {
+		contractIssue = err.Error()
+	} else {
+		contract, contractIssue = c.workflowContract(ctx, repo, run.Workflow, run.WorkflowSHA, plan)
+	}
+	jobs, err := c.jobs(ctx, repo, run.ID, run.Attempt)
+	if err != nil {
+		return platformci.HealthRun{}, err
+	}
+	return observedRun(run, jobs, plan, contract, contractIssue), nil
+}
+
+func workflowRevision(run githubRun, plan platformci.Plan) (string, error) {
+	if run.Event != "pull_request" {
+		if !isCommitSHA(run.HeadSHA) {
+			return "", fmt.Errorf("run %d has no immutable workflow revision in head_sha", run.ID)
+		}
+		return run.HeadSHA, nil
+	}
+	if plan.PR == nil || validateHealthPRPlan(plan) != nil {
+		return "", fmt.Errorf("run %d has no valid PR plan to bind its tested workflow revision", run.ID)
+	}
+	if plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt) {
+		return "", fmt.Errorf("run %d plan provenance does not match its current attempt", run.ID)
+	}
+	if !isCommitSHA(run.TestedSHA) || plan.PR.Head != run.TestedSHA {
+		return "", fmt.Errorf("run %d has no verified tested-candidate workflow revision", run.ID)
+	}
+	return run.TestedSHA, nil
+}
+
+func isCommitSHA(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func (c *client) workflowContract(ctx context.Context, repo, workflow, revision string, plan platformci.Plan) (*ciadapter.HealthWorkflowContract, string) {
+	if revision == "" {
+		return nil, "immutable workflow revision unavailable"
+	}
+	if !isCommitSHA(revision) {
+		return nil, "workflow revision is not a commit SHA"
+	}
+	filename := ".github/workflows/" + workflow
+	contents, err := c.workflowSource(ctx, repo, revision, filename)
+	if err != nil {
+		return nil, fmt.Sprintf("read %s at %s: %v", filename, revision, err)
+	}
+	calls, err := ciadapter.LocalHealthWorkflowCalls(contents)
+	if err != nil {
+		return nil, fmt.Sprintf("parse %s at %s: %v", filename, revision, err)
+	}
+	reusable := make(map[string][]byte, len(calls))
+	for _, call := range calls {
+		callPath := strings.TrimPrefix(call, "./")
+		data, err := c.workflowSource(ctx, repo, revision, callPath)
+		if err != nil {
+			return nil, fmt.Sprintf("read %s at %s: %v", callPath, revision, err)
+		}
+		reusable[call] = data
+	}
+	contract, err := ciadapter.BuildHealthWorkflow(workflow, contents, reusable, plan)
+	if err != nil {
+		return nil, fmt.Sprintf("build %s contract at %s: %v", filename, revision, err)
+	}
+	return &contract, ""
+}
+
+func (c *client) workflowSource(ctx context.Context, repo, revision, filename string) ([]byte, error) {
+	key := repo + "/" + revision + "/" + filename
+	c.workflowMu.Lock()
+	if c.workflowCache == nil {
+		c.workflowCache = map[string]*workflowCacheEntry{}
+	}
+	entry, exists := c.workflowCache[key]
+	if !exists {
+		entry = &workflowCacheEntry{ready: make(chan struct{})}
+		c.workflowCache[key] = entry
+		c.workflowMu.Unlock()
+		var response struct {
+			Path     string `json:"path"`
+			Encoding string `json:"encoding"`
+			Content  string `json:"content"`
+		}
+		endpoint := fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s", repo, filename, url.QueryEscape(revision))
+		entry.err = c.getJSON(ctx, endpoint, &response)
+		if entry.err == nil {
+			if response.Path != filename || response.Encoding != "base64" {
+				entry.err = fmt.Errorf("unexpected workflow content metadata: path=%q encoding=%q", response.Path, response.Encoding)
+			} else {
+				entry.contents, entry.err = base64.StdEncoding.DecodeString(response.Content)
+			}
+		}
+		close(entry.ready)
+	} else {
+		c.workflowMu.Unlock()
+		select {
+		case <-entry.ready:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if entry.err != nil {
+		return nil, entry.err
+	}
+	return append([]byte(nil), entry.contents...), nil
 }
 
 // PR run metadata names the immutable source head, while checkout tests GitHub's
@@ -264,7 +382,7 @@ func (c *client) commitDescendsFrom(ctx context.Context, repo, ancestor, descend
 	return comparison.Status == "ahead" && comparison.MergeBaseCommit.SHA == ancestor, nil
 }
 
-func observedRun(run githubRun, jobs []githubJob, plan platformci.Plan) platformci.HealthRun {
+func observedRun(run githubRun, jobs []githubJob, plan platformci.Plan, contract *ciadapter.HealthWorkflowContract, contractIssue string) platformci.HealthRun {
 	queue, elapsed := int64(-1), int64(-1)
 	if started := earliestStart(jobs); !run.StartedAt.IsZero() && !started.IsZero() && !started.Before(run.StartedAt) {
 		queue = int64(started.Sub(run.StartedAt).Seconds())
@@ -302,56 +420,21 @@ func observedRun(run githubRun, jobs []githubJob, plan platformci.Plan) platform
 	if plan.PR != nil && (plan.PR.Head != candidate || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt)) {
 		planIssue = "plan provenance does not match run/attempt/candidate"
 	}
-	deferred := run.Event == "pull_request" && deferredStackRun(jobs)
-	if plan.PR != nil && validateHealthPRPlan(plan) == nil && planIssue == "" {
-		deferred = run.Event == "pull_request" && plan.PR.Deferred
+	deferred := run.Event == "pull_request" && plan.PR != nil && validateHealthPRPlan(plan) == nil && planIssue == "" && plan.PR.Deferred
+	var workflowJobs, requiredJobs, planIndependentJobs []string
+	if contract != nil {
+		workflowJobs = contract.WorkflowJobs
+		requiredJobs = contract.RequiredJobs
+		planIndependentJobs = contract.PlanIndependentJobs
 	}
 	return platformci.HealthRun{
 		ID: run.ID, Workflow: run.Workflow, Event: run.Event, Attempt: run.Attempt,
+		HeadSHA: run.HeadSHA, WorkflowSHA: run.WorkflowSHA,
 		Conclusion: run.Conclusion, DurationSeconds: elapsed, QueueSeconds: queue,
-		Deferred: deferred,
-		Plan:     plan, PlanIssue: planIssue, Results: jobResults(jobs),
+		Deferred: deferred, ContractIssue: contractIssue,
+		WorkflowJobs: workflowJobs, WorkflowRequiredJobs: requiredJobs, PlanIndependentJobs: planIndependentJobs,
+		Plan: plan, PlanIssue: planIssue, Results: jobResults(jobs, contract),
 	}
-}
-
-func deferredStackRun(jobs []githubJob) bool {
-	results := jobResults(jobs)
-	if results["ci-gate"] != "success" {
-		return false
-	}
-	if results["legacy-pr-validation"] == "skipped" && len(results) == 2 {
-		return true
-	}
-	for _, expected := range [][]string{
-		platformci.ExpectedHealthJobs("ci.yml"),
-		platformci.HistoricalExpectedHealthJobs("ci.yml"),
-	} {
-		if completeSkippedInventory(results, expected) {
-			return true
-		}
-	}
-	return false
-}
-
-func completeSkippedInventory(results map[string]string, expected []string) bool {
-	if _, ok := results["prepare"]; !ok {
-		var legacy []string
-		for _, job := range expected {
-			if job != "prepare" && job != "docs-validation" {
-				legacy = append(legacy, job)
-			}
-		}
-		expected = legacy
-	}
-	if len(results) != len(expected) {
-		return false
-	}
-	for _, job := range expected {
-		if job != "ci-gate" && results[job] != "skipped" {
-			return false
-		}
-	}
-	return true
 }
 
 func validateHealthPRPlan(plan platformci.Plan) error {
@@ -464,12 +547,14 @@ func decodePlanArchive(data []byte) (platformci.Plan, error) {
 	return platformci.Plan{}, errors.New("ci-plan.json missing from artifact")
 }
 
-func jobResults(jobs []githubJob) map[string]string {
+func jobResults(jobs []githubJob, contract *ciadapter.HealthWorkflowContract) map[string]string {
 	results := map[string]string{}
 	for _, job := range jobs {
-		name := normalizedJobName(job.Name)
-		if name == "" {
-			continue
+		name := "unknown/" + job.Name
+		if contract != nil {
+			if canonical, ok := contract.JobNames[job.Name]; ok {
+				name = canonical
+			}
 		}
 		if prior, ok := results[name]; ok {
 			results[name] = combineConclusion(prior, job.Conclusion)
@@ -477,23 +562,27 @@ func jobResults(jobs []githubJob) map[string]string {
 			results[name] = job.Conclusion
 		}
 	}
-	// The parent reusable-workflow result is the mandatory caller contract.
-	// Synthesize it only after both child jobs are observed; keeping their
-	// individual keys lets health reporting detect a missing child as incomplete.
-	recovery, hasRecovery := results["host-recovery-validation/recovery"]
-	historical, hasHistorical := results["host-recovery-validation/historical-transition"]
-	if hasRecovery && hasHistorical {
-		aggregate := combineConclusion(recovery, historical)
-		if parent, present := results["host-recovery-validation"]; present {
-			aggregate = combineConclusion(parent, aggregate)
+	if contract != nil {
+		for parent, children := range contract.ReusableChildren {
+			aggregate, complete := "success", len(children) > 0
+			for _, child := range children {
+				conclusion, present := results[child]
+				if !present {
+					complete = false
+					break
+				}
+				aggregate = combineConclusion(aggregate, conclusion)
+			}
+			if !complete {
+				continue
+			}
+			if observed, present := results[parent]; present {
+				aggregate = combineConclusion(observed, aggregate)
+			}
+			results[parent] = aggregate
 		}
-		results["host-recovery-validation"] = aggregate
 	}
 	return results
-}
-
-func normalizedJobName(name string) string {
-	return ciadapter.HealthJobName(name)
 }
 
 func combineConclusion(current, next string) string {
@@ -536,7 +625,6 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	fmt.Fprintf(&output, "| Metric | Value |\n|---|---:|\n| Runs | %d |\n", report.RunCount)
 	fmt.Fprintf(&output, "| Success / failure / cancelled / skipped / unknown conclusion | %d / %d / %d / %d / %d |\n", report.Successes, report.Failures, report.Cancellations, report.Skipped, report.UnknownConclusions)
 	fmt.Fprintf(&output, "| Deferred stack layers | %d |\n| Incomplete evidence | %d |\n| Missing durations | %d |\n", report.Deferred, report.Incomplete, report.MissingDurations)
-	fmt.Fprintf(&output, "| Intentionally skipped PR runs | %d |\n", report.SkippedPR)
 	for _, row := range []struct {
 		name   string
 		metric platformci.DurationMetric
@@ -545,9 +633,9 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	} {
 		fmt.Fprintf(&output, "| %s p50 / p95 (samples) | %s |\n", row.name, formatMetric(row.metric))
 	}
-	fmt.Fprintf(&output, "| Reruns | %d (%.1f%%) |\n| Supported PR plans / unknown PR selection | %d / %d |\n| Audit samples / misses | %d / %d |\n", report.Reruns, report.RerunPercent, report.PlannedRuns, report.UnknownSelection, report.AuditSamples, report.AuditMisses)
+	fmt.Fprintf(&output, "| Reruns | %d (%.1f%%) |\n| Supported PR plans / unknown PR selection | %d / %d |\n| Audit samples / potential misses | %d / %d |\n", report.Reruns, report.RerunPercent, report.PlannedRuns, report.UnknownSelection, report.AuditSamples, report.AuditPotentialMisses)
 	output.WriteString("\nLatency uses latest-attempt timestamps, including failed and cancelled attempts with complete timestamps. Unknown evidence is not proof of success.\n")
-	output.WriteString("\nPR runs with the complete known job inventory skipped, including planning and the gate, are recorded separately and excluded from execution metrics. They require no plan artifact or execution timestamps.\n")
+	output.WriteString("\nSkipped PR jobs without a valid run-bound plan and immutable workflow source remain unknown evidence; a complete-looking set of skips does not establish deferral or health.\n")
 	output.WriteString("\n## Planned selection\n\nRates use supported plans only; they are not execution rates.\n\n| Job | Planned | Rate |\n|---|---:|---:|\n")
 	names := make([]string, 0, len(report.Selection))
 	for name := range report.Selection {
@@ -561,7 +649,7 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	if report.PlannedRuns == 0 {
 		output.WriteString("\nN/A — no supported planning evidence.\n")
 	}
-	output.WriteString("\n## Expected and observed jobs\n\nCounts are per run and matrix member. Expected jobs come from a supported plan or the documented exhaustive workflow registry; observed skips do not prove intent. Unknown counts include missing expected jobs and unknown names/conclusions.\n\n| Job | Expected | Executed | Skipped | Unknown |\n|---|---:|---:|---:|---:|\n")
+	output.WriteString("\n## Expected and observed jobs\n\nCounts are per run and matrix member. Expected jobs come from a supported plan or the exact workflow contract parsed at that run's immutable source revision; unsupported source shapes remain unavailable. Observed skips do not prove intent. Unknown counts include missing expected jobs and unknown names/conclusions.\n\n| Job | Expected | Executed | Skipped | Unknown |\n|---|---:|---:|---:|---:|\n")
 	names = nil
 	for name := range report.Jobs {
 		names = append(names, name)

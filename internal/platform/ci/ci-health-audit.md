@@ -238,10 +238,12 @@ Implement in small reviewable changes, with regression tests written first.
 Files: `internal/app/tools/cireport/main.go`, `main_test.go`,
 `internal/platform/ci/health.go`, `health_test.go`.
 
-- Recognize current lane names and matrix members; retain support for historical
-  artifacts/names. Missing plans must be explicit unknown/inferred coverage, not
-  fabricated `FullJobs()`. Count actual job executions separately from planned
-  selection and publish denominators/sample counts.
+- Reconstruct job names and required members from the immutable workflow source
+  revision. Do not keep historical display-name aliases or apply today's
+  inventory to old runs. Missing plans or unsupported source shapes remain
+  explicit unknown/incomplete evidence, not fabricated `FullJobs()`. Count actual
+  job executions separately from planned selection and publish denominators and
+  sample counts.
 - Separate exhaustive merge, full PR audit, ordinary PR, deferred stack, and
   unclassified runs. Retain visibility of every category and the 12-minute full
   threshold. Display no-sample metrics as unavailable, not zero-second performance.
@@ -859,4 +861,3 @@ Triggers and filters:
 |---|---|---|---|
 | plan | [] | default | none |
 | apply | plan | ${{ inputs.operation == 'apply' }} | none |
-
