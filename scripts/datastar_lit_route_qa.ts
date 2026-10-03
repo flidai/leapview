@@ -300,17 +300,10 @@ async function verifyKeyboardAccessibilityJourney(): Promise<void> {
           ? ancestor.assignedSlot
           : ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null)
       }
-      return {
-        active: describeElement(active),
-        contained: Boolean(dialog && ancestor === dialog),
-      }
-
-      function describeElement(element: Element | null): string {
-        if (!element) return '<none>'
-        return element.getAttribute('aria-label')
-          || element.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
-          || element.localName
-      }
+      const activeName = active?.getAttribute('aria-label')
+        || active?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
+        || active?.localName || '<none>'
+      return { active: activeName, contained: Boolean(dialog && ancestor === dialog) }
     })
     if (!reverseTrap.contained) {
       throw new Error(`visual modal: Shift+Tab escaped the dialog to ${reverseTrap.active}`)
