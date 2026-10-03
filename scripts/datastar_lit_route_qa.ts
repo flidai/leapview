@@ -290,14 +290,22 @@ async function verifyKeyboardAccessibilityJourney(): Promise<void> {
     await expect(close, 'opening a visual modal must move focus to its Close control').toBeFocused()
 
     await page.keyboard.press('Shift+Tab')
-    const reverseTrap = await page.locator('lv-visual-modal').evaluate((modal: any) => {
-      const active = modal.deepActiveElement()
+    const reverseTrap = await page.locator('lv-visual-modal').evaluate((modal) => {
+      let active: Element | null = document.activeElement
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+      const dialog = modal.shadowRoot?.querySelector('dialog[open]')
+      let ancestor: Node | null = active
+      while (ancestor && ancestor !== dialog) {
+        ancestor = ancestor instanceof Element && ancestor.assignedSlot
+          ? ancestor.assignedSlot
+          : ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null)
+      }
       return {
         active: describeElement(active),
-        contained: Boolean(active && modal.focusableElements().includes(active)),
+        contained: Boolean(dialog && ancestor === dialog),
       }
 
-      function describeElement(element: HTMLElement | null): string {
+      function describeElement(element: Element | null): string {
         if (!element) return '<none>'
         return element.getAttribute('aria-label')
           || element.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
