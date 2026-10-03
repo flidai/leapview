@@ -577,7 +577,7 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 			fmt.Fprintf(&output, "- %s\n", wireJobText(alert))
 		}
 	} else {
-		output.WriteString("\nNo measured thresholds exceeded. Audit coverage and sample counts are reported above.\n")
+		output.WriteString("\nNo measured thresholds exceeded. p95 requires at least 20 samples and is unavailable below that. Audit coverage and sample counts are reported above.\n")
 	}
 	renderDiagnostics(&output, report.Runs)
 	return output.String()
@@ -636,6 +636,9 @@ func formatMetric(metric platformci.DurationMetric) string {
 	if metric.Count == 0 {
 		return "N/A (0)"
 	}
-	return fmt.Sprintf("%s / %s (%d)", formatSeconds(metric.P50Seconds), formatSeconds(metric.P95Seconds), metric.Count)
+	if metric.P95Seconds == nil {
+		return fmt.Sprintf("%s / N/A (<%d samples) (%d)", formatSeconds(metric.P50Seconds), platformci.MinimumP95Samples, metric.Count)
+	}
+	return fmt.Sprintf("%s / %s (%d)", formatSeconds(metric.P50Seconds), formatSeconds(*metric.P95Seconds), metric.Count)
 }
 func formatSeconds(seconds int64) string { return (time.Duration(seconds) * time.Second).String() }

@@ -35,6 +35,42 @@ func TestJobResultsPreservesHistoricalMatrixFailures(t *testing.T) {
 	}
 }
 
+func TestMarkdownP95RequiresTwentySamples(t *testing.T) {
+	for _, test := range []struct {
+		count       int
+		wantMetric  string
+		wantAlert   string
+		wantNoAlert bool
+	}{
+		{count: 19, wantMetric: "Exhaustive merge p50 / p95 (samples) | 13m20s / N/A (<20 samples) (19) |", wantNoAlert: true},
+		{count: 20, wantMetric: "Exhaustive merge p50 / p95 (samples) | 13m20s / 13m20s (20) |", wantAlert: "full CI p95 is 13m20s (limit 12m0s)"},
+	} {
+		t.Run(fmt.Sprintf("%d samples", test.count), func(t *testing.T) {
+			runs := make([]platformci.HealthRun, test.count)
+			for i := range runs {
+				results := map[string]string{}
+				for _, job := range platformci.ExpectedHealthJobs("merge-validation.yml") {
+					results[job] = "success"
+				}
+				runs[i] = platformci.HealthRun{
+					Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "success",
+					DurationSeconds: 800, QueueSeconds: 140, Results: results,
+				}
+			}
+			markdown := renderMarkdown(platformci.AnalyzeHealth(runs), 7)
+			if !strings.Contains(markdown, test.wantMetric) {
+				t.Errorf("markdown does not contain metric %q:\n%s", test.wantMetric, markdown)
+			}
+			if test.wantAlert != "" && !strings.Contains(markdown, test.wantAlert) {
+				t.Errorf("markdown does not contain alert %q", test.wantAlert)
+			}
+			if test.wantNoAlert && (strings.Contains(markdown, "## Alerts") || !strings.Contains(markdown, "p95 requires at least 20 samples")) {
+				t.Errorf("small-sample p95 was alerted or not explained:\n%s", markdown)
+			}
+		})
+	}
+}
+
 func TestReusableHostQualificationChildrenAggregateIntoMandatoryLane(t *testing.T) {
 	results := jobResults([]githubJob{
 		{Name: "Isolated host recovery and migration boundary contracts / Isolated host recovery and migration boundary contracts", Conclusion: "success"},

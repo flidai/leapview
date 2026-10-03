@@ -25,7 +25,7 @@ Measured inputs were GitHub conclusions, job names, and timestamps. Planned jobs
 came from artifacts when present; missing plans, full/selective classification,
 and “all jobs selected” were inferred. Those inferences were not labeled.
 
-## Version 2 reporting model
+## Version 3 reporting model
 
 The reporter collects PR, merge-validation, and nightly workflows, including
 nightly dependency security and vulnerability-evidence refresh jobs. It keeps
@@ -51,7 +51,7 @@ registry. Failed or cancelled runs with complete timestamps remain in their
 category's latency samples and their own conclusion counts.
 Deferred stack runs are excluded from latency and rerun denominators.
 
-`HealthReport.version` is 2. The existing JSON `full` field remains an alias for
+`HealthReport.version` is 3. The existing JSON `full` field remains an alias for
 **merge only** for structural compatibility; it must no longer be interpreted as
 a combined PR/merge population. Historical JSON remains decodable. Unsupported or
 unversioned plans are never upgraded implicitly. Version-1 plan artifacts remain
@@ -112,7 +112,10 @@ waiting before GitHub started the workflow attempt. The old creation-to-update
 window is no longer a latency fallback. Missing/inconsistent timestamps use `-1`
 in run JSON and are excluded from percentiles, not converted to zero. Reports show
 sample counts, missing-duration counts, and `N/A` for zero-sample populations.
-Nearest-rank p50/p95 calculations are unchanged.
+Nearest-rank p50 is available for every nonempty population. p95 requires at least
+20 observations: JSON omits `p95_seconds` and Markdown shows `N/A (<20 samples)`
+below that count, and p95 thresholds are evaluated only when the estimate is
+available.
 
 Threshold values remain 12 minutes exhaustive/full, 6 minutes selective PR,
 2 minutes queue, and 3% reruns. The 12-minute bound is applied independently to
@@ -139,6 +142,14 @@ Zero misses with zero audit samples is not evidence of selector correctness.
   the actual three workflow files and verify all lanes and matrix members. Old
   monolithic layouts may remain recognizable but incomplete against the current
   exhaustive inventory; unsupported layouts are not silently declared complete.
+- Historical workflow revisions remain a reporting limitation: the current
+  registry is applied to past merge/nightly runs, and current PR plans can gain
+  the host-recovery expectation even when their workflow revision predates it.
+  Git history places host recovery in `ci.yml` and `merge-validation.yml` at
+  `59cbc0d` (2026-09-28), then `nightly.yml` at `3b92e515` (2026-10-02). The
+  reporter drops each run's head SHA and does not load workflow source at that
+  revision, so it cannot select an exact historical inventory. Revision-aware
+  inventory is tracked by FAI-1065; date cutovers are not used.
 - The reporter observes GitHub conclusions, not test inventories or runtime
   attestation. It cannot independently prove that an intentionally skipped job
   was irrelevant or that a workflow's command body preserved coverage.

@@ -2,6 +2,7 @@ package ci
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -50,14 +51,8 @@ func TestAnalyzeHealth(t *testing.T) {
 	if got.RunCount != 6 || got.Deferred != 1 {
 		t.Fatalf("run count/deferred = %d/%d, want 6/1", got.RunCount, got.Deferred)
 	}
-	if got.Full.P95Seconds != 800 {
-		t.Fatalf("full p95 = %d, want 800", got.Full.P95Seconds)
-	}
-	if got.Selective.P95Seconds != 240 {
-		t.Fatalf("selective p95 = %d, want 240", got.Selective.P95Seconds)
-	}
-	if got.Queue.P95Seconds != 140 {
-		t.Fatalf("queue p95 = %d, want 140", got.Queue.P95Seconds)
+	if got.Full.Count != 3 || got.Full.P95Seconds != nil || got.Selective.Count != 1 || got.Selective.P95Seconds != nil || got.Queue.Count != 5 || got.Queue.P95Seconds != nil {
+		t.Fatalf("small-sample p95 should be unavailable while counts remain: full=%+v selective=%+v queue=%+v", got.Full, got.Selective, got.Queue)
 	}
 	if got.RerunPercent != 20 {
 		t.Fatalf("rerun percentage = %.1f, want 20", got.RerunPercent)
@@ -66,8 +61,6 @@ func TestAnalyzeHealth(t *testing.T) {
 		t.Fatalf("audit misses = %d, want 1", got.AuditMisses)
 	}
 	for _, alert := range []string{
-		"full CI p95 is 13m20s (limit 12m0s)",
-		"queue p95 is 2m20s (limit 2m0s)",
 		"rerun rate is 20.0% (limit 3.0%)",
 		"selection audit detected 1 miss",
 	} {
@@ -121,7 +114,7 @@ func TestHealthPopulationsAndIncompleteEvidence(t *testing.T) {
 		{Conclusion: "", DurationSeconds: -1, QueueSeconds: -1},
 	}
 	r := AnalyzeHealth(runs)
-	if r.Selective.Count != 1 || r.Merge.P95Seconds != 800 || r.Nightly.P95Seconds != 900 || r.Unknown.P95Seconds != 50 {
+	if r.Selective.Count != 1 || r.Merge.Count != 1 || r.Merge.P50Seconds != 800 || r.Merge.P95Seconds != nil || r.Nightly.Count != 1 || r.Nightly.P50Seconds != 900 || r.Nightly.P95Seconds != nil || r.Unknown.Count != 1 || r.Unknown.P50Seconds != 50 || r.Unknown.P95Seconds != nil {
 		t.Fatalf("populations mixed: %+v", r)
 	}
 	if r.Cancellations != 1 || r.Reruns != 1 || r.UnknownConclusions != 1 || r.MissingDurations != 1 {
@@ -198,6 +191,14 @@ func healthSuccessfulResults(jobs Jobs) map[string]string {
 	return results
 }
 
+func healthSuccessfulExhaustiveResults(workflow string) map[string]string {
+	results := map[string]string{}
+	for _, job := range ExpectedHealthJobs(workflow) {
+		results[job] = "success"
+	}
+	return results
+}
+
 func healthSuccessfulResultsWithHostRecovery(jobs Jobs) map[string]string {
 	results := healthSuccessfulResults(jobs)
 	for _, job := range expectedHealthLaneJobs(hostRecoveryHealthLane) {
@@ -220,8 +221,56 @@ func TestHistoricalHealthJSONRemainsReadableWithoutTrustingMissingMetadata(t *te
 		t.Fatal(err)
 	}
 	var decoded HealthReport
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Version != 2 || decoded.Unknown.Count != 1 {
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Version != 3 || decoded.Unknown.Count != 1 {
 		t.Fatalf("report roundtrip failed: %s, %v", data, err)
+	}
+}
+
+func TestP95RequiresTwentySamples(t *testing.T) {
+	for _, count := range []int{19, 20} {
+		t.Run(fmt.Sprintf("%d samples", count), func(t *testing.T) {
+			runs := make([]HealthRun, count)
+			for i := range runs {
+				runs[i] = HealthRun{
+					Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "success",
+					DurationSeconds: 800, QueueSeconds: 140, Results: healthSuccessfulExhaustiveResults("merge-validation.yml"),
+				}
+			}
+			report := AnalyzeHealth(runs)
+			for name, metric := range map[string]DurationMetric{"merge": report.Merge, "queue": report.Queue} {
+				if metric.Count != count || metric.P50Seconds == 0 {
+					t.Errorf("%s count/p50 = %d/%d, want %d/nonzero", name, metric.Count, metric.P50Seconds, count)
+				}
+				data, err := json.Marshal(metric)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var encoded map[string]json.RawMessage
+				if err := json.Unmarshal(data, &encoded); err != nil {
+					t.Fatal(err)
+				}
+				if count < MinimumP95Samples {
+					if metric.P95Seconds != nil || encoded["p95_seconds"] != nil {
+						t.Errorf("%s p95 at %d samples = %v / %s, want omitted", name, count, metric.P95Seconds, encoded["p95_seconds"])
+					}
+				} else if metric.P95Seconds == nil || encoded["p95_seconds"] == nil {
+					t.Errorf("%s p95 at %d samples = %v / %s, want emitted", name, count, metric.P95Seconds, encoded["p95_seconds"])
+				}
+			}
+			p95Alerts := 0
+			for _, alert := range report.Alerts {
+				if strings.Contains(alert, " p95 is ") {
+					p95Alerts++
+				}
+			}
+			wantAlerts := 0
+			if count == MinimumP95Samples {
+				wantAlerts = 2
+			}
+			if p95Alerts != wantAlerts {
+				t.Errorf("p95 alerts = %d, want %d: %v", p95Alerts, wantAlerts, report.Alerts)
+			}
+		})
 	}
 }
 

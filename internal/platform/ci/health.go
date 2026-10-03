@@ -34,10 +34,13 @@ type HealthRun struct {
 }
 
 type DurationMetric struct {
-	Count      int   `json:"count"`
-	P50Seconds int64 `json:"p50_seconds"`
-	P95Seconds int64 `json:"p95_seconds"`
+	Count      int    `json:"count"`
+	P50Seconds int64  `json:"p50_seconds"`
+	P95Seconds *int64 `json:"p95_seconds,omitempty"`
 }
+
+// MinimumP95Samples is the smallest sample count at which the report emits p95.
+const MinimumP95Samples = 20
 
 type SelectionMetric struct {
 	Selected int     `json:"selected"`
@@ -328,7 +331,7 @@ func incompleteHealthEvidence(run HealthRun) bool {
 }
 
 func AnalyzeHealth(runs []HealthRun) HealthReport {
-	report := HealthReport{Version: 2, GeneratedAt: time.Now().UTC(), RunCount: len(runs), Selection: map[string]SelectionMetric{}, Jobs: map[string]JobMetric{}}
+	report := HealthReport{Version: 3, GeneratedAt: time.Now().UTC(), RunCount: len(runs), Selection: map[string]SelectionMetric{}, Jobs: map[string]JobMetric{}}
 	populations := map[string][]int64{}
 	var queues []int64
 	for _, input := range runs {
@@ -444,8 +447,8 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 		{"full PR", report.FullPR, 12 * time.Minute}, {"unknown CI", report.Unknown, 12 * time.Minute},
 		{"selective PR", report.Selective, 6 * time.Minute}, {"queue", report.Queue, 2 * time.Minute},
 	} {
-		if population.metric.Count > 0 && population.metric.P95Seconds > int64(population.limit.Seconds()) {
-			report.Alerts = append(report.Alerts, fmt.Sprintf("%s p95 is %s (limit %s)", population.name, duration(population.metric.P95Seconds), population.limit))
+		if population.metric.P95Seconds != nil && *population.metric.P95Seconds > int64(population.limit.Seconds()) {
+			report.Alerts = append(report.Alerts, fmt.Sprintf("%s p95 is %s (limit %s)", population.name, duration(*population.metric.P95Seconds), population.limit))
 		}
 	}
 	if report.RerunPercent > 3 {
@@ -464,11 +467,12 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 }
 
 func durationMetric(values []int64) DurationMetric {
-	return DurationMetric{
-		Count:      len(values),
-		P50Seconds: percentile(values, 0.50),
-		P95Seconds: percentile(values, 0.95),
+	metric := DurationMetric{Count: len(values), P50Seconds: percentile(values, 0.50)}
+	if len(values) >= MinimumP95Samples {
+		p95 := percentile(values, 0.95)
+		metric.P95Seconds = &p95
 	}
+	return metric
 }
 
 func percentile(values []int64, p float64) int64 {
