@@ -1,10 +1,23 @@
-name: Orchestration cache experiment
+name: Orchestration toolchain cache
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - nix/**/*.nix
+      - go.mod
+      - package.json
+      - scripts/export_nix_ci_environment.py
+      - scripts/measure_orchestration_cache.py
+      - .github/workflows/orchestration-cache.yml
+      - .github/actions/setup-ci/action.yml
+      - .github/workflows/ci.yml
   workflow_dispatch:
     inputs:
       operation:
-        description: Opt-in measurement only; normal CI setup is unchanged
+        description: Produce a trusted main archive or run paired measurements
         required: true
         type: choice
         default: measure
@@ -24,7 +37,7 @@ permissions:
 cache-mode: read
 
 concurrency:
-  group: orchestration-cache-experiment-${{ github.ref }}-${{ inputs.operation }}-${{ inputs.source_revision }}-${{ inputs.cache_service }}
+  group: orchestration-cache-${{ github.ref }}-${{ inputs.operation || 'produce' }}-${{ inputs.operation == 'measure' && format('{0}-{1}', inputs.source_revision, inputs.cache_service) || 'publisher' }}
   cancel-in-progress: false
 
 jobs:
@@ -32,6 +45,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      operation: ${{ steps.identity.outputs.operation }}
+      cache_hit: ${{ steps.lookup.outputs.cache-hit }}
       revision: ${{ steps.identity.outputs.revision }}
       input_id: ${{ steps.identity.outputs.input_id }}
       cache_key: ${{ steps.identity.outputs.cache_key }}
@@ -43,10 +58,10 @@ jobs:
       - name: Verify source and producer authority
         id: identity
         env:
-          OPERATION: ${{ inputs.operation }}
+          OPERATION: ${{ github.event_name == 'push' && 'produce' || inputs.operation }}
           SOURCE_REVISION: ${{ inputs.source_revision }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          INPUT_ID: ${{ hashFiles('flake.nix', 'flake.lock', 'nix/**/*.nix', 'go.mod', 'package.json', 'scripts/export_nix_ci_environment.py', 'scripts/measure_orchestration_cache.py', '.github/workflows/orchestration-cache-experiment.yml') }}
+          INPUT_ID: ${{ hashFiles('flake.nix', 'flake.lock', 'nix/**/*.nix', 'go.mod', 'package.json', 'scripts/export_nix_ci_environment.py', 'scripts/measure_orchestration_cache.py', '.github/workflows/orchestration-cache.yml', '.github/actions/setup-ci/action.yml', '.github/workflows/ci.yml') }}
         run: |
           set -euo pipefail
           case "$OPERATION" in produce|measure) ;; *) exit 1 ;; esac
@@ -63,20 +78,30 @@ jobs:
           fi
           test -n "$INPUT_ID"
           {
+            echo "operation=$OPERATION"
             echo "revision=$revision"
             echo "input_id=$INPUT_ID"
-            echo "cache_key=nix-orchestration-experiment-v1-Linux-X64-2.31.2-$INPUT_ID"
+            echo "cache_key=nix-orchestration-v1-Linux-X64-2.31.2-$INPUT_ID"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check whether this exact input is already published
+        id: lookup
+        if: steps.identity.outputs.operation == 'produce'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/orchestration-cache
+          key: ${{ steps.identity.outputs.cache_key }}
+          lookup-only: true
+
   producer:
-    if: inputs.operation == 'produce'
+    if: needs.resolve.outputs.operation == 'produce' && needs.resolve.outputs.cache_hit != 'true'
     needs: resolve
     cache-mode: write-only
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
-      actions: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -94,30 +119,13 @@ jobs:
           CACHE_INPUT_ID: ${{ needs.resolve.outputs.input_id }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: python3 scripts/measure_orchestration_cache.py produce
-      - name: Enforce archive and namespace budgets
+      - name: Retain only three bounded default-branch toolchain identities
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CACHE_INPUT_ID: ${{ needs.resolve.outputs.input_id }}
           CACHE_KEY: ${{ needs.resolve.outputs.cache_key }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
-          gh api --paginate --slurp --method GET "repos/$GITHUB_REPOSITORY/actions/caches" \
-            -f key=nix-orchestration-experiment-v1- -f ref="refs/heads/$DEFAULT_BRANCH" \
-            > "$RUNNER_TEMP/orchestration-cache-inventory.json"
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          root = Path(os.environ['RUNNER_TEMP'])
-          manifest = json.loads((root / 'orchestration-cache/manifest.json').read_text())
-          entries = [cache for page in json.loads((root / 'orchestration-cache-inventory.json').read_text()) for cache in page['actions_caches']]
-          others = [cache for cache in entries if cache['key'] != os.environ['CACHE_KEY']]
-          assert len(others) < 3, 'three-identity namespace budget exhausted; no publication'
-          new_bytes = manifest['archiveBytes'] + (root / 'orchestration-cache/manifest.json').stat().st_size + 1_048_576
-          assert new_bytes <= 300_000_000, 'archive envelope budget exhausted'
-          assert sum(cache['size_in_bytes'] for cache in others) + new_bytes <= 900_000_000
-          PY
+        run: python3 scripts/measure_orchestration_cache.py retain
       - name: Publish the bounded toolchain archive
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -131,12 +139,12 @@ jobs:
           path: |
             ${{ runner.temp }}/orchestration-cache-metrics.json
             ${{ runner.temp }}/orchestration-cache/manifest.json
-            ${{ runner.temp }}/orchestration-cache-inventory.json
+            ${{ runner.temp }}/orchestration-cache-retention.json
           retention-days: 14
           if-no-files-found: warn
 
   measure:
-    if: inputs.operation == 'measure'
+    if: needs.resolve.outputs.operation == 'measure'
     needs: resolve
     name: Orchestration setup (${{ matrix.treatment }}, pair ${{ matrix.sample }})
     runs-on: ubuntu-24.04

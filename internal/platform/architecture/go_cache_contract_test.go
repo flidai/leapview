@@ -127,8 +127,12 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 	if !regexp.MustCompile(`^actions/cache@[0-9a-f]{40}$`).MatchString(goCache.Uses) {
 		t.Fatalf("Go cache action must be pinned to a commit, got %q", goCache.Uses)
 	}
-	if strings.Contains(string(body), "cache-hit") {
-		t.Fatal("setup-ci must not skip work based on a cache-hit output")
+	for _, step := range action.Runs.Steps {
+		// Import may read a hit output, but realization and validation must run
+		// for both hits and misses. Check execution guards, not environment data.
+		if strings.Contains(step.If, "cache-hit") || strings.Contains(step.Run, "cache-hit") {
+			t.Fatalf("setup-ci step %q must not skip work based on a cache-hit output", step.Name)
+		}
 	}
 	setupIndex := -1
 	resolverIndex := -1

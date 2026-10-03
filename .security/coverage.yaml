@@ -219,7 +219,7 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
-  - path: .github/workflows/orchestration-cache-experiment.yml
+  - path: .github/workflows/orchestration-cache.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
