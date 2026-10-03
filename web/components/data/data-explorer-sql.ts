@@ -29,7 +29,7 @@ class DataExplorerSQL extends LitElement {
     .sql-empty { color: var(--lv-fg-muted); font: var(--lv-type-body); }
     .sql-view lv-code-block .code-block-shell { border: 0; border-radius: 0; }
     .sql-view lv-code-block .shiki,
-    .sql-view lv-code-block .code-block-fallback { max-height: min(36rem, 55vh); font-size: 14px; line-height: 1.6; white-space: pre; overflow-wrap: normal; word-break: normal; }
+    .sql-view lv-code-block .code-block-fallback { max-height: min(36rem, 55vh); font-size: var(--text-body-size-medium); line-height: var(--base-text-lineHeight-normal); white-space: pre; overflow-wrap: normal; word-break: normal; }
     .sql-view.wrap lv-code-block .shiki,
     .sql-view.wrap lv-code-block .code-block-fallback { white-space: pre-wrap; overflow-wrap: anywhere; }
     .sql-view.wrap lv-code-block .shiki code { min-width: 0; }

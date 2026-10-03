@@ -109,7 +109,7 @@ test('Data Explorer retains the last good result through draft and run lifecycle
         return {
           table: grid?.shadowRoot?.textContent ?? '',
           failure: element.shadowRoot?.querySelector('.result-failure')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
-          actions: Array.from(element.shadowRoot?.querySelectorAll('.query-actions .text-button') ?? []).map((button: any) => button.textContent?.replace(/\s+/g, ' ').trim() ?? ''),
+          actions: Array.from(element.shadowRoot?.querySelectorAll('.query-actions .text-button:not([aria-controls="semantic-filter-dock"])') ?? []).map((button: any) => button.textContent?.replace(/\s+/g, ' ').trim() ?? ''),
           execution: element.shadowRoot?.querySelector('.execution-state')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
           columns: element.shadowRoot?.querySelector('.header-columns summary')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
           views: Array.from(element.shadowRoot?.querySelectorAll('[aria-label="Result views"] button') ?? []).map((button: any) => button.textContent?.trim()),
@@ -264,7 +264,7 @@ test('Data Explorer retains the last good result through draft and run lifecycle
     expect(state.runIDAfterSuggestion).toBe(state.latestRun.runId)
     expect(state.acknowledged.actions).toEqual(['Run'])
     expect(state.acknowledged.table).toContain('delivered')
-    expect(state.acknowledged.execution).toContain('stale')
+    expect(state.acknowledged.execution).toBe('Query edited · run to update results')
     expect(state.acknowledged.execution).not.toContain('outcome is unknown')
     expect(state.executionAfterAck).toBe('idle')
     expect(state.failureAfterAck).toBe(false)
@@ -366,6 +366,180 @@ test('Data Explorer reveals a newly hydrated selection and preserves manual side
   }
 })
 
+
+test('SQL line wrapping can be enabled and disabled without changing the query', async () => {
+  const page = await browser.newPage({ viewport: { width: 500, height: 700 } })
+  const sql = `SELECT '${'a long SQL value '.repeat(40)}' AS description FROM orders`
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer-sql'))
+    await page.evaluate((query) => {
+      const element = document.createElement('lv-data-explorer-sql') as any
+      element.sql = query
+      document.body.append(element)
+    }, sql)
+    const viewer = page.locator('lv-data-explorer-sql')
+    await viewer.getByRole('button', { name: 'Format SQL', exact: true }).click()
+    await viewer.locator('lv-code-block').evaluate(async (element) => { await (element as any).updateComplete })
+    const code = viewer.locator('pre')
+    await code.waitFor()
+    const dimensions = () => code.evaluate((element) => ({
+      whiteSpace: getComputedStyle(element).whiteSpace,
+      height: element.scrollHeight,
+      width: element.clientWidth,
+      contentWidth: element.scrollWidth,
+      text: element.textContent,
+    }))
+    const unwrapped = await dimensions()
+    expect(unwrapped.whiteSpace).toBe('pre')
+    expect(unwrapped.contentWidth).toBeGreaterThan(unwrapped.width)
+    const wrap = viewer.getByRole('button', { name: 'Wrap SQL lines', exact: true })
+    await wrap.click()
+    expect(await wrap.getAttribute('aria-pressed')).toBe('true')
+    const wrapped = await dimensions()
+    expect(wrapped.whiteSpace).toBe('pre-wrap')
+    expect(wrapped.height).toBeGreaterThan(unwrapped.height)
+    expect(wrapped.contentWidth).toBeLessThanOrEqual(wrapped.width + 1)
+    expect(wrapped.text).toBe(sql)
+    await wrap.click()
+    expect(await wrap.getAttribute('aria-pressed')).toBe('false')
+    const restored = await dimensions()
+    expect(restored.whiteSpace).toBe('pre')
+    expect(restored.contentWidth).toBeGreaterThan(restored.width)
+    expect(restored.height).toBe(unwrapped.height)
+    expect(restored.text).toBe(sql)
+  } finally { await page.close() }
+})
+
+test('filter suggestions support keyboard and pointer selection before Apply', async () => {
+  const page = await browser.newPage({ viewport: { width: 500, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer-query-controls'))
+    await page.evaluate(() => {
+      const element = document.createElement('lv-data-explorer-query-controls') as any
+      element.filterEditorOnly = true
+      element.filterField = 'orders.quantity'
+      element.fields = [{ id: 'orders.quantity', label: 'Quantity', kind: 'dimension', datasetId: 'orders', type: 'integer', compatible: true, selected: false }]
+      element.suggestionRequestSeq = 1
+      element.suggestions = {
+        field: 'orders.quantity', requestSeq: 0, suggestionRequestSeq: 1, loading: false, stale: false, truncated: false,
+        values: [{ label: 'Ten items', value: { kind: 'integer', value: '10' } }, { label: 'Twenty items', value: { kind: 'integer', value: '20' } }],
+      }
+      ;(window as any).filterChanges = []
+      element.addEventListener('lv-data-explorer-filter-change', (event: Event) => (window as any).filterChanges.push((event as CustomEvent).detail))
+      document.body.append(element)
+    })
+    const editor = page.locator('lv-data-explorer-query-controls')
+    const value = editor.getByRole('combobox', { name: 'Value', exact: true })
+    await value.click()
+    expect(await value.getAttribute('aria-expanded')).toBe('true')
+    await value.press('ArrowDown')
+    expect(await editor.getByRole('option', { name: 'Ten items' }).getAttribute('aria-selected')).toBe('true')
+    await value.press('ArrowDown')
+    await value.press('Enter')
+    expect(await value.inputValue()).toBe('20')
+    expect(await value.getAttribute('aria-expanded')).toBe('false')
+    expect(await page.evaluate(() => (window as any).filterChanges)).toEqual([{ action: 'value', value: '20' }])
+    await value.click()
+    await editor.getByRole('option', { name: 'Ten items' }).click()
+    expect(await value.inputValue()).toBe('10')
+    expect(await value.getAttribute('aria-expanded')).toBe('false')
+    await editor.getByRole('button', { name: 'Apply', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).filterChanges)).toEqual([
+      { action: 'value', value: '20' }, { action: 'value', value: '10' }, { action: 'apply' },
+    ])
+  } finally { await page.close() }
+})
+
+test('query controls hydrate canonical select values on their first render', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer-query-controls'))
+
+    const state = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer-query-controls') as any
+      const spec = {
+        schemaVersion: 1,
+        modelId: 'sales',
+        datasetId: 'orders',
+        dimensions: [{ field: 'orders.status' }],
+        metrics: [{ field: 'orders.net_total' }],
+        filters: [],
+        time: {
+          field: 'orders.purchase_date',
+          grain: 'day',
+          range: {
+            kind: 'absolute',
+            lower: { value: { kind: 'date', value: '2026-01-01' }, inclusive: true },
+            upper: { value: { kind: 'date', value: '2026-01-31' }, inclusive: true },
+          },
+        },
+        sort: [{ field: 'orders.purchase_date', direction: 'desc' }],
+        limit: 100,
+      }
+      element.command = {
+        spec,
+        semanticModelId: 'sales',
+        datasetId: 'orders',
+        dimensions: ['orders.status'],
+        metrics: ['orders.net_total'],
+        filters: [],
+        sort: [{ field: 'orders.purchase_date', direction: 'desc' }],
+        limit: 100,
+        requestSeq: 0,
+        resetVersion: 0,
+        columnWidths: {},
+      }
+      element.fields = [
+        { id: 'orders.created_at', label: 'Created at', kind: 'dimension', datasetId: 'orders', type: 'timestamp', compatible: true, selected: false },
+        { id: 'orders.purchase_date', label: 'Purchase date', kind: 'dimension', datasetId: 'orders', type: 'date', compatible: true, selected: false },
+        { id: 'shipments.created_at', label: 'Shipment created at', kind: 'dimension', datasetId: 'shipments', type: 'timestamp', compatible: false, selected: false },
+        { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+        { id: 'orders.net_total', label: 'Net total', kind: 'metric', datasetId: 'orders', type: 'decimal', compatible: true, selected: true },
+      ]
+      element.filterField = 'orders.net_total'
+      element.filterOperator = 'greater_than'
+      element.filterValue = '10'
+      element.filtersOnly = true
+      document.body.append(element)
+      await element.updateComplete
+
+      const root = element.shadowRoot as ShadowRoot
+      const value = (selector: string) => root.querySelector<HTMLSelectElement>(selector)?.value
+      return {
+        timeField: value('[aria-label="Time field"]'),
+        timeGrain: value('[aria-label="Time grain"]'),
+        timeRange: value('[aria-label="Time range"]'),
+        rowLimit: value('[aria-label="Row limit"]'),
+        sortField: value('[aria-label="Sort field 1"]'),
+        sortDirection: value('[aria-label="Sort direction 1"]'),
+        filterOperator: value('.filter-editor select'),
+        rangeFrom: root.querySelector<HTMLInputElement>('[aria-label="Time range from"]')?.value,
+        rangeTo: root.querySelector<HTMLInputElement>('[aria-label="Time range to"]')?.value,
+        unavailableTimeDisabled: root.querySelector<HTMLOptionElement>('option[value="shipments.created_at"]')?.disabled, progressiveDisclosure: { columnsOpen: root.querySelector<HTMLDetailsElement>('.field-picker')?.open, moreOpen: root.querySelector<HTMLDetailsElement>('.query-config')?.open, exclusiveGroups: Array.from(root.querySelectorAll<HTMLDetailsElement>('.field-group')).every((group) => group.name === 'data-explorer-field-group') },
+        optionsSummary: root.querySelector('.query-config summary')?.textContent?.replace(/\s+/g, ' ').trim(),
+      }
+    })
+
+    expect(state).toEqual({
+      timeField: 'orders.purchase_date',
+      timeGrain: 'day',
+      timeRange: 'absolute',
+      rowLimit: undefined,
+      sortField: 'orders.purchase_date',
+      sortDirection: 'desc',
+      filterOperator: 'greater_than',
+      rangeFrom: '2026-01-01',
+      rangeTo: '2026-01-31',
+      unavailableTimeDisabled: true, progressiveDisclosure: { columnsOpen: undefined, moreOpen: false, exclusiveGroups: true },
+      optionsSummary: 'Time & sort Purchase date · 1 sort',
+    })
+  } finally {
+    await page.close()
+  }
+})
 
 function testDocument() {
   return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%}lv-data-explorer{display:block;min-height:720px}</style></head><body><main data-signals="{}"></main><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/data-explorer-under-test.js"></script></body></html>`

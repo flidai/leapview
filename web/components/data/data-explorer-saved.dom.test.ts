@@ -85,11 +85,11 @@ test('saved explorations render in their own row and emit the canonical current 
       root.querySelector<HTMLElement>('.saved-exploration-sharing summary')!.click()
       const explorerTopAfterShare = root.querySelector('.explorer')!.getBoundingClientRect().top
       root.querySelector<HTMLButtonElement>('.saved-exploration-sharing button')!.click()
-      for (let index = 0; index < 10 && !root.querySelector('[role="status"]'); index += 1) {
+      for (let index = 0; index < 10 && !root.querySelector('.saved-exploration-sharing [role="status"]'); index += 1) {
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
-      const shareStatus = root.querySelector('[role="status"]')?.textContent?.trim()
+      const shareStatus = root.querySelector('.saved-exploration-sharing [role="status"]')?.textContent?.trim()
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('unavailable') } } })
       root.querySelector<HTMLButtonElement>('.saved-exploration-sharing button')!.click()
       for (let index = 0; index < 10 && !root.querySelector('.saved-exploration-share-fallback'); index += 1) {

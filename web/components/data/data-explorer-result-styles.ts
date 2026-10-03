@@ -133,7 +133,7 @@ export const dataExplorerResultStyles = css`
 
   .result-visual lv-visualization-host {
     display: block;
-    min-height: max(18rem, var(--explorer-visual-min-height, 0px));
+    min-height: max(18rem, var(--explorer-visual-min-height));
     height: 100%;
   }
 
