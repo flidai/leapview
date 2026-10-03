@@ -1,0 +1,139 @@
+{
+  "runID": 37098049134,
+  "sourceRevision": "104a23a300bbe8cd7adc180c7c7ba3a6a30100ed",
+  "pairs": [
+    {
+      "treatment": "baseline",
+      "sample": "2",
+      "runnerSeconds": 284.0,
+      "affectedExecutionSeconds": 254.0,
+      "buildSeconds": 254.0,
+      "jobID": 111133883993
+    },
+    {
+      "treatment": "mounts",
+      "sample": "2",
+      "runnerSeconds": 314.0,
+      "affectedExecutionSeconds": 263.0,
+      "buildSeconds": 137.0,
+      "jobID": 111133883998
+    },
+    {
+      "treatment": "baseline",
+      "sample": "3",
+      "runnerSeconds": 316.0,
+      "affectedExecutionSeconds": 285.0,
+      "buildSeconds": 285.0,
+      "jobID": 111133883999
+    },
+    {
+      "treatment": "mounts",
+      "sample": "3",
+      "runnerSeconds": 257.0,
+      "affectedExecutionSeconds": 222.0,
+      "buildSeconds": 128.0,
+      "jobID": 111133884015
+    },
+    {
+      "treatment": "baseline",
+      "sample": "1",
+      "runnerSeconds": 256.0,
+      "affectedExecutionSeconds": 213.0,
+      "buildSeconds": 213.0,
+      "jobID": 111133884026
+    },
+    {
+      "treatment": "mounts",
+      "sample": "1",
+      "runnerSeconds": 319.0,
+      "affectedExecutionSeconds": 271.0,
+      "buildSeconds": 141.0,
+      "jobID": 111133884046
+    }
+  ],
+  "seed": {
+    "id": 111131914838,
+    "name": "Isolated amd64 Go mount seed",
+    "status": "completed",
+    "conclusion": "success",
+    "runnerSeconds": 742.0,
+    "steps": [
+      {
+        "name": "Set up job",
+        "conclusion": "success",
+        "seconds": 3.0
+      },
+      {
+        "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "conclusion": "success",
+        "seconds": 6.0
+      },
+      {
+        "name": "Bind the isolated producer to current application and compiler inputs",
+        "conclusion": "success",
+        "seconds": 0.0
+      },
+      {
+        "name": "Run docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
+        "conclusion": "success",
+        "seconds": 7.0
+      },
+      {
+        "name": "Recreate code-only Go mounts using compatible main-layer reads",
+        "conclusion": "success",
+        "seconds": 458.0
+      },
+      {
+        "name": "Extract the compiler mount without loading a duplicate extraction image",
+        "conclusion": "success",
+        "seconds": 179.0
+      },
+      {
+        "name": "Transfer the isolated mount data for this run only",
+        "conclusion": "success",
+        "seconds": 9.0
+      },
+      {
+        "name": "Post Recreate code-only Go mounts using compatible main-layer reads",
+        "conclusion": "success",
+        "seconds": 2.0
+      },
+      {
+        "name": "Post Run docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
+        "conclusion": "success",
+        "seconds": 74.0
+      },
+      {
+        "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "conclusion": "success",
+        "seconds": 1.0
+      },
+      {
+        "name": "Complete job",
+        "conclusion": "success",
+        "seconds": 0.0
+      }
+    ]
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "sourceRevision": "104a23a300bbe8cd7adc180c7c7ba3a6a30100ed",
+    "context": "compiler-application-linux-amd64-CGO1-duckdb_arrow-go1.27.1-bookworm-69a7b9788769",
+    "archiveSHA256": "1091743c29a6ae5d87b146a9e8761ed26f6d909466198e4eec7efa5195beac69",
+    "archiveBytes": 949937930,
+    "buildFiles": 22480,
+    "buildLogicalBytes": 4017129093
+  },
+  "allocationConsumers": 3,
+  "baselineMedianRunnerSeconds": 284.0,
+  "mountsMedianRunnerSeconds": 314.0,
+  "fullyAllocatedMountsMedianRunnerSeconds": 561.3333333333334,
+  "fullyAllocatedRunnerRegressionPercent": 97.65258215962442,
+  "baselineMedianAffectedExecutionSeconds": 254.0,
+  "mountsMedianAffectedExecutionSeconds": 263.0,
+  "artifactRetentionDays": 1,
+  "scope": "compiler mounts only; existing module base initialization and ordinary production layer reads identical",
+  "decision": "reject; transfer/injection and producer costs exceed project acceptance; retain current production behavior",
+  "allSixInputDigestsEqual": true,
+  "queueSeconds": 0.0
+}
