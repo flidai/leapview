@@ -87,6 +87,26 @@ owns browser/diagram tests and uses `test:site:prepared`. The standalone
 complete local coverage. Every projected docs selection includes the site shard;
 generated checks and all other shards remain mandatory.
 
+## Image layers and transition builds
+
+Both Dockerfiles install locked JavaScript dependencies before copying scripts,
+static assets and browser source. Broad source-generation inputs remain intact.
+The site sourcegen sequence was executed with visualdocgen before and after the
+remaining documentation generators; both produced SHA-256
+`77f7fa194e9eb0830627eb1f77fc56457679241ecbd6f4bf02415db32841c4c3` for
+`docs/visuals/examples.gen.json`. Timings and commands are recorded in
+`measurements/site-generation-equivalence.json`. The repeated second invocation
+is removed; the first generation and final embedded-artifact assertions remain.
+
+Pre-merge historical-transition builds explicitly initialize Buildx and use the
+existing pinned build-push action to restore `production-amd64` GitHub layers.
+That action supplies the GitHub runtime cache credentials for BuildKit, which a
+bare shell `docker buildx` invocation does not automatically receive. Candidates
+load the image locally and publish no images or caches. Checkout SHA verification,
+commit build time, revision/dirty assertions, final-artifact admission and the
+mandatory transition receipt remain in place. This changes ordinary layer reads;
+it does not add persistent cache-mount export or release-cache experiments.
+
 Higher-risk experiments remain measurement-gated:
 
 - Nix caching: first measure the orchestration closure and realization cost.
@@ -122,3 +142,67 @@ refuse replacement of an existing release.
 References: [reusable workflow permissions](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows),
 [job reruns](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs),
 [release listing](https://docs.github.com/en/rest/releases/releases#list-releases).
+
+## Qualification evidence and rollout follow-through
+
+The rollout is tracked in the [CI/CD Quality & Speed project](https://linear.app/flid/project/leapview-cicd-quality-and-speed-8a7e28e7113f/overview).
+The three changes are [qualification correctness](https://github.com/flidai/leapview/pull/805),
+[bounded execution](https://github.com/flidai/leapview/pull/807), and
+[image layers](https://github.com/flidai/leapview/pull/808), registered in native
+GitHub stack #809. Submit the remaining stack through the protected merge queue;
+source-head PR checks do not replace exact merge-candidate validation.
+
+The first change merged as `3b92e515dedc5a85dc75b04071d662c5f2222d68` after
+[full merge validation](https://github.com/flidai/leapview/actions/runs/37020782062),
+[Security gate](https://github.com/flidai/leapview/actions/runs/37020782054), and
+[all four native proofs](https://github.com/flidai/leapview/actions/runs/37020781881)
+passed for that candidate. Remaining PRs must be rebased when main advances and
+receive their own passing candidate checks before merging.
+
+[PR run 37016204441](https://github.com/flidai/leapview/actions/runs/37016204441)
+passed the cumulative contract. Rerunning only its terminal gate passed in
+attempt 2 using the retained successful attempt-1 plan, without repeating bulk
+validation or publication. This exercises partial-rerun identity preservation;
+it does not execute or publish a server release. Subsequent rebases require fresh
+checks and are recorded in the project rather than attributed to this old SHA.
+
+Hosted validation also exposed browser and module-acquisition failures. Catalog
+DOM suites now run in separate Bun processes, with a regression for that process
+boundary. Eligible idempotent agent signal patches use the existing bounded
+context-turnover helper; assertions and timeouts remain intact. The exact cause
+of the original hosted catalog timeout was not established, so passing reruns
+are not evidence that every source of browser flakiness has been removed.
+Latest-main local validation also caught a pipeline fixture mutating its signal
+root before Datastar's initial scan completed. Pipeline fixture navigation now
+waits for the expected page kind/tab and Lit update before mutation. A controlled
+delayed-signal regression fails with navigation-only readiness and passes with
+the explicit boundary; production components and assertions are unchanged.
+
+Two merge candidates failed while fetching Go module ZIPs with HTTP/2
+`INTERNAL_ERROR`, before their tests or generators could execute. `go:deps`
+performs one fail-closed module download before generation and parallel test
+lanes, with HTTP/2 disabled only for that download process, matching the existing
+sqlc acquisition setting. Tests retain the caller's transport configuration.
+Executable Task regressions verify acquisition ordering, one prefetch before
+application shards, and that failed downloads stop generation and tests.
+Cold and warm downloads of the two affected locked modules matched `go.sum`.
+This changes neither cache namespaces nor dependency versions.
+
+FAI-1050 through FAI-1053 retain separate measurement work for Nix-store caching,
+Go archive utility, BuildKit mounts/release reuse, and recovery concurrency.
+Local closure serialization and existing restore timings are screening evidence;
+they lack controlled hosted transfer/producer costs and paired comparisons.
+No experiment is adopted, no acceptance threshold is waived, and no aggregate
+speedup or p95 claim is made. FAI-1054 records the integrated qualification and
+the remaining measurement limitations.
+
+The Go-cache assessment retains joint module/build archives and current ownership.
+Hosted PR/merge package jobs restored v2 archives of 1.387/1.396 GB in observed
+restore-action intervals of 30.35/40.81s. Their logs show 244/248 cached Go result
+lines out of 323; this is test-result reuse, not a compiler hit ratio or a paired
+speedup. Module-versus-build byte attribution remains unmeasured. After confirming
+current consumers use v2 and v2 archives served passing PR and merge validation,
+the 11 obsolete default-branch v1 cache IDs were removed (20,572,733,591 bytes).
+A fresh exact-prefix listing returned zero v1 entries. FAI-1051 records the
+exact cleanup inventory and hosted evidence; active v2/native/BuildKit namespaces
+and input key behavior were retained.

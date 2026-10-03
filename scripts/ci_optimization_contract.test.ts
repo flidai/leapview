@@ -98,3 +98,37 @@ test('hosted docs retain regeneration and Go checks while the site shard owns br
     .toBe('task ci:test:docs')
   expect(job.steps.some((step: any) => step.run === 'task generated:check')).toBe(true)
 })
+
+test('image dependency installation precedes source copies and site generation runs once', () => {
+  for (const name of ['Dockerfile', 'Dockerfile.site']) {
+    const file = readFileSync(name, 'utf8')
+    const web = file.slice(file.indexOf(' AS web\n'), file.indexOf(' AS build\n'))
+    expect(web.indexOf('RUN bun install --frozen-lockfile --no-cache')).toBeLessThan(web.indexOf('COPY scripts'))
+    expect(web.indexOf('COPY package.json bun.lock tsconfig.json')).toBeLessThan(web.indexOf('RUN bun install'))
+    // schema export reaches application code; do not narrow generator inputs.
+    expect(file).toContain('COPY . .\n')
+  }
+  const site = readFileSync('Dockerfile.site', 'utf8')
+  expect(site.match(/go run -tags=duckdb_arrow \.\/internal\/app\/tools\/visualdocgen/g)).toHaveLength(1)
+})
+
+test('historical transition reads production layers but builds and verifies the exact candidate', () => {
+  const steps = workflow('demo-upgrade-qualification').jobs['historical-transition'].steps
+  const setup = steps.findIndex((step: any) => step.uses?.startsWith('docker/setup-buildx-action@'))
+  const identity = steps.findIndex((step: any) => step.id === 'local-identity')
+  const build = steps.findIndex((step: any) => step.uses?.startsWith('docker/build-push-action@'))
+  const verify = steps.findIndex((step: any) => step.name === 'Verify the local candidate revision')
+  const qualify = steps.findIndex((step: any) => step.name === 'Run the required historical transition fixture')
+  expect(setup).toBeGreaterThan(-1)
+  expect(identity).toBeGreaterThan(setup)
+  expect(build).toBeGreaterThan(identity)
+  expect(verify).toBeGreaterThan(build)
+  expect(qualify).toBeGreaterThan(verify)
+  expect(steps[build].with).toMatchObject({ context: '.', file: 'Dockerfile',
+    platforms: 'linux/amd64', load: true, push: false, 'cache-from': 'type=gha,scope=production-amd64' })
+  expect(steps[build].with['cache-to']).toBeUndefined()
+  expect(steps[build].with['build-args']).toContain('BUILD_REVISION=${{ inputs.candidate_revision || github.sha }}')
+  expect(steps[identity].run).toContain('test "$(git rev-parse HEAD)" = "${SOURCE_REVISION}"')
+  expect(steps[verify].run).toContain('.revision == $revision and .dirty == false')
+  for (const index of [setup, identity, build, verify]) expect(steps[index].if).toBe('${{ !inputs.final_artifact }}')
+})

@@ -4019,8 +4019,8 @@ func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
 		t.Fatalf("Dockerfile.site downloads Go modules %d times, want one shared dependency stage", count)
 	}
 	const seededModuleCache = "type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked"
-	if count := strings.Count(string(siteDockerfile), seededModuleCache); count != 3 {
-		t.Fatalf("Dockerfile.site uses the seeded persistent Go module cache %d times, want source generation, visual documentation, and compilation", count)
+	if count := strings.Count(string(siteDockerfile), seededModuleCache); count != 2 {
+		t.Fatalf("Dockerfile.site uses the seeded persistent Go module cache %d times, want source generation (including visual documentation) and compilation", count)
 	}
 
 	gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
