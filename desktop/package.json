@@ -52,6 +52,7 @@
     "node"
   ],
   "overrides": {
+    "@parcel/watcher": "2.6.0",
     "brace-expansion": "file:vendor/brace-expansion-compat",
     "image-size": "file:vendor/image-size-next-compat",
     "tar": "7.5.22"
