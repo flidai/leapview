@@ -366,6 +366,47 @@ test('chat dashboard draft moves side legends below the chart without hiding the
   }
 })
 
+test('always-labelled trend previews scroll inside mobile cards without changing authored labels', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    await publishDashboardDraft(page, 'labelled-trend', 'Monthly performance', [{ id: 'trend', artifactId: 'trend_artifact', title: 'Monthly sales' }])
+    const draft = page.locator('lv-chat-dashboard-draft')
+    for (const mark of ['line', 'area', 'bar']) {
+      const layout = await draft.evaluate(async (host: any, mark) => {
+        const original = host.visuals.trend_artifact
+        const payload = { ...original, spec: { ...original.spec, mark, presentation: { ...original.spec.presentation, labelPolicy: { ...original.spec.presentation.labelPolicy, density: 'always' } } } }
+        host.visuals = { trend_artifact: payload }
+        await host.updateComplete
+        const card = host.shadowRoot.querySelector('.card')
+        const viewport = host.shadowRoot.querySelector('.visual')
+        const chart = host.shadowRoot.querySelector('lv-visualization-host')
+        viewport.scrollLeft = 100
+        return {
+          cardWidth: card.getBoundingClientRect().width,
+          chartWidth: chart.getBoundingClientRect().width,
+          scrollLeft: viewport.scrollLeft,
+          documentOverflow: document.documentElement.scrollWidth > innerWidth,
+          samePayload: chart.envelope === payload,
+          density: chart.envelope.spec.presentation.labelPolicy.density,
+        }
+      }, mark)
+      expect(layout.cardWidth).toBeLessThanOrEqual(390)
+      expect(layout.documentOverflow).toBe(false)
+      expect(layout.samePayload).toBe(true)
+      expect(layout.density).toBe('always')
+      if (mark === 'bar') {
+        expect(layout.chartWidth).toBeLessThan(layout.cardWidth)
+        expect(layout.scrollLeft).toBe(0)
+      } else {
+        expect(layout.chartWidth).toBeGreaterThanOrEqual(640)
+        expect(layout.scrollLeft).toBeGreaterThan(0)
+      }
+    }
+  } finally { await page.close() }
+})
+
 async function publishDashboardDraft(page: Page, revision: string, title: string, visuals: Array<{ id: string; artifactId: string; title: string }>): Promise<void> {
   await page.evaluate(async ({ revision, title, visuals }) => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')

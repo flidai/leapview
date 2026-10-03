@@ -138,6 +138,8 @@ export class ChatDashboardDraft extends LitElement {
     .card-actions button { min-height: 1.9rem; padding-inline: var(--base-size-8); }
     .remove { color: var(--lv-fg-danger); }
     .visual { height: clamp(22rem, 42vh, 30rem); min-height: 22rem; padding: var(--base-size-8); }
+    .visual.scroll-labels { overflow-x: auto; }
+    .visual.scroll-labels lv-visualization-host { min-width: 40rem; }
     lv-visualization-host { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
     .unavailable { display: grid; min-height: 18rem; place-items: center; padding: var(--base-size-16); color: var(--lv-fg-muted); text-align: center; font: var(--lv-type-secondary); }
     .empty { display: grid; min-height: 15rem; place-content: center; justify-items: center; gap: var(--base-size-8); padding: var(--base-size-24); color: var(--lv-fg-muted); text-align: center; }
@@ -274,6 +276,9 @@ export class ChatDashboardDraft extends LitElement {
     const displayPayload = payload ? this.normalizedVisualPayload(payload) : undefined
     const title = visual.title?.trim() || payload?.spec.title?.trim() || 'Untitled visual'
     const selected = this.selectedVisualId === visual.id
+    const scrollLabels = payload?.spec.kind === 'cartesian'
+      && (payload.spec.mark === 'line' || payload.spec.mark === 'area')
+      && payload.spec.presentation.labelPolicy.density === 'always'
     return html`
       <article class="card" data-draft-visual-id=${visual.id} data-selected=${String(selected)}>
         <div class="card-actions" role="group" aria-label=${`Actions for ${title}`}>
@@ -285,7 +290,7 @@ export class ChatDashboardDraft extends LitElement {
           </button>
         </div>
         ${payload ? html`
-          <div class="visual" @click=${() => { this.selectedVisualId = visual.id }}>
+          <div class=${scrollLabels ? 'visual scroll-labels' : 'visual'} @click=${() => { this.selectedVisualId = visual.id }}>
             <lv-visualization-host .envelope=${displayPayload} defer-mount></lv-visualization-host>
           </div>
         ` : html`<div class="unavailable" role="status">Chart data is loading for ${title}…</div>`}
