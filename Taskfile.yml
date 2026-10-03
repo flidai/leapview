@@ -551,6 +551,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/nix_ci_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py

@@ -1,4 +1,4 @@
-name: Ephemeral Hetzner deployment
+name: Deploy / Ephemeral Hetzner
 
 on:
   workflow_dispatch:

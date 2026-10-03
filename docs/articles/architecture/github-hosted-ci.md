@@ -150,7 +150,7 @@ inputs. The always-running CI gate still requires every lane to succeed and the 
 proof to succeed for the exact merge candidate. Local full validation remains sequential to avoid
 contention on a shared machine.
 
-Nightly CI also runs security scans in parallel. Post-merge artifact CI builds and pushes the
+`CI / Nightly validation` also runs security scans in parallel. Post-merge artifact CI builds and pushes the
 production image using a BuildKit cache, then qualifies its immutable digest on a second clean runner.
 
 Splitting production build and qualification prevents build layers from consuming the local

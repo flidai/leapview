@@ -82,7 +82,7 @@ workflow steps with an explicit allowlist; runner credentials are never copied.
 Browser lanes verify the npm/browser pairing with `task nix:smoke`; a missing or
 mismatched locked browser fails without downloading a replacement.
 
-The `Nix development` workflow also runs native toolchain checks, browser checks, and the
+The `CI / Nix development` workflow also runs native toolchain checks, browser checks, and the
 existing `task ci` on relevant toolchain changes or manual dispatch. It uses an
 ephemeral GitHub-hosted runner and public Nix substitutes, with no deployment secrets
 or private cache account. Manual dispatch can select

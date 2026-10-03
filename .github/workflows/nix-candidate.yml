@@ -1,4 +1,4 @@
-name: Protected Nix candidate
+name: Qualification / Protected Nix candidate
 
 on:
   workflow_dispatch:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Admit a digest using the receipt from the exact successful Main artifacts run."""
+"""Admit a digest using the receipt from the exact successful Build / Main image run."""
 import io
 import json
 import os

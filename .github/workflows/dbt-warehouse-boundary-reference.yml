@@ -1,4 +1,4 @@
-name: dbt warehouse boundary reference
+name: Deploy / dbt warehouse reference
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Installed candidate qualification
+name: Qualification / Installed candidate
 
 on:
   workflow_call:
