@@ -371,3 +371,24 @@ Protected candidate qualification continues to require one exact open PR head
 with a direct base of `main`. Stacked children must land their prerequisites,
 retarget and revalidate before using that protected path. This collector supplies
 reusable identity and evidence binding while those release gates remain pending.
+
+### Standalone static controller archive reports
+
+The same Go evidence adapter supports `--kind cli-archive`, with the required
+`--archive-identity` source/platform/version record. Its archive contract is exactly
+one regular executable named `leapviewctl` at the root. Extraction writes only a
+fixed private filename, rejects extra or duplicate members, links, set-ID files,
+size overrides, sparse files and ambiguous extended headers, and rechecks the full
+archive hash after reading. No controller bytes are executed by the scanner.
+
+`nix_candidate_manifest.py --kind cli-archive --archive-identity IDENTITY
+--go-evidence REPORT_DIRECTORY --binary-verifier ABSOLUTE_VERIFIER` binds and
+reverifies the expected controller package and platform, raw reports, build
+metadata, scanner identity and freshness against the exact archive. Both AMD64
+and ARM64 reports are retained alongside the unchanged native Debian 12 probes.
+The read-only PR scan uses reviewed-with-the-PR helpers and has no signing or
+publication authority. Protected qualification must generate fresh Go reports with
+main-owned tools; offline verification alone cannot establish the authenticity of
+PR-generated scanner results. Protected archive signing/admission, SPDX, full
+installation and recovery acceptance remain prerequisites; `releaseAdmission`
+stays false.

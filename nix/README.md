@@ -181,11 +181,24 @@ The probe receives no candidate-supplied libraries and runs without network,
 write access or root privileges. Reports bind the tested binary hash, archive
 candidate digest, runtime identity and host image digest.
 
+Controller builds retain Go function symbols (`-w`, without `-s`) so binary-mode
+vulnerability analysis can inspect the shipped code. A separate read-only lane
+scans both architectures on AMD64 without executing either controller. It retrieves
+the same immutable archive artifact, accepts exactly one bounded regular executable
+named `leapviewctl`, and retains full scanner reports. Offline verification binds
+those reports to the exact binary and compressed archive hashes, expected main
+package, architecture, scanner policy and freshness in the CLI candidate manifest.
+Duplicate files, links, extra paths and ambiguous tar metadata fail closed.
+Failed scans retain diagnostics and cannot produce a successful evidence manifest.
+These PR reports are unprivileged qualification evidence; protected signed archive
+qualification must rescan the exact output with main-owned tools before signing
+or adoption. Offline verification of PR-generated reports alone is insufficient.
+
 These are development candidates derived from canonical `VERSION`, clean source
 revision and commit timestamp, with `release=false`. Compatibility receipts retain
 `releaseAdmission: false`. Basic Debian command execution does not establish
 installation, publication, upgrade, rollback or recovery acceptance. Signed
-archive provenance/SPDX, Go vulnerability admission, complete supported-host
+archive provenance/SPDX, protected Go vulnerability admission, complete supported-host
 qualification, installation payload assembly and protected promotion remain D05
 gates. Conventional release and non-Linux builders remain the published owners.
 
