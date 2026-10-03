@@ -252,6 +252,7 @@ type assemblyConfig struct {
 	JobModule               *jobsmodule.Module
 	AccessRepo              access.Repository
 	MCPResource             mcpoauth.ResourceServer
+	MCPEnabled              bool
 	AccessModule            *accessmodule.Module
 	Agent                   *agentmodule.Service
 	AgentConfig             agentmodule.ModelConfig
@@ -383,8 +384,8 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
-			Profile: accessmodule.NewProfileSurface(options.AccessRepo, options.MCPResource),
-			Assets:  options.Assets, InstanceID: instanceID, PublicURL: publicURL,
+			MCPEnabled: options.MCPEnabled, Profile: accessmodule.NewProfileSurface(options.AccessRepo, options.MCPResource),
+			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
 		})
 		if err != nil {
 			return nil, err

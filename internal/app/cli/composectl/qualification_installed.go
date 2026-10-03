@@ -1104,7 +1104,7 @@ func verifyQualificationDenialsAndMetrics(
 		return fmt.Errorf("unauthenticated governed query returned %d", response.StatusCode)
 	}
 	metricsRequest, err := newQualificationLoopbackRequest(
-		ctx, http.MethodGet, "http://127.0.0.1:8080/metrics", nil,
+		ctx, http.MethodGet, "http://127.0.0.1:9090/metrics", nil,
 	)
 	if err != nil {
 		return err
@@ -1118,7 +1118,7 @@ func verifyQualificationDenialsAndMetrics(
 		return fmt.Errorf("unauthenticated metrics returned %d", metricsResponse.StatusCode)
 	}
 	metrics, err := readQualificationMetrics(
-		ctx, client, "http://127.0.0.1:8080", metricsToken,
+		ctx, client, "http://127.0.0.1:9090", metricsToken,
 	)
 	if err != nil {
 		return err

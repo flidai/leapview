@@ -16,6 +16,10 @@ services:
       LEAPVIEW_IMAGE: ${LEAPVIEW_IMAGE:?set LEAPVIEW_IMAGE in deployment.env}
     ports:
       - "${COMPOSE_APP_BIND:-127.0.0.1:8080}:8080"
+      - target: 9090
+        published: "${COMPOSE_METRICS_PORT:-9090}"
+        host_ip: 127.0.0.1
+        protocol: tcp
     volumes:
       - leapview-state:/var/lib/leapview
       - type: tmpfs

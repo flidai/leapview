@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -361,7 +362,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		return fail(err)
 	}
 	var internalOAuth *appaccesspostgres.InternalOAuthConfig
-	if strings.TrimSpace(cfg.MCPOAuthIssuerURL) == "" {
+	if cfg.MCPEnabled && strings.TrimSpace(cfg.MCPOAuthIssuerURL) == "" {
 		secret := sha256.Sum256([]byte("leapview:mcp-oauth:" + cfg.CSRFKey))
 		internalOAuth = &appaccesspostgres.InternalOAuthConfig{IssuerURL: publicURL, ResourceURL: strings.TrimSuffix(publicURL, "/") + "/mcp", Secret: secret[:]}
 	}
@@ -369,7 +370,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	if err != nil {
 		return fail(err)
 	}
-	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, Environment: string(environment), MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject, AuthoringProject: authoringProject})
+	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, Environment: string(environment), MCPEnabled: cfg.MCPEnabled, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject, AuthoringProject: authoringProject})
 	if err != nil {
 		return fail(err)
 	}
@@ -1051,6 +1052,9 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		return errors.Join(closeRuntimeHost(), closeResources())
 	}
 	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, refreshChanges, runtimeLifecycle}
+	if strings.TrimSpace(cfg.MetricsAddr) != "" {
+		components = append(components, newMetricsListener(cfg.MetricsAddr, platform.telemetry.MetricsHandler(cfg.MetricsBearerToken, accessmodule.BearerToken)))
+	}
 	application := newApplication(handler, components)
 	transitionExecute := func(transitionCtx context.Context, request AccessTransitionExecutionRequest) (AccessTransitionExecutionResult, error) {
 		if routes.deploymentModule == nil {

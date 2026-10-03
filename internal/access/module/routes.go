@@ -99,13 +99,15 @@ func (m *Module) MountOAuthEndpoints(r chi.Router) {
 	r.Get("/auth/{provider}/callback", m.Callback)
 	r.Post("/oauth/device/code", m.AuthoringDeviceAuthorization)
 	r.Post("/oauth/token", m.OAuthToken)
-	r.Post("/oauth/register", m.MCPOAuthRegister)
+	if m.MCPEnabled() {
+		r.Post("/oauth/register", m.MCPOAuthRegister)
+	}
 	r.Post("/oauth/revoke", m.OAuthRevoke)
 	m.MountDesktopAuth(r)
 }
 
 func (m *Module) MountOAuthMetadata(r chi.Router) {
-	if m == nil {
+	if !m.MCPEnabled() {
 		return
 	}
 	r.Get("/.well-known/oauth-protected-resource", m.MCPProtectedResourceMetadata)

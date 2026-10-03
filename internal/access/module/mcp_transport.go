@@ -12,8 +12,13 @@ type MCPIdentity struct {
 	Credential  access.APICredential
 }
 
+// MCPEnabled is deployment-owned and independent of model inference settings.
+func (m *Module) MCPEnabled() bool {
+	return m != nil && m.mcpEnabled
+}
+
 func (m *Module) MCPIdentity(r *http.Request) (MCPIdentity, bool) {
-	if m == nil || m.auth == nil {
+	if !m.MCPEnabled() || m.auth == nil {
 		return MCPIdentity{}, false
 	}
 	principal, ok := m.auth.Principal(r)
@@ -29,6 +34,10 @@ func (m *Module) MCPIdentity(r *http.Request) (MCPIdentity, bool) {
 
 func (m *Module) ProtectMCP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !m.MCPEnabled() {
+			http.NotFound(w, r)
+			return
+		}
 		if m == nil || m.auth == nil || m.oauthResource == nil {
 			if m != nil && m.oauthResource != nil {
 				m.oauthResource.Challenge(w)

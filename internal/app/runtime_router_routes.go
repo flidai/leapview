@@ -232,7 +232,7 @@ func mountAPIRoutes(mux *chi.Mux, dependencies apiRouteDependencies, publicProto
 	if !dependencies.persistenceConfigured {
 		return
 	}
-	if dependencies.auth != nil {
+	if dependencies.auth != nil && dependencies.access.MCPEnabled() {
 		dependencies.agent.MountMCP(mux.With(dependencies.rateLimits.API()))
 	}
 	if strings.TrimSpace(dependencies.scimBearerToken) != "" {

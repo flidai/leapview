@@ -365,7 +365,7 @@ func TestQualificationLoopbackRequestUsesProductionAllowedHost(t *testing.T) {
 	request, err := newQualificationLoopbackRequest(
 		t.Context(),
 		http.MethodGet,
-		"http://127.0.0.1:8080/metrics",
+		"http://127.0.0.1:9090/metrics",
 		nil,
 	)
 	require.NoError(t, err)

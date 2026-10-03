@@ -19,6 +19,13 @@ executable form of the same journey.
 
 ## Run from an extracted release
 
+Metrics use a separate listener on container port 9090. Compose binds that port
+only to host `127.0.0.1`; `COMPOSE_METRICS_PORT` selects the host port for local
+operators. The installed qualification uses the default port 9090 and its metrics
+bearer. The application/proxy path `/metrics` returns 404. Do not forward the
+metrics port through the public proxy. Each independently running Compose project
+needs distinct host application and metrics ports.
+
 Install Docker Engine with the Compose plugin, `curl`, `jq`, `openssl`, and
 `sha256sum`. From the extracted archive:
 

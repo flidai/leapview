@@ -35,6 +35,7 @@ type Config struct {
 	AuthorizationPolicyTargetID    string
 	AuthorizationPolicyEnvironment string
 	MCPIssuerURL                   string
+	MCPEnabled                     bool
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
 	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
 	AuthoringProjectID             func(context.Context) (projectgraph.ResourceID, error)
@@ -56,6 +57,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Persistence == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
+			MCPEnabled:                     config.MCPEnabled,
 			Persistence:                    config.Persistence,
 			AuthorizationPolicyTargetID:    firstNonEmpty(config.AuthorizationPolicyTargetID, config.InstanceID),
 			AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment,
@@ -66,7 +68,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			Presentation:       config.Presentation, Assets: config.Assets,
 		}
 		if config.Profile != nil {
-			surface.OAuthResource = config.Profile.oauthResource
+			if config.MCPEnabled {
+				surface.OAuthResource = config.Profile.oauthResource
+			}
 			if config.Profile.repository != nil {
 				surface.Repository = func() (access.Repository, error) { return config.Profile.repository, nil }
 			}
@@ -139,6 +143,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		auth.authoringAuth = authoringAuth
 	}
 	surface := surfaceConfig{
+		MCPEnabled:                     config.MCPEnabled,
 		Persistence:                    config.Persistence,
 		AuthorizationPolicyTargetID:    firstNonEmpty(config.AuthorizationPolicyTargetID, config.InstanceID),
 		AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment,
@@ -167,16 +172,18 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if auth == nil {
 		return module, nil
 	}
-	if oauth != nil {
-		module.oauth = oauth
-		module.oauthResource = oauth
-	} else if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
-		module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
-	} else {
-		return nil, errors.New("MCP OAuth requires injected PostgreSQL-backed service or external resource")
-	}
-	if err != nil {
-		return nil, err
+	if config.MCPEnabled {
+		if oauth != nil {
+			module.oauth = oauth
+			module.oauthResource = oauth
+		} else if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
+			module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
+		} else {
+			return nil, errors.New("MCP OAuth requires injected PostgreSQL-backed service or external resource")
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	if strings.TrimSpace(config.InstanceID) != "" {
 		desktopStore, ok := repository.(desktopauth.Store)

@@ -54,6 +54,7 @@ func (c *Controller) qualifyProductionImageRuntime(
 		"--env", "LEAPVIEW_POSTGRES_CONTROL_URL=",
 		"--env", "LEAPVIEW_API_TOKEN_ONLY_AUTH=1",
 		"--env", "LEAPVIEW_CSRF_KEY="+csrfKey,
+		"--env", "LEAPVIEW_METRICS_ADDR=:9090",
 		"--env", "LEAPVIEW_METRICS_BEARER_TOKEN="+metricsToken,
 		"--env", "LEAPVIEW_ALLOWED_HOSTS=127.0.0.1,localhost",
 		"--env", "LEAPVIEW_PUBLIC_URL=https://localhost",

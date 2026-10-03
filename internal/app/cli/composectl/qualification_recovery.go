@@ -232,6 +232,7 @@ func (c *Controller) runQualificationRecovery(
 	})
 	client := &http.Client{Timeout: 30 * time.Second}
 	apiRoot := "http://127.0.0.1:8080"
+	metricsRoot := "http://127.0.0.1:9090"
 
 	if err := phases.Finish(nil); err != nil {
 		return report, err
@@ -618,7 +619,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	report.BoundedState.DiskBeforeKiB = diskBefore
-	metricsBefore, err := readQualificationMetrics(ctx, client, apiRoot, options.MetricsToken)
+	metricsBefore, err := readQualificationMetrics(ctx, client, metricsRoot, options.MetricsToken)
 	if err != nil {
 		return report, err
 	}
@@ -660,7 +661,7 @@ func (c *Controller) runQualificationRecovery(
 			return report, fmt.Errorf("SSE reconnect cycle %d: %w", cycle, err)
 		}
 	}
-	metricsAfter, err := readQualificationMetrics(ctx, client, apiRoot, options.MetricsToken)
+	metricsAfter, err := readQualificationMetrics(ctx, client, metricsRoot, options.MetricsToken)
 	if err != nil {
 		return report, err
 	}

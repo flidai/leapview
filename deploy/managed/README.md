@@ -151,12 +151,19 @@ backend and standard `docker0`/`br-*` Docker bridge names. Custom bridge interfa
 names require separate policy coverage and qualification. Root/Docker operators
 can still change this configuration.
 
-These are port-level checks. The application serves `/metrics` on the same
-listener as its pages; the current Kamal template therefore routes that path
-through the public proxy, with bearer-token protection. This does not qualify
-private metrics collection. Select and test a private collection/exposure contract
-before production acceptance; blocking published bypass ports does not restrict
-paths carried over allowed HTTP ingress.
+These are port-level checks. Metrics now use the separate
+`LEAPVIEW_METRICS_ADDR` listener; the public application router returns 404 for
+`/metrics`, including requests with a valid metrics bearer. The Kamal template
+uses container port 9090 without publishing it. A collector must join the
+restricted container network and supply the metrics bearer; do not publish that
+port or add it to the public proxy. Actual collector access, external denial and
+alert delivery still require deployment qualification.
+
+The managed template disables local password login and external MCP by default.
+It requires the customer's OIDC issuer/client and a protected client secret;
+the example callback uses the declared public hostname. Initial bootstrap and
+recovery must use the supported fenced procedure. Template settings do not prove
+Microsoft tenant restrictions, MFA, entitlement removal or safe emergency access.
 
 The kernel fixture and real-Docker guests complement an external exposure test
 on the provisioned host; they do not qualify Hetzner or Tailscale network paths.

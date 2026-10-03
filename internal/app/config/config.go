@@ -207,6 +207,11 @@ func (c Config) CookieSecure() (bool, error) {
 }
 
 func (c Config) Validate(profile Profile) error {
+	if strings.TrimSpace(c.MetricsAddr) != "" {
+		if _, err := ParseListenAddr(c.MetricsAddr); err != nil {
+			return fmt.Errorf("LEAPVIEW_METRICS_ADDR: %w", err)
+		}
+	}
 	if profile != ProfileServe {
 		return fmt.Errorf("unsupported configuration profile %q", profile)
 	}

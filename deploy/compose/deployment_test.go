@@ -45,6 +45,9 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 	for _, required := range []string{
 		"leapview-state:/var/lib/leapview",
 		"${COMPOSE_APP_BIND:-127.0.0.1:8080}:8080",
+		"target: 9090",
+		"published: \"${COMPOSE_METRICS_PORT:-9090}\"",
+		"host_ip: 127.0.0.1",
 		"read_only: true",
 		"cap_drop: [ALL]",
 		"stop_grace_period: 2m",
@@ -70,6 +73,8 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 	appEnvironment := read(t, "leapview.env.example")
 	for _, required := range []string{
 		"LEAPVIEW_HOME=/var/lib/leapview/home",
+		"LEAPVIEW_METRICS_ADDR=:9090",
+		"LEAPVIEW_MCP_ENABLED=false",
 		"LEAPVIEW_PUBLIC_URL=https://dash.example.com",
 		"LEAPVIEW_ALLOWED_HOSTS=dash.example.com",
 		"LEAPVIEW_TRUST_PROXY_HEADERS=true",

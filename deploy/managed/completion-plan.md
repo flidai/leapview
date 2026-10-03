@@ -53,10 +53,11 @@ their limits visible is part of the delivery contract.
    Root-owned daemon state now uses a temporary directory outside the checkout;
    the previous `.tmp` location made concurrent contract generation fail while
    recursively walking the repository.
-6. **A port allowlist does not make metrics private.** `/metrics` shares the
-   application listener. The current public proxy routes that path with bearer
-   authentication; the network fixtures do not enforce path restrictions. Private
-   collection/exposure and external denial remain part of monitoring qualification.
+6. **A port allowlist does not make metrics private.** The original `/metrics`
+   route shared the application listener. The 2 October continuation removes
+   that route, adds a separate bearer-protected metrics listener and leaves its
+   container port unpublished. Local route/listener tests cover this boundary;
+   actual private collection, external denial and alerts remain deployment gates.
 7. **SSH CIDR validation accepted default-route aliases.** The host module rejected
    `/0` but accepted `/00` and malformed addresses, allowing unexpectedly broad
    rules or firewall startup failures. It now requires explicit positive,

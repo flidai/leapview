@@ -690,6 +690,7 @@ start() {
   ensure_dev_extension_supply
   export PORT="$port"
   export LEAPVIEW_ADDR="127.0.0.1:$port"
+  export LEAPVIEW_MCP_ENABLED="true"
   export LEAPVIEW_DEV_WORKTREE="$ROOT"
   if [[ "$(auth_mode)" == "local" ]]; then
     export LEAPVIEW_DEV_BROWSER_SESSION_TTL="${LEAPVIEW_DEV_BROWSER_SESSION_TTL:-720h}"

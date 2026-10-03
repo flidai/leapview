@@ -81,11 +81,13 @@ func TestCorrelationIdentitySurvivesEarlyMiddlewareFailure(t *testing.T) {
 	}
 }
 
-func TestMetricsRouteRequiresConfiguredBearerToken(t *testing.T) {
+func TestPrivateMetricsHandlerRequiresConfiguredBearerToken(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{
 		MetricsBearerToken: "0123456789abcdef0123456789abcdef",
 	}))
-	handler := server.Routes()
+	// The HTTP vector is created on the first observed application request.
+	server.Routes().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	handler := server.platform.telemetry.MetricsHandler(server.policy.metricsBearerToken, accessmodule.BearerToken)
 
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	response := httptest.NewRecorder()
@@ -124,7 +126,7 @@ func TestMetricsRouteExportsHealthRequestMetrics(t *testing.T) {
 
 	request = httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	server.platform.telemetry.MetricsHandler("", accessmodule.BearerToken).ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("metrics status = %d, want 200 body=%s", response.Code, response.Body.String())
 	}
