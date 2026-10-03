@@ -1,4 +1,4 @@
-name: Release image
+name: Release / Server and CLI
 
 on:
   push:

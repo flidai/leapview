@@ -251,7 +251,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"name: Nightly CI",
+		"name: CI / Nightly validation",
 		"schedule:",
 		"cron: '17 2 * * *'",
 		"workflow_dispatch:",

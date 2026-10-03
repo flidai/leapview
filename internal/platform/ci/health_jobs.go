@@ -95,7 +95,7 @@ func reusableQualificationJob(name string) (string, bool) {
 		switch parent {
 		case "host-recovery-validation",
 			"Isolated host recovery and migration boundary contracts",
-			"Isolated host recovery qualification",
+			"Qualification / Host recovery and migration",
 			"qualify-historical-transition",
 			"Qualify schema-32 predecessor transition against exact image":
 		default:

@@ -79,7 +79,7 @@ func TestReleaseWorkflowPublishesComposeArchiveAndAttestedImage(t *testing.T) {
 func TestPublicSiteImagePublicationContract(t *testing.T) {
 	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "site-image.yml"))
 	for _, fragment := range []string{
-		"name: Publish public site image",
+		"name: Build / Public site image",
 		"workflow_dispatch:",
 		"workflow_call:",
 		"IMAGE_NAME: ghcr.io/flidai/leapview-site",

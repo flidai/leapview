@@ -1,4 +1,4 @@
-name: Qualify isolated Kamal site image
+name: Qualification / Kamal site image
 
 # Experimental branch-only build. Push keeps the OIDC source digest equal to
 # the selected PR head; pull_request would attest the synthetic merge commit.

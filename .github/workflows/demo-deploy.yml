@@ -1,4 +1,4 @@
-name: Hosted demo deployment
+name: Deploy / Hosted demo
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ on:
         type: string
         required: false
       qualification_run:
-        description: 'Runtime operations: successful Main artifacts run ID with qualification receipt'
+        description: 'Runtime operations: successful Build / Main image run ID with qualification receipt'
         type: string
         required: false
 

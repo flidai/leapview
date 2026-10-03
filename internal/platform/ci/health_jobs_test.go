@@ -43,9 +43,9 @@ func TestReusableHostQualificationChildrenNormalizeToRequiredJobs(t *testing.T) 
 		"host-recovery-validation / historical-transition": hostRecoveryHistoricalJob,
 		"Isolated host recovery and migration boundary contracts / Isolated host recovery and migration boundary contracts": hostRecoveryRecoveryJob,
 		"Isolated host recovery and migration boundary contracts / Schema-32 legacy access transition":                      hostRecoveryHistoricalJob,
-		"Isolated host recovery qualification / Schema-32 legacy access transition":                                         hostRecoveryHistoricalJob,
+		"Qualification / Host recovery and migration / Schema-32 legacy access transition":                                         hostRecoveryHistoricalJob,
 		"Qualify schema-32 predecessor transition against exact image / Schema-32 legacy access transition":                 hostRecoveryHistoricalJob,
-		"host-recovery-validation / Isolated host recovery qualification / recovery":                                        hostRecoveryRecoveryJob,
+		"host-recovery-validation / Qualification / Host recovery and migration / recovery":                                        hostRecoveryRecoveryJob,
 		"Isolated host recovery and migration boundary contracts":                                                           hostRecoveryHealthLane,
 	} {
 		if got := HealthJobName(name); got != want {

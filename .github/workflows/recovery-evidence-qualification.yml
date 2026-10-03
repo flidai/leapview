@@ -1,4 +1,4 @@
-name: Recovery evidence qualification
+name: Qualification / Recovery evidence
 
 on:
   pull_request:

@@ -73,7 +73,7 @@ Do not substitute Electron's `--no-sandbox` flag. It invalidates the proof.
 
 The Go integration test skips unless `LEAPVIEW_ELECTRON_BINARY` points to an
 explicit Electron binary, keeping ordinary unit-test runs fast and deterministic.
-The `Electron security proof` workflow runs the same complete 20-invariant
+The `Security / Electron proof` workflow runs the same complete 20-invariant
 manifest on macOS Intel, Windows x64, and sandboxed Linux x64. Proof output
 contains only bounded enum-like observations and framework versions; it must
 not contain credentials or tenant data.
