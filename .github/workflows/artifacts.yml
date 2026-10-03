@@ -194,6 +194,17 @@ jobs:
           # workflow event SHA. Candidate identity is checked independently
           # against the image below after the open-PR authorization gate.
           source-revision: ${{ github.sha }}
+          platform: linux/amd64
+          vulnerability-report: ${{ runner.temp }}/oci-vulnerability-report.json
+
+      - name: Upload OCI vulnerability diagnostic
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-vulnerability-diagnostic-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/oci-vulnerability-report.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Qualify the immutable production image
         id: qualification

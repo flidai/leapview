@@ -1,12 +1,22 @@
 # Manual operator qualification — 29 September 2026
 
-## Live production rollout — 30 September 2026
+## Final live proofs — 2 October 2026
+
+The [final acceptance report](final-acceptance-20261002.md) and
+[receipt index](final-acceptance-20261002.json) record the full replacement
+24-hour interval, both boundary adoption smokes, actual observer and acceptance
+command exits, and the final read-only storage/retention/recovery audit.
+All required live proofs passed. Fallback #748 was subsequently closed externally
+as superseded at 16:07:20 IST on 2 October. Closeout documentation review and
+protected merge remain pending. Automatic VPS activation remains deferred.
+
+## Historical live rollout snapshot — 30 September 2026
 
 The public website now serves through the manually managed Kamal deployment.
 Production A/B admission and capacity qualification, original Compose
 restoration, B-to-A offline rollback and return to B, Caddy recreation, and a
 real host reboot all passed. Image B is active and A is the verified prior.
-The 24-hour observer is still running. Completion requires the full interval,
+At this snapshot the 24-hour observer was still running. Completion required the full interval,
 then its end adoption smoke and observation acceptance receipt, then the final
 retention/recovery audit, and finally closure of fallback PR #748.
 
@@ -15,7 +25,8 @@ See the [sanitized rollout report](live-rollout-20260930.md) and
 IST event times, admitted image/source identities, capacity margins, observer
 status, and hashes of protected source receipts. Raw protected receipts and
 their locations are not published. The v3 observer's failed sample is retained
-as a monitoring-tool limitation, separate from the accepted v4 observation.
+as a monitoring-tool limitation. The v4 interval subsequently stopped and is
+also excluded. Only the replacement 1–2 October interval qualifies for acceptance.
 
 The operator and disposable lifecycle results below remain historical synthetic
 qualification. They are not production migration, real-image capacity, or host
@@ -87,7 +98,9 @@ That inventory preceded the separately recorded 30 September live migration.
 
 The live evidence completes production admission, real-image capacity
 qualification, controlled handover/restoration, offline rollback, Caddy
-recreation and real host restart. Completion still requires a full 24-hour
-observation, the end adoption smoke and final receipt, a post-observation image
-retention audit, and then retirement of fallback PR #748. Automatic VPS
+recreation and real host restart. The 2 October final acceptance report also
+records the completed 24-hour observation, both adoption boundary smokes,
+bound acceptance receipt and post-observation retention/recovery audit.
+Fallback PR #748 was closed externally after those proofs passed. Completion
+requires final documentation review and protected merge. Automatic VPS
 activation remains deferred.

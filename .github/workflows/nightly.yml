@@ -312,10 +312,19 @@ jobs:
             .data/agent-e2e/report.json
             .data/agent-e2e/transcript-summary.jsonl
 
+  host-recovery-validation:
+    name: Isolated host recovery and migration boundary contracts
+    if: github.repository == 'flidai/leapview'
+    uses: ./.github/workflows/demo-upgrade-qualification.yml
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation, dependency-evidence-refresh]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation, dependency-evidence-refresh, host-recovery-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -327,9 +336,10 @@ jobs:
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_RESULT: ${{ needs.full-validation.result }}
           SECURITY_RESULT: ${{ needs.security-validation.result }}
+          HOST_RECOVERY_RESULT: ${{ needs.host-recovery-validation.result }}
           DEPENDENCY_EVIDENCE_REFRESH_RESULT: ${{ needs.dependency-evidence-refresh.result }}
         run: |
-          for result in "${APIGEN_RESULT}" "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}" "${DEPENDENCY_EVIDENCE_REFRESH_RESULT}"; do
+          for result in "${APIGEN_RESULT}" "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}" "${DEPENDENCY_EVIDENCE_REFRESH_RESULT}" "${HOST_RECOVERY_RESULT}"; do
             test "${result}" = success || {
               printf 'Nightly validation result: %s\n' "${result}" >&2
               exit 1

@@ -195,6 +195,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Set up Buildx
@@ -485,6 +486,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Generate release build inputs
@@ -731,6 +733,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Verify Docker container prerequisites
@@ -824,6 +827,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          toolchain: "conventional"
           browser: "false"
 
       - name: Run plan-to-GC lifecycle conformance
@@ -941,3 +945,27 @@ jobs:
             candidate/dist/*.tar.gz.sha256 \
             candidate/authoring/*.tar.gz \
             candidate/authoring/*.tar.gz.sha256
+
+  # Successful publication remains complete when a qualification is rerun.
+  # GitHub's release publication token does not trigger release-event workflows.
+  installed-qualification:
+    name: Qualify the published installation
+    needs: [image, publish]
+    uses: ./.github/workflows/installed-candidate.yml
+    with:
+      release_tag: ${{ needs.image.outputs.release_tag }}
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+      issues: write
+
+  authoring-qualification:
+    name: Qualify the published authoring package
+    needs: [image, publish]
+    uses: ./.github/workflows/authoring-package-qualification.yml
+    with:
+      release_tag: ${{ needs.image.outputs.release_tag }}
+      run_lifecycle: false
+    permissions:
+      contents: read

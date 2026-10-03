@@ -285,6 +285,12 @@ def validate_complete(config, observer, summary, status):
             or summary.get('samples') != PUBLIC_SAMPLES or summary.get('host_samples') != HOST_SAMPLES
             or summary.get('elapsed_seconds', 0) < DURATION):
         raise ValueError('full 24-hour health/storage observation has not passed')
+    try:
+        observer_exit = observer.read_exit_receipt(config['run_dir'])
+    except Exception as exc:
+        raise ValueError('supervised observer exit receipt is missing or invalid') from exc
+    if observer_exit.get('returncode') != 0:
+        raise ValueError('supervised observer did not exit successfully')
     ended_wall = summary.get('ended_wall_unix_seconds')
     elapsed_total = summary.get('elapsed_seconds')
     origin_wall = config['expected']['clock_origin_wall_unix_seconds']

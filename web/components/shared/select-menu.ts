@@ -175,7 +175,7 @@ export class SelectMenu extends LitElement {
   private handleTriggerClick = (): void => {
     if (!this.trigger || !this.menu) return
     this.open = toggleAnchoredPopover(this.trigger, this.menu, {
-      minWidth: this.trigger.getBoundingClientRect().width,
+      minWidth: 0,
       maxWidth: 320,
       maxHeight: 320,
       gap: 4,

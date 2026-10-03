@@ -48,8 +48,14 @@ export function toggleAnchoredPopover(
 }
 
 function anchoredPopoverScale(trigger: HTMLElement, bounds: DOMRect): number {
-  if (trigger.offsetWidth <= 0 || bounds.width <= 0) return 1
-  const scale = bounds.width / trigger.offsetWidth
+  const style = getComputedStyle(trigger)
+  // offsetWidth rounds to integer pixels and can mistake a fractional layout
+  // width for an ancestor scale, shrinking otherwise unscaled menu rows.
+  const borderBoxWidth = Number.parseFloat(style.width) + (style.boxSizing === 'border-box' ? 0 :
+    Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight) +
+    Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.borderRightWidth))
+  if (!Number.isFinite(borderBoxWidth) || borderBoxWidth <= 0 || bounds.width <= 0) return 1
+  const scale = bounds.width / borderBoxWidth
   if (!Number.isFinite(scale) || scale <= 0) return 1
   return Math.abs(scale - 1) < 0.001 ? 1 : scale
 }

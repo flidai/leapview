@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "as_of": "2026-10-01T09:54:15.136390+00:00",
+  "scope": "public_site_observation_recovery_only",
+  "migration_acceptance": "pending",
+  "production_mutation_performed": false,
+  "interrupted_observation": {
+    "started_at": "2026-09-30T10:28:20Z",
+    "stopped_at": "2026-10-01T02:19:20Z",
+    "elapsed_seconds": 57060.128,
+    "reported_failure": "OSError",
+    "errno": "not_recorded",
+    "historical_cause": "undetermined",
+    "raw_event_directory": "missing",
+    "surviving_audit_hashes_do_not_replace_raw_events": true,
+    "excluded_from_acceptance": true,
+    "superseded_local_jobs_cancelled": true
+  },
+  "read_only_preflight": {
+    "active_image": "ghcr.io/flidai/leapview-site@sha256:acc225d4526738b4a7b55609b1a643e31fdbc034dca305f17ca952a973f16e87",
+    "prior_image": "ghcr.io/flidai/leapview-site@sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec",
+    "public_http_health_readiness_build": "passed",
+    "host_identity_retention_topology_ownership": "passed",
+    "free_bytes": 33363365888,
+    "free_inodes": 2398342,
+    "minimum_free_bytes": 5900624282,
+    "minimum_free_inodes": 13787,
+    "legacy_updater": "disabled",
+    "observed_at": "2026-10-01T09:11:23Z"
+  },
+  "replacement_observation": {
+    "status": "running",
+    "started_at": "2026-10-01T09:44:34Z",
+    "expected_end": "2026-10-02T09:44:34Z",
+    "duration_seconds": 86400,
+    "public_interval_seconds": 60,
+    "host_interval_seconds": 900,
+    "public_samples_at_snapshot": 10,
+    "host_samples_at_snapshot": 1,
+    "failure_at_snapshot": null,
+    "durable_private_storage": true,
+    "start_adoption_smoke": "passed",
+    "frozen_scheduler_preflight": "passed",
+    "observer_sha256": "d632a45788bd01729e71e8783072394e5d7ec30854e11e1885b38ebf88b69425",
+    "acceptance_sha256": "8cf79337e69353e2179a222a9ac4e334769c1e971a15c5d2dd0514ca5f0c70eb",
+    "supported_command_exit_required": true,
+    "background_schedule": "verified",
+    "acceptance_scheduled_at": "2026-10-02T09:47:00Z",
+    "closeout_backup_scheduled_at": "2026-10-02T10:20:00Z",
+    "quiet_watcher": "alive_with_no_dispatch_required",
+    "last_sample_at_snapshot": "2026-10-01T09:53:34Z",
+    "background_schedule_verified_at": "2026-10-01T09:54:15.136390+00:00"
+  },
+  "remaining": [
+    "full_replacement_observation",
+    "end_adoption_smoke_and_acceptance_receipt",
+    "final_retention_storage_recovery_audit",
+    "reviewable_closeout_evidence",
+    "fallback_748_closure"
+  ]
+}

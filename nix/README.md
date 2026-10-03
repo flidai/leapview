@@ -13,7 +13,7 @@ Install Nix using its [official instructions](https://nixos.org/download/) and e
 `nix-command flakes`. From this Git checkout:
 
 ```sh
-nix develop
+./scripts/develop.sh
 # Existing commands continue to own the workflow:
 task dev
 task ci
@@ -23,12 +23,16 @@ For one command without an interactive shell:
 
 ```sh
 nix develop --no-update-lock-file -c task ci
+./scripts/develop.sh task ci:full
+./scripts/develop.sh task ci:nightly
 nix develop --no-update-lock-file -c task nix:smoke
 nix flake check --no-update-lock-file -L
 ```
 
 On a fresh checkout, run `nix develop -c task ci:prepare` before `task ci` to
 create the ignored generated inputs, as the existing hosted CI does.
+Local full/nightly contracts also require Terraform 1.13.5 on `PATH`; deployment
+validation retains this specialist dependency outside the Nix development shell.
 
 `task nix:check` runs the flake check and browser smoke check; `task nix:ci` runs the
 existing PR contract through Nix. Stage new Nix files before evaluating them:
@@ -61,19 +65,45 @@ instead of silently downloading a different compiler.
 The second Nix input provides only upstream Playwright packaging at the version
 used by npm. Chromium and its headless shell are supplied through
 `PLAYWRIGHT_BROWSERS_PATH`, including native dependencies and fonts. Browser
-installation does not depend on mutable host libraries. The smoke check verifies
-the npm/browser version pairing, starts Chromium, and exercises a page interaction.
+installation does not depend on mutable host libraries. Font discovery and
+configuration use only locked Nix paths, including Playwright's WenQuanYi CJK
+fallback: ECharts derives text heights from a CJK glyph even for Latin labels.
+The smoke check verifies the npm/browser pairing, starts Chromium, exercises a
+page interaction, and checks the chart font metrics without host fonts.
 Desktop/Electron packaging and other platforms still require qualification.
 
 ## CI and updates
 
-The `Nix development` workflow runs native toolchain checks, browser checks, and the
+The shared `setup-ci` action defaults to the locked Nix shell on x86_64 Linux.
+PR validation (including planning and gating), merge-queue validation and nightly
+validation keep their existing Task contracts and use those tools. Compiler flags,
+native library paths and pinned browser/font paths are exported into subsequent
+workflow steps with an explicit allowlist; runner credentials are never copied.
+Browser lanes verify the npm/browser pairing with `task nix:smoke`; a missing or
+mismatched locked browser fails without downloading a replacement.
+
+The `Nix development` workflow also runs native toolchain checks, browser checks, and the
 existing `task ci` on relevant toolchain changes or manual dispatch. It uses an
 ephemeral GitHub-hosted runner and public Nix substitutes, with no deployment secrets
-or private cache account. Existing CI remains in place during qualification; this
-slice does not migrate every CI lane to Nix. Manual dispatch can select
+or private cache account. Manual dispatch can select
 `checks=image` or `checks=development` for a focused rerun; the default and
-pull-request validation run both lanes.
+pull-request validation run both lanes. Select `contract=full` or `contract=nightly`
+with `checks=development` to exercise those contracts in a fresh hosted environment.
+These selections install the same pinned Terraform used by deployment validation.
+Their ordinary merge-queue/nightly workflows retain their existing gates. Historical
+transition utility containers use a portable Docker client from a digest-pinned
+fixture image, so they do not depend on the host toolchain's loader or libraries.
+
+Go caches remain bounded by workload, platform, runner image, selected toolchain,
+compiler version and locked inputs. Only default-branch jobs publish archives;
+candidate jobs restore them and run all selected checks even on a cache miss.
+
+Conventional release builders explicitly select `toolchain: conventional` until
+each output passes its compatibility and final-artifact admission gates. Other
+platforms keep their existing tool setup. The current flake qualifies x86_64 Linux;
+ARM64 development-shell adoption is still pending. Terraform/provider and specialist
+dbt/Electron dependencies retain their existing setup until their callers migrate.
+See [the caller inventory](CI-CALLERS.md) before removing any installer.
 
 Update toolchains in a reviewed change. After `nix flake update`, inspect the lock
 and version changes. A Go/Bun manifest update needs the corresponding official
@@ -88,7 +118,7 @@ nix build --no-update-lock-file .#leapview --out-link result-app
 nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop -c docker load --input "$(readlink -f result-image)"
 # Full production-image qualification using disposable Docker fixtures:
-nix develop -c bash scripts/check_nix_image.sh
+task nix:qualify
 ```
 
 `task nix:build`, `task nix:image`, and `task nix:qualify` expose the same paths.
@@ -101,6 +131,7 @@ loopback registry and existing PostgreSQL/browser fixtures.
 |---|---|
 | `leapview` (default) | Application and deployment CLI, generated contracts, frontend assets and runtime resources |
 | `leapview-linux` | Exported Linux CLI binaries for Ubuntu 24.04 or a compatible runtime; no Nix store required |
+| `leapviewctl-linux-amd64`, `leapviewctl-linux-arm64` | Standalone CGO-disabled deployment controller, deterministic candidate archive, source/platform identity and static-link report; no Nix store or host glibc dependency |
 | `leapview-image` | Container archive with the existing entrypoint, UID/GID 999, health check, writable volume paths and deployment bundle |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets`, `extension-supply` | Pinned runtime asset trees, using the existing map/extension publishers and integrity checks |
@@ -117,7 +148,7 @@ Use a Nix installation with `sandbox = true`; the image CI job sets it explicitl
 The native `leapview` output uses the locked Nix runtime and runs on Nix/NixOS.
 The image and its exported deployment CLI use ordinary Linux loader paths, with
 runtime libraries supplied by the container or the operator's host. Exported Nix
-CLI candidates currently require **glibc 2.38+, GLIBCXX 3.4.30 and CXXABI 1.3.13**;
+application and native-controller exports currently require **glibc 2.38+, GLIBCXX 3.4.30 and CXXABI 1.3.13**;
 Ubuntu 24.04 is the qualification baseline. The build rejects increases to these
 ABI requirements. On NixOS, use the native output; the exported conventional Linux
 binary needs a compatible loader such as a separately configured `nix-ld`.
@@ -126,6 +157,37 @@ The packaged authoring-client fixture uses pinned Ubuntu 24.04 to exercise that
 baseline. The existing Dockerfile and its Debian client fixture remain unchanged.
 Do not assume these candidate exports support Debian 12. Fully static glibc
 binaries are unsuitable here: DuckDB loads native extensions at runtime.
+
+### Standalone deployment controller candidates
+
+`task nix:cli` builds `result-cli-amd64` and `result-cli-arm64`. Each output contains
+`bin/leapviewctl`, `leapviewctl-linux-<arch>.tar.gz`, `archive-identity.json` and
+`static-compatibility.json`. Generation uses the existing source-generation
+contract and locked dependency inputs; controller compilation uses `CGO_ENABLED=0`
+and the same target contract as the release installation controller. It does not
+build the application image, frontend assets or a complete installation bundle.
+The application image's native controller retains its current native commands.
+
+The build copies the locked Go SDK and reverses only its three NixOS data-path
+patches for protocol, MIME and timezone files. The controller uses standard host
+data paths; compiler/linker fixes remain pinned. Both outputs reject all Nix store
+references, including data references that static ELF linkage alone cannot detect.
+
+The build rejects dynamic loaders, dynamic segments, incorrect architectures and
+inconsistent Go build metadata. PR CI binds the exact archives through the shared
+candidate manifest, extracts them on native AMD64/ARM64 runners, and exercises
+version and command discovery in the independently pinned Debian 12 fixture.
+The probe receives no candidate-supplied libraries and runs without network,
+write access or root privileges. Reports bind the tested binary hash, archive
+candidate digest, runtime identity and host image digest.
+
+These are development candidates derived from canonical `VERSION`, clean source
+revision and commit timestamp, with `release=false`. Compatibility receipts retain
+`releaseAdmission: false`. Basic Debian command execution does not establish
+installation, publication, upgrade, rollback or recovery acceptance. Signed
+archive provenance/SPDX, Go vulnerability admission, complete supported-host
+qualification, installation payload assembly and protected promotion remain D05
+gates. Conventional release and non-Linux builders remain the published owners.
 
 These are candidate builds, not a replacement for signed release publication.
 Clean Git revisions receive a `+nix.<revision>` development version, source
@@ -179,6 +241,12 @@ raw findings and enforcing new unassessed vulnerabilities. Production admission
 still requires review of those assessments and integration with the published
 digest and other release gates. The build checks that Go module
 metadata remains readable after native fixups and conventional Linux export.
+
+The qualification workflow also records [common candidate evidence](CANDIDATE-EVIDENCE.md):
+the exact archive, config/layer content, source, locked input and runtime report
+hashes. Verification rejects substituted or incomplete evidence. This unsigned
+record always leaves release admission false; protected final-artifact admission
+and each output's compatibility and lifecycle gates remain required.
 
 The historical fixture uses a private synthetic CA. Its Python publication client
 receives `DEMO_GENERATION_CA_CERT` explicitly, because Nix OpenSSL's default trust

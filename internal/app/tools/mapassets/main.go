@@ -314,7 +314,7 @@ func runPMTilesWithRetry(ctx context.Context, arguments []string, run func(conte
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		stderr, err := run(ctx, arguments...)
+		diagnostics, err := run(ctx, arguments...)
 		if err == nil {
 			return nil
 		}
@@ -322,13 +322,12 @@ func runPMTilesWithRetry(ctx context.Context, arguments []string, run func(conte
 			return ctx.Err()
 		}
 		lastErr = err
-		if !isPMTilesTransientFailure(stderr) || attempt == pmtilesMaxAttempts {
+		if len(arguments) < 3 || arguments[0] != "extract" ||
+			!isPMTilesTransientFailure(diagnostics) || attempt == pmtilesMaxAttempts {
 			return err
 		}
-		if len(arguments) >= 3 && arguments[0] == "extract" {
-			if removeErr := os.Remove(arguments[2]); removeErr != nil && !os.IsNotExist(removeErr) {
-				return fmt.Errorf("remove partial PMTiles extraction before retry: %w", removeErr)
-			}
+		if removeErr := os.Remove(arguments[2]); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("remove partial PMTiles extraction before retry: %w", removeErr)
 		}
 		delay := time.Duration(attempt*5) * time.Second
 		fmt.Fprintf(os.Stderr, "PMTiles source request failed transiently; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesMaxAttempts)
@@ -343,11 +342,15 @@ func runPMTilesWithRetry(ctx context.Context, arguments []string, run func(conte
 	return lastErr
 }
 
-func isPMTilesTransientFailure(stderr string) bool {
-	for _, line := range strings.Split(stderr, "\n") {
+func isPMTilesTransientFailure(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
 		_, failure, found := strings.Cut(line, "Failed to extract, ")
 		if !found {
 			continue
+		}
+		failure = strings.TrimSpace(failure)
+		if failure == "EOF" {
+			return true
 		}
 		if status, found := strings.CutPrefix(failure, "HTTP error: "); found {
 			fields := strings.Fields(status)

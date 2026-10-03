@@ -34,12 +34,34 @@ let
   playwright =
     (pkgs.callPackage "${playwright-nixpkgs}/pkgs/development/web/playwright/driver.nix" { })
     .playwright-core;
-  fontconfig = pkgs.makeFontsConf {
-    fontDirectories = [
-      pkgs.dejavu_fonts
-      pkgs.liberation_ttf
-    ];
-  };
+  fontConfigRules = pkgs.runCommand "leapview-fontconfig-rules" { } ''
+    mkdir -p "$out"
+    for config in ${pkgs.fontconfig.out}/etc/fonts/conf.d/*.conf; do
+      case "$(basename "$config")" in
+        50-user.conf|51-local.conf) continue ;;
+      esac
+      ln -s "$config" "$out/$(basename "$config")"
+    done
+  '';
+  fontconfig =
+    (pkgs.makeFontsConf {
+      # Keep browser text metrics independent of runner/user font installations.
+      impureFontDirectories = [ ];
+      includes = [ fontConfigRules ];
+      fontDirectories = [
+        pkgs.dejavu_fonts
+        pkgs.liberation_ttf
+        # Playwright's conventional Linux dependencies include this fallback.
+        # ZRender measures 国 to derive chart line heights even for Latin labels.
+        pkgs.wqy_zenhei
+      ];
+    }).overrideAttrs
+      (previous: {
+        # makeFontsConf unconditionally adds the user's XDG font directory.
+        buildCommand = previous.buildCommand + ''
+          sed -i '\|<dir prefix="xdg">fonts</dir>|d' "$out"
+        '';
+      });
   browsers = playwright.selectBrowsers {
     withFirefox = false;
     withWebkit = false;

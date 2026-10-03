@@ -1,0 +1,6 @@
+# Deliver as /var/lib/leapview-backup-secrets/pgbackrest.conf, root:pgbackrest 0440.
+# Parent directory: root:pgbackrest 0750. Never import this file with Nix.
+[global]
+repo1-s3-key=<customer-scoped-access-key>
+repo1-s3-key-secret=<customer-scoped-secret-key>
+repo1-cipher-pass=<independently-recoverable-backup-encryption-passphrase>

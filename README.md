@@ -39,12 +39,19 @@ for the supported Compose deployment, database bootstrap, and first project.
 The repository also contains a release-oriented
 [Docker Compose package](deploy/compose/README.md) for self-hosted deployments.
 
+The public website uses the [manual Kamal operator](deploy/kamal-site/README.md).
+Its [2 October live acceptance evidence](deploy/kamal-site/evidence/final-acceptance-20261002.md)
+records the completed observation and recovery audit. Automatic VPS activation
+remains deferred.
+
 ## Development
 
-For a pinned x86_64 Linux toolchain, enter `nix develop` before running the commands
-below. `nix build .#leapview` builds the application; `nix build .#leapview-image`
+On x86_64 Linux, use `./scripts/develop.sh` to enter the default locked Nix
+environment, then run the Task commands below. For one command, use
+`./scripts/develop.sh task ci`. The launcher preserves the conventional tools on
+other supported platforms. `nix build .#leapview` builds the application; `nix build .#leapview-image`
 builds its container archive. See the [Nix guide](nix/README.md) for prerequisites,
-qualification and current scope. The existing non-Nix workflow remains available.
+qualification and current scope. Docker must be running for database fixtures.
 
 Start the worktree-local development server:
 

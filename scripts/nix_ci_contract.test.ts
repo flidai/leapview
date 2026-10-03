@@ -1,0 +1,246 @@
+import { expect, test } from 'bun:test'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { parse } from 'yaml'
+
+const action = parse(readFileSync('.github/actions/setup-ci/action.yml', 'utf8'))
+const steps = action.runs.steps
+const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
+const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
+
+test('static controller qualification preserves the host baseline and exact artifact transfer', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = jobs['cli-build']
+  const qualify = jobs['cli-compatibility']
+  expect(build.outputs.artifact_id).toBe('${{ steps.upload.outputs.artifact-id }}')
+  expect(qualify.needs).toBe('cli-build')
+  expect(qualify.strategy['fail-fast']).toBe(false)
+  expect(qualify.strategy.matrix.include.map((row: any) => [row.arch, row.runner]))
+    .toEqual([['amd64', 'ubuntu-24.04'], ['arm64', 'ubuntu-24.04-arm']])
+  const download = qualify.steps.find((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(download.with['artifact-ids']).toBe('${{ needs.cli-build.outputs.artifact_id }}')
+  expect(download.with['merge-multiple']).toBe(true)
+  const probe = qualify.steps.find((step: any) => step.env?.ARCH)
+  const baseline = readFileSync('deploy/compose/qualification/Dockerfile.authoring-client', 'utf8')
+    .match(/^FROM (debian:bookworm-slim@sha256:[a-f0-9]{64})$/m)![1]
+  expect(probe.run).toContain(`host=${baseline}`)
+  expect(probe.run).toContain('--network none --read-only')
+  expect(probe.run).toContain('--kind cli-archive')
+  expect(probe.run).toContain('--verify .tmp/nix-cli-evidence/candidate-manifest.json')
+  expect(probe.run).toContain("'releaseAdmission': False")
+})
+
+test('Linux validation selects locked tools and excludes duplicate installers', () => {
+  expect(action.inputs.toolchain.default).toBe('auto')
+  const install = steps.find((step: any) => step.name === 'Install locked Nix')
+  expect(install.if).toBe(locked)
+  expect(install.uses).toMatch(/@[a-f0-9]{40}$/)
+  expect(install.with.extra_nix_config).toContain('sandbox = true')
+  const environment = steps.find((step: any) => step.name === 'Export locked compiler and browser environment')
+  expect(environment.if).toBe(locked)
+  expect(environment.run).toBe('nix develop --no-update-lock-file -c python3 scripts/export_nix_ci_environment.py')
+  for (const name of ['Set up Go', 'Set up Node.js', 'Set up Bun', 'Install pinned CI tools']) {
+    expect(steps.find((step: any) => step.name === name).if).toBe(conventional)
+  }
+  expect(steps.find((step: any) => step.name === 'Configure bounded tool caches').run)
+    .not.toContain('PLAYWRIGHT_BROWSERS_PATH=')
+})
+
+test('locked browser validation cannot fall back to runner browser installs', () => {
+  const smoke = steps.find((step: any) => step.name === 'Verify locked Chromium and compiler pairing')
+  expect(smoke.if).toBe(`inputs.browser == 'true' && ${locked}`)
+  expect(smoke.run).toBe('task nix:smoke')
+  for (const name of ['Restore Playwright browser cache', 'Install cached Chromium and system dependencies']) {
+    expect(steps.find((step: any) => step.name === name).if)
+      .toBe(`inputs.browser == 'true' && (${conventional})`)
+  }
+})
+
+test('all PR, merge and nightly validation jobs use the shared toolchain', () => {
+  for (const workflow of ['ci', 'merge-validation', 'nightly']) {
+    const config = parse(readFileSync(`.github/workflows/${workflow}.yml`, 'utf8'))
+    for (const [name, job] of Object.entries(config.jobs) as [string, any][]) {
+      if (!job.steps?.some((step: any) => /\b(go run|task ci:|task generated:check)\b/.test(step.run ?? ''))) continue
+      const setup = job.steps.filter((step: any) => step.uses === './.github/actions/setup-ci')
+      expect(setup.length, `${workflow}/${name}`).toBe(1)
+      expect(setup[0].with?.toolchain).not.toBe('conventional')
+    }
+  }
+})
+
+test('published native binaries retain the conventional builder until artifact qualification', () => {
+  const release = parse(readFileSync('.github/workflows/release.yml', 'utf8'))
+  for (const job of Object.values(release.jobs) as any[]) {
+    for (const step of job.steps ?? []) {
+      if (step.uses === './.github/actions/setup-ci') expect(step.with.toolchain).toBe('conventional')
+    }
+  }
+})
+
+test('cache fallbacks retain the toolchain and locked compiler input identity', () => {
+  const cache = steps.find((step: any) => step.name === 'Restore candidate Go validation cache')
+  expect(cache.uses).toContain('actions/cache/restore@')
+  for (const field of ['key', 'restore-keys']) {
+    expect(cache.with[field]).toContain('${{ inputs.toolchain }}')
+    expect(cache.with[field]).toContain("${{ hashFiles('flake.lock', 'nix/toolchain.nix') }}")
+    expect(cache.with[field]).toContain('${{ steps.toolchain.outputs.go-version }}')
+  }
+})
+
+test('fresh full and nightly qualification provision the deployment Terraform dependency', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const development = workflow.jobs.development.steps
+  const terraform = development.find((step: any) => step.uses?.startsWith('hashicorp/setup-terraform@'))
+  const canonical = steps.find((step: any) => step.name === 'Set up Terraform')
+  expect(terraform).toBeDefined()
+  expect(terraform.uses).toBe(canonical.uses)
+  expect(terraform.with).toEqual(canonical.with)
+  expect(terraform.if).toBe("inputs.contract == 'full' || inputs.contract == 'nightly'")
+  const contractIndex = development.findIndex((step: any) => step.env?.CONTRACT)
+  expect(development.indexOf(terraform)).toBeLessThan(contractIndex)
+})
+
+test('Nix candidate collection follows enforcement and retains all bound evidence', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const image = workflow.jobs.image.steps
+  const enforcement = image.findIndex((step: any) => step.run?.includes('check_nix_runtime_security.py result-image'))
+  const collection = image.findIndex((step: any) => step.run?.includes('nix_candidate_manifest.py result-image'))
+  expect(enforcement).toBeGreaterThan(-1)
+  expect(collection).toBeGreaterThan(enforcement)
+  expect(image[collection].if).toBeUndefined() // The default success gate rejects incomplete scans.
+  expect(image[collection].run).toContain('--kind application-image')
+  expect(image[collection].run).toContain('--verify .tmp/nix-runtime-security/candidate-manifest.json')
+  const binding = image.findIndex((step: any) => step.run?.includes('scripts/nix_oci_content.py'))
+  expect(binding).toBeGreaterThan(collection)
+  expect(image[binding].if).toBeUndefined()
+  expect(image[binding].run).toContain('scripts/nix_oci_content.py export')
+  expect(image[binding].run).toContain('skopeo copy --preserve-digests oci:.tmp/nix-exported-oci:candidate')
+  expect(image[binding].run).toContain('open(".tmp/nix-exported-oci/index.json")')
+  expect(image[binding].run).toContain('--platform linux/amd64 --kind application-image')
+  expect(image[binding].run).toContain('--candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security')
+  expect(image[binding].run).toContain('--verify .tmp/nix-runtime-security/oci-content-binding.json')
+  const retention = image.find((step: any) => step.with?.name?.startsWith('nix-runtime-security-'))
+  expect(retention.if).toBe('always()')
+  for (const name of ['candidate-manifest', 'oci-content-binding', 'summary', 'sbom.syft', 'sbom.spdx', 'runtime.syft',
+    'runtime.grype', 'runtime.assessed.grype', 'controls.synthetic.syft', 'controls.grype',
+    'assessments.vex', 'syft-config', 'grype-config']) {
+    expect(retention.with.path).toContain(`.tmp/nix-runtime-security/${name}.json`)
+  }
+  expect(workflow.permissions).toEqual({ contents: 'read' })
+})
+
+test('protected Nix candidates isolate build, qualification and signing authority', () => {
+  const config = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
+  expect(Object.keys(config.on)).toEqual(['workflow_dispatch'])
+  expect(config.permissions).toEqual({ contents: 'read' })
+  expect(config.concurrency['cancel-in-progress']).toBe(false)
+  for (const job of Object.values(config.jobs) as any[]) {
+    expect(job.if).toContain("github.repository == 'flidai/leapview'")
+    expect(job.if).toContain("github.ref == 'refs/heads/main'")
+    for (const step of job.steps) {
+      if (step.uses?.startsWith('actions/checkout@')) expect(step.with['persist-credentials']).toBe(false)
+      if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/)
+    }
+  }
+  const { authorize, build, qualify, publish } = config.jobs
+  expect(build.permissions).toEqual({ contents: 'read' })
+  expect(qualify.permissions).toEqual({ contents: 'read' })
+  expect(build.needs).toBe('authorize')
+  expect(qualify.needs).toEqual(['authorize', 'build'])
+  expect(publish.needs).toEqual(['authorize', 'qualify'])
+  expect(publish.permissions['id-token']).toBe('write')
+  expect(publish.permissions.packages).toBe('write')
+  expect(publish.environment).toBe(authorize.environment)
+  for (const job of [qualify, publish]) {
+    const protectedCheckout = job.steps.find((s: any) => s.with?.path === 'protected')
+    expect(protectedCheckout.with.ref).toBe('${{ github.sha }}')
+    expect(job.steps.find((s: any) => s.with?.path === 'source').with.ref).toBe('${{ inputs.source_revision }}')
+    const commands = job.steps.map((s: any) => s.run ?? '').join('\n')
+    expect(commands).not.toMatch(/\b(?:python3|bash|nix develop|nix build) source\//)
+    expect(commands).not.toContain('cd source')
+  }
+  const scanner = qualify.steps.find((s: any) => s.run?.includes('check_nix_runtime_security.py'))
+  expect(scanner['working-directory']).toBe('protected')
+  expect(scanner.run).toContain('../candidate/image.tar')
+  expect(qualify.steps.find((s: any) => s.run?.includes('check_nix_image.sh')).run)
+    .toContain('protected/scripts/check_nix_image.sh candidate/image.tar trusted-app')
+  expect(publish.steps.find((s: any) => s.uses?.startsWith('actions/download-artifact@')).with['artifact-ids'])
+    .toBe('${{ needs.qualify.outputs.artifact_id }}')
+})
+
+test('protected producer preserves current-head authorization and signs the bound SPDX', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
+  for (const job of [jobs.authorize, jobs.publish]) {
+    const guard = job.steps.find((s: any) => s.run?.includes('/pulls'))
+    expect(guard.run).toContain('.base.ref == "main" and .state == "open" and .head.sha == $revision')
+    expect(guard.run).toContain('length == 1')
+    expect(guard.run).toContain('^[0-9a-f]{40}$')
+  }
+  const steps = jobs.publish.steps
+  const publication = steps.findIndex((s: any) => s.id === 'publish')
+  const signatures = steps.filter((s: any) => s.uses?.startsWith('actions/attest@'))
+  expect(signatures.length).toBe(2)
+  for (const signature of signatures) {
+    expect(steps.indexOf(signature)).toBeGreaterThan(publication)
+    expect(signature.with['subject-digest']).toBe('${{ steps.publish.outputs.digest }}')
+    expect(signature.with['subject-name']).toBe('ghcr.io/flidai/leapview')
+    expect(signature.with['push-to-registry']).toBe(true)
+    expect(signature.with['create-storage-record']).toBe(false)
+  }
+  expect(signatures[1].with['predicate-type']).toBe('https://spdx.dev/Document/v2.3')
+  expect(signatures[1].with['predicate-path']).toBe('candidate/runtime/sbom.spdx.json')
+  const verification = steps.find((s: any) => s.run?.includes('verify-signed'))
+  expect(steps.indexOf(verification)).toBeGreaterThan(steps.indexOf(signatures[1]))
+  expect(verification.run).toContain('--signer-revision "$GITHUB_SHA"')
+  const qualifier = readFileSync('scripts/check_nix_image.sh', 'utf8')
+  expect(qualifier).not.toContain('nix build')
+  expect(qualifier).toContain('test "$#" = 2')
+  expect(qualifier).toContain('^leapview-nix:[0-9a-f]{12}$')
+  expect(qualifier).toContain('image="$(docker image inspect "$reference" --format')
+  const tasks = parse(readFileSync('Taskfile.yml', 'utf8'))
+  expect(tasks.tasks['nix:qualify'].cmds.slice(0, 2)).toEqual([{ task: 'nix:build' }, { task: 'nix:image' }])
+})
+
+test('image qualification rejects fixture tags and uses the normalized Docker image ID', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nix-image-import-'))
+  const script = join(root, 'scripts', 'check_nix_image.sh')
+  const archive = join(root, 'image.tar')
+  const calls = join(root, 'docker-calls')
+  const imageID = `sha256:${'b'.repeat(64)}`
+  try {
+    mkdirSync(join(root, 'scripts'))
+    mkdirSync(join(root, 'bin'))
+    copyFileSync(resolve('scripts/check_nix_image.sh'), script)
+    writeFileSync(join(root, 'bin', 'docker'), `#!/bin/sh
+printf '%s\\n' "$*" >> '${calls}'
+case "$1" in
+  load) exit 0 ;;
+  image) printf '%s\\n' '${imageID}' ;;
+  run) exit 77 ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'cc'), '#!/bin/sh\ntouch "$3"\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'patchelf'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    for (const tag of ['postgres:18', 'leapview-nix:abcdef123456']) {
+      writeFileSync(join(root, 'manifest.json'), JSON.stringify([{ Config: `${'a'.repeat(64)}.json`, RepoTags: [tag] }]))
+      expect(spawnSync('tar', ['-cf', archive, '-C', root, 'manifest.json']).status).toBe(0)
+      const run = spawnSync('bash', [script, archive, root], {
+        env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}` },
+      })
+      if (tag === 'postgres:18') {
+        expect(run.status).toBe(1)
+        expect(() => readFileSync(calls)).toThrow()
+      } else {
+        expect(run.status).toBe(77)
+        const commands = readFileSync(calls, 'utf8').trim().split('\n')
+        expect(commands[2]).toEndWith(imageID)
+        expect(commands[2]).not.toContain(`sha256:${'a'.repeat(64)}`)
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
