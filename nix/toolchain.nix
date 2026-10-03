@@ -79,6 +79,15 @@ assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
     ;
   playwrightVersion = playwright.version;
   GOTOOLCHAIN = "local";
+  # Planning/gating only compile pure Go and manipulate Git/JSON evidence.
+  orchestrationPackages = with pkgs; [
+    go
+    git
+    jq
+    python3
+    bash
+    coreutils
+  ];
   # The upstream headless-shell package does not inherit the Chromium wrapper.
   FONTCONFIG_FILE = fontconfig;
   PLAYWRIGHT_BROWSERS_PATH = "${browsers}";

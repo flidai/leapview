@@ -276,11 +276,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up the cached CI toolchain
-        uses: ./.github/actions/setup-ci
-        with:
-          browser: "false"
-
       - name: Detect live-model credentials
         id: credentials
         env:
@@ -292,6 +287,12 @@ jobs:
             echo "available=false" >> "${GITHUB_OUTPUT}"
             echo "DeepSeek evaluation skipped because DEEPSEEK_API_KEY is unavailable." >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+      - name: Set up the cached CI toolchain
+        if: steps.credentials.outputs.available == 'true'
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
 
       - name: Run all-tools headless evaluation
         if: steps.credentials.outputs.available == 'true'

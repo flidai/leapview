@@ -1295,7 +1295,7 @@ model ConnectionLifecycleSignal {
   `authenticationMode`: string;
   `bindingId`: string;
   `canManage`: boolean;
-  `canTest`: boolean;
+  `canRefresh`: boolean;
   `connectorKind`: string;
   `credentialEnvironment`: string;
   `credentialProjectId`: string;

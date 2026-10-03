@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, type Browser, type Page } from '@playwright/test'
 import { testDocument } from './project-page.dom.fixture'
 
 let server: Server
@@ -46,10 +46,53 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+async function openPipelineFixture(page: Page, tab: 'pipelines' | 'runs') {
+  await page.goto(`${baseURL}/?root=${tab}`)
+  await page.waitForFunction((expectedTab) => {
+    const element = document.querySelector('lv-pipelines-page') as any
+    return element?.signals?.page?.kind === 'pipelines' && element.signals.page.activeTab === expectedTab
+  }, tab)
+  const element = page.locator('lv-pipelines-page')
+  await element.evaluate(async (element: any) => { await element.updateComplete })
+  return element
+}
+
+test('pipeline fixtures wait for the asynchronously loaded initial signals', async () => {
+  const page = await browser.newPage()
+  await page.route(`${baseURL}/?root=pipelines`, async route => {
+    await route.fulfill({
+      contentType: 'text/html',
+      body: testDocument('pipelines').replace('data-signals=', 'fixture-signals='),
+    })
+  })
+  let ready = false
+  const opening = openPipelineFixture(page, 'pipelines').then(element => {
+    ready = true
+    return element
+  })
+  try {
+    await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
+    await page.waitForLoadState('load')
+    expect(await page.locator('lv-pipelines-page').evaluate((element: any) => element.signals?.page?.kind ?? null)).toBeNull()
+    expect(ready).toBe(false)
+    await page.evaluate(() => {
+      const main = document.querySelector('main')!
+      main.setAttribute('data-signals', main.getAttribute('fixture-signals')!)
+      main.removeAttribute('fixture-signals')
+    })
+    const element = await opening
+    expect(await element.evaluate((element: any) => element.signals.page.activeTab)).toBe('pipelines')
+  } finally {
+    const closedOpening = opening.catch(() => {})
+    await page.close()
+    await closedOpening
+  }
+}, 15_000)
+
 test('pipeline catalog and run monitor expose URL-backed views and filters', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
+    await openPipelineFixture(page, 'pipelines')
     await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
     const catalog = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -106,7 +149,7 @@ test('pipeline catalog and run monitor expose URL-backed views and filters', asy
     })
     expect(await page.getByRole('button', { name: 'Run Sales refresh now' }).count()).toBe(0)
 
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     await page.addStyleTag({ content: ':root { --base-text-weight-normal: 400; --base-text-weight-medium: 500; --base-text-weight-semibold: 600; }' })
     const monitor = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -155,7 +198,7 @@ test('pipeline catalog and run monitor expose URL-backed views and filters', asy
 test('active runs spin while queued runs remain static and reduced motion is respected', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
+    await openPipelineFixture(page, 'pipelines')
     const recent = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       element.signals.page.pipelines[0].recentRuns = [
         { id: 'queued', status: 'queued', href: '/queued' },
@@ -178,7 +221,7 @@ test('active runs spin while queued runs remain static and reduced motion is res
     await page.emulateMedia({ reducedMotion: 'reduce' })
     expect(await page.locator('lv-pipelines-page [data-status="running"] svg').evaluate((icon) => getComputedStyle(icon).animationName)).toBe('none')
 
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const listed = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       element.signals.page.runsTable = { ...element.signals.page.runsTable, rows: [{ ...element.signals.page.runsTable.rows[0], status_value: 'prepared' }] }
       element.requestUpdate()
@@ -206,7 +249,7 @@ test('active runs spin while queued runs remain static and reduced motion is res
 test('run history colors status icons only, with a blue queued icon', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const colors = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       element.style.setProperty('--lv-fg-default', '#c9d1d9')
       element.style.setProperty('--lv-fg-accent', '#58a6ff')
@@ -242,7 +285,7 @@ test('run history colors status icons only, with a blue queued icon', async () =
 test('run duration counts live, pauses on disconnect, and yields to recorded completion', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const host = page.locator('lv-pipelines-page')
     await host.evaluate(async (element: any) => {
       const startedAt = new Date(Date.now() - 3200).toISOString()
@@ -290,7 +333,7 @@ test('run duration counts live, pauses on disconnect, and yields to recorded com
 test('pipeline rows stay compact and readable on a narrow mobile viewport', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
+    await openPipelineFixture(page, 'pipelines')
     const row = page.locator('lv-pipelines-page lv-entity-list .entity-list-table-row')
     if (await row.count() !== 1) throw new Error('expected one pipeline row on mobile')
     const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
@@ -340,7 +383,7 @@ test('pipeline rows stay compact and readable on a narrow mobile viewport', asyn
 test('pipeline collection keeps publication and run action visible at a 1207px desktop viewport', async () => {
   const page = await browser.newPage({ viewport: { width: 1207, height: 900 } })
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
+    await openPipelineFixture(page, 'pipelines')
     const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot!
@@ -363,7 +406,7 @@ test('pipeline collection keeps publication and run action visible at a 1207px d
 test('queued manual requests use recent-run slots on the collection and remain actionable in Runs', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
+    await openPipelineFixture(page, 'pipelines')
     const collection = page.locator('lv-pipelines-page')
     await collection.evaluate(async (element: any) => {
       element.signals.page.waitingIntents = [
@@ -408,7 +451,7 @@ test('queued manual requests use recent-run slots on the collection and remain a
     expect(mobile.queuedColumn).toBe(0)
     expect(mobile.queuedVisible).toBe(true)
 
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const runs = page.locator('lv-pipelines-page')
     await runs.evaluate(async (element: any) => {
       element.signals.page.runMonitor = { ...element.signals.page.runMonitor, query: '', range: 'all', status: '', page: 1 }
@@ -441,7 +484,7 @@ test('queued manual requests use recent-run slots on the collection and remain a
 test('active rows stay above history in queue order without claiming a start-time sort', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const host = page.locator('lv-pipelines-page')
     await host.evaluate(async (element: any) => {
       const template = element.signals.page.runsTable.rows[0]
@@ -485,7 +528,7 @@ test('active rows stay above history in queue order without claiming a start-tim
 test('stale manual requests appear as table outcomes without becoming runs', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const host = page.locator('lv-pipelines-page')
     await host.evaluate(async (element: any) => {
       element.signals.page.runMonitor = { ...element.signals.page.runMonitor, query: '', range: 'all', status: '', page: 1 }
@@ -512,7 +555,7 @@ test('stale manual requests appear as table outcomes without becoming runs', asy
 test('request rows follow run filters and stay within the mobile table', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const host = page.locator('lv-pipelines-page')
     await host.evaluate(async (element: any) => {
       element.signals.page.runMonitor = { ...element.signals.page.runMonitor, query: '', range: 'all', pipeline: '', status: '', trigger: '', page: 1 }
@@ -552,7 +595,7 @@ test('request rows follow run filters and stay within the mobile table', async (
 test('shared run history preserves global actions and mobile table containment', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       await element.updateComplete
       element.signals.page.runsTable.rows[0].actions = [{ label: 'Cancel run', action: 'cancel', icon: 'cancel' }]
@@ -587,7 +630,7 @@ test('shared run history preserves global actions and mobile table containment',
 test('run history omits the run-again action from terminal rows', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const host = page.locator('lv-pipelines-page')
     await host.evaluate(async (element: any) => {
       element.signals.page.runsTable.rows[0].actions = [
@@ -608,7 +651,7 @@ test('run history omits the run-again action from terminal rows', async () => {
 test('run timestamps identify UTC even when the browser uses another timezone', async () => {
   const page = await browser.newPage({ timezoneId: 'America/Los_Angeles' })
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const started = page.locator('lv-pipelines-page .run-table .entity-list-cell a[href="/pipelines/pipeline:sales/runs/run-failed"]')
     expect((await started.textContent())?.trim()).toBe('Sep 13, 12:00 UTC')
   } finally {
@@ -619,7 +662,7 @@ test('run timestamps identify UTC even when the browser uses another timezone', 
 test('run monitor stops claiming live updates while its page stream reconnects', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=runs`)
+    await openPipelineFixture(page, 'runs')
     const host = page.locator('lv-pipelines-page')
     await host.evaluate(async (element: any) => element.updateComplete)
     const eyebrow = host.locator('.page-eyebrow')
@@ -647,7 +690,7 @@ test('run monitor stops claiming live updates while its page stream reconnects',
 test('pipeline command acknowledgement uses a dismissible shared toast, not a persistent banner', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
+    await openPipelineFixture(page, 'pipelines')
     await page.getByRole('button', { name: 'Run Sales refresh now' }).click()
     await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       element.signals.pipelineCommandStatus.loading = true
@@ -685,7 +728,7 @@ test('pipeline command acknowledgement uses a dismissible shared toast, not a pe
 test('shared toasts pause on hover and keep actions available until dismissed', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 700 } })
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
+    await openPipelineFixture(page, 'pipelines')
     await page.evaluate(() => {
       const region = document.createElement('lv-toast-region') as any
       region.id = 'toast-test-region'

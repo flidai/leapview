@@ -74,7 +74,8 @@ pkgs.stdenv.mkDerivation {
       ${pkgs.lib.concatMapStringsSep "\n" (patch: "patch --reverse -p1 < ${patch}") hostDataPatches}
     )
     export GOROOT="$TMPDIR/host-go"
-    flags="-s -w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
+    # Retain function symbols for exact binary-mode vulnerability analysis.
+    flags="-w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
       if dirty then "true" else "false"
     } -X ${buildInfo}.release=false"
     for arch in amd64 arm64; do

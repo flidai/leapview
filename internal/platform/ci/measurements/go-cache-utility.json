@@ -1,0 +1,198 @@
+{
+  "scope": "composition and useful compiler-cache reuse only; no workflow-level net speedup claim; existing joint archives retained, no new design adopted",
+  "coldRunID": 37098160371,
+  "warmRunID": 37100477694,
+  "producerRunID": 37098873287,
+  "assessments": [
+    {
+      "schemaVersion": 1,
+      "sourceRevision": "3373e91ff6118f601f5e11e6475efa9fe17da6ae",
+      "runID": "37100477694",
+      "attempt": "1",
+      "workload": "go-application-validation",
+      "compiler": {
+        "CC": "gcc",
+        "CGO_CFLAGS": "-O2 -g",
+        "CGO_ENABLED": "1",
+        "CGO_LDFLAGS": "-O2 -g",
+        "CXX": "g++",
+        "GOARCH": "amd64",
+        "GOEXPERIMENT": "",
+        "GOOS": "linux",
+        "GOVERSION": "go1.26.8"
+      },
+      "inputSHA256": {
+        "flake.lock": "ee3662beffd6e1d59b04a3d18e5e19b0ab5662bddb6132dd084160fe75e84f49",
+        "nix/toolchain.nix": "2bda05b90af448028f7a901a273181b2431b6651f52a8dbe21d50c0ccb6bc0c6",
+        "go.mod": "e2b19839ee0de2d2f1a7236ead782fa410d84a725f7fc6693427b0951877294d",
+        "go.sum": "dc6722806a3df70db1083d0ce39c6a6f011188ab835c3ce6fb87f3df6bca98a9",
+        "Taskfile.yml": "9389ee7ecf620d948c441d4684220d062c88da6e4b25d0529ca63bb2413ce72b",
+        ".github/actions/setup-ci/action.yml": "829d01f5364c3aa8b2431397d18c86fe0eca77d42271429139192d87fb294559"
+      },
+      "restored": {
+        "modules": {
+          "files": 182207,
+          "logicalBytes": 1767126691
+        },
+        "build": {
+          "files": 16383,
+          "logicalBytes": 2796463236
+        }
+      },
+      "packages": [
+        "./internal/platform/ci",
+        "./internal/analytics/query",
+        "./internal/recoveryset/capture"
+      ],
+      "scope": "compiler-only screening; no runtime-test or paired workflow speedup claim",
+      "restoredTrial": {
+        "seconds": 4.169577863000029,
+        "exitCode": 0,
+        "compileInvocations": 6,
+        "cgoInvocations": 0,
+        "logSHA256": "f742294c9ea7bf7c952d72df836d9d3770246c5c4bd8ed7f3f2580bb3f274f5a"
+      },
+      "empty-build-cacheTrial": {
+        "seconds": 46.292771653000045,
+        "exitCode": 0,
+        "compileInvocations": 319,
+        "cgoInvocations": 20,
+        "logSHA256": "b5b72d9ef2c1676dc21c03795d07fb0d82af7ca255b9f2498bf122bbc93e9426"
+      },
+      "archive": {
+        "key": "go-validation-v2-go-application-validation-Linux-X64-auto-ubuntu24-1.26.8-c7bde1d59c081b48baa069fb11785dedbf7159eee76da8ec6effe9898f6d431c-601866f24787d6fcbcdedc58cd7589c17103536d5ba99e14eca4e702018446b4",
+        "bytes": 1370320500,
+        "restoreCompletionUTC": "2026-10-03T05:43:34.0183671Z",
+        "startAction": "2026-10-03T05:43:06.9912954Z ##[start-action display=Restore candidate Go validation cache;id=__self.__actions_cache_2]",
+        "restoreSeconds": 27.04
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "sourceRevision": "3373e91ff6118f601f5e11e6475efa9fe17da6ae",
+      "runID": "37100477694",
+      "attempt": "1",
+      "workload": "full-validation",
+      "compiler": {
+        "CC": "gcc",
+        "CGO_CFLAGS": "-O2 -g",
+        "CGO_ENABLED": "1",
+        "CGO_LDFLAGS": "-O2 -g",
+        "CXX": "g++",
+        "GOARCH": "amd64",
+        "GOEXPERIMENT": "",
+        "GOOS": "linux",
+        "GOVERSION": "go1.26.8"
+      },
+      "inputSHA256": {
+        "flake.lock": "ee3662beffd6e1d59b04a3d18e5e19b0ab5662bddb6132dd084160fe75e84f49",
+        "nix/toolchain.nix": "2bda05b90af448028f7a901a273181b2431b6651f52a8dbe21d50c0ccb6bc0c6",
+        "go.mod": "e2b19839ee0de2d2f1a7236ead782fa410d84a725f7fc6693427b0951877294d",
+        "go.sum": "dc6722806a3df70db1083d0ce39c6a6f011188ab835c3ce6fb87f3df6bca98a9",
+        "Taskfile.yml": "9389ee7ecf620d948c441d4684220d062c88da6e4b25d0529ca63bb2413ce72b",
+        ".github/actions/setup-ci/action.yml": "829d01f5364c3aa8b2431397d18c86fe0eca77d42271429139192d87fb294559"
+      },
+      "restored": {
+        "modules": {
+          "files": 182232,
+          "logicalBytes": 1767306467
+        },
+        "build": {
+          "files": 27819,
+          "logicalBytes": 3889435582
+        }
+      },
+      "packages": [
+        "./internal/platform/ci",
+        "./internal/analytics/query",
+        "./internal/recoveryset/capture"
+      ],
+      "scope": "compiler-only screening; no runtime-test or paired workflow speedup claim",
+      "restoredTrial": {
+        "seconds": 4.053607592999981,
+        "exitCode": 0,
+        "compileInvocations": 6,
+        "cgoInvocations": 0,
+        "logSHA256": "af80180a4a5197252e280fc5ef2a09fd2f227569f50fb5a8beabe3ffa6f9eb10"
+      },
+      "empty-build-cacheTrial": {
+        "seconds": 44.70588420499996,
+        "exitCode": 0,
+        "compileInvocations": 319,
+        "cgoInvocations": 20,
+        "logSHA256": "0f0fc9550c252fc340fd18e358ac353dfd1764b99dfdf20127e9fb60c22bd371"
+      },
+      "archive": {
+        "key": "go-validation-v2-full-validation-Linux-X64-auto-ubuntu24-1.26.8-c7bde1d59c081b48baa069fb11785dedbf7159eee76da8ec6effe9898f6d431c-601866f24787d6fcbcdedc58cd7589c17103536d5ba99e14eca4e702018446b4",
+        "bytes": 1589140055,
+        "restoreCompletionUTC": "2026-10-03T05:43:17.7484103Z",
+        "startAction": "2026-10-03T05:42:51.9648968Z ##[start-action display=Restore candidate Go validation cache;id=__self.__actions_cache_2]",
+        "restoreSeconds": 25.799
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "sourceRevision": "3373e91ff6118f601f5e11e6475efa9fe17da6ae",
+      "runID": "37100477694",
+      "attempt": "1",
+      "workload": "go-packages-validation",
+      "compiler": {
+        "CC": "gcc",
+        "CGO_CFLAGS": "-O2 -g",
+        "CGO_ENABLED": "1",
+        "CGO_LDFLAGS": "-O2 -g",
+        "CXX": "g++",
+        "GOARCH": "amd64",
+        "GOEXPERIMENT": "",
+        "GOOS": "linux",
+        "GOVERSION": "go1.26.8"
+      },
+      "inputSHA256": {
+        "flake.lock": "ee3662beffd6e1d59b04a3d18e5e19b0ab5662bddb6132dd084160fe75e84f49",
+        "nix/toolchain.nix": "2bda05b90af448028f7a901a273181b2431b6651f52a8dbe21d50c0ccb6bc0c6",
+        "go.mod": "e2b19839ee0de2d2f1a7236ead782fa410d84a725f7fc6693427b0951877294d",
+        "go.sum": "dc6722806a3df70db1083d0ce39c6a6f011188ab835c3ce6fb87f3df6bca98a9",
+        "Taskfile.yml": "9389ee7ecf620d948c441d4684220d062c88da6e4b25d0529ca63bb2413ce72b",
+        ".github/actions/setup-ci/action.yml": "829d01f5364c3aa8b2431397d18c86fe0eca77d42271429139192d87fb294559"
+      },
+      "restored": {
+        "modules": {
+          "files": 182220,
+          "logicalBytes": 1767246051
+        },
+        "build": {
+          "files": 23560,
+          "logicalBytes": 3899488678
+        }
+      },
+      "packages": [
+        "./internal/platform/ci",
+        "./internal/analytics/query",
+        "./internal/recoveryset/capture"
+      ],
+      "scope": "compiler-only screening; no runtime-test or paired workflow speedup claim",
+      "restoredTrial": {
+        "seconds": 2.1509546890000024,
+        "exitCode": 0,
+        "compileInvocations": 0,
+        "cgoInvocations": 0,
+        "logSHA256": "c4d76d5f739c5e0442064c54b0468db9e13b71b3295d5b0dcf679752f49b9427"
+      },
+      "empty-build-cacheTrial": {
+        "seconds": 43.52405478500003,
+        "exitCode": 0,
+        "compileInvocations": 319,
+        "cgoInvocations": 20,
+        "logSHA256": "a42816ed31221f9e5aae1bfed35aa7a9585bb609a55da03ce8b86f05eb7ccd79"
+      },
+      "archive": {
+        "key": "go-validation-v2-go-packages-validation-Linux-X64-auto-ubuntu24-1.26.8-c7bde1d59c081b48baa069fb11785dedbf7159eee76da8ec6effe9898f6d431c-601866f24787d6fcbcdedc58cd7589c17103536d5ba99e14eca4e702018446b4",
+        "bytes": 1630970917,
+        "restoreCompletionUTC": "2026-10-03T05:43:13.0623022Z",
+        "startAction": "2026-10-03T05:42:47.7280410Z ##[start-action display=Restore candidate Go validation cache;id=__self.__actions_cache_2]",
+        "restoreSeconds": 25.347
+      }
+    }
+  ],
+  "workflowStatus": "assessment jobs all succeeded; intentionally cancelled unrelated provider/full wrapper after retaining measurements; not a qualification pass"
+}

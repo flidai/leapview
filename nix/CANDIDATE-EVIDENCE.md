@@ -245,6 +245,105 @@ main. Go/embedded-native coverage, complete platform/host and installation/recov
 admission, canonical release identity and exact-artifact promotion remain separate
 D04 and output-specific gates before adopting a replacement builder.
 
+### Exact Go binary verifier
+
+`securitydependencies` supplies a separate binary operation alongside the existing
+source-aware repository scan. It accepts only an actual Linux AMD64 or ARM64 Go
+ELF binary whose main package, ELF architecture and Go build settings match the
+explicit expectation. Metadata and SHA-256 come from the same bytes; the pinned
+`govulncheck v1.6.0` scans a private snapshot without executing that binary.
+
+Run with trusted verifier code and toolchain, using a new report directory:
+
+```sh
+go run ./internal/app/tools/securitydependencies -root . \
+  -binary /path/to/leapviewctl \
+  -binary-package github.com/flidai/leapview/cmd/leapviewctl \
+  -binary-platform linux/amd64 -binary-evidence /path/to/new-go-evidence
+```
+
+Successful scans retain `govulncheck.json` in full and `summary.json`, binding
+the exact binary hash, complete Go build metadata, scanner/database identity and
+raw report hash. The SBOM must match the binary's Go version, main module and
+complete dependency/replacement versions. Missing or malformed messages, source
+mode, scanner diagnostics/failures, coverage warnings and vulnerable symbols
+fail closed. Report capture is bounded to 32 MiB; binaries to 256 MiB. Failed
+scans can leave diagnostic reports, but never a success summary. Existing report
+directories cannot be reused by a scan.
+
+Use the same arguments with `-verify-binary-evidence` for offline verification.
+This rechecks binary and report bytes, metadata and findings without installing
+or running a scanner or candidate. Scan receipts expire at 120 hours and future
+scan/database timestamps are rejected. Database last-modified time is retained
+as database identity; it is not itself a scan timestamp or evidence that the
+database must publish a change every five days.
+
+This is **Go binary evidence only**, and its receipt is unsigned. Stripped binaries
+receive conservative module-level analysis from govulncheck; a symbol finding
+still blocks, even if the source scan does not reach it. A clean source scan does
+not waive a binary finding. No clean application or controller candidate is
+claimed by adding this tool. The adapter does not establish archive containment,
+embedded DuckDB/native-extension coverage, provenance or release admission.
+
+### Protected archive Go evidence
+
+The protected producer requires Go evidence for all three declared application
+entrypoints: `/usr/local/bin/leapview`, `/usr/local/libexec/leapviewctl`, and
+`/usr/local/share/leapview/deployment/leapviewctl`. The two controller copies must
+be byte-identical. `scripts/nix_archive_go_evidence.py` reads the nested layer
+archives without extracting arbitrary paths or executing candidate binaries.
+Regular overlays use final manifest layer order; links, non-directory ancestors,
+whiteouts affecting these paths, missing/non-executable files and oversized inputs
+are rejected. Image startup and healthcheck must use the absolute
+`/usr/local/bin/leapview` path, so a permissions failure cannot make PATH lookup
+select an unscanned binary. The standard Compose healthcheck also uses that
+absolute path. PATH must still start with `/usr/local/bin` for container CLI
+operations that use command names. Configuration redirection is rejected.
+Layer metadata rejects global PAX headers, PAX size/sparse overrides, sparse files,
+mixed PAX/GNU headers and repeated headers of the same type, which Python and
+Docker's Go layer reader can interpret differently.
+Independent PAX headers and GNU long names/links remain supported; each extended
+header is bounded to 1 MiB. Absolute container-root paths in
+dockerTools store layers are normalized for lookup only, never used as host
+extraction paths. Extracted files use fixed private names without execute
+permissions. Each parsed layer must match
+its verified diff ID, and the whole archive hash is checked before and after.
+
+Qualification builds the Go verifier from the protected checkout with its locked
+Go compiler, scans these exact bytes in the credentialless job, and retains every
+raw report and receipt under `runtime/go/`. Failed scans retain diagnostics but
+cannot produce a candidate manifest. `record`, `prepare`, `publish` and
+`verify-signed` all require `--binary-verifier /absolute/protected/verifier` and
+offline-reverify the complete report set against freshly extracted archive bytes.
+The publisher builds only the protected verifier: it neither executes candidate
+Go binaries nor runs a scanner or rebuilds the candidate archive.
+
+The manifest's `go-binaries` evidence binds the archive, each shipped path and main
+package, binary/report/receipt hashes, complete Go build metadata, scanner/database
+identity and scan time. Verification uses private report snapshots and rejects
+changed input reports, symlinks, missing/extra report directories, diagnostics,
+substitution, malformed/source-mode reports and stale scans. It never treats a
+receipt's asserted success as independent authority. The reports must originate
+from the protected qualification job and travel with its immutable artifact ID.
+
+The standalone manifest collector accepts `--go-evidence runtime/go` together with
+`--binary-verifier`; OCI, registry and signed-evidence adapters accept that verifier
+flag and reverify the corresponding `runtime/go` reports. Omitting it cannot verify
+a manifest that already binds Go evidence. Generic unsigned candidates may still
+record incomplete evidence; the protected publisher always requires the Go set.
+
+This completes the archive/report composition implementation only. Live positive
+protected producer qualification must run after the workflow/helper changes land
+on main, against an eligible exact open PR head. Existing stripped candidates can
+fail conservative module-level binary analysis; those findings remain blocking,
+with no exception based on a source scan. The Nix application recipe retains Go
+function symbols (`-w`, without `-s`, and `dontStrip`) for precise binary coverage.
+Locally rebuilt application and controller binaries with those flags passed the
+protected scanner; those probes do not qualify a new Nix archive or authorize
+publication. Embedded DuckDB/extensions, full platform/host and
+installation/recovery qualification, production adoption and
+exact promotion remain separate gates. `releaseAdmission` remains false.
+
 ### Remaining release authority
 
 The manifest is unsigned. Its hashes detect accidental substitution when checked
@@ -272,3 +371,24 @@ Protected candidate qualification continues to require one exact open PR head
 with a direct base of `main`. Stacked children must land their prerequisites,
 retarget and revalidate before using that protected path. This collector supplies
 reusable identity and evidence binding while those release gates remain pending.
+
+### Standalone static controller archive reports
+
+The same Go evidence adapter supports `--kind cli-archive`, with the required
+`--archive-identity` source/platform/version record. Its archive contract is exactly
+one regular executable named `leapviewctl` at the root. Extraction writes only a
+fixed private filename, rejects extra or duplicate members, links, set-ID files,
+size overrides, sparse files and ambiguous extended headers, and rechecks the full
+archive hash after reading. No controller bytes are executed by the scanner.
+
+`nix_candidate_manifest.py --kind cli-archive --archive-identity IDENTITY
+--go-evidence REPORT_DIRECTORY --binary-verifier ABSOLUTE_VERIFIER` binds and
+reverifies the expected controller package and platform, raw reports, build
+metadata, scanner identity and freshness against the exact archive. Both AMD64
+and ARM64 reports are retained alongside the unchanged native Debian 12 probes.
+The read-only PR scan uses reviewed-with-the-PR helpers and has no signing or
+publication authority. Protected qualification must generate fresh Go reports with
+main-owned tools; offline verification alone cannot establish the authenticity of
+PR-generated scanner results. Protected archive signing/admission, SPDX, full
+installation and recovery acceptance remain prerequisites; `releaseAdmission`
+stays false.

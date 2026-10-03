@@ -1,0 +1,269 @@
+{
+  "scope": "correctness only; three independent cold/absence/alternate scenarios; no hosted warm performance or producer qualification claim",
+  "observations": [
+    {
+      "runID": 37101270058,
+      "attempt": 1,
+      "scenario": "exact-key cold miss",
+      "workflowSourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+      "testedSourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+      "allSixConsumersPassed": true,
+      "metrics": [
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101270058",
+          "attempt": "1",
+          "sample": "3",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 52.052068074000005,
+          "realizationAndExportSeconds": 150.61225287
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101270058",
+          "attempt": "1",
+          "sample": "3",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 52.83174232600004,
+          "realizationAndExportSeconds": 159.44881332299997
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101270058",
+          "attempt": "1",
+          "sample": "1",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 41.33315308,
+          "realizationAndExportSeconds": 99.79641353999999
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101270058",
+          "attempt": "1",
+          "sample": "1",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 54.23134015900001,
+          "realizationAndExportSeconds": 160.41976405
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101270058",
+          "attempt": "1",
+          "sample": "2",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 51.893966788,
+          "realizationAndExportSeconds": 156.61526145000002
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101270058",
+          "attempt": "1",
+          "sample": "2",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 53.401250583999996,
+          "realizationAndExportSeconds": 159.49918893300003
+        }
+      ]
+    },
+    {
+      "runID": 37101271841,
+      "attempt": 1,
+      "scenario": "cache service unavailable",
+      "workflowSourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+      "testedSourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+      "allSixConsumersPassed": true,
+      "metrics": [
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101271841",
+          "attempt": "1",
+          "sample": "2",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 52.79605984899999,
+          "realizationAndExportSeconds": 156.324874779
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101271841",
+          "attempt": "1",
+          "sample": "2",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 53.758411339999995,
+          "realizationAndExportSeconds": 158.27056959499998
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101271841",
+          "attempt": "1",
+          "sample": "1",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 56.556433941,
+          "realizationAndExportSeconds": 161.91599935899998
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101271841",
+          "attempt": "1",
+          "sample": "3",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 45.89731891400004,
+          "realizationAndExportSeconds": 103.83187026799999
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101271841",
+          "attempt": "1",
+          "sample": "3",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 42.29039858300001,
+          "realizationAndExportSeconds": 108.71403224899998
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101271841",
+          "attempt": "1",
+          "sample": "1",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 54.073797051,
+          "realizationAndExportSeconds": 155.004669552
+        }
+      ]
+    },
+    {
+      "runID": 37101273556,
+      "attempt": 1,
+      "scenario": "exact alternate source",
+      "workflowSourceRevision": "9a4f1a43de4e72652d3b827204719f2945d91aab",
+      "testedSourceRevision": "1e11f109616ff1fba56afa9f166aa1b7e1dba39c",
+      "allSixConsumersPassed": true,
+      "metrics": [
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "1e11f109616ff1fba56afa9f166aa1b7e1dba39c",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101273556",
+          "attempt": "1",
+          "sample": "1",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 53.34943732900001,
+          "realizationAndExportSeconds": 160.37197459400002
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "1e11f109616ff1fba56afa9f166aa1b7e1dba39c",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101273556",
+          "attempt": "1",
+          "sample": "3",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 47.32116059499998,
+          "realizationAndExportSeconds": 143.79034837400002
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "1e11f109616ff1fba56afa9f166aa1b7e1dba39c",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101273556",
+          "attempt": "1",
+          "sample": "2",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 40.96823035599999,
+          "realizationAndExportSeconds": 99.913096279
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "1e11f109616ff1fba56afa9f166aa1b7e1dba39c",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101273556",
+          "attempt": "1",
+          "sample": "3",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 41.963840675,
+          "realizationAndExportSeconds": 106.386538833
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "baseline",
+          "sourceRevision": "1e11f109616ff1fba56afa9f166aa1b7e1dba39c",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101273556",
+          "attempt": "1",
+          "sample": "2",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 52.622387247000006,
+          "realizationAndExportSeconds": 156.25347049299995
+        },
+        {
+          "schemaVersion": 1,
+          "operation": "restore",
+          "sourceRevision": "1e11f109616ff1fba56afa9f166aa1b7e1dba39c",
+          "inputID": "ad7b1a76c490c1941b8b2c20e1c7ffe335b09e8ea35025437b165281215edf8c",
+          "runID": "37101273556",
+          "attempt": "1",
+          "sample": "1",
+          "cacheHit": false,
+          "scope": "orchestration toolchain only; no production adoption",
+          "evaluationSeconds": 43.38619108099999,
+          "realizationAndExportSeconds": 106.116174366
+        }
+      ]
+    }
+  ]
+}

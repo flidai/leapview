@@ -101,7 +101,9 @@ func TestIsolatedHostRecoveryQualificationIsARequiredReusableContract(t *testing
 		case step.ID == "admission" && step.If == "${{ inputs.final_artifact }}":
 			finalAdmission = true
 		case step.Name == "Build a local candidate image for pre-merge transition testing" && step.If == "${{ !inputs.final_artifact }}":
-			localImage = strings.Contains(step.Run, "docker buildx build --load")
+			localImage = step.Uses == "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc" &&
+				step.With["load"] == "true" && step.With["push"] == "false" &&
+				step.With["cache-from"] == "type=gha,scope=production-amd64" && step.With["cache-to"] == ""
 		case step.Name == "Upload passed historical transition receipt":
 			receiptUpload = step.With["name"] == "historical-transition-${{ github.run_attempt }}" &&
 				step.With["path"] == "${{ runner.temp }}/historical-transition/transition.json" &&

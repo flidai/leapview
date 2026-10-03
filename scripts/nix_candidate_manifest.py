@@ -214,7 +214,8 @@ def runtime_evidence(directory, artifact):
             'scope': 'nix-runtime-only', 'enforcementMode': 'enforce'}
 
 
-def collect(archive, kind, source, *, archive_identity=None, runtime_dir=None):
+def collect(archive, kind, source, *, archive_identity=None, runtime_dir=None,
+            go_dir=None, binary_verifier=None):
     if kind not in KINDS:
         raise ValueError('unsupported candidate kind')
     validate_source(source)
@@ -239,6 +240,12 @@ def collect(archive, kind, source, *, archive_identity=None, runtime_dir=None):
         if not kind.endswith('-image'):
             raise ValueError('image runtime evidence cannot qualify an archive output')
         manifest['evidence']['nix-runtime'] = runtime_evidence(runtime_dir, artifact)
+    if (go_dir is None) != (binary_verifier is None):
+        raise ValueError('Go archive evidence requires a protected binary verifier')
+    if go_dir is not None:
+        import nix_archive_go_evidence
+        manifest['evidence']['go-binaries'] = nix_archive_go_evidence.verify(
+            archive, artifact, go_dir, binary_verifier)
     manifest['candidateDigest'] = digest_bytes(b'leapview/nix-candidate-manifest/v1\n' + canonical_bytes(manifest))
     return manifest
 
@@ -273,12 +280,15 @@ def main():
     parser.add_argument('--verify', type=Path, help='recompute and compare an existing manifest')
     parser.add_argument('--archive-identity', type=Path, help='archive builder source/platform/version JSON')
     parser.add_argument('--runtime-evidence', type=Path)
+    parser.add_argument('--go-evidence', type=Path)
+    parser.add_argument('--binary-verifier', type=Path)
     args = parser.parse_args()
     os.umask(0o077)
     try:
         source = checkout_source(ROOT)
         options = {'archive_identity': read_json_file(args.archive_identity) if args.archive_identity else None,
-                   'runtime_dir': args.runtime_evidence}
+                   'runtime_dir': args.runtime_evidence,
+                   'go_dir': args.go_evidence, 'binary_verifier': args.binary_verifier}
         if args.verify:
             manifest = verify(read_json_file(args.verify), args.archive, source, kind=args.kind, **options)
         else:

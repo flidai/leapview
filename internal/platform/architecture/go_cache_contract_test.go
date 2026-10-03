@@ -88,11 +88,11 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 		t.Fatalf("setup-ci must have a default-branch writer and a candidate reader, found %d", len(goCaches))
 	}
 	goCache := goCaches[0]
-	if goCache.If != "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" || goCache.Run != "" {
+	if goCache.If != "inputs.profile == 'validation' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch))" || goCache.Run != "" {
 		t.Fatal("only default-branch workloads may publish Go caches")
 	}
 	reader := goCaches[1]
-	if reader.If != "github.ref != format('refs/heads/{0}', github.event.repository.default_branch)" || reader.Run != "" || !regexp.MustCompile(`^actions/cache/restore@[0-9a-f]{40}$`).MatchString(reader.Uses) {
+	if reader.If != "inputs.profile == 'validation' && (github.ref != format('refs/heads/{0}', github.event.repository.default_branch))" || reader.Run != "" || !regexp.MustCompile(`^actions/cache/restore@[0-9a-f]{40}$`).MatchString(reader.Uses) {
 		t.Fatal("candidates must use the complementary restore-only action")
 	}
 	if len(reader.With) != len(goCache.With) {
@@ -127,8 +127,12 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 	if !regexp.MustCompile(`^actions/cache@[0-9a-f]{40}$`).MatchString(goCache.Uses) {
 		t.Fatalf("Go cache action must be pinned to a commit, got %q", goCache.Uses)
 	}
-	if strings.Contains(string(body), "cache-hit") {
-		t.Fatal("setup-ci must not skip work based on a cache-hit output")
+	for _, step := range action.Runs.Steps {
+		// Import may read a hit output, but realization and validation must run
+		// for both hits and misses. Check execution guards, not environment data.
+		if strings.Contains(step.If, "cache-hit") || strings.Contains(step.Run, "cache-hit") {
+			t.Fatalf("setup-ci step %q must not skip work based on a cache-hit output", step.Name)
+		}
 	}
 	setupIndex := -1
 	resolverIndex := -1
@@ -288,6 +292,12 @@ func TestPRGoCacheReadersHaveScheduledProducers(t *testing.T) {
 		for id, reader := range read(name) {
 			for _, step := range reader.Steps {
 				if step.Uses != "./.github/actions/setup-ci" {
+					continue
+				}
+				if step.With["profile"] == "orchestration" {
+					if step.With["go-cache-restore-workload"] != "" {
+						t.Fatal("orchestration must not restore application caches")
+					}
 					continue
 				}
 				scope := step.With["go-cache-restore-workload"]

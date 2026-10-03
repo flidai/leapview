@@ -1,14 +1,15 @@
 # Linux toolchain callers
 
-Inventory against main `b78a38b1c37c5a2242497ee8f05e1df95790781d`,
-1 October 2026. Toolchain adoption does not qualify a new release artifact or
+Inventory against main `c5aea6cc2768cffa504fc3000a3d235a098da1af`,
+3 October 2026, plus the proposed orchestration archive adoption. Toolchain adoption does not qualify a new release artifact or
 hosting profile. Run `rg -n 'setup-ci|setup-go|setup-node|setup-bun|apt-get' .github`
 when adding or removing a caller.
 
 | Caller | Tool owner | Contract and remaining boundary |
 | --- | --- | --- |
 | `scripts/develop.sh` | Locked root flake on x86_64 Linux | Existing Task ordering; other platforms execute their conventional tools |
-| `ci.yml` | Shared `setup-ci`, default Nix on x86_64 Linux | Cumulative PR planner, generated checks, all selected validation lanes and exact-plan gate |
+| `ci.yml` | Shared `setup-ci`, default Nix on x86_64 Linux | Planner/gate restore the bounded orchestration-only archive then realize locked tools; selected validation lanes retain the complete shell |
+| `orchestration-cache.yml` | Locked orchestration shell, trusted default-branch producer | Exact-key restore-only consumers, three-identity / 900 MB retention, independent paired measurements; no application or release publication |
 | `merge-validation.yml` | Shared `setup-ci`, default Nix | Existing complete merge-queue candidate checks |
 | `nightly.yml` | Shared `setup-ci`, default Nix | Existing full checks, security scans, dependency evidence and diagnostic evaluations |
 | `nix-development.yml` | Root flake directly | Native/compiler and real-browser checks, fresh-checkout PR/full/nightly contract selection; image qualification remains independent |

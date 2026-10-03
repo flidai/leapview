@@ -58,9 +58,11 @@ def verify(record, expected):
         raise ValueError('registry binding differs from freshly verified registry and candidate content')
 
 
-def verified_records(paths, kind, source):
+def verified_records(paths, kind, source, *, binary_verifier=None):
     return [candidate.verify(candidate.read_json_file(Path(manifest)), Path(archive), source,
-                             kind=kind, runtime_dir=Path(runtime))
+                             kind=kind, runtime_dir=Path(runtime),
+                             go_dir=Path(runtime) / 'go' if binary_verifier is not None else None,
+                             binary_verifier=binary_verifier)
             for archive, manifest, runtime in paths]
 
 
@@ -69,6 +71,7 @@ def main():
     parser.add_argument('--image', required=True)
     parser.add_argument('--kind', choices=sorted(REPOSITORIES), required=True)
     parser.add_argument('--platform', action='append', required=True)
+    parser.add_argument('--binary-verifier', type=Path)
     parser.add_argument('--candidate', nargs=3, action='append', required=True,
                         metavar=('ARCHIVE', 'MANIFEST', 'RUNTIME_EVIDENCE'))
     output = parser.add_mutually_exclusive_group(required=True)
@@ -79,11 +82,12 @@ def main():
     try:
         image_digest(args.image, args.kind)
         source = candidate.checkout_source(candidate.ROOT)
-        records = verified_records(args.candidate, args.kind, source)
+        records = verified_records(args.candidate, args.kind, source, binary_verifier=args.binary_verifier)
         result = bind_registry(args.image, args.kind, records, args.platform)
         # Recheck source, archive and time-limited runtime evidence after the
         # registry operation. An expired or changed input cannot mint a receipt.
-        current = verified_records(args.candidate, args.kind, candidate.checkout_source(candidate.ROOT))
+        current = verified_records(args.candidate, args.kind, candidate.checkout_source(candidate.ROOT),
+                                   binary_verifier=args.binary_verifier)
         if candidate.canonical_bytes(current) != candidate.canonical_bytes(records):
             raise ValueError('candidate changed during registry verification')
         if args.verify:

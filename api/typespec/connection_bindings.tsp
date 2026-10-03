@@ -262,32 +262,6 @@ interface TargetConnectionBindings {
     @body body: TargetConnectionBindingUpdateRequest,
   ): OkJson<TargetConnectionBindingResponse> | CommonErrors;
 
-  @summary("Test a target connection through the candidate runtime path")
-  @doc("Command classification: testing can persist validated health/version state and promote the replacement runtime pool.")
-  @route("/{connection}/test")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
-  @extension("x-leapview-object-scope", "connection")
-  @apigen.failsWith(InvalidConnectionBindingFailure)
-  @apigen.failsWith(ForbiddenConnectionOperationFailure)
-  @apigen.failsWith(ConnectionBindingNotFoundFailure)
-  @apigen.failsWith(ConnectionBindingConflictFailure)
-  @apigen.failsWith(ConnectionBindingDisabledFailure)
-  @apigen.failsWith(ConnectionTestFailedFailure)
-  @apigen.failsWith(ConnectionProviderUnavailableFailure)
-  @apigen.ui("connection.binding.test")
-  @apigen.command(#{
-    auditAction: "credential.test.requested",
-    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
-  })
-  @apigen.auditPayload(TargetConnectionRotationAuditPayload)
-  testTargetConnectionBinding(
-    @path project: ResourceId,
-    @path target: TargetConnectionIdentifier,
-    @path @apigen.target connection: LogicalConnectionId,
-    @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
-  ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
-
   @summary("Refresh credentials and replace the validated target pool")
   @route("/{connection}/refresh")
   @post

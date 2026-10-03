@@ -8,6 +8,66 @@ import { parse } from 'yaml'
 const shards = ['core', 'reports', 'chat', 'data', 'site']
 const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
 
+for (const [target, downloadFails] of [
+  ['test:go:app:shards', false],
+  ['test:go:app:shards', true],
+  ['generate', true],
+] as const) {
+  test(`Go module preparation for ${target} ${downloadFails ? 'blocks compilation on failure' : 'preserves test HTTP transport'}`, () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'leapview-go-preparation-'))
+    try {
+      const bin = join(fixture, 'bin')
+      const events = join(fixture, 'events.log')
+      mkdirSync(bin)
+      writeFileSync(join(bin, 'go'), `#!/bin/sh
+printf '%s|%s\\n' "$GODEBUG" "$*" >> "$CI_GO_EVENT_LOG"
+if [ "$1:$2" = mod:download ]; then
+  test "$CI_MODULE_DOWNLOAD_FAIL" != 1
+elif [ "$1" = run ]; then
+  printf '^TestFixture$\\n'
+fi
+`, { mode: 0o755 })
+      const result = spawnSync('task', ['--taskfile', join(process.cwd(), 'Taskfile.yml'), target], {
+        cwd: fixture,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          GODEBUG: 'http2client=1',
+          CI_GO_EVENT_LOG: events,
+          CI_MODULE_DOWNLOAD_FAIL: downloadFails ? '1' : '0',
+        },
+      })
+      const calls = readFileSync(events, 'utf8').trim().split('\n')
+      expect(calls[0]).toBe('http2client=0|mod download')
+      expect(calls.filter(call => call.endsWith('|mod download'))).toHaveLength(1)
+      if (downloadFails) {
+        expect(result.status).not.toBe(0)
+        expect(calls).toHaveLength(1)
+      } else {
+        expect(result.status).toBe(0)
+        expect(calls.filter(call => call.includes('|test ./internal/app '))).toHaveLength(4)
+        expect(calls.slice(1).every(call => call.startsWith('http2client=1|'))).toBe(true)
+      }
+      for (const lane of ['generate', 'ci:prepare', 'test:go:app:shards', 'test:go:packages']) {
+        expect(tasks[lane].cmds[0]).toEqual({ task: 'go:deps' })
+        expect(tasks[lane].env?.GODEBUG).toBeUndefined()
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+}
+
+test('catalog page browser fixtures run in separate test processes', () => {
+  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
+  const testProcesses = scripts['test:catalog-page'].split(' && ').filter((command: string) => command.startsWith('bun test '))
+  for (const fixture of ['catalog-page.dom.test.ts', 'catalog-page.pins.dom.test.ts']) {
+    expect(testProcesses.filter((command: string) => command.includes(fixture)))
+      .toEqual([`bun test web/components/app/${fixture}`])
+  }
+})
+
 test('local frontend validation runs every bounded shard without suppressing failure', () => {
   expect(tasks['ci:lane:frontend'].cmds).toEqual(shards.map((shard) => ({
     task: 'ci:lane:frontend:shard', vars: { SHARD: shard },

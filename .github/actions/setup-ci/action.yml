@@ -2,6 +2,10 @@ name: Set up LeapView CI
 description: Uses locked Nix tools on x86_64 Linux and restores bounded validation caches.
 
 inputs:
+  profile:
+    description: validation retains the complete development toolchain; orchestration provides only locked Go and scripting tools on x86_64 Linux.
+    required: false
+    default: "validation"
   toolchain:
     description: auto uses the locked Nix development shell on x86_64 Linux; conventional retains the existing release compiler and other platforms.
     required: false
@@ -26,10 +30,24 @@ runs:
       shell: bash
       env:
         TOOLCHAIN: ${{ inputs.toolchain }}
+        CI_PROFILE: ${{ inputs.profile }}
+        CI_BROWSER: ${{ inputs.browser }}
+        CI_TERRAFORM: ${{ inputs.terraform }}
+        CI_PLATFORM: ${{ runner.os }}-${{ runner.arch }}
       run: |
         case "$TOOLCHAIN" in
           auto|conventional) ;;
           *) echo "unknown CI toolchain: $TOOLCHAIN" >&2; exit 1 ;;
+        esac
+        case "$CI_PROFILE" in
+          validation) ;;
+          orchestration)
+            test "$TOOLCHAIN" = auto
+            test "$CI_PLATFORM" = Linux-X64
+            test "$CI_BROWSER" = false
+            test "$CI_TERRAFORM" = false
+            ;;
+          *) echo "unknown CI profile: $CI_PROFILE" >&2; exit 1 ;;
         esac
 
     - name: Install locked Nix
@@ -41,10 +59,30 @@ runs:
           experimental-features = nix-command flakes
           sandbox = true
 
-    - name: Export locked compiler and browser environment
-      if: inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'
+    - name: Restore exact orchestration toolchain archive
+      if: inputs.profile == 'orchestration'
+      id: orchestration-cache
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/orchestration-cache
+        key: nix-orchestration-v1-Linux-X64-2.31.2-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**/*.nix', 'go.mod', 'package.json', 'scripts/export_nix_ci_environment.py', 'scripts/measure_orchestration_cache.py', '.github/workflows/orchestration-cache.yml', '.github/actions/setup-ci/action.yml', '.github/workflows/ci.yml') }}
+
+    - name: Import orchestration archive and realize the complete locked environment
+      if: inputs.profile == 'orchestration'
       shell: bash
-      run: nix develop --no-update-lock-file -c python3 scripts/export_nix_ci_environment.py
+      env:
+        CACHE_INPUT_ID: ${{ hashFiles('flake.nix', 'flake.lock', 'nix/**/*.nix', 'go.mod', 'package.json', 'scripts/export_nix_ci_environment.py', 'scripts/measure_orchestration_cache.py', '.github/workflows/orchestration-cache.yml', '.github/actions/setup-ci/action.yml', '.github/workflows/ci.yml') }}
+        CACHE_HIT: ${{ steps.orchestration-cache.outputs.cache-hit }}
+      run: python3 scripts/measure_orchestration_cache.py restore
+
+    - name: Export locked compiler and browser environment
+      if: inputs.profile == 'validation' && inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'
+      shell: bash
+      env:
+        CI_PROFILE: ${{ inputs.profile }}
+        NIX_SHELL: ${{ inputs.profile == 'orchestration' && 'orchestration' || 'default' }}
+      run: nix develop --no-update-lock-file ".#${NIX_SHELL}" -c python3 scripts/export_nix_ci_environment.py --profile "$CI_PROFILE"
 
     - name: Set up Go
       if: inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'
@@ -54,6 +92,7 @@ runs:
         cache: false
 
     - name: Resolve selected compiler identity
+      if: inputs.profile == 'validation'
       id: toolchain
       shell: bash
       run: |
@@ -61,6 +100,7 @@ runs:
         echo "go-version=${version#go}" >> "$GITHUB_OUTPUT"
 
     - name: Resolve Go validation cache paths
+      if: inputs.profile == 'validation'
       id: go-cache-paths
       shell: bash
       run: |
@@ -91,7 +131,7 @@ runs:
     # Only default-branch archives are reusable by new PRs and merge groups.
     # Candidate writes consume gigabytes per ref and evict those shared inputs.
     - name: Restore and publish default-branch Go validation cache
-      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      if: inputs.profile == 'validation' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -102,7 +142,7 @@ runs:
           go-validation-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.toolchain.outputs.go-version }}-${{ hashFiles('flake.lock', 'nix/toolchain.nix') }}-
 
     - name: Restore candidate Go validation cache
-      if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+      if: inputs.profile == 'validation' && (github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -113,18 +153,19 @@ runs:
           go-validation-v2-${{ inputs.go-cache-restore-workload || github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.toolchain.outputs.go-version }}-${{ hashFiles('flake.lock', 'nix/toolchain.nix') }}-
 
     - name: Set up Node.js
-      if: inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'
+      if: inputs.profile == 'validation' && (inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64')
       uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
       with:
         node-version: "24"
 
     - name: Set up Bun
-      if: inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'
+      if: inputs.profile == 'validation' && (inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64')
       uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       with:
         bun-version: 1.3.14
 
     - name: Configure bounded tool caches
+      if: inputs.profile == 'validation'
       shell: bash
       run: |
         mkdir -p "${HOME}/.bun/install/cache" "${HOME}/.cache/terraform"
@@ -135,6 +176,7 @@ runs:
         } >> "${GITHUB_ENV}"
 
     - name: Restore Bun download cache
+      if: inputs.profile == 'validation'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bun/install/cache
@@ -144,14 +186,14 @@ runs:
           bun-${{ runner.os }}-${{ runner.arch }}-1.3.14-
 
     - name: Restore Playwright browser cache
-      if: inputs.browser == 'true' && (inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64')
+      if: inputs.profile == 'validation' && (inputs.browser == 'true' && (inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'))
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/ms-playwright
         key: playwright-${{ runner.os }}-${{ runner.arch }}-1.61.1
 
     - name: Restore Terraform provider cache
-      if: inputs.terraform == 'true'
+      if: inputs.profile == 'validation' && (inputs.terraform == 'true')
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/terraform
@@ -160,14 +202,14 @@ runs:
           terraform-${{ runner.os }}-${{ runner.arch }}-1.13.5-
 
     - name: Set up Terraform
-      if: inputs.terraform == 'true'
+      if: inputs.profile == 'validation' && (inputs.terraform == 'true')
       uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
       with:
         terraform_version: 1.13.5
         terraform_wrapper: false
 
     - name: Install pinned CI tools
-      if: inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'
+      if: inputs.profile == 'validation' && (inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64')
       shell: bash
       run: |
         install_go_tool() {
@@ -189,7 +231,7 @@ runs:
         echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
 
     - name: Install cached Chromium and system dependencies
-      if: inputs.browser == 'true' && (inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64')
+      if: inputs.profile == 'validation' && (inputs.browser == 'true' && (inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'))
       shell: bash
       run: |
         echo "PLAYWRIGHT_BROWSERS_PATH=${HOME}/.cache/ms-playwright" >> "${GITHUB_ENV}"
@@ -198,6 +240,6 @@ runs:
         echo "LEAPVIEW_PLAYWRIGHT_READY=1" >> "${GITHUB_ENV}"
 
     - name: Verify locked Chromium and compiler pairing
-      if: inputs.browser == 'true' && inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'
+      if: inputs.profile == 'validation' && (inputs.browser == 'true' && inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64')
       shell: bash
       run: task nix:smoke

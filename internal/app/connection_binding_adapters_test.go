@@ -24,12 +24,12 @@ func TestConnectionRotationAuditAdapterPersistsOnlyRedactedBoundedMetadata(t *te
 	err := recorder.RecordCredentialRotation(context.Background(), analyticsmodule.ConnectionRotationAuditEvent{
 		BindingID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "connection_sales", ProjectID: "project:sales",
 		ProviderVersion: "secret:v2", Actor: "principal:operator-1",
-		Operation: "credential.test.requested", Outcome: "degraded",
+		Operation: "credential.refresh.requested", Outcome: "degraded",
 		Reason: "POOL_HEALTH_CHECK_FAILED", Timestamp: time.Now(),
 	})
 	require.NoError(t, err)
 	if input.ProjectID != "project:sales" || input.ResourceID != "connection_sales" || input.PrincipalID != "operator-1" ||
-		input.Action != "credential.test.requested" ||
+		input.Action != "credential.refresh.requested" ||
 		input.ResourceKind != "connection" ||
 		input.Capability != access.CapabilityResourceUse || input.Status != "degraded" {
 		t.Fatalf("audit input = %#v", input)
@@ -54,8 +54,8 @@ func TestConnectionRotationAuditAdapterPersistsOnlyRedactedBoundedMetadata(t *te
 			t.Fatalf("audit metadata disclosed %q: %s", forbidden, input.MetadataJSON)
 		}
 	}
-	logMetadata, err := analyticsgen.EncodeGenTestTargetConnectionBindingAuditPayloadForLog(analyticsgen.GenSchemaTargetConnectionRotationAuditPayload{
-		Operation: "credential.test.requested", Outcome: "degraded", ProviderVersion: "secret:v2",
+	logMetadata, err := analyticsgen.EncodeGenRefreshTargetConnectionBindingAuditPayloadForLog(analyticsgen.GenSchemaTargetConnectionRotationAuditPayload{
+		Operation: "credential.refresh.requested", Outcome: "degraded", ProviderVersion: "secret:v2",
 		DiagnosticCode: "POOL_HEALTH_CHECK_FAILED", TargetId: "lvinst_prod",
 	})
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestConnectionRotationAuditAdapterPersistsOnlyRedactedBoundedMetadata(t *te
 		strings.Contains(logMetadata, "POOL_HEALTH_CHECK_FAILED") {
 		t.Fatalf("log metadata leaked internal values: %s", logMetadata)
 	}
-	if !strings.Contains(logMetadata, `"operation":"credential.test.requested"`) || !strings.Contains(logMetadata, `"outcome":"degraded"`) {
+	if !strings.Contains(logMetadata, `"operation":"credential.refresh.requested"`) || !strings.Contains(logMetadata, `"outcome":"degraded"`) {
 		t.Fatalf("log metadata omitted public values: %s", logMetadata)
 	}
 }

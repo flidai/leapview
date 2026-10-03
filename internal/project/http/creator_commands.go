@@ -130,7 +130,7 @@ func (h *BrowserHandler) ConnectionAdministrationLifecycleCommand(w stdhttp.Resp
 		h.connectionCommandPatch(w, r, command, "The connection command is invalid.")
 		return
 	}
-	if command.Action != "test" && command.Action != "refresh" && command.Action != "enable" && command.Action != "disable" {
+	if command.Action != "refresh" && command.Action != "enable" && command.Action != "disable" {
 		h.connectionCommandPatch(w, r, command, "The connection command is invalid.")
 		return
 	}
@@ -167,8 +167,6 @@ func (h *BrowserHandler) ConnectionAdministrationLifecycleCommand(w stdhttp.Resp
 	key := connectionadmin.BindingKey{Scope: connectionadmin.BindingScope{ProjectID: projectID, Environment: h.Environment}, TargetID: target, ConnectionID: projectgraph.ResourceID(connectionID)}
 	var operationErr error
 	switch command.Action {
-	case "test":
-		_, operationErr = h.ConnectionAdministration.Test(r.Context(), principal.ID, key)
 	case "refresh":
 		_, operationErr = h.ConnectionAdministration.RefreshNow(r.Context(), principal.ID, key)
 	case "enable":
@@ -191,8 +189,6 @@ func connectionActionCompletionMessage(action string) string {
 		return "Enable completed."
 	case "disable":
 		return "Disable completed."
-	case "test":
-		return "Test completed."
 	case "refresh":
 		return "Refresh completed."
 	default:
@@ -206,8 +202,6 @@ func (h *BrowserHandler) connectionOperation(action string) string {
 		return h.ConnectionCommands.Create.OperationID()
 	case "update":
 		return h.ConnectionCommands.Update.OperationID()
-	case "test":
-		return h.ConnectionCommands.Test.OperationID()
 	case "refresh":
 		return h.ConnectionCommands.Refresh.OperationID()
 	case "enable":
@@ -229,7 +223,7 @@ func (h *BrowserHandler) beginConnectionInvocation(r *stdhttp.Request, action, p
 	if h == nil || h.BeginConnectionCommand == nil {
 		return r, errors.New("connection command invocation is unavailable")
 	}
-	if action != "create" && action != "update" && action != "test" && action != "refresh" && action != "enable" && action != "disable" {
+	if action != "create" && action != "update" && action != "refresh" && action != "enable" && action != "disable" {
 		return r, fmt.Errorf("unsupported connection operation")
 	}
 	ctx, err := h.BeginConnectionCommand(r.Context(), CreatorCommandInvocation{Action: action, Project: project, Resource: connection, IdempotencyKey: key, RequestID: requestID, CorrelationID: correlationID, Revision: revision})
@@ -609,7 +603,7 @@ func (h *BrowserHandler) connectionAdministrationView(ctx context.Context, proje
 	if err != nil {
 		return view, err
 	}
-	view.CanManage, view.CanTest = true, true
+	view.CanManage, view.CanRefresh = true, true
 	for _, binding := range bindings {
 		value := projectui.ConnectionBindingView{ID: binding.ID.String(), LogicalConnection: binding.ConnectionID.String(), ConnectorKind: binding.ConnectorKind, AuthenticationMode: string(binding.AuthenticationMode), Host: binding.Endpoint.Host, Port: binding.Endpoint.Port, Database: binding.Endpoint.Database, ObjectScope: binding.Endpoint.ObjectScope, SourceIdentity: binding.Endpoint.SourceIdentity, TLSMode: binding.Endpoint.TLSMode, Options: binding.Endpoint.Options, Enabled: binding.Enabled, Health: string(binding.Health), ValidatedVersion: binding.ValidatedVersion, Revision: binding.Revision}
 		// Credential references are write-only. Keep only health/configuration

@@ -15,6 +15,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/runtimehost"
+	"github.com/google/uuid"
 )
 
 // CandidateConnectionRequirement and CandidateAuthoredConnection are
@@ -49,13 +50,14 @@ const (
 )
 
 type CandidateConnectionEvidence struct {
-	BindingID          string
-	ConnectionID       projectgraph.ResourceID
-	ConnectorKind      string
-	Revision           int64
-	ProviderVersion    string
-	EndpointConfigHash string
-	Access             semanticmodel.ConnectionAccess
+	BindingID           string
+	ConnectionID        projectgraph.ResourceID
+	ConnectorKind       string
+	Revision            int64
+	ProviderVersion     string
+	CredentialVersionID string
+	EndpointConfigHash  string
+	Access              semanticmodel.ConnectionAccess
 }
 
 // CandidateConnectionRequest is one project-generation connection lease.
@@ -138,24 +140,26 @@ func BindingFingerprint(values []CandidateConnectionEvidence) (string, error) {
 		return "", err
 	}
 	preimage := make([]struct {
-		BindingID          string                         `json:"bindingId"`
-		ConnectionID       string                         `json:"connectionId"`
-		ConnectorKind      string                         `json:"connectorKind"`
-		Revision           int64                          `json:"revision"`
-		ProviderVersion    string                         `json:"providerVersion"`
-		EndpointConfigHash string                         `json:"endpointConfigHash"`
-		Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+		BindingID           string                         `json:"bindingId"`
+		ConnectionID        string                         `json:"connectionId"`
+		ConnectorKind       string                         `json:"connectorKind"`
+		Revision            int64                          `json:"revision"`
+		ProviderVersion     string                         `json:"providerVersion"`
+		CredentialVersionID string                         `json:"credentialVersionId,omitempty"`
+		EndpointConfigHash  string                         `json:"endpointConfigHash"`
+		Access              semanticmodel.ConnectionAccess `json:"access,omitempty"`
 	}, len(bindings))
 	for i, binding := range bindings {
 		preimage[i] = struct {
-			BindingID          string                         `json:"bindingId"`
-			ConnectionID       string                         `json:"connectionId"`
-			ConnectorKind      string                         `json:"connectorKind"`
-			Revision           int64                          `json:"revision"`
-			ProviderVersion    string                         `json:"providerVersion"`
-			EndpointConfigHash string                         `json:"endpointConfigHash"`
-			Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
-		}{binding.BindingID, binding.LogicalConnection, binding.ConnectorKind, binding.Revision, binding.ProviderVersion, binding.EndpointConfigHash, binding.Access}
+			BindingID           string                         `json:"bindingId"`
+			ConnectionID        string                         `json:"connectionId"`
+			ConnectorKind       string                         `json:"connectorKind"`
+			Revision            int64                          `json:"revision"`
+			ProviderVersion     string                         `json:"providerVersion"`
+			CredentialVersionID string                         `json:"credentialVersionId,omitempty"`
+			EndpointConfigHash  string                         `json:"endpointConfigHash"`
+			Access              semanticmodel.ConnectionAccess `json:"access,omitempty"`
+		}{binding.BindingID, binding.LogicalConnection, binding.ConnectorKind, binding.Revision, binding.ProviderVersion, binding.CredentialVersionID, binding.EndpointConfigHash, binding.Access}
 	}
 	encoded, err := json.Marshal(preimage)
 	if err != nil {
@@ -385,7 +389,7 @@ func candidateConnectionEvidence(values []runtimehost.CandidateBindingVersion) [
 		if err != nil {
 			continue
 		}
-		result[i] = CandidateConnectionEvidence{BindingID: value.BindingID, ConnectionID: connectionID, ConnectorKind: value.ConnectorKind, Revision: value.Revision, ProviderVersion: value.ProviderVersion, EndpointConfigHash: value.EndpointConfigHash, Access: value.Access}
+		result[i] = CandidateConnectionEvidence{BindingID: value.BindingID, ConnectionID: connectionID, ConnectorKind: value.ConnectorKind, Revision: value.Revision, ProviderVersion: value.ProviderVersion, CredentialVersionID: value.CredentialVersionID, EndpointConfigHash: value.EndpointConfigHash, Access: value.Access}
 	}
 	return result
 }
@@ -403,11 +407,14 @@ func candidateBindingVersions(evidence []CandidateConnectionEvidence) ([]runtime
 	for i := range evidence {
 		item := &evidence[i]
 		rawConnection := item.ConnectionID.String()
-		if item.BindingID != strings.TrimSpace(item.BindingID) || item.ConnectorKind != strings.TrimSpace(item.ConnectorKind) || item.ProviderVersion != strings.TrimSpace(item.ProviderVersion) || item.EndpointConfigHash != strings.TrimSpace(item.EndpointConfigHash) || rawConnection != strings.TrimSpace(rawConnection) {
+		if item.BindingID != strings.TrimSpace(item.BindingID) || item.ConnectorKind != strings.TrimSpace(item.ConnectorKind) || item.ProviderVersion != strings.TrimSpace(item.ProviderVersion) || item.CredentialVersionID != strings.TrimSpace(item.CredentialVersionID) || item.EndpointConfigHash != strings.TrimSpace(item.EndpointConfigHash) || rawConnection != strings.TrimSpace(rawConnection) {
 			return nil, ErrCandidateInvalid
 		}
-		if item.BindingID == "" || item.ConnectorKind == "" || item.ProviderVersion == "" || item.Revision < 1 || platformdigest.ValidateSHA256Identity(item.EndpointConfigHash) != nil || item.ConnectionID.Validate() != nil {
+		if item.BindingID == "" || item.ConnectorKind == "" || item.Revision < 1 || platformdigest.ValidateSHA256Identity(item.EndpointConfigHash) != nil || item.ConnectionID.Validate() != nil {
 			return nil, ErrCandidateInvalid
+		}
+		if err := validateCandidateCredentialVersion(item.ConnectorKind, item.Access, item.ProviderVersion, item.CredentialVersionID); err != nil {
+			return nil, err
 		}
 	}
 	sort.Slice(evidence, func(i, j int) bool { return evidence[i].BindingID < evidence[j].BindingID })
@@ -416,7 +423,21 @@ func candidateBindingVersions(evidence []CandidateConnectionEvidence) ([]runtime
 		if i > 0 && evidence[i-1].BindingID == item.BindingID {
 			return nil, ErrCandidateInvalid
 		}
-		result = append(result, runtimehost.CandidateBindingVersion{BindingID: item.BindingID, LogicalConnection: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ProviderVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash, Access: item.Access})
+		result = append(result, runtimehost.CandidateBindingVersion{BindingID: item.BindingID, LogicalConnection: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ProviderVersion: item.ProviderVersion, CredentialVersionID: item.CredentialVersionID, EndpointConfigHash: item.EndpointConfigHash, Access: item.Access})
 	}
 	return result, nil
+}
+
+func validateCandidateCredentialVersion(connectorKind string, access semanticmodel.ConnectionAccess, providerVersion, credentialVersionID string) error {
+	if credentialVersionID == "" {
+		if providerVersion == "" {
+			return ErrCandidateInvalid
+		}
+		return nil
+	}
+	versionID, err := uuid.Parse(credentialVersionID)
+	if err != nil || versionID == uuid.Nil || versionID.String() != credentialVersionID || providerVersion != "" || connectorKind != "postgres" || access != "" {
+		return ErrCandidateInvalid
+	}
+	return nil
 }

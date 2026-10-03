@@ -48,7 +48,7 @@ type ProfileApplicationBindingAdministration interface {
 	Create(context.Context, string, TargetBindingInput) (TargetBinding, error)
 	PlanConfigurationChange(context.Context, string, BindingKey, TargetBindingConfiguration) (BindingChangePlan, error)
 	UpdateConfiguration(context.Context, UpdateConfigurationRequest) (TargetBinding, error)
-	Test(context.Context, string, BindingKey) (BindingHealthStatus, error)
+	RefreshNow(context.Context, string, BindingKey) (BindingHealthStatus, error)
 	Enable(context.Context, string, BindingKey) (TargetBinding, error)
 	Disable(context.Context, string, BindingKey) (TargetBinding, error)
 }
@@ -338,7 +338,7 @@ func (service *ProfileApplicationService) applyConnection(ctx context.Context, a
 			return ProfileApplicationConnection{}, err
 		}
 	}
-	health, err := service.bindings.Test(ctx, actor, key)
+	health, err := service.bindings.RefreshNow(ctx, actor, key)
 	if err != nil {
 		return ProfileApplicationConnection{}, err
 	}

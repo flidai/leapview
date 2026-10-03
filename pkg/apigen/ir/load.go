@@ -434,7 +434,7 @@ func validateCommand(doc Document, endpoint Endpoint) error {
 		}
 	}
 	switch command.Idempotency {
-	case "", "required":
+	case "", "required", "forbidden":
 	default:
 		return fmt.Errorf("%s has unsupported idempotency policy %q", context, command.Idempotency)
 	}
@@ -451,10 +451,38 @@ func validateCommand(doc Document, endpoint Endpoint) error {
 		}
 		return false
 	}
+	hasHeader := func(name string) bool {
+		for _, parameter := range endpoint.Parameters {
+			if parameter.In == "header" && strings.EqualFold(parameter.Name, name) {
+				return true
+			}
+		}
+		return false
+	}
 	if command.Idempotency == "required" && !hasRequiredHeader("Idempotency-Key") {
 		return fmt.Errorf("%s idempotency policy requires a required Idempotency-Key header", context)
 	}
-	if strings.EqualFold(endpoint.Method, "post") && command.Idempotency != "required" {
+	if command.Idempotency == "forbidden" {
+		if !strings.EqualFold(endpoint.Method, "post") {
+			return fmt.Errorf("%s forbidden idempotency requires POST", context)
+		}
+		if hasHeader("Idempotency-Key") {
+			return fmt.Errorf("%s forbidden idempotency policy disallows any Idempotency-Key header", context)
+		}
+		if endpoint.RequestBody == nil || !endpoint.RequestBody.Required || !requiredJSONRequestBody(*endpoint.RequestBody) {
+			return fmt.Errorf("%s forbidden idempotency requires a required JSON request body", context)
+		}
+		if command.Execution != nil {
+			return fmt.Errorf("%s forbidden idempotency does not support async execution", context)
+		}
+		if !command.Audit.Required || command.Audit.Guarantee != "transactional" {
+			return fmt.Errorf("%s forbidden idempotency requires required transactional audit", context)
+		}
+		if command.AuthzMode != "authenticated" && command.AuthzMode != "privilege" {
+			return fmt.Errorf("%s forbidden idempotency requires authenticated or privilege authorization", context)
+		}
+	}
+	if strings.EqualFold(endpoint.Method, "post") && command.Idempotency != "required" && command.Idempotency != "forbidden" {
 		return fmt.Errorf("%s POST commands require idempotency policy %q", context, "required")
 	}
 	if command.Concurrency == "if-match" && !hasRequiredHeader("If-Match") {
@@ -475,6 +503,23 @@ func validateCommand(doc Document, endpoint Endpoint) error {
 		}
 	}
 	return nil
+}
+
+func requiredJSONRequestBody(body RequestBody) bool {
+	if !body.Required || len(body.Contents) == 0 {
+		return false
+	}
+	for _, content := range body.Contents {
+		mediaType, _, err := mime.ParseMediaType(content.ContentType)
+		if err != nil || content.BodyKind != "json" {
+			return false
+		}
+		mediaType = strings.ToLower(mediaType)
+		if mediaType != "application/json" && !(strings.HasPrefix(mediaType, "application/") && strings.HasSuffix(mediaType, "+json")) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateExecutionReferences(doc Document) error {

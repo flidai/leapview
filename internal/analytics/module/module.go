@@ -138,6 +138,7 @@ type Module struct {
 	targetID                     string
 	targetEnvironment            string
 	targetClass                  connectionbinding.TargetClass
+	production                   bool
 	connectionFactory            connectionbinding.RuntimePoolFactory
 	connectionPoolsMu            sync.Mutex
 	connectionPools              *connectionbinding.PoolDirectory
@@ -289,7 +290,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		connectionBindings: connectionBindings,
 		credentials:        credentials, targetResolvers: targetResolvers,
 		targetID: config.CredentialTargetID, targetEnvironment: config.CredentialEnvironment,
-		targetClass: targetClass, connectionFactory: connectionFactory, egressProxy: egressProxy,
+		targetClass: targetClass, production: config.Production, connectionFactory: connectionFactory, egressProxy: egressProxy,
 	}, nil
 }
 

@@ -13,18 +13,20 @@ import (
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 )
 
 // ActiveRuntimeBindingEvidence is the non-secret, immutable connection proof
 // retained with a ready release.
 type ActiveRuntimeBindingEvidence struct {
-	BindingID          connectionbinding.BindingID
-	ConnectionID       projectgraph.ResourceID
-	ConnectorKind      string
-	Revision           int64
-	ValidatedVersion   string
-	EndpointConfigHash string
-	Access             semanticmodel.ConnectionAccess
+	BindingID           connectionbinding.BindingID
+	ConnectionID        projectgraph.ResourceID
+	ConnectorKind       string
+	Revision            int64
+	ValidatedVersion    string
+	CredentialVersionID string
+	EndpointConfigHash  string
+	Access              semanticmodel.ConnectionAccess
 }
 
 type ActiveRuntimeBindingEvidenceSource interface {
@@ -82,6 +84,9 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 	evidence, err := r.evidenceFor(ctx, name)
 	if err != nil {
 		return semanticmodel.Connection{}, err
+	}
+	if evidence.CredentialVersionID != "" {
+		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
 	}
 	connectionID, err := connectionbinding.ParseConnectionID(strings.TrimSpace(name))
 	if err != nil {
@@ -171,7 +176,7 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 				)
 			}
 			if value.ConnectionID == "" || value.BindingID == "" || value.ConnectorKind == "" ||
-				value.Revision < 1 || value.ValidatedVersion == "" ||
+				value.Revision < 1 || !validActiveCredentialPin(value) ||
 				platformdigest.ValidateSHA256Identity(value.EndpointConfigHash) != nil {
 				return ActiveRuntimeBindingEvidence{}, fmt.Errorf(
 					"%w: active binding evidence is invalid",
@@ -199,4 +204,13 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 		return ActiveRuntimeBindingEvidence{}, connectionbinding.ErrBindingNotFound
 	}
 	return evidence, nil
+}
+
+func validActiveCredentialPin(value ActiveRuntimeBindingEvidence) bool {
+	if value.CredentialVersionID == "" {
+		return value.ValidatedVersion != ""
+	}
+	version, err := uuid.Parse(value.CredentialVersionID)
+	return err == nil && version != uuid.Nil && version.String() == value.CredentialVersionID &&
+		value.ValidatedVersion == "" && value.ConnectorKind == "postgres" && value.Access == ""
 }

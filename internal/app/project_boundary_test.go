@@ -355,7 +355,9 @@ func TestProjectBoundaryGeneratedLocatorsCannotRetarget(t *testing.T) {
 			}
 			request := httptest.NewRequest(contract.Method, path, strings.NewReader(`{}`))
 			request.Header.Set("Authorization", "Bearer "+token)
-			request.Header.Set("Idempotency-Key", "boundary-"+operation)
+			if contract.Command == nil || contract.Command.Idempotency != "forbidden" {
+				request.Header.Set("Idempotency-Key", "boundary-"+operation)
+			}
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)

@@ -764,7 +764,7 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-chat-drawer'))
     const baseVisual = testVisualizationEnvelopes().orders_chart
-    await page.evaluate(async ({ baseVisual }) => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async ({ baseVisual }) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       const visual = {
             ...baseVisual,
@@ -791,7 +791,7 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
         },
         agentVisuals: { 'chat-chart': visual },
       })
-    }, { baseVisual })
+    }, { baseVisual }))
     await page.locator('lv-dashboard-page').evaluate((element: any) => {
       element.shadowRoot.querySelector('.agent-toggle').click()
     })
@@ -888,10 +888,10 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
       element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('lv-chat-thread').shadowRoot.querySelector('[data-visual-id="chat-chart"]').click()
     })
     await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')))
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agentVisuals: { 'chat-chart': null } })
-    })
+    }))
     await page.waitForFunction(() => {
       const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')
       const thread = drawer?.shadowRoot?.querySelector('lv-chat-thread') as HTMLElement | null
@@ -909,15 +909,15 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
     })
     expect(afterVisualRemoved).toEqual({ hasVisualPanel: false, threadHidden: false, hasComposer: true, hasInlineArtifact: true })
 
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agentVisuals: { 'chat-chart': (window as any).__chatDrawerVisual } })
-    })
+    }))
     await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelector('[data-visual-id="chat-chart"]')))
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { activeConversationId: 'chat-two', transcript: [{ id: 'user-two', kind: 'user', text: 'Second conversation' }] } })
-    })
+    }))
     await page.waitForFunction(() => {
       const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')
       const thread = drawer?.shadowRoot?.querySelector('lv-chat-thread') as HTMLElement | null

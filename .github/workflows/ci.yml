@@ -17,6 +17,7 @@ env:
 
 jobs:
   prepare:
+    cache-mode: read
     name: Plan PR validation
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
@@ -43,7 +44,7 @@ jobs:
       - name: Set up planner locked toolchain
         uses: ./.github/actions/setup-ci
         with:
-          go-cache-restore-workload: go-packages-validation
+          profile: orchestration
       - name: Plan cumulative candidate validation
         id: plan
         env:
@@ -346,11 +347,11 @@ jobs:
         uses: ./.github/actions/setup-ci
         with:
           go-cache-restore-workload: go-packages-validation
-          browser: "true"
+          browser: "false"
       - name: Prepare generated and embedded assets
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
       - name: Validate documentation and embedded site contracts
-        run: task ci:test:docs-site
+        run: task ci:test:docs
       - name: Verify generated artifacts
         run: task generated:check
 
@@ -388,6 +389,7 @@ jobs:
       attestations: read
 
   ci-gate:
+    cache-mode: read
     name: CI gate
     if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation, host-recovery-validation]
@@ -408,7 +410,7 @@ jobs:
       - name: Set up gate locked toolchain
         uses: ./.github/actions/setup-ci
         with:
-          go-cache-restore-workload: go-packages-validation
+          profile: orchestration
       - name: Read the exact plan artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

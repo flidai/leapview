@@ -514,7 +514,14 @@ tasks:
       - task: build
 
   ci:test:docs-site:
-    desc: Validate authored documentation and the independently deployable public site
+    desc: Prepare and validate complete documentation and site coverage independently
+    cmds:
+      - task: ci:prepare
+      - task: ci:test:docs
+      - task: ci:test:frontend:site
+
+  ci:test:docs:
+    desc: Validate documentation generation, snapshots, observation and site Go contracts on prepared assets
     cmds:
       - |
         bash scripts/check_generated_snapshots.sh \
@@ -533,9 +540,6 @@ tasks:
           -- task --force docs:generate
       - task: site:observation:test
       - task: docs:check
-      - task: site:build
-      - bun run test:docs-diagrams
-      - bun run test:site
       - go test ./cmd/leapview-site ./docs ./site ./internal/app/site/...
 
   ci:test:frontend:core:
@@ -543,6 +547,7 @@ tasks:
     cmds:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/nix_ci_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
@@ -553,6 +558,8 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_archive_go_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_go_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
@@ -564,6 +571,7 @@ tasks:
       - bun run test:datastar-lit
       - bun run test:ui-command-boundaries
       - bun run test:command-failure
+      - node scripts/ensure_playwright.mjs && bun test web/components/shared/command.dom.test.ts
       - bun run test:app-shell
       - bun run test:settings
       - bun run typecheck:app
@@ -814,6 +822,7 @@ tasks:
   generate:
     desc: Generate all checked-out derived code needed for local development
     cmds:
+      - task: go:deps
       - task: adr0016-conformance:generate
       - task: duckdbsql:generate
       - task: db:generate
@@ -991,6 +1000,7 @@ tasks:
     sources:
       - Taskfile.yml
       - internal/app/cli/**/*.go
+      - internal/admin/cli/**/*.go
       - internal/app/tools/clidocgen/**/*.go
     generates:
       - docs/reference/cli/catalog.json
@@ -1302,6 +1312,9 @@ tasks:
       - internal/analytics/api/gen/request_models.gen.go
       - internal/analytics/api/gen/server.apigen.gen.go
       - internal/analytics/api/gen/client.apigen.gen.go
+      - internal/credential/api/gen/request_models.gen.go
+      - internal/credential/api/gen/server.apigen.gen.go
+      - internal/credential/api/gen/client.apigen.gen.go
       - internal/dashboard/api/gen/request_models.gen.go
       - internal/dashboard/api/gen/server.apigen.gen.go
       - internal/dashboard/api/gen/client.apigen.gen.go
@@ -1809,10 +1822,20 @@ tasks:
   test:go:app:shards:
     desc: Run stable application shards with three-process parallelism
     cmds:
+      - task: go:deps
       - task --parallel --concurrency 3 test:go:app:0 test:go:app:1 test:go:app:2 test:go:app:3
+
+  go:deps:
+    desc: Prepare the locked module graph before parallel test compilation
+    run: once
+    cmds:
+      # Match sqlc's proxy transport setting only for module acquisition.
+      # Test processes retain the caller's GODEBUG and HTTP/2 behavior.
+      - GODEBUG=http2client=0 go mod download
 
   test:go:packages:
     cmds:
+      - task: go:deps
       # Container-backed PostgreSQL tests are run once, fail closed, by the
       # dedicated conformance lane. Derive the exclusion by source so a new
       # harness user cannot silently run in both lanes. App tests use the same
@@ -2027,6 +2050,7 @@ tasks:
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
+      - task: go:deps
       - task: ci:extensions:prepare
       - task: generate
       - task: build

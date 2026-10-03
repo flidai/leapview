@@ -105,9 +105,15 @@
         javascript-dependencies = applicationBuild.dependencies.javascript;
       };
       devShells.${system} = {
+        orchestration = pkgs.mkShellNoCC {
+          packages = toolchain.orchestrationPackages;
+          inherit (toolchain) GOTOOLCHAIN;
+        };
         default = pkgs.mkShell {
           packages = toolchain.packages;
           buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+          # Bun's native Parcel watcher loads the locked C++ runtime at execution.
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ];
           inherit (toolchain) GOTOOLCHAIN PLAYWRIGHT_BROWSERS_PATH FONTCONFIG_FILE;
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
           LEAPVIEW_TEST_NIX_PLAYWRIGHT_VERSION = toolchain.playwrightVersion;
@@ -115,12 +121,14 @@
         };
         runtime-security = pkgs.mkShell {
           packages = [
+            toolchain.go
             pkgs.syft
             pkgs.grype
             pkgs.skopeo
             pkgs.gh
             pkgs.python3
           ];
+          inherit (toolchain) GOTOOLCHAIN;
         };
       };
       checks.${system}.toolchain = import ./nix/check-toolchain.nix {

@@ -19,7 +19,6 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 		{item, "get", "getTargetConnectionBinding", "RESOURCE_MANAGE"},
 		{item + "/plan", "post", "planTargetConnectionBindingChange", "RESOURCE_MANAGE"},
 		{item, "put", "updateTargetConnectionBinding", "RESOURCE_MANAGE"},
-		{item + "/test", "post", "testTargetConnectionBinding", "RESOURCE_MANAGE"},
 		{item + "/refresh", "post", "refreshTargetConnectionBinding", "RESOURCE_MANAGE"},
 		{item + "/enable", "post", "enableTargetConnectionBinding", "RESOURCE_MANAGE"},
 		{item + "/disable", "post", "disableTargetConnectionBinding", "RESOURCE_MANAGE"},
@@ -35,11 +34,17 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, action := range []string{"test", "refresh", "enable", "disable"} {
+	for _, action := range []string{"refresh", "enable", "disable"} {
 		operation := openAPIOperation(t, paths, item+"/"+action, "post")
 		if !operationHasParameter(operation, "header", "Idempotency-Key") {
 			t.Fatalf("%s operation is missing Idempotency-Key", action)
 		}
+	}
+	if _, exists := openAPIMap(t, paths, item)["post"]; exists {
+		t.Fatal("POST on a target connection binding unexpectedly exists")
+	}
+	if _, exists := paths[item+"/test"]; exists {
+		t.Fatal("legacy pool-promoting test route remains in the public API")
 	}
 
 	schemas := openAPIMap(t, openAPIMap(t, spec, "components"), "schemas")

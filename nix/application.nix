@@ -74,7 +74,9 @@ pkgs.stdenv.mkDerivation {
     bun scripts/generate_visualization_validator.ts
     bun run build
     mkdir -p "$out/bin" "$tools/bin"
-    flags="-s -w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
+    # Keep Go function symbols so govulncheck can identify shipped vulnerable
+    # functions. Removing them forces conservative module-level analysis.
+    flags="-w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
       if dirty then "true" else "false"
     } -X ${buildInfo}.release=false"
     go build -tags=duckdb_arrow -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview

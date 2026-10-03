@@ -33,7 +33,7 @@ var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
 	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "semanticvalue": {}, "platform": {},
-	"recoveryset": {},
+	"recoveryset": {}, "credential": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
@@ -41,7 +41,7 @@ var approvedInternalRoots = map[string]struct{}{
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
 	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
-	"recoveryset": {},
+	"recoveryset": {}, "credential": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -1048,7 +1048,7 @@ func TestRefreshOwnsDurableRunState(t *testing.T) {
 
 func TestCapabilityModuleSurfacesExist(t *testing.T) {
 	root := repoRoot(t)
-	for _, capability := range []string{"access", "analytics", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin"} {
+	for _, capability := range []string{"access", "analytics", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin", "credential"} {
 		dir := "internal/" + capability + "/module"
 		if !packageDirExists(root, dir) {
 			t.Errorf("capability composition package %s does not exist", dir)
@@ -4019,8 +4019,8 @@ func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
 		t.Fatalf("Dockerfile.site downloads Go modules %d times, want one shared dependency stage", count)
 	}
 	const seededModuleCache = "type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked"
-	if count := strings.Count(string(siteDockerfile), seededModuleCache); count != 3 {
-		t.Fatalf("Dockerfile.site uses the seeded persistent Go module cache %d times, want source generation, visual documentation, and compilation", count)
+	if count := strings.Count(string(siteDockerfile), seededModuleCache); count != 2 {
+		t.Fatalf("Dockerfile.site uses the seeded persistent Go module cache %d times, want source generation (including visual documentation) and compilation", count)
 	}
 
 	gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))

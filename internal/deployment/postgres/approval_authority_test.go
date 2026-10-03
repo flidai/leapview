@@ -79,7 +79,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 	}
 	const targetID, projectID = "target_approval", "project_approval"
 	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: ids["generation"], CompiledGraphDigest: testDigest('b')}}
-	repository := NewWithOptions(db, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
+	repository := NewWithOptions(db, Options{ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	if _, err := repository.CreateTarget(ctx, TargetInput{TargetID: targetID, ProjectID: projectID, Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}

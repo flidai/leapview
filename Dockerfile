@@ -48,6 +48,7 @@ WORKDIR /src
 
 COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 COPY package.json bun.lock tsconfig.json ./
+RUN bun install --frozen-lockfile --no-cache
 COPY scripts ./scripts
 COPY static ./static
 COPY web ./web
@@ -55,7 +56,6 @@ COPY --from=sourcegen /src/api/gen ./api/gen
 COPY --from=sourcegen /src/api/visualization ./api/visualization
 COPY --from=sourcegen /src/web/generated ./web/generated
 
-RUN bun install --frozen-lockfile --no-cache
 RUN mkdir -p internal/dashboard/appearance && \
     bun scripts/generate_lucide_icon_catalog.ts && \
     bun scripts/generate_visualization_validator.ts && \
@@ -74,6 +74,7 @@ COPY --from=sourcegen /src/api/gen ./api/gen
 COPY --from=sourcegen /src/internal/access/api/gen ./internal/access/api/gen
 COPY --from=sourcegen /src/internal/agent/api/gen ./internal/agent/api/gen
 COPY --from=sourcegen /src/internal/analytics/api/gen ./internal/analytics/api/gen
+COPY --from=sourcegen /src/internal/credential/api/gen ./internal/credential/api/gen
 COPY --from=sourcegen /src/internal/dashboard/api/gen ./internal/dashboard/api/gen
 COPY --from=sourcegen /src/internal/deployment/api/gen ./internal/deployment/api/gen
 COPY --from=sourcegen /src/internal/manageddata/api/gen ./internal/manageddata/api/gen
@@ -91,6 +92,7 @@ COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/
 COPY --from=sourcegen /src/internal/project/postgres/internal/db ./internal/project/postgres/internal/db
 COPY --from=sourcegen /src/internal/project/developmentsession/postgres/internal/db ./internal/project/developmentsession/postgres/internal/db
 COPY --from=sourcegen /src/internal/access/postgres/internal/db ./internal/access/postgres/internal/db
+COPY --from=sourcegen /src/internal/credential/postgres/internal/db ./internal/credential/postgres/internal/db
 COPY --from=sourcegen /src/internal/admin/product/postgres/internal/db ./internal/admin/product/postgres/internal/db
 COPY --from=sourcegen /src/internal/agent/postgres/internal/db ./internal/agent/postgres/internal/db
 COPY --from=sourcegen /src/internal/dashboard/session/postgres/internal/db ./internal/dashboard/session/postgres/internal/db

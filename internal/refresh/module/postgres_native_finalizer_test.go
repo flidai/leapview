@@ -20,6 +20,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func allowRefreshPGActivationAdmission(context.Context, deploymentpostgres.Tx, deploymentpostgres.DeliveryPublication) error {
+	return nil
+}
+
 type failingNativeCompletionQueue struct {
 	*PostgresJobsAdapter
 	err error
@@ -87,7 +91,10 @@ func newNativeRefreshFixture(t *testing.T) nativeRefreshFixture {
 		t.Fatal("fixture must keep serving and source artifact digests distinct")
 	}
 	lineage := &integrationActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: "target_concrete_prod", ProjectID: "project_concrete", GenerationID: baseID, CompiledGraphDigest: plan.CompiledGraphDigest}}
-	delivery := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: deploymentaudit.NewWithRepository(accesspostgres.New()), Lineage: lineage})
+	delivery := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{
+		ActivationAudit: deploymentaudit.NewWithRepository(accesspostgres.New()), Lineage: lineage,
+		ActivationAdmission: allowRefreshPGActivationAdmission,
+	})
 	basePub, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: "0198f2c0-7c7a-7f00-8a11-000000000106", TargetID: "target_concrete_prod", GenerationID: baseID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-native-finalizer", RequestDigest: digest('8')})
 	if err != nil {
 		t.Fatal(err)
