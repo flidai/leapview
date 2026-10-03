@@ -40,9 +40,14 @@ test('Linux validation selects locked tools and excludes duplicate installers', 
   expect(install.with.extra_nix_config).toContain('sandbox = true')
   const environment = steps.find((step: any) => step.name === 'Export locked compiler and browser environment')
   expect(environment.if).toBe(locked)
-  expect(environment.run).toBe('nix develop --no-update-lock-file -c python3 scripts/export_nix_ci_environment.py')
+  expect(environment.env).toEqual({
+    CI_PROFILE: '${{ inputs.profile }}',
+    NIX_SHELL: "${{ inputs.profile == 'orchestration' && 'orchestration' || 'default' }}",
+  })
+  expect(environment.run).toBe('nix develop --no-update-lock-file ".#${NIX_SHELL}" -c python3 scripts/export_nix_ci_environment.py --profile "$CI_PROFILE"')
   for (const name of ['Set up Go', 'Set up Node.js', 'Set up Bun', 'Install pinned CI tools']) {
-    expect(steps.find((step: any) => step.name === name).if).toBe(conventional)
+    expect(steps.find((step: any) => step.name === name).if)
+      .toBe(name === 'Set up Go' ? conventional : `inputs.profile == 'validation' && (${conventional})`)
   }
   expect(steps.find((step: any) => step.name === 'Configure bounded tool caches').run)
     .not.toContain('PLAYWRIGHT_BROWSERS_PATH=')
@@ -50,11 +55,11 @@ test('Linux validation selects locked tools and excludes duplicate installers', 
 
 test('locked browser validation cannot fall back to runner browser installs', () => {
   const smoke = steps.find((step: any) => step.name === 'Verify locked Chromium and compiler pairing')
-  expect(smoke.if).toBe(`inputs.browser == 'true' && ${locked}`)
+  expect(smoke.if).toBe(`inputs.profile == 'validation' && (inputs.browser == 'true' && ${locked})`)
   expect(smoke.run).toBe('task nix:smoke')
   for (const name of ['Restore Playwright browser cache', 'Install cached Chromium and system dependencies']) {
     expect(steps.find((step: any) => step.name === name).if)
-      .toBe(`inputs.browser == 'true' && (${conventional})`)
+      .toBe(`inputs.profile == 'validation' && (inputs.browser == 'true' && (${conventional}))`)
   }
 })
 

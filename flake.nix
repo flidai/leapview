@@ -105,6 +105,10 @@
         javascript-dependencies = applicationBuild.dependencies.javascript;
       };
       devShells.${system} = {
+        orchestration = pkgs.mkShellNoCC {
+          packages = toolchain.orchestrationPackages;
+          inherit (toolchain) GOTOOLCHAIN;
+        };
         default = pkgs.mkShell {
           packages = toolchain.packages;
           buildInputs = [ pkgs.stdenv.cc.cc.lib ];

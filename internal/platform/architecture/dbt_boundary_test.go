@@ -280,8 +280,7 @@ func TestDBTWarehouseBoundaryWorkflowPublishesBeforeLeapView(t *testing.T) {
 
 	producerOrder := []string{
 		"Set up pinned Python",
-		"Install pinned dbt Core",
-		"Install pinned dbt-duckdb",
+		"Install pinned dbt dependencies",
 		"Read the bounded producer inputs",
 		"Run dbt build and verify physical Parquet",
 		"Select a new immutable publication prefix",
