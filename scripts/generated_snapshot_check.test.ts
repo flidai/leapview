@@ -13,9 +13,19 @@ function runSnapshotCheck(root: string, ...generator: string[]) {
 }
 
 function runSnapshotCheckPaths(root: string, paths: string[], ...generator: string[]) {
+  return runSnapshotCheckPathsWithEnv(root, paths, process.env, ...generator)
+}
+
+function runSnapshotCheckPathsWithEnv(
+  root: string,
+  paths: string[],
+  env: typeof process.env,
+  ...generator: string[]
+) {
   return spawnSync('bash', [helper, ...paths, '--', ...generator], {
     cwd: root,
     encoding: 'utf8',
+    env: { ...process.env, ...env },
   })
 }
 
@@ -154,6 +164,54 @@ test('generated checks repeat generation when cold ignored outputs first appear'
     )
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('nondeterministic')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('generated checks do not treat .git/info/exclude patterns as build-only outputs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'leapview-generated-info-exclude-'))
+  try {
+    initGitRepo(root)
+    writeFileSync(join(root, '.gitignore'), '\n')
+    commitFixture(root)
+    writeFileSync(join(root, '.git', 'info', 'exclude'), 'api/gen/\n')
+
+    const result = runSnapshotCheckPaths(
+      root,
+      ['api/gen/data-resources-ir.json'],
+      'bash',
+      '-c',
+      'mkdir -p api/gen; printf \'{}\\n\' > api/gen/data-resources-ir.json',
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('generated snapshots changed during generation')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('generated checks do not treat core.excludesFile patterns as build-only outputs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'leapview-generated-global-exclude-'))
+  try {
+    initGitRepo(root)
+    writeFileSync(join(root, '.gitignore'), '\n')
+    commitFixture(root)
+    const globalIgnore = join(root, 'personal-ignore')
+    const globalConfig = join(root, 'personal-gitconfig')
+    writeFileSync(globalIgnore, 'api/gen/\n')
+    execFileSync('git', ['config', '--file', globalConfig, 'core.excludesFile', globalIgnore], { cwd: root })
+
+    const result = runSnapshotCheckPathsWithEnv(
+      root,
+      ['api/gen/data-resources-ir.json'],
+      { GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: '1' },
+      'bash',
+      '-c',
+      'mkdir -p api/gen; printf \'{}\\n\' > api/gen/data-resources-ir.json',
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('generated snapshots changed during generation')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

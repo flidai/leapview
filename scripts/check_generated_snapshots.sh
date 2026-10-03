@@ -45,7 +45,8 @@ ignored_paths() {
     fi
   done
   if ((${#existing_paths[@]})); then
-    git ls-files --others --ignored --exclude-standard -z -- "${existing_paths[@]}"
+    # Only repository-owned rules can classify build outputs for this check.
+    git ls-files --others --ignored --exclude-per-directory=.gitignore -z -- "${existing_paths[@]}"
   fi
 }
 
