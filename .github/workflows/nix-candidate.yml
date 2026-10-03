@@ -112,11 +112,24 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             sandbox = true
+      - name: Build the protected Go binary verifier
+        working-directory: protected
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
       - name: Scan the archive with protected tools and policy
         working-directory: protected
         run: |
           nix develop --no-update-lock-file .#runtime-security -c \
             python3 scripts/check_nix_runtime_security.py ../candidate/image.tar --evidence-dir ../candidate/runtime
+      - name: Scan exact Go entrypoints without executing candidate binaries
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_archive_go_evidence.py candidate/image.tar \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --evidence-dir candidate/runtime/go --binary-verifier "$RUNNER_TEMP/go-binary-verifier"
       - name: Bind source and exact reports with the protected verifier
         env:
           SOURCE_REVISION: ${{ inputs.source_revision }}
@@ -124,11 +137,13 @@ jobs:
           nix develop --no-update-lock-file ./protected#runtime-security -c \
             python3 protected/scripts/nix_candidate_publication.py record \
             --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --output candidate/runtime/candidate-manifest.json
           nix develop --no-update-lock-file ./protected#runtime-security -c \
             python3 protected/scripts/nix_candidate_publication.py prepare \
             --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --layout "$RUNNER_TEMP/qualified-oci" --output "$RUNNER_TEMP/qualified-content.json"
       - name: Build the protected qualification CLI
@@ -201,6 +216,11 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             sandbox = true
+      - name: Build only the protected offline Go verifier
+        working-directory: protected
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
       - name: Verify archive and reports and export without rebuilding
         env:
           SOURCE_REVISION: ${{ inputs.source_revision }}
@@ -208,6 +228,7 @@ jobs:
           nix develop --no-update-lock-file ./protected#runtime-security -c \
             python3 protected/scripts/nix_candidate_publication.py prepare \
             --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --layout "$RUNNER_TEMP/nix-oci" --output "$RUNNER_TEMP/nix-prepared.json"
       - name: Reauthorize the still-current candidate before publication
@@ -236,6 +257,7 @@ jobs:
           nix develop --no-update-lock-file ./protected#runtime-security -c \
             python3 protected/scripts/nix_candidate_publication.py publish \
             --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --layout "$RUNNER_TEMP/nix-oci" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --output "$RUNNER_TEMP/nix-published.json" --github-output "$GITHUB_OUTPUT"
@@ -264,6 +286,7 @@ jobs:
           nix develop --no-update-lock-file ./protected#runtime-security -c \
             python3 protected/scripts/nix_candidate_publication.py verify-signed \
             --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --image "$IMAGE" --signer-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/nix-signed.json"
       - name: Retain verified candidate bindings

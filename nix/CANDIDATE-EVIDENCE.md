@@ -285,11 +285,56 @@ not waive a binary finding. No clean application or controller candidate is
 claimed by adding this tool. The adapter does not establish archive containment,
 embedded DuckDB/native-extension coverage, provenance or release admission.
 
-Protected archive extraction and candidate-manifest/publication binding are the
-next D04 composition step, after this verifier lands on main. The producer does
-not call this new operation yet. Callers must use protected verifier code and
-the immutable qualification artifact ID; an untrusted receipt can never grant
-publication authority on its own.
+### Protected archive Go evidence
+
+The protected producer requires Go evidence for all three declared application
+entrypoints: `/usr/local/bin/leapview`, `/usr/local/libexec/leapviewctl`, and
+`/usr/local/share/leapview/deployment/leapviewctl`. The two controller copies must
+be byte-identical. `scripts/nix_archive_go_evidence.py` reads the nested layer
+archives without extracting arbitrary paths or executing candidate binaries.
+Regular overlays use final manifest layer order; links, non-directory ancestors,
+whiteouts affecting these paths, missing/non-executable files and oversized inputs
+are rejected. Image startup/healthcheck and PATH must select the declared application
+binary; configuration redirection is rejected. Absolute container-root paths in
+dockerTools store layers are normalized for lookup only, never used as host
+extraction paths. Extracted files use fixed private names without execute
+permissions. Each parsed layer must match
+its verified diff ID, and the whole archive hash is checked before and after.
+
+Qualification builds the Go verifier from the protected checkout with its locked
+Go compiler, scans these exact bytes in the credentialless job, and retains every
+raw report and receipt under `runtime/go/`. Failed scans retain diagnostics but
+cannot produce a candidate manifest. `record`, `prepare`, `publish` and
+`verify-signed` all require `--binary-verifier /absolute/protected/verifier` and
+offline-reverify the complete report set against freshly extracted archive bytes.
+The publisher builds only the protected verifier: it neither executes candidate
+Go binaries nor runs a scanner or rebuilds the candidate archive.
+
+The manifest's `go-binaries` evidence binds the archive, each shipped path and main
+package, binary/report/receipt hashes, complete Go build metadata, scanner/database
+identity and scan time. Verification uses private report snapshots and rejects
+changed input reports, symlinks, missing/extra report directories, diagnostics,
+substitution, malformed/source-mode reports and stale scans. It never treats a
+receipt's asserted success as independent authority. The reports must originate
+from the protected qualification job and travel with its immutable artifact ID.
+
+The standalone manifest collector accepts `--go-evidence runtime/go` together with
+`--binary-verifier`; OCI, registry and signed-evidence adapters accept that verifier
+flag and reverify the corresponding `runtime/go` reports. Omitting it cannot verify
+a manifest that already binds Go evidence. Generic unsigned candidates may still
+record incomplete evidence; the protected publisher always requires the Go set.
+
+This completes the archive/report composition implementation only. Live positive
+protected producer qualification must run after the workflow/helper changes land
+on main, against an eligible exact open PR head. Existing stripped candidates can
+fail conservative module-level binary analysis; those findings remain blocking,
+with no exception based on a source scan. The Nix application recipe retains Go
+function symbols (`-w`, without `-s`, and `dontStrip`) for precise binary coverage.
+Locally rebuilt application and controller binaries with those flags passed the
+protected scanner; those probes do not qualify a new Nix archive or authorize
+publication. Embedded DuckDB/extensions, full platform/host and
+installation/recovery qualification, production adoption and
+exact promotion remain separate gates. `releaseAdmission` remains false.
 
 ### Remaining release authority
 

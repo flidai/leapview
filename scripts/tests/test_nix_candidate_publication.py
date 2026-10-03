@@ -34,6 +34,7 @@ class PublicationTests(unittest.TestCase):
         self.paths = ('archive', 'manifest', str(self.runtime))
         self.source_root = self.root.parent / 'source'
         self.commands = []
+        self.verifier = Path('/protected/verifier')
 
     def push(self, args, **kwargs):
         self.commands.append((args, kwargs))
@@ -44,7 +45,7 @@ class PublicationTests(unittest.TestCase):
         return patch.object(publication, 'verified_record', side_effect=[self.record, after or self.record])
 
     def publish(self):
-        return publication.publish(self.source_root, self.paths, self.root, 123, 1)
+        return publication.publish(self.source_root, self.paths, self.root, 123, 1, self.verifier)
 
     def test_publishes_preserved_digest_then_rechecks_actual_registry_and_candidate(self):
         with self.context(), patch.object(publication.subprocess, 'run', side_effect=self.push), \
@@ -101,7 +102,7 @@ class PublicationTests(unittest.TestCase):
     def test_unique_run_identity_and_amd64_scope_are_required(self):
         for run_id, attempt in [(0, 1), (1, 0), (True, 1), ('123', 1), (1, -1)]:
             with patch.object(publication.subprocess, 'run') as run, self.assertRaises(ValueError):
-                publication.publish(self.source_root, self.paths, self.root, run_id, attempt)
+                publication.publish(self.source_root, self.paths, self.root, run_id, attempt, self.verifier)
             run.assert_not_called()
         self.record['artifact']['platform'] = 'linux/arm64'
         with self.context(), patch.object(publication.subprocess, 'run') as run, self.assertRaises(ValueError):
@@ -113,29 +114,33 @@ class PublicationTests(unittest.TestCase):
         with patch.object(candidate, 'checkout_source', return_value=self.record['source']) as checkout, \
                 patch.object(candidate, 'read_json_file', return_value={'manifest': 'data'}), \
                 patch.object(candidate, 'verify', return_value=self.record) as verify:
-            publication.verified_record(self.source_root, self.paths)
+            publication.verified_record(self.source_root, self.paths, self.verifier)
         checkout.assert_called_once_with(self.source_root)
         self.assertEqual(candidate.ROOT, original)
         self.assertEqual(verify.call_args.kwargs['runtime_dir'], self.runtime)
+        self.assertEqual(verify.call_args.kwargs['go_dir'], self.runtime / 'go')
+        self.assertEqual(verify.call_args.kwargs['binary_verifier'], self.verifier)
 
     def test_preparation_binds_content_without_registry_access_and_rechecks_inputs(self):
         with self.context(), patch.object(publication.oci, 'export_layout', return_value=self.digest), \
                 patch.object(publication.subprocess, 'run') as run:
-            result = publication.prepare(self.source_root, self.paths, self.root)
+            result = publication.prepare(self.source_root, self.paths, self.root, self.verifier)
         self.assertEqual(result['oci']['digest'], self.digest)
         self.assertFalse(result['releaseAdmission'])
         run.assert_not_called()
         with self.context(ValueError('expired')), \
                 patch.object(publication.oci, 'export_layout', return_value=self.digest), self.assertRaises(ValueError):
-            publication.prepare(self.source_root, self.paths, self.root)
+            publication.prepare(self.source_root, self.paths, self.root, self.verifier)
 
     def test_record_uses_protected_collector_and_candidate_source_identity(self):
         with patch.object(candidate, 'checkout_source', return_value=self.record['source']) as checkout, \
                 patch.object(candidate, 'collect', return_value=self.record) as collect:
-            result = publication.record(self.source_root, self.paths)
+            result = publication.record(self.source_root, self.paths, self.verifier)
         checkout.assert_called_once_with(self.source_root)
         self.assertEqual(collect.call_args.args, (Path('archive'), publication.KIND, self.record['source']))
         self.assertEqual(collect.call_args.kwargs['runtime_dir'], self.runtime)
+        self.assertEqual(collect.call_args.kwargs['go_dir'], self.runtime / 'go')
+        self.assertEqual(collect.call_args.kwargs['binary_verifier'], self.verifier)
         self.assertEqual(result, self.record)
 
     def test_signatures_use_protected_event_revision_and_recheck_expiry(self):
@@ -145,16 +150,16 @@ class PublicationTests(unittest.TestCase):
             publication.signed.validate_signer('site-image', publication.WORKFLOW, signer_revision)
         result = {'spdx': [{'predicateSHA256': candidate.digest_bytes(candidate.canonical_bytes(self.document))}]}
         with self.context(), patch.object(publication.signed, 'collect', return_value=result) as collect:
-            self.assertEqual(publication.verify_signed(self.source_root, self.paths, self.image, signer_revision), result)
+            self.assertEqual(publication.verify_signed(self.source_root, self.paths, self.image, signer_revision, self.verifier), result)
         self.assertEqual(collect.call_args.args[-2:], (publication.WORKFLOW, signer_revision))
         with self.context(ValueError('expired')), \
                 patch.object(publication.signed, 'collect', return_value=result), self.assertRaises(ValueError):
-            publication.verify_signed(self.source_root, self.paths, self.image, signer_revision)
+            publication.verify_signed(self.source_root, self.paths, self.image, signer_revision, self.verifier)
 
     def test_cli_rejects_wrong_source_or_existing_receipt_without_publishing(self):
         output = self.root.parent / 'receipt.json'
         args = ['publish', '--source-root', str(self.source_root), '--source-revision', 'a' * 40,
-                '--candidate', *self.paths, '--layout', str(self.root), '--run-id', '123', '--run-attempt', '1',
+                '--binary-verifier', str(self.verifier), '--candidate', *self.paths, '--layout', str(self.root), '--run-id', '123', '--run-attempt', '1',
                 '--output', str(output)]
         for source in [{'revision': 'f' * 40}, self.record['source']]:
             if source == self.record['source']:

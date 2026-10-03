@@ -54,6 +54,14 @@ test('orchestration cache experiment authorizes only the exact main producer', (
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
+test('Nix application binaries retain function symbols for exact vulnerability coverage', () => {
+  const recipe = readFileSync('nix/application.nix', 'utf8')
+  const flags = recipe.match(/^    flags="([^"]+)"/m)![1].split(/\s+/)
+  expect(flags).toContain('-w')
+  expect(flags).not.toContain('-s')
+  expect(recipe).toContain('dontStrip = true;')
+})
+
 test('static controller qualification preserves the host baseline and exact artifact transfer', () => {
   const { jobs } = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const build = jobs['cli-build']
@@ -250,6 +258,30 @@ test('protected producer preserves current-head authorization and signs the boun
   expect(qualifier).toContain('image="$(docker image inspect "$reference" --format')
   const tasks = parse(readFileSync('Taskfile.yml', 'utf8'))
   expect(tasks.tasks['nix:qualify'].cmds.slice(0, 2)).toEqual([{ task: 'nix:build' }, { task: 'nix:image' }])
+})
+
+test('protected producer scans Go binaries only in qualification and reverifies them before publication', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
+  const steps = jobs.qualify.steps
+  const runtime = steps.findIndex((step: any) => step.run?.includes('check_nix_runtime_security.py'))
+  const go = steps.findIndex((step: any) => step.run?.includes('nix_archive_go_evidence.py'))
+  const binding = steps.findIndex((step: any) => step.run?.includes('nix_candidate_publication.py record'))
+  expect(go).toBeGreaterThan(runtime)
+  expect(binding).toBeGreaterThan(go)
+  expect(steps[go].run).toContain('protected/scripts/nix_archive_go_evidence.py candidate/image.tar')
+  expect(steps[go].run).toContain('--evidence-dir candidate/runtime/go')
+  for (const job of [jobs.qualify, jobs.publish]) {
+    const compile = job.steps.find((step: any) => step.run?.includes('go build'))
+    expect(compile['working-directory']).toBe('protected')
+    expect(compile.run).toContain('./internal/app/tools/securitydependencies')
+    for (const step of job.steps.filter((step: any) => step.run?.includes('nix_candidate_publication.py'))) {
+      expect(step.run).toContain('--binary-verifier "$RUNNER_TEMP/go-binary-verifier"')
+    }
+  }
+  const commands = jobs.publish.steps.map((step: any) => step.run ?? '').join('\n')
+  expect(commands).not.toContain('nix_archive_go_evidence.py')
+  expect(commands).not.toContain('govulncheck')
+  expect(commands).not.toContain('nix build')
 })
 
 test('image qualification rejects fixture tags and uses the normalized Docker image ID', () => {

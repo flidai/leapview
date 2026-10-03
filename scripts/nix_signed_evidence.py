@@ -113,6 +113,7 @@ def main():
     parser.add_argument('--image', required=True)
     parser.add_argument('--kind', choices=sorted(WORKFLOWS), required=True)
     parser.add_argument('--platform', action='append', required=True)
+    parser.add_argument('--binary-verifier', type=Path)
     parser.add_argument('--candidate', nargs=3, action='append', required=True,
                         metavar=('ARCHIVE', 'MANIFEST', 'RUNTIME_EVIDENCE'))
     parser.add_argument('--expected-workflow', required=True)
@@ -127,10 +128,11 @@ def main():
         validate_signer(args.kind, args.expected_workflow, args.signer_revision)
         registry.image_digest(args.image, args.kind)
         source = candidate.checkout_source(candidate.ROOT)
-        records = registry.verified_records(args.candidate, args.kind, source)
+        records = registry.verified_records(args.candidate, args.kind, source, binary_verifier=args.binary_verifier)
         result = collect(args.image, args.kind, records, args.candidate, args.platform,
                          args.expected_workflow, args.signer_revision)
-        current = registry.verified_records(args.candidate, args.kind, candidate.checkout_source(candidate.ROOT))
+        current = registry.verified_records(args.candidate, args.kind, candidate.checkout_source(candidate.ROOT),
+                                            binary_verifier=args.binary_verifier)
         if candidate.canonical_bytes(current) != candidate.canonical_bytes(records):
             raise ValueError('candidate changed during signed evidence verification')
         if args.verify:
