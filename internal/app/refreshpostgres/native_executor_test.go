@@ -51,10 +51,19 @@ func TestPostgresNativeRefreshExecutorBuildsAndRecoversExactSeal(t *testing.T) {
 		plan:  deploymentmodule.NativeDeliveryPlan{ID: uuid.MustParse(nativeExecutorPlan), ProjectID: job.Identity.ProjectID, TargetID: nativeExecutorTarget, Environment: nativeExecutorEnvironment, Operation: string(deployment.DeliveryOperationRestatement), SourceDigest: nativeExecutorSourceDigest, SourceAttestationDigest: nativeExecutorAttestation, BaseGenerationID: uuid.MustParse(nativeExecutorBase), BaseTargetRevision: 9, PlanDigest: nativeExecutorPlanDigest, Status: "planned"},
 		build: deploymentmodule.NativeDeliveryBuild{ID: uuid.MustParse(nativeExecutorBuild), PlanID: uuid.MustParse(nativeExecutorPlan), PlanDigest: nativeExecutorPlanDigest, SourceDigest: nativeExecutorSourceDigest, BaseGenerationID: uuid.MustParse(nativeExecutorBase), ServingArtifactDigest: nativeExecutorArtifact, WriterLeaseID: uuid.MustParse(nativeExecutorLease), ServingStateID: uuid.MustParse(nativeExecutorResult), SealID: uuid.MustParse(nativeExecutorSeal), CandidateID: uuid.MustParse(nativeExecutorCandidate), Status: "sealed"},
 	}
-	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget)
+	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget, func(context.Context, refreshrun.JobRecord) error { return nil })
 	if err != nil {
 		t.Fatalf("construct native refresh executor: %v", err)
 	}
+	denial := errors.New("unsupported local credential")
+	executor.BaseCredentialCheck = func(context.Context, refreshrun.JobRecord) error { return denial }
+	if _, err := executor.Execute(t.Context(), job); !errors.Is(err, denial) {
+		t.Fatalf("preflight denial = %v", err)
+	}
+	if mutations.planRequest.IdempotencyKey != "" || mutations.buildRequest.IdempotencyKey != "" {
+		t.Fatal("denied credential reached mutations")
+	}
+	executor.BaseCredentialCheck = func(context.Context, refreshrun.JobRecord) error { return nil }
 	result, err := executor.Execute(t.Context(), job)
 	if err != nil {
 		t.Fatalf("execute native refresh: %v", err)
@@ -77,7 +86,7 @@ func TestPostgresNativeRefreshExecutorRejectsChangedActiveBase(t *testing.T) {
 	job := nativeExecutorJob()
 	reader := &nativeExecutorReader{snapshot: deploymentnative.DeliveryOperatorSnapshot{TargetID: nativeExecutorTarget, ProjectID: nativeExecutorProject, Environment: nativeExecutorEnvironment, TargetRevision: 9, ActiveGenerationID: nativeExecutorResult}}
 	mutations := &nativeExecutorMutations{}
-	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget)
+	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget, func(context.Context, refreshrun.JobRecord) error { return nil })
 	if err != nil {
 		t.Fatalf("construct native refresh executor: %v", err)
 	}
@@ -94,7 +103,7 @@ func TestPostgresNativeRefreshExecutorRejectsChangedTargetFence(t *testing.T) {
 	job := nativeExecutorJob()
 	reader := &nativeExecutorReader{snapshot: deploymentnative.DeliveryOperatorSnapshot{TargetID: nativeExecutorTarget, ProjectID: nativeExecutorProject, Environment: nativeExecutorEnvironment, TargetRevision: job.TargetRevision + 1, ActiveGenerationID: nativeExecutorBase}}
 	mutations := &nativeExecutorMutations{}
-	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget)
+	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget, func(context.Context, refreshrun.JobRecord) error { return nil })
 	if err != nil {
 		t.Fatalf("construct native refresh executor: %v", err)
 	}
@@ -112,7 +121,7 @@ func TestPostgresNativeRefreshExecutorPropagatesPlanCompletionFailure(t *testing
 	basePlan := nativeExecutorBasePlan(t)
 	reader := nativeExecutorReaderFixture(basePlan)
 	mutations := &nativeExecutorMutations{plan: deploymentmodule.NativeDeliveryPlan{ID: uuid.MustParse(nativeExecutorPlan), ProjectID: job.Identity.ProjectID, TargetID: nativeExecutorTarget, Environment: nativeExecutorEnvironment, Operation: string(deployment.DeliveryOperationRestatement), SourceDigest: nativeExecutorSourceDigest, SourceAttestationDigest: nativeExecutorAttestation, BaseGenerationID: uuid.MustParse(nativeExecutorBase), BaseTargetRevision: job.TargetRevision, PlanDigest: nativeExecutorPlanDigest, Status: "planned"}, planCompletionErr: errors.New("plan evidence mismatch")}
-	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget)
+	executor, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget, func(context.Context, refreshrun.JobRecord) error { return nil })
 	if err != nil {
 		t.Fatalf("construct native refresh executor: %v", err)
 	}
@@ -237,5 +246,19 @@ func TestNativeExecutorConstantsRemainCanonical(t *testing.T) {
 		if err != nil || parsed.String() != strings.TrimSpace(id) || parsed.Version() != 7 {
 			t.Fatalf("id %q is not UUIDv7: %v", id, err)
 		}
+	}
+}
+
+func TestPostgresNativeRefreshExecutorRequiresCredentialPreflight(t *testing.T) {
+	mutations, reader := &nativeExecutorMutations{}, &nativeExecutorReader{}
+	if _, err := NewPostgresNativeRefreshExecutor(mutations, reader, nativeExecutorTarget, nil); err == nil {
+		t.Fatal("missing preflight accepted")
+	}
+	executor := &PostgresNativeRefreshExecutor{Mutations: mutations, Reader: reader, TargetID: nativeExecutorTarget}
+	if _, err := executor.Execute(t.Context(), nativeExecutorJob()); err == nil {
+		t.Fatal("unconfigured executor accepted")
+	}
+	if mutations.planRequest.IdempotencyKey != "" || mutations.buildRequest.IdempotencyKey != "" {
+		t.Fatal("missing preflight reached mutation")
 	}
 }

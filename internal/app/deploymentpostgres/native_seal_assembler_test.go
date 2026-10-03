@@ -24,6 +24,10 @@ import (
 func assemblerDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
 func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInput {
+	return nativeSealAssemblerInputWithCredentialPin(t, "")
+}
+
+func nativeSealAssemblerInputWithCredentialPin(t *testing.T, versionID string) NativeSealEvidenceAssemblerInput {
 	t.Helper()
 	const (
 		attemptID   = "0198f2c0-7c7a-7f00-8a11-000000001103"
@@ -85,6 +89,10 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 		BindingID: "binding-assembler", ConnectionID: "connection-assembler", ConnectorKind: "postgres",
 		Revision: 1, ProviderVersion: "provider:assembler", EndpointConfigHash: assemblerDigest('4'),
 	}}
+	if versionID != "" {
+		bindings[0].ProviderVersion = ""
+		bindings[0].CredentialVersionID = versionID
+	}
 	bindingFingerprint, err := deployment.BindingFingerprint(bindings)
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +183,27 @@ func nativeAssemblerClosure(t *testing.T, catalogID, root, namespace string, rel
 		t.Fatal(err)
 	}
 	return ducklake.NativeSnapshotClosureEvidence{CatalogID: catalogID, SnapshotID: 42, ObjectRoot: root, RelationNamespace: namespace, Relations: relations, Objects: []ducklake.NativeSnapshotObject{}, RelationManifestJSON: relationJSON, ClosureJSON: closureJSON, CanonicalJSON: canonical, RelationManifestDigest: digest(relationJSON), ClosureDigest: digest(closureJSON), ObjectRootDigest: rootDigest}
+}
+
+func TestNativeSealAssemblerPreservesLocalCredentialPin(t *testing.T) {
+	const versionID = "01995b31-3000-7000-8000-000000000001"
+	input := nativeSealAssemblerInputWithCredentialPin(t, versionID)
+	got, err := AssembleNativeGenerationAdmissionInput(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Provenance.Plan.Bindings) != 1 || got.Provenance.Plan.Bindings[0].CredentialVersionID != versionID || got.Provenance.Plan.Bindings[0].ValidatedVersion != "" {
+		t.Fatal("native seal assembly lost or reinterpreted the local credential pin")
+	}
+	// The admission transaction assigns the immutable candidate revision.
+	got.Provenance.Candidate.Revision = 1
+	provenance, err := release.NewProvenance(got.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provenance.Plan.GateEvidence.BindingGeneration != release.BindingFingerprint(provenance.Plan.Bindings) {
+		t.Fatal("native qualification fingerprint differs from the retained credential pin")
+	}
 }
 
 func TestAssembleNativeGenerationAdmissionInputAcceptsExactEvidence(t *testing.T) {

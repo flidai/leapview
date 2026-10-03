@@ -29,12 +29,12 @@ func TestPostgreSQL18MultiNodeActivationServingStateQualification(t *testing.T) 
 	lineageA := &testActivationLineage{}
 	lineageB := &testActivationLineage{}
 	nodeA := NewWithOptions(poolA, Options{
-		ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
-		Lineage:         lineageA,
+		ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
+		Lineage: lineageA,
 	})
 	nodeB := NewWithOptions(poolB, Options{
-		ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
-		Lineage:         lineageB,
+		ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
+		Lineage: lineageB,
 	})
 
 	input, ids := prepareLostAckActivation(t, nodeA)

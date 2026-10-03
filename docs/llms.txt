@@ -197,7 +197,8 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Current User](/docs/api/current-user): Current principal, sessions, tokens, and capabilities.
 - [Search](/docs/api/search): Progressive project-graph discovery across governed resources.
 - [BI](/docs/api/bi): Dashboard and semantic model read APIs.
-- [Connections](/docs/api/connections): Target-owned logical connection bindings, tests, refreshes, and redacted health.
+- [Connections](/docs/api/connections): Target-owned logical connection bindings, explicit credential refreshes, and redacted health.
+- [Credentials](/docs/api/credentials): Encrypted connection credential drafts, isolated validation, and metadata-only reads.
 - [Deployments](/docs/api/deployments): Atomic project release deployment.
 - [Refresh Runs](/docs/api/refresh-runs): Headless refresh run operations.
 - [Agent](/docs/api/agent): Headless agent conversation and run operations.

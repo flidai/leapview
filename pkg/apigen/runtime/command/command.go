@@ -29,6 +29,7 @@ var (
 	ErrExecutionUnavailable = errors.New("APIGen command execution is unavailable")
 	ErrInvocationRejected   = errors.New("APIGen command invocation rejected")
 	ErrIdempotencyRequired  = errors.New("command idempotency key is required")
+	ErrIdempotencyForbidden = errors.New("command idempotency key is forbidden")
 	ErrTargetRequired       = errors.New("command authorization target is required")
 	ErrSurfaceNotExposed    = errors.New("command surface is not exposed")
 	ErrOperationMismatch    = errors.New("command operation identity does not match")
@@ -39,8 +40,9 @@ var (
 type IdempotencyPolicy string
 
 const (
-	IdempotencyNone     IdempotencyPolicy = ""
-	IdempotencyRequired IdempotencyPolicy = "required"
+	IdempotencyNone      IdempotencyPolicy = ""
+	IdempotencyRequired  IdempotencyPolicy = "required"
+	IdempotencyForbidden IdempotencyPolicy = "forbidden"
 )
 
 type ConcurrencyPolicy string
@@ -135,7 +137,7 @@ func (c Contract) Validate() error {
 		return fmt.Errorf("%w: operation %q has an incomplete authorization target", ErrInvalidContract, c.OperationID)
 	}
 	switch c.Idempotency {
-	case IdempotencyNone, IdempotencyRequired:
+	case IdempotencyNone, IdempotencyRequired, IdempotencyForbidden:
 	default:
 		return fmt.Errorf("%w: operation %q has unsupported idempotency policy %q", ErrInvalidContract, c.OperationID, c.Idempotency)
 	}
@@ -173,6 +175,11 @@ func (c Contract) Validate() error {
 			strings.TrimSpace(execution.EventsOperation) == "" || (execution.Cancellation != "supported" && execution.Cancellation != "unsupported") {
 			return fmt.Errorf("%w: operation %q has an incomplete async execution contract", ErrInvalidContract, c.OperationID)
 		}
+	}
+	if c.Idempotency == IdempotencyForbidden && (!strings.EqualFold(c.Method, "POST") ||
+		(c.AuthzMode != "authenticated" && c.AuthzMode != "privilege") ||
+		c.Guarantee != GuaranteeTransactional || c.Execution != nil) {
+		return fmt.Errorf("%w: operation %q forbidden idempotency requires authenticated or privilege authorization, synchronous POST, and transactional audit", ErrInvalidContract, c.OperationID)
 	}
 	return nil
 }
@@ -432,6 +439,9 @@ func BeginInvocation(ctx context.Context, contract Contract, invocation Invocati
 	}
 	if contract.Idempotency == IdempotencyRequired && strings.TrimSpace(invocation.IdempotencyKey) == "" {
 		return ctx, nil, fmt.Errorf("%w: %w: operation %q", ErrInvocationRejected, ErrIdempotencyRequired, contract.OperationID)
+	}
+	if contract.Idempotency == IdempotencyForbidden && invocation.IdempotencyKey != "" {
+		return ctx, nil, fmt.Errorf("%w: %w: operation %q", ErrInvocationRejected, ErrIdempotencyForbidden, contract.OperationID)
 	}
 	if contract.Concurrency == ConcurrencyIfMatch && strings.TrimSpace(invocation.ConcurrencyToken) == "" {
 		return ctx, nil, fmt.Errorf("%w: %w: operation %q requires If-Match", ErrInvocationRejected, ErrPreconditionRequired, contract.OperationID)

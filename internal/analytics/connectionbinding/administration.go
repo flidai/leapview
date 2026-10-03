@@ -23,7 +23,7 @@ type AdministrationPermission string
 
 const (
 	PermissionManageConnectionMetadata AdministrationPermission = "connection.metadata.manage"
-	PermissionTestConnection           AdministrationPermission = "connection.test"
+	PermissionUseConnection            AdministrationPermission = "connection.use"
 	PermissionViewConnectionHealth     AdministrationPermission = "connection.health.view"
 )
 
@@ -314,17 +314,6 @@ func (service *Administration) RefreshNow(
 	return service.refresh(ctx, actorID, key, RefreshRequested)
 }
 
-// Test resolves and validates a fresh credential snapshot through the same
-// candidate pool path as rotation. A successful test can therefore promote
-// the validated replacement without exposing credentials or accepting SQL.
-func (service *Administration) Test(
-	ctx context.Context,
-	actorID string,
-	key BindingKey,
-) (BindingHealthStatus, error) {
-	return service.refresh(ctx, actorID, key, RefreshTest)
-}
-
 func (service *Administration) refresh(
 	ctx context.Context,
 	actorID string,
@@ -335,7 +324,7 @@ func (service *Administration) refresh(
 	if err != nil {
 		return BindingHealthStatus{}, err
 	}
-	if err := service.authorize(ctx, strings.TrimSpace(actorID), PermissionTestConnection, binding); err != nil {
+	if err := service.authorize(ctx, strings.TrimSpace(actorID), PermissionUseConnection, binding); err != nil {
 		return BindingHealthStatus{}, ErrUnauthorizedBinding
 	}
 	if service.pools == nil {

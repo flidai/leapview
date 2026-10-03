@@ -72,6 +72,7 @@ import { emitDocumentFile } from "./phase-emission.js";
 import { normalizeDocument } from "./phase-normalization.js";
 import { qualifiedNamespaceName, readPackageMetadata } from "./phase-naming.js";
 import { withSchemaConstraints } from "./schema-constraints.js";
+import { commandTransportPolicies } from "./command-idempotency.js";
 import {
   hasErrorDiagnostics,
   validateOutputFile,
@@ -166,7 +167,7 @@ interface Command {
   additional_exposures?: string[];
   ui?: { action_id: string };
   target?: { parameter: string; type: string };
-  idempotency?: "required";
+  idempotency?: "required" | "forbidden";
   concurrency?: "if-match";
   authz_mode?: string;
   privilege?: string;
@@ -1361,23 +1362,22 @@ function commandMetadata(
     }
   }
 
-  const hasRequiredHeader = (name: string) =>
-    emittedParameters.some(
-      (parameter) => parameter.in === "header" && parameter.required && parameter.name.toLowerCase() === name.toLowerCase(),
-    );
   const method = operation.verb.toLowerCase();
-  const idempotency = hasRequiredHeader("Idempotency-Key") ? "required" as const : undefined;
-  const concurrency = hasRequiredHeader("If-Match") ? "if-match" as const : undefined;
-  if (method === "post" && idempotency === undefined) {
-    builder.invalidCommand("POST commands require a required Idempotency-Key header", operation.operation);
-  }
-  if (method === "patch" && concurrency === undefined) {
-    builder.invalidCommand("PATCH commands require a required If-Match header", operation.operation);
-  }
-
   const authz = getAuthz({ program }, operation.operation) as AuthzMetadata | undefined;
   const authzMode = typeof authz?.mode === "string" ? authz.mode : undefined;
   const privilege = typeof authz?.privilege === "string" ? authz.privilege : undefined;
+  const { idempotency, concurrency } = commandTransportPolicies({
+    method,
+    nonReplayable: options.nonReplayable,
+    parameters: emittedParameters,
+    requestBody: operation.parameters.body,
+    asyncExecution: executionOptions !== undefined,
+    auditRequired: options.audit.required,
+    auditGuarantee: guarantee,
+    authzMode,
+    invalidCommand: (reason) => builder.invalidCommand(reason, operation.operation),
+  });
+
   return prune({
     owner: namespaceName(operation.operation.namespace) ?? "",
     audit: prune({ required: options.audit.required, success_action: successAction, guarantee, payload: auditPayload }),

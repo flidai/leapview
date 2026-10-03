@@ -369,9 +369,6 @@ func (redactionAdministration) PlanConfigurationChange(context.Context, string, 
 func (redactionAdministration) UpdateConfiguration(context.Context, connectionadmin.UpdateConfigurationRequest) (connectionadmin.TargetBinding, error) {
 	return connectionadmin.TargetBinding{}, nil
 }
-func (redactionAdministration) Test(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
-	return connectionadmin.BindingHealthStatus{}, nil
-}
 func (redactionAdministration) RefreshNow(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
 	return connectionadmin.BindingHealthStatus{}, nil
 }

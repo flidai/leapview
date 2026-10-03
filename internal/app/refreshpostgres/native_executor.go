@@ -48,16 +48,17 @@ type NativeRefreshDeliveryMutations interface {
 // port to refresh/run's canonical executor callback. It is target-bound: the
 // target is process-owned and is never taken from a refresh job payload.
 type PostgresNativeRefreshExecutor struct {
-	Mutations NativeRefreshDeliveryMutations
-	Reader    NativeRefreshDeliveryReader
-	TargetID  string
+	Mutations           NativeRefreshDeliveryMutations
+	Reader              NativeRefreshDeliveryReader
+	TargetID            string
+	BaseCredentialCheck func(context.Context, refreshrun.JobRecord) error
 }
 
 var _ NativeRefreshDeliveryReader = (deploymentmodule.NativeDeliveryReader)(nil)
 
 // NewPostgresNativeRefreshExecutor validates a target-bound native executor
 // without opening a database or performing any I/O.
-func NewPostgresNativeRefreshExecutor(mutations NativeRefreshDeliveryMutations, reader NativeRefreshDeliveryReader, targetID string) (*PostgresNativeRefreshExecutor, error) {
+func NewPostgresNativeRefreshExecutor(mutations NativeRefreshDeliveryMutations, reader NativeRefreshDeliveryReader, targetID string, check func(context.Context, refreshrun.JobRecord) error) (*PostgresNativeRefreshExecutor, error) {
 	if mutations == nil {
 		return nil, errors.New("native refresh delivery mutations are required")
 	}
@@ -67,7 +68,12 @@ func NewPostgresNativeRefreshExecutor(mutations NativeRefreshDeliveryMutations, 
 	if targetID == "" || targetID != strings.TrimSpace(targetID) || len(targetID) > 255 {
 		return nil, errors.New("native refresh delivery target id must be canonical")
 	}
-	return &PostgresNativeRefreshExecutor{Mutations: mutations, Reader: reader, TargetID: targetID}, nil
+	executor := &PostgresNativeRefreshExecutor{Mutations: mutations, Reader: reader, TargetID: targetID}
+	if check == nil {
+		return nil, errors.New("refresh base credential check is required")
+	}
+	executor.BaseCredentialCheck = check
+	return executor, nil
 }
 
 // Execute performs one idempotent native refresh restatement. The native
@@ -75,7 +81,7 @@ func NewPostgresNativeRefreshExecutor(mutations NativeRefreshDeliveryMutations, 
 // adapter only carries stable identity and verifies the resulting immutable
 // generation/seal tuple before refresh completion is attempted.
 func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error) {
-	if e == nil || e.Mutations == nil || e.Reader == nil || e.TargetID == "" {
+	if e == nil || e.Mutations == nil || e.BaseCredentialCheck == nil || e.Reader == nil || e.TargetID == "" {
 		return refreshrun.CanonicalRefreshResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	if err := validateNativeRefreshJob(job); err != nil {
@@ -139,6 +145,9 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 	if job.PipelinePlan != nil {
 		canonical := job.PipelinePlan.Canonical()
 		pipelinePlan = &canonical
+	}
+	if err := e.BaseCredentialCheck(ctx, job); err != nil {
+		return refreshrun.CanonicalRefreshResult{}, err
 	}
 	plan, err := e.Mutations.CreatePlan(ctx, deploymentmodule.NativeDeliveryPlanRequest{
 		ProjectID: job.Identity.ProjectID, TargetID: e.TargetID, Environment: job.Identity.Environment,

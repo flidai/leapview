@@ -50,6 +50,13 @@ func (h *Handler) HandleAPIGen(operationID string, w http.ResponseWriter, r *htt
 	// canonical request identifier contract.
 	apiprotocol.PrepareRequest(w, r)
 	protected, ok := h.authorizer.Protect(operationID, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check the generated policy before boundary validation can inspect the
+		// body, including when mounted without the public protocol middleware.
+		if h.commands != nil {
+			if contract, command := h.commands(operationID); command && contract.Idempotency == apigencommand.IdempotencyForbidden && !apiprotocol.ValidateNonReplayableRequest(w, r) {
+				return
+			}
+		}
 		if !validateBoundary(operationID, w, r) {
 			return
 		}
@@ -98,6 +105,8 @@ func (h *Handler) HandleAPIGen(operationID string, w http.ResponseWriter, r *htt
 
 func writeInvocationProblem(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, apigencommand.ErrIdempotencyForbidden):
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_FORBIDDEN", "This command does not accept Idempotency-Key and must not be automatically retried.", nil)
 	case errors.Is(err, apigencommand.ErrIdempotencyRequired):
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required by the command contract.", nil)
 	case errors.Is(err, apigencommand.ErrPreconditionRequired):

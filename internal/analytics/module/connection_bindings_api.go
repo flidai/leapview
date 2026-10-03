@@ -21,7 +21,6 @@ type ConnectionBindingAdministration interface {
 	Get(context.Context, string, connectionbinding.BindingKey) (connectionbinding.TargetBinding, error)
 	PlanConfigurationChange(context.Context, string, connectionbinding.BindingKey, connectionbinding.TargetBindingConfiguration) (connectionbinding.BindingChangePlan, error)
 	UpdateConfiguration(context.Context, connectionbinding.UpdateConfigurationRequest) (connectionbinding.TargetBinding, error)
-	Test(context.Context, string, connectionbinding.BindingKey) (connectionbinding.BindingHealthStatus, error)
 	RefreshNow(context.Context, string, connectionbinding.BindingKey) (connectionbinding.BindingHealthStatus, error)
 	Enable(context.Context, string, connectionbinding.BindingKey) (connectionbinding.TargetBinding, error)
 	Disable(context.Context, string, connectionbinding.BindingKey) (connectionbinding.TargetBinding, error)
@@ -218,23 +217,6 @@ func completeConnectionBindingCommand(ctx context.Context, operationID analytics
 	return executor.Execute(ctx, operationID.APIGenOperationID(), apigencommand.Execution{
 		Transactional: func(context.Context, apigencommand.Contract) error { return nil },
 	})
-}
-
-func (handler connectionBindingAPIHandler) Test(
-	w http.ResponseWriter,
-	r *http.Request,
-	project, target, connection string,
-) {
-	principalID, key, ok := handler.requestScope(w, r, project, target, handler.config.Environment, connection)
-	if !ok {
-		return
-	}
-	status, err := handler.config.Administration.Test(r.Context(), principalID, key)
-	if err != nil {
-		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationTestTargetConnectionBinding(), err)
-		return
-	}
-	apitransport.WriteJSON(w, http.StatusOK, targetConnectionHealthResponse(status))
 }
 
 func (handler connectionBindingAPIHandler) Refresh(

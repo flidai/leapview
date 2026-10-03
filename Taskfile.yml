@@ -561,6 +561,7 @@ tasks:
       - bun run test:datastar-lit
       - bun run test:ui-command-boundaries
       - bun run test:command-failure
+      - node scripts/ensure_playwright.mjs && bun test web/components/shared/command.dom.test.ts
       - bun run test:app-shell
       - bun run test:settings
       - bun run typecheck:app
@@ -987,6 +988,7 @@ tasks:
     sources:
       - Taskfile.yml
       - internal/app/cli/**/*.go
+      - internal/admin/cli/**/*.go
       - internal/app/tools/clidocgen/**/*.go
     generates:
       - docs/reference/cli/catalog.json
@@ -1298,6 +1300,9 @@ tasks:
       - internal/analytics/api/gen/request_models.gen.go
       - internal/analytics/api/gen/server.apigen.gen.go
       - internal/analytics/api/gen/client.apigen.gen.go
+      - internal/credential/api/gen/request_models.gen.go
+      - internal/credential/api/gen/server.apigen.gen.go
+      - internal/credential/api/gen/client.apigen.gen.go
       - internal/dashboard/api/gen/request_models.gen.go
       - internal/dashboard/api/gen/server.apigen.gen.go
       - internal/dashboard/api/gen/client.apigen.gen.go

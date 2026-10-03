@@ -20,9 +20,6 @@ func (journeyConnectionAdministrationStub) PlanConfigurationChange(context.Conte
 func (journeyConnectionAdministrationStub) UpdateConfiguration(context.Context, connectionadmin.UpdateConfigurationRequest) (connectionadmin.TargetBinding, error) {
 	return connectionadmin.TargetBinding{}, nil
 }
-func (journeyConnectionAdministrationStub) Test(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
-	return connectionadmin.BindingHealthStatus{}, nil
-}
 func (journeyConnectionAdministrationStub) RefreshNow(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
 	return connectionadmin.BindingHealthStatus{}, nil
 }

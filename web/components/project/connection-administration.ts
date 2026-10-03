@@ -130,7 +130,7 @@ class LeapViewConnectionAdministration extends LitElement {
       this.openDrawer(lifecycle)
       return
     }
-    if (action.id === 'disable' && !window.confirm(`Disable ${lifecycle.logicalConnection}? Dependent sources will stop using this connection until it is enabled and tested again.`)) return
+    if (action.id === 'disable' && !window.confirm(`Disable ${lifecycle.logicalConnection}? Dependent sources will stop using this connection until it is enabled and refreshed again.`)) return
     this.commandPending = true
     this.terminalFailure = null
     this.dispatchEvent(new CustomEvent('lv-connection-administration-action', {

@@ -535,12 +535,13 @@ type ActivationLineageVerifier interface {
 	VerifyActivationLineage(context.Context, Tx, ActivationLineageInput) error
 }
 
-// Options wires deployment's transactional side effects. The audit and
-// lineage ports are required by activation; other delivery operations remain
+// Options wires deployment's transactional side effects. Audit, lineage and
+// admission ports are required by activation; other delivery operations remain
 // usable without them for isolated persistence tests.
 type Options struct {
-	ActivationAudit ActivationAuditPort
-	Lineage         ActivationLineageVerifier
+	ActivationAudit     ActivationAuditPort
+	Lineage             ActivationLineageVerifier
+	ActivationAdmission ActivationAdmissionPort
 	// Events is the exact canonical repository used to append and read
 	// activation event evidence.
 	Events *eventspostgres.Repository
@@ -573,10 +574,11 @@ type ActivationResult struct {
 }
 
 type Repository struct {
-	db      DBTX
-	audit   ActivationAuditPort
-	lineage ActivationLineageVerifier
-	events  *eventspostgres.Repository
+	db        DBTX
+	audit     ActivationAuditPort
+	lineage   ActivationLineageVerifier
+	events    *eventspostgres.Repository
+	admission ActivationAdmissionPort
 }
 
 //go:embed schema.sql
@@ -601,7 +603,7 @@ func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: d
 
 // NewWithOptions constructs a delivery repository with its composition-owned
 // activation authorities. Missing authorities are allowed for read/build-only
-// repository use, but Activate/ActivateTx fail closed when either is absent.
+// repository use, but Activate/ActivateTx fail closed when any is absent.
 func NewWithOptions(db DBTX, options Options) *Repository {
 	return newRepository(db, options)
 }
@@ -614,7 +616,7 @@ func newRepository(db DBTX, options Options) *Repository {
 	if events == nil {
 		events = eventspostgres.New()
 	}
-	return &Repository{db: db, audit: options.ActivationAudit, lineage: options.Lineage, events: events}
+	return &Repository{db: db, audit: options.ActivationAudit, lineage: options.Lineage, events: events, admission: options.ActivationAdmission}
 }
 
 // DB exposes the configured native PostgreSQL handle to composition-owned
@@ -3435,6 +3437,13 @@ func (r *Repository) Activate(ctx context.Context, in ActivationInput) (Activati
 	committed = true
 	return result, nil
 }
+
+// ActivateTx isolates the entire activation attempt in a savepoint. A failed
+// attempt cannot be committed by the caller with its unrelated outer work.
+// Success releases only the savepoint; the caller still owns the outer commit
+// and activation locks remain held until that transaction ends.
+// If savepoint cleanup fails, the caller transaction is rolled back as well
+// and must be discarded; uncertain activation writes must not be committed.
 func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) (ActivationResult, error) {
 	return r.activateTx(ctx, tx, in, nil)
 }
@@ -3446,19 +3455,56 @@ func (r *Repository) ActivateTxWithPreCommitHook(ctx context.Context, tx Tx, in 
 	return r.activateTx(ctx, tx, in, beforeCommit)
 }
 
-func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, beforeCommit ActivationPreCommitHook) (ActivationResult, error) {
+func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, beforeCommit ActivationPreCommitHook) (result ActivationResult, err error) {
 	if r == nil || r.audit == nil {
 		return ActivationResult{}, fmt.Errorf("%w: activation audit port is required", ErrInvalid)
 	}
 	if r.lineage == nil {
 		return ActivationResult{}, fmt.Errorf("%w: activation lineage verifier is required", ErrInvalid)
 	}
+	if !r.ActivationAdmissionCapable() {
+		return ActivationResult{}, fmt.Errorf("%w: activation admission authority is required", ErrInvalid)
+	}
 	if !r.EventCapable() {
 		return ActivationResult{}, fmt.Errorf("%w: activation event boundary is required", ErrInvalid)
 	}
-	if tx == nil {
+	if ctx == nil || platformtypednil.IsNil(tx) {
 		return ActivationResult{}, ErrInvalid
 	}
+	savepoint, err := tx.Begin(ctx)
+	if err != nil {
+		return ActivationResult{}, err
+	}
+	released := false
+	defer func() {
+		if !released {
+			// Cancellation of the request must not prevent cleanup of its writes.
+			if rollbackErr := savepoint.Rollback(context.Background()); rollbackErr != nil {
+				err = errors.Join(err, fmt.Errorf("rollback activation savepoint: %w", rollbackErr))
+				// pgx closes the child handle even when RELEASE fails. ErrTxClosed
+				// therefore cannot prove rollback; abort the caller transaction too.
+				if outerErr := tx.Rollback(context.Background()); outerErr != nil {
+					err = errors.Join(err, fmt.Errorf("rollback activation caller transaction: %w", outerErr))
+				}
+			}
+		}
+	}()
+	result, err = r.activatePublicationTx(ctx, savepoint, in, beforeCommit)
+	if err != nil {
+		return ActivationResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ActivationResult{}, err
+	}
+	if err := savepoint.Commit(ctx); err != nil {
+		return ActivationResult{}, err
+	}
+	released = true
+	return result, nil
+}
+
+// activatePublicationTx runs only inside the activation-owned savepoint.
+func (r *Repository) activatePublicationTx(ctx context.Context, tx Tx, in ActivationInput, beforeCommit ActivationPreCommitHook) (ActivationResult, error) {
 	pid, err := uuidID(in.PublicationID, "publication id", false)
 	if err != nil {
 		return ActivationResult{}, err
@@ -3691,6 +3737,9 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		predecessor = found
 	}
 	newRev := currentRev + 1
+	if err := r.admission(ctx, tx, p); err != nil {
+		return ActivationResult{}, err
+	}
 	transitioned, err := commitActivationTransition(ctx, tx, p.PublicationID, target, p.GenerationID, currentRev, newRev)
 	if err != nil {
 		return ActivationResult{}, err

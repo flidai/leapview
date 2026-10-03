@@ -2388,6 +2388,12 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_CREDENTIAL_KEYRING_FILE": {
+      "description": "Private credential-keyring-v1 file for customer credentials, bound to the durable instance ID. Configure after admin initialization and declare the customer owner with admin credentials setup. Key bytes never belong in environment variables or PostgreSQL.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve,admin credentials setup"
+    },
     "LEAPVIEW_CSRF_KEY": {
       "description": "Key used for CSRF protection and OAuth state cookies; requires at least 32 characters.",
       "type": "string",

@@ -41,7 +41,12 @@
     {
       "slug": "connections",
       "title": "Connections",
-      "summary": "Target-owned logical connection bindings, tests, refreshes, and redacted health."
+      "summary": "Target-owned logical connection bindings, explicit credential refreshes, and redacted health."
+    },
+    {
+      "slug": "credentials",
+      "title": "Credentials",
+      "summary": "Encrypted connection credential drafts, isolated validation, and metadata-only reads."
     },
     {
       "slug": "deployments",

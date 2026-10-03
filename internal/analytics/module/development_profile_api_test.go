@@ -174,8 +174,8 @@ func (emptyProfileAdministration) PlanConfigurationChange(context.Context, strin
 func (emptyProfileAdministration) UpdateConfiguration(context.Context, connectionbinding.UpdateConfigurationRequest) (connectionbinding.TargetBinding, error) {
 	return connectionbinding.TargetBinding{}, errors.New("unexpected update")
 }
-func (emptyProfileAdministration) Test(context.Context, string, connectionbinding.BindingKey) (connectionbinding.BindingHealthStatus, error) {
-	return connectionbinding.BindingHealthStatus{}, errors.New("unexpected test")
+func (emptyProfileAdministration) RefreshNow(context.Context, string, connectionbinding.BindingKey) (connectionbinding.BindingHealthStatus, error) {
+	return connectionbinding.BindingHealthStatus{}, errors.New("unexpected refresh")
 }
 func (emptyProfileAdministration) Enable(context.Context, string, connectionbinding.BindingKey) (connectionbinding.TargetBinding, error) {
 	return connectionbinding.TargetBinding{}, errors.New("unexpected enable")
