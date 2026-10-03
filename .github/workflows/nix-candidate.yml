@@ -127,7 +127,7 @@ jobs:
           SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_archive_go_evidence.py candidate/image.tar \
+            python3 protected/scripts/nix_archive_go_evidence.py candidate/image.tar --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --evidence-dir candidate/runtime/go --binary-verifier "$RUNNER_TEMP/go-binary-verifier"
       - name: Bind source and exact reports with the protected verifier

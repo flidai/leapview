@@ -71,6 +71,39 @@ test('Nix application startup and healthcheck execute the scanned absolute path'
     .toEqual(['CMD', '/usr/local/bin/leapview', 'healthcheck'])
 })
 
+test('static controller scans bind both exact archives without executing them or granting authority', () => {
+  const recipe = readFileSync('nix/deployment-cli.nix', 'utf8')
+  const flags = recipe.match(/^    flags="([^"]+)"/m)![1].split(/\s+/)
+  expect(flags).toContain('-w')
+  expect(flags).not.toContain('-s')
+  expect(recipe).toContain('dontFixup = true;')
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const job = workflow.jobs['cli-security']
+  expect(job.needs).toBe('cli-build')
+  expect(job['runs-on']).toBe('ubuntu-24.04') // Cross-architecture inspection needs no candidate execution.
+  expect(job.strategy['fail-fast']).toBe(false)
+  expect(job.strategy.matrix.arch).toEqual(['amd64', 'arm64'])
+  expect(job.permissions).toBeUndefined()
+  expect(job.environment).toBeUndefined()
+  expect(workflow.permissions).toEqual({ contents: 'read' })
+  const download = job.steps.find((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(download.with['artifact-ids']).toBe('${{ needs.cli-build.outputs.artifact_id }}')
+  const scan = job.steps.find((step: any) => step.env?.ARCH)
+  expect(scan.run).toContain('scripts/nix_archive_go_evidence.py "$archive" --kind cli-archive')
+  expect(scan.run).toContain('--go-evidence .tmp/nix-cli-go-evidence/go')
+  expect(scan.run).toContain('for operation in --output --verify; do')
+  expect(scan.run).toContain('--source-revision "$(git rev-parse HEAD)"')
+  expect(scan.run).not.toContain('tar -')
+  expect(scan.run).not.toContain('docker run')
+  expect(scan.if).toBeUndefined()
+  const retention = job.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(retention.if).toBe('always()')
+  expect(retention.with.path).toBe('.tmp/nix-cli-go-evidence/')
+  for (const file of ['scripts/nix_archive_go_evidence.py', 'scripts/tests/test_nix_cli_go_evidence.py',
+    'internal/app/tools/securitydependencies/**']) expect(workflow.on.pull_request.paths).toContain(file)
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain('-p test_nix_cli_go_evidence.py')
+})
+
 test('static controller qualification preserves the host baseline and exact artifact transfer', () => {
   const { jobs } = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   const build = jobs['cli-build']

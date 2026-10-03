@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind protected Go reports to final application-image entrypoints without execution."""
+"""Bind Go reports to exact application-image and CLI-archive entrypoints without execution."""
 
 import argparse
 import hashlib
@@ -19,6 +19,18 @@ ENTRYPOINTS = [
     {'id': 'deployment-leapviewctl', 'path': 'usr/local/share/leapview/deployment/leapviewctl',
      'package': 'github.com/flidai/leapview/cmd/leapviewctl'},
 ]
+CLI_ENTRYPOINTS = [{'id': 'leapviewctl', 'path': 'leapviewctl',
+                    'package': 'github.com/flidai/leapview/cmd/leapviewctl'}]
+
+
+def entrypoints(artifact):
+    if artifact['kind'] == 'application-image':
+        return ENTRYPOINTS
+    if artifact['kind'] == 'cli-archive':
+        return CLI_ENTRYPOINTS
+    raise ValueError('unsupported Go archive kind')
+
+
 MAX_BINARY_BYTES = 256 * 1024**2
 MAX_REPORT_BYTES = 32 * 1024**2
 MAX_LAYER_BYTES = 8 * 1024**3
@@ -142,7 +154,7 @@ def check_entrypoint_config(archive, artifact):
     raise ValueError('missing image entrypoint configuration')
 
 
-def extract(archive, artifact, destination):
+def extract_image(archive, artifact, destination):
     """Read nested tars; write only fixed filenames, never tar paths or links.
 
     Regular overlays use manifest order even if outer members are reordered.
@@ -218,6 +230,35 @@ def extract(archive, artifact, destination):
     return result
 
 
+def extract(archive, artifact, destination):
+    entries = entrypoints(artifact)
+    if artifact['kind'] == 'application-image':
+        return extract_image(archive, artifact, destination)
+    archive, destination = Path(archive), Path(destination)
+    if (archive.is_symlink() or not archive.is_file()
+            or candidate.digest_file(archive) != artifact['sha256']):
+        raise ValueError('Go extraction requires the exact regular CLI archive')
+    # The standalone controller export contains exactly one executable at the
+    # archive root. Never materialize archive names or links on the host.
+    target = destination / entries[0]['id']
+    count = 0
+    with tarfile.open(archive, 'r|*', tarinfo=LayerTarInfo) as content:
+        for member in content:
+            count += 1
+            if (count != 1 or member.name != entries[0]['path'] or not member.isfile()
+                    or not member.mode & 0o111 or member.mode & 0o6000
+                    or not 0 < member.size <= MAX_BINARY_BYTES):
+                raise ValueError('CLI archive must contain exactly one bounded regular executable')
+            data = content.extractfile(member).read(MAX_BINARY_BYTES + 1)
+            if len(data) != member.size:
+                raise ValueError('truncated CLI executable')
+            target.write_bytes(data)
+            target.chmod(0o600)
+    if count != 1 or candidate.digest_file(archive) != artifact['sha256']:
+        raise ValueError('CLI archive is empty or changed during extraction')
+    return {entries[0]['id']: target}
+
+
 def run_verifier(verifier, binary, entry, platform, directory, *, offline):
     if not Path(verifier).is_absolute():
         raise ValueError('protected verifier requires an absolute executable path')
@@ -239,7 +280,7 @@ def scan(archive, artifact, directory, verifier):
     directory.mkdir(mode=0o700)
     with tempfile.TemporaryDirectory(prefix='leapview-archive-go-') as temporary:
         binaries = extract(archive, artifact, Path(temporary))
-        for entry in ENTRYPOINTS:
+        for entry in entrypoints(artifact):
             run_verifier(verifier, binaries[entry['id']], entry, artifact['platform'],
                          directory / entry['id'], offline=False)
 
@@ -260,13 +301,13 @@ def regular_report(root, name, limit):
 
 def verify(archive, artifact, directory, verifier):
     directory = Path(directory)
-    if directory.is_symlink() or {path.name for path in directory.iterdir()} != {entry['id'] for entry in ENTRYPOINTS}:
+    if directory.is_symlink() or {path.name for path in directory.iterdir()} != {entry['id'] for entry in entrypoints(artifact)}:
         raise ValueError('Go evidence must cover exactly the declared entrypoints')
     records = []
     with tempfile.TemporaryDirectory(prefix='leapview-archive-go-verify-') as temporary:
         staging = Path(temporary)
         binaries = extract(archive, artifact, staging)
-        for entry in ENTRYPOINTS:
+        for entry in entrypoints(artifact):
             original = directory / entry['id']
             if original.is_symlink() or {path.name for path in original.iterdir()} != {'summary.json', 'govulncheck.json'}:
                 raise ValueError('Go report directory is incomplete or contains diagnostics')
@@ -299,14 +340,16 @@ def main():
     parser.add_argument('--source-revision', required=True)
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--binary-verifier', type=Path, required=True)
+    parser.add_argument('--kind', choices=['application-image', 'cli-archive'], required=True)
+    parser.add_argument('--archive-identity', type=Path)
     args = parser.parse_args()
     os.umask(0o077)
     try:
         source = candidate.checkout_source(args.source_root)
         if source['revision'] != args.source_revision or not candidate.REVISION.fullmatch(args.source_revision):
             raise ValueError('source differs from authorized candidate revision')
-        artifact = candidate.image_identity(args.archive, source, 'application-image')
-        artifact.update(kind='application-image', sha256=candidate.digest_file(args.archive))
+        identity = candidate.read_json_file(args.archive_identity) if args.archive_identity else None
+        artifact = candidate.collect(args.archive, args.kind, source, archive_identity=identity)['artifact']
         scan(args.archive, artifact, args.evidence_dir, args.binary_verifier)
         verify(args.archive, artifact, args.evidence_dir, args.binary_verifier)
         if candidate.canonical_bytes(candidate.checkout_source(args.source_root)) != candidate.canonical_bytes(source):
