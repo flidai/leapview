@@ -1,0 +1,519 @@
+{
+  "runID": 37096704297,
+  "sourceRevision": "50f63f20598ec8c4d9478a6dee2e0d313c4a35d4",
+  "pairs": [
+    {
+      "sample": "3",
+      "treatment": "baseline",
+      "runnerSeconds": 624.0,
+      "buildSeconds": 566.0,
+      "jobID": 111127996786
+    },
+    {
+      "sample": "1",
+      "treatment": "baseline",
+      "runnerSeconds": 616.0,
+      "buildSeconds": 568.0,
+      "jobID": 111127996793
+    },
+    {
+      "sample": "3",
+      "treatment": "main-read",
+      "runnerSeconds": 279.0,
+      "buildSeconds": 246.0,
+      "jobID": 111127996800
+    },
+    {
+      "sample": "2",
+      "treatment": "main-read",
+      "runnerSeconds": 294.0,
+      "buildSeconds": 259.0,
+      "jobID": 111127996813
+    },
+    {
+      "sample": "1",
+      "treatment": "main-read",
+      "runnerSeconds": 310.0,
+      "buildSeconds": 277.0,
+      "jobID": 111127996834
+    },
+    {
+      "sample": "2",
+      "treatment": "baseline",
+      "runnerSeconds": 610.0,
+      "buildSeconds": 561.0,
+      "jobID": 111127996846
+    }
+  ],
+  "initialWorkflowQueueSeconds": 0.0,
+  "producerRunID": 37094287650,
+  "producerBuildRunnerSeconds": 919,
+  "allocationConsumers": 3,
+  "baselineMedianBuildSeconds": 566.0,
+  "treatmentMedianBuildSeconds": 259.0,
+  "consumerBuildImprovementPercent": 54.24028268551237,
+  "baselineMedianRunnerSeconds": 616.0,
+  "treatmentMedianRunnerSeconds": 294.0,
+  "fullyAllocatedTreatmentMedianRunnerSeconds": 600.3333333333333,
+  "fullyAllocatedRunnerImprovementPercent": 2.5432900432900465,
+  "allSixInputDigestsEqual": true,
+  "screeningStatus": "three successful pairs; >=10 later comparable confirmations still pending; no p95 claim",
+  "compilerContext": {
+    "application": "Dockerfile",
+    "platform": "linux/amd64",
+    "goImage": "golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195",
+    "mainProducerRevision": "c8f728eed2df1399d596d9184626c704c6aa5b22",
+    "producerCacheIndexID": 8444961913,
+    "producerCacheIndexBytes": 78391,
+    "note": "index bytes exclude shared BuildKit blobs; no additional cache namespace or writer in treatment"
+  },
+  "inputDigests": [
+    "723a8ffff53b517ceeb52cc9b8e13755349f4279e98ac1b3876f4a0fc5e6dd92  Dockerfile",
+    "e2b19839ee0de2d2f1a7236ead782fa410d84a725f7fc6693427b0951877294d  go.mod",
+    "dc6722806a3df70db1083d0ce39c6a6f011188ab835c3ce6fb87f3df6bca98a9  go.sum",
+    "f10ae36ab4050fd0915f24416a8bf6ad248fd03e7a98d7080f3495337b4c69e1  bun.lock"
+  ],
+  "timingEvidence": {
+    "runID": 37096704297,
+    "attempt": 1,
+    "sourceRevision": "50f63f20598ec8c4d9478a6dee2e0d313c4a35d4",
+    "branch": "ganesh/ci-release-layer-screen",
+    "workflow": "Local Docker macOS tests",
+    "status": "completed",
+    "conclusion": "success",
+    "initialWorkflowQueueSeconds": 0.0,
+    "jobs": [
+      {
+        "id": 111127996682,
+        "name": "Local Docker endpoint tests (macOS Apple silicon)",
+        "status": "completed",
+        "conclusion": "success",
+        "runnerSeconds": 21.0,
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 2.0
+          },
+          {
+            "name": "Check out repository",
+            "conclusion": "success",
+            "seconds": 5.0
+          },
+          {
+            "name": "Set up Go",
+            "conclusion": "success",
+            "seconds": 2.0
+          },
+          {
+            "name": "Test local Docker endpoint policy",
+            "conclusion": "success",
+            "seconds": 9.0
+          },
+          {
+            "name": "Post Set up Go",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Post Check out repository",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 1.0
+          }
+        ]
+      },
+      {
+        "id": 111127996786,
+        "name": "Release-compatible amd64 layers (baseline, pair 3)",
+        "status": "completed",
+        "conclusion": "success",
+        "runnerSeconds": 624.0,
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 7.0
+          },
+          {
+            "name": "Resolve the identical candidate build inputs",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 7.0
+          },
+          {
+            "name": "Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 566.0
+          },
+          {
+            "name": "Verify exact image and compiler context without publication",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Retain input and local-image evidence",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 3.0
+          },
+          {
+            "name": "Post Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 34.0
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 1.0
+          }
+        ]
+      },
+      {
+        "id": 111127996793,
+        "name": "Release-compatible amd64 layers (baseline, pair 1)",
+        "status": "completed",
+        "conclusion": "success",
+        "runnerSeconds": 616.0,
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 6.0
+          },
+          {
+            "name": "Resolve the identical candidate build inputs",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 4.0
+          },
+          {
+            "name": "Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 568.0
+          },
+          {
+            "name": "Verify exact image and compiler context without publication",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Retain input and local-image evidence",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 32.0
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0.0
+          }
+        ]
+      },
+      {
+        "id": 111127996800,
+        "name": "Release-compatible amd64 layers (main-read, pair 3)",
+        "status": "completed",
+        "conclusion": "success",
+        "runnerSeconds": 279.0,
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 2.0
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 7.0
+          },
+          {
+            "name": "Resolve the identical candidate build inputs",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 8.0
+          },
+          {
+            "name": "Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 246.0
+          },
+          {
+            "name": "Verify exact image and compiler context without publication",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Retain input and local-image evidence",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 8.0
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0.0
+          }
+        ]
+      },
+      {
+        "id": 111127996813,
+        "name": "Release-compatible amd64 layers (main-read, pair 2)",
+        "status": "completed",
+        "conclusion": "success",
+        "runnerSeconds": 294.0,
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 2.0
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 7.0
+          },
+          {
+            "name": "Resolve the identical candidate build inputs",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 7.0
+          },
+          {
+            "name": "Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 259.0
+          },
+          {
+            "name": "Verify exact image and compiler context without publication",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Retain input and local-image evidence",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 12.0
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0.0
+          }
+        ]
+      },
+      {
+        "id": 111127996834,
+        "name": "Release-compatible amd64 layers (main-read, pair 1)",
+        "status": "completed",
+        "conclusion": "success",
+        "runnerSeconds": 310.0,
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 7.0
+          },
+          {
+            "name": "Resolve the identical candidate build inputs",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 5.0
+          },
+          {
+            "name": "Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 277.0
+          },
+          {
+            "name": "Verify exact image and compiler context without publication",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Retain input and local-image evidence",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 3.0
+          },
+          {
+            "name": "Post Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 12.0
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0.0
+          }
+        ]
+      },
+      {
+        "id": 111127996846,
+        "name": "Release-compatible amd64 layers (baseline, pair 2)",
+        "status": "completed",
+        "conclusion": "success",
+        "runnerSeconds": 610.0,
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 6.0
+          },
+          {
+            "name": "Resolve the identical candidate build inputs",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 4.0
+          },
+          {
+            "name": "Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 561.0
+          },
+          {
+            "name": "Verify exact image and compiler context without publication",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Retain input and local-image evidence",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Build locally with the existing release scope and optional production-main reads",
+            "conclusion": "success",
+            "seconds": 1.0
+          },
+          {
+            "name": "Post Set up the existing pinned Buildx",
+            "conclusion": "success",
+            "seconds": 33.0
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "conclusion": "success",
+            "seconds": 0.0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0.0
+          }
+        ]
+      }
+    ],
+    "completedRunnerSeconds": 2754.0
+  },
+  "confirmationRuns": [],
+  "decision": "initial screening eligible; later confirmations and protected qualification pending"
+}
