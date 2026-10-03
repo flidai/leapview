@@ -948,7 +948,8 @@ schemaVersion: 14, visualID: 'chart-dashboard', rendererID: 'echarts', specRevis
       detail: { artifactId: 'chart-dashboard', title: 'Net sales by country', explorerHref: '/explore?model=sales' }, bubbles: true, composed: true,
     }))
   })
-  await page.getByRole('button', { name: 'Add to dashboard', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview', exact: true }).click()
+  await page.locator('lv-chat-dashboard-draft').getByRole('button', { name: 'Save dashboard', exact: true }).click()
 }
 
 for (const createNew of [false, true]) {
@@ -1029,5 +1030,23 @@ test('dashboard search cannot submit a destination hidden by the filter', async 
     expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isDisabled()).toBe(true)
     await picker.getByRole('radio', { name: 'Finance 6', exact: true }).check()
     expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isEnabled()).toBe(true)
+  } finally { await page.close() }
+})
+
+
+test('empty full chat expanded from a side agent has a return control before the first turn', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(() => sessionStorage.setItem('leapview-chat-returns-v1', JSON.stringify({ origin: { href: '/dashboards/finance/pages/main?year=2026#chart', created: Date.now(), state: { conversationId: '', draft: 'Unsent question', references: [], editMessageId: '', selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '', scroll: { top: 0, follow: true } } } })))
+    await page.goto(`${baseURL}/new?return=origin`)
+    const close = page.getByRole('link', { name: 'Return to page', exact: true })
+    await close.waitFor()
+    expect(await close.getAttribute('href')).toBe('/dashboards/finance/pages/main?year=2026#chart')
+    expect(await page.getByRole('combobox').isVisible()).toBe(true)
+    expect(await page.getByRole('combobox').inputValue()).toBe('Unsent question')
+    await page.reload()
+    await page.getByRole('combobox').waitFor()
+    expect(await page.getByRole('combobox').inputValue()).toBe('')
   } finally { await page.close() }
 })

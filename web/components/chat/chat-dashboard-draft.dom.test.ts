@@ -78,6 +78,10 @@ test('chat dashboard draft shows composed visuals, supports edits, and saves ret
     expect(await draft.locator('lv-visualization-host').evaluateAll((hosts: any[]) => hosts.map((host) => host.envelope?.visualID))).toEqual(['artifact_revenue', 'artifact_margin'])
     expect(await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('.route')?.classList.contains('dashboard-open'))).toBe(true)
 
+    await draft.getByRole('button', { name: 'Back to chat', exact: true }).click()
+    await draft.waitFor({ state: 'detached' })
+    await page.locator('lv-chat-page').evaluate((host: any) => host.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', { detail: { artifactId: 'artifact_revenue' }, bubbles: true, composed: true })))
+    await draft.getByRole('heading', { name: 'Revenue overview', exact: true }).waitFor()
     await draft.getByRole('button', { name: 'Ask about Revenue by country' }).click()
     const composer = page.locator('lv-chat-composer')
     expect(await composer.getByRole('combobox').inputValue()).toBe('Update the dashboard visual "Revenue by country" (draft visual id: visual_revenue): ')
@@ -139,6 +143,68 @@ test('chat dashboard draft shows composed visuals, supports edits, and saves ret
     await page.close()
   }
 }, 30_000)
+
+for (const width of [1440, 360]) {
+test(`visual Preview edits and closes safely at width ${width}`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    await publishDashboardDraft(page, 'fixture', 'Sales', [{ id: 'sales', artifactId: 'artifact_sales', title: 'Sales by region' }])
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { dashboardDraft: null, transcript: [{ id: 'tool-sales', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'artifact_sales', type: 'bar' } }] } })
+    })
+    await page.waitForFunction(() => !document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-dashboard-draft'))
+    await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', { detail: { artifactId: 'artifact_sales', title: 'Sales by region' }, bubbles: true, composed: true })))
+    const details = page.locator('lv-chat-visual-panel')
+    await details.getByRole('button', { name: 'Preview', exact: true }).click()
+    const preview = page.locator('lv-chat-dashboard-draft')
+    await preview.getByRole('heading', { name: 'Dashboard preview', exact: true }).waitFor()
+    expect(await page.getByRole('button', { name: 'Add to dashboard', exact: true }).count()).toBe(0)
+    const layout = await page.locator('lv-chat-page').evaluate((host: any) => {
+      const canvas = host.shadowRoot.querySelector('lv-chat-dashboard-draft').getBoundingClientRect()
+      const agent = host.shadowRoot.querySelector('.main').getBoundingClientRect()
+      return { canvasX: canvas.x, canvasWidth: canvas.width, agentX: agent.x, agentWidth: agent.width, overflow: document.documentElement.scrollWidth > innerWidth }
+    })
+    if (width > 768) {
+      expect(layout.canvasX).toBeLessThan(layout.agentX)
+      expect(layout.canvasWidth).toBeGreaterThan(layout.agentWidth)
+    }
+    expect(layout.overflow).toBe(false)
+    await preview.getByRole('button', { name: 'Ask about Sales by region' }).click()
+    expect(await page.locator('lv-chat-composer').getByRole('combobox').inputValue()).toContain('artifact_sales')
+    if (width <= 768) expect(await page.locator('lv-chat-page').evaluate((host: any) => host.shadowRoot.querySelector('.main').inert)).toBe(false)
+    const focus = await page.locator('lv-chat-page').evaluate((host: any) => {
+      const event = new CustomEvent('lv-chat-submit', { detail: { input: 'Make it a donut', references: [] } as any, bubbles: true, composed: true })
+      host.shadowRoot.querySelector('lv-chat-composer').dispatchEvent(event)
+      return event.detail.previewArtifactId
+    })
+    expect(focus).toBe('artifact_sales')
+    if (width <= 768) await page.locator('.mobile-dashboard-toggle').click()
+    await preview.getByRole('button', { name: 'Back to chat', exact: true }).click()
+    await details.getByRole('button', { name: 'Preview', exact: true }).waitFor()
+    expect(await preview.count()).toBe(0)
+  } finally { await page.close() }
+})
+}
+
+test('explicit visual preview on reload takes precedence over an existing composed draft', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?preview=artifact_selected`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    await publishDashboardDraft(page, 'composition', 'Whole dashboard', [{ id: 'selected', artifactId: 'artifact_selected', title: 'Selected visual' }])
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { transcript: [{ id: 'query', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'artifact_selected', type: 'bar' } }] } })
+    })
+    const preview = page.locator('lv-chat-dashboard-draft')
+    await preview.getByRole('heading', { name: 'Dashboard preview', exact: true }).waitFor()
+    expect(await preview.evaluate((host: any) => host.sourceArtifactId)).toBe('artifact_selected')
+    expect(await page.locator('lv-chat-page').evaluate((host: any) => host.agent.dashboardDraft.title)).toBe('Whole dashboard')
+  } finally { await page.close() }
+})
 
 test('chat dashboard draft works as a mobile modal and returns visual requests to the composer', async () => {
   const page = await browser.newPage({ viewport: { width: 360, height: 820 } })

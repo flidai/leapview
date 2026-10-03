@@ -1,4 +1,4 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { ChartColumn, CircleHelp, ExternalLink, LayoutDashboard, Maximize2, Move, Plus, RefreshCw, TrendingUp, X, type IconNode } from 'lucide'
 import type {
@@ -14,6 +14,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
+import { clearDrawerReturn, fullChatHref, readDrawerReturn, rememberChatReturn, type DrawerReturnState } from './chat-navigation'
 import './chat-visual-panel'
 import './chat-composer'
 import './chat-thread'
@@ -74,6 +75,11 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @state() private visualSaving = false
   @state() private visualSaved = false
   @state() private visualSaveError = ''
+  private returnState: DrawerReturnState | undefined
+  private restoringReturn = false
+  private requestedReturnConversationID = ''
+  private retainedDraft = ''
+  private retainedScroll: DrawerReturnState['scroll'] | undefined
   private focusReturnTarget: HTMLElement | null = null
 	private trackedConversationID: string | null = null
 	private trackedAcceptedRunID: string | null = null
@@ -368,6 +374,88 @@ class ChatDrawer extends DatastarLit(LitElement) {
 		return this.cachedSignal<AgentReferenceSearchSignal>('agentReferenceSearch', emptyReferenceSearch)
 	}
 
+  connectedCallback(): void {
+    this.returnState = readDrawerReturn()
+    super.connectedCallback()
+    window.addEventListener('pageshow', this.handlePageShow)
+  }
+
+  disconnectedCallback(): void {
+    window.removeEventListener('pageshow', this.handlePageShow)
+    super.disconnectedCallback()
+  }
+
+  private handlePageShow = (event: PageTransitionEvent): void => {
+    this.returnState = readDrawerReturn()
+    const conversationId = this.returnState?.conversationId
+    if (event.persisted && conversationId && this.requestedReturnConversationID !== conversationId) {
+      // A cached document has not rerun its shell initialization. Reload the
+      // authorized transcript, including turns added while full chat was open.
+      // Mark before dispatch so absent/unauthorized replies cannot retry.
+      this.requestedReturnConversationID = conversationId
+      emitDomainEvent(this, domainEvents.chatRestore, { conversationId })
+    }
+    this.requestUpdate()
+  }
+
+  private expandChat = (event: MouseEvent): void => {
+    if (this.pending) { event.preventDefault(); return }
+    ;(event.currentTarget as HTMLAnchorElement).href = this.expandedHref()
+  }
+
+  private expandedHref(): string {
+    this.requestedReturnConversationID = ''
+    const composer = this.shadowRoot?.querySelector<HTMLElement & { snapshotDraft(): string }>('lv-chat-composer')
+    const thread = this.shadowRoot?.querySelector<HTMLElement & { snapshotScroll(): DrawerReturnState['scroll'] }>('lv-chat-thread')
+    const token = rememberChatReturn({
+      conversationId: this.agent.activeConversationId ?? '',
+      draft: composer?.snapshotDraft() ?? this.retainedDraft,
+      references: this.references,
+      editMessageId: this.editMessageId,
+      selectedVisualId: this.selectedVisualID,
+      selectedExplorerHref: this.selectedExplorerHref,
+      selectedVisualTitle: this.selectedVisualTitle,
+      scroll: this.retainedScroll ?? thread?.snapshotScroll() ?? { top: 0, follow: true },
+    })
+    return fullChatHref(this.agent.activeConversationId ?? '', token ? `?return=${token}` : '')
+  }
+
+  private previewVisual = (): void => {
+    if (this.pending || !this.selectedVisualID) return
+    const href = new URL(this.expandedHref(), location.origin)
+    href.searchParams.set('preview', this.selectedVisualID)
+    location.assign(href.pathname + href.search)
+  }
+
+  private restoreReturnState(): void {
+    const saved = this.returnState
+    if (!saved || this.restoringReturn || (this.agent.activeConversationId ?? '') !== saved.conversationId) return
+    // The shell first authorizes and hydrates the remembered conversation.
+    if (saved.conversationId && !this.agent.transcript?.length) return
+    this.restoringReturn = true
+    this.returnState = undefined
+    this.references = Array.isArray(saved.references) ? saved.references : []
+    this.editMessageId = saved.editMessageId && this.canEditMessage(saved.editMessageId) ? saved.editMessageId : ''
+    if (saved.selectedVisualId && this.visuals[saved.selectedVisualId]) {
+      this.selectedVisualID = saved.selectedVisualId
+      this.selectedExplorerHref = saved.selectedExplorerHref
+      this.selectedVisualTitle = saved.selectedVisualTitle
+    }
+    this.retainedDraft = saved.draft ?? ''
+    if (this.selectedVisualID) this.retainedScroll = saved.scroll
+    this.notifyReferences()
+    void this.updateComplete.then(async () => {
+      const composer = this.shadowRoot?.querySelector<LitElement & { setDraft(value: string, focus?: boolean): void }>('lv-chat-composer')
+      await composer?.updateComplete
+      composer?.setDraft(saved.draft ?? '', false)
+      const thread = this.shadowRoot?.querySelector<LitElement & { restoreScroll(state: DrawerReturnState['scroll']): void }>('lv-chat-thread')
+      await thread?.updateComplete
+      thread?.restoreScroll(saved.scroll ?? { top: 0, follow: true })
+      clearDrawerReturn()
+      this.restoringReturn = false
+    })
+  }
+
   public openDrawer(): void {
     if (this.open) this.focusComposer()
     this.open = true
@@ -391,6 +479,13 @@ class ChatDrawer extends DatastarLit(LitElement) {
 
   protected updated(changed: Map<string, unknown>): void {
 		this.syncEditState()
+    if (this.embedded && this.agent.status.enabled && this.returnState?.conversationId
+      && this.agent.activeConversationId !== this.returnState.conversationId
+      && this.requestedReturnConversationID !== this.returnState.conversationId) {
+      this.requestedReturnConversationID = this.returnState.conversationId
+      emitDomainEvent(this, domainEvents.chatRestore, { conversationId: this.returnState.conversationId })
+    }
+    this.restoreReturnState()
 		if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
     if (!changed.has('open')) return
     if (!this.open) {
@@ -460,7 +555,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
             <div class="toolbar-actions">
               <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
-              <a class="text-action" href=${conversationHref} title="Open full chat" aria-label="Open full chat" aria-disabled=${String(this.pending && !agent.activeConversationId)} @click=${(event: MouseEvent) => { if (this.pending && !agent.activeConversationId) event.preventDefault() }}>${lucideIcon(ExternalLink)}<span>Full chat</span></a>
+              <a class="text-action" href=${this.pending ? nothing : conversationHref} title=${this.pending ? 'Wait for the current answer to finish' : 'Open full chat'} aria-label="Open full chat" aria-disabled=${String(this.pending)} @click=${this.expandChat}>${lucideIcon(ExternalLink)}<span>Full chat</span></a>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
             </div>
           </div>
@@ -500,6 +595,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
             title=${this.selectedVisualTitle || this.visuals[this.selectedVisualID].spec.title || 'Visual result'}
             .payload=${this.visuals[this.selectedVisualID]}
             .explorerHref=${this.selectedExplorerHref}
+            .dashboardAvailable=${!this.pending && Boolean(agent.activeConversationId) && (agent.transcript ?? []).some(item => item.kind === 'tool' && item.name === 'query_visual' && item.status === 'complete' && item.artifact?.id === this.selectedVisualID)}
+            @lv-chat-visual-preview=${this.previewVisual}
             .saving=${this.visualSaving}
             .saved=${this.visualSaved}
             .saveError=${this.visualSaveError}
@@ -521,6 +618,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
 		this.clearSelectedVisual()
 		this.clearEditMessage()
     this.fillPrompt('')
+    this.retainedDraft = ''
+    this.retainedScroll = undefined
     this.references = []
     this.referenceLimitMessage = ''
     this.notifyReferences()
@@ -535,6 +634,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
   private openVisual = (event: CustomEvent<{ artifactId: string; explorerHref: string; title: string }>): void => {
     const artifactId = event.detail?.artifactId ?? ''
     if (!artifactId || !this.visuals[artifactId]) return
+    this.retainedDraft = this.shadowRoot?.querySelector<HTMLElement & { snapshotDraft(): string }>('lv-chat-composer')?.snapshotDraft() ?? ''
+    this.retainedScroll = this.shadowRoot?.querySelector<HTMLElement & { snapshotScroll(): DrawerReturnState['scroll'] }>('lv-chat-thread')?.snapshotScroll()
     this.selectedVisualID = artifactId
     this.selectedExplorerHref = event.detail.explorerHref ?? ''
     this.selectedVisualTitle = event.detail.title ?? ''
@@ -547,6 +648,15 @@ class ChatDrawer extends DatastarLit(LitElement) {
     const artifactId = this.selectedVisualID
     if (!artifactId) return
     this.clearSelectedVisual()
+    void this.updateComplete.then(async () => {
+      const composer = this.shadowRoot?.querySelector<LitElement & { setDraft(value: string, focus?: boolean): void }>('lv-chat-composer')
+      await composer?.updateComplete
+      composer?.setDraft(this.retainedDraft, false)
+      const thread = this.shadowRoot?.querySelector<LitElement & { restoreScroll(state: DrawerReturnState['scroll']): void }>('lv-chat-thread')
+      await thread?.updateComplete
+      if (this.retainedScroll) thread?.restoreScroll(this.retainedScroll)
+      this.retainedScroll = undefined
+    })
     if (!restoreFocus) return
     void this.updateComplete.then(() => {
       const cards = this.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll<HTMLButtonElement>('.artifact-card')
@@ -613,6 +723,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
 		const acceptedRunID = latestAcceptedRunId(this.agent.transcript ?? [])
 		const conversationChanged = this.trackedConversationID !== null && this.trackedConversationID !== conversationID
 		if (conversationChanged) {
+      this.retainedDraft = ''
+      this.retainedScroll = undefined
 			this.clearSelectedVisual()
 			// Composer state belongs to the active conversation. A route signal can
 			// switch conversations without recreating the drawer, so clear an
@@ -663,9 +775,9 @@ class ChatDrawer extends DatastarLit(LitElement) {
 }
 
 type ChatReuseDetail = {
-	text: string
-	references?: ChatTranscriptItemSignal['references']
-	editMessageId?: string
+  text: string
+  references?: ChatTranscriptItemSignal['references']
+  editMessageId?: string
 }
 
 function deepActiveElement(root: Document | ShadowRoot): HTMLElement | null {

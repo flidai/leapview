@@ -26,10 +26,16 @@ export const chatPageStyles = css`
     .route.dashboard-open {
       display: grid;
       height: 100svh;
-      grid-template-columns: minmax(22rem, .9fr) minmax(0, 1.1fr);
+      grid-template-columns: minmax(0, 1fr) clamp(20rem, 28vw, 26rem);
       overflow: hidden;
     }
     lv-chat-dashboard-draft { min-width: 0; min-height: 0; }
+    .dashboard-open > lv-chat-dashboard-draft { grid-column: 1; grid-row: 1; }
+    .dashboard-open > .main { grid-column: 2; grid-row: 1; border-left: var(--lv-border-muted); }
+    .dashboard-open .thread-stack { --lv-chat-stack-width: 100%; }
+    .return-chat { display: inline-flex; align-items: center; justify-content: center; width: var(--lv-control-medium); height: var(--lv-control-medium); border-radius: var(--lv-radius-default); color: var(--lv-fg-muted); text-decoration: none; }
+    .return-chat:hover { background: var(--lv-bg-control-hover); }
+    .return-chat:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--base-size-2); }
     .main {
       display: grid;
       min-width: 0;
@@ -51,6 +57,8 @@ export const chatPageStyles = css`
       grid-template-rows: minmax(0, 1fr);
     }
 
+    .main.new-main.with-return { grid-template-rows: auto minmax(0, 1fr); }
+
     .loading-state {
       display: grid;
       place-items: center;
@@ -61,12 +69,12 @@ export const chatPageStyles = css`
     .conversation-titlebar {
       display: grid;
       min-width: 0;
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr) auto;
       padding: 14px var(--base-size-16) var(--base-size-8);
     }
 
     .mobile-dashboard-toggle {
-      display: none;
+      display: inline-flex;
       min-height: var(--lv-control-medium);
       align-items: center;
       justify-self: start;
@@ -308,6 +316,7 @@ export const chatPageStyles = css`
         background: var(--lv-bg-panel);
       }
       .route.dashboard-open { grid-template-columns: minmax(0, 1fr); }
+      .dashboard-open > .main { grid-column: 1; border-left: 0; }
       .route.dashboard-open lv-chat-dashboard-draft {
         position: fixed;
         z-index: 20;

@@ -1,3 +1,4 @@
+import { readDrawerReturn } from '../chat/chat-navigation'
 import type {
   DashboardFilterState,
   DashboardPageSignal,
@@ -68,7 +69,8 @@ export class DashboardAgentStateController {
 
   initialize(enabled: boolean): DashboardAgentStoredState {
     if (!enabled || this.initialized) return this.state
-    const stored = readDashboardAgentState(this.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage))
+    const restored = this.storage ? undefined : readDrawerReturn()
+    const stored = restored ? { open: true, conversationId: restored.conversationId } : readDashboardAgentState(this.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage))
     this.restoredConversationId = stored.conversationId
     this.persisted = stored
     this.initialized = true

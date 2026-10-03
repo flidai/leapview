@@ -412,3 +412,36 @@ test('dashboard builder stacks visual tiles within the mobile canvas viewport', 
     await page.close()
   }
 })
+
+test('builder return expands the agent pane and authorizes its remembered conversation once', async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } })
+  try {
+    await page.route('**/dashboards/return/edit', route => route.fulfill({ contentType: 'text/html', body: documentWithProductFonts(true) }))
+    await page.addInitScript(() => {
+      localStorage.setItem('leapview-dashboard-builder-collapsed-panes', JSON.stringify({ version: 2, collapsed: ['agent'] }))
+      sessionStorage.setItem('leapview-chat-returns-v1', JSON.stringify({ builder: {
+        href: '/dashboards/return/edit', created: Date.now(),
+        state: { conversationId: 'builder-conversation', draft: 'Keep this change request', references: [], editMessageId: '', selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '', scroll: { top: 0, follow: false } },
+      } }))
+      ;(window as any).__builderRestores = []
+      window.addEventListener('lv-chat-restore', (event: Event) => {
+        ;(window as any).__builderRestores.push((event as CustomEvent).detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+    })
+    await page.goto(`${baseURL}/dashboards/return/edit`)
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-builder')?.shadowRoot?.querySelector('lv-chat-drawer')))
+    expect(await page.locator('lv-dashboard-builder .agent-pane').getAttribute('data-collapsed')).toBe('false')
+    await page.waitForFunction(() => (window as any).__builderRestores.length > 0)
+    expect(await page.evaluate(() => (window as any).__builderRestores)).toEqual([{ conversationId: 'builder-conversation' }])
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { activeConversationId: 'builder-conversation', transcript: [{ id: 'message', kind: 'user', text: 'Existing dashboard conversation' }] } })
+    })
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-builder')?.shadowRoot?.querySelector('lv-chat-drawer') as any
+      return drawer?.open && drawer.shadowRoot.querySelector('lv-chat-composer')?.snapshotDraft() === 'Keep this change request'
+    })
+    expect(await page.evaluate(() => (window as any).__builderRestores)).toHaveLength(1)
+  } finally { await page.close() }
+}, 15_000)

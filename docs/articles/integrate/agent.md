@@ -22,7 +22,7 @@ See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, h
 ## Build a dashboard in chat
 
 Ask the agent to build a dashboard and describe the charts you need. A dashboard
-draft appears beside the conversation. Continue chatting to add a chart, change
+preview fills the main workspace, with the agent on the right. Continue chatting to add a chart, change
 one, or apply a filter. Select **Ask about visual** on a chart to put its identity
 in the composer, then describe the change before sending.
 
@@ -42,7 +42,7 @@ copy. Sharing or publishing uses the dashboard's normal controls.
 
 Open a visual card in chat to inspect its chart. **Save** keeps it as a saved exploration.
 
-For a visual created by the agent, choose **Add to dashboard** to select an editable dashboard and page or create a new private dashboard. The picker shows compatible dashboards that you can edit or copy. Published dashboards use **Create copy and add**, which creates a private editable copy containing the visual. The visual retains its semantic query and filters.
+For a visual created by the agent, choose **Preview** to see it on a dashboard canvas while continuing to edit through the agent on the right. Previewing does not save a dashboard. Choose **Save dashboard** in that preview to select an editable dashboard and page or create a new private dashboard. The picker shows compatible dashboards that you can edit or copy. Published dashboards use **Create copy and add**, which creates a private editable copy containing the visual. The visual retains its semantic query and filters.
 
 After adding the visual, choose **Open dashboard** to inspect it in the editor, or **Add another visual** to return to chat. The next dashboard picker remembers the dashboard and page you selected.
 
@@ -162,3 +162,11 @@ Natural-language output is not a replacement for governed results. Present tool 
 Test empty results, authorization failures, project-scoped credentials, ambiguous questions, provider timeouts, cancelled runs, and active deployment changes. Audit conversation and tool activity, apply bounded retention with `leapview admin maintenance`, and never log provider API keys or raw sensitive prompts into general diagnostics.
 
 See [Service principals and API tokens](/docs/security/tokens) and the generated [`agent` CLI reference](/docs/cli/agent).
+
+## Expand and return to a side conversation
+
+Use **Full chat** in the dashboard or Data Explorer agent to expand the same
+conversation. Use **Return to page** or your browser's Back action to return to
+its original page with the side agent open. Unsent text, attached references,
+the selected visual, and the conversation scroll position are restored in the
+same browser tab. Expansion is available after the current answer finishes.

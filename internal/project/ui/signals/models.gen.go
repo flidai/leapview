@@ -9,19 +9,20 @@ import (
 )
 
 type AgentContextSignal struct {
-	Surface        string                         `json:"surface" yaml:"surface"`
-	DashboardID    string                         `json:"dashboardId" yaml:"dashboardId"`
-	DashboardTitle string                         `json:"dashboardTitle" yaml:"dashboardTitle"`
-	DraftID        *string                        `json:"draftId,omitempty" yaml:"draftId,omitempty"`
-	PageID         string                         `json:"pageId" yaml:"pageId"`
-	PageTitle      string                         `json:"pageTitle" yaml:"pageTitle"`
-	ModelID        string                         `json:"modelId" yaml:"modelId"`
-	DatasetID      *string                        `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Exploration    *DataExploreAgentContextSignal `json:"exploration,omitempty" yaml:"exploration,omitempty"`
-	Generation     int64                          `json:"generation" yaml:"generation"`
-	Filters        DashboardFilterState           `json:"filters" yaml:"filters"`
-	ReferenceLimit int32                          `json:"referenceLimit" yaml:"referenceLimit"`
-	References     []AgentReferenceSignal         `json:"references" yaml:"references"`
+	Surface           string                         `json:"surface" yaml:"surface"`
+	PreviewArtifactID *string                        `json:"previewArtifactId,omitempty" yaml:"previewArtifactId,omitempty"`
+	DashboardID       string                         `json:"dashboardId" yaml:"dashboardId"`
+	DashboardTitle    string                         `json:"dashboardTitle" yaml:"dashboardTitle"`
+	DraftID           *string                        `json:"draftId,omitempty" yaml:"draftId,omitempty"`
+	PageID            string                         `json:"pageId" yaml:"pageId"`
+	PageTitle         string                         `json:"pageTitle" yaml:"pageTitle"`
+	ModelID           string                         `json:"modelId" yaml:"modelId"`
+	DatasetID         *string                        `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Exploration       *DataExploreAgentContextSignal `json:"exploration,omitempty" yaml:"exploration,omitempty"`
+	Generation        int64                          `json:"generation" yaml:"generation"`
+	Filters           DashboardFilterState           `json:"filters" yaml:"filters"`
+	ReferenceLimit    int32                          `json:"referenceLimit" yaml:"referenceLimit"`
+	References        []AgentReferenceSignal         `json:"references" yaml:"references"`
 }
 
 type AgentReferenceKeySignal struct {

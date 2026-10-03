@@ -934,3 +934,123 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
     expect(afterConversationSwitch).toEqual({ hasVisualPanel: false, threadHidden: false, hasComposer: true })
   } finally { await page.close() }
 })
+
+test.each(['back', 'close'])('full chat %s returns to the same route, conversation, draft and scroll after document reload', async (returnAction) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.route('**/dashboards/return**', route => route.fulfill({ contentType: 'text/html', body: testDocument() }))
+    const navigation = await Bun.build({ entrypoints: ['web/components/chat/chat-navigation.ts'], target: 'browser', format: 'esm' })
+    if (!navigation.success) throw new Error('navigation helper fixture did not build')
+    const navigationScript = await navigation.outputs[0].text()
+    await page.route('**/return-navigation.js', route => route.fulfill({ contentType: 'text/javascript', body: navigationScript }))
+    await page.route('**/chats/return-conversation**', route => route.fulfill({ contentType: 'text/html', body: '<button id="close">Close full chat</button><script type="module">import { returnFromFullChat } from "/return-navigation.js"; document.querySelector("#close").onclick = returnFromFullChat;</script>' }))
+    await page.addInitScript(() => {
+      window.addEventListener('lv-chat-restore', (event: Event) => event.stopImmediatePropagation(), { capture: true })
+    })
+    await page.goto(`${baseURL}/dashboards/return?filter=retained#visual`)
+    await page.waitForFunction(() => Boolean((document.querySelector('lv-dashboard-page') as any)?.page))
+    const hydrate = async () => page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: {
+        activeConversationId: 'return-conversation',
+        status: { enabled: true, running: false },
+        composer: { value: '', disabled: false },
+        transcript: Array.from({ length: 30 }, (_, i) => ({ id: `user-${i}`, kind: 'user', text: `Question ${i}: retained conversation position` })),
+      } })
+      const shell = document.querySelector('lv-dashboard-page') as any
+      shell.setAgentDrawerOpen(true)
+      await shell.updateComplete
+      const drawer = shell.shadowRoot.querySelector('lv-chat-drawer') as any
+      drawer.open = true
+      await drawer.updateComplete
+    })
+    await hydrate()
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { status: { running: true } } })
+    })
+    await page.waitForFunction(() => {
+      const drawer = (document.querySelector('lv-dashboard-page') as any)?.shadowRoot.querySelector('lv-chat-drawer')
+      return drawer?.shadowRoot.querySelector('[aria-label="Open full chat"]')?.getAttribute('aria-disabled') === 'true'
+    })
+    expect(await page.locator('lv-chat-drawer [aria-label="Open full chat"]').getAttribute('href')).toBeNull()
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { status: { running: false } } })
+    })
+    await page.locator('lv-chat-drawer').evaluate(async (drawer: any) => {
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer')
+      await composer.updateComplete
+      composer.setDraft('My unsent follow-up', false)
+      const thread = drawer.shadowRoot.querySelector('lv-chat-thread')
+      await thread.updateComplete
+      thread.restoreScroll({ top: 150, follow: false })
+    })
+    await page.locator('lv-chat-drawer [aria-label="Open full chat"]').click()
+    await page.waitForURL('**/chats/return-conversation?return=*')
+    if (returnAction === 'back') await page.goBack()
+    else await page.locator('#close').click()
+    await page.waitForFunction(() => Boolean((document.querySelector('lv-dashboard-page') as any)?.page))
+    await hydrate()
+    await page.waitForFunction(() => {
+      const drawer = (document.querySelector('lv-dashboard-page') as any)?.shadowRoot.querySelector('lv-chat-drawer')
+      return drawer?.shadowRoot.querySelector('lv-chat-composer')?.snapshotDraft() === 'My unsent follow-up'
+    })
+    expect(page.url()).toBe(`${baseURL}/dashboards/return?filter=retained#visual`)
+    const restored = await page.locator('lv-chat-drawer').evaluate((drawer: any) => ({
+      conversationId: drawer.agent.activeConversationId,
+      open: drawer.open,
+      scroll: drawer.shadowRoot.querySelector('lv-chat-thread').snapshotScroll(),
+    }))
+    expect(restored.conversationId).toBe('return-conversation')
+    expect(restored.open).toBe(true)
+    expect(restored.scroll.follow).toBe(false)
+    expect(restored.scroll.top).toBeCloseTo(150, 0)
+  } finally { await page.close() }
+})
+
+test('bfcache return authorizes a promoted conversation once before restoring drawer state', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.addInitScript(() => {
+      ;(window as any).__returnRestores = []
+      window.addEventListener('lv-chat-restore', (event: Event) => {
+        ;(window as any).__returnRestores.push((event as CustomEvent).detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean((document.querySelector('lv-dashboard-page') as any)?.page))
+    await page.evaluate(async () => {
+      history.replaceState({}, '', '/dashboards/bfcache?filter=kept')
+      const shell = document.querySelector('lv-dashboard-page') as any
+      shell.setAgentDrawerOpen(true)
+      await shell.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { activeConversationId: '', transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false } } })
+      await shell.updateComplete
+      sessionStorage.setItem('leapview-chat-returns-v1', JSON.stringify({ promoted: {
+        href: '/dashboards/bfcache?filter=kept', created: Date.now(),
+        state: { conversationId: 'promoted-conversation', draft: 'Retained draft', references: [], editMessageId: '', selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '', scroll: { top: 0, follow: false } },
+      } }))
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+    })
+    expect(await page.evaluate(() => (window as any).__returnRestores)).toEqual([{ conversationId: 'promoted-conversation' }])
+    // An absent/unauthorized response must not create a retry loop.
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { activeConversationId: '', transcript: [] } })
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+    })
+    expect(await page.evaluate(() => (window as any).__returnRestores)).toHaveLength(1)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { activeConversationId: 'promoted-conversation', transcript: [{ id: 'accepted', kind: 'user', text: 'New full chat question' }] } })
+    })
+    await page.waitForFunction(() => {
+      const drawer = (document.querySelector('lv-dashboard-page') as any)?.shadowRoot.querySelector('lv-chat-drawer')
+      return drawer?.agent.activeConversationId === 'promoted-conversation' && drawer.shadowRoot.querySelector('lv-chat-composer')?.snapshotDraft() === 'Retained draft'
+    })
+  } finally { await page.close() }
+})

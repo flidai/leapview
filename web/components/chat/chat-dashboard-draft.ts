@@ -28,6 +28,7 @@ export class ChatDashboardDraft extends LitElement {
   @property({ type: Boolean, reflect: true }) modal = false
   @property({ attribute: false }) selectedVisualId = ''
   @property({ type: Boolean }) busy = false
+  @property({ attribute: 'source-artifact-id' }) sourceArtifactId = ''
 
   @state() private saveDialogOpen = false
   @state() private saveTitle = ''
@@ -177,9 +178,7 @@ export class ChatDashboardDraft extends LitElement {
       .saved-link { white-space: normal; overflow-wrap: anywhere; }
     }
 
-    @media (min-width: 769px) {
-      .header > .close { display: none; }
-    }
+
   `
 
   protected willUpdate(changed: Map<string, unknown>): void {
@@ -241,7 +240,7 @@ export class ChatDashboardDraft extends LitElement {
             <button class="close" type="button" aria-label="Back to chat" @click=${this.closeModal}>${lucideIcon(X, { size: 16 })}</button>
             <div class="heading">
               <span class="eyebrow">Live dashboard draft</span>
-              <h2 id="dashboard-draft-title">${draft?.title || 'Dashboard draft'}</h2>
+              <h2 id="dashboard-draft-title">${this.sourceArtifactId ? 'Dashboard preview' : draft?.title || 'Dashboard draft'}</h2>
               <span class="count">${draftVisuals.length} ${draftVisuals.length === 1 ? 'visual' : 'visuals'} · Draft</span>
             </div>
             <div class="actions">
@@ -341,6 +340,10 @@ export class ChatDashboardDraft extends LitElement {
 
   private openSaveDialog = (event: Event): void => {
     if (!this.draft || this.draft.visuals.length === 0 || this.busy || this.saving || this.saved?.revision === this.draft.revision) return
+    if (this.sourceArtifactId) {
+      this.dispatchEvent(new CustomEvent('lv-chat-dashboard-save-visual', { bubbles: true, composed: true }))
+      return
+    }
     this.saveTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
     this.saveTitle = this.draft.title.trim()
     this.saveError = ''
@@ -389,7 +392,7 @@ export class ChatDashboardDraft extends LitElement {
 
   private dispatchEditRequest(action: 'edit' | 'remove', visual: ChatDashboardDraftSignal['visuals'][number], title: string): void {
     const safeTitle = title.replace(/[\\"\n\r]/g, ' ').replace(/\s+/g, ' ').trim()
-    const stableIdentity = `draft visual id: ${visual.id}`
+    const stableIdentity = this.sourceArtifactId ? `preview artifact id: ${this.sourceArtifactId}` : `draft visual id: ${visual.id}`
     const prompt = action === 'remove'
       ? `Remove the dashboard visual "${safeTitle}" (${stableIdentity}).`
       : `Update the dashboard visual "${safeTitle}" (${stableIdentity}): `
@@ -402,6 +405,10 @@ export class ChatDashboardDraft extends LitElement {
 
   private closeModal = (): void => {
     this.dispatchEvent(new CustomEvent('lv-chat-dashboard-close', { bubbles: true, composed: true }))
+  }
+
+  focusSave(): void {
+    this.renderRoot.querySelector<HTMLButtonElement>('.header .primary')?.focus()
   }
 
   focusClose(): void {

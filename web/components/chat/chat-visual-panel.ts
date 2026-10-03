@@ -127,7 +127,7 @@ export class ChatVisualPanel extends LitElement {
             ${this.explorerHref ? html`
               <button type="button" ?disabled=${this.saving || this.saved} @click=${this.save} aria-label="Save visual to Data Explorer">${this.saved ? 'Saved' : this.saving ? 'Saving…' : 'Save'}</button>
             ` : nothing}
-            ${this.dashboardAvailable ? html`<button class="add-dashboard" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-visual-add-dashboard', { bubbles: true, composed: true }))}>Add to dashboard</button>` : nothing}
+            ${this.dashboardAvailable ? html`<button class="preview-dashboard" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-visual-preview', { bubbles: true, composed: true }))}>Preview</button>` : nothing}
             <button class="close" type="button" aria-label="Close visual details" @click=${this.close}>${lucideIcon(X, { size: 16 })}</button>
           </div>
         </div>
@@ -147,8 +147,8 @@ export class ChatVisualPanel extends LitElement {
     return this.displayVisual
   }
 
-  focusAddToDashboard(): void {
-    this.renderRoot.querySelector<HTMLButtonElement>('.add-dashboard')?.focus()
+  focusPreview(): void {
+    this.renderRoot.querySelector<HTMLButtonElement>('.preview-dashboard')?.focus()
   }
 
   focusClose(): void {

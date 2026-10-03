@@ -235,7 +235,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				// message already bound to this run proves that prompt
 				// preparation committed; otherwise prepare a fresh message.
 				if needsPrepare {
-					draftItems, contextErr := promptDashboardDraftContextItems(input.Scope, input.Context, stored, input.EditMessageID)
+					draftItems, contextErr := s.promptDashboardPreviewContextItems(ctx, input, stored)
 					if contextErr != nil {
 						return nil, contextErr
 					}
@@ -338,7 +338,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}
-	draftItems, err := promptDashboardDraftContextItems(input.Scope, input.Context, storedMessages, input.EditMessageID)
+	draftItems, err := s.promptDashboardPreviewContextItems(ctx, input, storedMessages)
 	if err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}

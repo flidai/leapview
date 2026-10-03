@@ -105,6 +105,18 @@ class ChatThread extends LitElement {
     `
   }
 
+  public snapshotScroll(): { top: number; follow: boolean } {
+    return { top: this.renderRoot.querySelector<HTMLElement>('.scroll')?.scrollTop ?? 0, follow: this.shouldAutoScroll }
+  }
+
+  public restoreScroll(state: { top: number; follow: boolean }): void {
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
+    this.shouldAutoScroll = state.follow
+    const scroll = this.renderRoot.querySelector<HTMLElement>('.scroll')
+    if (scroll) scroll.scrollTop = state.follow ? scroll.scrollHeight : Math.max(0, state.top)
+  }
+
   protected firstUpdated() {
     this.scheduleScrollToBottom(true)
   }

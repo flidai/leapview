@@ -163,7 +163,7 @@ func isDashboardDraftContextMessage(message agentcore.Message) bool {
 	}
 	tag := content[1:end]
 	key := strings.TrimPrefix(tag, "external_")
-	if key != "leapview_dashboard_draft" && !isIndexedDashboardVisualContextKey(key) {
+	if key != "leapview_dashboard_preview" && key != "leapview_dashboard_draft" && !isIndexedDashboardVisualContextKey(key) {
 		return false
 	}
 	return strings.HasSuffix(content, "\n</"+tag+">")
