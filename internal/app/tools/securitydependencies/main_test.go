@@ -347,7 +347,7 @@ func TestTypedJSONParsersRejectMalformedFindings(t *testing.T) {
 		}
 	}
 	for _, data := range []string{`{"finding":{}} trailing`, `null`, `[]`, `"diagnostic"`, `{}`, `{"progress":{}}`} {
-		if stream, err := parseGovulnStream([]byte(data)); err == nil {
+		if stream, err := parseGovulnStream([]byte(data), "source"); err == nil {
 			t.Fatalf("malformed govulncheck stream was accepted: %s -> %#v", data, stream)
 		}
 	}

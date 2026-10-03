@@ -245,6 +245,52 @@ main. Go/embedded-native coverage, complete platform/host and installation/recov
 admission, canonical release identity and exact-artifact promotion remain separate
 D04 and output-specific gates before adopting a replacement builder.
 
+### Exact Go binary verifier
+
+`securitydependencies` supplies a separate binary operation alongside the existing
+source-aware repository scan. It accepts only an actual Linux AMD64 or ARM64 Go
+ELF binary whose main package, ELF architecture and Go build settings match the
+explicit expectation. Metadata and SHA-256 come from the same bytes; the pinned
+`govulncheck v1.6.0` scans a private snapshot without executing that binary.
+
+Run with trusted verifier code and toolchain, using a new report directory:
+
+```sh
+go run ./internal/app/tools/securitydependencies -root . \
+  -binary /path/to/leapviewctl \
+  -binary-package github.com/flidai/leapview/cmd/leapviewctl \
+  -binary-platform linux/amd64 -binary-evidence /path/to/new-go-evidence
+```
+
+Successful scans retain `govulncheck.json` in full and `summary.json`, binding
+the exact binary hash, complete Go build metadata, scanner/database identity and
+raw report hash. The SBOM must match the binary's Go version, main module and
+complete dependency/replacement versions. Missing or malformed messages, source
+mode, scanner diagnostics/failures, coverage warnings and vulnerable symbols
+fail closed. Report capture is bounded to 32 MiB; binaries to 256 MiB. Failed
+scans can leave diagnostic reports, but never a success summary. Existing report
+directories cannot be reused by a scan.
+
+Use the same arguments with `-verify-binary-evidence` for offline verification.
+This rechecks binary and report bytes, metadata and findings without installing
+or running a scanner or candidate. Scan receipts expire at 120 hours and future
+scan/database timestamps are rejected. Database last-modified time is retained
+as database identity; it is not itself a scan timestamp or evidence that the
+database must publish a change every five days.
+
+This is **Go binary evidence only**, and its receipt is unsigned. Stripped binaries
+receive conservative module-level analysis from govulncheck; a symbol finding
+still blocks, even if the source scan does not reach it. A clean source scan does
+not waive a binary finding. No clean application or controller candidate is
+claimed by adding this tool. The adapter does not establish archive containment,
+embedded DuckDB/native-extension coverage, provenance or release admission.
+
+Protected archive extraction and candidate-manifest/publication binding are the
+next D04 composition step, after this verifier lands on main. The producer does
+not call this new operation yet. Callers must use protected verifier code and
+the immutable qualification artifact ID; an untrusted receipt can never grant
+publication authority on its own.
+
 ### Remaining release authority
 
 The manifest is unsigned. Its hashes detect accidental substitution when checked
