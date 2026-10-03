@@ -30,6 +30,8 @@ type savedExplorationServiceStub struct {
 	fixture           savedExplorationHTTPFixture
 	create            func(context.Context, saved.CreateRequest) (saved.MutationResult, error)
 	reopen            func(context.Context, saved.ReopenRequest) (saved.ReopenResult, error)
+	execute           func(context.Context, saved.ExecuteRequest) (saved.ExecuteResult, error)
+	executeSpec       func(context.Context, saved.ExecuteSpecRequest) (saved.ExecuteResult, error)
 	list              func(context.Context, saved.ListRequest) ([]saved.Lifecycle, error)
 	update            func(context.Context, saved.UpdateVersionRequest) (saved.MutationResult, error)
 	duplicate         func(context.Context, saved.DuplicateRequest) (saved.MutationResult, error)
@@ -63,6 +65,20 @@ func (stub *savedExplorationServiceStub) Reopen(ctx context.Context, request sav
 		return stub.reopen(ctx, request)
 	}
 	return stub.fixture.reopen, nil
+}
+
+func (stub *savedExplorationServiceStub) Execute(ctx context.Context, request saved.ExecuteRequest) (saved.ExecuteResult, error) {
+	if stub.execute != nil {
+		return stub.execute(ctx, request)
+	}
+	return saved.ExecuteResult{}, errors.New("unexpected saved exploration execution")
+}
+
+func (stub *savedExplorationServiceStub) ExecuteSpec(ctx context.Context, request saved.ExecuteSpecRequest) (saved.ExecuteResult, error) {
+	if stub.executeSpec != nil {
+		return stub.executeSpec(ctx, request)
+	}
+	return saved.ExecuteResult{}, errors.New("unexpected URL exploration execution")
 }
 
 func (stub *savedExplorationServiceStub) List(ctx context.Context, request saved.ListRequest) ([]saved.Lifecycle, error) {

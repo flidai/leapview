@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import type { DataExplorerCommand } from '../../generated/signals'
 import { DataExplorerQueryController } from './data-explorer-controller'
-import { dataExplorerURL } from './data-explorer-url'
+import { dataExplorerExportURL, dataExplorerURL, savedExplorationShareURL } from './data-explorer-url'
 
 test('exploration URL deterministically includes durable query state only', () => {
   const command = {
@@ -41,6 +41,24 @@ test('exploration URL deterministically includes durable query state only', () =
 
 test('browse URL preserves only the selected object', () => {
   expect(dataExplorerURL({ mode: 'browse', objectKey: 'model:orders' } as DataExplorerCommand)).toBe('/explore?object=model%3Aorders')
+})
+
+test('saved share URL resolves the authorized saved version without draft query state', () => {
+  expect(savedExplorationShareURL('exploration:orders')).toBe('/explore/saved/exploration%3Aorders?navigation=true')
+  expect(savedExplorationShareURL('exploration:orders', true)).toBe('/explore/saved/exploration%3Aorders?navigation=true&includeArchived=true')
+  expect(savedExplorationShareURL('')).toBe('')
+})
+
+test('export URL contains canonical state and no saved identity', () => {
+  const command = { mode: 'explore', explore: { spec: {
+    schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }],
+    metrics: [], filters: [], sort: [], limit: 100,
+  } } } as unknown as DataExplorerCommand
+  const url = new URL(dataExplorerExportURL(command, 'csv'), 'https://example.test')
+  expect(url.pathname).toBe('/explore/export')
+  expect(url.searchParams.get('format')).toBe('csv')
+  expect(url.searchParams.has('saved')).toBe(false)
+  expect(JSON.parse(url.searchParams.get('state')!).modelId).toBe('semantic:sales')
 })
 
 test('browse URL retains active row filters for refresh', () => {

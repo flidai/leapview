@@ -98,9 +98,13 @@ func configureSavedExploration(inputs savedExplorationWiringInputs) (savedExplor
 	return savedExplorationWiringResult{accessModule: accessModule, savedExplorationService: savedService}, nil
 }
 
-func savedExplorationAPIGenConfig(service analyticsmodule.SavedExplorationService, accessModule *accessmodule.Module, auth *accessmodule.Auth) analyticsmodule.SavedExplorationAPIGenConfig {
+func savedExplorationAPIGenConfig(service analyticsmodule.SavedExplorationService, accessModule *accessmodule.Module, auth *accessmodule.Auth, recorders ...analyticsmodule.QueryAuditRecorder) analyticsmodule.SavedExplorationAPIGenConfig {
+	var recorder analyticsmodule.QueryAuditRecorder
+	if len(recorders) > 0 {
+		recorder = recorders[0]
+	}
 	return analyticsmodule.SavedExplorationAPIGenConfig{
-		Service: service,
+		Service: service, ExportAuditRecorder: recorder,
 		CurrentPrincipal: func(r *http.Request) (string, bool) {
 			if accessModule == nil {
 				return "", false

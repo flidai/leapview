@@ -2200,6 +2200,7 @@ func TestArrowImportsStayInsideAnalyticalDataPlaneAndExplicitEncoders(t *testing
 	allowed := []string{
 		"internal/analytics/arrowquery",
 		"internal/analytics/arrowdecode",
+		"internal/analytics/exploration/export",
 		"internal/analytics/resultcache",
 		"internal/analytics/materialize",
 		"internal/analytics/ducklake",

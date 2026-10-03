@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	canonical "github.com/flidai/leapview/internal/analytics/exploration"
 	"github.com/flidai/leapview/internal/analytics/exploration/lowering"
 	"github.com/flidai/leapview/internal/analytics/exploration/saved"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -561,7 +562,11 @@ func (s *Service) Execute(ctx context.Context, request saved.ExecuteRequest) (sa
 		return saved.ExecuteResult{}, err
 	}
 	defer lease.Release()
-	opened, model, err := s.openCurrentWithLease(ctx, lease, saved.ReadRequest{ProjectID: request.ProjectID, ID: request.ID, ActorID: request.ActorID}, AuthorizationActionExecute)
+	var expected *saved.RevisionToken
+	if !request.ExpectedRevision.IsZero() {
+		expected = &request.ExpectedRevision
+	}
+	opened, model, err := s.openCurrentWithLeaseAtRevision(ctx, lease, saved.ReadRequest{ProjectID: request.ProjectID, ID: request.ID, ActorID: request.ActorID}, AuthorizationActionExecute, expected)
 	if err != nil {
 		return saved.ExecuteResult{}, publicLookupError(err)
 	}
@@ -576,15 +581,69 @@ func (s *Service) Execute(ctx context.Context, request saved.ExecuteRequest) (sa
 	if err != nil {
 		return saved.ExecuteResult{}, fmt.Errorf("%w: lower saved exploration: %v", saved.ErrInvalidPayload, err)
 	}
-	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: "saved_exploration", Operation: "saved_exploration_execute", PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "saved_exploration", ObjectID: request.ID.String()})
+	operation := request.Operation
+	if operation == "" {
+		operation = "saved_exploration_execute"
+	}
+	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: "saved_exploration", Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "saved_exploration", ObjectID: request.ID.String()})
 	result, err := s.executor.Execute(ctx, lease, request.ActorID, query)
 	if err != nil {
 		return saved.ExecuteResult{}, err
 	}
 	truncated := len(result.Rows) > int(spec.Limit)
-	if truncated {
+	if operation != "saved_exploration_export" && truncated {
 		result.Rows = result.Rows[:spec.Limit]
 	}
 	result.RowsReturned = len(result.Rows)
 	return saved.ExecuteResult{Lifecycle: opened.Lifecycle, Revision: opened.Revision, Query: query, Result: result, Truncated: truncated, Evidence: saved.ExecutionEvidence{ActorID: request.ActorID, Revision: opened.Revision.Token(), ServingIdentity: lease.Identity()}}, nil
+}
+
+// ExecuteSpec runs URL-authored state under the current viewer's active lease.
+// It performs no saved-resource lookup, so a URL cannot expose another user's
+// unpublished working copy or confer the creator's model permissions.
+func (s *Service) ExecuteSpec(ctx context.Context, request saved.ExecuteSpecRequest) (saved.ExecuteResult, error) {
+	if err := request.ValidateEnvelope(); err != nil {
+		return saved.ExecuteResult{}, err
+	}
+	if s == nil || s.executor == nil {
+		return saved.ExecuteResult{}, saved.ErrUnavailable
+	}
+	lease, err := s.acquire(ctx, request.ProjectID)
+	if err != nil {
+		return saved.ExecuteResult{}, err
+	}
+	defer lease.Release()
+	const transientID = saved.ExplorationID("url-export")
+	if err := s.authorize(ctx, lease, AuthorizationRequest{
+		ActorID: request.ActorID, ProjectID: request.ProjectID, ExplorationID: transientID,
+		OwnerPrincipalID: request.ActorID, Visibility: saved.VisibilityPrivate,
+		Status: saved.StatusActive, SemanticModelID: projectgraph.ResourceID(request.Spec.ModelID),
+		Action: AuthorizationActionExecute,
+	}); err != nil {
+		return saved.ExecuteResult{}, err
+	}
+	if err := canonical.ValidateShape(&request.Spec); err != nil {
+		return saved.ExecuteResult{}, fmt.Errorf("%w: canonical exploration spec: %v", saved.ErrInvalidPayload, err)
+	}
+	model, err := s.modelForLease(lease, projectgraph.ResourceID(request.Spec.ModelID))
+	if err != nil {
+		return saved.ExecuteResult{}, err
+	}
+	if err := canonical.ValidateAgainstModel(model, &request.Spec); err != nil {
+		return saved.ExecuteResult{}, fmt.Errorf("%w: canonical exploration spec is incompatible with active semantic model: %v", saved.ErrInvalidPayload, err)
+	}
+	query, err := lowering.QueryForModel(request.Spec, model)
+	if err != nil {
+		return saved.ExecuteResult{}, fmt.Errorf("%w: lower canonical exploration: %v", saved.ErrInvalidPayload, err)
+	}
+	operation := request.Operation
+	if operation == "" {
+		operation = "saved_exploration_url_execute"
+	}
+	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: "saved_exploration", Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "exploration_url", ObjectID: "url-export"})
+	result, err := s.executor.Execute(ctx, lease, request.ActorID, query)
+	if err != nil {
+		return saved.ExecuteResult{}, err
+	}
+	return saved.ExecuteResult{Query: query, Result: result, Evidence: saved.ExecutionEvidence{ActorID: request.ActorID, ServingIdentity: lease.Identity()}}, nil
 }

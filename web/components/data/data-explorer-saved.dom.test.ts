@@ -79,15 +79,61 @@ test('saved explorations render in their own row and emit the canonical current 
       name.dispatchEvent(new Event('input', { bubbles: true }))
       root.querySelector<HTMLButtonElement>('.saved-exploration-actions button')!.click()
       await element.updateComplete
+      let copiedURL = ''
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { copiedURL = value } } })
+      const explorerTopBeforeShare = root.querySelector('.explorer')!.getBoundingClientRect().top
+      root.querySelector<HTMLElement>('.saved-exploration-sharing summary')!.click()
+      const explorerTopAfterShare = root.querySelector('.explorer')!.getBoundingClientRect().top
+      root.querySelector<HTMLButtonElement>('.saved-exploration-sharing button')!.click()
+      for (let index = 0; index < 10 && !root.querySelector('[role="status"]'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const shareStatus = root.querySelector('[role="status"]')?.textContent?.trim()
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('unavailable') } } })
+      root.querySelector<HTMLButtonElement>('.saved-exploration-sharing button')!.click()
+      for (let index = 0; index < 10 && !root.querySelector('.saved-exploration-share-fallback'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const exportFormats = Array.from(root.querySelectorAll<HTMLAnchorElement>('.saved-exploration-sharing a[href^="/explore/export"]')).map((link) => new URL(link.href).searchParams.get('format'))
+      mergePatch({ dataExplorer: { explore: { result: { truncated: true } } } })
+      await element.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(resolve))
       return {
         routeClasses: root.querySelector('.route')!.className,
         gridRows: getComputedStyle(root.querySelector('.route')!).gridTemplateRows,
         command: commands[0],
+        copiedURL,
+        shareStatus,
+        sharePanelOpen: root.querySelector<HTMLDetailsElement>('.saved-exploration-sharing')?.open,
+        shareTriggerInHeader: Boolean(root.querySelector('.header .saved-exploration-sharing summary')),
+        shareTriggerInSavedBar: Boolean(root.querySelector('.saved-explorations .saved-exploration-sharing summary')),
+        explorerTopBeforeShare,
+        explorerTopAfterShare,
+        fallbackURL: root.querySelector<HTMLAnchorElement>('.saved-exploration-share-fallback')?.href,
+        exportFormats,
+        truncatedExportLinks: root.querySelectorAll('.saved-exploration-sharing a[href^="/explore/export"]').length,
+        truncatedExportMessage: root.querySelector('.saved-exploration-export-unavailable')?.textContent?.trim(),
       }
     })
     expect(state.routeClasses).toContain('saved-enabled')
     expect(state.gridRows.split(' ').length).toBeGreaterThanOrEqual(3)
     expect(state.command).toMatchObject({ action: 'create', title: 'Orders by status', visibility: 'private', spec: { modelId: 'sales', datasetId: 'orders' } })
+    expect(new URL(state.copiedURL).searchParams.get('mode')).toBe('explore')
+    expect(state.shareStatus).toBe('Link copied.')
+    expect(state.sharePanelOpen).toBe(true)
+    expect(state.shareTriggerInHeader).toBe(true)
+    expect(state.shareTriggerInSavedBar).toBe(false)
+    expect(state.explorerTopAfterShare).toBe(state.explorerTopBeforeShare)
+    expect(state.fallbackURL).toBe(state.copiedURL)
+    expect(state.exportFormats).toEqual(['csv', 'parquet'])
+    expect(state.truncatedExportLinks).toBe(0)
+    expect(state.truncatedExportMessage).toBe('Increase row limit, then run to export.')
+    await page.setViewportSize({ width: 390, height: 820 })
+    const shareMenuBounds = await page.evaluate(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector('.saved-exploration-sharing-actions')?.getBoundingClientRect().toJSON())
+    expect(shareMenuBounds?.left).toBeGreaterThanOrEqual(0)
+    expect(shareMenuBounds?.right).toBeLessThanOrEqual(390)
   } finally {
     await page.close()
   }

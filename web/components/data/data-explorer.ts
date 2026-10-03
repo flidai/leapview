@@ -2,7 +2,6 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { ChevronRight, Code2, Columns3, Database, Filter, Play, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
-  AgentReferenceSignal,
   DataExploreCommand,
   DataExploreFieldSignal,
   DataExploreFilterSignal,
@@ -27,6 +26,7 @@ import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
+  dataExplorerAgentSuggestions,
   prepareExplorationRun,
   prepareExplorationStop,
   exploreContextMatchesObject,
@@ -38,11 +38,13 @@ import { dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
 import { renderSelectedFieldRows, renderSemanticFieldPane, renderSemanticFilterDock, semanticLayoutStyles } from './data-explorer-semantic-layout'
 import {
   emptySavedExplorations,
+  renderExplorationShareMenu,
   renderSavedExplorations,
   SavedExplorationTracker,
   savedExplorationSelectionIncludesArchived,
   savedExplorationStyles,
   type SavedExplorationCurrent,
+  type SavedExplorationViewOptions,
   type SavedExplorationVisibility,
 } from './data-explorer-saved'
 import '../chat/chat-drawer'
@@ -131,6 +133,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private savedDuplicateTitle = ''
   @state() private savedVisibility: SavedExplorationVisibility = 'private'
   @state() private currentSavedVisibility: SavedExplorationVisibility = 'private'
+  @state() private savedShareStatus = ''
+  @state() private savedShareFallbackURL = ''
   @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' | 'uncertain' = 'idle'
   @state() private exploreTransportFailure: BrowserCommandFailure | null = null
   private exploreTransportAction: 'run' | 'stop' | null = null
@@ -1118,6 +1122,28 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       || Boolean(savedExplorations.list?.items?.length)
       || savedExplorations.save?.state === 'error'
     )
+    const savedViewOptions: SavedExplorationViewOptions = {
+      savedTitle: () => this.savedTitle,
+      savedDuplicateTitle: () => this.savedDuplicateTitle,
+      savedVisibility: () => this.savedVisibility,
+      currentSavedVisibility: (current: SavedExplorationCurrent) => this.currentSavedVisibility || current.visibility,
+      canSaveCurrent: () => canSaveCurrent,
+      activeSpec: () => activeSpec,
+      onSavedTitleInput: (value) => this.savedTitle = value,
+      onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
+      onSavedVisibilityInput: (value) => this.savedVisibility = value,
+      onCurrentSavedVisibilityInput: (value) => this.currentSavedVisibility = value,
+      onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
+      onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
+        bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
+      })),
+      shareStatus: () => this.savedShareStatus,
+      shareFallbackURL: () => this.savedShareFallbackURL,
+      onShareStatus: (message, fallbackURL) => {
+        this.savedShareStatus = message
+        this.savedShareFallbackURL = fallbackURL
+      },
+    }
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${savedVisible ? ' saved-enabled' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
@@ -1153,25 +1179,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 </div>
               </details>
             ` : nothing}
+            ${savedVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions, Boolean(explorer.explore?.result?.truncated)) : nothing}
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
-        ${savedVisible ? renderSavedExplorations(savedExplorations, {
-          savedTitle: () => this.savedTitle,
-          savedDuplicateTitle: () => this.savedDuplicateTitle,
-          savedVisibility: () => this.savedVisibility,
-          currentSavedVisibility: (current: SavedExplorationCurrent) => this.currentSavedVisibility || current.visibility,
-          canSaveCurrent: () => canSaveCurrent,
-          activeSpec: () => activeSpec,
-          onSavedTitleInput: (value) => this.savedTitle = value,
-          onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
-          onSavedVisibilityInput: (value) => this.savedVisibility = value,
-          onCurrentSavedVisibilityInput: (value) => this.currentSavedVisibility = value,
-          onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
-          onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
-            bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
-          })),
-        }) : nothing}
+        ${savedVisible ? renderSavedExplorations(savedExplorations, savedViewOptions) : nothing}
         <div
           class=${`explorer${this.browserCollapsed ? ' browser-collapsed' : ''}`}
         >
@@ -1235,7 +1247,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         </div>
         ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
           open
-          .suggestions=${this.agentSuggestions(explorer)}
+          .suggestions=${dataExplorerAgentSuggestions(explorer, this.optimisticExplore ?? explorer.explore.command, this.page?.context)}
           @lv-chat-drawer-close=${() => this.setAgentDrawerOpen(false)}
           @lv-chat-new=${this.handleAgentNew}
         ></lv-chat-drawer>` : nothing}
@@ -1525,24 +1537,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     // In an unknown-outcome state either the old or retry run may have reached
     // the server. A monotonic unnamed Stop safely addresses whichever remains.
     this.emitCommand({ action: 'stop', mode: 'explore', runId: uncertain ? undefined : this.clientState.runID(), explore: stopCommand })
-  }
-
-  private agentSuggestions(explorer: DataExplorerSignal): AgentReferenceSignal[] {
-    const command = this.optimisticExplore ?? explorer.explore.command
-    const context = this.page?.context
-    const projectId = context?.projectId ?? ''
-    const generationId = context?.generationId ?? ''
-    const semanticModelId = command.semanticModelId ?? ''
-    const datasetId = command.datasetId ?? ''
-    if (!projectId || !generationId || !semanticModelId || !datasetId) return []
-    const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
-    const href = `/explore?mode=explore&semanticModel=${encodeURIComponent(semanticModelId)}&dataset=${encodeURIComponent(datasetId)}`
-    return [{
-      reference: { kind: 'dataset', id: `${semanticModelId}/${datasetId}` },
-      name: dataset?.title ?? datasetId,
-      description: dataset?.description,
-      hierarchy: [projectId, semanticModelId], href, locations: [], context: ['active_project_generation'],
-    }]
   }
 
   private handleAgentNew = () => {

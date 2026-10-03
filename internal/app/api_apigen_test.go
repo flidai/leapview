@@ -27,7 +27,7 @@ import (
 
 // Current main's generated surface plus target-policy and development-profile
 // operations.
-const expectedAPIGenAggregateOperationCount = 199
+const expectedAPIGenAggregateOperationCount = 201
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -270,7 +270,7 @@ func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 
 func TestAPIGenAnalyticsCapabilityOwnsItsOperationSurface(t *testing.T) {
 	analyticsContracts := analyticsgen.GetAPIGenOperationContracts()
-	if got, want := len(analyticsContracts), 19; got != want {
+	if got, want := len(analyticsContracts), 21; got != want {
 		t.Fatalf("Analytics generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range analyticsContracts {
@@ -992,6 +992,8 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"disablePrincipal":                 true,
 		"enablePrincipal":                  true,
 		"executeDashboardAuthoringCommand": true,
+		"exportSavedExploration":           true,
+		"exportSavedExplorationURL":        true,
 		"forkDashboardAuthoringDraft":      true,
 		"getAgentConfig":                   true,
 		"getAgentConversation":             true,

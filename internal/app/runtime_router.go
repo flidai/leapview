@@ -1122,6 +1122,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	routes.accessModule = savedWiring.accessModule
 	runtime.savedExplorationService = savedWiring.savedExplorationService
+	if routes.projectBrowser != nil && runtime.savedExplorationService != nil && runtime.analyticsModule != nil {
+		routes.projectBrowser.ExplorationExportAuditRecorder = runtime.analyticsModule.QueryAuditRecorder()
+		routes.projectBrowser.ExplorationExportEncoder = analyticsmodule.EncodeExplorationExport
+	}
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
@@ -1139,6 +1143,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		DevelopmentProfiles: developmentProfileAPI,
 		SavedExplorations:   savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth),
+	}
+	if runtime.analyticsModule != nil {
+		analyticsAPI.SavedExplorations.ExportAuditRecorder = runtime.analyticsModule.QueryAuditRecorder()
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {

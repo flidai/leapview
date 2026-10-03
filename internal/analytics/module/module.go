@@ -25,6 +25,7 @@ type CredentialMode string
 // reads and writes. The alias keeps application composition on the module
 // surface while preserving the capability-owned contract.
 type QueryAuditStore = queryaudit.Store
+type QueryAuditRecorder = queryaudit.Recorder
 
 const (
 	CredentialModeNonSecret              CredentialMode = "non_secret"

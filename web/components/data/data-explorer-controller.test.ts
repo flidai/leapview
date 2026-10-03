@@ -3,6 +3,7 @@ import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
+  dataExplorerAgentSuggestions,
   prepareExplorationRun,
   prepareExplorationStop,
   readDataExplorerAgentState,
@@ -10,7 +11,20 @@ import {
 } from './data-explorer-controller'
 import { DataExplorerClientState } from './data-explorer-client'
 import { emptyExplorationSpec } from './data-explorer-spec'
-import type { DataExploreCommand, DataExplorerCommand } from '../../generated/signals'
+import type { DataExploreCommand, DataExplorerCommand, DataExplorerSignal } from '../../generated/signals'
+
+test('agent suggestions retain the active dataset identity and require project context', () => {
+  const explorer = { explore: { datasets: [{ id: 'orders', title: 'Orders', description: 'Order facts' }] } } as DataExplorerSignal
+  const command = { semanticModelId: 'sales', datasetId: 'orders' } as DataExploreCommand
+  const context = { projectId: 'project-1', generationId: 'generation-1' } as NonNullable<Parameters<typeof dataExplorerAgentSuggestions>[2]>
+  expect(dataExplorerAgentSuggestions(explorer, command)).toEqual([])
+  expect(dataExplorerAgentSuggestions(explorer, command, context)).toMatchObject([{
+    reference: { kind: 'dataset', id: 'sales/orders' },
+    name: 'Orders',
+    description: 'Order facts',
+    hierarchy: ['project-1', 'sales'],
+  }])
+})
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
