@@ -135,7 +135,7 @@ export class PlaygroundCharts extends LitElement {
     const hasTooltip = spec.kind === 'cartesian' || spec.kind === 'point' || spec.kind === 'proportional'
     const adapter = fixture.envelope.rendererID
     return html`
-      <div class="controls" aria-label="Chart fixture controls">
+      <div data-fixture-controls class="controls" aria-label="Chart fixture controls">
         ${this.select('scenario', 'Data fixture', [['standard', 'Standard'], ['dense', 'Dense data'], ['long-labels', 'Long labels'], ['missing', 'Missing values'], ['single', 'Single datum'], ['zero', 'Zero values'], ['negative', 'Mixed signs'], ['precision', 'High precision']])}
         ${this.select('status', 'State', [['ready', 'Ready'], ['loading', 'Loading'], ['empty', 'Empty'], ['error', 'Error']])}
         ${spec.kind === 'geographic' ? this.select('mapLayer', 'Map layer', [['point', 'Points'], ['heat', 'Weighted heatmap'], ['density', 'Point density'], ['choropleth', 'Choropleth'], ['path', 'Route lines'], ['reference', 'Reference boundaries']]) : nothing}

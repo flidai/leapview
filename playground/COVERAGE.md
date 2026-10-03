@@ -21,7 +21,9 @@ invented for controls that have no such interface.
 
 Sharing/reload preserve exposed fixture controls. Code snippets export public inputs.
 The collapsed review panel provides a pinned interactive comparison, an opt-in
-axe scan and a manual review checklist; it does not generate screenshot baselines.
+axe scan, an inventory of selectable fixtures and states, and a manual review checklist.
+The optional [browser review workflow](browser-review/README.md) compares screenshot
+baselines and scans the catalog; automated checks still require manual review.
 
 ## Deliberate exclusions
 
@@ -90,6 +92,5 @@ workflows remain outside the standalone fixture contract.
 Lit development-mode/update warnings and headless WebGL performance messages
 remain in diagnostic logs; they are not a production performance qualification.
 
-Before merging, run the checks in README.md and update existing expectations for
-the corrected bar highlight mapping, native popover action menu, and map range
-expressions. These test-case updates remain deferred at the task owner's request.
+The existing expectations for bar highlighting, native popover actions and map
+ranges were subsequently updated in this PR. Run the checks in README.md before merging.

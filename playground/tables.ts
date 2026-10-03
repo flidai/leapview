@@ -201,7 +201,7 @@ export class PlaygroundTables extends LitElement {
     const doc = docs[this.example]
     const windowed = ['windowed', 'data-preview', 'data-explore'].includes(this.example)
     const states: TableState[] = this.example === 'windowed' || this.example === 'data-preview' ? ['populated', 'empty', 'loading', 'error'] : this.example === 'data-explore' ? ['populated', 'empty', 'error'] : ['populated', 'empty']
-    return html`<div class="controls">
+    return html`<div data-fixture-controls class="controls">
       <label>State<select class="settings-input" aria-label="Table state" .value=${this.status} @change=${(event: Event) => { this.status = (event.target as HTMLSelectElement).value as TableState; this.reset() }}>${states.map((value) => html`<option value=${value}>${value[0].toUpperCase() + value.slice(1)}</option>`)}</select></label>
       ${this.example === 'record' ? html`<label>Variant<select class="settings-input" aria-label="Record table variant" .value=${this.variant} @change=${(event: Event) => { this.variant = (event.target as HTMLSelectElement).value }}>${['minimal', 'primary', 'compact'].map((value) => html`<option value=${value}>${value}</option>`)}</select></label>` : nothing}
       ${!this.example.startsWith('data-') ? this.checkbox('Compact', this.compact, (value) => { this.compact = value; this.records = { ...this.records, density: value ? 'tight' : 'normal' } }) : nothing}

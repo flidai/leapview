@@ -186,7 +186,7 @@ export class PlaygroundSurfaces extends LitElement {
     if (!docs) return html`<p>Choose a surface example.</p>`
     const variants = this.variants()
     return html`<div class="stack">
-      <div class="controls" aria-label="Surface fixture controls">
+      <div data-fixture-controls class="controls" aria-label="Surface fixture controls">
         ${variants.length ? html`<label>Variant<select class="settings-input" aria-label="Variant" .value=${this.variant} @change=${(event: Event) => { this.variant = (event.target as HTMLSelectElement).value; this.actionDone = false }}>${variants.map(([value, label]) => html`<option value=${value}>${label}</option>`)}</select></label>` : nothing}
         <label><input type="checkbox" .checked=${this.longText} @change=${(event: Event) => { this.longText = (event.target as HTMLInputElement).checked }}>Long content</label>
         ${['drawer', 'settings', 'page-header', 'entity-detail'].includes(this.example) ? html`<label><input type="checkbox" .checked=${this.disabled} @change=${(event: Event) => { this.disabled = (event.target as HTMLInputElement).checked }}>Disable fixture actions</label>` : nothing}

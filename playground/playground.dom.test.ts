@@ -156,7 +156,26 @@ test('table sorting, selection and scroll windows work while expanded', async ()
   await table.locator('.table-scrollport').evaluate(element => { element.scrollTop = 17000 })
   await browserExpect.poll(async () => table.locator('.row[aria-selected]').count()).toBeGreaterThan(0)
   await browserExpect.poll(async () => page.locator('lv-visualization-host').evaluate((element: any) => Math.max(...Object.values(element.envelope.dataState.blocks).map((block: any) => block.start)))).toBeGreaterThan(400)
-  await table.locator('.row[aria-selected]').first().click()
+  // Mounted rows include overscan behind the sticky header; choose a real visible cell.
+  const visibleCellHandle = await table.evaluateHandle(element => {
+    const root = element.shadowRoot!
+    const viewport = root.querySelector('.table-scrollport')!.getBoundingClientRect()
+    const bodyTop = Math.max(viewport.top, ...Array.from(root.querySelectorAll('.head, .group-head'), header => header.getBoundingClientRect().bottom))
+    return Array.from(root.querySelectorAll<HTMLButtonElement>('.row[aria-selected] .cell-action')).find(button => {
+      const bounds = button.getBoundingClientRect()
+      const x = bounds.left + bounds.width / 2
+      const y = bounds.top + bounds.height / 2
+      const hit = root.elementFromPoint(x, y)
+      return bounds.width > 0 && bounds.height > 0
+        && bounds.top >= Math.max(bodyTop, 0) && bounds.bottom <= Math.min(viewport.bottom, innerHeight)
+        && bounds.left >= Math.max(viewport.left, 0) && bounds.right <= Math.min(viewport.right, innerWidth)
+        && hit !== null && button.contains(hit)
+    }) ?? null
+  })
+  const visibleCell = visibleCellHandle.asElement()
+  if (!visibleCell) throw new Error('No unobscured table cell is visible after scrolling')
+  await visibleCell.click()
+  await visibleCellHandle.dispose()
   await browserExpect.poll(async () => page.locator('lv-visualization-host').evaluate((element: any) => element.envelope.selection.length)).toBeGreaterThan(0)
   await page.keyboard.press('Escape')
   await browserExpect(page.getByRole('dialog')).toBeHidden()
@@ -376,3 +395,148 @@ for (const type of ['bar', 'table']) {
     await browserExpect(page.getByRole('button', { name: 'Preview', exact: true })).toBeVisible()
   })
 }
+
+test('favorites support keyboard toggling, persisted shortcuts and search isolation', async () => {
+  await open('controls/select')
+  const favorite = page.getByRole('button', { name: 'Favorite Select menu', exact: true })
+  await favorite.focus()
+  await page.keyboard.press('Space')
+  await browserExpect(favorite).toHaveAttribute('aria-pressed', 'true')
+  const shortcuts = page.getByRole('navigation', { name: 'Example shortcuts', exact: true })
+  await browserExpect(shortcuts.getByRole('link', { name: 'Select menu', exact: true })).toHaveAttribute('aria-current', 'page')
+
+  const catalog = page.getByRole('navigation', { name: 'Examples', exact: true })
+  await catalog.getByRole('link', { name: 'Date picker', exact: true }).click()
+  const shortcut = shortcuts.getByRole('link', { name: 'Select menu', exact: true })
+  await shortcut.focus()
+  await page.keyboard.press('Enter')
+  await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText('Select menu')
+  await page.reload()
+  await browserExpect(favorite).toHaveAttribute('aria-pressed', 'true')
+  await browserExpect(shortcuts.getByRole('region', { name: 'Recent', exact: true }).getByRole('link')).toHaveText(['Date picker'])
+
+  await page.getByLabel('Find an example', { exact: true }).fill('select menu')
+  await browserExpect(shortcuts).toBeHidden()
+  await browserExpect(catalog.getByRole('link', { name: 'Select menu', exact: true })).toBeVisible()
+  await page.getByLabel('Find an example', { exact: true }).fill('')
+  await favorite.focus()
+  await page.keyboard.press('Enter')
+  await browserExpect(favorite).toHaveAttribute('aria-pressed', 'false')
+  await browserExpect(shortcuts.getByRole('region', { name: 'Favorites', exact: true })).toHaveCount(0)
+  await page.reload()
+  await browserExpect(favorite).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('recent shortcuts keep five distinct previous examples and omit favorites and the current route', async () => {
+  await open('controls/buttons')
+  await page.getByRole('button', { name: 'Favorite Buttons', exact: true }).click()
+  const catalog = page.getByRole('navigation', { name: 'Examples', exact: true })
+  for (const label of ['Form fields', 'Select menu', 'Entity multiselect', 'Date picker', 'Filter menu', 'Toasts', 'Loading']) {
+    await catalog.getByRole('link', { name: label, exact: true }).click()
+    await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText(label)
+  }
+  const recent = page.getByRole('navigation', { name: 'Example shortcuts', exact: true }).getByRole('region', { name: 'Recent', exact: true })
+  await browserExpect(recent.getByRole('link')).toHaveText(['Toasts', 'Filter menu', 'Date picker', 'Entity multiselect', 'Select menu'])
+  await recent.getByRole('link', { name: 'Date picker', exact: true }).click()
+  await browserExpect(recent.getByRole('link')).toHaveText(['Loading', 'Toasts', 'Filter menu', 'Entity multiselect', 'Select menu'])
+  await browserExpect(recent.getByRole('link', { name: 'Buttons', exact: true })).toHaveCount(0)
+  await browserExpect(recent.getByRole('link', { name: 'Date picker', exact: true })).toHaveCount(0)
+  await page.reload()
+  await browserExpect(recent.getByRole('link')).toHaveText(['Loading', 'Toasts', 'Filter menu', 'Entity multiselect', 'Select menu'])
+})
+
+test('pinned embedded previews never change favorites or recent navigation', async () => {
+  await open('controls/select')
+  await page.getByRole('button', { name: 'Favorite Select menu', exact: true }).click()
+  await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('link', { name: 'Buttons', exact: true }).click()
+  const before = await page.evaluate(() => localStorage.getItem('leapview-playground:navigation:v1'))
+  const review = page.locator('playground-review-tools')
+  await review.locator('summary').first().click()
+  await review.getByRole('button', { name: 'Pin comparison', exact: true }).click()
+  const embedded = page.frameLocator('iframe[title="Pinned example comparison"]')
+  await browserExpect(embedded.locator('playground-app')).toHaveAttribute('embedded', '')
+  await browserExpect(embedded.getByRole('button', { name: /^Favorite / })).toHaveCount(0)
+  await embedded.locator('playground-app').evaluate(() => { location.hash = 'controls/date-picker' })
+  await browserExpect(embedded.locator('lv-date-picker')).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('leapview-playground:navigation:v1'))).toBe(before)
+  await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText('Buttons')
+})
+
+test('invalid saved shortcuts cannot introduce unknown routes or duplicate links', async () => {
+  await open('controls/buttons')
+  await page.evaluate(() => localStorage.setItem('leapview-playground:navigation:v1', JSON.stringify({
+    version: 1,
+    favorites: ['controls/select', 'https://example.invalid/', 'controls/select', 42, 'missing/example'],
+    recent: ['controls/select', 'controls/fields', 'controls/fields', 'missing/example'],
+    lastVisited: 'controls/buttons',
+  })))
+  await page.reload()
+  const shortcuts = page.getByRole('navigation', { name: 'Example shortcuts', exact: true })
+  await browserExpect(shortcuts.getByRole('region', { name: 'Favorites', exact: true }).getByRole('link')).toHaveText(['Select menu'])
+  await browserExpect(shortcuts.getByRole('region', { name: 'Recent', exact: true }).getByRole('link')).toHaveText(['Form fields'])
+  expect(await shortcuts.getByRole('link').evaluateAll(links => links.map(link => link.getAttribute('href')))).toEqual(['#controls/select', '#controls/fields'])
+
+  await page.evaluate(() => localStorage.setItem('leapview-playground:navigation:v1', '{broken json'))
+  await page.reload()
+  await browserExpect(shortcuts).toHaveCount(0)
+  await page.getByRole('button', { name: 'Favorite Buttons', exact: true }).click()
+  await browserExpect(shortcuts.getByRole('link', { name: 'Buttons', exact: true })).toBeVisible()
+})
+
+test('shortcuts remain usable in memory when browser storage denies reads and writes', async () => {
+  await page.addInitScript(() => {
+    const read = Storage.prototype.getItem
+    const write = Storage.prototype.setItem
+    Storage.prototype.getItem = function(this: Storage, key: string) {
+      if (key === 'leapview-playground:navigation:v1') throw new DOMException('Storage unavailable', 'SecurityError')
+      return read.call(this, key)
+    }
+    Storage.prototype.setItem = function(this: Storage, key: string, value: string) {
+      if (key === 'leapview-playground:navigation:v1') throw new DOMException('Storage unavailable', 'SecurityError')
+      return write.call(this, key, value)
+    }
+  })
+  await open('controls/buttons')
+  await page.getByRole('button', { name: 'Favorite Buttons', exact: true }).click()
+  const catalog = page.getByRole('navigation', { name: 'Examples', exact: true })
+  await catalog.getByRole('link', { name: 'Form fields', exact: true }).click()
+  await catalog.getByRole('link', { name: 'Select menu', exact: true }).click()
+  const shortcuts = page.getByRole('navigation', { name: 'Example shortcuts', exact: true })
+  await browserExpect(shortcuts.getByRole('region', { name: 'Favorites', exact: true }).getByRole('link')).toHaveText(['Buttons'])
+  await browserExpect(shortcuts.getByRole('region', { name: 'Recent', exact: true }).getByRole('link')).toHaveText(['Form fields'])
+  await shortcuts.getByRole('link', { name: 'Buttons', exact: true }).click()
+  await browserExpect(page.getByRole('button', { name: 'Favorite Buttons', exact: true })).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('fixture summary follows chart options and route changes without including demo form controls', async () => {
+  await open('charts/combo')
+  const review = page.locator('playground-review-tools')
+  await review.locator('summary').first().click()
+  const coverage = review.locator('details.coverage')
+  await coverage.locator(':scope > summary').click()
+  await browserExpect(coverage).toContainText('Available options for this configuration, not test results.')
+  const stateRow = coverage.locator('dl > div').filter({ has: page.locator('dt').filter({ hasText: /^State$/ }) })
+  await browserExpect(stateRow.locator('dd')).toHaveText('Ready · Loading · Empty · Error')
+  await browserExpect(coverage.locator('dt').filter({ hasText: /^Show axes$/ })).toHaveCount(1)
+  await browserExpect(coverage.locator('dl')).not.toContainText('?lit')
+  await browserExpect(coverage.locator('dt').filter({ hasText: /^Smooth lines$/ })).toHaveCount(1)
+
+  await page.locator('.display-options > summary').click()
+  await page.getByLabel('Multiple series', { exact: true }).uncheck()
+  await coverage.getByRole('button', { name: 'Refresh fixture summary', exact: true }).click()
+  await browserExpect(coverage.locator('dt').filter({ hasText: /^Smooth lines$/ })).toHaveCount(0)
+  await page.getByLabel('State', { exact: true }).selectOption('error')
+  await browserExpect(page.locator('lv-visualization-host').getByRole('alert')).toContainText('Example error')
+  await coverage.getByRole('button', { name: 'Refresh fixture summary', exact: true }).click()
+  await browserExpect(stateRow.locator('dd')).toHaveText('Ready · Loading · Empty · Error')
+
+  await page.evaluate(() => { location.hash = 'charts/kpi' })
+  await browserExpect(coverage.locator('dt').filter({ hasText: /^KPI mode$/ })).toHaveCount(1)
+  await browserExpect(coverage.locator('dt').filter({ hasText: /^Multiple series$/ })).toHaveCount(0)
+  await browserExpect(coverage).toContainText('Compact · Bullet · Progress')
+  await page.evaluate(() => { location.hash = 'controls/fields' })
+  await browserExpect(page.locator('playground-controls .preview select')).toBeVisible()
+  await browserExpect(coverage.locator('dt')).toHaveText(['Disabled', 'Error'])
+  await browserExpect(coverage).not.toContainText('Refresh schedule')
+  await browserExpect(coverage).not.toContainText('Daily')
+})

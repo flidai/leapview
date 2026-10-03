@@ -2,7 +2,8 @@ import { LitElement, css, html, nothing } from 'lit'
 import { keyed } from 'lit/directives/keyed.js'
 import { property, state } from 'lit/decorators.js'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
-import type { ExampleSnapshot } from './example-state'
+import type { ExampleSnapshot, StatefulExample } from './example-state'
+import { fixtureCoverage, type FixtureControl } from './fixture-coverage'
 
 export function snapshotURL(snapshot: ExampleSnapshot): URL {
   const url = new URL(location.href)
@@ -19,6 +20,7 @@ export async function copyText(value: string): Promise<boolean> {
 class PlaygroundReviewTools extends LitElement {
   @property({ attribute: false }) getSnapshot?: () => ExampleSnapshot
   @property({ attribute: false }) getCode?: () => string
+  @property({ attribute: false }) getExample?: () => StatefulExample | null
   @property() route = ''
   @state() private code = ''
   @state() private message = ''
@@ -29,9 +31,21 @@ class PlaygroundReviewTools extends LitElement {
   @state() private findings: Array<{ id: string; help: string; helpUrl: string; nodes: number; targets: string[] }> = []
   @state() private scanSummary = ''
   @state() private scannedRoute = ''
+  @state() private coverage: FixtureControl[] = []
 
   protected willUpdate(changed: Map<PropertyKey, unknown>) {
-    if (changed.has('route')) { this.code = ''; this.message = '' }
+    if (changed.has('route')) { this.code = ''; this.message = ''; this.coverage = [] }
+  }
+
+  protected updated(changed: Map<PropertyKey, unknown>) {
+    if (changed.has('route') && this.renderRoot.querySelector<HTMLDetailsElement>('.coverage')?.open) void this.refreshCoverage()
+  }
+
+  private refreshCoverage = async () => {
+    const route = this.route
+    const example = this.getExample?.()
+    await example?.updateComplete
+    if (route === this.route) this.coverage = fixtureCoverage(example?.shadowRoot)
   }
 
   static styles = [settingsLayoutStyles, css`
@@ -52,6 +66,9 @@ class PlaygroundReviewTools extends LitElement {
     label { display: flex; gap: var(--base-size-8); align-items: start; }
     input { accent-color: var(--lv-bg-accent); }
     ul { margin: 0; padding-left: var(--base-size-20); }
+    dl { margin: 0; display: grid; gap: var(--base-size-12); }
+    dt { font-weight: var(--base-text-weight-semibold); }
+    dd { margin: var(--base-size-4) 0 0; color: var(--lv-fg-muted); overflow-wrap: anywhere; }
   `]
 
   private showCode = async () => {
@@ -100,6 +117,13 @@ class PlaygroundReviewTools extends LitElement {
         <button class="settings-button" ?disabled=${this.scanning} @click=${this.scan}>${this.scanning ? 'Inspecting…' : 'Check accessibility'}</button>
       </div>
       <p class="note">Compare a fixed fixture with changes above. Accessibility checks cover the rendered preview; keyboard, canvas charts, and screen-reader behavior still need manual review.</p>
+      <details class="coverage" @toggle=${(event: Event) => { if ((event.target as HTMLDetailsElement).open) void this.refreshCoverage() }}>
+        <summary>Fixtures & states</summary><div class="body">
+          <p class="note">Available options for this configuration, not test results. Refresh after changing options.</p>
+          ${this.coverage.length ? html`<dl>${this.coverage.map(control => html`<div><dt>${control.label}</dt><dd>${control.choices.join(' · ')}</dd></div>`)}</dl>` : html`<p class="note">This example has no selectable fixture variants. See Usage & events for its interactions and limitations.</p>`}
+          <div><button class="settings-button" @click=${this.refreshCoverage}>Refresh fixture summary</button></div>
+        </div>
+      </details>
       ${chart ? html`<a href=${`https://github.com/flidai/leapview/blob/main/docs/visuals/${encodeURIComponent(chart)}.md`}>Authored ${chart} YAML examples</a>` : nothing}
       ${this.message ? html`<span role="status">${this.message}</span>` : nothing}
       ${this.code ? html`<pre tabindex="0" aria-label="Current component code">${this.code}</pre>` : nothing}

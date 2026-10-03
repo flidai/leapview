@@ -125,7 +125,7 @@ export class PlaygroundOverlayRecipe extends LitElement {
   }
 
   render() {
-    return html`<div class="controls" aria-label="Overlay recipe controls">
+    return html`<div data-fixture-controls class="controls" aria-label="Overlay recipe controls">
       <label><input type="checkbox" .checked=${this.wide} @change=${(event: Event) => { this.wide = (event.target as HTMLInputElement).checked }}>Wide drawer</label>
       <label><input type="checkbox" .checked=${this.longContent} @change=${(event: Event) => { this.longContent = (event.target as HTMLInputElement).checked }}>Long content</label>
       <label><input type="checkbox" .checked=${this.disabled} @change=${(event: Event) => { this.disabled = (event.target as HTMLInputElement).checked }}>Read-only fields</label>

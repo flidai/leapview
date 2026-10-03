@@ -33,6 +33,7 @@ the normal generation or dependency-install command. Generated bundles stay unde
 - Expand a category to see its examples and count. The current category opens
   automatically; searching opens matching categories and hides empty ones. On small
   screens, use **Browse** to open navigation; selecting an example closes it.
+- Star an example beside its title to keep it in **Favorites**. **Recent** keeps the last five visited examples; both lists stay in this browser and pinned comparisons do not change them.
 - Use the sun/moon button to switch between light and dark mode. The choice
   persists through the production theme setting; existing theme-specific preview
   links still work. Change preview width and height to inspect responsiveness.
@@ -62,6 +63,7 @@ the normal generation or dependency-install command. Generated bundles stay unde
   tab. Change the live example above to compare options/themes; Replace comparison
   refreshes the reference. Its captured theme does not change the saved preference.
   This is an interactive visual reference, not a pixel-diff baseline system.
+- **Fixtures & states**, inside Code & review, lists the options exposed by the current fixture controls. Refresh it after changing conditional options. These are available variants, not a claim that every permutation has passed tests.
 - **Check accessibility** loads the existing axe-core dependency on demand and
   reports findings for the current rendered preview. It never runs automatically.
   Results are a point-in-time aid, not proof of accessibility; use the manual
@@ -84,7 +86,7 @@ with a stable ID and render the production component with its public properties.
 Do not copy its markup/styles into the playground or introduce a parallel library.
 Use `exampleDetails` and `exampleChromeStyles` from `example-chrome.ts` to keep
 usage information and event logs in the shared disclosure below each preview.
-Keep fixture controls and meaningful selection feedback visible.
+Keep fixture controls and meaningful selection feedback visible. Mark the fixture control container with `data-fixture-controls` so the review panel can discover its labeled selects and checkboxes without duplicating option lists.
 Expose `getExampleState()` and `restoreExampleState()` on the playground renderer
 for sharing/reload. Whitelist bounded controls and reconstruct fixtures; never
 restore arbitrary envelopes or production private state from URLs. Await the
@@ -165,3 +167,9 @@ event documentation, the official [ECharts event/action contract](https://echart
 [ECharts ARIA guidance](https://echarts.apache.org/handbook/en/best-practices/aria/),
 [Bun filesystem watching](https://bun.sh/guides/read-file/watch), and
 [axe API](https://www.deque.com/axe/core-documentation/api-documentation/).
+
+## Optional visual and accessibility review
+
+See [browser-review/README.md](browser-review/README.md) for screenshot comparison
+and the catalog accessibility sweep using the existing Playwright dependencies.
+These commands are opt-in and do not change repository CI or security policy.

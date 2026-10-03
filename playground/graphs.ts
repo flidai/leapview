@@ -109,7 +109,7 @@ export class PlaygroundGraphs extends LitElement {
       : [['sales', 'Sales relationships'], ['composite', 'Composite key · one to one'], ['disconnected', 'Disconnected dataset'], ['empty', 'Empty graph']]
     const fixture = isLineage ? this.lineage : this.semantic
     return html`
-      <div class="controls">
+      <div data-fixture-controls class="controls">
         <label>Scenario<select class="settings-input" aria-label="Graph scenario" .value=${this.scenario} @change=${this.changeScenario}>${variants.map(([value, label]) => html`<option value=${value}>${label}</option>`)}</select></label>
         ${isLineage ? html`<label>Scope<select class="settings-input" aria-label="Graph scope" .value=${this.scope} @change=${(event: Event) => { this.scope = (event.target as HTMLSelectElement).value as 'focused' | 'full' }}><option value="focused">Focused path</option><option value="full">Full graph</option></select></label>` : nothing}
         ${isLineage && this.scenario === 'run' ? html`<label class="check"><input type="checkbox" .checked=${this.animateRun} @change=${(event: Event) => { this.animateRun = (event.target as HTMLInputElement).checked; this.lineage = lineageFixture('run', this.animateRun) }}>Animate running node</label>` : nothing}

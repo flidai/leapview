@@ -206,7 +206,7 @@ export class PlaygroundContent extends LitElement {
 
   private renderControls() {
     const code = this.example === 'code-editor' || this.example === 'code-block'
-    return html`<div class="controls" aria-label="Content fixture controls">
+    return html`<div data-fixture-controls class="controls" aria-label="Content fixture controls">
       ${code || this.example === 'config-viewer' ? this.select('Language', this.language,
         this.example === 'code-editor' ? ['sql', 'yaml', 'json', 'markdown', 'text'] : this.example === 'code-block' ? ['sql', 'yaml', 'json', 'shell', 'toon', 'text'] : ['yaml', 'json'],
         (value) => { this.language = value; this.source = codeFixtures[value]! }) : nothing}

@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
-import { ChevronDown, Maximize2, Minimize2, Moon, PanelLeft, Sun } from 'lucide'
+import { ChevronDown, Maximize2, Minimize2, Moon, PanelLeft, Star, Sun } from 'lucide'
 import { lucideIcon } from '../web/components/shared/lucide-icons'
 import '../web/components/shared/brand-mark'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
@@ -19,6 +19,7 @@ import './reload-client'
 import { decodeSnapshot, snapshotKey, type ExampleSnapshot, type StatefulExample } from './example-state'
 import { copyText, snapshotURL } from './review-tools'
 import './review-tools'
+import { emptyNavigation, navigationShortcuts, navigationShortcutStyles, readNavigation, toggleFavorite, visitExample, writeNavigation } from './navigation-shortcuts'
 
 const parameters = new URLSearchParams(location.search)
 const embedded = parameters.get('embedded') === '1'
@@ -60,12 +61,15 @@ const groups = [
     { id: 'overlay-form', label: 'Drawer form' },
   ] },
 ]
+const shortcutExamples = new Map(groups.flatMap(group => group.examples.map(example => [`${group.id}/${example.id}`, { label: example.label, groupLabel: group.label }] as const)))
 
 class PlaygroundApp extends LitElement {
   @state() private route = location.hash.slice(1) || 'charts/bar'
   @state() private search = ''
   @state() private navigationOpen = false
   @state() private expandedGroups = new Set([this.route.split('/')[0]])
+  @state() private navigationPreferences = emptyNavigation()
+  private navigationLoaded = false
   @state() private width = initialSnapshot?.width || (['360', '768', '1200'].includes(parameters.get('width') || '') ? parameters.get('width')! : 'responsive')
   @state() private height = initialSnapshot?.height || (['260', '420', '640'].includes(parameters.get('height') || '') ? parameters.get('height')! : '420')
   @state() private dark = document.documentElement.style.colorScheme === 'dark'
@@ -126,6 +130,7 @@ class PlaygroundApp extends LitElement {
     const fromMobileNavigation = this.navigationOpen
     this.navigationOpen = false
     this.route = location.hash.slice(1) || 'charts/bar'
+    this.rememberExample()
     this.shareMessage = ''; this.shareFallback = ''
     const incoming = decodeSnapshot(new URLSearchParams(location.search).get('state'))
     this.expandedGroups = new Set([this.route.split('/')[0]])
@@ -143,6 +148,11 @@ class PlaygroundApp extends LitElement {
   connectedCallback() {
     super.connectedCallback()
     this.toggleAttribute('embedded', embedded)
+    if (!embedded && !this.navigationLoaded) {
+      this.navigationLoaded = true
+      this.navigationPreferences = readNavigation(shortcutExamples)
+      this.rememberExample()
+    }
     document.addEventListener('leapview-theme-applied', this.themeApplied)
     window.addEventListener('hashchange', this.navigate)
     window.addEventListener('keydown', this.exitPreview)
@@ -215,7 +225,7 @@ class PlaygroundApp extends LitElement {
       .toolbar { width: 100%; }
       .toolbar .settings-input { max-width: 8rem; }
     }
-  `]
+  `, navigationShortcutStyles]
 
   render() {
     const [groupID, exampleID] = this.route.split('/')
@@ -247,6 +257,7 @@ class PlaygroundApp extends LitElement {
       <button type="button" class="settings-button exit-preview" ?hidden=${!this.previewOnly || embedded} @click=${this.leavePreview} title="Exit preview (Escape)">${lucideIcon(Minimize2, { size: 16 })} Exit preview</button>
       <div class=${this.previewOnly ? 'workspace solo' : 'workspace'}>
         <aside id="example-navigation" ?data-open=${this.navigationOpen} ?hidden=${this.previewOnly}><input aria-label="Find an example" placeholder="Search examples…" class="settings-input search" type="search" .value=${this.search} @input=${this.changeSearch}>
+          ${!embedded && !this.search.trim() ? navigationShortcuts(this.navigationPreferences, this.route, shortcutExamples, route => { if (route === this.route) void this.navigate() }) : nothing}
           <nav aria-label="Examples">${visibleGroups.map(item => html`<section>
             <button type="button" class="group-button" aria-expanded=${String(this.expandedGroups.has(item.id))} aria-controls=${`examples-${item.id}`} @click=${() => this.toggleGroup(item.id)}>
               <span class="chevron" aria-hidden="true">${lucideIcon(ChevronDown, { size: 16 })}</span><span class="group-label">${item.label}</span><span class="count" aria-hidden="true">${item.examples.length}</span>
@@ -257,7 +268,7 @@ class PlaygroundApp extends LitElement {
         </aside>
         <main id="main" tabindex="-1" aria-label=${example?.label || 'Preview'}>
           <div class="example-header" ?hidden=${this.previewOnly}>
-            <div class="heading"><p class="eyebrow">${group?.label || 'Playground'}</p><h1>${example?.label || 'Example not found'}</h1></div>
+            <div class="heading"><p class="eyebrow">${group?.label || 'Playground'}</p><div class="title-line"><h1>${example?.label || 'Example not found'}</h1>${example && !embedded ? html`<button type="button" class="settings-button favorite-toggle" aria-label=${`Favorite ${example.label}`} aria-pressed=${String(this.navigationPreferences.favorites.includes(this.route))} title=${this.navigationPreferences.favorites.includes(this.route) ? 'Remove from favorites' : 'Add to favorites'} @click=${this.favoriteExample}>${lucideIcon(Star, { size: 16 })}</button>` : nothing}</div></div>
             <div class="toolbar">
               <label>Width<select aria-label="Preview width" class="settings-input" .value=${this.width} @change=${(event: Event) => { this.width = (event.target as HTMLSelectElement).value }}>
                 <option value="responsive">Responsive</option><option value="360">360 px</option><option value="768">768 px</option><option value="1200">1200 px</option>
@@ -272,7 +283,7 @@ class PlaygroundApp extends LitElement {
           <span class="share-message" role="status" ?hidden=${this.previewOnly}>${this.shareMessage}</span>
           ${this.shareFallback && !this.previewOnly ? html`<input class="settings-input share-fallback" readonly aria-label="Example link" .value=${this.shareFallback} @focus=${(event: Event) => (event.target as HTMLInputElement).select()}>` : nothing}
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
-          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .getSnapshot=${this.snapshot} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
+          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
         </main>
       </div>`
   }
@@ -281,6 +292,20 @@ class PlaygroundApp extends LitElement {
     this.previewOnly = true
     await this.updateComplete
     this.renderRoot.querySelector<HTMLElement>('.exit-preview')?.focus()
+  }
+
+  private rememberExample(): void {
+    if (embedded) return
+    const next = visitExample(this.navigationPreferences, this.route, shortcutExamples)
+    if (next === this.navigationPreferences) return
+    this.navigationPreferences = next
+    writeNavigation(next)
+  }
+
+  private favoriteExample = (): void => {
+    if (embedded) return
+    this.navigationPreferences = toggleFavorite(this.navigationPreferences, this.route, shortcutExamples)
+    writeNavigation(this.navigationPreferences)
   }
 
   private async leavePreview() {

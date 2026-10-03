@@ -200,7 +200,7 @@ export class PlaygroundControls extends LitElement {
 
   private renderStates() {
     if (this.example === 'loading') return nothing
-    return html`<div class="state-panel" aria-label="Example states">
+    return html`<div data-fixture-controls class="state-panel" aria-label="Example states">
       ${['buttons', 'fields', 'select', 'multiselect', 'date-picker'].includes(this.example) ? this.stateControl('Disabled', this.disabled, (value) => { this.disabled = value }) : nothing}
       ${['fields', 'date-picker', 'filter-menu'].includes(this.example) ? this.stateControl('Error', this.invalid, (value) => { this.invalid = value }) : nothing}
       ${['select', 'multiselect', 'filter-menu'].includes(this.example) ? this.stateControl('Empty options', this.empty, (value) => { this.empty = value }) : nothing}
