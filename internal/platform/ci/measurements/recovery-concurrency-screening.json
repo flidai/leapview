@@ -1,0 +1,226 @@
+{
+  "serial": {
+    "successMedianExecutionSeconds": 4002.0,
+    "successMedianRunnerSeconds": 4002.0,
+    "allScenarioRunnerSeconds": 12847.0,
+    "allScenarioMedianRunnerSeconds": 3760.0
+  },
+  "parallel": {
+    "successMedianExecutionSeconds": 2657.0,
+    "successMedianRunnerSeconds": 3897.0,
+    "allScenarioRunnerSeconds": 15557.0,
+    "allScenarioMedianRunnerSeconds": 4002.0
+  },
+  "successExecutionImprovementPercent": 33.608195902048976,
+  "successRunnerImprovementPercent": 2.6236881559220437,
+  "allScenarioAggregateRunnerRegressionPercent": 21.0944189304896,
+  "allScenarioMedianRunnerRegressionPercent": 6.436170212765968,
+  "cacheKey": "go-validation-v2-full-validation-Linux-X64-auto-ubuntu24-1.26.8-c7bde1d59c081b48baa069fb11785dedbf7159eee76da8ec6effe9898f6d431c-601866f24787d6fcbcdedc58cd7589c17103536d5ba99e14eca4e702018446b4",
+  "decision": "reject; retain serial dependency: tested failed-provider work exceeds 5% runner regression allowance; no production failure-rate or p95 extrapolation",
+  "testMix": "three successes plus one deliberately failed provider; cancellation excluded from performance measurements",
+  "cancellationRunID": 37099434676,
+  "rows": [
+    {
+      "pair": 1,
+      "providerResult": "success",
+      "mode": "serial",
+      "runID": 37096892475,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 3518.0,
+      "runnerSeconds": 3518.0,
+      "activeJobSpanSeconds": 3520.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128543861,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "success",
+          "runnerSeconds": 1382.0
+        },
+        {
+          "id": 111132221479,
+          "name": "Recovery candidate full validation",
+          "conclusion": "success",
+          "runnerSeconds": 2136.0
+        }
+      ]
+    },
+    {
+      "pair": 1,
+      "providerResult": "success",
+      "mode": "parallel",
+      "runID": 37096894188,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 2821.0,
+      "runnerSeconds": 4114.0,
+      "activeJobSpanSeconds": 2821.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128549307,
+          "name": "Recovery candidate full validation",
+          "conclusion": "success",
+          "runnerSeconds": 2821.0
+        },
+        {
+          "id": 111128549435,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "success",
+          "runnerSeconds": 1293.0
+        }
+      ]
+    },
+    {
+      "pair": 2,
+      "providerResult": "success",
+      "mode": "serial",
+      "runID": 37096930227,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 4043.0,
+      "runnerSeconds": 4043.0,
+      "activeJobSpanSeconds": 4046.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128646402,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "success",
+          "runnerSeconds": 1261.0
+        },
+        {
+          "id": 111132008023,
+          "name": "Recovery candidate full validation",
+          "conclusion": "success",
+          "runnerSeconds": 2782.0
+        }
+      ]
+    },
+    {
+      "pair": 2,
+      "providerResult": "success",
+      "mode": "parallel",
+      "runID": 37096931701,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 2085.0,
+      "runnerSeconds": 3439.0,
+      "activeJobSpanSeconds": 2085.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128651305,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "success",
+          "runnerSeconds": 1354.0
+        },
+        {
+          "id": 111128651499,
+          "name": "Recovery candidate full validation",
+          "conclusion": "success",
+          "runnerSeconds": 2085.0
+        }
+      ]
+    },
+    {
+      "pair": 3,
+      "providerResult": "success",
+      "mode": "serial",
+      "runID": 37096933218,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 4002.0,
+      "runnerSeconds": 4002.0,
+      "activeJobSpanSeconds": 4005.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128657176,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "success",
+          "runnerSeconds": 1400.0
+        },
+        {
+          "id": 111132374010,
+          "name": "Recovery candidate full validation",
+          "conclusion": "success",
+          "runnerSeconds": 2602.0
+        }
+      ]
+    },
+    {
+      "pair": 3,
+      "providerResult": "success",
+      "mode": "parallel",
+      "runID": 37096934982,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 2657.0,
+      "runnerSeconds": 3897.0,
+      "activeJobSpanSeconds": 2658.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128662336,
+          "name": "Recovery candidate full validation",
+          "conclusion": "success",
+          "runnerSeconds": 2657.0
+        },
+        {
+          "id": 111128662430,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "success",
+          "runnerSeconds": 1240.0
+        }
+      ]
+    },
+    {
+      "pair": 4,
+      "providerResult": "injected-failure",
+      "mode": "serial",
+      "runID": 37096975249,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 1284.0,
+      "runnerSeconds": 1284.0,
+      "activeJobSpanSeconds": 1284.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128780927,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "failure",
+          "runnerSeconds": 1284.0
+        }
+      ]
+    },
+    {
+      "pair": 4,
+      "providerResult": "injected-failure",
+      "mode": "parallel",
+      "runID": 37096976987,
+      "attempt": 1,
+      "sourceRevision": "eeb6ed4cee77ccd030c918fd59d1cd717f0d9165",
+      "executionSecondsExcludingDependencyQueue": 2826.0,
+      "runnerSeconds": 4107.0,
+      "activeJobSpanSeconds": 2826.0,
+      "initialWorkflowQueueSeconds": 0.0,
+      "jobs": [
+        {
+          "id": 111128785820,
+          "name": "Recovery candidate full validation",
+          "conclusion": "success",
+          "runnerSeconds": 2826.0
+        },
+        {
+          "id": 111128785899,
+          "name": "PostgreSQL and MinIO evidence qualification",
+          "conclusion": "failure",
+          "runnerSeconds": 1281.0
+        }
+      ]
+    }
+  ]
+}
