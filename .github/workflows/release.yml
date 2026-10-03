@@ -5,12 +5,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Candidate image tag
-        required: true
-        default: candidate
-        type: string
 
 permissions:
   contents: read
@@ -218,9 +212,7 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=candidate-${{ github.run_id }}-${{ github.run_attempt }},enable=${{ github.event_name == 'push' }}
-            type=raw,value=${{ inputs.image_tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=sha,prefix=sha-
+            type=raw,value=candidate-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Download native image digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -899,9 +891,11 @@ jobs:
       - name: Publish qualified image tags
         env:
           RELEASE_VERSION: ${{ needs.image.outputs.version }}
+          REVISION: ${{ needs.image.outputs.revision }}
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
         run: |
-          tags=(--tag "${IMAGE_NAME}:${RELEASE_VERSION}")
+          short_revision="${REVISION:0:7}"
+          tags=(--tag "${IMAGE_NAME}:sha-${short_revision}" --tag "${IMAGE_NAME}:${RELEASE_VERSION}")
           case "$RELEASE_VERSION" in
             *-*) ;;
             *)
