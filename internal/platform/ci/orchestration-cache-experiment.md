@@ -19,6 +19,9 @@ Dispatch `operation=produce` on the default branch with no alternate source.
 The resolver requires checkout HEAD to equal the trusted event SHA before the
 producer can execute; the producer checks that identity again before publication.
 It realizes only the orchestration shell, then serializes its toolchain closure.
+The producer explicitly builds the shell output before inventory/export:
+`nix develop` alone realizes an environment derivation and can leave that output
+absent on a fresh store. This build is included in producer realization costs.
 Application sources, workspaces, runtime state, credentials and test evidence
 are excluded from the archive. Metrics live outside the cached directory.
 
@@ -72,3 +75,11 @@ and completed environment export. A changed input was rejected while normal
 locked realization succeeded. This verifies the mechanism locally; it excludes
 hosted transfer, cold import and producer amortization and establishes no speedup.
 Hosted paired measurements and an adoption/rejection decision remain pending.
+
+The first trusted hosted producer,
+[37103488392](https://github.com/flidai/leapview/actions/runs/37103488392), failed
+before publication because the shell output had not been realized. It is excluded
+from performance samples. The producer now explicitly realizes that root; the
+fresh-store regression test requires realization before inventory while a cold
+consumer still executes only the normal environment contract. The earlier local
+check used a warm store and therefore did not establish this producer condition.
