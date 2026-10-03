@@ -87,6 +87,10 @@ def main():
             metrics['cacheImportError'] = type(error).__name__
         metrics['importSeconds'] = time.monotonic() - start
     start = time.monotonic()
+    if args.operation == 'produce':
+        # Develop realizes an environment derivation, leaving the shell output
+        # absent on fresh stores. Inventory/export needs the actual shell root.
+        subprocess.run(['nix', 'build', '--no-update-lock-file', '--no-link', SHELL], check=True)
     subprocess.run(['nix', 'develop', '--no-update-lock-file', '.#orchestration', '-c',
                     'python3', 'scripts/export_nix_ci_environment.py', '--profile', 'orchestration'], check=True)
     metrics['realizationAndExportSeconds'] = time.monotonic() - start
