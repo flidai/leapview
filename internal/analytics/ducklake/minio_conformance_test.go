@@ -26,6 +26,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/deployment/gcstore"
+	"github.com/flidai/leapview/internal/platform/testminio"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
@@ -632,7 +633,7 @@ func minioSecretEndpoint(raw string) (string, bool, error) {
 }
 
 const (
-	conformanceMinIOImage  = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+	conformanceMinIOImage  = testminio.Image
 	conformanceMinIOUser   = "leapview"
 	conformanceMinIOSecret = "leapview-conformance-secret"
 )
@@ -642,7 +643,7 @@ func startConformanceMinIO(t *testing.T, ctx context.Context) string {
 	if os.Getenv("CI") == "" {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
-	container, err := tcminio.Run(ctx, conformanceMinIOImage,
+	container, err := testminio.Run(ctx,
 		tcminio.WithUsername(conformanceMinIOUser), tcminio.WithPassword(conformanceMinIOSecret),
 		testcontainers.WithLogger(log.TestLogger(t)))
 	testcontainers.CleanupContainer(t, container)

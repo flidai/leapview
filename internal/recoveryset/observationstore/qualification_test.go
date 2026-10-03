@@ -23,6 +23,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	manageds3 "github.com/flidai/leapview/internal/manageddata/storage/s3"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/flidai/leapview/internal/platform/testminio"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/recoveryset/observation"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
@@ -34,8 +35,6 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
-
-const qualificationMinIOImage = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 
 // This is an opt-in provider qualification, not a restore or startup test.
 // It proves that the store uses exact versions and requires Object Lock
@@ -200,10 +199,10 @@ func TestFAI520ObservationStoreMinIOFullCaptureSaveReload(t *testing.T) {
 
 func qualificationProvider(t *testing.T) (context.Context, *s3.Client, func() *s3.Client, string, string, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	t.Cleanup(cancel)
 	user, secret := "q"+strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
-	container, err := tcminio.Run(ctx, qualificationMinIOImage, tcminio.WithUsername(user), tcminio.WithPassword(secret), testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}), testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))
+	container, err := testminio.Run(ctx, tcminio.WithUsername(user), tcminio.WithPassword(secret), testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g,uid=65532,gid=65532,mode=0700"}), testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {
 		t.Fatal(err)
