@@ -14,6 +14,8 @@ on:
 permissions:
   contents: read
 
+cache-mode: read
+
 concurrency:
   group: recovery-evidence-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -68,3 +70,81 @@ jobs:
         run: task ci:prepare
       - name: Run the existing full-validation extras
         run: task ci:full:extras
+
+  go-cache-assessment-packages:
+    name: Read-only Go cache assessment (go-packages-validation)
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Restore the existing workload archive without changing keys or publishing Go caches
+        uses: ./.github/actions/setup-ci
+        with:
+          go-cache-restore-workload: go-packages-validation
+      - name: Record composition and controlled compiler reuse
+        env:
+          CACHE_WORKLOAD: go-packages-validation
+        run: python3 scripts/measure_go_cache.py
+      - name: Retain measurement diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-cache-assessment-go-packages-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/go-cache-assessment/*.*
+          retention-days: 14
+          if-no-files-found: error
+
+  go-cache-assessment-application:
+    name: Read-only Go cache assessment (go-application-validation)
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Restore the existing workload archive without changing keys or publishing Go caches
+        uses: ./.github/actions/setup-ci
+        with:
+          go-cache-restore-workload: go-application-validation
+      - name: Record composition and controlled compiler reuse
+        env:
+          CACHE_WORKLOAD: go-application-validation
+        run: python3 scripts/measure_go_cache.py
+      - name: Retain measurement diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-cache-assessment-go-application-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/go-cache-assessment/*.*
+          retention-days: 14
+          if-no-files-found: error
+
+  go-cache-assessment-full:
+    name: Read-only Go cache assessment (full-validation)
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Restore the existing workload archive without changing keys or publishing Go caches
+        uses: ./.github/actions/setup-ci
+        with:
+          go-cache-restore-workload: full-validation
+      - name: Record composition and controlled compiler reuse
+        env:
+          CACHE_WORKLOAD: full-validation
+        run: python3 scripts/measure_go_cache.py
+      - name: Retain measurement diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-cache-assessment-full-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/go-cache-assessment/*.*
+          retention-days: 14
+          if-no-files-found: error
