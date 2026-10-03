@@ -205,8 +205,8 @@ Draft PR events skip planning, validation, and the gate. Marking a PR ready for
 review starts CI automatically; `workflow_dispatch` runs CI on the selected
 branch even while its PR is a draft. For eligible runs, the gate still evaluates
 every outcome, including planning or validation failures.
-The same draft policy applies to Security gates, Electron security proof,
-Recovery evidence qualification, and Local Docker macOS tests. Each supports
+The same draft policy applies to `Security / Policy and scans`, `Security / Electron proof`,
+`Qualification / Recovery evidence`, and `CI / Local Docker macOS`. Each supports
 manual dispatch and ready-for-review events; existing path filters still apply.
 Push, merge-group, and scheduled validation retain their existing behavior.
 Selected jobs still use full preparation and all of their existing validation

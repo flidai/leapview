@@ -30,11 +30,11 @@ var requiredChecks = []string{"CI gate", "Security gate"}
 // TrustedBuilders is the allow-list documented in SECURITY.md. Workflow paths
 // are compared exactly, while the display names make reports useful to people.
 var trustedBuilders = []Builder{
-	{Workflow: ".github/workflows/artifacts.yml", Name: "Main artifacts"},
-	{Workflow: ".github/workflows/release.yml", Name: "Release image"},
-	{Workflow: ".github/workflows/site-image.yml", Name: "Publish public site image"},
-	{Workflow: ".github/workflows/electron-security-proof.yml", Name: "Electron security proof"},
-	{Workflow: ".github/workflows/desktop-preview-release.yml", Name: "Desktop unsigned preview release"},
+	{Workflow: ".github/workflows/artifacts.yml", Name: "Build / Main image"},
+	{Workflow: ".github/workflows/release.yml", Name: "Release / Server and CLI"},
+	{Workflow: ".github/workflows/site-image.yml", Name: "Build / Public site image"},
+	{Workflow: ".github/workflows/electron-security-proof.yml", Name: "Security / Electron proof"},
+	{Workflow: ".github/workflows/desktop-preview-release.yml", Name: "Release / Desktop unsigned preview"},
 }
 
 // GovernedEnvironments are the deployment environments whose settings are

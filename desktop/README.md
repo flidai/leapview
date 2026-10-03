@@ -109,7 +109,7 @@ branch candidates additionally receive GitHub build-provenance and SBOM
 attestations. Production publication remains fail-closed until the platform
 code-signing identities and installer signing gate are implemented.
 
-The manual **Desktop unsigned preview release** workflow can publish a reviewed
+The manual **Release / Desktop unsigned preview** workflow can publish a reviewed
 default-branch commit as a GitHub prerelease for early evaluation. It requires
 an explicit unsigned-release confirmation and the protected `desktop-preview`
 environment. The four installers use immutable versioned names and ship with

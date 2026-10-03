@@ -1,4 +1,4 @@
-name: Main artifacts
+name: Build / Main image
 
 on:
   push:
