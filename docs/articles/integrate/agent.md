@@ -22,8 +22,7 @@ See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, h
 ## Build a dashboard in chat
 
 Ask the agent to build a dashboard and describe the charts you need. A dashboard
-draft appears beside the main chat. Choose **Preview** to fill the main workspace
-with the dashboard canvas and move the agent to the right. Continue chatting to add a chart, change
+draft appears beside the main chat. Continue chatting to add a chart, change
 one, or apply a filter. Select **Ask about visual** on a chart to put its identity
 in the composer, then describe the change before sending.
 
@@ -33,9 +32,14 @@ complete preview. A failed update leaves the last successful draft available.
 Charts in one draft use the same semantic model; the agent can compose up to
 twelve charts. On a narrow screen, use **Dashboard draft** to switch to the preview.
 
-Choose **Save dashboard**, give it a name, and confirm to create a private
+Choose **Preview** to create a private editable draft and open it immediately in
+the dashboard builder. The conversation continues in the builder's agent pane
+on the right, and subsequent edits apply to that draft. The normal chat layout
+remains in place until you choose Preview.
+
+Alternatively, choose **Save dashboard**, give it a name, and confirm to create a private
 dashboard containing all the preview's charts and their filters. The saved
-dashboard is available from **Open dashboard** for manual editing. Further chat
+dashboard is available from **Open in builder** for manual editing. Further chat
 changes update the conversation draft; saving that changed draft creates a new
 copy. Sharing or publishing uses the dashboard's normal controls.
 
@@ -43,9 +47,9 @@ copy. Sharing or publishing uses the dashboard's normal controls.
 
 Open a visual card in chat to inspect its chart. **Save** keeps it as a saved exploration.
 
-For a visual created by the agent, choose **Preview** to see it on a dashboard canvas while continuing to edit through the agent on the right. Previewing does not save a dashboard. Choose **Save dashboard** in that preview to select an editable dashboard and page or create a new private dashboard. The picker shows compatible dashboards that you can edit or copy. Published dashboards use **Create copy and add**, which creates a private editable copy containing the visual. The visual retains its semantic query and filters.
+For a visual created by the agent, choose **Preview** to create a private editable dashboard draft from the visual and open the dashboard builder immediately. Its agent pane restores the same conversation and unsent input. The visual retains its governed semantic query and filters. Preview failures remain in chat so you can retry; a retry uses the same creation identity.
 
-After adding the visual, choose **Open dashboard** to inspect it in the editor, or **Add another visual** to return to chat. The next dashboard picker remembers the dashboard and page you selected.
+The existing dashboard picker also offers **Open in builder** after adding a visual, or **Add another visual** to return to chat. The next dashboard picker remembers the dashboard and page you selected.
 
 ## Product documentation tools
 

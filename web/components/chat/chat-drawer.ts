@@ -14,7 +14,8 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
-import { clearDrawerReturn, fullChatHref, readDrawerReturn, rememberChatReturn, type DrawerReturnState } from './chat-navigation'
+import { clearDrawerReturn, fullChatHref, handoffBuilderConversation, readDrawerReturn, rememberChatReturn, type DrawerReturnState } from './chat-navigation'
+import { previewChatBuilder } from './chat-builder-preview'
 import './chat-visual-panel'
 import './chat-composer'
 import './chat-thread'
@@ -75,6 +76,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @state() private visualSaving = false
   @state() private visualSaved = false
   @state() private visualSaveError = ''
+  @state() private visualPreviewPending = false
+  @state() private visualPreviewHref = ''
   private returnState: DrawerReturnState | undefined
   private restoringReturn = false
   private requestedReturnConversationID = ''
@@ -420,11 +423,32 @@ class ChatDrawer extends DatastarLit(LitElement) {
     return fullChatHref(this.agent.activeConversationId ?? '', token ? `?return=${token}` : '')
   }
 
-  private previewVisual = (): void => {
-    if (this.pending || !this.selectedVisualID) return
-    const href = new URL(this.expandedHref(), location.origin)
-    href.searchParams.set('preview', this.selectedVisualID)
-    location.assign(href.pathname + href.search)
+  private previewVisual = async (): Promise<void> => {
+    if (this.pending || this.visualPreviewPending || !this.selectedVisualID || !this.agent.activeConversationId) return
+    const conversationId = this.agent.activeConversationId
+    const artifactId = this.selectedVisualID
+    const title = this.selectedVisualTitle || this.visuals[artifactId]?.spec.title || 'Visual result'
+    const state: DrawerReturnState = {
+      conversationId, draft: this.retainedDraft, references: [...this.references],
+      editMessageId: this.editMessageId, selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '',
+      scroll: this.retainedScroll ?? { top: 0, follow: true },
+    }
+    this.visualPreviewPending = true
+    this.visualSaveError = ''
+    try {
+      // Retain the original sidebar snapshot for browser Back while handing
+      // the same conversation to the new builder's authorized restore path.
+      this.expandedHref()
+      const result = await previewChatBuilder({ conversationId, artifactId, title })
+      if (!this.isConnected || this.agent.activeConversationId !== conversationId) return
+      this.visualPreviewHref = result.href
+      location.assign(handoffBuilderConversation(result.href, state))
+    } catch (error) {
+      if (!this.isConnected || this.agent.activeConversationId !== conversationId) return
+      this.visualSaveError = error instanceof Error ? error.message : 'Could not open the dashboard builder. Please try again.'
+    } finally {
+      this.visualPreviewPending = false
+    }
   }
 
   private restoreReturnState(): void {
@@ -596,6 +620,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
             .payload=${this.visuals[this.selectedVisualID]}
             .explorerHref=${this.selectedExplorerHref}
             .dashboardAvailable=${!this.pending && Boolean(agent.activeConversationId) && (agent.transcript ?? []).some(item => item.kind === 'tool' && item.name === 'query_visual' && item.status === 'complete' && item.artifact?.id === this.selectedVisualID)}
+            .previewPending=${this.visualPreviewPending}
+            .previewHref=${this.visualPreviewHref}
             @lv-chat-visual-preview=${this.previewVisual}
             .saving=${this.visualSaving}
             .saved=${this.visualSaved}
@@ -641,6 +667,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
     this.selectedVisualTitle = event.detail.title ?? ''
     this.visualSaved = false
     this.visualSaveError = ''
+    this.visualPreviewHref = ''
     void this.updateComplete.then(() => this.shadowRoot?.querySelector<ChatVisualPanel>('lv-chat-visual-panel')?.focusClose())
   }
 
@@ -670,6 +697,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
     this.selectedVisualTitle = ''
     this.visualSaved = false
     this.visualSaveError = ''
+    this.visualPreviewHref = ''
   }
 
   private saveVisual = async (event: CustomEvent<{ title: string; explorerHref: string; artifactId: string }>): Promise<void> => {

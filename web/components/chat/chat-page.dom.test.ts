@@ -981,7 +981,7 @@ for (const createNew of [false, true]) {
       expect(requests[0].body).toEqual(createNew ? { title: 'CFO review' } : { dashboardId: 'dashboard:finance', pageId: 'details' })
       expect(requests[0].csrf).toBe('test-csrf')
       expect(requests[0].key).toMatch(/^[0-9a-f-]{14}7[0-9a-f-]{21}$/)
-      expect(await picker.getByRole('link', { name: 'Open dashboard' }).getAttribute('href')).toBe('/dashboards/dashboard:finance/edit')
+      expect(await picker.getByRole('link', { name: 'Open in builder' }).getAttribute('href')).toBe('/dashboards/dashboard:finance/edit')
       await page.locator('lv-chat-composer').evaluate((element: any) => element.setDraft('Show margin by product', false))
       await picker.getByRole('button', { name: 'Add another visual' }).click()
       await page.locator('.dashboard-destination').waitFor()

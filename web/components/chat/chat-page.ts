@@ -18,8 +18,9 @@ import type { ChatVisualPanel } from './chat-visual-panel'
 import { saveChatVisual } from './saved-visuals'
 import './chat-dashboard-picker'
 import type { ChatDashboardResult } from './chat-dashboard-api'
+import { previewChatBuilder, type ChatBuilderPreviewSource } from './chat-builder-preview'
 import './chat-dashboard-draft'
-import { chatReturnHref, fullChatHref, readFullChatReturn, takeFullChatReturn, returnFromFullChat, updateChatReturnConversation } from './chat-navigation'
+import { chatReturnHref, fullChatHref, handoffBuilderConversation, type DrawerReturnState, readFullChatReturn, takeFullChatReturn, returnFromFullChat, updateChatReturnConversation } from './chat-navigation'
 
 const emptyAgent: ChatSignal = {
   conversations: [],
@@ -46,13 +47,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   @state() private dashboardPickerOpen = false
   @state() private dashboardDestination?: ChatDashboardResult
   @state() private dashboardPreviewOpen = false
-  @state() private dashboardWorkspace = false
   @state() private selectedDraftVisualID = ''
-  @state() private previewArtifactID = ''
+  @state() private builderPreviewPending = false
+  @state() private builderPreviewError = ''
+  @state() private builderPreviewHref = ''
   private requestedPreviewID = ''
-  private previewQueryRevision = ''
-  private previewConversationID = ''
-  private previewEditing = false
   private restoredExpandedDraft = false
   private trackedDashboardDraftRevision = ''
   @state() private compactViewport = false
@@ -93,7 +92,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     if (dashboardDraftRevision && dashboardDraftRevision !== this.trackedDashboardDraftRevision) {
       if (!this.requestedPreviewID) {
         if (this.selectedVisualID) this.closeVisual(false)
-        this.previewArtifactID = ''
         this.clearPreviewURL()
       }
       this.dashboardPreviewOpen = true
@@ -105,7 +103,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       this.selectedDraftVisualID = ''
     }
     this.trackedDashboardDraftRevision = dashboardDraftRevision
-    this.syncVisualPreview()
+    this.restoreRequestedVisual()
     if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
   }
 
@@ -148,8 +146,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		if (this.trackedConversationID !== null && this.trackedConversationID !== conversationID) {
       this.closeVisual(false)
       this.dashboardDestination = undefined
-      this.dashboardWorkspace = false
-      this.previewArtifactID = ''
+      this.builderPreviewError = ''
+      this.builderPreviewHref = ''
       this.requestedPreviewID = ''
       this.dashboardPreviewOpen = false
       this.selectedDraftVisualID = ''
@@ -243,12 +241,12 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const isNew = view === 'new'
     const title = conversationTitle(agent)
     const selectedVisual = this.selectedVisualID ? this.visuals[this.selectedVisualID] : undefined
-    const dashboardDraft = this.previewDraft
+    const dashboardDraft = this.dashboardDraft
     const draftContainsSelectedVisual = Boolean(this.dashboardDraft?.visuals.some((visual) => visual.artifactId === this.selectedVisualID))
-    const showVisualPanel = !this.dashboardPreviewOpen && !this.previewEditing && Boolean(selectedVisual && !isList && !isNew && (!this.dashboardDraft || !draftContainsSelectedVisual))
+    const showVisualPanel = !this.dashboardPreviewOpen && Boolean(selectedVisual && !isList && !isNew && (!this.dashboardDraft || !draftContainsSelectedVisual))
     const showDashboardDraft = Boolean(dashboardDraft && !showVisualPanel) && !isList && !isNew && this.dashboardPreviewOpen
     return html`
-      <div class=${showDashboardDraft ? this.dashboardWorkspace ? 'route dashboard-open dashboard-workspace' : 'route dashboard-open' : showVisualPanel ? 'route visual-open' : 'route'} @lv-chat-submit=${this.preparePreviewTurn}>
+      <div class=${showDashboardDraft ? 'route dashboard-open' : showVisualPanel ? 'route visual-open' : 'route'} @lv-chat-submit=${this.showOptimisticTurn}>
         <section class=${['main', isList ? 'list-main' : '', isNew ? chatReturnHref() ? 'new-main with-return' : 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats" ?inert=${Boolean((showDashboardDraft || showVisualPanel) && this.compactViewport)}>
           ${isList || isNew && !chatReturnHref() ? null : this.renderConversationTitlebar(isNew ? 'New chat' : title, Boolean(dashboardDraft && !this.dashboardPreviewOpen))}
           <div class="body">
@@ -262,9 +260,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             .visuals=${this.visuals}
             .selectedVisualId=${this.selectedDraftVisualID}
             .busy=${this.pending}
-            .sourceArtifactId=${this.previewArtifactID}
-            .workspace=${this.dashboardWorkspace}
-            @lv-chat-dashboard-preview=${this.enterDashboardWorkspace}
+            .previewPending=${this.builderPreviewPending}
+            .previewHref=${this.builderPreviewHref}
+            .previewError=${this.builderPreviewError}
+            @lv-chat-dashboard-preview=${this.previewComposedDashboard}
             @lv-chat-dashboard-save-visual=${() => { this.dashboardPickerOpen = true }}
             conversation-id=${agent.activeConversationId ?? ''}
             .modal=${this.compactViewport}
@@ -280,7 +279,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             .explorerHref=${this.selectedExplorerHref}
             .saving=${this.visualSaving}
             .saved=${this.visualSaved}
-            .saveError=${this.visualSaveError}
+            .saveError=${this.builderPreviewError || this.visualSaveError}
+            .previewPending=${this.builderPreviewPending}
+            .previewHref=${this.builderPreviewHref}
             .modal=${this.compactViewport}
             .dashboardAvailable=${Boolean(agent.activeConversationId) && (agent.transcript ?? []).some(item => item.kind === 'tool' && item.name === 'query_visual' && item.status === 'complete' && item.artifact?.id === this.selectedVisualID)}
             @lv-chat-visual-preview=${this.previewSelectedVisual}
@@ -306,11 +307,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private renderConversationTitlebar(title: string, showDraftToggle = false) {
     return html`
       <div class="conversation-titlebar">
-        <h1>${this.dashboardWorkspace ? 'Agent' : title}</h1>
+        <h1>${title}</h1>
         ${chatReturnHref() ? html`<a class="return-chat" href=${chatReturnHref()!} aria-label="Return to page" title="Return to page" @click=${(event: MouseEvent) => { event.preventDefault(); returnFromFullChat() }}>${lucideIcon(X, { size: 16 })}</a>` : null}
-        ${showDraftToggle && this.previewDraft ? html`
+        ${showDraftToggle && this.dashboardDraft ? html`
           <button class="mobile-dashboard-toggle" type="button" @click=${this.openDashboardPreview}>
-            <span>Dashboard draft</span><span class="mobile-dashboard-count">${this.previewDraft!.visuals.length}</span>
+            <span>Dashboard draft</span><span class="mobile-dashboard-count">${this.dashboardDraft!.visuals.length}</span>
           </button>
         ` : null}
       </div>
@@ -373,9 +374,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private openVisual(event: CustomEvent<{ artifactId: string; explorerHref: string; title: string }>): void {
     const artifactId = event.detail?.artifactId ?? ''
     if (!artifactId || !this.visuals[artifactId]) return
-    this.previewEditing = false
-    this.dashboardWorkspace = false
-    this.previewArtifactID = ''
     this.dashboardPreviewOpen = false
     this.clearPreviewURL()
     const draftVisual = this.dashboardDraft?.visuals.find((visual) => visual.artifactId === artifactId)
@@ -385,6 +383,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       return
     }
     this.dashboardPickerOpen = false
+    this.builderPreviewError = ''
+    this.builderPreviewHref = ''
     this.selectedVisualID = artifactId
     this.selectedExplorerHref = event.detail.explorerHref ?? ''
     this.selectedVisualTitle = event.detail.title ?? ''
@@ -398,8 +398,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.dashboardPickerOpen = false
     if (!artifactId) return
     this.selectedVisualID = ''
-    this.previewArtifactID = ''
-    this.previewEditing = false
     this.clearPreviewURL()
     this.selectedExplorerHref = ''
     this.selectedVisualTitle = ''
@@ -421,9 +419,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private addAnotherVisual = (event: CustomEvent<ChatDashboardResult>): void => {
     this.dashboardDestination = event.detail
-    this.dashboardWorkspace = false
     this.dashboardPreviewOpen = false
-    this.previewArtifactID = ''
     this.requestedPreviewID = ''
     this.closeVisual(false)
     void this.updateComplete.then(() => this.shadowRoot?.querySelector<HTMLElement & { focusInput(): void }>('lv-chat-composer')?.focusInput())
@@ -445,70 +441,51 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
   }
 
-  private get previewDraft(): ChatDashboardDraftSignal | undefined {
-    const payload = this.previewArtifactID ? this.visuals[this.previewArtifactID] : undefined
-    if (!payload) return this.dashboardDraft
-    const title = payload.spec.title?.trim() || this.selectedVisualTitle || 'Visual preview'
-    return { revision: `visual:${this.previewArtifactID}`, title, visuals: [{ id: this.previewArtifactID, artifactId: this.previewArtifactID, title }] }
+  private previewSelectedVisual = (): void => {
+    const artifactId = this.selectedVisualID
+    const payload = this.visuals[artifactId]
+    if (this.pending || !payload || !this.isPreviewableArtifact(artifactId)) return
+    void this.openBuilderPreview({ conversationId: this.agent.activeConversationId, artifactId, title: payload.spec.title?.trim() || this.selectedVisualTitle || 'Visual preview' })
   }
 
-  private previewSelectedVisual = (): void => {
-    if (this.pending || !this.selectedVisualID || !this.isPreviewableArtifact(this.selectedVisualID)) return
-    this.previewArtifactID = this.selectedVisualID
-    this.dashboardWorkspace = true
-    this.previewEditing = false
-    this.previewConversationID = this.agent.activeConversationId
-    this.previewQueryRevision = this.latestQueryArtifactID()
-    this.selectedDraftVisualID = this.selectedVisualID
-    this.dashboardPreviewOpen = true
-    this.persistPreviewURL()
+  private previewComposedDashboard = (): void => {
+    const draft = this.dashboardDraft
+    if (this.pending || !draft?.visuals.length) return
+    void this.openBuilderPreview({ conversationId: this.agent.activeConversationId, revision: draft.revision, title: draft.title })
+  }
+
+  private async openBuilderPreview(source: ChatBuilderPreviewSource): Promise<void> {
+    if (this.builderPreviewPending) return
+    this.builderPreviewPending = true
+    this.builderPreviewError = ''
+    this.builderPreviewHref = ''
+    try {
+      const result = await previewChatBuilder(source)
+      if (!this.isConnected || this.agent.activeConversationId !== source.conversationId) return
+      this.builderPreviewHref = result.href
+      const composer = this.shadowRoot?.querySelector<HTMLElement & { snapshotDraft(): string }>('lv-chat-composer')
+      const thread = this.shadowRoot?.querySelector<HTMLElement & { snapshotScroll(): DrawerReturnState['scroll'] }>('lv-chat-thread')
+      const href = handoffBuilderConversation(result.href, {
+        conversationId: source.conversationId, draft: composer?.snapshotDraft() ?? '', references: this.references,
+        editMessageId: this.editMessageId, selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '',
+        scroll: thread?.snapshotScroll() ?? { top: 0, follow: true },
+      })
+      window.location.assign(href)
+    } catch (error) {
+      if (this.agent.activeConversationId === source.conversationId) this.builderPreviewError = error instanceof Error ? error.message : 'Could not open the dashboard builder. Please try again.'
+    } finally { this.builderPreviewPending = false }
   }
 
   private isPreviewableArtifact(id: string): boolean {
     return Boolean(this.visuals[id] && (this.agent.transcript ?? []).some(item => item.kind === 'tool' && item.name === 'query_visual' && item.status === 'complete' && item.artifact?.id === id))
   }
 
-  private latestQueryArtifactID(): string {
-    return (this.agent.transcript ?? []).filter(item => item.kind === 'tool' && item.name === 'query_visual' && item.status === 'complete' && this.visuals[item.artifact?.id ?? '']).at(-1)?.artifact?.id ?? ''
-  }
-
-  private syncVisualPreview(): void {
-    const conversationId = this.agent.activeConversationId
-    if (this.previewConversationID && this.previewConversationID !== conversationId) {
-      this.previewArtifactID = ''
-      this.requestedPreviewID = ''
-      this.clearPreviewURL()
-    }
-    if (this.requestedPreviewID && this.isPreviewableArtifact(this.requestedPreviewID)) {
-      this.previewArtifactID = this.requestedPreviewID
-      this.dashboardWorkspace = true
-      this.selectedVisualID = this.requestedPreviewID
-      this.requestedPreviewID = ''
-      this.previewConversationID = conversationId
-      this.previewQueryRevision = this.latestQueryArtifactID()
-      this.dashboardPreviewOpen = true
-    }
-    if (!this.previewArtifactID) return
-    if (!this.isPreviewableArtifact(this.previewArtifactID)) {
-      this.previewArtifactID = ''
-      this.dashboardPreviewOpen = Boolean(this.dashboardDraft)
-      this.clearPreviewURL()
-      return
-    }
-    const latest = this.latestQueryArtifactID()
-    if ((this.dashboardPreviewOpen || this.previewEditing) && latest && latest !== this.previewQueryRevision) {
-      this.previewArtifactID = latest
-      this.selectedVisualID = latest
-      this.selectedDraftVisualID = latest
-      this.persistPreviewURL()
-    }
-    this.previewQueryRevision = latest
-  }
-
-  private persistPreviewURL(): void {
-    const url = new URL(window.location.href)
-    url.searchParams.set('preview', this.previewArtifactID)
-    window.history.replaceState(window.history.state, '', url)
+  private restoreRequestedVisual(): void {
+    if (!this.requestedPreviewID || !this.isPreviewableArtifact(this.requestedPreviewID)) return
+    const artifactId = this.requestedPreviewID
+    this.requestedPreviewID = ''
+    // A URL selects a visual; only an explicit Preview click creates a builder draft.
+    this.openVisual(new CustomEvent('lv-chat-visual-open', { detail: { artifactId, title: this.visuals[artifactId]?.spec.title || '', explorerHref: '' } }))
   }
 
   private clearPreviewURL(): void {
@@ -518,29 +495,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     window.history.replaceState(window.history.state, '', url)
   }
 
-  private preparePreviewTurn = (event: CustomEvent<{ input?: string; references?: AgentReferenceSignal[]; editMessageId?: string; previewArtifactId?: string }>): void => {
-    event.detail.previewArtifactId = this.dashboardPreviewOpen || this.previewEditing ? this.previewArtifactID : ''
-    this.showOptimisticTurn(event)
-  }
-
   private openDashboardPreview = (): void => {
-    this.dashboardPreviewOpen = true
-    if (this.previewArtifactID) this.persistPreviewURL()
-  }
-
-  private enterDashboardWorkspace = (): void => {
-    this.dashboardWorkspace = true
     this.dashboardPreviewOpen = true
   }
 
   private closeDashboardPreview = (): void => {
-    if (this.dashboardWorkspace && !this.previewArtifactID && !this.compactViewport) {
-      this.dashboardWorkspace = false
-      void this.updateComplete.then(() => this.shadowRoot?.querySelector<HTMLElement & { focusPreview(): void }>('lv-chat-dashboard-draft')?.focusPreview())
-      return
-    }
-    this.dashboardWorkspace = false
-    this.previewEditing = false
     this.dashboardPreviewOpen = false
     this.dashboardPickerOpen = false
     this.clearPreviewURL()
@@ -555,7 +514,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const detail = event.detail
     if (!detail?.visualId || !detail.prompt) return
     this.selectedDraftVisualID = detail.visualId
-    this.previewEditing = Boolean(this.previewArtifactID)
     if (this.compactViewport) this.dashboardPreviewOpen = false
     void this.updateComplete.then(() => {
       this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(detail.prompt)

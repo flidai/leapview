@@ -1009,6 +1009,52 @@ test.each(['back', 'close'])('full chat %s returns to the same route, conversati
   } finally { await page.close() }
 })
 
+test('drawer Preview creates a builder draft with a stable retry and preserves its conversation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  const requests: Array<{ key?: string; body: unknown }> = []
+  try {
+    await page.route('**/chats/builder-chat/visuals/chat-chart/dashboards', async route => {
+      requests.push({ key: route.request().headers()['idempotency-key'], body: route.request().postDataJSON() })
+      await route.fulfill(requests.length === 1
+        ? { status: 503, json: { error: 'unavailable' } }
+        : { status: 200, json: { dashboardId: 'created', title: 'Revenue by country', pageId: 'overview', href: '/dashboards/created/edit?page=overview' } })
+    })
+    await page.route('**/dashboards/created/edit?*', route => route.fulfill({ contentType: 'text/html', body: '<h1>Dashboard builder</h1>' }))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer'))
+    await page.evaluate(async (baseVisual) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: {
+        activeConversationId: 'builder-chat', status: { enabled: true, running: false }, composer: { value: '', disabled: false },
+        transcript: [{ id: 'tool', kind: 'tool', name: 'query_visual', status: 'complete', resultJson: JSON.stringify({ ok: true, type: 'bar', id: 'chat-chart', semanticModelRef: { kind: 'semantic_model', id: 'semantic:sales' }, datasetId: 'orders', fields: [{ fieldId: 'semantic:sales.country', role: 'dimension', alias: 'country', explorerFieldId: 'orders.country', label: 'Country' }, { fieldId: 'semantic:sales.revenue', role: 'metric', alias: 'revenue', label: 'Revenue' }] }), artifact: { id: 'chat-chart', type: 'bar', summary: 'Created chart.' } }],
+      }, agentVisuals: { 'chat-chart': { ...baseVisual, visualID: 'chat-chart', spec: { ...baseVisual.spec, title: 'Revenue by country' } } } })
+      const shell = document.querySelector('lv-dashboard-page') as any
+      shell.setAgentDrawerOpen(true)
+      await shell.updateComplete
+      const drawer = shell.shadowRoot.querySelector('lv-chat-drawer') as any
+      await drawer.updateComplete
+      drawer.shadowRoot.querySelector('lv-chat-composer').setDraft('My unsent builder edit', false)
+    }, testVisualizationEnvelopes().orders_chart)
+    const drawer = page.locator('lv-chat-drawer')
+    // This fixture supplies a governed visualization envelope; eligibility of
+    // rendered transcript cards is covered by the Save-action test above.
+    await drawer.evaluate((host: any) => host.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', { detail: { artifactId: 'chat-chart', title: 'Revenue by country', explorerHref: '' }, bubbles: true, composed: true })))
+    const preview = drawer.getByRole('button', { name: 'Preview', exact: true })
+    await preview.click()
+    await drawer.getByRole('alert').waitFor()
+    expect(page.url()).toBe(`${baseURL}/`)
+    await preview.click()
+    await page.waitForURL('**/dashboards/created/edit?page=overview')
+    expect(requests).toHaveLength(2)
+    expect(requests[0].key).toBe(requests[1].key)
+    expect(requests[0].body).toEqual({ title: 'Revenue by country' })
+    const handoff = await page.evaluate(() => Object.values(JSON.parse(sessionStorage.getItem('leapview-builder-chat-handoffs-v1') || '{}')) as any[])
+    expect(handoff[0]?.state.conversationId).toBe('builder-chat')
+    expect(handoff[0]?.state.draft).toBe('My unsent builder edit')
+    expect(handoff[0]?.state.selectedVisualId).toBe('')
+  } finally { await page.close() }
+})
+
 test('bfcache return authorizes a promoted conversation once before restoring drawer state', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -1053,4 +1099,62 @@ test('bfcache return authorizes a promoted conversation once before restoring dr
       return drawer?.agent.activeConversationId === 'promoted-conversation' && drawer.shadowRoot.querySelector('lv-chat-composer')?.snapshotDraft() === 'Retained draft'
     })
   } finally { await page.close() }
+})
+
+
+test.each([200, 503])('drawer ignores a previous conversation Preview response (%s)', async (status) => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  let release!: () => void
+  let received!: () => void
+  const requestReceived = new Promise<void>(resolve => { received = resolve })
+  let requests = 0
+  try {
+    await page.route('**/chats/previous-preview/visuals/chart/dashboards', async route => {
+      requests++
+      await new Promise<void>(resolve => { release = resolve; received() })
+      await route.fulfill({ status, json: status === 200
+        ? { dashboardId: 'previous', title: 'Revenue', pageId: 'overview', href: '/dashboards/previous/edit?page=overview' }
+        : { error: 'unavailable' } })
+    })
+    await page.route('**/dashboards/previous/edit?*', route => route.fulfill({ contentType: 'text/html', body: '<h1>Previous builder</h1>' }))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer'))
+    await page.evaluate(async (visual) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { activeConversationId: 'previous-preview', status: { enabled: true, running: false }, composer: { value: '', disabled: false }, transcript: [] }, agentVisuals: { chart: visual } })
+      const shell = document.querySelector('lv-dashboard-page') as any
+      shell.setAgentDrawerOpen(true)
+      await shell.updateComplete
+      const drawer = shell.shadowRoot.querySelector('lv-chat-drawer') as any
+      await drawer.updateComplete
+      drawer.selectedVisualID = 'chart'
+      drawer.selectedVisualTitle = 'Revenue'
+      void drawer.previewVisual()
+    }, testVisualizationEnvelopes().orders_chart)
+    await requestReceived
+    await page.locator('lv-chat-drawer').evaluate(async (drawer: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { activeConversationId: 'current-preview' } })
+      await drawer.updateComplete
+      drawer.visualSaveError = 'Current conversation error'
+      drawer.visualPreviewHref = '/dashboards/current/edit'
+    })
+    release()
+    await page.waitForFunction(() => !(document.querySelector('lv-dashboard-page') as any)?.shadowRoot.querySelector('lv-chat-drawer')?.visualPreviewPending)
+    expect(page.url()).toBe(`${baseURL}/`)
+    expect(await page.locator('lv-chat-drawer').evaluate((drawer: any) => ({ error: drawer.visualSaveError, href: drawer.visualPreviewHref })))
+      .toEqual({ error: 'Current conversation error', href: '/dashboards/current/edit' })
+    if (status === 200) {
+      await page.locator('lv-chat-drawer').evaluate(async (drawer: any) => {
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+        mergePatch({ agent: { activeConversationId: 'previous-preview' } })
+        await drawer.updateComplete
+        drawer.selectedVisualID = 'chart'
+        drawer.selectedVisualTitle = 'Revenue'
+        void drawer.previewVisual()
+      })
+      await page.waitForURL('**/dashboards/previous/edit?page=overview')
+      expect(requests).toBe(1)
+    }
+  } finally { release?.(); await page.close() }
 })

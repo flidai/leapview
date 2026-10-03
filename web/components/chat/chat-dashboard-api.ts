@@ -20,6 +20,8 @@ export async function addChatVisualToDashboard(conversationId: string, artifactI
   const response = await postUIJSON(endpoint(conversationId, artifactId), 'addChatVisualToDashboard', choice, idempotencyKey)
   if (!response.ok) throw new Error(response.status === 409
     ? 'This dashboard changed while you were adding the visual. Reopen the picker and try again.'
+    : response.status === 403
+      ? 'title' in choice ? 'You do not have permission to create a dashboard from this visual.' : 'You do not have permission to add this visual to that dashboard.'
     : 'Could not add this visual. Please try again.')
   return response.json()
 }
@@ -28,6 +30,8 @@ export async function saveChatDashboardDraft(conversationId: string, revision: s
   const response = await postUIJSON(`/chats/${encodeURIComponent(conversationId)}/dashboard`, 'saveChatDashboardDraft', { revision, title }, idempotencyKey)
   if (!response.ok) throw new Error(response.status === 409
     ? 'This chat draft changed while it was being saved. Save the latest draft as a new dashboard.'
+    : response.status === 403
+      ? 'You do not have permission to create this dashboard.'
     : 'Could not save this dashboard. Please try again.')
   return response.json()
 }

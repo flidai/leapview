@@ -12,6 +12,7 @@ export type DrawerReturnState = {
 }
 type ReturnEntry = { href: string; created: number; state: DrawerReturnState; fullChatPresented?: boolean }
 const storageKey = 'leapview-chat-returns-v1'
+const builderHandoffKey = 'leapview-builder-chat-handoffs-v1'
 const maxAge = 24 * 60 * 60 * 1000
 
 export function safeChatReturnURL(value: string, origin: string): string | undefined {
@@ -48,9 +49,9 @@ function validState(value: unknown): value is DrawerReturnState {
     && value.scroll.top >= 0 && value.scroll.top <= 100_000_000 && typeof value.scroll.follow === 'boolean'
 }
 
-function entries(): Record<string, ReturnEntry> {
+function entries(key = storageKey): Record<string, ReturnEntry> {
   try {
-    const encoded = sessionStorage.getItem(storageKey) ?? '{}'
+    const encoded = sessionStorage.getItem(key) ?? '{}'
     if (encoded.length > 2_000_000) return {}
     const raw: unknown = JSON.parse(encoded)
     if (!record(raw)) return {}
@@ -77,12 +78,20 @@ export function rememberChatReturn(state: DrawerReturnState): string {
 export function readDrawerReturn(): DrawerReturnState | undefined {
   if (typeof location === 'undefined') return undefined
   const href = location.pathname + location.search + location.hash
-  return Object.values(entries()).find(entry => entry.href === href)?.state
+  return Object.values(entries(builderHandoffKey)).find(entry => entry.href === href)?.state
+    ?? Object.values(entries()).find(entry => entry.href === href)?.state
 }
 
 export function clearDrawerReturn(): void {
   try {
     const href = location.pathname + location.search + location.hash
+    const handoffs = entries(builderHandoffKey)
+    const handoff = Object.entries(handoffs).find(([, entry]) => entry.href === href)
+    if (handoff) {
+      delete handoffs[handoff[0]]
+      sessionStorage.setItem(builderHandoffKey, JSON.stringify(handoffs))
+      return
+    }
     const saved = entries()
     for (const [token, entry] of Object.entries(saved)) if (entry.href === href) delete saved[token]
     sessionStorage.setItem(storageKey, JSON.stringify(saved))
@@ -136,4 +145,28 @@ export function updateChatReturnConversation(conversationId: string): void {
     saved[token].state.conversationId = conversationId
     sessionStorage.setItem(storageKey, JSON.stringify(saved))
   } catch { /* Browser storage can be unavailable. */ }
+}
+
+/** Stage local composer state; the builder authorizes and reloads the transcript. */
+export function handoffBuilderConversation(targetHref: string, state: DrawerReturnState): string {
+  if (!text(targetHref) || targetHref.startsWith('//') || targetHref.includes('\\')) throw new Error('Invalid dashboard builder destination.')
+  const target = new URL(targetHref, location.origin)
+  const match = /^\/dashboards\/([^/]+)\/edit$/.exec(target.pathname)
+  let dashboardId = ''
+  try { dashboardId = match ? decodeURIComponent(match[1]).trim() : '' } catch { /* Rejected below. */ }
+  if (target.origin !== location.origin || !dashboardId || dashboardId.includes('/') || dashboardId.includes('\\')) {
+    throw new Error('Invalid dashboard builder destination.')
+  }
+  if (!validState(state) || !state.conversationId.trim()) throw new Error('A conversation is required to open the dashboard builder.')
+  const href = target.pathname + target.search + target.hash
+  const saved = entries(builderHandoffKey)
+  for (const [token, entry] of Object.entries(saved)) if (entry.href === href) delete saved[token]
+  const bounded = Object.fromEntries(Object.entries(saved).slice(-15))
+  bounded[crypto.randomUUID()] = {
+    href, created: Date.now(),
+    state: { ...state, selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '' },
+  }
+  try { sessionStorage.setItem(builderHandoffKey, JSON.stringify(bounded)) }
+  catch { throw new Error('Could not preserve the conversation for the dashboard builder. Please try again.') }
+  return href
 }

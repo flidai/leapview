@@ -29,6 +29,9 @@ export class ChatDashboardDraft extends LitElement {
   @property({ attribute: false }) selectedVisualId = ''
   @property({ type: Boolean }) busy = false
   @property({ type: Boolean }) workspace = false
+  @property({ type: Boolean }) previewPending = false
+  @property() previewError = ''
+  @property() previewHref = ''
   @property({ attribute: 'source-artifact-id' }) sourceArtifactId = ''
 
   @state() private saveDialogOpen = false
@@ -240,20 +243,22 @@ export class ChatDashboardDraft extends LitElement {
       >
         <div class="toolbar">
           <header class="header">
-            <button class="close" type="button" aria-label="Back to chat" @click=${this.closeModal}>${lucideIcon(X, { size: 16 })}</button>
+            <button class="close" type="button" ?disabled=${this.previewPending} aria-label="Back to chat" @click=${this.closeModal}>${lucideIcon(X, { size: 16 })}</button>
             <div class="heading">
               <span class="eyebrow">Live dashboard draft</span>
               <h2 id="dashboard-draft-title">${this.sourceArtifactId ? 'Dashboard preview' : draft?.title || 'Dashboard draft'}</h2>
               <span class="count">${draftVisuals.length} ${draftVisuals.length === 1 ? 'visual' : 'visuals'} · Draft</span>
             </div>
             <div class="actions">
-              ${!this.workspace && !this.sourceArtifactId ? html`<button class="preview" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-dashboard-preview', { bubbles: true, composed: true }))}>Preview</button>` : nothing}
-              ${this.saved ? html`<a class="saved-link" href=${this.saved.result.href}>Open saved dashboard ${lucideIcon(ArrowUpRight, { size: 14 })}</a>` : nothing}
+              ${!this.workspace && !this.sourceArtifactId ? html`<button class="preview" type="button" ?disabled=${this.busy || this.previewPending || draftVisuals.length === 0} @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-dashboard-preview', { bubbles: true, composed: true }))}>${this.previewPending ? 'Opening builder…' : 'Preview'}</button>` : nothing}
+              ${this.previewHref ? html`<a class="saved-link" href=${this.previewHref}>Open in builder ${lucideIcon(ArrowUpRight, { size: 14 })}</a>` : nothing}
+              ${this.saved ? html`<a class="saved-link" href=${this.saved.result.href}>Open in builder ${lucideIcon(ArrowUpRight, { size: 14 })}</a>` : nothing}
               <button class="primary" type="button" ?disabled=${this.busy || this.saving || savedForCurrentRevision || draftVisuals.length === 0} @click=${this.openSaveDialog}>
                 ${this.saving ? 'Saving…' : savedForCurrentRevision ? 'Saved' : savedFromEarlierRevision ? 'Save as new dashboard' : html`${lucideIcon(Save, { size: 15 })} Save dashboard`}
               </button>
             </div>
           </header>
+          ${this.previewError ? html`<p class="saved-note error" role="alert">${this.previewError}</p>` : nothing}
           ${savedFromEarlierRevision ? html`<p class="saved-note" role="status">The saved dashboard reflects an earlier draft. Save these changes as a new dashboard.</p>` : nothing}
         </div>
         <div class="canvas">
@@ -280,7 +285,7 @@ export class ChatDashboardDraft extends LitElement {
     const selected = this.selectedVisualId === visual.id
     const scrollLabels = payload?.spec.kind === 'cartesian'
       && (payload.spec.mark === 'line' || payload.spec.mark === 'area')
-      && payload.spec.presentation.labelPolicy.density === 'always'
+      && payload.spec.presentation.labelPolicy.density !== 'hidden'
     return html`
       <article class="card" data-draft-visual-id=${visual.id} data-selected=${String(selected)}>
         <div class="card-actions" role="group" aria-label=${`Actions for ${title}`}>
@@ -323,7 +328,7 @@ export class ChatDashboardDraft extends LitElement {
         ${result ? html`
           <div class="dialog-body success" role="status">
             <strong>${result.title}</strong>
-            <a class="saved-link" href=${result.href}>Open dashboard ${lucideIcon(ArrowUpRight, { size: 14 })}</a>
+            <a class="saved-link" href=${result.href}>Open in builder ${lucideIcon(ArrowUpRight, { size: 14 })}</a>
           </div>
           <footer><button type="button" @click=${this.closeSaveDialog}>Done</button></footer>
         ` : html`
@@ -411,6 +416,7 @@ export class ChatDashboardDraft extends LitElement {
   }
 
   private closeModal = (): void => {
+    if (this.previewPending) return
     this.dispatchEvent(new CustomEvent('lv-chat-dashboard-close', { bubbles: true, composed: true }))
   }
 

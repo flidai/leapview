@@ -29,11 +29,16 @@ import (
 
 type dashboardSaveRepository struct {
 	chatCopyHTTPRepository
-	creates int
-	intent  access.AuditIntent
+	creates    int
+	intent     access.AuditIntent
+	takenSlugs map[string]bool
 }
 
 func (r *dashboardSaveRepository) Create(ctx context.Context, input authoring.CreateInput) (authoring.DashboardLifecycle, error) {
+	if r.takenSlugs[input.Lifecycle.Slug] {
+		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: slug is in use", authoring.ErrConflict)
+	}
+	r.takenSlugs[input.Lifecycle.Slug] = true
 	r.creates++
 	r.operation, r.target, r.revision = input.Operation, input.Lifecycle, input.Revision
 	r.retained = authoring.CreateOperationResult{DashboardID: input.Lifecycle.ID, Revision: input.Revision.Token(), Fingerprint: input.Operation.Fingerprint}
@@ -54,7 +59,7 @@ func TestSaveChatDashboardCreatesAllCardsOnceAndEnforcesPreviewRevision(t *testi
 		t.Fatal(err)
 	}
 	revision := appendHTTPDashboardDraft(t, fixture.Agent, scope, conversation.ID)
-	repository := &dashboardSaveRepository{}
+	repository := &dashboardSaveRepository{takenSlugs: map[string]bool{"performance": true}}
 	authorizer := &chatCopyHTTPAuthorizer{}
 	service, err := authoringservice.NewService(authoringservice.Options{Repository: repository, Authorizer: authorizer, Compiler: chatCopyHTTPCompiler{}, Now: func() time.Time { return time.Now().UTC() },
 		NewDashboardID: func() (authoring.DashboardID, error) { return "saved-dashboard", nil },

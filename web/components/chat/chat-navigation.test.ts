@@ -67,3 +67,44 @@ test('return snapshots restore only the exact originating route and stay out of 
     else Reflect.deleteProperty(globalThis, 'sessionStorage')
   }
 })
+
+test('builder handoff preserves the conversation and origin return token without trusting target URLs', async () => {
+  const { handoffBuilderConversation, rememberChatReturn, readDrawerReturn, clearDrawerReturn, chatReturnHref } = await import('./chat-navigation')
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+  const values = new Map<string, string>()
+  const local = { origin: 'https://leap.test', pathname: '/explore', search: '?dataset=sales', hash: '' }
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: local })
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) } })
+  const state = { conversationId: 'same-conversation', draft: 'Unsent change', references: [], editMessageId: '', selectedVisualId: 'open-chart', selectedExplorerHref: '/explore?visual=one', selectedVisualTitle: 'Existing chart', scroll: { top: 25, follow: false } }
+  try {
+    const token = rememberChatReturn(state)
+    local.pathname = '/chats/same-conversation'
+    local.search = `?return=${token}`
+    const destination = handoffBuilderConversation('https://leap.test/dashboards/private-one/edit?page=overview', state)
+    expect(destination).toBe('/dashboards/private-one/edit?page=overview')
+    expect(chatReturnHref()).toBe('/explore?dataset=sales')
+    for (const target of ['https://evil.test/dashboards/a/edit', '//evil.test/dashboards/a/edit', '/dashboards/a', '/chats/new', '/dashboards/a%2Fb/edit', '/dashboards/%20/edit']) {
+      expect(() => handoffBuilderConversation(target, state)).toThrow()
+    }
+    expect(() => handoffBuilderConversation(destination, { ...state, conversationId: '' })).toThrow()
+    local.pathname = '/dashboards/private-one/edit'
+    local.search = '?page=other'
+    expect(readDrawerReturn()).toBeUndefined()
+    local.search = '?page=overview'
+    expect(readDrawerReturn()).toEqual({ ...state, selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '' })
+    clearDrawerReturn()
+    expect(readDrawerReturn()).toBeUndefined()
+    local.pathname = '/chats/same-conversation'
+    local.search = `?return=${token}`
+    expect(chatReturnHref()).toBe('/explore?dataset=sales')
+    local.pathname = '/explore'
+    local.search = '?dataset=sales'
+    expect(readDrawerReturn()).toEqual(state)
+  } finally {
+    if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation)
+    else Reflect.deleteProperty(globalThis, 'location')
+    if (originalStorage) Object.defineProperty(globalThis, 'sessionStorage', originalStorage)
+    else Reflect.deleteProperty(globalThis, 'sessionStorage')
+  }
+})

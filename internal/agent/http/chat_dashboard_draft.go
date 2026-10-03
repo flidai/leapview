@@ -103,7 +103,7 @@ func (h *Handler) saveChatDashboardDraft(w stdhttp.ResponseWriter, r *stdhttp.Re
 		return
 	}
 	result, err := h.options.DashboardAuthoring.CreateFromDocument(ctx, authoringservice.CreateFromDocumentRequest{
-		ProjectID: projectID, ActorID: scope.PrincipalID, Document: value, Title: input.Title,
+		ProjectID: projectID, ActorID: scope.PrincipalID, Document: value, Title: input.Title, Slug: chatDashboardCreateSlug(key),
 		Origin: authoring.OriginAgent, ConversationID: conversationID, ToolCallID: draft.ToolCallID,
 		IdempotencyKey: key, OperationKind: "create",
 	})

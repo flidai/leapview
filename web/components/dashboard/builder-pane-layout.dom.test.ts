@@ -413,13 +413,13 @@ test('dashboard builder stacks visual tiles within the mobile canvas viewport', 
   }
 })
 
-test('builder return expands the agent pane and authorizes its remembered conversation once', async () => {
+test.each(['leapview-chat-returns-v1', 'leapview-builder-chat-handoffs-v1'])('builder return from %s expands the agent pane and authorizes its remembered conversation once', async (snapshotKey) => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } })
   try {
     await page.route('**/dashboards/return/edit', route => route.fulfill({ contentType: 'text/html', body: documentWithProductFonts(true) }))
-    await page.addInitScript(() => {
+    await page.addInitScript((storageKey) => {
       localStorage.setItem('leapview-dashboard-builder-collapsed-panes', JSON.stringify({ version: 2, collapsed: ['agent'] }))
-      sessionStorage.setItem('leapview-chat-returns-v1', JSON.stringify({ builder: {
+      sessionStorage.setItem(storageKey, JSON.stringify({ builder: {
         href: '/dashboards/return/edit', created: Date.now(),
         state: { conversationId: 'builder-conversation', draft: 'Keep this change request', references: [], editMessageId: '', selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '', scroll: { top: 0, follow: false } },
       } }))
@@ -428,7 +428,7 @@ test('builder return expands the agent pane and authorizes its remembered conver
         ;(window as any).__builderRestores.push((event as CustomEvent).detail)
         event.stopImmediatePropagation()
       }, { capture: true })
-    })
+    }, snapshotKey)
     await page.goto(`${baseURL}/dashboards/return/edit`)
     await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-builder')?.shadowRoot?.querySelector('lv-chat-drawer')))
     expect(await page.locator('lv-dashboard-builder .agent-pane').getAttribute('data-collapsed')).toBe('false')
