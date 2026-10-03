@@ -226,15 +226,18 @@ def _file_size_limit(limit):
 def _run_container(args, name, *, timeout=45, limit=MAX_RUNTIME_BYTES):
     output = b''
     try:
-        with tempfile.TemporaryFile(mode='w+b') as capture:
+        with tempfile.TemporaryFile(mode='w+b') as capture, tempfile.TemporaryFile(mode='w+b') as errors:
             try:
                 subprocess.run(args, check=True, timeout=timeout, stdout=capture,
-                               stderr=subprocess.DEVNULL, env=_runtime_env(),
+                               stderr=errors, env=_runtime_env(),
                                preexec_fn=_file_size_limit(limit))
             except (OSError, subprocess.SubprocessError):
                 raise ValueError('protected controller host probe failed or exceeded its limits') from None
             capture.seek(0)
             output = capture.read(limit + 1)
+            errors.seek(0)
+            if len(errors.read(limit + 1)) > limit:
+                raise ValueError('controller host-probe stderr exceeds its byte limit')
     finally:
         # --rm handles normal completion. This also removes a named container
         # if the Docker client was killed at its timeout or output limit.
@@ -259,6 +262,7 @@ def _run_host(binary, arch, output_directory):
     for description, command, filename in RUNTIME_COMMANDS:
         name = 'leapview-cli-probe-' + uuid.uuid4().hex
         args = ['docker', 'run', '--rm', '--name', name, '--platform', 'linux/' + arch,
+                '--log-driver', 'none',
                 '--network', 'none', '--read-only', '--user', '65534:65534',
                 '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
                 '--memory', '256m', '--cpus', '1', '--pids-limit', '64', '--ulimit', 'core=0',

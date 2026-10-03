@@ -153,6 +153,8 @@ class CliPublicationTests(unittest.TestCase):
             mounted = args[args.index('--mount') + 1].split('src=', 1)[1].split(',', 1)[0]
             self.assertEqual(Path(mounted).stat().st_mode & 0o777, 0o755)
             self.assertIn('--name', args)
+            self.assertEqual(args[args.index('--log-driver') + 1], 'none')
+            self.assertTrue(hasattr(kwargs['stderr'], 'write'))
             self.assertIsNotNone(kwargs.get('preexec_fn'))
             if self.runtime_mode == 'timeout':
                 raise subprocess.TimeoutExpired(args, 45)
@@ -165,6 +167,8 @@ class CliPublicationTests(unittest.TestCase):
                 output = b'leapviewctl usage fixture\n'
             if self.runtime_mode == 'oversized':
                 output = b'x' * (publication.MAX_RUNTIME_BYTES + 1)
+            if self.runtime_mode == 'stderr-oversized':
+                kwargs['stderr'].write(b'x' * (publication.MAX_RUNTIME_BYTES + 1))
             kwargs['stdout'].write(output)
             return subprocess.CompletedProcess(args, 0)
         if args[:3] == ['gh', 'attestation', 'verify']:
@@ -328,7 +332,7 @@ class CliPublicationTests(unittest.TestCase):
         self.assertFalse(any(args[0] == 'docker' for args, _ in self.commands))
 
     def test_host_probe_output_and_container_lifetime_are_bounded(self):
-        for mode in ('oversized', 'timeout'):
+        for mode in ('oversized', 'stderr-oversized', 'timeout'):
             with self.subTest(mode=mode):
                 self.evidence_dir = self.root / ('limited-' + mode)
                 self.runtime_mode = mode
@@ -502,6 +506,46 @@ class CliPublicationTests(unittest.TestCase):
                                            self.revision, self.verifier, self.evidence_dir)
         self.assertEqual(verified['artifact']['platform'], 'linux/arm64')
         self.assertFalse(any(args[0] in {'docker', 'syft', 'gh'} for args, _ in self.commands))
+
+
+class CliHostRuntimeTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('LEAPVIEW_TEST_NIX_CLI_RUNTIME') == '1',
+                         'requires the pinned Docker host fixture')
+    def test_real_host_probe_bounds_stderr_and_preserves_normal_output(self):
+        import uuid
+        from types import SimpleNamespace
+
+        arch, _ = publication._native_arch()
+        for mode in ('normal', 'stderr-flood'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                binary = root / 'leapviewctl'
+                flood = "head -c 16777216 /dev/zero | tr '\\000' x >&2\n" if mode == 'stderr-flood' else ''
+                binary.write_text('#!/bin/sh\n' + flood +
+                                  'if [ "$1" = version ]; then\n'
+                                  '  printf \'{"fixture":"bounded"}\\n\'\n'
+                                  'else\n  printf \'fixture help\\n\'\nfi\n')
+                binary.chmod(0o755)
+                evidence = root / 'evidence'
+                evidence.mkdir()
+                identifiers = [uuid.uuid4().hex for _ in publication.RUNTIME_COMMANDS]
+                names = ['leapview-cli-probe-' + identifier for identifier in identifiers]
+                generated = iter(identifiers)
+                with patch.object(publication.uuid, 'uuid4',
+                                  side_effect=lambda: SimpleNamespace(hex=next(generated))):
+                    if mode == 'stderr-flood':
+                        with self.assertRaisesRegex(ValueError, 'host.probe'):
+                            publication._run_host(binary, arch, evidence)
+                    else:
+                        runtime, machine = publication._run_host(binary, arch, evidence)
+                        self.assertEqual(runtime, {'fixture': 'bounded'})
+                        self.assertEqual(machine, publication.ARCH_MACHINE[arch])
+                        self.assertEqual((evidence / 'runtime-help.txt').read_bytes(), b'fixture help\n')
+                        self.assertEqual((evidence / 'runtime-host-help.txt').read_bytes(), b'fixture help\n')
+                for name in names:
+                    inspected = subprocess.run(['docker', 'inspect', name],
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self.assertNotEqual(inspected.returncode, 0, 'probe container was not removed')
 
 
 if __name__ == '__main__':

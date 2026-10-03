@@ -446,6 +446,8 @@ qualifier executes version and command discovery in the independently pinned
 Debian 12 fixture with no network, a read-only filesystem, an unprivileged user
 and no capabilities. These probes establish the existing baseline command
 contract; they do not establish installation or recovery acceptance.
+Probe stdout and stderr each have a 1 MiB limit, and Docker daemon logging is
+disabled so candidate output cannot bypass those limits through daemon log files.
 
 `scripts/nix_cli_publication.py qualify` retains the exact archive/source/platform
 manifest, full Go scanner reports, static and runtime identity, SPDX, and a

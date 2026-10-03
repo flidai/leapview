@@ -10,6 +10,8 @@ test('protected controller adversarial checks run in local and hosted CI', () =>
   expect(readFileSync('Taskfile.yml', 'utf8')).toContain(command)
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
+  expect(workflow.jobs.image.steps.some((step: any) =>
+    step.run?.includes(`env LEAPVIEW_TEST_NIX_CLI_RUNTIME=1 ${command}`))).toBe(true)
 })
 
 const action = parse(readFileSync('.github/actions/setup-ci/action.yml', 'utf8'))
