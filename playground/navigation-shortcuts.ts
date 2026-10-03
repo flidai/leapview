@@ -64,7 +64,14 @@ export const navigationShortcutStyles = css`
   .shortcuts a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title-line { display: flex; align-items: center; gap: var(--base-size-8); }
   .title-line h1 { min-width: 0; }
-  .favorite-toggle { width: var(--control-medium-size); padding: 0; flex-shrink: 0; }
-  .favorite-toggle[aria-pressed='true'] { color: var(--lv-fg-accent); background: var(--lv-bg-accent-muted); }
+  .favorite-toggle {
+    display: inline-grid; place-items: center; flex-shrink: 0;
+    width: var(--control-medium-size); height: var(--control-medium-size);
+    padding: 0; border: 0; border-radius: var(--lv-radius-default);
+    color: var(--lv-fg-muted); background: transparent; cursor: pointer;
+  }
+  .favorite-toggle:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
+  .favorite-toggle:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+  .favorite-toggle[aria-pressed='true'] { color: var(--button-star-iconColor, var(--lv-fg-warning)); }
   .favorite-toggle[aria-pressed='true'] svg { fill: currentColor; }
 `

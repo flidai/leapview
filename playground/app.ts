@@ -268,7 +268,7 @@ class PlaygroundApp extends LitElement {
         </aside>
         <main id="main" tabindex="-1" aria-label=${example?.label || 'Preview'}>
           <div class="example-header" ?hidden=${this.previewOnly}>
-            <div class="heading"><p class="eyebrow">${group?.label || 'Playground'}</p><div class="title-line"><h1>${example?.label || 'Example not found'}</h1>${example && !embedded ? html`<button type="button" class="settings-button favorite-toggle" aria-label=${`Favorite ${example.label}`} aria-pressed=${String(this.navigationPreferences.favorites.includes(this.route))} title=${this.navigationPreferences.favorites.includes(this.route) ? 'Remove from favorites' : 'Add to favorites'} @click=${this.favoriteExample}>${lucideIcon(Star, { size: 16 })}</button>` : nothing}</div></div>
+            <div class="heading"><p class="eyebrow">${group?.label || 'Playground'}</p><div class="title-line"><h1>${example?.label || 'Example not found'}</h1>${example && !embedded ? html`<button type="button" class="favorite-toggle" aria-label=${`Favorite ${example.label}`} aria-pressed=${String(this.navigationPreferences.favorites.includes(this.route))} title=${this.navigationPreferences.favorites.includes(this.route) ? 'Remove from favorites' : 'Add to favorites'} @click=${this.favoriteExample}>${lucideIcon(Star, { size: 16 })}</button>` : nothing}</div></div>
             <div class="toolbar">
               <label>Width<select aria-label="Preview width" class="settings-input" .value=${this.width} @change=${(event: Event) => { this.width = (event.target as HTMLSelectElement).value }}>
                 <option value="responsive">Responsive</option><option value="360">360 px</option><option value="768">768 px</option><option value="1200">1200 px</option>
