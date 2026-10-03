@@ -16,8 +16,8 @@ test('orchestration archive manifest checks run in the CI contract lane', () => 
   expect(result.status).toBe(0)
 })
 
-test('orchestration cache experiment authorizes only the exact main producer', () => {
-  const workflow = parse(readFileSync('.github/workflows/orchestration-cache-experiment.yml', 'utf8'))
+test('orchestration cache authorizes only the exact main producer', () => {
+  const workflow = parse(readFileSync('.github/workflows/orchestration-cache.yml', 'utf8'))
   const identity = workflow.jobs.resolve.steps.find((step: any) => step.id === 'identity')
   const root = mkdtempSync(join(tmpdir(), 'nix-cache-authority-'))
   try {
@@ -52,6 +52,31 @@ test('orchestration cache experiment authorizes only the exact main producer', (
     expect(workflow.jobs.measure.strategy.matrix.treatment).toEqual(['baseline', 'restore'])
     expect(workflow.jobs.measure.steps.find((step: any) => step.id === 'restore').with['restore-keys']).toBeUndefined()
   } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('production orchestration restores only exact keys and retains complete realization', () => {
+  const workflow = parse(readFileSync('.github/workflows/orchestration-cache.yml', 'utf8'))
+  const restore = steps.find((step: any) => step.id === 'orchestration-cache')
+  const realize = steps.find((step: any) => step.name === 'Import orchestration archive and realize the complete locked environment')
+  const identity = workflow.jobs.resolve.steps.find((step: any) => step.id === 'identity')
+  expect(restore.if).toBe("inputs.profile == 'orchestration'")
+  expect(restore.uses).toContain('actions/cache/restore@')
+  expect(restore['continue-on-error']).toBe(true)
+  expect(restore.with['restore-keys']).toBeUndefined()
+  expect(restore.with.key).toBe('nix-orchestration-v1-Linux-X64-2.31.2-' + identity.env.INPUT_ID)
+  expect(realize.env.CACHE_INPUT_ID).toBe(identity.env.INPUT_ID)
+  expect(realize.run).toBe('python3 scripts/measure_orchestration_cache.py restore')
+  const keyFiles = [...identity.env.INPUT_ID.matchAll(/'([^']+)'/g)].map((match: any) => match[1])
+  expect(workflow.on.push.branches).toEqual(['main'])
+  expect(workflow.on.push.paths).toEqual(keyFiles)
+  const lookup = workflow.jobs.resolve.steps.find((step: any) => step.id === 'lookup')
+  expect(lookup.with['lookup-only']).toBe(true)
+  expect(workflow.jobs.producer.if).toContain("needs.resolve.outputs.cache_hit != 'true'")
+  expect(workflow.jobs.producer.permissions.actions).toBe('write')
+  expect(Object.entries(workflow.jobs).filter(([job, value]: [string, any]) =>
+    job !== 'producer' && value.permissions?.actions === 'write')).toEqual([])
+  const ci = parse(readFileSync('.github/workflows/ci.yml', 'utf8'))
+  for (const job of ['prepare', 'ci-gate']) expect(ci.jobs[job]['cache-mode']).toBe('read')
 })
 
 test('Nix application binaries retain function symbols for exact vulnerability coverage', () => {
@@ -100,7 +125,7 @@ test('Linux validation selects locked tools and excludes duplicate installers', 
   expect(install.uses).toMatch(/@[a-f0-9]{40}$/)
   expect(install.with.extra_nix_config).toContain('sandbox = true')
   const environment = steps.find((step: any) => step.name === 'Export locked compiler and browser environment')
-  expect(environment.if).toBe(locked)
+  expect(environment.if).toBe(`inputs.profile == 'validation' && ${locked}`)
   expect(environment.env).toEqual({
     CI_PROFILE: '${{ inputs.profile }}',
     NIX_SHELL: "${{ inputs.profile == 'orchestration' && 'orchestration' || 'default' }}",

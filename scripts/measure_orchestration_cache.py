@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Opt-in orchestration cache measurements; production setup stays unchanged."""
+"""Bounded orchestration closure publication, import and paired measurements."""
 import argparse
+from datetime import datetime
 import gzip
 import hashlib
 import json
@@ -11,6 +12,7 @@ import subprocess
 import time
 
 ARCHIVE_BUDGET = 300_000_000
+CACHE_PREFIX = 'nix-orchestration-v1-Linux-X64-2.31.2-'
 SHELL = '.#devShells.x86_64-linux.orchestration'
 
 
@@ -21,6 +23,49 @@ def output(*args):
 def digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def retention_plan(entries, key, ref, envelope_bytes):
+    assert re.fullmatch(re.escape(CACHE_PREFIX) + r'[0-9a-f]{64}', key)
+    assert 0 < envelope_bytes <= ARCHIVE_BUDGET
+    scoped = [entry for entry in entries if entry['ref'] == ref and
+              re.fullmatch(re.escape(CACHE_PREFIX) + r'[0-9a-f]{64}', entry['key']) and
+              entry['key'] != key]
+    for entry in scoped:
+        assert type(entry['id']) is int and entry['id'] > 0
+        assert type(entry['size_in_bytes']) is int and entry['size_in_bytes'] >= 0
+        assert re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', entry['created_at'])
+    scoped.sort(key=lambda entry: (datetime.fromisoformat(entry['created_at']), entry['id']))
+    retired = []
+    while len(scoped) >= 3 or sum(entry['size_in_bytes'] for entry in scoped) + envelope_bytes > 900_000_000:
+        retired.append(scoped.pop(0))
+    return retired
+
+
+def verify_producer():
+    assert os.environ['GITHUB_REF'] == 'refs/heads/' + os.environ['DEFAULT_BRANCH']
+    assert output('git', 'rev-parse', 'HEAD') == os.environ['GITHUB_SHA']
+
+
+def enforce_retention(directory):
+    verify_producer()
+    manifest_path = directory / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    validate_manifest(manifest, os.environ['CACHE_INPUT_ID'],
+                      output('nix', 'eval', '--no-update-lock-file', '--raw', SHELL + '.outPath'))
+    envelope_bytes = manifest['archiveBytes'] + manifest_path.stat().st_size + 1_048_576
+    endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/caches"
+    pages = json.loads(output('gh', 'api', '--paginate', '--slurp', '--method', 'GET', endpoint,
+                             '-f', 'key=' + CACHE_PREFIX, '-f', 'ref=' + os.environ['GITHUB_REF']))
+    entries = [entry for page in pages for entry in page['actions_caches']]
+    retired = retention_plan(entries, os.environ['CACHE_KEY'], os.environ['GITHUB_REF'], envelope_bytes)
+    receipt = {'envelopeBytes': envelope_bytes, 'inventory': entries, 'retired': []}
+    receipt_path = directory.parent / 'orchestration-cache-retention.json'
+    receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+    for entry in retired:
+        subprocess.run(['gh', 'api', '--method', 'DELETE', endpoint + '/' + str(entry['id'])], check=True)
+        receipt['retired'].append(entry)
+        receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
 
 
 def validate_manifest(manifest, input_id, root):
@@ -42,10 +87,15 @@ def validate_manifest(manifest, input_id, root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['produce', 'baseline', 'restore'])
+    parser.add_argument('operation', choices=['produce', 'baseline', 'restore', 'retain'])
     args = parser.parse_args()
     directory = Path(os.environ['RUNNER_TEMP']) / 'orchestration-cache'
     directory.mkdir(exist_ok=True)
+    if args.operation == 'retain':
+        enforce_retention(directory)
+        return
+    if args.operation == 'produce':
+        verify_producer()
     metrics_path = Path(os.environ['RUNNER_TEMP']) / 'orchestration-cache-metrics.json'
     metrics = {
         'schemaVersion': 1, 'operation': args.operation,
@@ -53,7 +103,7 @@ def main():
         'inputID': os.environ['CACHE_INPUT_ID'], 'runID': os.environ['GITHUB_RUN_ID'],
         'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'sample': os.environ.get('CACHE_SAMPLE', ''),
         'cacheHit': os.environ.get('CACHE_HIT') == 'true',
-        'scope': 'orchestration toolchain only; no production adoption',
+        'scope': 'orchestration toolchain only; complete locked realization required',
     }
     start = time.monotonic()
     root = output('nix', 'eval', '--no-update-lock-file', '--raw', SHELL + '.outPath')
@@ -82,7 +132,7 @@ def main():
             imported = output('nix-store', '--query', '--requisites', root).splitlines()
             assert sorted(imported) == sorted(manifest['paths'])
             metrics['archiveBytes'] = manifest['archiveBytes']
-        except (AssertionError, OSError, ValueError, KeyError, RuntimeError, subprocess.CalledProcessError) as error:
+        except (AssertionError, OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.CalledProcessError) as error:
             # Cache absence/corruption must not change toolchain correctness.
             metrics['cacheImportError'] = type(error).__name__
         metrics['importSeconds'] = time.monotonic() - start

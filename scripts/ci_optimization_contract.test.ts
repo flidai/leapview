@@ -14,7 +14,7 @@ test('orchestration uses explicit locked setup without application caches or ins
     expect(setup.with).toEqual({ profile: 'orchestration' })
   }
   for (const step of action.runs.steps) {
-    if (step.uses?.includes('actions/cache') || ['Resolve selected compiler identity',
+    if ((step.uses?.includes('actions/cache') && step.id !== 'orchestration-cache') || ['Resolve selected compiler identity',
       'Resolve Go validation cache paths', 'Set up Node.js', 'Set up Bun',
       'Configure bounded tool caches', 'Install pinned CI tools'].includes(step.name)) {
       expect(String(step.if), String(step.name)).toContain("inputs.profile == 'validation'")

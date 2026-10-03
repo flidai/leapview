@@ -59,8 +59,25 @@ runs:
           experimental-features = nix-command flakes
           sandbox = true
 
+    - name: Restore exact orchestration toolchain archive
+      if: inputs.profile == 'orchestration'
+      id: orchestration-cache
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/orchestration-cache
+        key: nix-orchestration-v1-Linux-X64-2.31.2-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**/*.nix', 'go.mod', 'package.json', 'scripts/export_nix_ci_environment.py', 'scripts/measure_orchestration_cache.py', '.github/workflows/orchestration-cache.yml', '.github/actions/setup-ci/action.yml', '.github/workflows/ci.yml') }}
+
+    - name: Import orchestration archive and realize the complete locked environment
+      if: inputs.profile == 'orchestration'
+      shell: bash
+      env:
+        CACHE_INPUT_ID: ${{ hashFiles('flake.nix', 'flake.lock', 'nix/**/*.nix', 'go.mod', 'package.json', 'scripts/export_nix_ci_environment.py', 'scripts/measure_orchestration_cache.py', '.github/workflows/orchestration-cache.yml', '.github/actions/setup-ci/action.yml', '.github/workflows/ci.yml') }}
+        CACHE_HIT: ${{ steps.orchestration-cache.outputs.cache-hit }}
+      run: python3 scripts/measure_orchestration_cache.py restore
+
     - name: Export locked compiler and browser environment
-      if: inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'
+      if: inputs.profile == 'validation' && inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'
       shell: bash
       env:
         CI_PROFILE: ${{ inputs.profile }}

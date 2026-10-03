@@ -45,7 +45,12 @@ the 12-observation confirmation median meets the limit with little margin.
 Per-batch and individual observations are in `measurements/release-layer-confirmations.json`.
 The cost allocation does not establish release cadence or billing savings.
 
-Protected qualification of the adoption commit is still pending. There are 15
+[#816](https://github.com/flidai/leapview/pull/816) merged through the protected
+queue as `61fc1849263fbf8abfbf800e33cf4435ab54b8ff`. Exact-candidate full CI
+[37107720182](https://github.com/flidai/leapview/actions/runs/37107720182), security
+[37107719973](https://github.com/flidai/leapview/actions/runs/37107719973) and all
+four native proofs [37107719939](https://github.com/flidai/leapview/actions/runs/37107719939)
+passed. There are 15
 observations per mode in total and no p95 conclusion. Required admission/publication assertions remain
 independent of cache performance, and normal builds remain required on misses.
 Persistent compiler mounts are evaluated separately with their full seed,

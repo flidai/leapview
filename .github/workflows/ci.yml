@@ -17,6 +17,7 @@ env:
 
 jobs:
   prepare:
+    cache-mode: read
     name: Plan PR validation
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
@@ -388,6 +389,7 @@ jobs:
       attestations: read
 
   ci-gate:
+    cache-mode: read
     name: CI gate
     if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation, host-recovery-validation]
