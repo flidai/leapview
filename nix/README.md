@@ -190,17 +190,24 @@ those reports to the exact binary and compressed archive hashes, expected main
 package, architecture, scanner policy and freshness in the CLI candidate manifest.
 Duplicate files, links, extra paths and ambiguous tar metadata fail closed.
 Failed scans retain diagnostics and cannot produce a successful evidence manifest.
-These PR reports are unprivileged qualification evidence; protected signed archive
-qualification must rescan the exact output with main-owned tools before signing
-or adoption. Offline verification of PR-generated reports alone is insufficient.
+These PR reports are unprivileged qualification evidence. The manual
+`Protected Nix controller candidate` workflow rescans exact AMD64 and ARM64
+archives with main-owned tools before signing. It requires one exact open PR head
+directly based on main, and checks that authorization again before signing.
+Native Debian 12 probes run without signing credentials; the signing job only
+reverifies retained evidence and attests the already-qualified archive bytes.
+A separate read-only job verifies live provenance and the exact SPDX predicate
+against the protected main workflow revision. Offline verification of PR-generated
+reports alone is insufficient. See [the evidence contract](CANDIDATE-EVIDENCE.md#protected-static-controller-candidates).
 
 These are development candidates derived from canonical `VERSION`, clean source
 revision and commit timestamp, with `release=false`. Compatibility receipts retain
 `releaseAdmission: false`. Basic Debian command execution does not establish
 installation, publication, upgrade, rollback or recovery acceptance. Signed
-archive provenance/SPDX, protected Go vulnerability admission, complete supported-host
-qualification, installation payload assembly and protected promotion remain D05
-gates. Conventional release and non-Linux builders remain the published owners.
+successful live protected archive provenance/SPDX qualification, complete
+supported-host qualification, installation payload assembly and protected promotion
+remain D05 gates. Conventional release and non-Linux builders remain the published
+owners.
 
 These are candidate builds, not a replacement for signed release publication.
 Clean Git revisions receive a `+nix.<revision>` development version, source

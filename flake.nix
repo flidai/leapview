@@ -89,6 +89,27 @@
         src = source;
       };
       toolchain = import ./nix/toolchain.nix { inherit pkgs playwright-nixpkgs; };
+      runtimeSecurityShell =
+        platform:
+        let
+          nativePkgs = nixpkgs.legacyPackages.${platform};
+          nativeToolchain = import ./nix/toolchain.nix {
+            pkgs = nativePkgs;
+            inherit playwright-nixpkgs;
+          };
+        in
+        nativePkgs.mkShell {
+          packages = [
+            nativeToolchain.go
+            nativePkgs.syft
+            nativePkgs.grype
+            nativePkgs.skopeo
+            nativePkgs.gh
+            nativePkgs.python3
+            nativePkgs.docker-client
+          ];
+          inherit (nativeToolchain) GOTOOLCHAIN;
+        };
     in
     {
       packages.${system} = {
@@ -119,18 +140,9 @@
           LEAPVIEW_TEST_NIX_PLAYWRIGHT_VERSION = toolchain.playwrightVersion;
           BUN_FEATURE_FLAG_NO_ORPHANS = "1";
         };
-        runtime-security = pkgs.mkShell {
-          packages = [
-            toolchain.go
-            pkgs.syft
-            pkgs.grype
-            pkgs.skopeo
-            pkgs.gh
-            pkgs.python3
-          ];
-          inherit (toolchain) GOTOOLCHAIN;
-        };
+        runtime-security = runtimeSecurityShell system;
       };
+      devShells.aarch64-linux.runtime-security = runtimeSecurityShell "aarch64-linux";
       checks.${system}.toolchain = import ./nix/check-toolchain.nix {
         inherit pkgs toolchain;
       };

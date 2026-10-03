@@ -428,3 +428,48 @@ main-owned tools; offline verification alone cannot establish the authenticity o
 PR-generated scanner results. Protected archive signing/admission, SPDX, full
 installation and recovery acceptance remain prerequisites; `releaseAdmission`
 stays false.
+
+### Protected static controller candidates
+
+The manual `Protected Nix controller candidate` workflow owns qualification and
+signing of development controller archives independently of application images.
+Dispatch it on `main` with the full `source_revision` of one open PR directly
+based on main. That exact source must still be eligible immediately before
+signing. Both Linux AMD64 and ARM64 qualifiers must succeed; the selected archive
+is never rebuilt between qualification and attestation.
+
+The candidate build has no signing authority. Separate native runners download
+its immutable artifact ID, then use the protected workflow revision's extractor,
+static ELF/Go checks, fresh binary-mode govulncheck, and pinned Syft SPDX inventory.
+The inventory must describe the exact extracted controller's Go modules. Each
+qualifier executes version and command discovery in the independently pinned
+Debian 12 fixture with no network, a read-only filesystem, an unprivileged user
+and no capabilities. These probes establish the existing baseline command
+contract; they do not establish installation or recovery acceptance.
+
+`scripts/nix_cli_publication.py qualify` retains the exact archive/source/platform
+manifest, full Go scanner reports, static and runtime identity, SPDX, and a
+hash-bound qualification receipt. `verify` recomputes that evidence without
+executing candidate code. The protected signing job downloads only the two
+qualifiers' exact artifact IDs, reverifies the reports, reauthorizes the current
+source, and attests the unchanged archive bytes and their bound SPDX documents.
+It runs no candidate executable.
+
+The final read-only `verify-signed` job retrieves the signing job's exact artifact
+ID and repeats offline verification. It then asks GitHub to verify each file's
+live provenance and SPDX attestations, requiring this repository, the exact
+`nix-cli-candidate.yml` workflow at the protected main revision, the main ref, and
+GitHub-hosted runners. The verified subject must match the archive basename and
+SHA-256; the SPDX predicate must equal the independently generated bound report.
+Retained unsigned JSON or a supplied offline attestation cannot grant success.
+Signed receipts bind the archive, source and qualification identities and keep
+`releaseAdmission: false`.
+
+Qualification and signed receipts are retained for 14 days. Download and retain
+the exact artifacts and receipts before expiry when recording a qualification
+result in the project ledger. This workflow creates signed candidates, not release
+downloads, Compose installation bundles or production tags. A reviewed workflow
+and green PR checks still require a positive protected run after landing.
+Complete supported-host, installation, publication, upgrade, rollback and recovery
+qualification remain required before adopting either controller architecture;
+conventional and supported non-Linux release builders remain selected.
