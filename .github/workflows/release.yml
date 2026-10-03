@@ -843,6 +843,10 @@ jobs:
     name: Publish qualified release
     if: github.event_name == 'push'
     needs: [image, authoring-cli, qualify, minio-conformance, plan-gc-conformance]
+    concurrency:
+      group: release-image-promotion
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -893,26 +897,28 @@ jobs:
           RELEASE_VERSION: ${{ needs.image.outputs.version }}
           REVISION: ${{ needs.image.outputs.revision }}
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.image_digest }}
         run: |
-          short_revision="${REVISION:0:7}"
-          tags=(--tag "${IMAGE_NAME}:sha-${short_revision}" --tag "${IMAGE_NAME}:${RELEASE_VERSION}")
-          case "$RELEASE_VERSION" in
-            *-*) ;;
-            *)
-              major_minor="${RELEASE_VERSION%.*}"
-              tags+=(--tag "${IMAGE_NAME}:${major_minor}" --tag "${IMAGE_NAME}:latest")
-              ;;
-          esac
-          docker buildx imagetools create "${tags[@]}" "$IMAGE_REFERENCE"
+          python3 scripts/release_image_promotion.py \
+            --repository "$IMAGE_NAME" \
+            --candidate-reference "$IMAGE_REFERENCE" \
+            --candidate-digest "$IMAGE_DIGEST" \
+            --version "$RELEASE_VERSION" \
+            --revision "$REVISION"
 
+      - name: Verify immutable release version tag
+        env:
+          RELEASE_VERSION: ${{ needs.image.outputs.version }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.image_digest }}
+        run: |
           docker logout ghcr.io
           actual_digest=""
           for _ in $(seq 1 12); do
             actual_digest="sha256:$(docker buildx imagetools inspect --raw "${IMAGE_NAME}:${RELEASE_VERSION}" 2>/dev/null | sha256sum | awk '{print $1}')"
-            [ "$actual_digest" = '${{ needs.image.outputs.image_digest }}' ] && break
+            [ "$actual_digest" = "$IMAGE_DIGEST" ] && break
             sleep 5
           done
-          test "$actual_digest" = '${{ needs.image.outputs.image_digest }}'
+          test "$actual_digest" = "$IMAGE_DIGEST"
 
       - name: Publish GitHub release
         env:

@@ -215,10 +215,18 @@ test('release image aliases are published only after qualification', () => {
   const publish = release.jobs.publish
   expect(publish.if).toBe("github.event_name == 'push'")
   expect(publish.needs).toEqual(['image', 'authoring-cli', 'qualify', 'minio-conformance', 'plan-gc-conformance'])
+  expect(publish.concurrency).toEqual({
+    group: 'release-image-promotion',
+    'cancel-in-progress': false,
+    queue: 'max',
+  })
   const aliases = publish.steps.find((step: any) => step.name === 'Publish qualified image tags')
-  expect(aliases.run).toContain('${IMAGE_NAME}:sha-${short_revision}')
-  expect(aliases.run).toContain('${IMAGE_NAME}:${RELEASE_VERSION}')
-  expect(aliases.run).toContain('${IMAGE_NAME}:latest')
+  expect(aliases.env.IMAGE_DIGEST).toBe('${{ needs.image.outputs.image_digest }}')
+  expect(aliases.run).toContain('scripts/release_image_promotion.py')
+  expect(aliases.run).toContain('--candidate-reference "$IMAGE_REFERENCE"')
+  expect(publish.steps.find((step: any) => step.name === 'Verify immutable release version tag')).toBeDefined()
+  expect(publish.steps.findIndex((step: any) => step.name === 'Publish qualified image tags'))
+    .toBeLessThan(publish.steps.findIndex((step: any) => step.name === 'Publish GitHub release'))
 })
 
 test('cache fallbacks retain the toolchain and locked compiler input identity', () => {
