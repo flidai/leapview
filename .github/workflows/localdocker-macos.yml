@@ -13,6 +13,8 @@ on:
 permissions:
   contents: read
 
+cache-mode: read
+
 concurrency:
   group: localdocker-macos-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -33,3 +35,97 @@ jobs:
           cache: false
       - name: Test local Docker endpoint policy
         run: go test -count=1 ./internal/app/cli/localdocker
+
+  release-layer-screen:
+    if: ${{ github.event_name != 'pull_request' }}
+    name: Release-compatible amd64 layers (${{ matrix.treatment }}, pair ${{ matrix.sample }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: ['1', '2', '3']
+        treatment: [baseline, main-read]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve the identical candidate build inputs
+        id: identity
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          test "$revision" = "$GITHUB_SHA"
+          git diff --quiet
+          git diff --quiet HEAD^ HEAD -- . ':(exclude).github'
+          canonical="$(tr -d '[:space:]' < VERSION)"
+          {
+            echo "revision=$revision"
+            echo "version=$canonical+candidate.${revision:0:12}"
+            echo "build_time=$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/layer-screen"
+          sha256sum Dockerfile go.mod go.sum bun.lock > "$RUNNER_TEMP/layer-screen/inputs.sha256"
+          docker version --format '{{json .}}' > "$RUNNER_TEMP/layer-screen/docker.json"
+      - name: Set up the existing pinned Buildx
+        id: builder
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build locally with the existing release scope and optional production-main reads
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            BUILD_VERSION=${{ steps.identity.outputs.version }}
+            BUILD_REVISION=${{ steps.identity.outputs.revision }}
+            BUILD_TIME=${{ steps.identity.outputs.build_time }}
+            BUILD_DIRTY=false
+            BUILD_RELEASE=false
+          push: false
+          load: true
+          tags: leapview-layer-screen:local
+          cache-from: |
+            type=gha,scope=release-amd64
+            ${{ matrix.treatment == 'main-read' && 'type=gha,scope=production-amd64' || '' }}
+      - name: Verify exact image and compiler context without publication
+        env:
+          EXPECTED_REVISION: ${{ steps.identity.outputs.revision }}
+          EXPECTED_VERSION: ${{ steps.identity.outputs.version }}
+          SAMPLE: ${{ matrix.sample }}
+          TREATMENT: ${{ matrix.treatment }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/layer-screen"
+          docker image inspect leapview-layer-screen:local > "$root/image.json"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --entrypoint /usr/local/libexec/leapviewctl leapview-layer-screen:local version --json > "$root/runtime.json"
+          docker buildx inspect --bootstrap > "$root/builder.txt"
+          python3 - <<'PYJSON'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'layer-screen'
+          runtime = json.loads((root / 'runtime.json').read_text())
+          image = json.loads((root / 'image.json').read_text())[0]
+          assert runtime['revision'] == os.environ['EXPECTED_REVISION']
+          assert runtime['version'] == os.environ['EXPECTED_VERSION']
+          assert runtime['dirty'] is False and runtime['development'] is True
+          assert image['Architecture'] == 'amd64' and image['Os'] == 'linux'
+          assert image['Config']['Labels']['org.opencontainers.image.revision'] == runtime['revision']
+          (root / 'measurement.json').write_text(json.dumps({
+              'schemaVersion': 1, 'sample': os.environ['SAMPLE'], 'treatment': os.environ['TREATMENT'],
+              'sourceRevision': runtime['revision'], 'runID': os.environ['GITHUB_RUN_ID'],
+              'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'imageID': image['Id'],
+              'scope': 'ordinary amd64 layer reads only; no mount persistence or release admission claim',
+          }, indent=2) + '\n')
+          PYJSON
+      - name: Retain input and local-image evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-layer-${{ matrix.treatment }}-${{ matrix.sample }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/layer-screen/
+          retention-days: 14
+          if-no-files-found: error
