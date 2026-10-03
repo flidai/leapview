@@ -1,4 +1,5 @@
 name: Recovery evidence qualification
+run-name: Recovery measurement (${{ inputs.execution }}, pair ${{ inputs.sample }}, provider ${{ inputs.provider_result }})
 
 on:
   pull_request:
