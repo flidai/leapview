@@ -186,7 +186,11 @@ class LeapViewDrawer extends LitElement {
 
   focusFirst(): void {
     window.setTimeout(() => {
-      this.focusableElements()[0]?.focus()
+      const close = this.renderRoot.querySelector<HTMLElement>('.close')
+      const focusable = this.focusableElements()
+      // Keep initial focus on content, independently of the native Tab order.
+      const initial = focusable.find(element => element !== close) ?? close
+      initial?.focus()
     }, 0)
   }
 
@@ -215,13 +219,14 @@ class LeapViewDrawer extends LitElement {
       this.close()
       return
     }
-    if (event.key !== 'Tab' || !this.modal) return
+    if (event.key !== 'Tab' || !this.modal || event.defaultPrevented) return
     const focusable = this.focusableElements()
     if (focusable.length === 0) return
+    // Only wrap at the composed tree's edges. Nested components retain their
+    // own keyboard behavior between them, including open popovers.
     const first = focusable[0]
     const last = focusable[focusable.length - 1]
-    const root = this.getRootNode() as Document | ShadowRoot
-    const active = 'activeElement' in root ? root.activeElement : document.activeElement
+    const active = event.composedPath()[0]
     if (event.shiftKey && active === first) {
       event.preventDefault()
       last.focus()
@@ -232,14 +237,24 @@ class LeapViewDrawer extends LitElement {
   }
 
   private focusableElements(): HTMLElement[] {
-    const bodySlot = this.renderRoot.querySelector<HTMLSlotElement>('slot:not([name])')
-    const titleSlot = this.renderRoot.querySelector<HTMLSlotElement>('slot[name="title"]')
-    const subtitleSlot = this.renderRoot.querySelector<HTMLSlotElement>('slot[name="subtitle"]')
-    const slotted = [titleSlot, subtitleSlot, bodySlot].flatMap((slot) => slot?.assignedElements({ flatten: true }) ?? [])
-    const nested = slotted.flatMap((element) => Array.from(element.querySelectorAll<HTMLElement>(focusableSelector)))
-    const direct = slotted.filter((element): element is HTMLElement => element instanceof HTMLElement && element.matches(focusableSelector))
-    const close = this.renderRoot.querySelector<HTMLElement>('.close')
-    return [...direct, ...nested, ...(close ? [close] : [])]
+    const focusable: HTMLElement[] = []
+    const visit = (element: Element): void => {
+      const style = getComputedStyle(element)
+      if (element.matches('[hidden], [inert]') || style.display === 'none') return
+      if (element instanceof HTMLElement && element.matches(focusableSelector)
+        && element.tabIndex >= 0 && !element.matches(':disabled')
+        && style.visibility === 'visible' && element.getClientRects().length > 0) {
+        focusable.push(element)
+      }
+      // Traverse rendered slots and open shadow roots in place, rather than
+      // grouping light-DOM controls separately from their nested controls.
+      const children = element instanceof HTMLSlotElement
+        ? element.assignedElements({ flatten: true })
+        : Array.from((element.shadowRoot ?? element).children)
+      children.forEach(visit)
+    }
+    Array.from(this.renderRoot.children).forEach(visit)
+    return focusable
   }
 }
 
