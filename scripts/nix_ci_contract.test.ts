@@ -10,6 +10,12 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('orchestration archive manifest checks run in the CI contract lane', () => {
+  const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_orchestration_cache.py'], { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stdout + result.stderr)
+  expect(result.status).toBe(0)
+})
+
 test('orchestration cache experiment authorizes only the exact main producer', () => {
   const workflow = parse(readFileSync('.github/workflows/orchestration-cache-experiment.yml', 'utf8'))
   const identity = workflow.jobs.resolve.steps.find((step: any) => step.id === 'identity')
