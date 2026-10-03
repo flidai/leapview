@@ -105,18 +105,6 @@ class ChatThread extends LitElement {
     `
   }
 
-  public snapshotScroll(): { top: number; follow: boolean } {
-    return { top: this.renderRoot.querySelector<HTMLElement>('.scroll')?.scrollTop ?? 0, follow: this.shouldAutoScroll }
-  }
-
-  public restoreScroll(state: { top: number; follow: boolean }): void {
-    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
-    this.scrollFrame = 0
-    this.shouldAutoScroll = state.follow
-    const scroll = this.renderRoot.querySelector<HTMLElement>('.scroll')
-    if (scroll) scroll.scrollTop = state.follow ? scroll.scrollHeight : Math.max(0, state.top)
-  }
-
   protected firstUpdated() {
     this.scheduleScrollToBottom(true)
   }
@@ -267,9 +255,6 @@ class ChatThread extends LitElement {
   }
 
   private renderAgentItem(item: ChatTranscriptItemSignal) {
-    // Dashboard compositions update the live draft canvas. Their artifact is a
-    // snapshot of the whole draft, not a single chart to render in the thread.
-    if (this.isDashboardDraftArtifact(item)) return nothing
     switch (item.kind) {
       case 'tool':
         return this.renderToolOutcome(item)
@@ -307,10 +292,6 @@ class ChatThread extends LitElement {
     if (status === 'complete' && item.artifact) return this.renderArtifact(item.artifact, item)
     if (status === 'error') return this.renderMessage('error', item.error?.trim() || 'A requested operation failed.', false, true)
     return nothing
-  }
-
-  private isDashboardDraftArtifact(item: ChatTranscriptItemSignal): boolean {
-    return item.kind === 'tool' && this.toolStatus(item) === 'complete' && item.artifact?.type === 'dashboard_draft'
   }
 
   private renderArtifact(artifact: ChatArtifactSignal, item?: ChatTranscriptItemSignal) {

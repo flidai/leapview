@@ -652,11 +652,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		return fail(err)
 	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{Persistence: graph.DashboardPersistence, AuthorizeTypedResource: func(ctx context.Context, principal string, project projectgraph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
-		// Authoring readers establish the stored lifecycle before requesting
-		// permission. Its read authority must work before publication adds the
-		// dashboard to the serving graph; ordinary serving routes stay closed.
-		allowStoredRead := resource.Kind() == projectgraph.KindDashboard && action == access.ActionDashboardRead
-		return authorizeTypedResourceActionWithDraft(ctx, accessBundle.Module, runtimeHost, principal, project, []access.ResourceRef{resource}, action, allowStoredRead || allowsUnpublishedDashboardAuthoringAction(resource, action))
+		return authorizeTypedResourceActionWithDraft(ctx, accessBundle.Module, runtimeHost, principal, project, []access.ResourceRef{resource}, action, allowsUnpublishedDashboardAuthoringAction(resource, action))
 	}, AuthorizeTypedProject: func(ctx context.Context, principal string, project projectgraph.ResourceID, action access.Action) (bool, bool, error) {
 		return authorizeTypedAuthoringProjectAction(ctx, accessBundle.Module, runtimeHost, principal, project, action)
 	}, AcquireRuntime: runtimeHost.Acquire})

@@ -1044,18 +1044,6 @@ model ChatArtifactSignal {
   `summary`?: string;
 }
 
-model ChatDashboardDraftVisualSignal {
-  `id`: string;
-  `artifactId`: string;
-  `title`: string;
-}
-
-model ChatDashboardDraftSignal {
-  `revision`: string;
-  `title`: string;
-  `visuals`: ChatDashboardDraftVisualSignal[];
-}
-
 model AgentReferenceKeySignal {
 	`kind`: string;
 	`id`: string;
@@ -1092,7 +1080,6 @@ model AgentReferenceSearchSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model AgentContextSignal {
   `surface`: string;
-  `previewArtifactId`?: string;
   `dashboardId`: string;
   `dashboardTitle`: string;
   `draftId`?: string;
@@ -1157,7 +1144,6 @@ model ChatSignal {
   `activeConversationId`: string;
   `composer`: ComposerSignal;
   `conversations`: ChatConversationSummary[];
-  `dashboardDraft`?: ChatDashboardDraftSignal;
   `status`: ChatStatus;
   `transcript`: ChatTranscriptItemSignal[];
 }

@@ -40,10 +40,6 @@ func (s *Service) ConversationVisualArtifact(ctx context.Context, scope Scope, c
 	if err != nil {
 		return ChatVisualArtifact{}, err
 	}
-	return conversationVisualArtifactFromMessages(messages, artifactID)
-}
-
-func conversationVisualArtifactFromMessages(messages []Message, artifactID string) (ChatVisualArtifact, error) {
 	type visualCallSource struct {
 		callID       string
 		outputPartID string

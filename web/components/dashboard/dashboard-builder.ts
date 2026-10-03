@@ -1,4 +1,3 @@
-import { readDrawerReturn } from '../chat/chat-navigation'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
@@ -217,7 +216,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   override connectedCallback(): void {
     super.connectedCallback()
     this.restoreCollapsedPanes()
-    if (readDrawerReturn()) this.collapsedPanes = { ...this.collapsedPanes, agent: false }
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
     document.addEventListener('datastar-signal-patch', this.handleVisualSignalPatch)
     document.addEventListener('leapview-theme-applied', this.handleThemeApplied)

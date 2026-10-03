@@ -65,7 +65,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			}
 			references = append(references, TurnReferenceFromCatalog(item.Item, projectID))
 		}
-		return agent.TurnContext{Surface: "chat", PreviewArtifactID: strings.TrimSpace(candidate.PreviewArtifactID), References: references}, nil
+		return agent.TurnContext{Surface: "chat", References: references}, nil
 	default:
 		return agent.TurnContext{}, errors.New("unsupported agent context surface")
 	}

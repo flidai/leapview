@@ -5,27 +5,6 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/visual-artifact'
 
-export function normalizeChatVisualDisplayPayload(payload: VisualizationEnvelope | undefined, hideTitle = false): VisualizationEnvelope | undefined {
-  if (!payload) return undefined
-  const spec = payload.spec
-  const hideChartTitle = hideTitle && spec.titleVisible !== false
-  if (spec.kind === 'proportional') {
-    const legendPosition = spec.presentation.legend as string | undefined
-    if (legendPosition !== 'hidden' && legendPosition !== 'none') {
-      return {
-        ...payload,
-        spec: {
-          ...spec,
-          ...(hideChartTitle ? { titleVisible: false } : {}),
-          presentation: { ...spec.presentation, legend: 'bottom' },
-        },
-      }
-    }
-  }
-  if (!hideChartTitle) return payload
-  return { ...payload, spec: { ...spec, titleVisible: false } }
-}
-
 export class ChatVisualPanel extends LitElement {
   @property() title = ''
   @property({ attribute: 'artifact-id' }) artifactId = ''
@@ -36,8 +15,6 @@ export class ChatVisualPanel extends LitElement {
   @property({ type: Boolean }) modal = false
   @property() saveError = ''
   @property({ type: Boolean }) dashboardAvailable = false
-  @property({ type: Boolean }) previewPending = false
-  @property() previewHref = ''
   private displaySource?: VisualizationEnvelope
   private displayVisual?: VisualizationEnvelope
 
@@ -129,14 +106,13 @@ export class ChatVisualPanel extends LitElement {
             ${this.explorerHref ? html`
               <button type="button" ?disabled=${this.saving || this.saved} @click=${this.save} aria-label="Save visual to Data Explorer">${this.saved ? 'Saved' : this.saving ? 'Saving…' : 'Save'}</button>
             ` : nothing}
-            ${this.dashboardAvailable ? html`<button class="preview-dashboard" type="button" ?disabled=${this.previewPending} @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-visual-preview', { bubbles: true, composed: true }))}>${this.previewPending ? 'Opening builder…' : 'Preview'}</button>` : nothing}
-            <button class="close" type="button" aria-label="Close visual details" ?disabled=${this.previewPending} @click=${this.close}>${lucideIcon(X, { size: 16 })}</button>
+            ${this.dashboardAvailable ? html`<button class="add-dashboard" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-visual-add-dashboard', { bubbles: true, composed: true }))}>Add to dashboard</button>` : nothing}
+            <button class="close" type="button" aria-label="Close visual details" @click=${this.close}>${lucideIcon(X, { size: 16 })}</button>
           </div>
         </div>
         <div class="content">
           <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()}></lv-visual-artifact>
           ${this.saveError ? html`<p class="feedback error" role="alert">${this.saveError}</p>` : nothing}
-          ${this.previewHref ? html`<p class="feedback"><a href=${this.previewHref}>Open in builder</a></p>` : nothing}
           ${this.saved ? html`<p class="feedback" role="status">Saved to Data Explorer.</p>` : nothing}
         </div>
       </aside>
@@ -146,12 +122,23 @@ export class ChatVisualPanel extends LitElement {
   private visualDisplayPayload(): VisualizationEnvelope | undefined {
     if (this.payload === this.displaySource) return this.displayVisual
     this.displaySource = this.payload
-    this.displayVisual = normalizeChatVisualDisplayPayload(this.payload, true)
+    const payload = this.payload
+    if (!payload) {
+      this.displayVisual = undefined
+      return this.displayVisual
+    }
+    const spec = payload.spec
+    if (spec.kind === 'proportional' && (spec.presentation.legend === 'left' || spec.presentation.legend === 'right')) {
+      const titleHiddenSpec = spec.titleVisible === false ? spec : { ...spec, titleVisible: false }
+      this.displayVisual = { ...payload, spec: { ...titleHiddenSpec, presentation: { ...spec.presentation, legend: 'bottom' } } }
+    } else {
+      this.displayVisual = spec.titleVisible === false ? payload : { ...payload, spec: { ...spec, titleVisible: false } }
+    }
     return this.displayVisual
   }
 
-  focusPreview(): void {
-    this.renderRoot.querySelector<HTMLButtonElement>('.preview-dashboard')?.focus()
+  focusAddToDashboard(): void {
+    this.renderRoot.querySelector<HTMLButtonElement>('.add-dashboard')?.focus()
   }
 
   focusClose(): void {

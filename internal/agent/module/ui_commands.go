@@ -7,7 +7,6 @@ import (
 
 // UICommandBindings is the agent module's public browser command surface.
 type UICommandBindings struct {
-	SaveDashboardDraft   uicommand.Binding
 	AddVisualToDashboard uicommand.Binding
 	UpdateConfig         uicommand.Binding
 	CreateConversation   uicommand.Binding
@@ -18,7 +17,6 @@ type UICommandBindings struct {
 
 func (*Module) UICommandBindings() UICommandBindings {
 	return UICommandBindings{
-		SaveDashboardDraft:   agentgen.GenUIActionSaveChatDashboardDraft(),
 		AddVisualToDashboard: agentgen.GenUIActionAddChatVisualToDashboard(),
 		UpdateConfig:         agentgen.GenUIActionUpdateAgentConfig(),
 		CreateConversation:   agentgen.GenUIActionCreateAgentConversation(),

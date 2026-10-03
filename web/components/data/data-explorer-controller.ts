@@ -1,4 +1,3 @@
-import { readDrawerReturn } from '../chat/chat-navigation'
 import type {
   DataExploreCommand,
   DataExploreFieldSignal,
@@ -31,8 +30,7 @@ export class DataExplorerAgentStateController {
 
   initialize(): DataExplorerAgentStoredState {
     if (!this.initialized) {
-      const restored = this.storage ? undefined : readDrawerReturn()
-      this.stateValue = restored ? { open: true, conversationId: restored.conversationId } : readDataExplorerAgentState(this.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage))
+      this.stateValue = readDataExplorerAgentState(this.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage))
       this.initialized = true
     }
     return this.state

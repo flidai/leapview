@@ -46,16 +46,10 @@ func (m *Module) configureTools() {
 func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinition {
 	scope = m.executionScope(scope)
 	toolScope := ToolsScope(scope)
-	visualProvider := m.VisualToolProvider()
-	var composeProvider agenttools.DashboardComposeProvider
-	if scope.BuilderDashboardID == "" && scope.BuilderDraftID == "" {
-		composeProvider = m.DashboardComposeToolProvider(visualProvider)
-	}
 	definitions := (agenttools.ProviderSet{
 		Docs:      m.DocsToolProvider(),
 		Catalog:   m.CatalogToolProvider(),
-		Visual:    visualProvider,
-		Compose:   composeProvider,
+		Visual:    m.VisualToolProvider(),
 		APIGen:    m.APIGenToolProvider(),
 		Authoring: m.DashboardAuthoringToolProvider(),
 	}).Definitions(toolScope)
@@ -149,19 +143,6 @@ func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 				return m.queryMetadata(ctx, projectID, modelID)
 			}
 			return agenttools.VisualQueryMetadata{}
-		},
-	}
-}
-
-func (m *Module) DashboardComposeToolProvider(visual agenttools.VisualProvider) agenttools.DashboardComposeProvider {
-	return agenttools.DashboardComposeProvider{
-		Visual: visual,
-		AuthorizeConversation: func(ctx context.Context, scope agenttools.Scope) error {
-			if m.service == nil || strings.TrimSpace(scope.PrincipalID) == "" || strings.TrimSpace(scope.ConversationID) == "" {
-				return agentcap.ErrNotFound
-			}
-			_, err := m.service.GetConversation(ctx, scopeFromTools(scope), scope.ConversationID)
-			return err
 		},
 	}
 }

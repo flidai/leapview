@@ -17,7 +17,6 @@ import (
 )
 
 var (
-	saveChatDashboardDraftOperation   = agentgen.GenCommandOperationSaveChatDashboardDraft()
 	addChatVisualToDashboardOperation = agentgen.GenCommandOperationAddChatVisualToDashboard()
 	updateAgentConfigOperation        = agentgen.GenCommandOperationUpdateAgentConfig()
 	createAgentConversationOperation  = agentgen.GenCommandOperationCreateAgentConversation()
@@ -207,12 +206,6 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 			RequestID: identity, CorrelationID: correlationID,
 		})
 		return ctx, err
-	case saveChatDashboardDraftOperation.APIGenOperationID():
-		ctx, _, err := agentgen.BeginGenSaveChatDashboardDraftCommand(r.Context(), agentgen.GenSaveChatDashboardDraftCommandInvocation{
-			Surface: apigencommand.SurfaceUI, Conversation: strings.TrimSpace(target), IdempotencyKey: idempotencyKey,
-			RequestID: identity, CorrelationID: correlationID,
-		})
-		return ctx, err
 	case createAgentRunOperation.APIGenOperationID():
 		ctx, _, err := agentgen.BeginGenCreateAgentRunCommand(r.Context(), agentgen.GenCreateAgentRunCommandInvocation{
 			Surface: apigencommand.SurfaceUI, Conversation: strings.TrimSpace(target), IdempotencyKey: idempotencyKey,
@@ -240,8 +233,6 @@ func agentUIBinding(operationID agentgen.GenCommandOperationID) uicommand.Bindin
 		return agentgen.GenUIActionManageAgentConversations()
 	case addChatVisualToDashboardOperation.APIGenOperationID():
 		return agentgen.GenUIActionAddChatVisualToDashboard()
-	case saveChatDashboardDraftOperation.APIGenOperationID():
-		return agentgen.GenUIActionSaveChatDashboardDraft()
 	case createAgentRunOperation.APIGenOperationID():
 		return agentgen.GenUIActionCreateAgentRun()
 	case cancelAgentRunOperation.APIGenOperationID():

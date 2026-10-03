@@ -16,7 +16,6 @@ Machine-readable: [complete tool manifest](/docs/agent-tools/manifest.json). Foc
 | [`catalog_get`](/docs/agent-tools/catalog_get) | `RESOURCE_READ` | `read` | Resolve one exact authorized project resource ID and return compact metadata. |
 | [`catalog_list`](/docs/agent-tools/catalog_list) | `RESOURCE_READ` | `read` | Browse authorized project resources from the project ref, or one dependency level from a resource ref. |
 | [`catalog_search`](/docs/agent-tools/catalog_search) | `RESOURCE_READ` | `read` | Search authorized project resources by stable ID, name, description, semantic metric or dimension names and labels, or domain metadata. |
-| [`compose_chat_dashboard`](/docs/agent-tools/compose_chat_dashboard) | `RESOURCE_USE` | `read` | Compose or update the complete dashboard draft in this conversation. |
 | [`create_dashboard_draft`](/docs/agent-tools/create_dashboard_draft) | `RESOURCE_EDIT` | `write` | Create a private dashboard draft owned by the authenticated principal. |
 | [`docs_read`](/docs/agent-tools/docs_read) | `authenticated` | `read` | Read a bounded line window from one LeapView document returned by docs_search. |
 | [`docs_search`](/docs/agent-tools/docs_search) | `authenticated` | `read` | Search LeapView's version-matched product documentation. |

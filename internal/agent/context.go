@@ -20,20 +20,19 @@ const MaxTurnReferences = 12
 // deliberately separate from Scope: Scope controls authorization, while this
 // value describes the dashboard state the user is asking about.
 type TurnContext struct {
-	Surface           string           `json:"surface"`
-	PreviewArtifactID string           `json:"previewArtifactId,omitempty"`
-	DashboardID       string           `json:"dashboardId,omitempty"`
-	DashboardTitle    string           `json:"dashboardTitle,omitempty"`
-	DraftID           string           `json:"draftId,omitempty"`
-	DraftRevision     *DraftRevision   `json:"draftRevision,omitempty"`
-	PageID            string           `json:"pageId,omitempty"`
-	PageTitle         string           `json:"pageTitle,omitempty"`
-	ModelID           string           `json:"modelId,omitempty"`
-	DatasetID         string           `json:"datasetId,omitempty"`
-	Exploration       *DataExploration `json:"exploration,omitempty"`
-	Generation        int64            `json:"generation,omitempty"`
-	Filters           map[string]any   `json:"filters,omitempty"`
-	References        []TurnReference  `json:"references,omitempty"`
+	Surface        string           `json:"surface"`
+	DashboardID    string           `json:"dashboardId,omitempty"`
+	DashboardTitle string           `json:"dashboardTitle,omitempty"`
+	DraftID        string           `json:"draftId,omitempty"`
+	DraftRevision  *DraftRevision   `json:"draftRevision,omitempty"`
+	PageID         string           `json:"pageId,omitempty"`
+	PageTitle      string           `json:"pageTitle,omitempty"`
+	ModelID        string           `json:"modelId,omitempty"`
+	DatasetID      string           `json:"datasetId,omitempty"`
+	Exploration    *DataExploration `json:"exploration,omitempty"`
+	Generation     int64            `json:"generation,omitempty"`
+	Filters        map[string]any   `json:"filters,omitempty"`
+	References     []TurnReference  `json:"references,omitempty"`
 }
 
 // DraftRevision is server-resolved concurrency evidence for authoring tools.
@@ -138,7 +137,6 @@ type TurnReferenceLocation struct {
 
 func (c TurnContext) normalized() TurnContext {
 	c.Surface = strings.ToLower(strings.TrimSpace(c.Surface))
-	c.PreviewArtifactID = strings.TrimSpace(c.PreviewArtifactID)
 	c.DashboardID = strings.TrimSpace(c.DashboardID)
 	c.DashboardTitle = strings.TrimSpace(c.DashboardTitle)
 	c.DraftID = strings.TrimSpace(c.DraftID)

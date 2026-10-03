@@ -102,10 +102,6 @@ class ChatComposer extends LitElement {
     super.disconnectedCallback()
   }
 
-  public snapshotDraft(): string {
-    return this.draft
-  }
-
   public remeasure(): void {
     this.resizeTextarea()
   }

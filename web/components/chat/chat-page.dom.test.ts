@@ -277,6 +277,24 @@ test('chat donut panel keeps outside value labels and places the legend below th
   }
 })
 
+test('chat visual panel preserves a hidden proportional legend', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const legend = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-visual-panel')
+      const panel = document.createElement('lv-chat-visual-panel') as any
+      panel.payload = { spec: { kind: 'proportional', mark: 'donut', presentation: { legend: 'hidden', labelPosition: 'outside' } } }
+      document.body.append(panel)
+      await panel.updateComplete
+      return panel.shadowRoot.querySelector('lv-visual-artifact')?.payload?.spec.presentation.legend
+    })
+    expect(legend).toBe('hidden')
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 820, expectedSurfaceWidth: 760 },
   { name: 'narrow desktop', width: 700, height: 820, expectedSurfaceWidth: 668 },
@@ -919,10 +937,7 @@ function escapeHTML(value: string): string {
 
 async function openDashboardTestVisual(page: Page): Promise<void> {
   await page.goto(baseURL)
-  await page.waitForFunction(() => {
-    const chat = document.querySelector('lv-chat-page') as any
-    return Boolean(chat?.hasBootstrapSignals && chat.shadowRoot?.querySelector('lv-chat-thread'))
-  })
+  await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-thread'))
   await page.evaluate(async () => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
     const field = (id: string, role: string) => ({ id, role, dataType: role === 'metric' ? 'decimal' : 'string', nullable: false, label: id })
@@ -932,24 +947,13 @@ schemaVersion: 14, visualID: 'chart-dashboard', rendererID: 'echarts', specRevis
           dataState: { kind: 'inline', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['France', 42]], completeness: 'complete' }] },
           selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
     } } })
-  })
-  await page.waitForFunction(() => {
     const chat = document.querySelector('lv-chat-page') as any
-    return chat?.agent?.transcript?.some((item: any) => item.kind === 'tool' && item.artifact?.id === 'chart-dashboard')
-      && chat?.visuals?.['chart-dashboard']?.visualID === 'chart-dashboard'
-  })
-  await page.locator('lv-chat-page').evaluate(async (element: any) => {
-    await element.updateComplete
-    await element.shadowRoot.querySelector('lv-chat-thread')?.updateComplete
-  })
-  await page.locator('lv-chat-page').evaluate((element: any) => {
-    const thread = element.shadowRoot.querySelector('lv-chat-thread')
-    thread.dispatchEvent(new CustomEvent('lv-chat-visual-open', {
+    await chat.updateComplete
+    chat.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', {
       detail: { artifactId: 'chart-dashboard', title: 'Net sales by country', explorerHref: '/explore?model=sales' }, bubbles: true, composed: true,
     }))
   })
-  await page.getByRole('button', { name: 'Preview', exact: true }).click()
-  await page.locator('lv-chat-dashboard-draft').getByRole('button', { name: 'Save dashboard', exact: true }).click()
+  await page.getByRole('button', { name: 'Add to dashboard', exact: true }).click()
 }
 
 for (const createNew of [false, true]) {
@@ -981,7 +985,7 @@ for (const createNew of [false, true]) {
       expect(requests[0].body).toEqual(createNew ? { title: 'CFO review' } : { dashboardId: 'dashboard:finance', pageId: 'details' })
       expect(requests[0].csrf).toBe('test-csrf')
       expect(requests[0].key).toMatch(/^[0-9a-f-]{14}7[0-9a-f-]{21}$/)
-      expect(await picker.getByRole('link', { name: 'Open in builder' }).getAttribute('href')).toBe('/dashboards/dashboard:finance/edit')
+      expect(await picker.getByRole('link', { name: 'Open dashboard' }).getAttribute('href')).toBe('/dashboards/dashboard:finance/edit')
       await page.locator('lv-chat-composer').evaluate((element: any) => element.setDraft('Show margin by product', false))
       await picker.getByRole('button', { name: 'Add another visual' }).click()
       await page.locator('.dashboard-destination').waitFor()
@@ -1030,23 +1034,5 @@ test('dashboard search cannot submit a destination hidden by the filter', async 
     expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isDisabled()).toBe(true)
     await picker.getByRole('radio', { name: 'Finance 6', exact: true }).check()
     expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isEnabled()).toBe(true)
-  } finally { await page.close() }
-})
-
-
-test('empty full chat expanded from a side agent has a return control before the first turn', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.evaluate(() => sessionStorage.setItem('leapview-chat-returns-v1', JSON.stringify({ origin: { href: '/dashboards/finance/pages/main?year=2026#chart', created: Date.now(), state: { conversationId: '', draft: 'Unsent question', references: [], editMessageId: '', selectedVisualId: '', selectedExplorerHref: '', selectedVisualTitle: '', scroll: { top: 0, follow: true } } } })))
-    await page.goto(`${baseURL}/new?return=origin`)
-    const close = page.getByRole('link', { name: 'Return to page', exact: true })
-    await close.waitFor()
-    expect(await close.getAttribute('href')).toBe('/dashboards/finance/pages/main?year=2026#chart')
-    expect(await page.getByRole('combobox').isVisible()).toBe(true)
-    expect(await page.getByRole('combobox').inputValue()).toBe('Unsent question')
-    await page.reload()
-    await page.getByRole('combobox').waitFor()
-    expect(await page.getByRole('combobox').inputValue()).toBe('')
   } finally { await page.close() }
 })

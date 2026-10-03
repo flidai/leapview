@@ -290,21 +290,7 @@ func transcriptStateFromMessages(conversationID string, messages []Message) Chat
 			items = append(items, item)
 		}
 	}
-	if draft, ok := conversationDashboardDraftFromMessages(activeMessageProjection(messages)); ok {
-		artifacts.DashboardDraft = &ChatDashboardDraftArtifact{
-			Revision: draft.Revision, Title: draft.Title,
-			Visuals: chatDashboardDraftVisualArtifacts(draft),
-		}
-	}
 	return ChatTranscriptState{Transcript: items, Artifacts: artifacts}
-}
-
-func chatDashboardDraftVisualArtifacts(draft ChatDashboardDraft) []ChatDashboardDraftVisualArtifact {
-	visuals := make([]ChatDashboardDraftVisualArtifact, 0, len(draft.Visuals))
-	for _, visual := range draft.Visuals {
-		visuals = append(visuals, ChatDashboardDraftVisualArtifact{ID: visual.ID, ArtifactID: visual.ArtifactID, Title: visual.Title})
-	}
-	return visuals
 }
 
 func turnReferencesFromContentJSON(raw string) []TurnReference {

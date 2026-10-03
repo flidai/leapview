@@ -12,44 +12,19 @@ Built-in chat, MCP discovery, and `leapview agent tools` expose one governed cat
 - `query_semantic_model` executes governed semantic queries.
 - `query_dashboard_visual` queries one existing dashboard visual.
 - `query_visual` creates a read-only visualization from governed semantic fields.
-- In the built-in main chat, `compose_chat_dashboard` queries a complete dashboard preview owned by that conversation. Saving the preview is a separate user action.
 - `docs_search` and `docs_read` search and read the version-matched product documentation.
 
 Catalog search and list silently omit inaccessible resources. Exact lookup returns the same not-found result for missing and inaccessible refs. These discovery/query/documentation tools are read-only, idempotent, non-destructive, and closed-world. Dashboard authoring is the explicit exception: its twelve tools can create private drafts and apply the four bounded intents or lifecycle commands, while still enforcing project-resource grants, governed fields, exact revisions, and no access to connections, raw sources, lineage, refresh runs, raw SQL, credentials, semantic-model mutation, or data mutation.
 
 See [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, pagination, shared-resource locations, tool-selection guidance, and stable error behavior. Use the generated [Agent tool reference](/docs/agent-tools) for exact schemas and metadata.
 
-## Build a dashboard in chat
-
-Ask the agent to build a dashboard and describe the charts you need. A dashboard
-draft appears beside the main chat. Continue chatting to add a chart, change
-one, or apply a filter. Select **Ask about visual** on a chart to put its identity
-in the composer, then describe the change before sending.
-
-The draft belongs to the conversation and is restored when you reopen the chat.
-It uses governed semantic-model queries, and each successful update replaces the
-complete preview. A failed update leaves the last successful draft available.
-Charts in one draft use the same semantic model; the agent can compose up to
-twelve charts. On a narrow screen, use **Dashboard draft** to switch to the preview.
-
-Choose **Preview** to create a private editable draft and open it immediately in
-the dashboard builder. The conversation continues in the builder's agent pane
-on the right, and subsequent edits apply to that draft. The normal chat layout
-remains in place until you choose Preview.
-
-Alternatively, choose **Save dashboard**, give it a name, and confirm to create a private
-dashboard containing all the preview's charts and their filters. The saved
-dashboard is available from **Open in builder** for manual editing. Further chat
-changes update the conversation draft; saving that changed draft creates a new
-copy. Sharing or publishing uses the dashboard's normal controls.
-
-## Keep an individual chat visual
+## Keep a chat visual
 
 Open a visual card in chat to inspect its chart. **Save** keeps it as a saved exploration.
 
-For a visual created by the agent, choose **Preview** to create a private editable dashboard draft from the visual and open the dashboard builder immediately. Its agent pane restores the same conversation and unsent input. The visual retains its governed semantic query and filters. Preview failures remain in chat so you can retry; a retry uses the same creation identity.
+For a visual created by the agent, choose **Add to dashboard** to select an editable dashboard and page or create a new private dashboard. The picker shows compatible dashboards that you can edit or copy. Published dashboards use **Create copy and add**, which creates a private editable copy containing the visual. The visual retains its semantic query and filters.
 
-The existing dashboard picker also offers **Open in builder** after adding a visual, or **Add another visual** to return to chat. The next dashboard picker remembers the dashboard and page you selected.
+After adding the visual, choose **Open dashboard** to inspect it in the editor, or **Add another visual** to return to chat. The next dashboard picker remembers the dashboard and page you selected.
 
 ## Product documentation tools
 
@@ -167,11 +142,3 @@ Natural-language output is not a replacement for governed results. Present tool 
 Test empty results, authorization failures, project-scoped credentials, ambiguous questions, provider timeouts, cancelled runs, and active deployment changes. Audit conversation and tool activity, apply bounded retention with `leapview admin maintenance`, and never log provider API keys or raw sensitive prompts into general diagnostics.
 
 See [Service principals and API tokens](/docs/security/tokens) and the generated [`agent` CLI reference](/docs/cli/agent).
-
-## Expand and return to a side conversation
-
-Use **Full chat** in the dashboard or Data Explorer agent to expand the same
-conversation. Use **Return to page** or your browser's Back action to return to
-its original page with the side agent open. Unsent text, attached references,
-the selected visual, and the conversation scroll position are restored in the
-same browser tab. Expansion is available after the current answer finishes.

@@ -159,7 +159,7 @@ func (h *Handler) addChatVisualToDashboard(w stdhttp.ResponseWriter, r *stdhttp.
 			return
 		}
 		lifecycle, err = h.options.DashboardAuthoring.CreateFromDocument(ctx, dashboardauthoringservice.CreateFromDocumentRequest{
-			ProjectID: projectID, ActorID: scope.PrincipalID, Document: documentValue, Title: targetTitle, Slug: chatDashboardCreateSlug(key),
+			ProjectID: projectID, ActorID: scope.PrincipalID, Document: documentValue, Title: targetTitle,
 			Origin: authoring.OriginAgent, ConversationID: conversationID, ToolCallID: artifact.ToolCallID,
 			IdempotencyKey: key, OperationKind: "create",
 		})
@@ -299,10 +299,10 @@ func normalizeImportedChatLegend(visual document.DashboardVisual) document.Dashb
 		return visual
 	}
 	presentation, ok := visual.Presentation.Value.(*document.ProportionalDashboardPresentation)
-	if !ok || presentation == nil {
+	if !ok || presentation == nil || presentation.Legend == nil {
 		return visual
 	}
-	if presentation.Legend != nil && (*presentation.Legend == document.DashboardLegendPositionNone || *presentation.Legend == document.DashboardLegendPositionBottom) {
+	if *presentation.Legend != document.DashboardLegendPositionLeft && *presentation.Legend != document.DashboardLegendPositionRight {
 		return visual
 	}
 	copy := *presentation
@@ -522,13 +522,6 @@ func chatVisualIdempotencyKey(r *stdhttp.Request) (string, error) {
 		return "", fmt.Errorf("%w: Idempotency-Key must be a canonical UUIDv7", authoring.ErrInvalidPayload)
 	}
 	return parsed.String(), nil
-}
-
-// Chat imports create independent private drafts even when their titles match.
-// The validated UUIDv7 command key keeps the slug stable on retry and unique
-// across separate previews without changing the user-facing title.
-func chatDashboardCreateSlug(key string) string {
-	return "chat-" + key
 }
 
 func chatDashboardHref(dashboardID, pageID string) string {

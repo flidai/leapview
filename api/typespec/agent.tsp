@@ -103,26 +103,6 @@ model AddChatVisualToDashboardResponse {
   pageId: string;
 }
 
-model SaveChatDashboardDraftRequest {
-  @doc("The server-issued revision of the complete dashboard preview being saved.")
-  @minLength(1) @maxLength(256)
-  revision: string;
-  @minLength(1) @maxLength(255)
-  title: string;
-}
-
-@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "CHAT_DASHBOARD_DRAFT_CHANGED", publicDetail: "The dashboard preview changed. Review the latest preview and save again." })
-model ChatDashboardDraftChangedFailure {}
-
-@apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "INVALID_CHAT_DASHBOARD_DRAFT", publicDetail: "A complete dashboard preview and a valid title are required." })
-model InvalidChatDashboardDraftFailure {}
-
-@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "CHAT_DASHBOARD_DRAFT_NOT_FOUND", publicDetail: "The dashboard preview is unavailable." })
-model ChatDashboardDraftNotFoundFailure {}
-
-@apigen.failureDefinition(#{ kind: "forbidden", statusCode: 403, code: "CHAT_DASHBOARD_DRAFT_FORBIDDEN", publicDetail: "You do not have permission to save this dashboard." })
-model ChatDashboardDraftForbiddenFailure {}
-
 model AgentConversationCreateRequest {
   title?: string;
 }
@@ -363,21 +343,6 @@ interface AgentConversations {
   @apigen.failsWith(AgentServiceUnavailableFailure)
   @apigen.command(#{ auditAction: "agent.visual.dashboard.added", guarantee: "transactional" })
   addChatVisualToDashboard(@path @apigen.target conversation: string, @path artifact: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AddChatVisualToDashboardRequest): OkJson<AddChatVisualToDashboardResponse> | CommonErrors;
-
-  @summary("Save an owned conversation dashboard preview")
-  @doc("Creates one private dashboard from the latest successful persisted compose_chat_dashboard result. All visual definitions and filters are resolved from the owned conversation and imported atomically. The supplied revision must match the preview; rendered client data is never accepted as source.")
-  @route("/{conversation}/dashboard")
-  @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @apigen.ui("agent.dashboard.save")
-  @apigen.auditPayload(ChatVisualDashboardCommandAuditPayload)
-  @apigen.failsWith(InvalidChatDashboardDraftFailure)
-  @apigen.failsWith(ChatDashboardDraftNotFoundFailure)
-  @apigen.failsWith(ChatDashboardDraftForbiddenFailure)
-  @apigen.failsWith(ChatDashboardDraftChangedFailure)
-  @apigen.failsWith(AgentServiceUnavailableFailure)
-  @apigen.command(#{ auditAction: "agent.dashboard.saved", guarantee: "transactional" })
-  saveChatDashboardDraft(@path @apigen.target conversation: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: SaveChatDashboardDraftRequest): OkJson<AddChatVisualToDashboardResponse> | CommonErrors;
 
   @summary("List agent messages")
   @route("/{conversation}/messages")

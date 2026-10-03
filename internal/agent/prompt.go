@@ -222,27 +222,16 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				if promptErr != nil {
 					return nil, promptErr
 				}
-				lastUser, hasPrompt := lastVisibleUserMessage(transcript)
-				needsPrepare := !promptInSnapshot || !hasPrompt || lastUser.Content != input.Input
-				if needsPrepare {
-					transcript = withoutPreviousDashboardDraftContext(transcript)
-				}
 				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", SystemPrompt: systemPrompt, Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
 				if prepErr != nil {
 					return nil, prepErr
 				}
+				lastUser, hasPrompt := lastVisibleUserMessage(transcript)
 				// A previous run may have submitted identical text. Only a
 				// message already bound to this run proves that prompt
 				// preparation committed; otherwise prepare a fresh message.
-				if needsPrepare {
-					draftItems, contextErr := s.promptDashboardPreviewContextItems(ctx, input, stored)
-					if contextErr != nil {
-						return nil, contextErr
-					}
-					if prepErr = prepared.PreparePrompt(agentcore.PromptRequest{
-						Input:   input.Input,
-						Context: promptContextItems(input.Context, draftItems),
-					}); prepErr != nil {
+				if !promptInSnapshot || !hasPrompt || lastUser.Content != input.Input {
+					if prepErr = prepared.PreparePrompt(agentcore.PromptRequest{Input: input.Input, Context: turnContextItems(input.Context)}); prepErr != nil {
 						return nil, prepErr
 					}
 				}
@@ -298,8 +287,6 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		}
 		return nil, err
 	}
-	var storedMessages []Message
-	var listErr error
 	if input.EditMessageID != "" {
 		latestConversation, conversationErr := s.repo.GetConversation(ctx, input.Scope.PrincipalID, input.ConversationID)
 		if conversationErr != nil {
@@ -312,21 +299,15 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		if err != nil {
 			return s.startFailure(ctx, input, run.ID, err)
 		}
-		storedMessages, listErr = s.repo.ListMessages(ctx, input.Scope.PrincipalID, input.ConversationID)
+		stored, listErr := s.repo.ListMessages(ctx, input.Scope.PrincipalID, input.ConversationID)
 		if listErr != nil {
 			return s.startFailure(ctx, input, run.ID, listErr)
 		}
-		initial, err = prepareEditedTranscript(initial, storedMessages, input.EditMessageID)
-		if err != nil {
-			return s.startFailure(ctx, input, run.ID, err)
-		}
-	} else {
-		storedMessages, err = s.repo.ListMessages(ctx, input.Scope.PrincipalID, input.ConversationID)
+		initial, err = prepareEditedTranscript(initial, stored, input.EditMessageID)
 		if err != nil {
 			return s.startFailure(ctx, input, run.ID, err)
 		}
 	}
-	initial = withoutPreviousDashboardDraftContext(initial)
 	prepared, err := agentcore.New(agentcore.Definition{
 		Name:              "leapview-governed",
 		SystemPrompt:      systemPrompt,
@@ -338,13 +319,9 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}
-	draftItems, err := s.promptDashboardPreviewContextItems(ctx, input, storedMessages)
-	if err != nil {
-		return s.startFailure(ctx, input, run.ID, err)
-	}
 	if err := prepared.PreparePrompt(agentcore.PromptRequest{
 		Input:   input.Input,
-		Context: promptContextItems(input.Context, draftItems),
+		Context: turnContextItems(input.Context),
 	}); err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}

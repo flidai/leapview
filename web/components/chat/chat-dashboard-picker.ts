@@ -102,7 +102,7 @@ export class ChatDashboardPicker extends LitElement {
           <div class="body"><p role="status">Your visual has been added. Would you like to add another visual to this dashboard?</p></div>
           <footer>
             <button type="button" @click=${this.close}>Done</button>
-            <a class="button" href=${this.result.href}>Open in builder</a>
+            <a class="button" href=${this.result.href}>Open dashboard</a>
             <button type="button" @click=${this.addAnother}>Add another visual</button>
           </footer>
         ` : html`

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/flidai/leapview/internal/agent"
@@ -98,22 +97,5 @@ func TestChatConversationsPatchPreservesOneOrderForListAndSidebar(t *testing.T) 
 	}
 	if !items[1].Active {
 		t.Fatalf("active sidebar item = %#v", items)
-	}
-}
-
-func TestChatSignalPatchExplicitlyClearsAbsentDashboardDraft(t *testing.T) {
-	patch := ChatSignalPatch(ChatViewState{Agent: ChatSignal{Transcript: []ChatTranscriptItemSignal{}}})
-	encoded, err := json.Marshal(patch)
-	if err != nil {
-		t.Fatalf("marshal chat patch: %v", err)
-	}
-	var decoded map[string]map[string]any
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatalf("decode chat patch: %v", err)
-	}
-	agentPatch := decoded["agent"]
-	value, exists := agentPatch["dashboardDraft"]
-	if !exists || value != nil {
-		t.Fatalf("agent.dashboardDraft patch = %#v (exists %t), want explicit null tombstone", value, exists)
 	}
 }

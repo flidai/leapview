@@ -82,7 +82,6 @@ func TestToolNamesAreTheCuratedSurface(t *testing.T) {
 		"catalog_get",
 		"catalog_list",
 		"catalog_search",
-		"compose_chat_dashboard",
 		"create_dashboard_draft",
 		"docs_read",
 		"docs_search",
@@ -139,8 +138,8 @@ func TestReferenceCatalogComesFromCanonicalProviderDefinitions(t *testing.T) {
 	wantDefaults := map[string]map[string]any{
 		"add_dashboard_page": {}, "add_dashboard_visual": {}, "assign_dashboard_field": {},
 		"catalog_get": {}, "catalog_list": {"limit": 25}, "catalog_search": {"limit": 10},
-		"compose_chat_dashboard": {}, "create_dashboard_draft": {},
-		"docs_read": {"limit": 200, "offset": 1}, "docs_search": {"limit": 8},
+		"create_dashboard_draft": {},
+		"docs_read":              {"limit": 200, "offset": 1}, "docs_search": {"limit": 8},
 		"edit_dashboard_source": {}, "execute_dashboard_command": {}, "export_dashboard_yaml": {}, "fork_dashboard": {},
 		"get_dashboard": {}, "get_dashboard_draft": {}, "list_dashboards": {}, "preview_dashboard_draft": {}, "read_dashboard_source": {},
 		"query_dashboard_visual": {"limit": 50}, "query_semantic_model": {"limit": 25}, "query_visual": {"limit": 50},
@@ -148,7 +147,7 @@ func TestReferenceCatalogComesFromCanonicalProviderDefinitions(t *testing.T) {
 	}
 	wantEffects := map[string]string{
 		"add_dashboard_page": "write", "add_dashboard_visual": "write", "assign_dashboard_field": "write",
-		"catalog_get": "read", "catalog_list": "read", "catalog_search": "read", "compose_chat_dashboard": "read", "create_dashboard_draft": "write",
+		"catalog_get": "read", "catalog_list": "read", "catalog_search": "read", "create_dashboard_draft": "write",
 		"docs_read": "read", "docs_search": "read", "edit_dashboard_source": "write", "execute_dashboard_command": "destructive", "export_dashboard_yaml": "read",
 		"fork_dashboard": "write", "get_dashboard": "read", "get_dashboard_draft": "read", "list_dashboards": "read",
 		"preview_dashboard_draft": "read", "query_dashboard_visual": "read", "query_semantic_model": "read", "query_visual": "read", "read_dashboard_source": "read",

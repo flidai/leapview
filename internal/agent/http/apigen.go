@@ -102,8 +102,3 @@ func (d *APIGenDispatcher) AddChatVisualToDashboard(w stdhttp.ResponseWriter, r 
 	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
 	d.handler.AddChatVisualToDashboard(w, r)
 }
-
-func (d *APIGenDispatcher) SaveChatDashboardDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers agentgen.GenSaveChatDashboardDraftHeaders) {
-	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
-	d.handler.SaveChatDashboardDraft(w, r)
-}

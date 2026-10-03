@@ -36,7 +36,6 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/chats/{conversation}", authenticated(h.ChatConversation))
 	r.Get("/chats/{conversation}/visuals/{artifact}/dashboards", authenticated(h.ListChatVisualDashboards))
 	r.Post("/chats/{conversation}/visuals/{artifact}/dashboards", authenticated(h.AddChatVisualToDashboardUI))
-	r.Post("/chats/{conversation}/dashboard", authenticated(h.SaveChatDashboardDraftUI))
 	r.Post("/chats/manage", authenticated(h.ChatManagement))
 	r.Post("/chats/turns", authenticated(h.ChatTurn))
 	r.Post("/chats/stop", authenticated(h.ChatStop))
