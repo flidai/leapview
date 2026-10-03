@@ -449,6 +449,7 @@ test('pinned embedded previews never change favorites or recent navigation', asy
   await open('controls/select')
   await page.getByRole('button', { name: 'Favorite Select menu', exact: true }).click()
   await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('link', { name: 'Buttons', exact: true }).click()
+  await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText('Buttons')
   const before = await page.evaluate(() => localStorage.getItem('leapview-playground:navigation:v1'))
   const review = page.locator('playground-review-tools')
   await review.locator('summary').first().click()
