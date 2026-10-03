@@ -188,6 +188,9 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+      bindings_artifact_id: ${{ steps.bindings.outputs.artifact-id }}
     steps:
       # Candidate executables never run in this privileged job. Every command,
       # locked tool and security policy comes from the protected workflow SHA.
@@ -290,6 +293,7 @@ jobs:
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --image "$IMAGE" --signer-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/nix-signed.json"
       - name: Retain verified candidate bindings
+        id: bindings
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nix-candidate-binding-${{ github.run_id }}-${{ github.run_attempt }}
@@ -298,4 +302,105 @@ jobs:
             ${{ runner.temp }}/nix-published.json
             ${{ runner.temp }}/nix-signed.json
           if-no-files-found: error
+          retention-days: 14
+
+  qualify-published:
+    needs: [qualify, publish]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out protected qualification and verifier code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+      - name: Check out candidate identity only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Download the exact qualified archive and reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.qualify.outputs.artifact_id }}
+          merge-multiple: true
+          path: candidate
+      - name: Download the exact publisher bindings
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.publish.outputs.bindings_artifact_id }}
+          merge-multiple: true
+          path: bindings
+      - name: Install protected Nix tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build the protected Go binary verifier
+        working-directory: protected
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Verify signed final content before executing the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py verify-signed \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --image "$IMAGE" --signer-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/nix-final-verified.json"
+      - name: Build the protected qualification CLI
+        run: nix build --no-update-lock-file ./protected#leapview --out-link trusted-app -L
+      - name: Log in with read-only package access
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Qualify the final signed registry digest
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+        run: nix develop --no-update-lock-file ./protected -c bash protected/scripts/check_nix_registry_image.sh "$IMAGE" trusted-app
+      - name: Copy the exact qualification report for retention
+        if: always()
+        run: |
+          mkdir -p candidate/final
+          report=protected/.tmp/nix-published-qualification/evidence/image-qualification-report.json
+          if [ -f "$report" ] && [ ! -L "$report" ]; then
+            cp "$report" candidate/final/image-qualification-report.json
+          fi
+      - name: Bind successful qualification to freshly verified signed content
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py bind-qualified \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --image "$IMAGE" --signer-revision "$GITHUB_SHA" \
+            --signed-evidence bindings/nix-signed.json \
+            --qualification-report candidate/final/image-qualification-report.json \
+            --output candidate/final/nix-qualified.json
+      - name: Retain final qualification evidence and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-published-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate/final/
+          if-no-files-found: warn
           retention-days: 14

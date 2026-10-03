@@ -682,6 +682,33 @@ func TestQualificationPhaseTrackerRecordsTypedFailureAndDuration(t *testing.T) {
 	}
 }
 
+func TestQualificationPhaseTrackerPreservesTimestampPrecisionForOrdering(t *testing.T) {
+	now := time.Date(2026, 10, 3, 10, 0, 20, 123456789, time.UTC)
+	started := now
+	tracker := newQualificationPhaseTracker(func() time.Time { return now })
+	tracker.Begin(context.Background(), "first", time.Minute)
+	now = now.Add(1500 * time.Millisecond)
+	if err := tracker.Finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Begin(context.Background(), "second", time.Minute)
+	if err := tracker.Finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	phases := tracker.Evidence()
+	first, err := time.Parse(time.RFC3339Nano, phases[0].StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := time.Parse(time.RFC3339Nano, phases[1].StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Equal(started) || first.Add(time.Duration(phases[0].DurationMillis)*time.Millisecond).After(second) {
+		t.Fatalf("phase timestamps lost precision or falsely overlap: %+v", phases)
+	}
+}
+
 func TestQualificationPhaseTrackerClassifiesTimeout(t *testing.T) {
 	now := time.Now()
 	tracker := newQualificationPhaseTracker(func() time.Time { return now })

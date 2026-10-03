@@ -7,7 +7,7 @@ INSERT INTO release.release_record
      artifact_digest, request_digest, idempotency_key, status, provenance,
      created_by)
 VALUES (sqlc.arg(release_id), sqlc.arg(project_id), sqlc.arg(environment), sqlc.arg(generation_id), sqlc.arg(project_digest), sqlc.arg(artifact_digest), sqlc.arg(request_digest), sqlc.arg(idempotency_key), 'draft', sqlc.arg(provenance)::jsonb, sqlc.arg(created_by))
-ON CONFLICT (release_id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 -- name: GetRelease :one
 SELECT release_id, project_id, environment, generation_id, project_digest,
