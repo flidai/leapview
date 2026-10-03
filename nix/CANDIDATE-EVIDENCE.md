@@ -228,7 +228,12 @@ reports, preserved registry content, provenance and exact SPDX.
 `check_nix_registry_image.sh` pulls only an immutable application reference and
 keeps that exact reference in the loader probe and enterprise image qualification.
 It does not retag or repush the image, or substitute Docker's normalized daemon
-ID. The existing pre-publication archive qualification also remains enforced.
+ID. The Go qualifier also preserves an already-immutable input through Compose
+bootstrap, authoring and performance; only local tag inputs need registry pinning.
+The image report records the selected deployment reference. A controller
+regression checks the generated Compose environment and rejects registry startup,
+retagging or republishing for a signed digest. The existing pre-publication archive
+qualification also remains enforced.
 
 `nix_candidate_publication.py bind-qualified` requires a successful schema-1
 image report for that same registry digest, all four current bounded phases and

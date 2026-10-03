@@ -41,8 +41,10 @@ LEAPVIEWCTL_ROOT="$PWD/deploy/compose" \
   ./.tmp/leapviewctl-qualification qualify image --image leapview:ci
 ```
 
-The controller pushes the local image through an isolated registry, deploys its
-immutable digest with the production Compose bundle, and writes
+For local tag inputs, the controller pins the image through an isolated registry
+before deployment. Already-immutable registry references pass unchanged through
+bootstrap, authoring and performance qualification, without retagging or
+republishing. The report records the selected deployment image. The controller writes
 `qualification-evidence/authoring-ci/authoring-report.json`. Both trusted and
 fork pull-request production-image jobs run this gate.
 
