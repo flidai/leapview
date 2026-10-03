@@ -5,6 +5,15 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 
+test('protected controller adversarial checks run in local and hosted CI', () => {
+  const command = 'python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py'
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain(command)
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
+  expect(workflow.jobs.image.steps.some((step: any) =>
+    step.run?.includes(`env LEAPVIEW_TEST_NIX_CLI_RUNTIME=1 ${command}`))).toBe(true)
+})
+
 const action = parse(readFileSync('.github/actions/setup-ci/action.yml', 'utf8'))
 const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
@@ -442,6 +451,146 @@ test('registry image qualification retains the immutable reference and stops on 
       }
     }
   } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('protected Nix controller candidates keep build, qualification, signing, and verification isolated', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-cli-candidate.yml', 'utf8'))
+  expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch'])
+  expect(workflow.on.workflow_dispatch.inputs.source_revision.required).toBe(true)
+  expect(workflow.permissions).toEqual({ contents: 'read' })
+  expect(workflow.concurrency['cancel-in-progress']).toBe(false)
+  for (const [name, job] of Object.entries(workflow.jobs) as [string, any][]) {
+    expect(job.if, name).toContain("github.repository == 'flidai/leapview'")
+    expect(job.if, name).toContain("github.ref == 'refs/heads/main'")
+    for (const step of job.steps) {
+      if (step.uses?.startsWith('actions/checkout@')) expect(step.with['persist-credentials'], name).toBe(false)
+      if (step.uses) expect(step.uses, name).toMatch(/@[a-f0-9]{40}$/)
+    }
+  }
+
+  const { authorize, build, 'qualify-amd64': amd64, 'qualify-arm64': arm64, publish, 'verify-signed': verify } = workflow.jobs
+  expect(authorize.environment).toBe('leapview-ephemeral-qualification')
+  expect(authorize.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' })
+  const authorization = authorize.steps.find((step: any) => step.run?.includes('/pulls'))
+  expect(authorization.run).toContain('^[0-9a-f]{40}$')
+  expect(authorization.run).toContain('.base.ref == "main" and .state == "open" and .head.sha == $revision')
+  expect(authorization.run).toContain('length == 1')
+
+  expect(build.needs).toBe('authorize')
+  expect(build.outputs.artifact_id).toBe('${{ steps.archive.outputs.artifact-id }}')
+  expect(build.permissions).toEqual({ contents: 'read' })
+  expect(build.environment).toBeUndefined()
+  const buildStep = build.steps.find((step: any) => step.name === 'Build both controller archives without signing credentials')
+  for (const target of ['.#leapviewctl-linux-amd64', '.#leapviewctl-linux-arm64']) expect(buildStep.run).toContain(target)
+  for (const file of ['leapviewctl-linux-$arch.tar.gz', 'archive-identity.json', 'static-compatibility.json']) {
+    expect(buildStep.run).toContain(file)
+  }
+  const buildArtifact = build.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(buildArtifact.with.path).toBe('candidate/')
+  expect(buildArtifact.with['retention-days']).toBe(14)
+
+  for (const [arch, job, runner] of [['amd64', amd64, 'ubuntu-24.04'], ['arm64', arm64, 'ubuntu-24.04-arm']] as [string, any, string][]) {
+    expect(job.needs).toEqual(['authorize', 'build'])
+    expect(job['runs-on']).toBe(runner)
+    expect(job.permissions).toEqual({ contents: 'read' })
+    expect(job.environment).toBeUndefined()
+    expect(job.outputs.artifact_id).toBe('${{ steps.qualified.outputs.artifact-id }}')
+    const protectedCheckout = job.steps.find((step: any) => step.with?.path === 'protected')
+    const sourceCheckout = job.steps.find((step: any) => step.with?.path === 'source')
+    expect(protectedCheckout.with.ref).toBe('${{ github.sha }}')
+    expect(sourceCheckout.with.ref).toBe('${{ inputs.source_revision }}')
+    const download = job.steps.find((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+    expect(download.with['artifact-ids']).toBe('${{ needs.build.outputs.artifact_id }}')
+    const qualifyIndex = job.steps.findIndex((step: any) => step.run?.includes('nix_cli_publication.py qualify'))
+    const verifyIndex = job.steps.findIndex((step: any) => step.run?.includes('nix_cli_publication.py verify'))
+    const uploadIndex = job.steps.findIndex((step: any) => step.id === 'qualified')
+    expect(qualifyIndex).toBeGreaterThan(-1)
+    expect(verifyIndex).toBeGreaterThan(qualifyIndex)
+    expect(uploadIndex).toBeGreaterThan(verifyIndex)
+    const qualification = job.steps[qualifyIndex].run
+    expect(qualification).toContain(`candidate/${arch}/leapviewctl-linux-${arch}.tar.gz`)
+    expect(qualification).toContain(`--source-root source --source-revision "$SOURCE_REVISION"`)
+    expect(qualification).toContain(`--evidence-dir qualified/${arch}/evidence`)
+    expect(job.steps[verifyIndex].run).toContain(`qualified/${arch}/archive-identity.json`)
+    const commands = job.steps.map((step: any) => step.run ?? '').join('\n')
+    expect(commands).not.toMatch(/\b(?:python3|bash|nix develop|nix build) source\//)
+    expect(commands).not.toContain('cd source')
+    expect(commands).not.toContain('nix build')
+    const diagnostics = job.steps.find((step: any) => step.name === `Retain ${arch} diagnostics`)
+    expect(diagnostics.if).toBe('always()')
+    expect(diagnostics.with['retention-days']).toBe(14)
+  }
+
+  expect(publish.needs).toEqual(['authorize', 'qualify-amd64', 'qualify-arm64'])
+  expect(publish.outputs.artifact_id).toBe('${{ steps.signed.outputs.artifact-id }}')
+  expect(publish.environment).toBe(authorize.environment)
+  expect(publish.permissions).toEqual({
+    contents: 'read', 'pull-requests': 'read', attestations: 'write', 'id-token': 'write',
+  })
+  const protectedCheckout = publish.steps.find((step: any) => step.with?.path === 'protected')
+  const sourceCheckout = publish.steps.find((step: any) => step.with?.path === 'source')
+  expect(protectedCheckout.with.ref).toBe('${{ github.sha }}')
+  expect(sourceCheckout.with.ref).toBe('${{ inputs.source_revision }}')
+  const downloads = publish.steps.filter((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(downloads.map((step: any) => step.with['artifact-ids'])).toEqual([
+    '${{ needs.qualify-amd64.outputs.artifact_id }}',
+    '${{ needs.qualify-arm64.outputs.artifact_id }}',
+  ])
+  const publisherGuard = publish.steps.findIndex((step: any) => step.run?.includes('/pulls'))
+  const attestations = publish.steps.filter((step: any) => step.uses?.startsWith('actions/attest@'))
+  expect(publisherGuard).toBeGreaterThan(-1)
+  expect(attestations).toHaveLength(4)
+  expect(publish.steps.indexOf(attestations[0])).toBe(publisherGuard + 1)
+  for (const [index, arch] of ['amd64', 'arm64'].entries()) {
+    const provenance = attestations[index * 2]
+    const spdx = attestations[index * 2 + 1]
+    const archive = `qualified/${arch}/leapviewctl-linux-${arch}.tar.gz`
+    expect(provenance.with['subject-path']).toBe(archive)
+    expect(provenance.with['predicate-path']).toBeUndefined()
+    expect(spdx.with['subject-path']).toBe(archive)
+    expect(spdx.with['predicate-type']).toBe('https://spdx.dev/Document/v2.3')
+    expect(spdx.with['predicate-path']).toBe(`qualified/${arch}/evidence/sbom.spdx.json`)
+  }
+  expect(publish.permissions.packages).toBeUndefined()
+  const signedArtifact = publish.steps.find((step: any) => step.id === 'signed')
+  expect(signedArtifact.with.path).toContain('qualified/amd64/')
+  expect(signedArtifact.with.path).toContain('qualified/arm64/')
+  expect(signedArtifact.with['retention-days']).toBe(14)
+
+  expect(verify.needs).toEqual(['authorize', 'publish'])
+  expect(verify.permissions).toEqual({ contents: 'read', attestations: 'read' })
+  expect(verify.environment).toBeUndefined()
+  expect(verify.permissions['id-token']).toBeUndefined()
+  expect(Object.values(verify.permissions).some((value: any) => value === 'write')).toBe(false)
+  const verifyDownloads = verify.steps.filter((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(verifyDownloads).toHaveLength(1)
+  expect(verifyDownloads[0].with['artifact-ids']).toBe('${{ needs.publish.outputs.artifact_id }}')
+  const signedChecks = verify.steps.filter((step: any) => step.run?.includes('nix_cli_publication.py verify-signed'))
+  expect(signedChecks).toHaveLength(2)
+  for (const [index, arch] of ['amd64', 'arm64'].entries()) {
+    expect(signedChecks[index].run).toContain(`qualified/${arch}/leapviewctl-linux-${arch}.tar.gz`)
+    expect(signedChecks[index].run).toContain(`qualified/${arch}/evidence`)
+    expect(signedChecks[index].run).toContain('--signer-revision "$GITHUB_SHA"')
+  }
+  const signedRetention = verify.steps.find((step: any) => step.name === 'Retain independently verified signed evidence')
+  expect(signedRetention.if).toBe('always()')
+  expect(signedRetention.with['retention-days']).toBe(14)
+
+  const development = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  for (const path of ['scripts/nix_cli_publication.py', 'scripts/tests/test_nix_cli_publication.py',
+    '.github/workflows/nix-cli-candidate.yml']) expect(development.on.pull_request.paths).toContain(path)
+})
+
+test('Nix development evaluates the native ARM runtime-security shell without building ARM packages', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const steps = workflow.jobs.development.steps
+  const flakeCheck = steps.findIndex((step: any) => step.name === 'Check the pinned toolchain and native compiler')
+  const armShell = steps.findIndex((step: any) => step.name === 'Check the native ARM runtime-security shell')
+  const format = steps.findIndex((step: any) => step.name === 'Check formatting')
+  expect(steps[armShell].run)
+    .toBe('test "$(nix eval --raw --no-update-lock-file .#devShells.aarch64-linux.runtime-security.system)" = aarch64-linux')
+  expect(armShell).toBe(flakeCheck + 1)
+  expect(armShell).toBeLessThan(format)
 })
 
 test('image qualification rejects fixture tags and uses the normalized Docker image ID', () => {
