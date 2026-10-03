@@ -17,9 +17,13 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	}}}
 	page := uisignals.DataExplorerPageSignal{Context: uisignals.DataExplorerContextSignal{Active: true, Environment: "production", GenerationID: "generation-1", ProjectID: "sales"}}
 	signals := DataExplorerBootstrapSignalsWithAgent(catalogFixture(), page, explorer, DataExplorerAgentBootstrap{})
-	context, ok := signals["agentContext"].(uisignals.AgentContextSignal)
-	if !ok {
-		t.Fatalf("agent context = %#v", signals["agentContext"])
+	rawContext, err := json.Marshal(signals["agentContext"])
+	if err != nil {
+		t.Fatalf("marshal agent context: %v", err)
+	}
+	var context uisignals.AgentContextSignal
+	if err := json.Unmarshal(rawContext, &context); err != nil {
+		t.Fatalf("decode agent context: %v", err)
 	}
 	if context.Surface != "data" || context.ModelID != "commerce" || uisignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)

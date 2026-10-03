@@ -106,7 +106,10 @@ async function enterDataExplorerAnalyzeMode(page: Page): Promise<{ explorer: Loc
   await explorer.waitFor()
   const analyze = explorer.getByRole('button', { name: 'Analyze', exact: true })
   if (await analyze.count() === 0) {
+    const openBrowser = explorer.getByRole('button', { name: 'Open data browser' })
+    if (await openBrowser.count() > 0) await openBrowser.click()
     const firstGroup = explorer.locator('details.resource-group').first()
+    await firstGroup.waitFor({ state: 'visible' })
     if (await firstGroup.getAttribute('open') === null) {
       await firstGroup.locator(':scope > summary').click()
     }
@@ -220,9 +223,19 @@ export async function verifyDataExplorerResponsiveLayout({
     const response = await page.goto(new URL('/explore', baseURL).toString(), { waitUntil: 'domcontentloaded' })
     if (!response?.ok()) throw new Error(`responsive /explore: status ${response?.status() ?? 'unknown'}`)
     const { explorer } = await enterDataExplorerAnalyzeMode(page)
-    const filterAction = explorer.locator('.semantic-fields button.field-action:visible').first()
-    if (await filterAction.count() === 0) throw new Error('responsive Analyze query builder rendered no dimension filter action')
+    const fieldToggle = explorer.getByRole('button', { name: 'Model & fields', exact: true })
+    const fields = explorer.getByRole('complementary', { name: 'Semantic model fields', exact: true })
+    await expect(fieldToggle).toBeVisible()
+    await expect(fieldToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(fields, 'responsive Analyze must initially keep the fields drawer closed').toBeHidden()
+    await fieldToggle.click()
+    await expect(fieldToggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(fields).toBeVisible()
+    const filterAction = fields.locator('button.field-action:visible').first()
+    await expect(filterAction, 'responsive Analyze query builder must expose a dimension filter action').toBeVisible()
     await filterAction.click()
+    await expect(fieldToggle, 'opening a filter must close the fields drawer').toHaveAttribute('aria-expanded', 'false')
+    await expect(fields).toBeHidden()
     const controls = explorer.locator('.semantic-filter-dock lv-data-explorer-query-controls[filtereditoronly]')
     const filterEditor = controls.getByRole('region', { name: 'Add filter', exact: true })
     await expect(filterEditor).toBeVisible()
@@ -231,6 +244,7 @@ export async function verifyDataExplorerResponsiveLayout({
       const root = document.querySelector('lv-data-explorer') as HTMLElement & { shadowRoot: ShadowRoot }
       const route = root.shadowRoot?.querySelector('.route') as HTMLElement | null
       const explorer = root.shadowRoot?.querySelector('.explorer') as HTMLElement | null
+      const browser = root.shadowRoot?.querySelector('.browser') as HTMLElement | null
       const browserResizer = root.shadowRoot?.querySelector('.browser-resizer') as HTMLElement | null
       const controls = root.shadowRoot?.querySelector('.semantic-filter-dock lv-data-explorer-query-controls[filtereditoronly]') as HTMLElement & { shadowRoot: ShadowRoot } | null
       const filterEditor = controls?.shadowRoot?.querySelector('.filter-editor') as HTMLElement | null
@@ -245,7 +259,9 @@ export async function verifyDataExplorerResponsiveLayout({
         documentScrollWidth: document.documentElement.scrollWidth,
         routeWidth: route?.getBoundingClientRect().width ?? 0,
         explorerWidth: explorer?.getBoundingClientRect().width ?? 0,
-        explorerTracks: explorer ? getComputedStyle(explorer).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length : 0,
+        explorerDisplay: explorer ? getComputedStyle(explorer).display : '',
+        browserCollapsed: explorer?.classList.contains('browser-collapsed') ?? false,
+        browserWidth: browser?.getBoundingClientRect().width ?? 0,
         browserResizerDisplay: browserResizer ? getComputedStyle(browserResizer).display : '',
         controlsWidth: controls?.getBoundingClientRect().width ?? 0,
         filterEditorWidth: filterEditor?.getBoundingClientRect().width ?? 0,
@@ -259,7 +275,7 @@ export async function verifyDataExplorerResponsiveLayout({
     if (layout.routeWidth > layout.viewportWidth + 1 || layout.explorerWidth > layout.viewportWidth + 1) {
       throw new Error(`/explore responsive route exceeds viewport: ${JSON.stringify(layout)}`)
     }
-    if (layout.explorerTracks !== 1 || layout.browserResizerDisplay !== 'none') {
+    if (layout.explorerDisplay !== 'block' || !layout.browserCollapsed || layout.browserWidth > 45 || layout.browserResizerDisplay !== 'none') {
       throw new Error(`/explore responsive layout did not collapse the browser rail: ${JSON.stringify(layout)}`)
     }
     if (layout.controlsWidth <= 0 || layout.filterEditorWidth > layout.controlsWidth + 1 || layout.filterEditorTracks !== 1) {

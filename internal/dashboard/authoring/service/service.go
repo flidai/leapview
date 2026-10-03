@@ -40,6 +40,7 @@ const (
 	AuthorizationTargetProjectDashboard  AuthorizationTarget = "project_dashboard"
 	AuthorizationTargetAuthoredDashboard AuthorizationTarget = "authored_dashboard"
 	AuthorizationTargetNewDashboard      AuthorizationTarget = "new_dashboard"
+	AuthorizationTargetSemanticModel     AuthorizationTarget = "semantic_model"
 )
 
 type Authorizer interface {

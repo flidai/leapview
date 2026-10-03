@@ -28,6 +28,8 @@ type savedExplorationBrowserServiceStub struct {
 	listErr                                                error
 	items                                                  []saved.Lifecycle
 	reopen                                                 saved.ReopenResult
+	reopenErr                                              error
+	reopenRequests                                         *[]saved.ReopenRequest
 	updateErr, duplicateErr, archiveErr                    error
 	updateResult, duplicateResult, archiveResult           saved.MutationResult
 	createCalls, updateCalls, duplicateCalls, archiveCalls *int
@@ -96,8 +98,11 @@ func (s savedExplorationBrowserServiceStub) Archive(context.Context, saved.Archi
 	return s.archiveResult, nil
 }
 
-func (s savedExplorationBrowserServiceStub) Reopen(context.Context, saved.ReopenRequest) (saved.ReopenResult, error) {
-	return s.reopen, nil
+func (s savedExplorationBrowserServiceStub) Reopen(_ context.Context, request saved.ReopenRequest) (saved.ReopenResult, error) {
+	if s.reopenRequests != nil {
+		*s.reopenRequests = append(*s.reopenRequests, request)
+	}
+	return s.reopen, s.reopenErr
 }
 
 func TestSavedExplorationCommandRequiresGeneratedExecutorCompletion(t *testing.T) {
@@ -205,14 +210,123 @@ func TestSavedExplorationBrowserStateRetainsListAndSelection(t *testing.T) {
 		SemanticModelID: "model:orders", CreatedAt: now, UpdatedAt: now,
 		CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
 	}
+	spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "model:orders", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	var reopenRequests []saved.ReopenRequest
 	h := &BrowserHandler{
-		SavedExplorations: savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}},
+		SavedExplorations: savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}, reopen: saved.ReopenResult{Lifecycle: lifecycle, Revision: lifecycle.CurrentRevision, Spec: spec}, reopenRequests: &reopenRequests},
 		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 	}
-	state := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:orders", nil), "exploration:orders", false)
+	request := httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:orders", nil)
+	state := h.savedExplorationStateForBrowser(request, "exploration:orders", false)
 	if !state.State.Enabled || len(state.State.List.Items) != 1 || state.State.List.SelectedID == nil || *state.State.List.SelectedID != lifecycle.ID.String() || state.State.Current == nil {
 		t.Fatalf("saved browser state = %#v, want retained list/current selection", state.State)
+	}
+	if !state.State.Current.Detached || state.State.Current.Spec == nil || state.State.Current.Spec.Limit != spec.Limit {
+		t.Fatalf("selected current = %#v, want hydrated detached baseline", state.State.Current)
+	}
+	if len(reopenRequests) != 1 || reopenRequests[0] != (saved.ReopenRequest{ProjectID: "project:test", ID: lifecycle.ID, ActorID: "principal:test"}) {
+		t.Fatalf("reopen requests = %#v, want one actor/project scoped authorized read", reopenRequests)
+	}
+	if got := request.URL.Query().Get("saved"); got != lifecycle.ID.String() {
+		t.Fatalf("selected URL identity changed during hydration: %q", got)
+	}
+}
+
+func TestSavedExplorationBrowserStatePreservesURLDraftAgainstAuthorizedBaseline(t *testing.T) {
+	h, _ := newDataExplorerURLTestHandler(t)
+	const selectedID saved.ExplorationID = "exploration:orders"
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	lifecycle := saved.Lifecycle{
+		ProjectID: "project:test", ID: selectedID, OwnerPrincipalID: "principal:test",
+		Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, Status: saved.StatusActive,
+		SemanticModelID: "semantic:sales", CreatedAt: now, UpdatedAt: now,
+		CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 4, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+	}
+	baseline := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	draft := baseline
+	draft.Limit = 50
+	h.SavedExplorations = savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}, reopen: saved.ReopenResult{Lifecycle: lifecycle, Revision: lifecycle.CurrentRevision, Spec: baseline}}
+	h.CurrentUser = func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test", DevBypass: true}, true }
+	encodedDraft, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"mode": {"explore"}, "v": {"2"}, "state": {string(encodedDraft)}, "saved": {selectedID.String()}}
+	request := httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil)
+	rawQuery := request.URL.RawQuery
+	page, explorer, ok := h.dataExplorerSignalsForURL(httptest.NewRecorder(), request, false)
+	if !ok || page.Kind != projectsignals.RouteKindData {
+		t.Fatal("URL draft failed to restore")
+	}
+	state := h.savedExplorationStateForBrowser(request, request.URL.Query().Get("saved"), false).State
+	if explorer.Command.Explore == nil || explorer.Command.Explore.Spec.Limit != draft.Limit {
+		t.Fatalf("restored URL command = %#v, want limit %d", explorer.Command.Explore, draft.Limit)
+	}
+	if state.Current == nil || !state.Current.Detached || state.Current.Spec == nil || state.Current.Spec.Limit != baseline.Limit {
+		t.Fatalf("saved current = %#v, want persisted limit %d as dirty-tracking baseline", state.Current, baseline.Limit)
+	}
+	if request.URL.RawQuery != rawQuery || request.URL.Query().Get("state") != string(encodedDraft) {
+		t.Fatal("baseline hydration changed the URL draft")
+	}
+}
+
+func TestSavedExplorationBrowserStateDoesNotHydrateUnlistedOrFilteredArchivedIDs(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	archived := saved.Lifecycle{
+		ProjectID: "project:test", ID: "exploration:archived", OwnerPrincipalID: "principal:test",
+		Title: "Archived", Slug: "archived", Visibility: saved.VisibilityPrivate, Status: saved.StatusArchived,
+		SemanticModelID: "model:orders", CreatedAt: now, UpdatedAt: now,
+		CurrentRevision: saved.RevisionMetadata{ID: "revision:archived", Number: 2, ContentHash: "sha256:" + strings.Repeat("b", 64)},
+	}
+	spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "model:orders", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	var reopenRequests []saved.ReopenRequest
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{items: []saved.Lifecycle{archived}, reopen: saved.ReopenResult{Lifecycle: archived, Revision: archived.CurrentRevision, Spec: spec}, reopenRequests: &reopenRequests},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	filtered := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:archived", nil), archived.ID.String(), false).State
+	if len(filtered.List.Items) != 0 || filtered.Current != nil || len(reopenRequests) != 0 {
+		t.Fatalf("archived selection without includeArchived = %#v; reopen requests = %#v", filtered, reopenRequests)
+	}
+	included := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:archived&includeArchived=true", nil), archived.ID.String(), true).State
+	if len(included.List.Items) != 1 || included.Current == nil || included.Current.Status != string(saved.StatusArchived) || !included.List.IncludeArchived {
+		t.Fatalf("explicit archived selection = %#v, want archived baseline available", included)
+	}
+	if len(reopenRequests) != 1 || reopenRequests[0].ID != archived.ID {
+		t.Fatalf("reopen requests = %#v, want only explicitly listed archived identity", reopenRequests)
+	}
+	h.SavedExplorations = savedExplorationBrowserServiceStub{reopen: saved.ReopenResult{Lifecycle: archived, Revision: archived.CurrentRevision, Spec: spec}, reopenRequests: &reopenRequests}
+	unlisted := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:unlisted", nil), "exploration:unlisted", true).State
+	if unlisted.List.SelectedID != nil || unlisted.Current != nil || len(reopenRequests) != 1 {
+		t.Fatalf("unlisted selection = %#v; reopen requests = %#v, want no selection or authored read", unlisted, reopenRequests)
+	}
+}
+
+func TestSavedExplorationBrowserStateKeepsBaselineUnavailableWhenReopenFails(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	lifecycle := saved.Lifecycle{
+		ProjectID: "project:test", ID: "exploration:orders", OwnerPrincipalID: "principal:test",
+		Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, Status: saved.StatusActive,
+		SemanticModelID: "model:orders", CreatedAt: now, UpdatedAt: now,
+		CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+	}
+	var reopenRequests []saved.ReopenRequest
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}, reopenErr: errors.New("revision unavailable"), reopenRequests: &reopenRequests},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	state := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:orders", nil), lifecycle.ID.String(), false).State
+	if state.List.SelectedID == nil || *state.List.SelectedID != lifecycle.ID.String() || state.Current == nil || state.Current.Detached || state.Current.Spec != nil {
+		t.Fatalf("current fallback = %#v, want metadata only without an authorized readable baseline", state.Current)
+	}
+	if state.Save.State != "error" || state.Save.Message == nil || *state.Save.Message != "The saved exploration version is temporarily unavailable." {
+		t.Fatalf("save state = %#v, want safe baseline-read failure", state.Save)
+	}
+	if len(reopenRequests) != 1 || reopenRequests[0].ActorID != "principal:test" || reopenRequests[0].ProjectID != "project:test" {
+		t.Fatalf("reopen requests = %#v, want principal and project scoped read", reopenRequests)
 	}
 }
 
@@ -380,8 +494,26 @@ func TestSavedExplorationArchiveResponseKeepsArchivedMetadata(t *testing.T) {
 	if !strings.Contains(body, `"includeArchived":true`) || !strings.Contains(body, `"selectedId":"exploration:orders"`) || !strings.Contains(body, `"status":"archived"`) {
 		t.Fatalf("archive response omitted archived metadata: %q", body)
 	}
-	if strings.Contains(body, `"spec"`) {
-		t.Fatalf("archive response trusted or exposed a browser spec: %q", body)
+	_, encoded, ok := strings.Cut(body, "data: signals ")
+	if !ok {
+		t.Fatalf("archive response omitted its signal patch: %q", body)
+	}
+	type specClear struct {
+		Spec json.RawMessage `json:"spec"`
+	}
+	var patch struct {
+		SavedExplorations struct {
+			Current specClear `json:"current"`
+			Command specClear `json:"command"`
+		} `json:"savedExplorations"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(encoded)), &patch); err != nil {
+		t.Fatal(err)
+	}
+	// Explicit nulls remove stale client specs; no browser-authored query may
+	// be accepted as the archived revision's authoritative content.
+	if string(patch.SavedExplorations.Current.Spec) != "null" || string(patch.SavedExplorations.Command.Spec) != "null" {
+		t.Fatalf("archive response did not clear unverified browser specs: %q", body)
 	}
 }
 

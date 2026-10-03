@@ -3,6 +3,21 @@ import { canonicalExplorationSpec, explorationSpecFromCommand } from './data-exp
 
 export type DataExplorerHistoryMode = 'push' | 'replace'
 
+// Dashboard handoffs may offer a return affordance, but never turn arbitrary
+// URL input into a navigation target. This context is not part of a saved or
+// shared exploration specification.
+export function dashboardReturnPath(search: string): string {
+  const raw = new URLSearchParams(search).get('returnTo') ?? ''
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return ''
+  try {
+    const target = new URL(raw, 'https://leapview.invalid')
+    if (target.origin !== 'https://leapview.invalid' || target.search || target.hash) return ''
+    return /(?:^|\/)dashboards\/[^/]+\/pages\/[^/]+$/.test(target.pathname) ? target.pathname : ''
+  } catch {
+    return ''
+  }
+}
+
 // A saved link goes through the server's authorized reopen route. It must not
 // carry the browser's draft state, which may differ from the saved revision.
 export function savedExplorationShareURL(id: string, includeArchived = false): string {
@@ -50,8 +65,12 @@ export function dataExplorerURL(command: DataExplorerCommand, savedID?: string, 
 }
 
 export function updateDataExplorerURL(command: DataExplorerCommand, mode: DataExplorerHistoryMode, savedID?: string, includeArchived = false): string {
-  const next = dataExplorerURL(command, savedID, includeArchived)
-  if (typeof window === 'undefined') return next
+  const base = dataExplorerURL(command, savedID, includeArchived)
+  if (typeof window === 'undefined') return base
+  const context = dashboardReturnPath(window.location.search)
+  const target = new URL(base, window.location.origin)
+  if (context && target.pathname === '/explore') target.searchParams.set('returnTo', context)
+  const next = `${target.pathname}${target.search}`
   const current = `${window.location.pathname}${window.location.search}`
   if (next === current) return next
   window.history[mode === 'push' ? 'pushState' : 'replaceState'](window.history.state, '', next)

@@ -995,9 +995,13 @@ func TestDataExplorerSignalPatchRefreshesAgentContext(t *testing.T) {
 	}
 
 	patch := dataExplorerSignalPatch(page, explorer)
-	context, ok := patch["agentContext"].(projectsignals.AgentContextSignal)
-	if !ok {
-		t.Fatalf("agent context patch = %#v", patch["agentContext"])
+	rawContext, err := json.Marshal(patch["agentContext"])
+	if err != nil {
+		t.Fatalf("marshal agent context: %v", err)
+	}
+	var context projectsignals.AgentContextSignal
+	if err := json.Unmarshal(rawContext, &context); err != nil {
+		t.Fatalf("decode agent context: %v", err)
 	}
 	if context.Surface != "data" || context.ModelID != "semantic-model:visuals" || projectsignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)

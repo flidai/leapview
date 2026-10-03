@@ -330,6 +330,14 @@ func encodeParquet(ctx context.Context, result dataquery.Result, maxBytes int64)
 func parquetTypes(result dataquery.Result) ([]arrow.DataType, error) {
 	types := make([]arrow.DataType, len(result.Columns))
 	for index, column := range result.Columns {
+		if column.DecimalPrecision != 0 || column.DecimalScale != 0 {
+			declared, err := declaredParquetDecimal(column, result.Rows)
+			if err != nil {
+				return nil, fmt.Errorf("export column %q: %w", column.Name, err)
+			}
+			types[index] = declared
+			continue
+		}
 		var selected arrow.DataType
 		var decimalPrecision, decimalScale int32
 		for _, row := range result.Rows {
@@ -356,9 +364,8 @@ func parquetTypes(result dataquery.Result) ([]arrow.DataType, error) {
 			}
 		}
 		if selected == nil {
-			// dataquery.Column carries only the projected name. With no non-null
-			// value, the conservative supported contract is nullable UTF-8 text;
-			// no logical type can be recovered from an all-null result.
+			// Without declared decimal metadata or non-null values, use the
+			// conservative nullable UTF-8 fallback.
 			selected = arrow.BinaryTypes.String
 		} else if selected.ID() == arrow.DECIMAL128 {
 			// Align all fixed-scale decimals to one scale without converting them
@@ -391,6 +398,44 @@ func parquetTypes(result dataquery.Result) ([]arrow.DataType, error) {
 		types[index] = selected
 	}
 	return types, nil
+}
+
+// declaredParquetDecimal validates every value before Arrow can rescale it.
+// Decimal builders may round excess fractional digits, so accepting an
+// incompatible value here would silently change the exported number.
+func declaredParquetDecimal(column dataquery.Column, rows []dataquery.Row) (arrow.DataType, error) {
+	precision, scale := column.DecimalPrecision, column.DecimalScale
+	if precision < 1 || precision > 38 || scale < 0 || scale > precision {
+		return nil, fmt.Errorf("unsupported declared decimal(%d,%d)", precision, scale)
+	}
+	for _, row := range rows {
+		value := row[column.Name]
+		if value == nil {
+			continue
+		}
+		var text string
+		switch value := value.(type) {
+		case string:
+			text = value
+		case json.Number:
+			text = value.String()
+		default:
+			return nil, fmt.Errorf("declared decimal requires exact fixed-point text, got %T", value)
+		}
+		valuePrecision, valueScale, err := decimalShape(text)
+		if err != nil {
+			return nil, err
+		}
+		// Leading zeroes do not consume integer precision, including a zero
+		// supplied without a fractional part for decimal(p,p).
+		if strings.Trim(text, "+-0.") == "" {
+			valuePrecision = valueScale
+		}
+		if valueScale > scale || valuePrecision+scale-valueScale > precision {
+			return nil, fmt.Errorf("value %q does not fit declared decimal(%d,%d) exactly", text, precision, scale)
+		}
+	}
+	return &arrow.Decimal128Type{Precision: precision, Scale: scale}, nil
 }
 
 func parquetType(value any) (arrow.DataType, error) {
@@ -504,7 +549,10 @@ func decimalShape(value string) (precision, scale int32, err error) {
 	if strings.ContainsAny(value, "eE") {
 		return 0, 0, fmt.Errorf("decimal exponent %q is unsupported; use a fixed-scale decimal", value)
 	}
-	trimmed := strings.TrimPrefix(strings.TrimPrefix(value, "+"), "-")
+	trimmed := strings.TrimPrefix(value, "+")
+	if trimmed == value {
+		trimmed = strings.TrimPrefix(value, "-")
+	}
 	parts := strings.Split(trimmed, ".")
 	if len(parts) > 2 || (len(parts) == 1 && parts[0] == "") {
 		return 0, 0, fmt.Errorf("invalid decimal value %q", value)
@@ -517,7 +565,7 @@ func decimalShape(value string) (precision, scale int32, err error) {
 	if whole == "" {
 		whole = "0"
 	}
-	if !allDigits(whole) || !allDigits(fract) || (whole == "0" && fract == "") {
+	if !allDigits(whole) || !allDigits(fract) || strings.Trim(trimmed, ".") == "" {
 		return 0, 0, fmt.Errorf("invalid decimal value %q", value)
 	}
 	precision = int32(len(strings.TrimLeft(whole, "0")) + len(fract))

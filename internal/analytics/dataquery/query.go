@@ -205,6 +205,11 @@ type ColumnMask struct {
 
 type Column struct {
 	Name string
+	// DecimalPrecision and DecimalScale preserve the physical result schema
+	// independently of the canonical string representation used in Rows.
+	// A zero precision means no decimal type metadata is available.
+	DecimalPrecision int32
+	DecimalScale     int32
 }
 
 type Row map[string]any

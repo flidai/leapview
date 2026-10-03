@@ -121,7 +121,8 @@ export class DataExplorerClientState {
       result.columns?.length || result.rows?.length || result.rowsReturned > 0 || result.sql || result.plan,
     )
     const failed = Boolean(result.error || status?.error || status?.state === 'error' || status?.state === 'cancelled')
-    if (key && !failed && hasData && result.requestSeq >= (this.lastGoodSemanticResult?.requestSeq ?? 0)) {
+    const provisional = Boolean(status?.loading || status?.state === 'loading' || status?.state === 'stale' || status?.state === 'cancelled')
+    if (key && !failed && !provisional && hasData && result.requestSeq >= (this.lastGoodSemanticResult?.requestSeq ?? 0)) {
       this.lastGoodSemanticResult = snapshotSemanticResult(result)
     }
     const cached = this.lastGoodSemanticResult

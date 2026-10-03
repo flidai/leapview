@@ -42,6 +42,7 @@ export class VisualizationHost extends LitElement {
     this.requestUpdate('envelope', previous)
   }
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
+  @property({ attribute: false }) exploreHref?: string
   @property({ type: Boolean, attribute: 'defer-mount', reflect: true }) deferMount = false
   @property({ type: Boolean, reflect: true }) authoring = false
   @property({ type: Boolean, attribute: 'actions-enabled' }) actionsEnabled = true
@@ -359,6 +360,7 @@ export class VisualizationHost extends LitElement {
       <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options" @click=${this.handleVisualOptionsClick}>${lucideIcon(EllipsisVertical)}</summary>
       <div class="menu" role="menu">
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
+        ${this.exploreHref ? html`<a role="menuitem" href=${this.exploreHref}>${visualMenuIcon('explore')}<span>Explore</span></a>` : null}
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
         ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}

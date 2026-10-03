@@ -24,6 +24,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboardauthoringcatalog "github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -186,6 +187,8 @@ type BrowserHandler struct {
 	ProjectDefinitionReader        ProjectDefinitionReader
 	DashboardAppearances           DashboardAppearanceStore
 	DashboardCatalog               DashboardCatalogReader
+	DashboardAuthoring             *dashboardauthoring.Application
+	DashboardAppendCommand         uicommand.Binding
 	DashboardPopularity            func(context.Context, int) (map[string]string, error)
 	QueryExecutor                  DataQueryExecutor
 	ExplorationQueryLowerer        exploration.QueryLowerer
@@ -261,6 +264,9 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/", wrap(h.Insights))
 	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
+	r.Get("/explore/dashboard-targets", wrap(h.ExplorationDashboardTargets))
+	r.Get("/explore/dashboard-targets/{dashboard}", wrap(h.ExplorationDashboardTarget))
+	r.Post("/explore/add-to-dashboard", wrapMutation(h.AppendExplorationToDashboard))
 	r.Get("/explore/export", wrap(h.ExplorationExport))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
 	r.Get("/explore/saved/{exploration}", wrap(h.SavedExplorationReopen))
@@ -463,7 +469,13 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
 		Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
 	}
-	writeDocument(w, projectui.DataExplorerPageWithSavedExplorations(catalog, page, explorer, savedState, h.csrf(r), h.layout(r)))
+	dashboard := projectui.DataExplorerDashboardBootstrap{}
+	if h.DashboardAuthoring != nil && h.DashboardAppendCommand.OperationID() != "" {
+		dashboard = projectui.DataExplorerDashboardBootstrap{
+			TargetsURL: "/explore/dashboard-targets", AppendURL: "/explore/add-to-dashboard", Command: h.DashboardAppendCommand,
+		}
+	}
+	writeDocument(w, projectui.DataExplorerPageWithSavedExplorationsAndDashboard(catalog, page, explorer, savedState, dashboard, h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -494,10 +506,26 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 }
 
 func dataExplorerSignalPatch(page projectsignals.DataExplorerPageSignal, explorer projectsignals.DataExplorerSignal) pagestream.SignalPatch {
-	return pagestream.SignalPatch{
-		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
-		"agentContext": projectui.DataExplorerAgentContext(page, explorer),
+	if patch := dataExplorerSuggestionsPatch(explorer); patch != nil {
+		return patch
 	}
+	return pagestream.SignalPatch{
+		"page": page, "dataExplorer": projectui.DataExplorerPayload(explorer), "dataExplorerCommand": projectui.DataExplorerCommandPayload(explorer.Command),
+		"agentContext": projectui.DataExplorerAgentContextPayload(projectui.DataExplorerAgentContext(page, explorer)),
+	}
+}
+
+// Suggestions belong to an independent request lane. Replacing the semantic
+// command, status, or result here would invalidate a completed chart (or a run
+// still in flight) even though the query itself has not changed.
+func dataExplorerSuggestionsPatch(explorer projectsignals.DataExplorerSignal) pagestream.SignalPatch {
+	command := explorer.Explore.Command
+	if command.Action == nil || *command.Action != "configure" || command.FilterSuggestions == nil {
+		return nil
+	}
+	return pagestream.SignalPatch{"dataExplorer": map[string]any{
+		"explore": map[string]any{"filterSuggestions": explorer.Explore.FilterSuggestions},
+	}}
 }
 
 func (h *BrowserHandler) ModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -537,8 +565,12 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		return
 	}
 	defer unlock()
+	if patch := dataExplorerSuggestionsPatch(explorer); patch != nil {
+		_ = pagestream.PatchResponse(w, r, patch)
+		return
+	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-		"dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
+		"dataExplorer": projectui.DataExplorerPayload(explorer), "dataExplorerCommand": projectui.DataExplorerCommandPayload(explorer.Command),
 	})
 }
 
@@ -1007,8 +1039,8 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 			if !explorerOK {
 				return nil, false
 			}
-			patch["dataExplorer"] = explorer
-			patch["dataExplorerCommand"] = explorer.Command
+			patch["dataExplorer"] = projectui.DataExplorerPayload(explorer)
+			patch["dataExplorerCommand"] = projectui.DataExplorerCommandPayload(explorer.Command)
 		}
 		return patch, true
 	}

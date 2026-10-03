@@ -52,15 +52,51 @@ func (h *BrowserHandler) savedExplorationStateForBrowser(r *stdhttp.Request, sel
 		return bootstrap
 	}
 	selectedID := strings.TrimSpace(selected)
+	var selectedLifecycle saved.Lifecycle
+	selectedItem := -1
 	for _, lifecycle := range items {
+		// The service applies this filter too. Keep the browser boundary
+		// fail-closed if an adapter accidentally returns archived rows without
+		// an explicit includeArchived request.
+		if lifecycle.Status == saved.StatusArchived && !includeArchived {
+			continue
+		}
 		item := savedExplorationListItemSignal(lifecycle)
 		bootstrap.State.List.Items = append(bootstrap.State.List.Items, item)
 		if selectedID != "" && lifecycle.ID.String() == selectedID {
-			id := lifecycle.ID.String()
-			bootstrap.State.List.SelectedID = &id
-			bootstrap.State.Current = savedExplorationCurrentSignal(lifecycle, false, nil)
+			selectedLifecycle = lifecycle
+			selectedItem = len(bootstrap.State.List.Items) - 1
 		}
 	}
+	if selectedItem < 0 {
+		return bootstrap
+	}
+	id := selectedLifecycle.ID.String()
+	bootstrap.State.List.SelectedID = &id
+	// Keep a metadata-only fallback if baseline hydration fails. The ID has
+	// already passed the authorized, archive-aware list boundary, and Reopen
+	// performs its own view authorization before returning authored content.
+	bootstrap.State.Current = savedExplorationCurrentSignal(selectedLifecycle, false, nil)
+	opened, err := h.SavedExplorations.Reopen(r.Context(), saved.ReopenRequest{ProjectID: projectID, ID: selectedLifecycle.ID, ActorID: principal.ID})
+	if err != nil || opened.Lifecycle.ID != selectedLifecycle.ID || opened.Lifecycle.ProjectID != projectID {
+		message := "The saved exploration version is temporarily unavailable."
+		bootstrap.State.Save = projectsignals.SavedExplorationSaveStateSignal{State: "error", Message: &message}
+		return bootstrap
+	}
+	if opened.Lifecycle.Status == saved.StatusArchived && !includeArchived {
+		// The record may have been archived between listing it and reopening it.
+		// Respect the caller's archive filter across that race as well.
+		bootstrap.State.List.SelectedID = nil
+		bootstrap.State.Current = nil
+		return bootstrap
+	}
+	bootstrap.State.List.Items[selectedItem] = savedExplorationListItemSignal(opened.Lifecycle)
+	if opened.Revision.Token() != opened.Lifecycle.CurrentRevision.Token() || opened.Revision.Token().ValidateComplete() != nil || exploration.ValidateShape(&opened.Spec) != nil {
+		message := "The saved exploration version is temporarily unavailable."
+		bootstrap.State.Save = projectsignals.SavedExplorationSaveStateSignal{State: "error", Message: &message}
+		return bootstrap
+	}
+	bootstrap.State.Current = savedExplorationCurrentSignal(opened.Lifecycle, true, (*canonicalExplorationSpec)(&opened.Spec))
 	return bootstrap
 }
 
@@ -156,9 +192,9 @@ func (h *BrowserHandler) SavedExplorationReopen(w stdhttp.ResponseWriter, r *std
 		state.Save = projectsignals.SavedExplorationSaveStateSignal{State: "saved"}
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
-		"agentContext":      projectui.DataExplorerAgentContext(page, explorer),
-		"savedExplorations": state,
+		"page": page, "dataExplorer": projectui.DataExplorerPayload(explorer), "dataExplorerCommand": projectui.DataExplorerCommandPayload(explorer.Command),
+		"agentContext":      projectui.DataExplorerAgentContextPayload(projectui.DataExplorerAgentContext(page, explorer)),
+		"savedExplorations": projectui.DataExplorerSavedExplorationPayload(state),
 	})
 }
 
@@ -282,7 +318,7 @@ func (h *BrowserHandler) SavedExplorationCommand(w stdhttp.ResponseWriter, r *st
 	if state.Save.State != "error" {
 		state.Save = projectsignals.SavedExplorationSaveStateSignal{State: "saved", Message: &message}
 	}
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"savedExplorations": state})
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"savedExplorations": projectui.DataExplorerSavedExplorationPayload(state)})
 }
 
 // authorizeSavedExplorationMutationReplay reconstructs the actor/project/
@@ -636,7 +672,7 @@ func (h *BrowserHandler) savedExplorationCommandPatch(w stdhttp.ResponseWriter, 
 	state := h.savedExplorationStateForBrowser(r, selected, include).State
 	state.Command = command
 	state.Save = projectsignals.SavedExplorationSaveStateSignal{State: "error", Message: &message}
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"savedExplorations": state})
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"savedExplorations": projectui.DataExplorerSavedExplorationPayload(state)})
 }
 
 func publicSavedExplorationCommandError(err error) string {

@@ -1,5 +1,5 @@
 import { css, html, nothing } from 'lit'
-import { Filter, SlidersHorizontal, X } from 'lucide'
+import { ChevronDown, Filter, SlidersHorizontal, X } from 'lucide'
 import type { ExplorationSpec } from '../../generated/exploration'
 import type { DataExploreCommand, DataExploreFieldSignal, DataExploreSignal } from '../../generated/signals'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -8,6 +8,25 @@ import { filterOperator, filterValues } from './data-explorer-spec'
 import { fieldLabel, label } from './data-explorer-view-model'
 
 type FieldKind = 'dimension' | 'metric'
+
+export function isOutsideSemanticFields(event: PointerEvent, root: ParentNode): boolean {
+  const path = event.composedPath()
+  return ['.semantic-fields', '.semantic-fields-toggle'].every((selector) => {
+    const target = root.querySelector(selector)
+    return !target || !path.includes(target)
+  })
+}
+
+function closeSemanticFieldsOnEscape(event: KeyboardEvent, expanded: boolean, togglePane?: () => void) {
+  if (event.key !== 'Escape' || !expanded) return
+  const currentTarget = event.currentTarget as HTMLElement
+  togglePane?.()
+  const opener = currentTarget.classList.contains('semantic-fields-toggle')
+    ? currentTarget
+    : currentTarget.previousElementSibling
+  if (opener instanceof HTMLButtonElement) opener.focus()
+  event.stopPropagation()
+}
 
 export const semanticLayoutStyles = css`
   .query-bar {
@@ -40,6 +59,10 @@ export const semanticLayoutStyles = css`
   .semantic-fields h3 { font: var(--lv-type-caption); color: var(--lv-fg-muted); margin: 20px 0 10px; }
   .semantic-filter-dock { display: grid; min-width: 0; min-height: 0; border-left: var(--lv-border-default); background: var(--lv-bg-app); }
   .semantic-filter-rail { display: flex; align-items: center; flex-direction: column; gap: 8px; border: 0; background: transparent; color: var(--lv-fg-muted); padding: 16px 0; cursor: pointer; font: var(--lv-type-caption); text-transform: uppercase; }
+  .semantic-filter-trigger { display: inline-flex; align-items: center; gap: var(--base-size-6); white-space: nowrap; }
+  .semantic-filter-trigger[aria-expanded='true'] { background: var(--lv-bg-control-hover); }
+  .semantic-filter-trigger .filter-count { display: inline-grid; place-items: center; min-width: var(--base-size-16); padding: 0 var(--base-size-4); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); font: var(--lv-type-caption); }
+  .semantic-filter-trigger:focus-visible, .semantic-filter-rail:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: calc(-1 * var(--lv-border-width-focus)); }
   .semantic-filter-rail:hover { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
   .semantic-filter-rail span { writing-mode: vertical-rl; }
   .semantic-filter-rail b { display: grid; min-width: 18px; min-height: 18px; place-items: center; border-radius: 50%; background: var(--lv-line-accent); color: var(--lv-fg-on-emphasis); font: var(--lv-type-caption); }
@@ -54,6 +77,7 @@ export const semanticLayoutStyles = css`
   .semantic-filter-section-title { display: flex; justify-content: space-between; color: var(--lv-fg-muted); font: var(--lv-type-caption); text-transform: uppercase; margin-bottom: 10px; }
   .semantic-filter-add { display: grid; gap: 6px; margin-bottom: 12px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
   .semantic-filter-picker { min-width: 0; }
+  .semantic-filter-picker summary { text-transform: none; }
   .semantic-filter-picker summary { display: flex; min-height: var(--control-medium-size); box-sizing: border-box; align-items: center; gap: 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 8px; cursor: pointer; font: var(--lv-type-body); list-style: none; }
   .semantic-filter-picker summary::-webkit-details-marker { display: none; }
   .semantic-filter-picker summary:focus-visible { outline: 2px solid var(--lv-line-accent); outline-offset: 2px; }
@@ -75,6 +99,8 @@ export const semanticLayoutStyles = css`
   .semantic-filter-body lv-data-explorer-query-controls { margin-top: 12px; }
   .semantic-field { display: flex; gap: 8px; align-items: center; padding: 5px 0; }
   .semantic-field label { display: flex; gap: 8px; flex: 1; min-width: 0; align-items: center; font: var(--lv-type-body); }
+  .semantic-field-label { display: grid; min-width: 0; gap: var(--base-size-2); }
+  .semantic-field-metadata { color: var(--lv-fg-muted); font: var(--lv-type-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .semantic-field-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .semantic-field input { width: auto; margin: 0; }
   .semantic-field button { flex: none; }
@@ -102,19 +128,34 @@ export const semanticLayoutStyles = css`
   }
 `
 
+function semanticFieldMetadata(field: DataExploreFieldSignal): string {
+  return [field.kind === 'metric' ? 'Metric' : 'Dimension', field.type?.trim()].filter(Boolean).join(' · ')
+}
+
+function semanticFieldDescription(field: DataExploreFieldSignal): string {
+  return [semanticFieldMetadata(field), field.description, field.id, field.compatibilityReason].filter(Boolean).join(' · ')
+}
+
+export function renderSemanticFilterTrigger(count: number, open: boolean, toggle: () => void) {
+  return html`<button type="button" class="text-button semantic-filter-trigger" aria-label=${`Filters, ${count} active`} aria-expanded=${String(open)} aria-controls="semantic-filter-dock" @click=${toggle}>${lucideIcon(SlidersHorizontal, { size: 15 })}<span>Filters</span><span class="filter-count" aria-hidden="true">${count}</span></button>`
+}
+
 export function renderSemanticFieldPane(
   spec: ExplorationSpec,
   explore: DataExploreSignal,
   selected: Set<string>,
   search: string,
   actions: {
+    expanded?: boolean
+    togglePane?: () => void
     model: (id: string) => void
     search: (value: string) => void
     toggle: (field: DataExploreFieldSignal, kind: FieldKind) => void
     filter: (id: string) => void
   },
 ) {
-  return html`<aside class="semantic-fields" aria-label="Semantic model fields">
+  return html`<button type="button" class="semantic-fields-toggle" aria-label="Model & fields" aria-expanded=${String(Boolean(actions.expanded))} @click=${actions.togglePane} @keydown=${(event: KeyboardEvent) => closeSemanticFieldsOnEscape(event, Boolean(actions.expanded), actions.togglePane)}>Model & fields ${lucideIcon(actions.expanded ? X : ChevronDown, { size: 16 })}</button>
+  <aside class=${`semantic-fields${actions.expanded ? ' is-open' : ''}`} aria-label="Semantic model fields" @keydown=${(event: KeyboardEvent) => closeSemanticFieldsOnEscape(event, Boolean(actions.expanded), actions.togglePane)}>
     <label>Semantic model
       <select aria-label="Semantic model" .value=${spec.modelId} @change=${(event: Event) => actions.model((event.target as HTMLSelectElement).value)}>
         ${explore.semanticModels.map((model) => html`<option value=${model.id} .selected=${model.id === spec.modelId}>${model.title}</option>`)}
@@ -128,8 +169,8 @@ export function renderSemanticFieldPane(
         if (!fields.length) return nothing
         return html`<details ?open=${Boolean(search) || fields.some((field) => selected.has(field.id))}>
           <summary>${label(group)} · ${fields.length}</summary>
-          ${fields.map((field) => html`<div class="semantic-field" title=${field.compatibilityReason || field.id}>
-            <label><input type="checkbox" .checked=${selected.has(field.id)} ?disabled=${field.compatible === false && !field.rebaseDatasetId && !selected.has(field.id)} @change=${() => actions.toggle(field, kind)} /><span class="semantic-field-name">${field.label || field.id}</span>${field.compatible === false && field.rebaseDatasetId ? html`<span class="field-grain-note">↗ ${label(field.rebaseDatasetId)}</span>` : nothing}</label>
+          ${fields.map((field) => html`<div class="semantic-field" title=${semanticFieldDescription(field)}>
+            <label><input type="checkbox" .checked=${selected.has(field.id)} ?disabled=${field.compatible === false && !field.rebaseDatasetId && !selected.has(field.id)} @change=${() => actions.toggle(field, kind)} /><span class="semantic-field-label"><span class="semantic-field-name">${field.label || field.id}</span><span class="semantic-field-metadata">${semanticFieldMetadata(field)}</span></span>${field.compatible === false && field.rebaseDatasetId ? html`<span class="field-grain-note">↗ ${label(field.rebaseDatasetId)}</span>` : nothing}</label>
             ${kind === 'dimension' && field.compatible !== false ? html`<button class="field-action" aria-label=${'Filter ' + field.label} @click=${() => actions.filter(field.id)}>${lucideIcon(Filter, { size: 13 })}</button>` : nothing}
           </div>`)}
         </details>`
@@ -141,11 +182,11 @@ export function renderSemanticFieldPane(
 export function renderSelectedFieldRows(spec: ExplorationSpec, fields: DataExploreFieldSignal[], remove: (id: string, kind: FieldKind) => void) {
   return (['dimension', 'metric'] as const).map((kind) => html`
     <div class="selected-field-row">
-      <span class="query-label">${kind === 'dimension' ? 'Group by' : 'Measures'}</span>
+      <span class="query-label">${kind === 'dimension' ? 'Group by' : 'Metrics'}</span>
       <div class="selected-field-values">
         ${spec[kind === 'dimension' ? 'dimensions' : 'metrics'].length
           ? spec[kind === 'dimension' ? 'dimensions' : 'metrics'].map((field) => html`
-              <button type="button" class="chip" aria-label=${`Remove ${fieldLabel(field.field, fields)}`} title=${`Remove ${fieldLabel(field.field, fields)}`} @click=${() => remove(field.field, kind)}>${fieldLabel(field.field, fields)} ${lucideIcon(X, { size: 12 })}</button>
+              <button type="button" class="chip" aria-label=${`Remove ${fieldLabel(field.field, fields)} ${kind}`} title=${`Remove ${fieldLabel(field.field, fields)} ${kind}`} @click=${() => remove(field.field, kind)}>${fieldLabel(field.field, fields)} ${lucideIcon(X, { size: 12 })}</button>
             `)
           : html`<span class="query-summary">None selected</span>`}
       </div>
@@ -174,7 +215,7 @@ export function renderSemanticFilterControls(
   spec: ExplorationSpec,
   explore: DataExploreSignal,
   command: DataExploreCommand,
-  editor: { field: string; operator: string; value: string },
+  editor: { field: string; operator: string; value: string; suggestionRequestSeq?: number },
   renderFilter: (filter: ExplorationSpec['filters'][number], index: number) => ReturnType<typeof html>,
   clear: () => void,
   change: (detail: DataExplorerFilterControlDetail) => void,
@@ -185,6 +226,7 @@ export function renderSemanticFilterControls(
       .command=${command}
       .fields=${explore.fields}
       .suggestions=${explore.filterSuggestions}
+      .suggestionRequestSeq=${editor.suggestionRequestSeq ?? 0}
       .filterField=${editor.field}
       .filterOperator=${editor.operator}
       .filterValue=${editor.value}
@@ -209,7 +251,7 @@ export function renderSemanticFilterDock(
   explore: DataExploreSignal,
   command: DataExploreCommand,
   open: boolean,
-  editor: { field: string; operator: string; value: string },
+  editor: { field: string; operator: string; value: string; suggestionRequestSeq?: number },
   actions: {
     toggle: () => void
     add: (field: string) => void
@@ -222,14 +264,19 @@ export function renderSemanticFilterDock(
   showQueryConfig = true,
 ) {
   const filterFields = explore.fields.filter((field) => field.kind === 'dimension' && field.compatible !== false)
-  return html`<aside class="semantic-filter-dock" aria-label="Explorer filters" @keydown=${(event: KeyboardEvent) => {
+  const closeFilters = (event: Event) => {
+    const root = (event.currentTarget as HTMLElement).getRootNode() as ParentNode
+    actions.toggle()
+    requestAnimationFrame(() => root.querySelector<HTMLButtonElement>('.semantic-filter-trigger, .semantic-filter-rail')?.focus())
+  }
+  return html`<aside id="semantic-filter-dock" class="semantic-filter-dock" aria-label="Explorer filters" @keydown=${(event: KeyboardEvent) => {
     if (!open || event.key !== 'Escape') return
     const picker = (event.currentTarget as HTMLElement).querySelector<HTMLDetailsElement>('.semantic-filter-picker')
     if (picker?.open) {
       picker.open = false
       picker.querySelector('summary')?.focus()
     } else {
-      actions.toggle()
+      closeFilters(event)
     }
     event.stopPropagation()
   }} @click=${(event: MouseEvent) => {
@@ -237,7 +284,7 @@ export function renderSemanticFilterDock(
     if (picker?.open && !picker.contains(event.target as Node)) picker.open = false
   }}>
     ${open ? html`<div class="semantic-filter-panel">
-      <header class="semantic-filter-header"><div><strong>Filters</strong><small>${spec.filters.length ? `${spec.filters.length} active` : 'No active filters'}</small></div><button type="button" aria-label="Close filters" @click=${actions.toggle}>${lucideIcon(X, { size: 16 })}</button></header>
+      <header class="semantic-filter-header"><div><strong>Filters</strong><small>${spec.filters.length ? `${spec.filters.length} active` : 'No active filters'}</small></div><button type="button" aria-label="Close filters" @click=${closeFilters}>${lucideIcon(X, { size: 16 })}</button></header>
       <div class="semantic-filter-body">
         <div class="semantic-filter-section-title"><span>Filters on this query</span><span>${spec.filters.length}</span></div>
         <div class="semantic-filter-add">
@@ -261,6 +308,6 @@ export function renderSemanticFilterDock(
         ${showQueryConfig ? html`<lv-data-explorer-query-controls .filtersOnly=${true} .compactConfig=${true} .command=${command} .fields=${explore.fields} @lv-data-explorer-spec-change=${(event: CustomEvent<ExplorationSpec>) => actions.changeSpec(event.detail)}></lv-data-explorer-query-controls>` : nothing}
       </div>
       <footer class="semantic-filter-footer"><button type="button" ?disabled=${!spec.filters.length} @click=${actions.clear}>Reset all</button></footer>
-    </div>` : html`<button type="button" class="semantic-filter-rail" aria-label=${spec.filters.length ? `Filters, ${spec.filters.length} active` : 'Filters'} aria-expanded="false" @click=${actions.toggle}>${lucideIcon(SlidersHorizontal, { size: 16 })}<span>Filters</span>${spec.filters.length ? html`<b>${spec.filters.length}</b>` : nothing}</button>`}
+    </div>` : html`<button type="button" class="semantic-filter-rail" aria-label=${spec.filters.length ? `Filters, ${spec.filters.length} active` : 'Filters'} aria-expanded="false" aria-controls="semantic-filter-dock" @click=${actions.toggle}>${lucideIcon(SlidersHorizontal, { size: 16 })}<span>Filters</span>${spec.filters.length ? html`<b>${spec.filters.length}</b>` : nothing}</button>`}
   </aside>`
 }

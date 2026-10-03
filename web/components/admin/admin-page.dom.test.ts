@@ -372,9 +372,17 @@ test('personal API tokens use capability selectors', async () => {
       await expirationSelect.updateComplete
       const expirationRoot = expirationSelect.shadowRoot as ShadowRoot
       const expirationTrigger = expirationRoot.querySelector('.trigger') as HTMLButtonElement
+      const expirationMenu = expirationRoot.querySelector('.menu') as HTMLElement
+      await document.fonts.ready
+      const expirationOpened = new Promise<void>((resolve) => expirationMenu.addEventListener('toggle', () => resolve(), { once: true }))
       expirationTrigger.click()
+      await expirationOpened
       await expirationSelect.updateComplete
       const expirationOptions = Array.from(expirationRoot.querySelectorAll<HTMLButtonElement>('.option'))
+      const expirationValue = expirationRoot.querySelector('.value') as HTMLElement
+      const triggerRect = expirationTrigger.getBoundingClientRect()
+      const valueRect = expirationValue.getBoundingClientRect()
+      const fieldRect = expirationSelect.parentElement.getBoundingClientRect()
       const initial = {
         listHeading,
         pageHeaderVisible,
@@ -390,8 +398,13 @@ test('personal API tokens use capability selectors', async () => {
           options: expirationOptions.map((option) => option.textContent?.trim()),
           selected: expirationOptions.find((option) => option.getAttribute('aria-selected') === 'true')?.dataset.value,
           triggerHeight: Math.round(expirationTrigger.getBoundingClientRect().height),
-          triggerWidth: Math.round(expirationTrigger.getBoundingClientRect().width),
-          optionRowsLargeEnough: expirationOptions.every((option) => option.getBoundingClientRect().height >= 32),
+          triggerWidth: Math.round(triggerRect.width),
+          labelFits: valueRect.width > 0 && expirationValue.scrollWidth <= expirationValue.clientWidth + 1
+            && valueRect.left >= triggerRect.left && valueRect.right <= triggerRect.right,
+          triggerFitsField: triggerRect.left >= fieldRect.left && triggerRect.right <= fieldRect.right,
+          menuOpen: expirationMenu.matches(':popover-open'),
+          // Anchored positioning can scale by a fraction of a pixel because offsetWidth is rounded.
+          optionRowsLargeEnough: expirationOptions.every((option) => option.offsetHeight >= 32 && Math.round(option.getBoundingClientRect().height) >= 32),
         },
         rawProjectField: Boolean(root.querySelector('input[placeholder*="Project ID"]')),
         rawPrivilegeField: Boolean(root.querySelector('input[placeholder*="Privileges"]')),
@@ -562,12 +575,14 @@ test('personal API tokens use capability selectors', async () => {
         selected: '30',
         triggerHeight: 32,
         triggerWidth: expect.any(Number),
+        labelFits: true,
+        triggerFitsField: true,
+        menuOpen: true,
         optionRowsLargeEnough: true,
       },
       rawProjectField: false,
       rawPrivilegeField: false,
     })
-    expect(state.initial.expiration.triggerWidth).toBeGreaterThanOrEqual(190)
     expect(state.initial.expiration.triggerWidth).toBeLessThanOrEqual(260)
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)

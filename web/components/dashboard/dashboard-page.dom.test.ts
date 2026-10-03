@@ -503,7 +503,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       backAtTop: true,
       searchBelowBack: true,
       searchLabel: 'Search pages',
-      searchPlaceholder: 'Search pages',
+      searchPlaceholder: 'Search',
       filteredPages: ['Details'],
       reportHeaderAligned: true,
       breadcrumbInset: 16,

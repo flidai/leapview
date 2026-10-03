@@ -443,6 +443,8 @@ func (h *BrowserHandler) AuthorizeCreatorMutationReplay(r *stdhttp.Request) bool
 	switch r.URL.Path {
 	case "/explore/saved/command":
 		return h.authorizeSavedExplorationMutationReplay(r)
+	case "/explore/add-to-dashboard":
+		return h.authorizeExplorationDashboardAppendReplay(r, body)
 	case "/pipelines/command":
 		var payload creatorPipelineCommand
 		if json.Unmarshal(body, &payload) != nil || h.AuthorizePipeline == nil {

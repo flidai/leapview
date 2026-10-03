@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing } from 'lit'
-import { property } from 'lit/decorators.js'
+import { property, state } from 'lit/decorators.js'
 import { ChevronDown, ChevronRight, ChevronUp, Filter, Plus, Search, Sigma, Table2, X } from 'lucide'
 import type { DataExploreFieldSignal, DataExploreFilterSuggestionsSignal, DataExploreCommand } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
@@ -42,6 +42,9 @@ export class DataExplorerQueryControls extends LitElement {
   @property({ attribute: false }) command: DataExploreCommand = emptyDataExploreCommand
   @property({ attribute: false }) fields: DataExploreFieldSignal[] = []
   @property({ attribute: false }) suggestions?: DataExploreFilterSuggestionsSignal
+  @property({ type: Number }) suggestionRequestSeq = 0
+  @state() private suggestionsOpen = true
+  @state() private activeSuggestion = -1
   @property({ attribute: false }) executionState: ExecutionState = 'idle'
   @property({ type: String }) filterField = ''
   @property({ type: String }) filterOperator = 'equals'
@@ -80,6 +83,14 @@ export class DataExplorerQueryControls extends LitElement {
     .filter-editor label { display: grid; min-width: 0; gap: var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-medium); }
     .filter-editor input, .filter-editor select { min-width: 0; height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 var(--base-size-8); font: var(--lv-type-body); }
     .filter-actions { display: flex; gap: var(--base-size-4); }
+    .filter-value { display: grid; min-width: 0; gap: var(--base-size-4); }
+    .filter-suggestions { min-width: 0; overflow: hidden; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); }
+    .suggestion-options { max-height: 12rem; overflow-y: auto; overscroll-behavior: contain; padding: var(--base-size-4); }
+    .suggestion-option { display: block; width: 100%; min-height: var(--control-medium-size); padding: var(--base-size-6) var(--base-size-8); text-align: left; overflow-wrap: anywhere; font: var(--lv-type-body); }
+    .suggestion-option:hover, .suggestion-option[aria-selected="true"] { background: var(--lv-bg-control-hover); }
+    .suggestion-status { margin: 0; padding: var(--base-size-8); font: var(--lv-type-caption); color: var(--lv-fg-muted); }
+    .suggestion-status.is-error { color: var(--lv-fg-danger); }
+    .filter-editor input:focus-visible, .filter-editor select:focus-visible, .filter-editor button:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
     .config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--base-size-8); align-items: end; }
     :host([compactconfig]) .config-grid { grid-template-columns: minmax(0, 1fr); }
     :host([compactconfig]) .query-config { border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: var(--base-size-8); }
@@ -119,40 +130,127 @@ export class DataExplorerQueryControls extends LitElement {
     `
   }
 
-  private renderFilterEditor(spec: ExplorationSpec) {
+  protected willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('filterField')) this.suggestionsOpen = Boolean(this.filterField)
+    if (changed.has('filterField') || changed.has('filterValue') || changed.has('suggestions') || changed.has('suggestionRequestSeq')) this.activeSuggestion = -1
+  }
+
+  private currentSuggestions(): DataExploreFilterSuggestionsSignal | undefined {
+    const suggestions = this.suggestions
+    if (!suggestions || suggestions.field !== this.filterField || suggestions.requestSeq !== this.command.requestSeq) return undefined
+    if (this.suggestionRequestSeq && suggestions.suggestionRequestSeq !== this.suggestionRequestSeq) return undefined
+    return suggestions
+  }
+
+  private availableSuggestions() {
+    const suggestions = this.currentSuggestions()
+    return suggestions && !suggestions.loading && !suggestions.stale && !suggestions.error ? suggestions.values : []
+  }
+
+  private renderFilterEditor(_spec: ExplorationSpec) {
     const field = this.fields.find((candidate) => candidate.id === this.filterField)
     const type = field?.type
     const disabled = this.filterOperator === 'is_null' || this.filterOperator === 'is_not_null'
-    const suggestions = this.suggestions?.field === this.filterField ? this.suggestions : undefined
-    const inputType = filterInputType(type)
+    const suggestions = this.currentSuggestions()
+    const values = this.availableSuggestions()
+    const expanded = this.suggestionsOpen && !disabled && Boolean(suggestions || this.suggestionRequestSeq)
+    // Suggestion navigation belongs to an editable combobox. Keep native date/number
+    // controls only when this editor has no suggestion request or results.
+    const hasSuggestions = Boolean(suggestions || this.suggestionRequestSeq)
+    const inputType = hasSuggestions || this.filterOperator === 'in' || this.filterOperator === 'not_in' ? 'text' : filterInputType(type)
     const options = filterOperatorsForType(type)
-    return html`<section class="filter-editor" aria-label="Add filter">
+    return html`<section class="filter-editor" aria-label="Add filter" @focusout=${this.handleFilterFocusOut}>
       <label>Field<input .value=${fieldLabel(this.filterField, this.fields)} disabled /></label>
       <label>Condition<select .value=${this.filterOperator} @change=${(event: Event) => this.emitFilterChange({ action: 'operator', operator: (event.target as HTMLSelectElement).value })}>
         ${options.map((option) => html`<option value=${option.value} .selected=${option.value === this.filterOperator}>${option.label}</option>`)}
       </select></label>
-      <label>Value
+      <div class="filter-value">
+        <label for="filter-value-input">Value</label>
         <input
+          id="filter-value-input"
           type=${inputType}
           inputmode=${filterInputMode(type)}
-          list=${suggestions?.values.length ? 'data-explorer-filter-values' : nothing}
+          role=${inputType === 'text' ? 'combobox' : nothing}
+          aria-autocomplete=${inputType === 'text' ? 'list' : nothing}
+          aria-expanded=${inputType === 'text' ? String(expanded) : nothing}
+          aria-controls=${expanded ? 'data-explorer-filter-values' : nothing}
+          aria-activedescendant=${expanded && this.activeSuggestion >= 0 && values[this.activeSuggestion] ? `filter-option-${this.activeSuggestion}` : nothing}
+          autocomplete="off"
           placeholder=${filterPlaceholder(type, this.filterOperator)}
           .value=${this.filterValue}
           ?disabled=${disabled}
-          @input=${(event: Event) => this.emitFilterChange({ action: 'value', value: (event.target as HTMLInputElement).value })}
-          @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') this.emitFilterChange({ action: 'apply' }) }}
+          @focus=${() => { this.suggestionsOpen = true }}
+          @click=${() => { this.suggestionsOpen = true }}
+          @input=${this.handleFilterValueInput}
+          @keydown=${this.handleFilterValueKeydown}
         />
-        ${suggestions?.values.length ? html`<datalist id="data-explorer-filter-values">${suggestions.values.map((suggestion) => html`<option value=${String(suggestion.value.value)} label=${suggestion.label}></option>`)}</datalist>` : nothing}
-      </label>
+        ${expanded ? html`<div class="filter-suggestions">
+          <div id="data-explorer-filter-values" class="suggestion-options" role="listbox" aria-label="Suggested values" aria-busy=${String(!suggestions || suggestions.loading)}>
+            ${values.map((suggestion, index) => html`<button type="button" class="suggestion-option" id=${`filter-option-${index}`} role="option" tabindex="-1" aria-selected=${String(index === this.activeSuggestion)} @pointerdown=${(event: PointerEvent) => event.preventDefault()} @click=${() => this.selectSuggestion(index)}>${suggestion.label || String(suggestion.value.value)}</button>`)}
+          </div>
+          ${!suggestions || suggestions.loading ? html`<p class="suggestion-status" role="status">Loading suggestions…</p>` : nothing}
+          ${suggestions?.error ? html`<p class="suggestion-status is-error" role="alert">${suggestions.error}</p>` : nothing}
+          ${suggestions?.stale ? html`<p class="suggestion-status" role="status">Suggestions changed. Continue typing to refresh them.</p>` : nothing}
+          ${suggestions && !suggestions.loading && !suggestions.error && !suggestions.stale && !values.length ? html`<p class="suggestion-status" role="status">No matching values. You can still apply a typed value.</p>` : nothing}
+          ${values.length > 0 && suggestions?.truncated ? html`<p class="suggestion-status">Showing the first ${values.length} values. Type to narrow the list.</p>` : nothing}
+        </div>` : nothing}
+      </div>
       <div class="filter-actions">
         <button type="button" class="text-button" @click=${() => this.emitFilterChange({ action: 'cancel' })}>Cancel</button>
         <button type="button" class="text-button" ?disabled=${!disabled && !this.filterValue.trim()} @click=${() => this.emitFilterChange({ action: 'apply' })}>Apply</button>
       </div>
-      ${suggestions?.loading ? html`<span class="config-note" role="status">Loading governed suggestions…</span>` : nothing}
-      ${suggestions?.stale ? html`<span class="config-note" role="status">Suggestions are stale; continue typing or apply your value.</span>` : nothing}
-      ${suggestions?.error ? html`<span class="config-error" role="alert">${suggestions.error}</span>` : nothing}
-      ${suggestions?.truncated ? html`<span class="config-note">Showing the first ${suggestions.values.length} suggestions.</span>` : nothing}
     </section>`
+  }
+
+  private handleFilterFocusOut = (event: FocusEvent): void => {
+    // Keep action buttons stationary while focus moves within the editor.
+    const editor = event.currentTarget as HTMLElement
+    if (event.relatedTarget instanceof Node && editor.contains(event.relatedTarget)) return
+    this.suggestionsOpen = false
+    this.activeSuggestion = -1
+  }
+
+  private handleFilterValueInput = (event: Event): void => {
+    this.filterValue = (event.target as HTMLInputElement).value
+    this.suggestionsOpen = true
+    this.activeSuggestion = -1
+    this.emitFilterChange({ action: 'value', value: this.filterValue })
+  }
+
+  private handleFilterValueKeydown = (event: KeyboardEvent): void => {
+    if (event.isComposing) return
+    const values = this.availableSuggestions()
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!values.length) return
+      event.preventDefault()
+      const wasOpen = this.suggestionsOpen
+      this.suggestionsOpen = true
+      this.activeSuggestion = !wasOpen || this.activeSuggestion < 0
+        ? event.key === 'ArrowDown' ? 0 : values.length - 1
+        : (this.activeSuggestion + (event.key === 'ArrowDown' ? 1 : -1) + values.length) % values.length
+      void this.updateComplete.then(() => this.renderRoot.querySelector(`#filter-option-${this.activeSuggestion}`)?.scrollIntoView({ block: 'nearest' }))
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      if (this.suggestionsOpen && values[this.activeSuggestion]) this.selectSuggestion(this.activeSuggestion)
+      else if (this.filterValue.trim()) this.emitFilterChange({ action: 'apply' })
+    } else if (event.key === 'Escape' && this.suggestionsOpen) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.suggestionsOpen = false
+      this.activeSuggestion = -1
+    }
+  }
+
+  private selectSuggestion(index: number): void {
+    const suggestion = this.availableSuggestions()[index]
+    if (!suggestion) return
+    const value = String(suggestion.value.value)
+    const separator = this.filterValue.lastIndexOf(',')
+    this.filterValue = (this.filterOperator === 'in' || this.filterOperator === 'not_in') && separator >= 0
+      ? `${this.filterValue.slice(0, separator + 1)} ${value}` : value
+    this.suggestionsOpen = false
+    this.activeSuggestion = -1
+    this.emitFilterChange({ action: 'value', value: this.filterValue })
   }
 
   private fieldQuery = ''

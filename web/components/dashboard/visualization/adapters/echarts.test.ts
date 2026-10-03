@@ -154,7 +154,7 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(selectedDensePoints.series[0].label.formatter({ dataIndex: 0, value: inlineDataState.datasets[0].rows[0] })).toBe('order-0')
 })
 
-test('ECharts formats Cartesian temporal axis ticks as UTC dates and preserves rows and tooltips', () => {
+test('ECharts generates and formats Cartesian temporal axis ticks in UTC and preserves rows and tooltips', () => {
   const envelope = cartesianFixture('area') as any
   const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
   category.dataType = 'date'
@@ -166,6 +166,9 @@ test('ECharts formats Cartesian temporal axis ticks as UTC dates and preserves r
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   const december = Date.UTC(2016, 11, 23)
+  // The formatter alone is insufficient: local-time ticks shift month starts
+  // to the previous UTC day in browsers such as Europe/Berlin.
+  expect(option.useUTC).toBe(true)
   expect(option.xAxis.type).toBe('time')
   expect(option.xAxis.axisLabel.formatter(december)).toBe('2016-12-23')
   expect(option.xAxis.axisLabel.formatter(december)).not.toContain(String(december))

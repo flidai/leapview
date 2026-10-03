@@ -20,20 +20,21 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 	(&Module{handler: dashboardhttp.Handler{}}).MountAuthenticated(router, RouteGuard{ProtectWithResources: identityResources})
 
 	want := map[string]bool{
-		"GET /dashboards/new":                               false,
-		"POST /dashboards/new":                              false,
-		"GET /dashboards/{dashboard}/fork":                  false,
-		"POST /dashboards/{dashboard}/fork":                 false,
-		"GET /dashboards/{dashboard}/edit":                  false,
-		"POST /dashboards/{dashboard}/archive":              false,
-		"POST /dashboards/{dashboard}/delete":               false,
-		"GET /dashboards/{dashboard}/preview":               false,
-		"GET /dashboards/{dashboard}/export.yaml":           false,
-		"POST /dashboards/{dashboard}/draft/command":        false,
-		"POST /dashboards/{dashboard}/draft/filter":         false,
-		"POST /dashboards/{dashboard}/draft/filter-options": false,
-		"POST /dashboards/{dashboard}/draft/visual-window":  false,
-		"POST /dashboards/{dashboard}/commands/select":      false,
+		"GET /dashboards/new":                                               false,
+		"POST /dashboards/new":                                              false,
+		"GET /dashboards/{dashboard}/fork":                                  false,
+		"POST /dashboards/{dashboard}/fork":                                 false,
+		"GET /dashboards/{dashboard}/edit":                                  false,
+		"POST /dashboards/{dashboard}/archive":                              false,
+		"POST /dashboards/{dashboard}/delete":                               false,
+		"GET /dashboards/{dashboard}/preview":                               false,
+		"GET /dashboards/{dashboard}/export.yaml":                           false,
+		"POST /dashboards/{dashboard}/draft/command":                        false,
+		"POST /dashboards/{dashboard}/draft/filter":                         false,
+		"POST /dashboards/{dashboard}/draft/filter-options":                 false,
+		"POST /dashboards/{dashboard}/draft/visual-window":                  false,
+		"POST /dashboards/{dashboard}/commands/select":                      false,
+		"GET /dashboards/{dashboard}/pages/{page}/visuals/{visual}/explore": false,
 	}
 	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		key := method + " " + route
@@ -53,6 +54,7 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 		t.Fatalf("captured %d route capabilities, want at least 10", len(capabilities))
 	}
 	for index, wantCapability := range []access.Capability{
+		access.CapabilityResourceRead,
 		access.CapabilityResourceRead,
 		access.CapabilityResourceRead,
 		access.CapabilityResourceEdit,
