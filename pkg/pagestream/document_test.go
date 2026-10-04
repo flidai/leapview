@@ -48,6 +48,24 @@ func TestRenderPageIncludesLiteralUpdatesInitMainAttrsAndBody(t *testing.T) {
 	}
 }
 
+func TestRenderPageKeepsDocumentLandmarksOutsideUpdatesMain(t *testing.T) {
+	var body bytes.Buffer
+	err := RenderPage(PageSpec{
+		DatastarScriptURL: "/datastar.js",
+		UpdatesURL:        "/updates?route=site",
+		BeforeMain:        []g.Node{h.Header(g.Text("Site header"))},
+		Body:              []g.Node{h.P(g.Text("Page content"))},
+		AfterMain:         []g.Node{h.Footer(g.Text("Site footer"))},
+	}).Render(&body)
+	if err != nil {
+		t.Fatalf("render document: %v", err)
+	}
+	want := `<body><header>Site header</header><main data-init="@get(&#39;/updates?route=site&#39;, {openWhenHidden: true})"><p>Page content</p></main><footer>Site footer</footer></body>`
+	if !strings.Contains(body.String(), want) {
+		t.Fatalf("expected sibling landmarks with updates on main, got:\n%s", body.String())
+	}
+}
+
 func TestRenderPageRequiresUpdatesURL(t *testing.T) {
 	defer func() {
 		if recover() == nil {
