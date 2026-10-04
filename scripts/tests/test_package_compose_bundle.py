@@ -124,6 +124,15 @@ class ComposeBundleAssemblerTests(unittest.TestCase):
             self.assertEqual((package_root / "qualification/package.json").read_bytes(), (ROOT / "deploy/compose/qualification/package.json").read_bytes())
             self.assertEqual((package_root / "qualification/postgres-init.sh").read_bytes(), (ROOT / "deploy/postgres/init.sh").read_bytes())
             self.assertEqual((package_root / "local-runtime/postgres-init.sh").read_bytes(), (ROOT / "deploy/postgres/init.sh").read_bytes())
+            for packaged, canonical in {
+                "leapviewctl-wrapper": "deploy/host/files/leapviewctl-wrapper",
+                "bootstrap-linux.sh": "deploy/host/bootstrap-linux.sh",
+                "Caddyfile": "deploy/compose/Caddyfile",
+                "compose.https.yaml": "deploy/compose/compose.https.yaml",
+                "local-runtime/compose.yaml": "deploy/local/compose.yaml",
+                "local-runtime/runtime-package.schema.json": "deploy/local/runtime-package.schema.json",
+            }.items():
+                self.assertEqual((package_root / packaged).read_bytes(), (ROOT / canonical).read_bytes(), packaged)
             self.assertEqual((package_root / "image-reference.txt").read_text(), IMAGE + "\n")
             self.assertIn(IMAGE, (package_root / "deployment.env.example").read_text())
             self.assertNotIn("<release-digest>", (package_root / "deployment.env.example").read_text())

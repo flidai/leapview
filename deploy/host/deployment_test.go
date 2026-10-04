@@ -65,8 +65,8 @@ func TestProductionImageCarriesCanonicalDeploymentPayload(t *testing.T) {
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	for _, required := range []string{
-		"deploy/host/files/leapviewctl-wrapper",
-		"deploy/host/bootstrap-linux.sh",
+		"python3 scripts/package_compose_bundle.py assemble",
+		`--source-root . --controller "$controller"`,
 	} {
 		requireContains(t, release, required)
 	}

@@ -70,7 +70,7 @@ func TestReleaseWorkflowPublishesComposeArchiveAndAttestedImage(t *testing.T) {
 		"tags:", "needs: [image, authoring-cli, qualify, minio-conformance, plan-gc-conformance]", "gh release create",
 		"packages: write", "attestations: write", "id-token: write",
 		"docker/build-push-action@", "actions/attest@", "push-to-registry: true",
-		"leapview-compose-", "deployment.env.example", ".tar.gz.sha256", "./cmd/leapviewctl",
+		"leapview-compose-", "python3 scripts/package_compose_bundle.py assemble", ".tar.gz.sha256", "./cmd/leapviewctl",
 	} {
 		requireContains(t, workflow, fragment)
 	}
