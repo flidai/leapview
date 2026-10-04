@@ -14,11 +14,13 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+import nix_compose_controller_evidence as controller_evidence
 import nix_compose_qualification as qualification
 import package_compose_bundle as composer
 
@@ -282,6 +284,14 @@ class ComposeQualificationTests(unittest.TestCase):
 
     def _record_args(self):
         controller_runtime, image_runtime, admission_path, report_path = self._write_runtime_files()
+        controller_evidence_dir = self.root / "controller-evidence"
+        controller_evidence_dir.mkdir(exist_ok=True)
+        (controller_evidence_dir / "controller-evidence.json").write_text(
+            '{"fixture":"protected-controller-evidence"}\n', encoding="utf-8",
+        )
+        verifier = self.root / "protected-securitydependencies"
+        verifier.write_text("protected fixture verifier\n", encoding="utf-8")
+        verifier.chmod(0o755)
         return {
             "archive": self.archive, "sidecar": self.sidecar, "build_receipt": self.receipt,
             "source_root": self.source, "release_identity": self.release_identity,
@@ -290,9 +300,41 @@ class ComposeQualificationTests(unittest.TestCase):
             "admission_evidence": admission_path, "controller_runtime_identity": controller_runtime,
             "runtime_identity": image_runtime, "qualification_report": report_path,
             "qualification_evidence_dir": report_path.parent,
+            "controller_evidence_dir": controller_evidence_dir,
+            "controller_binary_verifier": verifier,
             "release_authorization": self._release_binding(), "signer_revision": self.revision,
             "metadata_reader": lambda _path: go_metadata(),
         }
+
+    def _controller_evidence_binding(self, *args, **kwargs):
+        archive = Path(args[0])
+        evidence_dir = Path(kwargs["evidence_dir"])
+        try:
+            receipt = (evidence_dir / "controller-evidence.json").read_bytes()
+        except OSError as exc:
+            raise qualification.QualificationError("controller evidence receipt is missing") from exc
+        return {
+            "bundle": {
+                "archiveSHA256": qualification._digest_bytes(archive.read_bytes()),
+                "controllerSHA256": qualification._digest_bytes(self.controller.read_bytes()),
+                "sourceRevision": kwargs["source_revision"],
+                "platform": kwargs["platform"],
+            },
+            "controllerEvidenceBindingDigest": qualification._digest_bytes(
+                b"fixture-controller-evidence-binding\n" + receipt
+            ),
+            "reports": {
+                "inventorySHA256": qualification._digest_bytes(b"fixture-controller-report-inventory"),
+            },
+        }
+
+    def _record_qualification(self, **arguments):
+        with patch.object(qualification, "_verify_controller_evidence", side_effect=self._controller_evidence_binding):
+            return qualification.record_qualification(**arguments)
+
+    def _verify_qualification(self, receipt_path, **arguments):
+        with patch.object(qualification, "_verify_controller_evidence", side_effect=self._controller_evidence_binding):
+            return qualification.verify_qualification(receipt_path, **arguments)
 
     def test_bundle_verification_binds_deterministic_outer_and_inner_content(self):
         extraction = self.root / "safe-extraction"
@@ -529,12 +571,17 @@ class ComposeQualificationTests(unittest.TestCase):
 
     def test_native_journey_receipt_binds_all_success_evidence_and_verifies_read_only(self):
         arguments = self._record_args()
-        receipt = qualification.record_qualification(**arguments)
+        receipt = self._record_qualification(**arguments)
         self.assertEqual(receipt["bundle"]["archiveSHA256"], "sha256:" + hashlib.sha256(self.archive.read_bytes()).hexdigest())
         self.assertEqual(receipt["runtime"]["controllerIdentitySHA256"], "sha256:" + hashlib.sha256(arguments["controller_runtime_identity"].read_bytes()).hexdigest())
         self.assertEqual(receipt["runtime"]["imageIdentitySHA256"], "sha256:" + hashlib.sha256(arguments["runtime_identity"].read_bytes()).hexdigest())
         self.assertEqual(receipt["ociAdmission"]["evidenceSHA256"], "sha256:" + hashlib.sha256(arguments["admission_evidence"].read_bytes()).hexdigest())
         self.assertEqual(receipt["qualification"]["result"], "success")
+        self.assertEqual(receipt["controllerEvidence"]["sourceRevision"], self.revision)
+        self.assertEqual(receipt["controllerEvidence"]["platform"], "linux/amd64")
+        self.assertEqual(receipt["controllerEvidence"]["receiptSHA256"], "sha256:" + hashlib.sha256(
+            (arguments["controller_evidence_dir"] / "controller-evidence.json").read_bytes()
+        ).hexdigest())
         self.assertFalse(receipt["releaseAdmission"])
         evidence = receipt["qualification"]["evidence"]
         self.assertEqual(evidence["fileCount"], 3)
@@ -557,7 +604,7 @@ class ComposeQualificationTests(unittest.TestCase):
             path.relative_to(arguments["qualification_evidence_dir"]): path.read_bytes()
             for path in arguments["qualification_evidence_dir"].rglob("*") if path.is_file()
         }
-        checked = qualification.verify_qualification(receipt_path, **arguments)
+        checked = self._verify_qualification(receipt_path, **arguments)
         self.assertEqual(checked, receipt)
         self.assertEqual(before, {path: path.read_bytes() for path in before})
         self.assertEqual(evidence_before, {
@@ -569,11 +616,11 @@ class ComposeQualificationTests(unittest.TestCase):
         changed_artifact.write_bytes(arguments["release_artifact_zip"].read_bytes() + b"changed")
         changed = dict(arguments, release_artifact_zip=changed_artifact)
         with self.assertRaisesRegex(qualification.QualificationError, "API digest"):
-            qualification.verify_qualification(receipt_path, **changed)
+            self._verify_qualification(receipt_path, **changed)
 
     def test_native_journey_receipt_rejects_changed_added_removed_and_unsafe_raw_evidence(self):
         arguments = self._record_args()
-        receipt = qualification.record_qualification(**arguments)
+        receipt = self._record_qualification(**arguments)
         receipt_path = self.root / "evidence-inventory-receipt.json"
         receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
         evidence_dir = arguments["qualification_evidence_dir"]
@@ -591,7 +638,7 @@ class ComposeQualificationTests(unittest.TestCase):
                 mutate()
                 try:
                     with self.assertRaisesRegex(qualification.QualificationError, "evidence|inventory"):
-                        qualification.verify_qualification(receipt_path, **arguments)
+                        self._verify_qualification(receipt_path, **arguments)
                 finally:
                     restore()
 
@@ -599,7 +646,7 @@ class ComposeQualificationTests(unittest.TestCase):
         symlink.symlink_to(evidence_dir / "performance-report.json")
         try:
             with self.assertRaisesRegex(qualification.QualificationError, "symlink|unsafe|regular"):
-                qualification.verify_qualification(receipt_path, **arguments)
+                self._verify_qualification(receipt_path, **arguments)
         finally:
             symlink.unlink()
 
@@ -607,9 +654,30 @@ class ComposeQualificationTests(unittest.TestCase):
         os.mkfifo(fifo)
         try:
             with self.assertRaisesRegex(qualification.QualificationError, "regular|special|unsafe"):
-                qualification.verify_qualification(receipt_path, **arguments)
+                self._verify_qualification(receipt_path, **arguments)
         finally:
             fifo.unlink()
+
+    def test_native_journey_receipt_requires_current_controller_evidence(self):
+        arguments = self._record_args()
+        receipt = self._record_qualification(**arguments)
+        receipt_path = self.root / "controller-evidence-receipt.json"
+        receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+        controller_receipt = arguments["controller_evidence_dir"] / "controller-evidence.json"
+        original = controller_receipt.read_bytes()
+
+        controller_receipt.unlink()
+        with self.assertRaisesRegex(qualification.QualificationError, "controller evidence"):
+            self._verify_qualification(receipt_path, **arguments)
+
+        controller_receipt.write_bytes(original + b"changed")
+        with self.assertRaisesRegex(qualification.QualificationError, "freshly verified evidence"):
+            self._verify_qualification(receipt_path, **arguments)
+
+        with patch.object(controller_evidence, "verify_controller_evidence",
+                          side_effect=ValueError("fixture evidence verifier failure")):
+            with self.assertRaisesRegex(qualification.QualificationError, "protected controller evidence verification failed"):
+                qualification.verify_qualification(receipt_path, **arguments)
 
     def test_native_journey_receipt_rejects_each_incomplete_identity_or_phase(self):
         arguments = self._record_args()
@@ -618,28 +686,28 @@ class ComposeQualificationTests(unittest.TestCase):
         report["result"] = "failure"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         with self.assertRaisesRegex(qualification.QualificationError, "complete success"):
-            qualification.record_qualification(**arguments)
+            self._record_qualification(**arguments)
         report = self._report()
         report["assertions"]["browserJourney"] = False
         report_path.write_text(json.dumps(report), encoding="utf-8")
         with self.assertRaisesRegex(qualification.QualificationError, "assertion"):
-            qualification.record_qualification(**arguments)
+            self._record_qualification(**arguments)
         report = self._report()
         report["phases"][4]["result"] = "failure"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         with self.assertRaisesRegex(qualification.QualificationError, "phases"):
-            qualification.record_qualification(**arguments)
+            self._record_qualification(**arguments)
         report_path.write_text(json.dumps(self._report()), encoding="utf-8")
 
         arguments["controller_runtime_identity"].write_text(json.dumps({"version": VERSION}), encoding="utf-8")
         with self.assertRaisesRegex(qualification.QualificationError, "controller runtime identity"):
-            qualification.record_qualification(**arguments)
+            self._record_qualification(**arguments)
         arguments = self._record_args()
         evidence = json.loads(arguments["admission_evidence"].read_text())
         evidence["registryDigest"] = "sha256:" + "0" * 64
         arguments["admission_evidence"].write_text(json.dumps(evidence), encoding="utf-8")
         with self.assertRaisesRegex(qualification.QualificationError, "OCI admission evidence"):
-            qualification.record_qualification(**arguments)
+            self._record_qualification(**arguments)
 
     def test_report_timing_preserves_go_nanoseconds(self):
         report = self._report()

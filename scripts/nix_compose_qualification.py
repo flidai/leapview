@@ -1034,9 +1034,24 @@ def _validate_installed_report(data, image, platform, now=None):
     return report
 
 
+def _verify_controller_evidence(archive, sidecar, build_receipt, source_root, release_identity, *,
+                               platform, source_revision, image, binary_verifier, evidence_dir, now=None):
+    try:
+        import nix_compose_controller_evidence
+
+        return nix_compose_controller_evidence.verify_controller_evidence(
+            archive, sidecar, build_receipt, source_root, release_identity,
+            platform=platform, source_revision=source_revision, image=image,
+            binary_verifier=binary_verifier, evidence_dir=evidence_dir, now=now,
+        )
+    except (ImportError, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+        raise QualificationError(f"protected controller evidence verification failed: {exc}") from exc
+
+
 def record_qualification(archive, sidecar, build_receipt, source_root, release_identity, *, platform,
                          source_revision, image, release_artifact_zip, admission_evidence, controller_runtime_identity,
                          runtime_identity, qualification_report, qualification_evidence_dir,
+                         controller_evidence_dir, controller_binary_verifier,
                          release_authorization, signer_revision, metadata_reader=None, now=None):
     """Create a success-only receipt from reverified bundle, image and native journey evidence."""
     authorization = _validate_release_authorization(release_authorization)
@@ -1057,6 +1072,15 @@ def record_qualification(archive, sidecar, build_receipt, source_root, release_i
     bundle_binding = verify_bundle(
         archive, sidecar, build_receipt, source_root, release_identity,
         platform=platform, source_revision=source_revision, image=image, metadata_reader=metadata_reader,
+    )
+    controller_evidence = _verify_controller_evidence(
+        archive, sidecar, build_receipt, source_root, release_identity,
+        platform=platform, source_revision=source_revision, image=image,
+        binary_verifier=controller_binary_verifier, evidence_dir=controller_evidence_dir, now=now,
+    )
+    controller_evidence_bytes = _read_regular(
+        Path(controller_evidence_dir) / "controller-evidence.json",
+        "protected controller evidence receipt", MAX_JSON_BYTES,
     )
     controller_identity_bytes = _read_regular(controller_runtime_identity, "native controller runtime identity", compose_bundle.MAX_IDENTITY_BYTES)
     image_identity_bytes = _read_regular(runtime_identity, "installed image runtime identity", compose_bundle.MAX_IDENTITY_BYTES)
@@ -1094,6 +1118,15 @@ def record_qualification(archive, sidecar, build_receipt, source_root, release_i
             "result": "success",
             "platform": platform,
             "evidence": evidence_inventory,
+        },
+        "controllerEvidence": {
+            "archiveSHA256": controller_evidence["bundle"]["archiveSHA256"],
+            "controllerSHA256": controller_evidence["bundle"]["controllerSHA256"],
+            "sourceRevision": controller_evidence["bundle"]["sourceRevision"],
+            "platform": controller_evidence["bundle"]["platform"],
+            "receiptSHA256": _digest_bytes(controller_evidence_bytes),
+            "bindingDigest": controller_evidence["controllerEvidenceBindingDigest"],
+            "reportInventorySHA256": controller_evidence["reports"]["inventorySHA256"],
         },
         "releaseAuthorization": authorization,
         "signer": {
@@ -1177,6 +1210,8 @@ def main():
         qualification.add_argument("--runtime-identity", type=Path, required=True, help="actual installed app image version --json output")
         qualification.add_argument("--qualification-report", type=Path, required=True)
         qualification.add_argument("--qualification-evidence-dir", type=Path, required=True)
+        qualification.add_argument("--controller-evidence-dir", type=Path, required=True)
+        qualification.add_argument("--controller-binary-verifier", type=Path, required=True)
         qualification.add_argument("--release-authorization", type=Path, required=True)
         qualification.add_argument("--signer-revision", required=True)
         if operation_name == "record-qualification":
@@ -1226,6 +1261,8 @@ def main():
                 "runtime_identity": args.runtime_identity,
                 "qualification_report": args.qualification_report,
                 "qualification_evidence_dir": args.qualification_evidence_dir,
+                "controller_evidence_dir": args.controller_evidence_dir,
+                "controller_binary_verifier": args.controller_binary_verifier,
                 "release_authorization": _load_json_argument(args.release_authorization, "release authorization"),
                 "signer_revision": args.signer_revision,
             }
