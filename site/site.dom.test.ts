@@ -95,10 +95,7 @@ test('compliance content passes the public-site accessibility audit', async () =
   const page = await context.newPage()
   try {
     await page.goto(`${baseURL}/compliance`)
-    // The shared PageSpec currently nests the existing site footer in <main>.
-    // Keep the page-wide scan, but do not expand this FAI-991 change into a
-    // cross-site landmark refactor.
-    const results = await new AxeBuilder({ page }).disableRules(['landmark-contentinfo-is-top-level']).analyze()
+    const results = await new AxeBuilder({ page }).analyze()
     expect(results.violations).toEqual([])
   } finally {
     await page.close()
@@ -154,6 +151,22 @@ test('homepage presents the new sections inside the shared site shell', async ()
     await page.close()
   }
 })
+
+test('homepage landmarks and controls pass accessibility checks in both themes', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const context = await browser.newContext({ colorScheme, reducedMotion: 'reduce', viewport: { width: 390, height: 900 } })
+    const page = await context.newPage()
+    try {
+      await page.goto(baseURL)
+      expect(await page.locator('body > header.site-header').count()).toBe(1)
+      expect(await page.locator('body > main.site-page').count()).toBe(1)
+      expect(await page.locator('body > footer.site-footer').count()).toBe(1)
+      expect(await page.locator('main > footer.site-footer').count()).toBe(0)
+      const results = await new AxeBuilder({ page }).analyze()
+      expect(results.violations).toEqual([])
+    } finally { await context.close() }
+  }
+}, 20000)
 
 test('homepage content aligns with the shared header and footer across screen sizes', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 900 } })
@@ -751,6 +764,44 @@ test('mobile menu restores keyboard focus on Escape', async () => {
     expect(await toggle.getAttribute('aria-expanded')).toBe('false')
   } finally { await page.close() }
 })
+
+test('mobile integrations remain named, visible, and clear of the heading without reduced motion', async () => {
+  const context = await browser.newContext({ reducedMotion: 'no-preference' })
+  const page = await context.newPage()
+  try {
+    await page.goto(baseURL)
+    for (const width of [320, 390, 700]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.locator('#connections').scrollIntoViewIfNeeded()
+      const layout = await page.locator('#orbit-stage').evaluate(stage => {
+        const heading = stage.querySelector('.orbit-center')!.getBoundingClientRect()
+        return [...stage.querySelectorAll('.orbit-node')].map(node => {
+          const rect = node.getBoundingClientRect()
+          return { name: node.getAttribute('aria-label'), label: node.querySelector('.orbit-label')!.textContent,
+            left: rect.left, right: rect.right, clearOfHeading: rect.top >= heading.bottom,
+            labelVisible: getComputedStyle(node.querySelector('.orbit-label')!).visibility,
+          }
+        })
+      })
+      expect(layout).toHaveLength(17)
+      for (const item of layout) {
+        expect(item.name).toBe(item.label)
+        expect(item.left).toBeGreaterThanOrEqual(0)
+        expect(item.right).toBeLessThanOrEqual(width)
+        expect(item.clearOfHeading).toBe(true)
+        expect(item.labelVisible).toBe('visible')
+      }
+      expect(await page.locator('.orbit-motion-toggle').isVisible()).toBe(false)
+      for (const button of await page.locator('.orbit-node').all()) {
+        await button.click()
+        expect(await button.getAttribute('aria-pressed')).toBe('true')
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const results = await new AxeBuilder({ page }).include('#orbit-stage').withRules(['button-name']).analyze()
+    expect(results.violations).toEqual([])
+  } finally { await context.close() }
+}, 20000)
 
 test('integration animation can be paused and stays still during keyboard interaction', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })

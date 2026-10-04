@@ -91,6 +91,9 @@ html {
 }
 
 body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
   min-width: 20rem;
   margin: 0;
   background: var(--lv-bg-page);
@@ -102,7 +105,8 @@ a {
 }
 
 .site-page {
-  min-height: 100svh;
+  flex: 1;
+  min-width: 0;
 }
 
 .skip-link {
@@ -2294,12 +2298,12 @@ lv-site-search:not(:defined) > .site-search-active-input {
   padding: var(--base-size-64) var(--base-size-32) var(--base-size-32);
 }
 
-.site-home + .site-footer {
+.site-page:has(.site-home) + .site-footer {
   background: var(--lv-bg-page);
   padding-inline: 0;
 }
 
-.site-home + .site-footer :is(.site-footer-content, .site-footer-bottom) {
+.site-page:has(.site-home) + .site-footer :is(.site-footer-content, .site-footer-bottom) {
   padding-inline: var(--site-header-inline-space);
 }
 
