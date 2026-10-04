@@ -93,9 +93,17 @@ jobs:
           nix build --no-update-lock-file .#leapviewctl-linux-amd64 --out-link result-cli-amd64 -L
           # Nix appends -arm64 for the selected non-default output.
           nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli -L
+          nix build --no-update-lock-file .#leapviewctl-compose-linux-amd64 --out-link result-compose-cli-amd64 -L
+          # Nix appends -arm64 for the selected non-default output.
+          nix build --no-update-lock-file .#leapviewctl-compose-linux-arm64 --out-link result-compose-cli -L
           mkdir -p cli-candidates/amd64 cli-candidates/arm64
           for arch in amd64 arm64; do
             cp result-cli-$arch/{leapviewctl-linux-$arch.tar.gz,archive-identity.json,static-compatibility.json} cli-candidates/$arch/
+          done
+          mkdir -p compose-candidates/amd64/bin compose-candidates/arm64/bin
+          for arch in amd64 arm64; do
+            cp result-compose-cli-$arch/{leapviewctl-linux-$arch.tar.gz,archive-identity.json,controller-build-identity.json,static-compatibility.json} compose-candidates/$arch/
+            cp result-compose-cli-$arch/bin/leapviewctl compose-candidates/$arch/bin/
           done
       - name: Retain immutable candidate archives
         id: upload
@@ -103,6 +111,13 @@ jobs:
         with:
           name: nix-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}
           path: cli-candidates/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Retain separate Compose controller candidates and static reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}
+          path: compose-candidates/
           retention-days: 14
           if-no-files-found: error
 

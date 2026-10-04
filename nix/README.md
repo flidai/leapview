@@ -131,7 +131,8 @@ loopback registry and existing PostgreSQL/browser fixtures.
 |---|---|
 | `leapview` (default) | Application and deployment CLI, generated contracts, frontend assets and runtime resources |
 | `leapview-linux` | Exported Linux CLI binaries for Ubuntu 24.04 or a compatible runtime; no Nix store required |
-| `leapviewctl-linux-amd64`, `leapviewctl-linux-arm64` | Standalone CGO-disabled deployment controller, deterministic candidate archive, source/platform identity and static-link report; no Nix store or host glibc dependency |
+| `leapviewctl-linux-amd64`, `leapviewctl-linux-arm64` | Standalone development controller, CGO-disabled, deterministic archive and static-link report; no Nix store or host glibc dependency |
+| `leapviewctl-compose-linux-amd64`, `leapviewctl-compose-linux-arm64` | Clean-source controller candidates with canonical release metadata for Compose bundle assembly; requires a matching immutable image and separate qualification |
 | `leapview-image` | Container archive with the existing entrypoint, UID/GID 999, health check, writable volume paths and deployment bundle |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets`, `extension-supply` | Pinned runtime asset trees, using the existing map/extension publishers and integrity checks |
@@ -184,6 +185,30 @@ identity must match before the full matrix can succeed.
 The probe receives no candidate-supplied libraries and runs without network,
 write access or root privileges. Reports bind runtime identity, archive and binary
 hashes, and every host image digest.
+
+For installation-bundle candidates, `task nix:compose:controllers` builds the same
+CGO-disabled controller with canonical `VERSION`, exact clean source revision and
+commit timestamp, and `development=false`. This metadata can match a conventional
+release image; it does not authorize publication. Dirty source is rejected for
+this purpose. Standalone development-controller outputs and their qualifier keep
+their existing `VERSION+nix.<revision>` identity.
+
+`scripts/package_compose_bundle.py` is the shared assembler used by the existing
+release workflow. It accepts a prebuilt controller, explicit platform, immutable
+image reference and matching release identity. The trusted Go reader checks the
+controller package, platform and CGO setting without executing it. A separate build receipt binds the exact binary hash to the
+producer's declared build identity; the assembler requires that identity to match
+the selected image. Go omits linker flags from metadata with `-trimpath`, so this
+receipt is a build claim and cannot substitute for native runtime qualification.
+The assembler ships the canonical Compose/local-runtime assets,
+normalizes modes, reuses the bundle validator, and produces complete inner
+checksums and deterministic outer archive/checksum files.
+
+A Nix Compose controller is only an input to that assembler. The completed bundle
+still needs exact image admission, native installed-candidate and host lifecycle
+qualification, and an attestation for its own outer archive. The standalone
+controller's signature cannot attest the composed bundle. Existing conventional
+and non-Linux builders retain publication responsibility until these gates pass.
 
 Controller builds retain Go function symbols (`-w`, without `-s`) so binary-mode
 vulnerability analysis can inspect the shipped code. A separate read-only lane
