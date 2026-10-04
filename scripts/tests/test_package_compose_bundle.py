@@ -88,6 +88,33 @@ def args_for(controller, release_identity, controller_build_identity, output_dir
 
 
 class ComposeBundleAssemblerTests(unittest.TestCase):
+    def test_release_identity_step_uses_the_same_utc_commit_time_as_nix(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        step = workflow.split("      - name: Resolve authoritative build identity\n", 1)[1].split("\n  image-platform:", 1)[0]
+        shell = step.split("        run: |\n", 1)[1]
+        shell = "\n".join(line[10:] for line in shell.splitlines())
+        for timestamp in ("2026-10-04T05:06:07+00:00", "2026-10-04T10:36:07+05:30"):
+            with self.subTest(timestamp=timestamp), tempfile.TemporaryDirectory() as temporary:
+                checkout = Path(temporary)
+                (checkout / "VERSION").write_text("0.8.1\n")
+                (checkout / "package.json").write_text('{"version":"0.8.1"}\n')
+                subprocess.run(["git", "init", "--quiet", str(checkout)], check=True)
+                subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
+                environment = dict(os.environ, GIT_AUTHOR_NAME="Candidate test", GIT_AUTHOR_EMAIL="candidate@example.invalid",
+                                   GIT_COMMITTER_NAME="Candidate test", GIT_COMMITTER_EMAIL="candidate@example.invalid",
+                                   GIT_AUTHOR_DATE=timestamp, GIT_COMMITTER_DATE=timestamp)
+                subprocess.run(["git", "-C", str(checkout), "commit", "--quiet", "-m", "test: release identity"], env=environment, check=True)
+                for event in ("push", "workflow_dispatch"):
+                    output = checkout / (event + ".output")
+                    environment.update(EVENT_NAME=event, RELEASE_TAG="v0.8.1", RUN_ID="42", RUN_ATTEMPT="1", GITHUB_OUTPUT=str(output))
+                    subprocess.run(["bash", "-euo", "pipefail", "-c", shell], cwd=checkout, env=environment, check=True, capture_output=True)
+                    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                    self.assertEqual(values["build_time"], BUILD_TIME)
+                    self.assertTrue(bundle._canonical_utc(values["build_time"]))
+                    _, identity = write_candidate_inputs(checkout / event, identity=identity_bytes(buildTime=values["build_time"]))
+                    parsed, _ = bundle._load_identity(identity, IMAGE)
+                    self.assertEqual(parsed["buildTime"], BUILD_TIME)
+
     def test_canonical_assets_modes_hashes_and_archives_are_stable_under_umask_0077(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

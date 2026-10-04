@@ -49,7 +49,8 @@ jobs:
             exit 1
           }
           revision="$(git rev-parse HEAD)"
-          build_time="$(git show -s --format=%cI HEAD)"
+          # Match the locked Nix build's UTC commit timestamp on every host.
+          build_time="$(git show -s --format=%ct HEAD | python3 -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.stdin.read()), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
           version=development
           release_tag=""
           is_release=false
