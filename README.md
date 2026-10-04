@@ -6,21 +6,27 @@ Open-source business intelligence for defining metrics once, building interactiv
 dashboards, and asking questions through AI—all using shared semantic definitions
 and governed access.
 
-[Get started](deploy/local/INSTALL.md) · [Documentation](https://leapview.dev/docs) ·
-[Current alpha](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1) ·
-[Contributing](docs/articles/contributing/repository.md)
+[Get started](deploy/local/INSTALL.md) · [Documentation](https://leapview.dev/docs) · [Current alpha](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1) · [Contributing](docs/articles/contributing/repository.md)
 
-[![Nightly CI](https://github.com/flidai/leapview/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/flidai/leapview/actions/workflows/nightly.yml)
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Nightly CI](https://github.com/flidai/leapview/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/flidai/leapview/actions/workflows/nightly.yml) [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme-executive-sales-dark.png">
-  <img src=".github/assets/readme-executive-sales-light.png" alt="Executive Sales dashboard showing revenue, average order value, interactive charts, filters, and an orders table">
+  <img src=".github/assets/readme-executive-sales-light.png" alt="Executive Sales overview with date, state, and category filters, order and revenue KPIs, and the monthly revenue trend">
 </picture>
 
 *Executive Sales, the repository's Olist-backed showcase, in a development build.
 It is separate from the synthetic Sales overview starter created by the authoring CLI.*
+
+<details>
+<summary>Explore the full dashboard: category breakdown and orders table</summary>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme-executive-sales-full-dark.png">
+  <img src=".github/assets/readme-executive-sales-full-light.png" alt="Full Executive Sales dashboard with KPI cards, monthly revenue, category breakdown, filters, and the orders table">
+</picture>
+
+</details>
 
 ## Why LeapView?
 

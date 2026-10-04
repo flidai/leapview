@@ -102,8 +102,9 @@ published-package functionality are separate evidence boundaries.
 - For operators, state the external PostgreSQL control/DuckLake and storage
   prerequisites and link the Compose guide.
 - For contributors, link the complete toolchain/bootstrap instructions before
-  mentioning `task dev`, `task playground`, and `task ci`. Do not imply that
-  `task dev` alone stages a fresh checkout's data.
+  mentioning `task dev`, `task playground`, and `task ci`. The authenticated
+  `task dev` workflow prepares and stages the sample on a fresh database, as
+  verified during implementation.
 
 ### A matching code example
 

@@ -7,7 +7,7 @@ Source revision: `81b99e5fb480e1d7bf5aff1971bd222c823c6615`.
 
 - Rewrote the README around product benefits, three onboarding audiences,
   accurate starter excerpts, governance, and the published alpha boundary.
-  It contains 622 words excluding fenced code.
+  It contains 660 words excluding fenced code.
 - Corrected directly linked installation, contributor, tutorial, project
   structure, and authoring-package documentation. Regenerated `docs/llms.txt`
   from the corrected navigation summaries.
@@ -105,3 +105,27 @@ No application code, release manifest, deployment contract, compatibility
 interface, or website publication changed. Temporary packaged services, the source capture server, its PostgreSQL
 service, and the local README preview were stopped. Private local state was
 retained; other worktrees were left untouched.
+
+## PR review follow-up
+
+- Incorporated `main` through `b2f47afe6` (the public-site/theme update), preserving
+  the merge already made on the remote PR branch.
+- Recaptured the authenticated source dashboard using Fit width. The hero is
+  now a 1296 × 704 landscape view of the filters, KPI cards, and monthly trend,
+  with the page sidebar and lower charts outside the capture framing. Product
+  data, labels, and chart rendering were not edited. All six envelopes loaded
+  before capture; only the contributor inspector was hidden.
+- Retained the original full-dashboard captures in a theme-aware expandable
+  section, so the categories and orders table remain available.
+- Kept navigation and badges compact and updated the hero alternative text.
+- Corrected the saved plan's stale statement about `task dev` data staging.
+- GitHub Markdown API rendering and a responsive local browser preview passed
+  at widths 390 and 1000, light and dark, with the detail section both closed
+  and open: all four image paths resolved to the expected theme, with no
+  document-level horizontal overflow. Both hero captures and the final desktop
+  preview were visually inspected.
+- `go run ./internal/app/tools/docsitegen --check` and `git diff --check` passed
+  after the merge. This presentation-only follow-up did not repeat the full
+  application test suite. The previously recorded watchdog and native
+  credential-store limitations remain explicit; hosted CI runs on the updated
+  PR head.
