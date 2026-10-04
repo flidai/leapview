@@ -23,8 +23,17 @@ import nix_archive_go_evidence as go_evidence
 import nix_candidate_manifest as candidate
 
 SYFT_VERSION = '1.52.0'
-HOST_IMAGE = ('debian:bookworm-slim@sha256:'
-              '3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251')
+HOST_FIXTURES = (
+    {'id': 'debian12', 'image': ('debian:bookworm-slim@sha256:'
+                                 '3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251'),
+     'osID': 'debian', 'versionID': '12'},
+    {'id': 'ubuntu2404', 'image': ('ubuntu:24.04@sha256:'
+                                  '534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55'),
+     'osID': 'ubuntu', 'versionID': '24.04'},
+    {'id': 'debian13', 'image': ('debian:trixie-slim@sha256:'
+                                 'a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a'),
+     'osID': 'debian', 'versionID': '13'},
+)
 WORKFLOW = 'flidai/leapview/.github/workflows/nix-cli-candidate.yml'
 PROVENANCE = 'https://slsa.dev/provenance/v1'
 SPDX_PREDICATE = 'https://spdx.dev/Document/v2.3'
@@ -34,14 +43,18 @@ MAX_RUNTIME_BYTES = 1024**2
 MAX_GO_BUILDINFO_BYTES = candidate.MAX_JSON_BYTES
 MAX_SYFT_VERSION_BYTES = 64 * 1024
 MAX_ATTESTATION_BYTES = candidate.MAX_REPORT_BYTES
-REPORTS = ('static.json', 'runtime-version.json', 'runtime-help.txt',
-           'runtime-host-help.txt', 'sbom.spdx.json')
+HOST_REPORT_SUFFIXES = ('os-release.txt', 'runtime-version.json', 'runtime-help.txt',
+                        'runtime-host-help.txt')
+HOST_REPORTS = tuple(f"{fixture['id']}-{suffix}" for fixture in HOST_FIXTURES
+                     for suffix in HOST_REPORT_SUFFIXES)
+REPORTS = ('static.json', *HOST_REPORTS, 'sbom.spdx.json')
 ROOT_REPORTS = (*REPORTS, 'candidate-manifest.json', 'qualification.json', 'go')
+PROBE_HOST_REPORTS = ('static.json', *HOST_REPORTS)
 ARCH_MACHINE = {'amd64': 'x86_64', 'arm64': 'aarch64'}
 RUNTIME_COMMANDS = (
-    ('version --json', ('version', '--json'), 'runtime-version.json'),
-    ('--help', ('--help',), 'runtime-help.txt'),
-    ('host --help', ('host', '--help'), 'runtime-host-help.txt'),
+    (('version', '--json'), 'runtime-version.json'),
+    (('--help',), 'runtime-help.txt'),
+    (('host', '--help'), 'runtime-host-help.txt'),
 )
 REVISION = re.compile(r'^[0-9a-f]{40}$')
 PURL = re.compile(r'^pkg:golang/([^@?#]+)(?:@([^?#]+))?(?:\?[^#]*)?$')
@@ -252,37 +265,80 @@ def _run_container(args, name, *, timeout=45, limit=MAX_RUNTIME_BYTES):
     return output
 
 
+def _validate_os_release(data, fixture):
+    try:
+        lines = data.decode('utf-8').splitlines()
+    except UnicodeDecodeError:
+        raise ValueError('host OS release report must be UTF-8') from None
+    values = {}
+    for line in lines:
+        key, separator, raw_value = line.partition('=')
+        if not separator or key not in ('ID', 'VERSION_ID'):
+            continue
+        if key in values:
+            raise ValueError('host OS release report contains duplicate identity fields')
+        match = re.fullmatch(r'(?:"([^"\\]*)"|\'([^\'\\]*)\'|([^\s#]*))(?:\s+#.*)?', raw_value)
+        if match is None:
+            raise ValueError('host OS release report contains a malformed identity field')
+        values[key] = next(value for value in match.groups() if value is not None)
+    if values != {'ID': fixture['osID'], 'VERSION_ID': fixture['versionID']}:
+        raise ValueError('host OS release identity differs from pinned fixture ' + fixture['id'])
+
+
+def _host_command(binary, arch, fixture, name, command):
+    args = ['docker', 'run', '--rm', '--name', name, '--platform', 'linux/' + arch,
+            '--log-driver', 'none', '--network', 'none', '--read-only', '--user', '65534:65534',
+            '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+            '--memory', '256m', '--cpus', '1', '--pids-limit', '64', '--ulimit', 'core=0']
+    if binary is not None:
+        binary = str(binary)
+        if ',' in binary or '\n' in binary or '\r' in binary:
+            raise ValueError('temporary controller path is not safe for a Docker bind mount')
+        args.extend(['--mount', 'type=bind,src=' + binary +
+                     ',dst=/usr/local/bin/leapviewctl,readonly'])
+        entrypoint = '/usr/local/bin/leapviewctl'
+    else:
+        entrypoint = '/bin/cat'
+    args.extend(['--entrypoint', entrypoint, fixture['image'], *command])
+    return args
+
+
 def _run_host(binary, arch, output_directory):
     native_arch, machine = _native_arch()
     if native_arch != arch:
         raise ValueError('host qualification must run on the candidate native architecture')
-    _run(['docker', 'pull', '--platform', 'linux/' + arch, HOST_IMAGE], timeout=300,
-         env=_runtime_env(), stdout=subprocess.DEVNULL)
-    runtime = {}
-    for description, command, filename in RUNTIME_COMMANDS:
+    hosts = []
+    for fixture in HOST_FIXTURES:
+        _run(['docker', 'pull', '--platform', 'linux/' + arch, fixture['image']], timeout=300,
+             env=_runtime_env(), stdout=subprocess.DEVNULL)
         name = 'leapview-cli-probe-' + uuid.uuid4().hex
-        args = ['docker', 'run', '--rm', '--name', name, '--platform', 'linux/' + arch,
-                '--log-driver', 'none',
-                '--network', 'none', '--read-only', '--user', '65534:65534',
-                '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-                '--memory', '256m', '--cpus', '1', '--pids-limit', '64', '--ulimit', 'core=0',
-                '--mount', 'type=bind,src=' + str(binary) +
-                ',dst=/usr/local/bin/leapviewctl,readonly',
-                '--entrypoint', '/usr/local/bin/leapviewctl', HOST_IMAGE, *command]
-        if ',' in str(binary) or '\n' in str(binary) or '\r' in str(binary):
-            raise ValueError('temporary controller path is not safe for a Docker bind mount')
-        output = _run_container(args, name, timeout=45, limit=MAX_RUNTIME_BYTES)
-        if filename == 'runtime-version.json':
-            parsed = candidate.read_json(output, MAX_RUNTIME_BYTES)
-            if not isinstance(parsed, dict):
-                raise ValueError('controller runtime identity must be a JSON object')
-            runtime = parsed
-        _write_new(Path(output_directory) / filename, output)
-    return runtime, machine
+        output = _run_container(_host_command(None, arch, fixture, name, ('/etc/os-release',)), name,
+                                timeout=45, limit=MAX_RUNTIME_BYTES)
+        _validate_os_release(output, fixture)
+        os_report_name = fixture['id'] + '-os-release.txt'
+        _write_new(Path(output_directory) / os_report_name, output)
+        runtime = None
+        for command, suffix in RUNTIME_COMMANDS:
+            name = 'leapview-cli-probe-' + uuid.uuid4().hex
+            output = _run_container(_host_command(binary, arch, fixture, name, command), name,
+                                    timeout=45, limit=MAX_RUNTIME_BYTES)
+            filename = fixture['id'] + '-' + suffix
+            if suffix == 'runtime-version.json':
+                runtime = candidate.read_json(output, MAX_RUNTIME_BYTES)
+                if not isinstance(runtime, dict):
+                    raise ValueError('controller runtime identity must be a JSON object')
+            _write_new(Path(output_directory) / filename, output)
+        hosts.append({'id': fixture['id'], 'image': fixture['image'],
+                      'platform': 'linux/' + arch, 'machine': machine,
+                      'runtimeIdentity': runtime})
+    return hosts, machine
 
 
 def _validate_runtime_identity(runtime, identity, source, expected_build_time):
-    if (not isinstance(runtime, dict) or runtime.get('version') != identity['version'] or
+    if (not isinstance(runtime, dict) or set(runtime) != {
+            'product', 'version', 'revision', 'buildTime', 'dirty', 'development'} or
+            runtime.get('product') != 'leapviewctl' or
+            runtime.get('version') != identity['version'] or
             runtime.get('revision') != source['revision'] or runtime.get('dirty') is not False or
             runtime.get('development') is not True or runtime.get('buildTime') != expected_build_time):
         raise ValueError('controller runtime identity differs from trusted source and archive identity')
@@ -393,36 +449,80 @@ def validate_spdx(data, info, binary_sha256):
     return document
 
 
-def _report_records(evidence_dir):
+def _report_limit(name):
+    if name == 'static.json':
+        return candidate.MAX_JSON_BYTES
+    if name == 'sbom.spdx.json':
+        return candidate.MAX_REPORT_BYTES
+    if name.endswith('-runtime-version.json') or name.endswith('-runtime-help.txt') or name.endswith(
+            '-runtime-host-help.txt') or name.endswith('-os-release.txt'):
+        return MAX_RUNTIME_BYTES
+    raise ValueError('unknown protected host report: ' + name)
+
+
+def _report_records(evidence_dir, names=REPORTS):
     records = []
-    limits = {'static.json': candidate.MAX_JSON_BYTES,
-              'runtime-version.json': MAX_RUNTIME_BYTES,
-              'runtime-help.txt': MAX_RUNTIME_BYTES,
-              'runtime-host-help.txt': MAX_RUNTIME_BYTES,
-              'sbom.spdx.json': candidate.MAX_REPORT_BYTES}
-    for name in REPORTS:
-        data = _lstat_regular(Path(evidence_dir) / name, limits[name])
+    for name in names:
+        data = _lstat_regular(Path(evidence_dir) / name, _report_limit(name))
         records.append({'path': name, 'sha256': candidate.digest_bytes(data)})
     return records
 
 
-def _qualification_record(identity, artifact, source, static_report, runtime, machine,
+def _expected_hosts(evidence_dir, arch, identity, source, expected_build_time):
+    hosts = []
+    machine = ARCH_MACHINE[arch]
+    for fixture in HOST_FIXTURES:
+        os_name = fixture['id'] + '-os-release.txt'
+        os_bytes = _lstat_regular(Path(evidence_dir) / os_name, MAX_RUNTIME_BYTES)
+        if not os_bytes:
+            raise ValueError('host OS release report is empty')
+        _validate_os_release(os_bytes, fixture)
+        runtime_name = fixture['id'] + '-runtime-version.json'
+        runtime = _read_json(Path(evidence_dir) / runtime_name, MAX_RUNTIME_BYTES)
+        _validate_runtime_identity(runtime, identity, source, expected_build_time)
+        for suffix in ('runtime-help.txt', 'runtime-host-help.txt'):
+            if not _lstat_regular(Path(evidence_dir) / (fixture['id'] + '-' + suffix),
+                                  MAX_RUNTIME_BYTES):
+                raise ValueError('host compatibility output is empty')
+        hosts.append({'id': fixture['id'], 'image': fixture['image'],
+                      'platform': 'linux/' + arch, 'machine': machine,
+                      'runtimeIdentity': runtime})
+    return hosts
+
+
+def _qualification_record(identity, artifact, source, static_report, hosts,
                            report_records, go_record, syft_version):
     return {
-        'schemaVersion': 1,
+        'schemaVersion': 2,
         'scope': 'static-cli-archive',
         'archive': {'basename': 'leapviewctl-linux-' + identity['platform'].removeprefix('linux/') + '.tar.gz',
                     'sha256': artifact['sha256']},
         'archiveIdentity': identity,
         'source': source,
         'platform': artifact['platform'],
-        'host': {'image': HOST_IMAGE, 'machine': machine},
+        'hosts': hosts,
         'syftVersion': syft_version,
-        'runtimeIdentity': runtime,
         'staticReport': static_report,
         'reports': report_records,
         'goEvidence': go_record,
         'result': 'success',
+        'releaseAdmission': False,
+    }
+
+
+def _host_compatibility_record(identity, archive_hash, source, static_report, hosts, reports):
+    return {
+        'schemaVersion': 1,
+        'scope': 'static-cli-host-compatibility',
+        'archive': {'basename': 'leapviewctl-linux-' + identity['platform'].removeprefix('linux/') + '.tar.gz',
+                    'sha256': archive_hash},
+        'archiveIdentity': identity,
+        'source': source,
+        'platform': identity['platform'],
+        'staticBinarySHA256': static_report['binarySHA256'],
+        'staticReport': static_report,
+        'hosts': hosts,
+        'reports': reports,
         'releaseAdmission': False,
     }
 
@@ -473,7 +573,6 @@ def qualify(archive, archive_identity, source_root, source_revision, binary_veri
     evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     os.chmod(evidence_dir, 0o700)
     output_directory = evidence_dir.resolve()
-    artifact_identity = identity
     with tempfile.TemporaryDirectory(prefix='leapview-cli-qualify-') as temporary:
         binaries = go_evidence.extract(archive, {
             'kind': 'cli-archive', 'platform': identity['platform'], 'sha256': archive_hash,
@@ -485,10 +584,12 @@ def qualify(archive, archive_identity, source_root, source_revision, binary_veri
         binary.chmod(0o755)
         static_report, build_info = _static_report(binary, arch)
         _write_json_new(output_directory / 'static.json', static_report)
-        runtime, probed_machine = _run_host(binary, arch, output_directory)
+        probed_hosts, probed_machine = _run_host(binary, arch, output_directory)
         if probed_machine != machine:
             raise ValueError('native host architecture changed during qualification')
-        _validate_runtime_identity(runtime, identity, source, expected_build_time)
+        hosts = _expected_hosts(output_directory, arch, identity, source, expected_build_time)
+        if probed_hosts != hosts:
+            raise ValueError('native host probe reports differ from parsed fixture evidence')
         spdx_path = output_directory / 'sbom.spdx.json'
         spdx_bytes, syft_version = _syft_spdx(binary, spdx_path)
         validate_spdx(spdx_bytes, build_info, static_report['binarySHA256'])
@@ -505,7 +606,7 @@ def qualify(archive, archive_identity, source_root, source_revision, binary_veri
     if artifact['sha256'] != archive_hash or artifact['platform'] != identity['platform']:
         raise ValueError('candidate artifact identity changed during qualification')
     report_records = _report_records(output_directory)
-    qualification = _qualification_record(identity, artifact, source, static_report, runtime, machine,
+    qualification = _qualification_record(identity, artifact, source, static_report, hosts,
                                           report_records, go_record, syft_version)
     manifest = _manifest_with_qualification(base, qualification)
     _write_json_new(output_directory / 'candidate-manifest.json', manifest)
@@ -516,6 +617,49 @@ def qualify(archive, archive_identity, source_root, source_revision, binary_veri
             _trusted_source(source_root, source_revision)) != candidate.canonical_bytes(source):
         raise ValueError('candidate source or archive changed during qualification')
     return manifest
+
+
+def probe_hosts(archive, archive_identity, source_root, source_revision, evidence_dir):
+    if os.geteuid() == 0:
+        raise ValueError('CLI host probing must run as an unprivileged user')
+    archive, identity_path, source_root, evidence_dir = map(Path,
+        (archive, archive_identity, source_root, evidence_dir))
+    source = _trusted_source(source_root, source_revision)
+    archive_hash, identity_hash = _check_paths(archive, identity_path)
+    identity, expected_build_time = _identity_file(identity_path, source_root, source, archive,
+                                                    source_revision)
+    arch = identity['platform'].removeprefix('linux/')
+    machine_arch, machine = _native_arch()
+    if machine_arch != arch:
+        raise ValueError('CLI host probing must run on the archive native architecture')
+    evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+    os.chmod(evidence_dir, 0o700)
+    output_directory = evidence_dir.resolve()
+    with tempfile.TemporaryDirectory(prefix='leapview-cli-host-probe-') as temporary:
+        binaries = go_evidence.extract(archive, {
+            'kind': 'cli-archive', 'platform': identity['platform'], 'sha256': archive_hash,
+            'version': identity['version'],
+        }, Path(temporary))
+        binary = binaries['leapviewctl']
+        binary.chmod(0o755)
+        static_report, _ = _static_report(binary, arch)
+        _write_json_new(output_directory / 'static.json', static_report)
+        probed_hosts, probed_machine = _run_host(binary, arch, output_directory)
+        if probed_machine != machine:
+            raise ValueError('native host architecture changed during host probing')
+        hosts = _expected_hosts(output_directory, arch, identity, source, expected_build_time)
+        if probed_hosts != hosts:
+            raise ValueError('native host probe reports differ from parsed fixture evidence')
+    if _check_paths(archive, identity_path) != (archive_hash, identity_hash) or candidate.canonical_bytes(
+            _trusted_source(source_root, source_revision)) != candidate.canonical_bytes(source):
+        raise ValueError('candidate source or archive changed during host probing')
+    receipt = _host_compatibility_record(identity, archive_hash, source, static_report, hosts,
+                                         _report_records(output_directory, PROBE_HOST_REPORTS))
+    _write_json_new(output_directory / 'host-compatibility.json', receipt)
+    if _check_paths(archive, identity_path) != (archive_hash, identity_hash) or candidate.canonical_bytes(
+            _trusted_source(source_root, source_revision)) != candidate.canonical_bytes(source):
+        raise ValueError('candidate source or archive changed during host probing')
+    return receipt
 
 
 def _expected_candidate(archive, identity_path, source_root, source_revision, verifier, evidence_dir):
@@ -530,8 +674,7 @@ def _expected_candidate(archive, identity_path, source_root, source_revision, ve
         raise ValueError('archive basename does not match its declared architecture')
     _root_inventory(evidence_dir, qualifying=False)
     verifier = _validate_binary_verifier(verifier)
-    runtime = _read_json(Path(evidence_dir) / 'runtime-version.json', MAX_RUNTIME_BYTES)
-    _validate_runtime_identity(runtime, identity, source, expected_build_time)
+    hosts = _expected_hosts(evidence_dir, arch, identity, source, expected_build_time)
     with tempfile.TemporaryDirectory(prefix='leapview-cli-verify-') as temporary:
         binaries = go_evidence.extract(archive, {
             'kind': 'cli-archive', 'platform': identity['platform'], 'sha256': archive_hash,
@@ -545,13 +688,7 @@ def _expected_candidate(archive, identity_path, source_root, source_revision, ve
         spdx_bytes = _lstat_regular(Path(evidence_dir) / 'sbom.spdx.json', candidate.MAX_REPORT_BYTES)
         validate_spdx(spdx_bytes, build_info, static_report['binarySHA256'])
 
-    # These raw host outputs are evidence of the completed protected probe. They
-    # are never re-executed during offline verification.
-    for name in ('runtime-help.txt', 'runtime-host-help.txt'):
-        if not _lstat_regular(Path(evidence_dir) / name, MAX_RUNTIME_BYTES):
-            raise ValueError('host compatibility output is empty')
     report_records = _report_records(evidence_dir)
-    machine = ARCH_MACHINE[arch]
     actual = _read_json(Path(evidence_dir) / 'candidate-manifest.json')
     if not isinstance(actual, dict) or not isinstance(actual.get('evidence'), dict):
         raise ValueError('candidate manifest is malformed')
@@ -564,8 +701,8 @@ def _expected_candidate(archive, identity_path, source_root, source_revision, ve
                             archive_identity=identity, go_dir=Path(evidence_dir) / 'go',
                             binary_verifier=verifier)
     go_record = base['evidence']['go-binaries']
-    qualification = _qualification_record(identity, base['artifact'], source, static_report, runtime,
-                                          machine, report_records, go_record, SYFT_VERSION)
+    qualification = _qualification_record(identity, base['artifact'], source, static_report, hosts,
+                                          report_records, go_record, SYFT_VERSION)
     expected = _manifest_with_qualification(base, qualification)
     if candidate.canonical_bytes(actual) != candidate.canonical_bytes(expected):
         raise ValueError('candidate manifest differs from exact current archive, source or evidence')
@@ -669,13 +806,14 @@ def verify_signed(archive, archive_identity, source_root, source_revision, binar
 def _arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     operations = parser.add_subparsers(dest='operation', required=True)
-    for operation in ('qualify', 'verify', 'verify-signed'):
+    for operation in ('qualify', 'verify', 'verify-signed', 'probe-hosts'):
         command = operations.add_parser(operation)
         command.add_argument('--archive', type=Path, required=True)
         command.add_argument('--archive-identity', type=Path, required=True)
         command.add_argument('--source-root', type=Path, required=True)
         command.add_argument('--source-revision', required=True)
-        command.add_argument('--binary-verifier', type=Path, required=True)
+        if operation != 'probe-hosts':
+            command.add_argument('--binary-verifier', type=Path, required=True)
         command.add_argument('--evidence-dir', type=Path, required=True)
         if operation == 'verify-signed':
             command.add_argument('--signer-revision', required=True)
@@ -695,6 +833,12 @@ def main():
             manifest = verify(args.archive, args.archive_identity, args.source_root,
                               args.source_revision, args.binary_verifier, args.evidence_dir)
             result = {'candidateDigest': manifest['candidateDigest'], 'releaseAdmission': False}
+        elif args.operation == 'probe-hosts':
+            receipt = probe_hosts(args.archive, args.archive_identity, args.source_root,
+                                  args.source_revision, args.evidence_dir)
+            result = {'archiveSHA256': receipt['archive']['sha256'],
+                      'staticBinarySHA256': receipt['staticBinarySHA256'],
+                      'releaseAdmission': False}
         else:
             binding = verify_signed(args.archive, args.archive_identity, args.source_root,
                                     args.source_revision, args.binary_verifier, args.evidence_dir,

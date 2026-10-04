@@ -151,13 +151,32 @@ test('static controller qualification preserves the host baseline and exact arti
   expect(download.with['artifact-ids']).toBe('${{ needs.cli-build.outputs.artifact_id }}')
   expect(download.with['merge-multiple']).toBe(true)
   const probe = qualify.steps.find((step: any) => step.env?.ARCH)
+  expect(probe.run).toContain('scripts/nix_cli_publication.py probe-hosts')
+  expect(probe.run).toContain('--archive-identity "cli-candidates/$ARCH/archive-identity.json"')
+  expect(probe.run).toContain('--source-revision "$(git rev-parse HEAD)"')
+  expect(probe.run).toContain('--evidence-dir .tmp/nix-cli-evidence')
+  expect(probe.run).not.toContain('tar -')
+  expect(probe.run).not.toContain('docker run')
+  expect(qualify.name).toBe('Linux host controller matrix (${{ matrix.arch }})')
+  const retention = qualify.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(retention.with['retention-days']).toBe(14)
+  expect(retention.with['if-no-files-found']).toBe('warn')
+})
+
+test('controller fixtures preserve the client baseline and advertised bootstrap hosts', () => {
+  const result = spawnSync('python3', ['-c',
+    'import json,sys; sys.path.insert(0,"scripts"); import nix_cli_publication as p; print(json.dumps(p.HOST_FIXTURES))'],
+  { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stdout + result.stderr)
+  const fixtures = JSON.parse(result.stdout)
   const baseline = readFileSync('deploy/compose/qualification/Dockerfile.authoring-client', 'utf8')
     .match(/^FROM (debian:bookworm-slim@sha256:[a-f0-9]{64})$/m)![1]
-  expect(probe.run).toContain(`host=${baseline}`)
-  expect(probe.run).toContain('--network none --read-only')
-  expect(probe.run).toContain('--kind cli-archive')
-  expect(probe.run).toContain('--verify .tmp/nix-cli-evidence/candidate-manifest.json')
-  expect(probe.run).toContain("'releaseAdmission': False")
+  expect(fixtures[0]).toMatchObject({ id: 'debian12', image: baseline, osID: 'debian', versionID: '12' })
+  const bootstrap = readFileSync('deploy/host/bootstrap-linux.sh', 'utf8')
+  const advertised = Array.from(bootstrap.matchAll(/^\s+(ubuntu|debian):([\d.]+)\)/gm), match => `${match[1]}:${match[2]}`)
+  expect(fixtures.slice(1).map((fixture: any) => `${fixture.osID}:${fixture.versionID}`)).toEqual(advertised)
+  expect(fixtures).toHaveLength(3)
+  for (const fixture of fixtures) expect(fixture.image).toMatch(/@sha256:[a-f0-9]{64}$/)
 })
 
 test('Linux validation selects locked tools and excludes duplicate installers', () => {

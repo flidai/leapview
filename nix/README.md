@@ -176,10 +176,14 @@ references, including data references that static ELF linkage alone cannot detec
 The build rejects dynamic loaders, dynamic segments, incorrect architectures and
 inconsistent Go build metadata. PR CI binds the exact archives through the shared
 candidate manifest, extracts them on native AMD64/ARM64 runners, and exercises
-version and command discovery in the independently pinned Debian 12 fixture.
+version and command discovery in independently pinned Debian 12, Ubuntu 24.04
+and Debian 13 fixtures on both native architectures. Debian 12 preserves the
+existing authoring-client baseline; Ubuntu 24.04 and Debian 13 come from the
+advertised host bootstrap contract. Each fixture's `/etc/os-release` and runtime
+identity must match before the full matrix can succeed.
 The probe receives no candidate-supplied libraries and runs without network,
-write access or root privileges. Reports bind the tested binary hash, archive
-candidate digest, runtime identity and host image digest.
+write access or root privileges. Reports bind runtime identity, archive and binary
+hashes, and every host image digest.
 
 Controller builds retain Go function symbols (`-w`, without `-s`) so binary-mode
 vulnerability analysis can inspect the shipped code. A separate read-only lane
@@ -194,7 +198,7 @@ These PR reports are unprivileged qualification evidence. The manual
 `Protected Nix controller candidate` workflow rescans exact AMD64 and ARM64
 archives with main-owned tools before signing. It requires one exact open PR head
 directly based on main, and checks that authorization again before signing.
-Native Debian 12 probes run without signing credentials; the signing job only
+Native Linux host matrix probes run without signing credentials; the signing job only
 reverifies retained evidence and attests the already-qualified archive bytes.
 A separate read-only job verifies live provenance and the exact SPDX predicate
 against the protected main workflow revision. Offline verification of PR-generated
@@ -202,10 +206,10 @@ reports alone is insufficient. See [the evidence contract](CANDIDATE-EVIDENCE.md
 
 These are development candidates derived from canonical `VERSION`, clean source
 revision and commit timestamp, with `release=false`. Compatibility receipts retain
-`releaseAdmission: false`. Basic Debian command execution does not establish
+`releaseAdmission: false`. Container userland command execution does not establish
 installation, publication, upgrade, rollback or recovery acceptance. Signed
 successful live protected archive provenance/SPDX qualification, complete
-supported-host qualification, installation payload assembly and protected promotion
+systemd/NixOS host qualification, installation payload assembly and protected promotion
 remain D05 gates. Conventional release and non-Linux builders remain the published
 owners.
 
