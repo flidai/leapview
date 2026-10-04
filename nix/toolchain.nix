@@ -7,15 +7,8 @@ let
     )
   );
   bunVersion = pkgs.lib.removePrefix "bun@" manifest.packageManager;
-  # Fixed-output overrides retain the application's existing versions while
-  # using upstream Nixpkgs build/patching logic. Update hashes with manifests.
-  go = pkgs.go_1_26.overrideAttrs {
-    version = goVersion;
-    src = pkgs.fetchurl {
-      url = "https://go.dev/dl/go${goVersion}.src.tar.gz";
-      hash = "sha256-Tjm5jkL5RvoFrIvFtxh335fb23y7Gnd7VBZnrXEX/S4=";
-    };
-  };
+  # The locked package includes the fuzztime cancellation fix (Go issue 75804).
+  go = assert pkgs.go_1_27.version == goVersion; pkgs.go_1_27;
   bun = pkgs.bun.overrideAttrs {
     version = bunVersion;
     src = pkgs.fetchurl {
