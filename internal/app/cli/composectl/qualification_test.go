@@ -605,6 +605,44 @@ func TestFinalizeQualificationPerformanceReportWritesFailureEvidence(t *testing.
 	}
 }
 
+func TestInstalledQualificationReportCompletionUsesOneClockInstant(t *testing.T) {
+	started := time.Date(2031, time.January, 2, 3, 4, 5, 0, time.UTC)
+	justBeforeBoundary := started.Add(time.Second - time.Nanosecond)
+	justAfterBoundary := started.Add(time.Second + time.Nanosecond)
+
+	for _, result := range []string{"success", "failure"} {
+		t.Run(result, func(t *testing.T) {
+			calls := 0
+			controller := &Controller{now: func() time.Time {
+				calls++
+				if calls == 1 {
+					return justBeforeBoundary
+				}
+				return justAfterBoundary
+			}}
+			report := qualificationInstalledReport{
+				Result:    result,
+				StartedAt: qualificationStartedAt(started),
+			}
+			controller.completeInstalledQualificationReport(&report, started)
+
+			require.Equal(t, 1, calls, "completion timestamp and elapsed time must share one clock reading")
+			encoded, err := json.Marshal(report)
+			require.NoError(t, err)
+			var serialized struct {
+				CompletedAt    string `json:"completedAt"`
+				ElapsedSeconds int64  `json:"elapsedSeconds"`
+			}
+			require.NoError(t, json.Unmarshal(encoded, &serialized))
+			completed, err := time.Parse(time.RFC3339Nano, serialized.CompletedAt)
+			require.NoError(t, err)
+			require.Equal(t, int64(completed.Sub(started).Seconds()), serialized.ElapsedSeconds)
+			require.Equal(t, int64(0), serialized.ElapsedSeconds,
+				"the just-before-boundary completion must not borrow elapsed time from the next instant")
+		})
+	}
+}
+
 func validQualificationPerformancePolicy() qualificationPerformancePolicy {
 	var policy qualificationPerformancePolicy
 	policy.SchemaVersion = 1

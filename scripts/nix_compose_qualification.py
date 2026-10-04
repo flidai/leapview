@@ -944,6 +944,11 @@ class tempfile_controller_file:
         self._temporary.cleanup()
 
 
+def _datetime_nanoseconds(value):
+    delta = value - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return (delta.days * 86400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1000
+
+
 def _parse_timestamp(value, label):
     if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z", value):
         raise QualificationError(f"{label} must be a canonical UTC RFC3339 timestamp")
@@ -951,12 +956,15 @@ def _parse_timestamp(value, label):
     if fraction is not None and fraction.group(1).endswith("0"):
         raise QualificationError(f"{label} is not in canonical RFC3339Nano form")
     try:
-        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+        parsed = datetime.fromisoformat(value[:19] + "+00:00")
     except ValueError:
         raise QualificationError(f"{label} is not a valid timestamp") from None
     if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
         raise QualificationError(f"{label} must use UTC")
-    return parsed
+    # Go emits RFC3339Nano. Python datetime only retains microseconds, so
+    # preserve the fraction separately for exact elapsed and phase comparisons.
+    nanoseconds = int(fraction.group(1).ljust(9, "0")) if fraction is not None else 0
+    return _datetime_nanoseconds(parsed) + nanoseconds
 
 
 def _runtime_identity(data, expected, product, label):
@@ -990,10 +998,12 @@ def _validate_installed_report(data, image, platform, now=None):
         raise QualificationError("installed qualification report is missing a required successful assertion")
     started = _parse_timestamp(report["startedAt"], "qualification startedAt")
     completed = _parse_timestamp(report["completedAt"], "qualification completedAt")
-    now = now or datetime.now(timezone.utc)
-    if started > now + timedelta(minutes=5) or completed > now + timedelta(minutes=5) or now - started >= QUALIFICATION_MAX_AGE:
+    now = _datetime_nanoseconds(now or datetime.now(timezone.utc))
+    clock_slack = 300 * 1_000_000_000
+    max_age = int(QUALIFICATION_MAX_AGE.total_seconds()) * 1_000_000_000
+    if started > now + clock_slack or completed > now + clock_slack or now - started >= max_age:
         raise QualificationError("installed qualification report is future-dated or stale")
-    if completed < started or int((completed - started).total_seconds()) != report["elapsedSeconds"]:
+    if completed < started or (completed - started) // 1_000_000_000 != report["elapsedSeconds"]:
         raise QualificationError("installed qualification report elapsed time disagrees with its timestamps")
     previous_end = started
     for entry, (name, timeout) in zip(report["phases"], PHASES):
@@ -1006,11 +1016,10 @@ def _validate_installed_report(data, image, platform, now=None):
         ):
             raise QualificationError("installed qualification phases are incomplete or outside their bounded contract")
         phase_started = _parse_timestamp(entry["startedAt"], f"qualification phase {name} startedAt")
-        phase_ended = phase_started + timedelta(milliseconds=entry["durationMillis"])
-        time_slack = timedelta(microseconds=1)
-        if phase_started + time_slack < previous_end or phase_started > now + timedelta(minutes=5) or phase_ended > completed + time_slack:
+        phase_ended = phase_started + entry["durationMillis"] * 1_000_000
+        if phase_started < previous_end or phase_started > now + clock_slack or phase_ended > completed:
             raise QualificationError("installed qualification phases overlap or fall outside the overall report")
-        if now - phase_started >= QUALIFICATION_MAX_AGE:
+        if now - phase_started >= max_age:
             raise QualificationError("installed qualification phase is stale")
         previous_end = phase_ended
     multi = report["multiNode"]

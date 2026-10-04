@@ -641,6 +641,24 @@ class ComposeQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(qualification.QualificationError, "OCI admission evidence"):
             qualification.record_qualification(**arguments)
 
+    def test_report_timing_preserves_go_nanoseconds(self):
+        report = self._report()
+        report["startedAt"] = report["startedAt"].removesuffix("Z") + ".0000009Z"
+        report["completedAt"] = report["completedAt"].removesuffix("Z") + ".0000001Z"
+        report["elapsedSeconds"] = 599
+        report["phases"][0]["startedAt"] = report["phases"][0]["startedAt"].removesuffix("Z") + ".000001Z"
+        data = json.dumps(report).encode()
+        self.assertEqual(
+            qualification._validate_installed_report(data, IMAGE, "linux/amd64")["elapsedSeconds"], 599
+        )
+        report["elapsedSeconds"] = 600
+        with self.assertRaisesRegex(qualification.QualificationError, "elapsed time"):
+            qualification._validate_installed_report(json.dumps(report).encode(), IMAGE, "linux/amd64")
+        report["elapsedSeconds"] = 599
+        report["phases"][0]["startedAt"] = report["startedAt"].replace(".0000009Z", ".0000001Z")
+        with self.assertRaisesRegex(qualification.QualificationError, "overlap"):
+            qualification._validate_installed_report(json.dumps(report).encode(), IMAGE, "linux/amd64")
+
     def test_release_handoff_rejects_wrong_source_image_and_admission_identity(self):
         files = {
             "image-reference.txt": (IMAGE + "\n").encode(),
