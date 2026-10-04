@@ -2,9 +2,10 @@
 
 FAI-1066 follows the [repository-wide reassessment](reassessment-2026-10-03.md).
 This is a proposed configuration for independent owner review, not a record of
-applied settings. The live read-only audit on 4 October 2026 found seven failures:
+applied settings. The strengthened live read-only audit on 4 October 2026 found eight failures:
 required reviewers and administrator bypass in all three governed environments,
-plus the hosted demo's missing main-only branch policy.
+plus the hosted demo's missing main-only branch policy and the qualification
+environment's temporary branch allowance.
 
 ## Proposed owner decision
 

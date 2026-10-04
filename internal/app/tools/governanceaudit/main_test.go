@@ -205,10 +205,10 @@ func TestAuditRequiresQualificationMainOnly(t *testing.T) {
 		t.Fatalf("main-only snapshot = %#v", report)
 	}
 
-	snapshot = withEnvironmentBranchPolicies(t, snapshot, "leapview-ephemeral-qualification", []customBranchPolicy{{
-		Name: "ganesh/fai-522-replacement-host-rebuild",
-		Type: "branch",
-	}})
+	snapshot = withEnvironmentBranchPolicies(t, snapshot, "leapview-ephemeral-qualification", []customBranchPolicy{
+		{Name: "main", Type: "branch"},
+		{Name: "ganesh/fai-522-replacement-host-rebuild", Type: "branch"},
+	})
 	report, err = Audit(snapshot)
 	if err != nil {
 		t.Fatal(err)
