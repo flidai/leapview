@@ -1,4 +1,4 @@
-"""Publish a verified AMD64 Nix candidate; retain no production release authority."""
+"""Publish a verified Linux Nix candidate; retain no production release authority."""
 
 import argparse
 from datetime import datetime, timedelta
@@ -15,7 +15,6 @@ import nix_registry_content as registry
 import nix_signed_evidence as signed
 
 KIND = 'application-image'
-PLATFORM = 'linux/amd64'
 WORKFLOW = 'flidai/leapview/.github/workflows/nix-candidate.yml'
 MAX_PREDICATE_BYTES = 16 * 1024 * 1024
 IMAGE_PHASES = [('image bundle', 1200), ('target bootstrap', 1200),
@@ -31,9 +30,22 @@ def verified_record(source_root, paths, binary_verifier):
                             runtime_dir=runtime, go_dir=runtime / 'go', binary_verifier=binary_verifier)
 
 
+def record_platform(record):
+    artifact = record.get('artifact')
+    if not isinstance(artifact, dict) or artifact.get('kind') != KIND:
+        raise ValueError('producer accepts only application-image candidates')
+    platform = artifact.get('platform')
+    if not isinstance(platform, str) or platform not in candidate.PLATFORMS:
+        raise ValueError('producer requires a supported Linux application platform')
+    return platform
+
+
+def platform_architecture(platform):
+    return {'linux/amd64': 'amd64', 'linux/arm64': 'arm64'}[platform]
+
+
 def bound_spdx(record, paths):
-    if record['artifact']['kind'] != KIND or record['artifact']['platform'] != PLATFORM:
-        raise ValueError('producer qualifies only the AMD64 application candidate')
+    record_platform(record)
     path = Path(paths[2]) / 'sbom.spdx.json'
     expected = [r['sha256'] for r in record['evidence']['nix-runtime']['reports']
                 if r['path'] == 'sbom.spdx.json']
@@ -53,6 +65,22 @@ def unchanged(source_root, paths, before, binary_verifier):
         raise ValueError('candidate changed during publication verification')
 
 
+def collect_signed(record, paths, image, signer_revision):
+    document = bound_spdx(record, paths)
+    platform = record_platform(record)
+    result = signed.collect(image, KIND, [record], [paths], [platform], WORKFLOW, signer_revision)
+    if (not isinstance(result, dict) or not isinstance(result.get('spdx'), list) or len(result['spdx']) != 1
+            or not isinstance(result['spdx'][0], dict)
+            or result['spdx'][0].get('platform') != platform
+            or result['spdx'][0].get('candidateDigest') != record['candidateDigest']):
+        raise ValueError('signed SPDX evidence does not bind the verified candidate platform')
+    # collect also matches SPDX against the bound report; retain this explicit
+    # read before any network call to enforce the producer's smaller size budget.
+    if candidate.digest_bytes(candidate.canonical_bytes(document)) != result['spdx'][0]['predicateSHA256']:
+        raise ValueError('signed SPDX differs from the producer document')
+    return result
+
+
 def record(source_root, paths, binary_verifier):
     result = candidate.collect(Path(paths[0]), KIND, candidate.checkout_source(source_root),
                                runtime_dir=Path(paths[2]), go_dir=Path(paths[2]) / 'go',
@@ -65,7 +93,7 @@ def prepare(source_root, paths, layout, binary_verifier):
     record = verified_record(source_root, paths, binary_verifier)
     bound_spdx(record, paths)
     digest = oci.export_layout(Path(paths[0]), record, layout)
-    result = oci.bind(layout, digest, [record], [PLATFORM])
+    result = oci.bind(layout, digest, [record], [record_platform(record)])
     unchanged(source_root, paths, record, binary_verifier)
     return result
 
@@ -75,11 +103,12 @@ def publish(source_root, paths, layout, run_id, attempt, binary_verifier):
         raise ValueError('publication requires a positive workflow run and attempt identity')
     record = verified_record(source_root, paths, binary_verifier)
     bound_spdx(record, paths)
+    platform = record_platform(record)
     descriptor = candidate.read_json_file(oci.local_file(layout, 'index.json'))['manifests'][0]
     digest = descriptor['digest']
-    oci.bind(layout, digest, [record], [PLATFORM])
+    oci.bind(layout, digest, [record], [platform])
     repository = registry.REPOSITORIES[KIND]
-    tag = f'{repository}:nix-candidate-{run_id}-{attempt}'
+    tag = f'{repository}:nix-candidate-{run_id}-{attempt}-{platform_architecture(platform)}'
     with tempfile.TemporaryDirectory(prefix='leapview-nix-publish-') as temporary:
         digest_file = Path(temporary) / 'digest'
         try:
@@ -94,7 +123,7 @@ def publish(source_root, paths, layout, run_id, attempt, binary_verifier):
         if returned != digest:
             raise ValueError('published registry digest differs from verified OCI content')
     image = repository + '@' + digest
-    binding = registry.bind_registry(image, KIND, [record], [PLATFORM])
+    binding = registry.bind_registry(image, KIND, [record], [platform])
     unchanged(source_root, paths, record, binary_verifier)
     result = {'schemaVersion': 1, 'image': image, 'tag': tag,
               'source': record['source'], 'candidateDigest': record['candidateDigest'],
@@ -106,12 +135,7 @@ def publish(source_root, paths, layout, run_id, attempt, binary_verifier):
 
 def verify_signed(source_root, paths, image, signer_revision, binary_verifier):
     record = verified_record(source_root, paths, binary_verifier)
-    document = bound_spdx(record, paths)
-    result = signed.collect(image, KIND, [record], [paths], [PLATFORM], WORKFLOW, signer_revision)
-    # collect also matches SPDX against the bound report; retain this explicit
-    # read before any network call to enforce the producer's smaller size budget.
-    if candidate.digest_bytes(candidate.canonical_bytes(document)) != result['spdx'][0]['predicateSHA256']:
-        raise ValueError('signed SPDX differs from the producer document')
+    result = collect_signed(record, paths, image, signer_revision)
     unchanged(source_root, paths, record, binary_verifier)
     return result
 
@@ -160,13 +184,16 @@ def bind_qualified(source_root, paths, image, signer_revision, binary_verifier,
     registry.image_digest(image, KIND)
     report = qualification_report(report_path, image)
     receipt = regular_json_bytes(signed_evidence)
-    live = verify_signed(source_root, paths, image, signer_revision, binary_verifier)
+    record = verified_record(source_root, paths, binary_verifier)
+    platform = record_platform(record)
+    live = collect_signed(record, paths, image, signer_revision)
+    unchanged(source_root, paths, record, binary_verifier)
     if candidate.canonical_bytes(candidate.read_json(receipt)) != candidate.canonical_bytes(live):
         raise ValueError('retained signature evidence differs from live protected verification')
     if (qualification_report(report_path, image) != report
             or regular_json_bytes(signed_evidence) != receipt):
         raise ValueError('qualification or signature reports changed during verification')
-    result = {'schemaVersion': 1, 'image': image, 'platform': PLATFORM, 'source': live['source'],
+    result = {'schemaVersion': 1, 'image': image, 'platform': platform, 'source': live['source'],
               'candidateDigest': live['spdx'][0]['candidateDigest'],
               'signedEvidenceBindingDigest': live['signedEvidenceBindingDigest'],
               'qualifierRevision': signer_revision,

@@ -3,6 +3,9 @@
   application,
   toolchain,
 }:
+let
+  interpreter = "/${pkgs.stdenv.hostPlatform.libDir}/${builtins.baseNameOf pkgs.stdenv.cc.bintools.dynamicLinker}";
+in
 pkgs.runCommand "leapview-linux-${application.version}"
   {
     nativeBuildInputs = [
@@ -18,7 +21,7 @@ pkgs.runCommand "leapview-linux-${application.version}"
     for binary in "$out/bin/"*; do
       # Exported tools use the host's supported glibc/libstdc++ runtime. Native
       # Nix users retain the store-linked application output instead.
-      patchelf --no-sort --set-interpreter /lib64/ld-linux-x86-64.so.2 --remove-rpath "$binary"
+      patchelf --no-sort --set-interpreter ${interpreter} --remove-rpath "$binary"
       go version -m "$binary" > "$TMPDIR/build-info"
       grep -Fq 'github.com/flidai/leapview' "$TMPDIR/build-info"
       grep -Fq 'github.com/jackc/pgx/v5' "$TMPDIR/build-info"
