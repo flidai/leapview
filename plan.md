@@ -1,427 +1,203 @@
-# Live public-website Kamal rollout: remaining plan
-
-Updated: 2 October 2026.
-Scope: `leapview.dev` and its `www` redirect. The product demo/NixOS deployment is separate.
-
-## Objective
-
-Move the live public website from its original Compose application to the merged
-manual Kamal deployment process. Keep Caddy serving HTTPS, prove recovery to a
-working version, and prevent website images from filling the server disk.
-
-Completion means verified A/B deployment and offline rollback, demonstrated
-original-Compose restoration, successful Caddy recreation and real host reboot,
-bounded image retention, and 24 hours of recorded healthy operation.
-Automatic VPS activation remains disabled. Merging code or publishing an image
-alone does not complete the live migration.
-
-## Live proofs passed — 2 October 2026
-
-The replacement observation completed a full 24 hours from 1 October at
-15:14:34 IST to 2 October at 15:14:36 IST, with 1,441 public samples,
-97 host samples and no recorded failures. Both public adoption boundary smokes
-passed. The frozen acceptance and its actual command wrapper passed at
-15:17:08 IST on 2 October. Independent inspection verified the supervised and
-outer CLI exit receipts, all run-file bindings and the observer log.
-
-The final read-only audit passed: B remains active, A remains the distinct
-locally recoverable prior, both selected OCI image contents match admission,
-no host/restart/ownership or pending-maintenance drift was found, and the
-retired updater timer remains disabled and its service inactive. The protected
-original backup manifest,
-all six original files, four inspection snapshots and archive hashes match
-frozen references. See the [final acceptance report](deploy/kamal-site/evidence/final-acceptance-20261002.md)
-and [receipt index](deploy/kamal-site/evidence/final-acceptance-20261002.json).
-
-All required live proofs have passed. Fallback [#748](https://github.com/flidai/leapview/pull/748)
-was closed externally as superseded at 16:07:20 IST on 2 October; its
-[closure comment](https://github.com/flidai/leapview/pull/748#issuecomment-5950542382) cites the reviewable evidence in #803.
-Final documentation review and protected merge remain pending.
-Automatic VPS activation remains deferred. Historical snapshots below retain
-their original dates and excluded intervals.
-
-## Verified starting point — 29 September baseline
-
-| Item | Status / evidence |
-| --- | --- |
-| Manual operator, #752 | Merged as `4c1fb0a0786cb693169d603bb2c021c175dd1152`. Provides admission, ownership, storage checks, deployment, rollback, recovery and maintenance. |
-| Trial and failure qualification, #751 | Merged as `efefe8178e6fd78498c3f4cb52a379658f67618d`. Final [merge validation](https://github.com/flidai/leapview/actions/runs/36556552195), security and Electron checks passed. |
-| Undo-test reliability, #770 | Merged as `bc07df37e6041b07558f1e0e06a41cb8ba966102`. |
-| Failure testing | 39 operator tests and expanded disposable lifecycle qualification passed. Real interrupted pulls/switches, lost responses and offline recovery were exercised. These are not production cutover or host-reboot results. |
-| Pre-correction Image A | Production workflow [36538460625](https://github.com/flidai/leapview/actions/runs/36538460625) passed; independent operator `prepare` passed. Source: `bc07df37e6041b07558f1e0e06a41cb8ba966102`. |
-| Pre-correction Image B | Post-#751 workflow [36558423631](https://github.com/flidai/leapview/actions/runs/36558423631) succeeded, and independent operator `prepare` passed. Source: `efefe8178e6fd78498c3f4cb52a379658f67618d`. |
-| Live website | No production migration was performed during this work. Fresh 29 September inventory: Ubuntu 24.04.4, original Compose/Caddy, Docker 29.1.3/containerd 2.2.1 on shared ext4, updater inactive/disabled. About 32.3 GiB free. Public checks passed around 11:18 UTC: health/readiness, build/release metadata, docs, 16 assets, eight server-release download/checksum links and the www redirect. Protected backup completed at 11:28 UTC; an empty protected Kamal directory was created, with no ready/state marker or app/proxy changes. |
-| Full adoption smoke (29 September baseline) | Failed on the existing desktop download: the advertised `desktop-v0.1.0-alpha.1` macOS arm64 asset returned HTTP 404 and GitHub reported that release absent. The focused correction in [#776](https://github.com/flidai/leapview/pull/776) subsequently withdrew the broken listing and corrected the availability copy before the live A/B images were selected. |
-| Demo | Latest reviewed [demo deployment](https://github.com/flidai/leapview/actions/runs/36553961368) passed. User reports NixOS rollout; leave the demo untouched. |
-| #748 | Open, uninstalled old Compose/updater fallback. Do not merge/install it alongside Kamal; close only after final migration acceptance. |
-
-## Live rollout status — 30 September 2026
-
-The production handover and recovery gates are complete. The current live
-identities and sanitized evidence are in the [rollout receipt](deploy/kamal-site/evidence/live-rollout-20260930.md)
-and its [JSON index](deploy/kamal-site/evidence/live-rollout-20260930.json).
-This status supersedes the 29 September baseline and the older pre-correction
-image identities below; those remain historical records.
-
-| Role | Live site image | Service source revision | State |
-| --- | --- | --- | --- |
-| A | `ghcr.io/flidai/leapview-site@sha256:87a5b2068742b8c216dbfbcc578d93789e4f6db1ca771f44834f654b54de6eec` | `aa823506bf7916f051083cab56dd015cbcadac0d` | Verified prior and offline rollback target |
-| B | `ghcr.io/flidai/leapview-site@sha256:acc225d4526738b4a7b55609b1a643e31fdbc034dca305f17ca952a973f16e87` | `0f25215ceb1cc7331701d2f3120da47b66a88714` | Active |
-
-Both images passed real-image lifecycle qualification. The measured peak was
-1,269,440,512 bytes and 3,787 inodes; required headroom plus reserve is
-5,900,624,282 bytes and 13,787 inodes. At qualification, the mapped live
-filesystem had 33,906,552,832 bytes and 2,398,341 inodes available. The separate
-receipt records the calculation and qualified image digests.
-
-Original Compose restoration was publicly accepted at 07:34:25 UTC (13:04:25
-IST). A bootstrap acceptance, B-to-A offline rollback, restoration of B, Caddy
-recreation, and a real host reboot all passed. Post-boot acceptance completed at
-08:56:31 UTC (14:26:31 IST). During the 08:46–08:56 UTC cutover/reboot window,
-25 endpoint samples failed across 13 sampled seconds. This does not establish a
-continuous outage duration; zero downtime is not claimed.
-
-The historical v4 public-health observer started at 10:28:20 UTC (15:58:20 IST).
-At the 30 September evidence snapshot it was still running. Its latest recorded sample is 11:17:20 UTC (16:47:20 IST): 50
-public samples and four host samples, with no recorded public-sample failures
-through that point. That 24-hour window was originally due to complete at 10:28:20 UTC on
-1 October (15:58:20 IST); its separate acceptance job was originally queued for 10:31 UTC
-(16:01 IST). Both that job and the old background closeout job were cancelled
-on 1 October after the interruption described below.
-At this historical snapshot the interval, end adoption smoke, acceptance and
-retention audit remained pending. The replacement interval and final live gates
-subsequently passed as recorded in the 2 October acceptance report. Fallback #748
-was later retired externally; final documentation review and protected merge
-remain pending.
-Automatic VPS activation remains disabled.
-
-The local aggregate `task ci` reports watchdog limitation remains historical
-validation evidence; it was not turned into a local pass. The PRs were approved
-and merged after the limitation was disclosed and required hosted checks passed.
-See [the receipt](deploy/kamal-site/evidence/local-ci-20260929.md).
-
-Pre-correction Image A's immutable reference (historical; superseded by the live
-Image A in the status above):
-
-```text
-ghcr.io/flidai/leapview-site@sha256:cced827fce58ebbccc2c293da65741c08e0108cbd017d46841f7ea87dcf78387
-```
-
-Its admission record and evidence remain in protected operator storage. The
-temporary working copies are not the sole recovery store. The protected records
-also bind operator source hashes and the public/desktop release manifests for
-the selected source revisions.
-
-Pre-correction Image B was
-`ghcr.io/flidai/leapview-site@sha256:093b718bcb51bd23e334497cc279f09367a26bbce0126956377d3ba5f612c14c`.
-Its admission record and evidence remain in protected operator storage. These
-pre-correction images retain the broken desktop download links found by the full
-adoption smoke and are historical only. The website correction in [#776](https://github.com/flidai/leapview/pull/776)
-was applied before selecting and qualifying the live A/B digests above.
-
-## Observation recovery — 1 October 2026
-
-The previous observer stopped at 02:19:20 UTC (07:49:20 IST) after 15 hours
-51 minutes. It recorded only `OSError`, without errno or the failing operation;
-the precise cause cannot be established. The original temporary run directory
-is now missing. Surviving protected summaries and audit hashes document the
-interruption, but do not replace the missing raw event evidence. This run is
-excluded from acceptance, and its scheduled acceptance/closeout jobs were
-cancelled. No website outage is established by the observer failure.
-
-Read-only checks on 1 October confirmed the expected B website, locally retained
-A/B images, healthy proxy/Caddy, disabled legacy updater, and no pending work.
-The checked server filesystem had 33,363,365,888 free bytes and 2,398,342 free
-inodes, above the qualified thresholds. These checks do not prove the missing
-observation interval.
-
-The recovery change reports a sanitized failing stage and errno, keeps run
-artifacts in durable private operator storage, and requires independently
-supervised successful observer exit before acceptance. A saved passed summary
-alone is insufficient. Start a fresh full 24-hour observation after a new public
-adoption smoke, freeze its acceptance inputs, and arrange a one-shot acceptance
-and quiet background closeout. The replacement started at 09:44:34 UTC (15:14:34 IST) on 1 October after
-a fresh public adoption smoke. Its first public/host samples and frozen scheduler
-preflight passed. The full interval is due at 09:44:34 UTC (15:14:34 IST) on
-2 October. The one-shot acceptance is scheduled for 09:47 UTC (15:17 IST) on 2 October.
-The quiet watcher is verified running; it wakes the background closeout task after
-a meaningful failure or completed gate. A deduplicated backup check is scheduled
-for 10:20 UTC (15:50 IST) on 2 October. These local jobs require the operator
-machine to remain available; the old cancelled schedule is not reused. No production deployment, pruning, rollback or
-reboot is needed for this local monitoring recovery. The [sanitized recovery
-receipt](deploy/kamal-site/evidence/observation-recovery-20261001.json) records
-the excluded interval, live preflight, and verified replacement snapshot.
-
-The replacement completed all live gates on 2 October. The remaining order is
-review/merge the sanitized completion evidence. Fallback #748 was subsequently
-retired externally after the live proofs passed. Normal GitHub
-checks, an approving review and exact-head merge-queue validation apply to the
-closeout documentation PR. The original interrupted interval remains excluded.
-
-## Execution flow
-
-```mermaid
-flowchart TD
-    A[Done: merged tooling and disposable tests] --> B[Done: admit corrected production A and B]
-    B --> C[Done: refresh live inventory and protect recovery material]
-    C --> D[Done: qualify real-image capacity and rehearse handover]
-    D --> E[Done: switch live website to Kamal A]
-    E --> F[Done: prove original Compose restoration and return to A]
-    F --> G[Done: deploy B, roll back offline to A, restore B]
-    G --> H[Done: recreate Caddy and reboot the real host]
-    H --> I[Done: full replacement 24-hour observation]
-    I --> J[Done: end adoption smoke and bound acceptance receipt]
-    J --> K[Done: read-only image, storage and recovery audit]
-    K --> L[Done: fallback retired after live proofs]
-    L --> M[Pending: documentation review and protected merge]
-```
-
-Proceed in order. A failed exit check blocks the next phase. Existing approval
-authorizes this rollout plan; normal repository protections still apply to any
-new code fixes. Do not substitute an image or expand scope to bypass a failed gate.
-
-## 1. Select and admit the two production images
-
-- [x] Merge the operator and trial PRs; verify publish-only production workflow.
-- [x] Admit A and preserve its exact index, amd64 manifest, config, source revision,
-  release metadata, provenance/SBOM and vulnerability-policy evidence.
-- [x] Wait for the complete post-#751 production-image workflow to succeed.
-  If it fails, diagnose/fix it and use a successful eligible main build.
-- [x] Download its qualification artifact and run the merged operator's live
-  admission for a distinct image B. Do not use a trial-package image or mutable tag.
-- [x] Confirm A and B are distinct immutable production images with the required
-  service ownership label and source-specific release/download metadata.
-- [x] Resolve the unavailable desktop download status through the focused website
-  correction in #776; select corrected production builds and repeat admission.
-  Verify all advertised download links before freezing their identities.
-- [x] Pin the tested operator checkout and locked tooling. Recheck admission and
-  policy freshness before deployment; preserve records for both selected images.
-  If an image must be replaced, repeat its storage qualification too.
-
-The admitted images listed in the 30 September live status supersede the two
-pre-correction digests recorded below. Both current digests have their own
-production admission and capacity evidence.
-
-From a checkout containing the merged operator, with the documented pinned tools
-and existing authenticated GitHub CLI:
-
-```sh
-task site:deploy -- prepare --image ghcr.io/flidai/leapview-site@sha256:FULL_B_DIGEST
-```
-
-`FULL_B_DIGEST` is a placeholder to replace with the successful workflow's exact
-artifact identity. `prepare` verifies registry/workflow evidence and writes a
-protected local record; it does not switch the production website.
-
-**Exit:** two valid protected admission records, traceable to successful main
-production workflows, with all referenced artifacts retained.
-
-## 2. Refresh the live baseline and protect original recovery material
-
-- [x] Use the existing site SSH credential, route and pinned host fingerprint.
-  Record UTC time, host boot ID, OS, architecture and Docker/containerd versions.
-- [x] Check HTTPS, health/readiness, source/build identity, docs, release metadata,
-  download links, CSS/JS and the `www` redirect. Capture the actual running image.
-- [x] Inventory Docker/containerd backing paths, filesystem devices, free bytes,
-  free inodes, site containers/images, Caddy image/config/mounts and restart policies.
-  Do not reuse the old approximately 32.3 GiB free-space observation as current capacity.
-- [x] Confirm the legacy updater timer/service remain disabled/inactive, old
-  mutating workflow runs are settled, and neither an unresolved owner journal nor
-  surviving remote work exists. Acquire locks in the documented order.
-- [x] Preserve protected original Compose, Caddyfile, deployment environment,
-  exact image identities and container inspections outside the routine deployment
-  directory. Preserve certificates/config volumes and required local images.
-  Captured under both locks. Original files/inspections and Caddy data/config
-  were copied to the protected operator store; file contents were checked
-  against the backup manifest.
-- [x] Write and verify exact restoration commands, including how to regain SSH
-  after a reboot. Keep secret-bearing material out of Git, PRs and public logs.
-
-That 29 September inventory was read-only. On 30 September the protected
-original Compose configuration was restored and publicly accepted at 07:34:25
-UTC (13:04:25 IST); the runbook's restoration commands were exercised. No Kamal
-ready/state marker was written during the original-site restoration.
-
-The 29 September snapshot showed live release `0.2.0-rc.1` while main expected
-`0.3.0-alpha.1`. Live acceptance checked the admitted images' release metadata;
-the release and build-identity checks passed.
-
-**Exit:** timestamped live baseline and usable protected original-site recovery
-material. Any unexpected host change is understood before mutation.
-
-## 3. Measure real storage and rehearse the exact handover
-
-Storage here means the website server's Docker image/container disk usage and
-file-count capacity (inodes), not customer datasets or demo storage.
-
-- [x] Use disposable storage/runtime matching the refreshed production setup.
-  Exercise the actual admitted A/B images, including cold pulls, shared layers,
-  extraction, boot, acceptance, rollback and cleanup.
-- [x] Measure peak incremental bytes/inodes for each distinct Docker/containerd
-  filesystem. Include temporary overlap with the original Compose recovery image,
-  A, B, proxy and Caddy; measure both cold and warm-cache cases.
-- [x] Save raw samples, filesystem identity/capacity, exact image identities,
-  runtime/tool versions, commands and outcomes. Synthetic fixture measurements
-  and compressed download sizes alone are insufficient; the raw qualification
-  remains in protected operator storage, with safe results indexed in the
-  [live receipt](deploy/kamal-site/evidence/live-rollout-20260930.json).
-- [x] Populate each capacity record's `paths`, `qualified_images`, measured peaks,
-  compressed-size envelope and derived margins:
-  - Candidate byte headroom: at least `ceil(1.5 × measured_peak_bytes)`.
-  - Byte reserve: at least `max(2 GiB, ceil(10% × filesystem capacity))`.
-  - Inode reserve: at least `max(10,000, 2 × measured_peak_inodes)`.
-  - Before pulling: free bytes must cover headroom plus reserve, and free inodes
-    must cover the measured incremental peak plus inode reserve.
-- [x] Rehearse the exact bootstrap, timed restoration safeguard, Caddy switch,
-  public acceptance and original-Compose restoration sequence. Choose and record
-  the safeguard deadline from the measured rehearsal before touching production.
-  The safeguard must defer if either deployment lock is held or an unresolved
-  owner journal exists. It must record that deferral, never clear ownership, and
-  require the documented ownership audit before restoration can resume. A timer
-  alone does not guarantee recovery after a controller disconnect.
-- [x] Verify sufficient live capacity with recovery images retained. If it does
-  not fit, stop and revise the plan; do not prune the only rollback or expand disks
-  as an unreviewed shortcut.
-
-**Exit:** A and B explicitly capacity-qualified, live headroom sufficient, and a
-rehearsed cutover/restoration procedure with a defined timeout.
-
-## 4. Perform controlled live handover to A
-
-Bootstrap is a separate migration step: routine `deploy` expects valid permanent
-readiness/state. Do not fabricate `ready.json` or mark handover complete just to
-make the normal deploy command run.
-
-- [x] Under exclusive ownership, bootstrap the persistent Kamal network and the
-  runbook's pinned private proxy with its restart policy and no public proxy ports.
-- [x] Start admitted A privately and verify its actual runtime/build identity.
-  Keep the original Compose application and image available for restoration.
-- [x] Install the guarded legacy entrypoints and active Caddy-only Compose/Caddy
-  configuration, preserving public ports, certificates and persistent mounts.
-- [x] Arm the rehearsed timed restoration safeguard, switch Caddy to Kamal, and
-  continuously probe public availability. Record start/end and any interruption;
-  zero downtime is not assumed.
-- [x] Validate HTTPS, health/readiness, image/build identity, docs, release metadata,
-  download URLs, assets and `www`. Run the public installation smoke check against
-  the intended release metadata without weakening version comparisons.
-- [x] Demonstrate restoration to the protected original Compose configuration,
-  verify it publicly, then return to A and repeat acceptance checks.
-- [x] Only after success, persist verified topology hashes, capacity qualification,
-  active record and permanent handover state. Confirm the updater remains disabled.
-
-**Exit passed:** A served publicly through persistent Caddy/Kamal, original-site
-restoration was publicly accepted, and permanent state reflected verified reality.
-
-## 5. Prove deployment, rollback and host restart
-
-- [x] Deploy B through the operator and save public acceptance evidence.
-- [x] From a fresh operator session, block registry access for the tested path,
-  roll back locally to retained A, and verify it publicly. Scope the block so SSH,
-  public probes and unrelated services remain available; remove it afterward.
-- [x] Confirm the recorded state is active=A and prior=B, then run `rollback`
-  again to restore B. Repeat public acceptance and verify active=B, prior=A.
-  Do not use `deploy --record B` while B is the recorded prior version: the
-  operator rejects that path and requires the recorded rollback operation.
-- [x] Confirm the final tool/source hashes still match the tested interrupted-work
-  and broken-current recovery evidence. Repeat affected disposable scenarios if
-  tooling changed; do not add unnecessary destructive live failure injection.
-- [x] Recreate Caddy using the active Caddy-only Compose definition. Verify HTTPS,
-  persistent certificates, topology and absence of a recreated legacy app.
-- [x] Reboot the real website host in the controlled rollout window. Verify SSH
-  recovery, application/proxy identity, restart policies, network, public checks,
-  state records and updater inactivity. A Docker restart does not satisfy this.
-
-After phase 4 establishes verified permanent state, the routine commands are:
-
-```sh
-task site:deploy -- status
-task site:deploy -- deploy --record /absolute/protected/path/to/B-record.json
-task site:deploy -- rollback
-# Confirm status reports active=A and prior=B before restoring B:
-task site:deploy -- status
-task site:deploy -- rollback
-# Confirm public acceptance and recorded active=B, prior=A:
-task site:deploy -- status
-```
-
-**Exit passed:** B is serving, A is locally recoverable, offline rollback and
-Caddy recreation passed, and the real host reboot recovered the intended topology.
-
-## 6. Settle image retention and observe for 24 hours
-
-- [x] Complete the recorded operator maintenance with B active, A as the distinct
-  verified prior, and no pending operation or maintenance. Preserve unrelated
-  images/containers, Caddy data and protected configuration/audit records.
-- [x] Record the live capacity policy, A/B digests and observer-start baseline.
-- [x] Start the original timestamped observation after the final planned mutation;
-  preserve its interrupted status and exclude it from acceptance.
-- [x] Verify a fresh start smoke and supervised replacement observation in durable
-  private storage, with frozen acceptance inputs. The monitor
-  probes public HTTPS/health/readiness every minute and samples disk/inodes,
-  service health and restart counts every 15 minutes.
-- [x] Verify the replacement one-shot acceptance and quiet background closeout schedule.
-- [x] Preserve the complete timestamped results and investigate any failed probes,
-  unexpected restarts, persistent image growth or reserve breaches. Notify on a
-  meaningful failure/change; healthy repeated samples need no user notification.
-- [x] Require a complete 24-hour stable period with no unresolved failure. Restart
-  the period after a failed/interrupted observation, or a deployment, rollback or
-  corrective production mutation. Preserve and investigate a failed/interrupted
-  one-shot acceptance attempt. A replacement bundle requires an unchanged observer
-  still running; if it has finished, start a new full interval.
-  A rejected setup/preflight check may be corrected while an unchanged observer
-  is still running; an unobserved interval does not count as successful monitoring.
-- [x] After the full 24-hour period completes, run the end public adoption smoke
-  and finish the final acceptance receipt.
-- [x] After the observation and end smoke pass, perform the post-observation
-  image-retention audit. Keep #748 open until this audit passes.
-
-**Exit:** recorded 24-hour health/storage acceptance with no unresolved deployment
-or maintenance problem and adequate measured capacity margins.
-
-## 7. Close out
-
-- [x] Update the operator runbook and this plan to match the actual host. Record
-  A/B identities, source revisions, release-check results, tooling, capacity margins,
-  commands and observed interruption durations. Keep protected recovery-location
-  details in the protected operator store, outside repository documentation.
-- [x] Attach sanitized qualification, cutover, rollback, reboot and ongoing
-  observation evidence; preserve secret-bearing originals only in protected operator storage.
-- [x] Verify the complete replacement interval, both boundary smokes, bound gate
-  wrapper, observer command exits/log and independent final read-only audit.
-- [x] Record external retirement of [#748](https://github.com/flidai/leapview/pull/748)
-  as superseded at 16:07:20 IST on 2 October. Its closure comment cites the
-  reviewable acceptance evidence in #803. The fallback was not installed or merged.
-- [ ] Obtain review, pass normal hosted checks and merge the final acceptance
-  documentation under normal repository protections.
-- [x] State explicitly that deployment remains operator-controlled. Treat any
-  future automatic deployment proposal as separate work.
-
-## Failure handling and scope boundaries
-
-| Condition | Required response |
-| --- | --- |
-| Admission, ownership, topology, recovery material or capacity uncertain | Stop before pulling/switching; investigate and re-establish verified prerequisites. |
-| A fails initial public acceptance | Restore the protected original Compose site using the rehearsed safeguard; verify it before retrying. |
-| Candidate B rejected | Restore verified A and check public health before any cleanup. |
-| Cleanup fails after B was accepted | Keep B serving; use explicit maintenance recovery. Do not undo a healthy acceptance merely because cleanup failed. |
-| SSH disconnects or an acceptance response is lost | Treat ownership/outcome as unresolved. Fence the old controller, inspect surviving work and actual state, then use the runbook's recovery path. Never clear locks based only on elapsed time. |
-| Reboot/public checks fail | Recover using the saved topology/configuration and locally retained images; record the interruption and postpone acceptance. |
-
-Do not change the demo/CFO deployment, DNS, disk size, registry credentials or CI
-network identities as part of this plan. Do not install #748 beside Kamal or
-re-enable the retired updater. Use the existing pinned access path and the
-[operator recovery procedure](deploy/kamal-site/README.md) for mutations.
-
-## References
-
-- [Accepted completion requirements](deploy/kamal-site/completion-plan.md)
-- [Manual operator, capacity and recovery runbook](deploy/kamal-site/README.md)
-- [Qualification evidence](deploy/kamal-site/evidence/README.md)
-- [Merged operator PR #752](https://github.com/flidai/leapview/pull/752)
-- [Merged trial PR #751](https://github.com/flidai/leapview/pull/751)
-- [Merged Undo-test fix #770](https://github.com/flidai/leapview/pull/770)
-- [Portable observation and acceptance tools PR #782](https://github.com/flidai/leapview/pull/782)
-
-Earlier runbooks can retain historical draft/pre-merge wording. The verified
-starting-point table above supersedes those stale status statements; their
-technical recovery and acceptance requirements still apply.
+# CodeQL reliability and alert remediation plan
+
+Reviewed: 4 October 2026. Status: implementation in progress.
+Tracking: [Linear project P-FAI-65](https://linear.app/flid/project/leapview-codeql-reliability-and-security-alert-remediation-c31a24fb8dc0), issues FAI-1077–FAI-1086. Lead: Ganesh Kambli. Target: Sunday, 11 October 2026.
+Repository: `flidai/leapview`. Baseline: `ad2c9bfb6b148834268e422ff2e2bbc1670acc81`.
+Scope: Go and JavaScript/TypeScript scanning, the seven open `main` alerts, and regression prevention.
+The previous, unrelated root plan is preserved unchanged in `plan.kamal-rollout.md`.
+
+## Findings that change this plan
+
+The screenshot reveals two separate workstreams: incomplete analysis and open code findings. Fixing the analysis warning will not automatically resolve the seven findings. A successful Actions job currently proves neither complete extraction nor absence of vulnerabilities.
+
+1. **P1 — Incomplete Go analysis is confirmed.** The SAST runner does not generate required source or use the shared toolchain. CodeQL reports 44 missing local packages while its job and `Security gate` pass. Generation in the dependency job runs on another machine and cannot prepare the SAST workspace.
+2. **P2 — Page-stream cookie policy is inconsistent (#91).** Authentication uses the configured secure-cookie policy, but the page-stream cookie independently inspects TLS and an unconditionally trusted forwarded header. This is a real configuration gap; exploitation in the deployed proxy topology has not been demonstrated.
+3. **P2 — The desktop verification script needs message validation (#1).** The flagged callback comes from a private `Map`, which prevents arbitrary property dispatch. A separate, adjacent defect is reproducible: a WebSocket payload of JSON `null` throws before validation. This affects the local packaging/accessibility checker; it is not evidence of remote product code execution.
+4. **P3 — Integer and allocation alerts already have bounds (#52, #49).** Simplify the integer conversion and prove the allocation bound through both HTTP callers. Do not describe them as demonstrated overflow or memory-exhaustion vulnerabilities.
+5. **Triage — Both password-hashing alerts are false positives on the inspected paths (#47, #48).** Their SARIF flows originate from the boolean `HasLocalPassword`, not a password. The sinks create ETags and pagination keys. Actual stored password verifiers use Argon2id.
+6. **Triage — The local browser cookie is an intentional loopback exception (#87).** This flow explicitly accepts only `http://127.0.0.1:<port>`, binds its handoff listener to loopback, and disables redirects in its authentication client. Setting `Secure=true` indiscriminately would break the intended flow.
+7. **Policy limitation — Required checks do not enforce alert severity.** The active `main` ruleset requires `CI gate` and `Security gate`, but has no `code_scanning` rule. The workflow's aggregate gate checks job outcomes only. Keep this distinct from the proposed analysis-health check.
+
+Priorities above are remediation priorities, not replacements for GitHub's displayed severity ratings. No alerts have been dismissed and no production code or repository settings have been changed during this review.
+
+## Evidence and baseline
+
+- [Inspected security run](https://github.com/flidai/leapview/actions/runs/37200497398), [Go job](https://github.com/flidai/leapview/actions/runs/37200497398/job/111431019646), and [JavaScript job](https://github.com/flidai/leapview/actions/runs/37200497398/job/111431019681) all concern the baseline commit.
+- Go analysis ID `1888592831`; JavaScript analysis ID `1888591182`. Authenticated API retrieval confirmed seven open alerts, each with its most recent instance on the baseline commit. The private security page does not load through unauthenticated web browsing.
+- The Go log reports 44 unresolved generated packages, including `internal/access/api/gen`, `internal/platform/http/api/gen`, `internal/access/postgres/internal/db`, and `internal/access/ui/signals`. Import/type errors accompany the warning.
+- The reported 1,716/3,387 Go file count is not proof that half of production code is omitted: the denominator includes tests and other files that the extractor may legitimately exclude. Acceptance must examine missing dependencies and expected maintained packages, not impose a misleading percentage.
+- `.github/workflows/security.yml:86` currently uses Go `autobuild` and JavaScript/TypeScript `none`, with checkout, initialization, and analysis only. The CodeQL action is pinned to `2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2` (v4.38.2); the inspected run used CLI 2.27.1.
+- The autobuilder attempts `go mod tidy -e`. A plan that combines autobuild with an immutable dependency graph is inconsistent. Use a manual traced build with read-only module resolution.
+- Raw analyzer SARIF contains extraction diagnostics. SARIF downloaded from GitHub's analysis API is processed and omitted invocation diagnostics in this investigation. It is useful for alert traces, not as a fixture for the proposed health checker.
+- Active ruleset ID `19956950` was read without modifying it. It enables a merge queue and requires the two aggregate status checks, but contains no code-scanning severity rule.
+
+## All seven alerts: assessment and disposition
+
+### #91 — Cookie Secure attribute: page-stream identity
+
+[Alert #91](https://github.com/flidai/leapview/security/code-scanning/91), GitHub severity **Medium**, rule `go/cookie-secure-not-set`.
+
+Evidence: `internal/platform/web/transport/client_id.go:18` returns an existing valid cookie immediately; line 32 sets `Secure: requestUsesHTTPS(r)`. Lines 37–45 trust `X-Forwarded-Proto` without consulting deployment policy. In contrast, `internal/app/config/config.go:197` computes `CookieSecure()` and `internal/app/postgres_build.go:134` passes that policy to authentication.
+
+A proxied HTTPS deployment with secure cookies configured can still issue a non-secure page-stream cookie if the forwarded header is missing or differs from the helper's expectation. A previously issued cookie is not reissued when the policy changes. The client ID is a routing/session correlation value, not the authentication credential: dashboard session keys also bind the principal (`internal/dashboard/http/handlers.go:349`). Do not infer an authentication bypass from this alert.
+
+Planned change:
+
+- Make page-stream cookie issuance consume an explicit application-owned policy derived at composition from the existing secure-cookie configuration and canonical serving origin. Production HTTPS and direct HTTPS must remain secure independently of client-supplied headers; supported local HTTP must remain functional.
+- Thread this policy through the product transport and its callers, including the `Patch*` helpers, dashboard/builder issuance, and admin issuance. Use one policy; remove the existing header-based decision. Update all callers rather than keep an old signature or implicit fallback.
+- When ensuring an existing valid client ID, reissue it with the current policy before response headers or SSE bytes are sent. Preserve the ID and other attributes. Request cookies do not reveal their original Secure flag, so the server cannot condition this upgrade on inspecting that flag.
+- Keep `HttpOnly`, `SameSite=Lax`, path `/`, host-only scope, and entropy-failure handling.
+
+Regression proof: secure-policy requests over the proxy's internal HTTP connection must emit Secure with absent, misleading, and comma-separated forwarded headers; an existing valid ID must receive the correct attributes; direct HTTPS must stay secure; deliberate local HTTP must work. Verify cookie issuance precedes SSE streaming and principal isolation is unchanged. Confirm a deployed HTTPS response through the actual proxy before closing the finding.
+
+### #1 — Callback dispatch in the accessibility checker
+
+[Alert #1](https://github.com/flidai/leapview/security/code-scanning/1), GitHub severity **High**, rule `js/unvalidated-dynamic-method-call`.
+
+Evidence: `desktop/scripts/accessibility-contract.mjs:155` accepts only loopback WebSocket URLs. Lines 171–193 use a private `Map` of locally registered callbacks and safe-integer IDs. There is no attacker-selected object property or arbitrary function installation. `desktop/scripts/verify-package.mjs:360` invokes this during packaged-app verification.
+
+However, after `JSON.parse`, the code reads `message.id` without first checking the payload's shape. A fake loopback WebSocket delivering `null` reproduced `TypeError: Cannot read properties of null (reading 'id')`. The six existing tests exercise accessibility-tree validation, not this transport boundary.
+
+Planned change:
+
+- Validate that decoded messages are non-null, non-array objects before accessing properties.
+- Accept responses only for valid outstanding positive safe-integer IDs. Ignore legitimate CDP notifications and unknown/duplicate response IDs without invoking anything.
+- Read the callback into a local variable, check that it is callable, delete its pending entry, then invoke it. Preserve `Map`; do not replace it with a plain object.
+- Route malformed frames and socket close/error into controlled rejection, clear outstanding timers, and settle pending operations. Preserve the existing message-size and timeout bounds.
+
+Regression proof: valid response and protocol error; JSON `null`, arrays, primitives, malformed/oversized frames; string/prototype-like and unsafe IDs; unknown/duplicate IDs; close/error while awaiting a response. Tests must verify controlled promise rejection without uncaught event-handler exceptions or leaked timers. Rerun the packaging accessibility smoke and CodeQL. If the original dispatch warning persists, triage that exact warning separately from the now-fixed malformed-frame defect.
+
+### #52 — Platform-sized integer conversion
+
+[Alert #52](https://github.com/flidai/leapview/security/code-scanning/52), GitHub severity **High**, rule `go/incorrect-integer-conversion`.
+
+Evidence: `pkg/duckdbsql/decode_helpers.go:155` parses an int64, checks architecture-specific upper and lower limits, then converts at line 166. The 32-bit branch already rejects out-of-range input; the 64-bit comparison is redundant after int64 parsing. This is a scanner-recognition/clarity issue on the reviewed code, not a reproduced overflow.
+
+Planned change: retain JSON-number decoding, but parse `intValue` directly to the platform `int` range using `strconv.Atoi` on the decoded number. Keep the separate `int64Value` contract for its callers. Remove the manual bit-twiddling bounds. Preserve valid JSON/error behavior and avoid parsing through floating point.
+
+Regression proof: native minimum and maximum int; one below/above them; 32-bit boundary values on both architectures; int64 overflow; malformed/fractional inputs; existing decode error classification. Run the focused pure-Go decoder tests on amd64 and 386 where executable. A compile-only cross-build is not proof that boundary tests ran. Rerun CodeQL before deciding whether any residual finding needs triage.
+
+### #49 — Response slice allocation
+
+[Alert #49](https://github.com/flidai/leapview/security/code-scanning/49), GitHub severity **High**, rule `go/uncontrolled-allocation-size`.
+
+Evidence: `internal/dashboard/semanticapi/semantic_query_support.go:130` allocates capacity `min(len(rows), limit)`. Both production callers, `semantic_queries.go:53,77` and `semantic_datasets.go:203,227`, obtain their limit through `semanticLimitAndOffset` at lines 60–72. It normalizes non-positive values and caps large values at `maxQueryLimit = 1000` (`semantic_http_support.go:141`). The query requests one extra row for pagination, while the response remains capped at the normalized page size. SARIF traces pass through this existing clamp.
+
+Planned disposition: first rescan with complete extraction and add behavior-level boundary tests for both callers. If the warning remains, record a narrow false-positive rationale with this call-chain evidence. Do not merely remove preallocation: appending without a capacity can still allocate unbounded memory in a truly unbounded path. Do not silently change the API from clamping to rejecting oversized requests.
+
+Regression proof: omitted/zero/negative limit, 1, 1000, 1001, maximum representable int; malformed numeric input; returned row counts and one-row pagination probe; cursor behavior for empty, exact-limit, and extra-row results. This conclusion concerns the flagged row-capacity allocation, not all memory use in query execution or column payloads.
+
+### #47 and #48 — Non-secret metadata mistaken for password material
+
+[Alert #47](https://github.com/flidai/leapview/security/code-scanning/47) and [alert #48](https://github.com/flidai/leapview/security/code-scanning/48), GitHub severity **High**, rule `go/weak-sensitive-data-hashing`.
+
+Evidence: the type at `internal/access/access.go:373` declares `HasLocalPassword bool`.
+
+- #47 starts at `internal/access/http/handler.go:230`, the `canChangePassword` capability, and reaches `resourceETag` at lines 597–600 through principal responses.
+- #48 starts at line 264, the `canResetPassword` capability, and reaches `apiItemPageKey` at lines 638–649 through principal-list pagination. Principal DTOs have an ID and normally take the earlier ID-based key branch.
+- These responses contain capability flags and profile metadata, not plaintext passwords or stored password verifiers. The real verifier functions at `internal/access/postgres/access_core.go:104` use Argon2id; password creation/change call that path.
+
+Planned disposition: preserve SHA-256 for deterministic metadata hashing. Save the source-to-sink evidence for each alert and, after a complete scan, use alert-specific false-positive triage if the warnings remain. Do not swap ETags or cursor keys to salted password hashes, remove capability flags, rename public fields to evade detection, or disable the rule globally.
+
+Regression proof: reuse/extend current-principal and principal-administration response tests to assert that credential material is absent; verify stable ETags for unchanged representations, ETag changes when relevant representation fields change, and pagination continuity. Retain existing password-verifier tests. Document these as false positives, not fixed password-storage vulnerabilities.
+
+### #87 — Local browser session handoff
+
+[Alert #87](https://github.com/flidai/leapview/security/code-scanning/87), GitHub severity **Medium**, rule `go/cookie-secure-not-set`.
+
+Evidence: `internal/app/cli/local_browser_session.go:340` sends the handoff cookie; `browserSessionCookie` explicitly sets `Secure=false` at line 303. `localSessionOrigin` at line 113 restricts origin to explicit HTTP IPv4 loopback plus a port, rejecting userinfo and nonempty paths/queries/fragments after trailing-slash normalization. `openLocalBrowserSession` at line 311 validates that origin again and binds `127.0.0.1:0` at line 322; its random handoff URL has a two-minute lifetime. Authentication redirects are disabled at line 131. The cookie remains HttpOnly, host-only, SameSite Lax.
+
+Planned disposition: retain the deliberately local HTTP behavior and document the exception beside the code. Add missing boundary tests before recommending alert-specific dismissal as intentional local-test/development behavior. Do not globally exclude CLI files or the cookie rule.
+
+Regression proof: reject remote hosts, hostname lookalikes, userinfo, alternate schemes, paths/queries/fragments, and missing ports before network or browser activity. Verify a failed/random path emits no session cookie, the handoff listener is loopback-only, authentication does not follow redirects, and browser handoff retains its cookie attributes and bounded lifetime.
+
+The local trust assumption must be explicit: cookies are not port-scoped, and hostile processes on the same host are not isolated by this design. `Secure` is not a solution to that local-process boundary. Do not claim this cookie is safe for remote HTTP deployment or dismiss it as unused code.
+
+## Implementation sequence
+
+### 1. Restore complete analysis on both matrix runners
+
+Files: `.github/workflows/security.yml`, `Taskfile.yml`, focused tooling under `internal/app/tools/securitysast`, workflow-contract tests, and security operating documentation.
+
+1. Keep existing triggers, check names, least-privilege permissions, commit-pinned actions, matrix independence, and `/language:${{ matrix.language }}` upload categories. Keep the current 45-minute budget initially; measure cold and warm runs before changing it.
+2. Run `./.github/actions/setup-ci` with the validation profile and `browser: "false"` before CodeQL initialization. This supplies the repository's locked Go/Node/Bun/sqlc/native toolchain. Do not replace it with an unrelated setup-go version or wrap the traced build in an environment that drops CodeQL instrumentation.
+3. Capture the checkout's dependency-manifest baseline before any installer, generator, or helper-build command can change it. Build the small SAST helper before initialization, outside the source tree, using read-only module resolution; include this build in integrity verification. The helper must depend only on policy/standard tooling, not generated application packages.
+4. Add a sequential `security:sast:prepare` task that invokes the existing generators. Start with `go:deps`, `db:generate`, `config:generate`, `api:generate`, `ui-signals:generate`, `agent-contracts:generate`, `data-resource-contracts:generate`, `pipeline-contracts:generate`, `desktop-discovery:generate`, `layout-contract:generate`, `map-style:generate`, and `lucide-icons:generate`. Reuse their declared dependency graph: API generation supplies the emitter, permission/dashboard/visualization contracts, and root Node installation. Explicit API generation before UI-signal generation avoids the clean-checkout bootstrap hole. Validate this exact set on a clean checkout rather than assuming it is complete.
+5. Use one top-level Task invocation and sequential `cmds`, so dependency installation has a single writer. Use the existing frozen Bun locks and npm `ci`; do not run independent generators concurrently against the same dependency tree. `NPM_CONFIG_AUDIT=false` prevents install-time advisory noise; the separate dependency-security lane stays enabled.
+6. Prepare generated source in each matrix job's own workspace. Do not rely on another job's files, commit ignored build inputs, copy stale generated output from caches, or run the entire docs/site-producing `task generate` just to satisfy extraction.
+7. Keep JavaScript/TypeScript build mode `none`. Before initialization, validate app/contracts/test TypeScript configs (including site source), playground where relevant, the APIGen emitter's production and test configs, and desktop production/test configs after `desktop:deps`. Invoke installed compilers with no emit; do not package Electron or bundle/minify assets for SAST. These checks establish resolvable source graphs, not full test or CodeQL coverage.
+8. Set explicit job environment: `GOFLAGS=-tags=duckdb_arrow`, `CODEQL_OVERLAY_DATABASE_MODE=none`, `CODEQL_ACTION_DIFF_INFORMED_QUERIES=false`, and `CODEQL_ACTION_EXPORT_DIAGNOSTICS=true`. The latter three are supported by the pinned action and need contract coverage on upgrades. Full extraction avoids depending on overlay indexing of ignored generated source; full query evaluation retains diagnostic coverage.
+9. For Go, change `build-mode` to `manual`. After CodeQL initialization and before analysis, invoke the prebuilt helper to enumerate every `go-module` in `.security/coverage.yaml`, currently root, `deploy/kamal-trial`, `pkg/apigen`, and `pkg/apigen/example`. Reuse the exported coverage types; reject empty/duplicate/escaping module paths and require the existing inventory policy to validate completeness. Do not add a second hard-coded module inventory.
+10. In each module, sequentially run `go list -mod=readonly -deps -tags=duckdb_arrow ./...` and `go build -a -p=2 -mod=readonly -tags=duckdb_arrow ./...`, propagating failures. The forced rebuild ensures restored build caches cannot eliminate the work CodeQL must observe. Preserve the initialized tracer environment and the shared CGO/native toolchain. No `go mod tidy`, `-e`, or continue-on-error in this path.
+11. Check dependency integrity after preparation and again after analysis, including on failures. Compare paths, existence, and content of maintained Go manifests/sums and JavaScript manifests/locks with the checkout baseline. Detect newly created files as well as modifications/deletions, including a `go.sum` originally absent. Ignore dependency/cache subtrees, not newly created first-party dependency files. Also reject unexpected tracked source drift from preparation.
+
+### 2. Fail the required job when analysis is incomplete
+
+Extend the focused SAST helper with raw-SARIF validation, with meaningful fixture tests.
+
+- Direct analyzer output to `${{ runner.temp }}/codeql-results`. The pinned analyzer writes `go.sarif` and `javascript.sarif`; the matrix label `javascript-typescript` is not the filename.
+- Validate expected SARIF 2.1.0 CodeQL output, expected language/category, at least one matching run, and nonempty invocation records with successful execution. Check every relevant run/invocation; do not inspect only the first. Normalize the category/run-ID representation according to actual output from the pinned analyzer.
+- Inspect both `toolExecutionNotifications` and `toolConfigurationNotifications`. Treat warning/error diagnostics as a failed health check. SARIF's omitted notification level defaults to warning. Note/none are allowed; absent notification arrays are legal when there are no diagnostics. Resolve descriptor IDs/indexes and report actionable diagnostic IDs, messages, and locations.
+- Reject missing, empty, malformed, unexpected-tool/category, unsuccessful, or unverifiable output. Do not confuse an API-processed report without diagnostics with raw analyzer output. Seed fixtures from actual runner output, plus focused synthetic error cases.
+- This is an **analysis-health** check. SARIF `results` are vulnerability findings, not extraction notifications; their handling is tracked separately below. Zero findings must not be mistaken for healthy extraction.
+- Run validation after analysis whenever initialization succeeded and the job was not cancelled, including when analysis failed. Missing output must fail rather than skip. Keep CodeQL's normal upload so developers can inspect findings; preserve the original analyze failure too.
+- Upload available raw SARIF on success or failure using the repository's pinned upload-artifact action, 14-day retention, and matrix/job/run/attempt-specific names. An artifact uploader may ignore a missing file, but the health check may not.
+- Keep the aggregate `Security gate` contract requiring every lane to succeed. A health failure in either matrix entry must propagate through the existing required gate.
+
+Tests must cover multiple runs/invocations, missing and failed invocations, both notification arrays, omitted/default and invalid levels, descriptor references, malformed/truncated JSON, category mismatches, missing output, vulnerability results without extraction warnings, and artifact/condition ordering. Parse workflow YAML for sequencing and conditions rather than rely only on matching text fragments. Update the existing `build-mode: autobuild` expectation. Add the helper tests to `task security:policy`.
+
+### 3. Establish a fresh alert baseline
+
+Run complete Go and JavaScript analysis on the implementation candidate before final triage. Retrieve the refreshed alerts and compare their source-to-sink paths with all seven entries above. Fixing missing packages can expose additional findings or change paths; newly surfaced findings need individual review.
+
+Do not delete historical analysis configurations merely to remove the warning banner. A manual-build configuration may have a different configuration identity; verify the current required analysis and current main status. Preserve categories and evidence so that alert history remains understandable.
+
+### 4. Apply focused code changes and triage
+
+Use separate reviewable commits for the scanner repair, page-stream cookie policy, desktop message validation, and integer parsing cleanup. Add the response-bound and local-loopback regression tests with their relevant rationale. Use red-green-refactor for confirmed defects; characterization tests for already-correct bounds may pass before any change.
+
+Retain the alert-specific evidence in a short repository review record. After fresh analysis, fixes should close through normal scanning; residual false positives or intentional local behavior should receive a narrow, reasoned disposition. Do not bulk-dismiss alerts, mark them fixed before a verifying scan, add blanket path/query exclusions, or place CodeQL dismissals into an unrelated dependency-advisory exception mechanism.
+
+### 5. Record the separate merge-policy decision
+
+The scanner repair makes incomplete scans fail. It does not make open High/Medium alerts fail the job. Document this explicitly in security operating guidance and the implementation PR.
+
+Recommended follow-up: propose a concrete addition to the existing `main` ruleset requiring CodeQL with `security_alerts_threshold: high_or_higher` and `alerts_threshold: none`, retaining its current required checks and queue configuration. This is a repository-setting proposal, not a change made by this plan. Re-read the current rule before producing its final diff, preserve other rules, and validate behavior with a disposable candidate.
+
+GitHub documents two material limits: this native protection does not apply to merge-queue groups, and qualifying alert locations must be in the PR diff. It will not retrospectively gate all seven existing findings. Do not advertise it as exact-candidate severity enforcement. If the project adopts that stronger policy, design and review a separate SARIF-result gate with explicit thresholds and tightly scoped triage handling; do not silently turn the diagnostic checker into an alert suppressor or pretend API dismissals remove findings from fresh raw SARIF.
+
+## Verification and acceptance
+
+### Checks completed during this investigation
+
+- Authenticated GitHub alert inventory, both analysis reports, Go job logs, and active main ruleset inspected.
+- Existing tests passed: `go test ./internal/platform/web/transport ./pkg/duckdbsql ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults`.
+- Existing desktop accessibility tests passed: `node --test desktop/scripts/accessibility-contract.test.mjs` (6 tests).
+- A local fake-WebSocket probe against the unchanged module reproduced the JSON-null TypeError, then shut down its pending call. No real remote service was contacted by that probe.
+- Earlier read-only `go list -mod=readonly -deps -tags=duckdb_arrow ./...` failed on missing generated packages, consistent with the extraction warning.
+
+These checks validate the investigation only. Generated-source preparation, the proposed manual traced build, broad application tests, and a new hosted CodeQL scan have not been executed. No claims of fixed alerts or healthy replacement analysis are made.
+
+### Required during implementation
+
+1. Focused tests for `securitysast`, workflow contracts, security policy/results, transport cookies, decoder boundaries, semantic query handlers, principal DTO/ETag/pagination behavior, local CLI handoff, and desktop transport handling. Prepare required generated source before application tests.
+2. `task security:policy`, workflow/actionlint validation, and `task ci` before handing off substantial implementation. Run the desktop test/build and packaged accessibility verification appropriate to its change; run the focused decoder tests on both integer widths. Do not substitute a typecheck for those behavior tests.
+3. Hosted cold-cache and warm-cache scans of the same candidate. Prove all four Go modules build under tracing, generated import paths resolve, and both language reports contain complete raw diagnostics. Record toolchain, candidate SHA, durations, and extraction evidence. Warm-cache success must still include forced compilation.
+4. On a disposable test candidate/fixture, remove a required generated package and inject a diagnostic warning separately. Each must fail the SAST job and required Security gate. Missing SARIF must also fail. Ensure diagnostics are retained even on failure.
+5. Change a TypeSpec input in a disposable validation case and confirm generation is refreshed before extraction. Verify no dependency manifest or lockfile changes, including newly created files, in both cold and warm cases.
+6. Verify actual proxy HTTPS cookies and local HTTP handoff. Recheck all seven GitHub alerts against the fixing commit and record fixed, false-positive, intentional-exception, or still-open status individually. Review any new findings rather than require the old alert count to remain seven.
+7. Verify the normal PR, merge-group, and main workflows on their actual candidate commits. Completion requires healthy current Go and JavaScript scans without the missing-package warning, required checks enforcing analysis health, and a reviewed disposition for every listed alert. The separate alert-severity enforcement limitation must remain explicit until that policy is implemented.
+
+## Research sources
+
+The repository and authenticated SARIF traces provide the case-specific evidence above. These primary sources informed the design:
+
+- [GitHub: compiled-language CodeQL build options](https://docs.github.com/en/code-security/reference/code-scanning/codeql/codeql-build-options-and-steps-for-compiled-languages) and [no source seen during build](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/no-source-code-seen-during-build): manual build sequencing and cache concerns.
+- [CodeQL Go autobuilder](https://github.com/github/codeql/blob/main/go/extractor/cli/go-autobuilder/go-autobuilder.go): module-update behavior, corroborated by the inspected job log.
+- Pinned CodeQL action [configuration logic](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/src/config-utils.ts), [feature flags](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/src/feature-flags.ts), [overlay indexing](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/src/overlay/index.ts), and [analyze inputs](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/analyze/action.yml): full extraction, diagnostics export, and output contract.
+- [SARIF 2.1.0 specification](https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/sarif-v2.1.0-os.html): invocation and notification semantics.
+- CodeQL query guidance for [integer conversion](https://codeql.github.com/codeql-query-help/go/go-incorrect-integer-conversion/), [allocation size](https://codeql.github.com/codeql-query-help/go/go-uncontrolled-allocation-size/), [sensitive-data hashing](https://codeql.github.com/codeql-query-help/go/go-weak-sensitive-data-hashing/), [cookies](https://codeql.github.com/codeql-query-help/go/go-cookie-secure-not-set/), and [dynamic method calls](https://codeql.github.com/codeql-query-help/javascript/js-unvalidated-dynamic-method-call/). The last recommends `Map`, which this repository already uses.
+- [Go strconv](https://pkg.go.dev/strconv): platform-sized parsing behavior.
+- [GitHub: resolving alerts](https://docs.github.com/en/code-security/how-tos/manage-security-alerts/manage-code-scanning-alerts/resolve-alerts), [merge-protection limitations](https://docs.github.com/en/code-security/concepts/code-scanning/merge-protection), and [setting merge protection](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/manage-your-configuration/set-merge-protection): narrow triage and separation of status checks from vulnerability policy.
+
+Implementation finding: clean-workspace TypeScript test checking also requires `docs/visuals/examples.gen.json`. Add `visual-docs:generate` to sequential SAST preparation, using its existing offline extension preparation dependencies. This was exposed by the new type-check gate.
