@@ -6,7 +6,7 @@ From the repository root:
 task playground
 ```
 
-Open <http://127.0.0.1:4400>. The command installs the pinned Bun dependencies,
+Open the local address printed at startup. `task playground` installs the pinned Bun dependencies,
 generates the canonical visualization/layout contracts and icon catalog, compiles the shared
 CSS and browser components, then starts a loopback-only Bun static server. It
 requires the repository's development tools (Task, Bun, Node/npm and Go for
