@@ -23,7 +23,7 @@ func TestRequiredSecurityWorkflowAggregatesEveryFailClosedLane(t *testing.T) {
 		"uses: ./.github/actions/setup-ci",
 		"task security:source",
 		"sast-validation:",
-		"build-mode: autobuild",
+		"build-mode: manual",
 		"build-mode: ${{ matrix.build-mode }}",
 		"name: Security gate",
 		"if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}",
@@ -388,4 +388,120 @@ func containsPinnedAction(workflow, action string) bool {
 		}
 	}
 	return true
+}
+
+func TestSASTWorkflowPreparesEachWorkspaceAndRetainsFailureDiagnostics(t *testing.T) {
+	var workflow struct {
+		Jobs map[string]struct {
+			Env      map[string]string `yaml:"env"`
+			Strategy struct {
+				FailFast bool `yaml:"fail-fast"`
+				Matrix   struct {
+					Include []map[string]string `yaml:"include"`
+				} `yaml:"matrix"`
+			} `yaml:"strategy"`
+			Steps []struct {
+				Name, ID, If, Uses, Run string
+				With, Env               map[string]string
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(repositoryYAML(t, ".github/workflows/security.yml")), &workflow); err != nil {
+		t.Fatal(err)
+	}
+	job := workflow.Jobs["sast-validation"]
+	for key, value := range map[string]string{"GOFLAGS": "-tags=duckdb_arrow", "CODEQL_OVERLAY_DATABASE_MODE": "none", "CODEQL_ACTION_DIFF_INFORMED_QUERIES": "false", "CODEQL_ACTION_EXPORT_DIAGNOSTICS": "true"} {
+		if job.Env[key] != value {
+			t.Errorf("%s=%q, want %q", key, job.Env[key], value)
+		}
+	}
+	if job.Strategy.FailFast || len(job.Strategy.Matrix.Include) != 2 {
+		t.Fatal("languages must run independently")
+	}
+	for _, entry := range job.Strategy.Matrix.Include {
+		switch entry["language"] {
+		case "go":
+			if entry["build-mode"] != "manual" || entry["sarif"] != "go.sarif" {
+				t.Fatal(entry)
+			}
+		case "javascript-typescript":
+			if entry["build-mode"] != "none" || entry["sarif"] != "javascript.sarif" {
+				t.Fatal(entry)
+			}
+		default:
+			t.Fatalf("unexpected language: %v", entry)
+		}
+	}
+	indices := map[string]int{}
+	for i, step := range job.Steps {
+		indices[step.Name] = i
+	}
+	order := []string{"Check out the exact candidate", "Capture immutable SAST checkout baseline", "Set up the locked SAST toolchain", "Build the SAST contract helper before tracing", "Prepare generated source in this runner", "Check maintained TypeScript source graphs", "Verify checkout integrity before extraction", "Initialize selected CodeQL analysis", "Trace every maintained Go module", "Analyze selected source language", "Require complete analysis diagnostics", "Verify checkout integrity after analysis", "Retain raw CodeQL diagnostics"}
+	previous := -1
+	for _, name := range order {
+		i, ok := indices[name]
+		if !ok || i <= previous {
+			t.Fatalf("missing or unordered step %q", name)
+		}
+		previous = i
+	}
+	setup := job.Steps[indices["Set up the locked SAST toolchain"]]
+	if setup.Uses != "./.github/actions/setup-ci" || setup.With["profile"] != "validation" || setup.With["browser"] != "false" {
+		t.Fatal("SAST must use the locked validation toolchain")
+	}
+	if job.Steps[indices["Prepare generated source in this runner"]].Run != "task security:sast:prepare" {
+		t.Fatal("SAST must prepare each workspace")
+	}
+	init := job.Steps[indices["Initialize selected CodeQL analysis"]]
+	if init.ID != "codeql_init" || init.Uses != "github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2" {
+		t.Fatal("review extraction assumptions when changing the action")
+	}
+	analyze := job.Steps[indices["Analyze selected source language"]]
+	if analyze.With["output"] != "${{ runner.temp }}/codeql-results" || analyze.With["category"] != "/language:${{ matrix.language }}" {
+		t.Fatal("raw output/category contract changed")
+	}
+	for _, name := range []string{"Require complete analysis diagnostics", "Retain raw CodeQL diagnostics"} {
+		if job.Steps[indices[name]].If != "${{ !cancelled() && steps.codeql_init.outcome == 'success' }}" {
+			t.Fatalf("%s must also run on analysis failure", name)
+		}
+	}
+	integrity := job.Steps[indices["Verify checkout integrity after analysis"]]
+	if integrity.If != "${{ !cancelled() && steps.sast_helper.outcome == 'success' }}" {
+		t.Fatal("integrity must run on preparation/extraction failure")
+	}
+	upload := job.Steps[indices["Retain raw CodeQL diagnostics"]]
+	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["retention-days"] != "14" || upload.With["if-no-files-found"] != "ignore" {
+		t.Fatal("diagnostic retention contract changed")
+	}
+	for _, fragment := range []string{"matrix.language", "github.job", "github.run_id", "github.run_attempt"} {
+		if !strings.Contains(upload.With["name"], fragment) {
+			t.Errorf("artifact name missing %s", fragment)
+		}
+	}
+}
+
+func TestSASTPreparationUsesSequentialGenerationAndBootstrapsAPI(t *testing.T) {
+	var task struct {
+		Cmds []struct {
+			Task string `yaml:"task"`
+		} `yaml:"cmds"`
+		Deps []string `yaml:"deps"`
+	}
+	var tasks map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(taskDefinition(t, repositoryText(t, "Taskfile.yml"), "security:sast:prepare")), &tasks); err != nil {
+		t.Fatal(err)
+	}
+	node := tasks["security:sast:prepare"]
+	if err := node.Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"go:deps", "db:generate", "config:generate", "api:generate", "ui-signals:generate", "agent-contracts:generate", "data-resource-contracts:generate", "pipeline-contracts:generate", "desktop-discovery:generate", "layout-contract:generate", "map-style:generate", "lucide-icons:generate", "visual-docs:generate"}
+	if len(task.Deps) != 0 || len(task.Cmds) != len(want) {
+		t.Fatal("source preparation must be sequential")
+	}
+	for i, name := range want {
+		if task.Cmds[i].Task != name {
+			t.Errorf("generation step %d: %q, want %q", i, task.Cmds[i].Task, name)
+		}
+	}
 }

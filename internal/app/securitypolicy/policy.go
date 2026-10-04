@@ -118,14 +118,8 @@ var (
 // ValidateRepository validates all three repository-owned contracts and
 // Dependabot coverage. now is injectable to make expiry checks hermetic.
 func ValidateRepository(root string, now time.Time) error {
-	if strings.TrimSpace(root) == "" {
-		return errors.New("repository root is required")
-	}
-	coverage, err := readYAML[Coverage](filepath.Join(root, coverageFile))
+	coverage, err := LoadValidatedCoverage(root)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", coverageFile, err)
-	}
-	if err := validateCoverage(root, coverage); err != nil {
 		return err
 	}
 	exceptions, err := readYAML[Exceptions](filepath.Join(root, exceptionsFile))
@@ -146,6 +140,22 @@ func ValidateRepository(root string, now time.Time) error {
 		return err
 	}
 	return nil
+}
+
+// LoadValidatedCoverage returns the inventory only after checking it against
+// discovered maintained surfaces. Build/scanner consumers share this authority.
+func LoadValidatedCoverage(root string) (Coverage, error) {
+	if strings.TrimSpace(root) == "" {
+		return Coverage{}, errors.New("repository root is required")
+	}
+	coverage, err := readYAML[Coverage](filepath.Join(root, coverageFile))
+	if err != nil {
+		return Coverage{}, fmt.Errorf("read %s: %w", coverageFile, err)
+	}
+	if err := validateCoverage(root, coverage); err != nil {
+		return Coverage{}, err
+	}
+	return coverage, nil
 }
 
 // LoadValidatedExceptions validates the complete repository security contract
