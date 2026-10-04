@@ -167,7 +167,7 @@ jobs:
           if-no-files-found: warn
 
   cli-compatibility:
-    name: Debian 12 controller (${{ matrix.arch }})
+    name: Linux host controller matrix (${{ matrix.arch }})
     needs: cli-build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -196,56 +196,18 @@ jobs:
           artifact-ids: ${{ needs.cli-build.outputs.artifact_id }}
           merge-multiple: true
           path: cli-candidates
-      - name: Qualify the extracted controller on the unchanged Debian host baseline
+      - name: Qualify the exact controller on the independent Linux host matrix
         env:
           ARCH: ${{ matrix.arch }}
           MACHINE: ${{ matrix.machine }}
         run: |
           set -euo pipefail
           test "$(uname -m)" = "$MACHINE"
-          mkdir -p cli-extracted .tmp/nix-cli-evidence
-          archive="cli-candidates/$ARCH/leapviewctl-linux-$ARCH.tar.gz"
-          tar -C cli-extracted -xzf "$archive"
-          python3 scripts/check_nix_cli_compatibility.py cli-extracted/leapviewctl \
-            --arch "$ARCH" --output .tmp/nix-cli-evidence/static.json
-          python3 scripts/nix_candidate_manifest.py "$archive" --kind cli-archive \
+          python3 scripts/nix_cli_publication.py probe-hosts \
+            --archive "cli-candidates/$ARCH/leapviewctl-linux-$ARCH.tar.gz" \
             --archive-identity "cli-candidates/$ARCH/archive-identity.json" \
-            --output .tmp/nix-cli-evidence/candidate-manifest.json
-          python3 scripts/nix_candidate_manifest.py "$archive" --kind cli-archive \
-            --archive-identity "cli-candidates/$ARCH/archive-identity.json" \
-            --verify .tmp/nix-cli-evidence/candidate-manifest.json
-          # This baseline comes from the existing client fixture, independently
-          # of any candidate's exported deployment files or runtime libraries.
-          host=debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
-          docker pull --platform "linux/$ARCH" "$host"
-          for command in 'version --json' '--help' 'host --help'; do
-            read -ra command_args <<< "$command"
-            docker run --rm --platform "linux/$ARCH" --network none --read-only \
-              --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges \
-              --mount "type=bind,src=$PWD/cli-extracted/leapviewctl,dst=/usr/local/bin/leapviewctl,readonly" \
-              --entrypoint /usr/local/bin/leapviewctl "$host" "${command_args[@]}" \
-              > ".tmp/nix-cli-evidence/$(echo "$command" | tr ' -' '__').txt"
-          done
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          root = Path('.tmp/nix-cli-evidence')
-          identity = json.loads(Path('cli-candidates', os.environ['ARCH'], 'archive-identity.json').read_text())
-          runtime = json.loads((root / 'version___json.txt').read_text())
-          assert runtime['version'] == identity['version']
-          assert runtime['revision'] == identity['sourceRevision']
-          assert runtime['dirty'] is False and runtime['development'] is True
-          candidate_static = json.loads(Path('cli-candidates', os.environ['ARCH'], 'static-compatibility.json').read_text())
-          assert candidate_static == json.loads((root / 'static.json').read_text())
-          manifest = json.loads((root / 'candidate-manifest.json').read_text())
-          (root / 'host-compatibility.json').write_text(json.dumps({
-              'schemaVersion': 1, 'platform': identity['platform'],
-              'host': 'debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251',
-              'binarySHA256': candidate_static['binarySHA256'],
-              'candidateDigest': manifest['candidateDigest'],
-              'runtimeIdentity': runtime, 'result': 'success', 'releaseAdmission': False,
-          }, indent=2) + '\n')
-          PY
+            --source-root . --source-revision "$(git rev-parse HEAD)" \
+            --evidence-dir .tmp/nix-cli-evidence
       - name: Retain hash-bound compatibility evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -57,11 +57,20 @@ class CliPublicationTests(unittest.TestCase):
                 ('GOOS', 'linux'), ('GOARCH', 'amd64'), ('CGO_ENABLED', '0'), ('GOAMD64', 'v1')]],
         }
         self.commands = []
-        self.runtime_identity = {'version': self.version, 'revision': self.revision,
+        self.runtime_identity = {'product': 'leapviewctl', 'version': self.version, 'revision': self.revision,
                                  'buildTime': self.build_time, 'dirty': False, 'development': True}
+        self.os_releases = {
+            'debian12': b'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\nID=debian\nVERSION_ID="12"\n',
+            'ubuntu2404': b'PRETTY_NAME="Ubuntu 24.04 LTS"\nID=ubuntu\nVERSION_ID="24.04"\n',
+            'debian13': b'PRETTY_NAME="Debian GNU/Linux 13 (trixie)"\nID=debian\nVERSION_ID="13"\n',
+        }
         self.syft_version = {'version': publication.SYFT_VERSION}
         self.spdx_mode = 'valid'
         self.runtime_mode = 'valid'
+        self.fail_fixture = None
+        self.bad_os_fixture = None
+        self.bad_runtime_fixture = None
+        self.oversized_fixture = None
         self.attestation_calls = 0
 
     def write_archive(self, members=None):
@@ -138,10 +147,16 @@ class CliPublicationTests(unittest.TestCase):
             output.write_bytes(self.spdx(binary))
             return subprocess.CompletedProcess(args, 0, stdout=b'')
         if args[:2] == ['docker', 'pull']:
+            self.assertIn(args[-1], [fixture['image'] for fixture in publication.HOST_FIXTURES])
             return subprocess.CompletedProcess(args, 0, stdout=b'')
         if args[:3] == ['docker', 'rm', '--force']:
             return subprocess.CompletedProcess(args, 0, stdout=b'')
         if args[:2] == ['docker', 'run']:
+            fixture_image = next((fixture['image'] for fixture in publication.HOST_FIXTURES
+                                  if fixture['image'] in args), None)
+            self.assertIsNotNone(fixture_image)
+            fixture = next(item for item in publication.HOST_FIXTURES
+                           if item['image'] == fixture_image)
             self.assertIn('--network', args)
             self.assertEqual(args[args.index('--network') + 1], 'none')
             self.assertIn('--read-only', args)
@@ -149,23 +164,47 @@ class CliPublicationTests(unittest.TestCase):
             self.assertEqual(args[args.index('--cap-drop') + 1], 'ALL')
             self.assertIn('65534:65534', args)
             self.assertIn('no-new-privileges', args)
-            self.assertIn('readonly', args[args.index('--mount') + 1])
-            mounted = args[args.index('--mount') + 1].split('src=', 1)[1].split(',', 1)[0]
-            self.assertEqual(Path(mounted).stat().st_mode & 0o777, 0o755)
+            self.assertEqual(args[args.index('--memory') + 1], '256m')
+            self.assertEqual(args[args.index('--cpus') + 1], '1')
+            self.assertEqual(args[args.index('--pids-limit') + 1], '64')
+            self.assertEqual(args[args.index('--ulimit') + 1], 'core=0')
+            self.assertNotIn('--privileged', args)
+            if args[args.index('--entrypoint') + 1] == '/usr/local/bin/leapviewctl':
+                self.assertIn('readonly', args[args.index('--mount') + 1])
+                mounted = args[args.index('--mount') + 1].split('src=', 1)[1].split(',', 1)[0]
+                self.assertEqual(Path(mounted).stat().st_mode & 0o777, 0o755)
+            else:
+                self.assertNotIn('--mount', args)
+                self.assertEqual(args[args.index('--entrypoint') + 1], '/bin/cat')
             self.assertIn('--name', args)
             self.assertEqual(args[args.index('--log-driver') + 1], 'none')
             self.assertTrue(hasattr(kwargs['stderr'], 'write'))
             self.assertIsNotNone(kwargs.get('preexec_fn'))
+            self.assertEqual(args[args.index('--platform') + 1], self.identity['platform'])
+            self.assertEqual(kwargs['timeout'], 45)
+            if fixture['id'] == self.fail_fixture:
+                raise subprocess.CalledProcessError(1, args)
+            if args[args.index('--entrypoint') + 1] == '/bin/cat':
+                self.assertEqual(args[-1], '/etc/os-release')
+                output = self.os_releases[fixture['id']]
+                if fixture['id'] == self.bad_os_fixture:
+                    output = b'ID=wrong\nVERSION_ID=0\n'
+                kwargs['stdout'].write(output)
+                return subprocess.CompletedProcess(args, 0)
             if self.runtime_mode == 'timeout':
                 raise subprocess.TimeoutExpired(args, 45)
             if args[-2:] == ['version', '--json']:
                 runtime = dict(self.runtime_identity)
                 if self.runtime_mode == 'wrong-revision':
                     runtime['revision'] = 'f' * 40
+                if fixture['id'] == self.bad_runtime_fixture:
+                    runtime['version'] = 'stale'
                 output = json.dumps(runtime).encode()
             else:
                 output = b'leapviewctl usage fixture\n'
             if self.runtime_mode == 'oversized':
+                output = b'x' * (publication.MAX_RUNTIME_BYTES + 1)
+            if fixture['id'] == self.oversized_fixture:
                 output = b'x' * (publication.MAX_RUNTIME_BYTES + 1)
             if self.runtime_mode == 'stderr-oversized':
                 kwargs['stderr'].write(b'x' * (publication.MAX_RUNTIME_BYTES + 1))
@@ -218,6 +257,18 @@ class CliPublicationTests(unittest.TestCase):
             return publication.verify(self.archive, self.identity_path, self.source_root,
                                       self.revision, self.verifier, self.evidence_dir)
 
+    def run_probe_hosts(self):
+        with patch.object(publication.os, 'geteuid', return_value=1000), \
+                patch.object(publication, '_native_arch', return_value=('amd64', 'x86_64')), \
+                patch.object(publication, '_source_build_identity',
+                             return_value=(self.version, self.build_time)), \
+                patch.object(publication, '_trusted_source', return_value=self.source), \
+                patch.object(publication.subprocess, 'check_output',
+                             return_value=json.dumps(self.build_info).encode()), \
+                patch.object(publication.subprocess, 'run', side_effect=self.fake_run):
+            return publication.probe_hosts(self.archive, self.identity_path, self.source_root,
+                                           self.revision, self.evidence_dir)
+
     def test_qualification_binds_exact_source_archive_runtime_static_spdx_and_go_evidence(self):
         manifest = self.run_qualify()
         report = json.loads((self.evidence_dir / 'qualification.json').read_bytes())
@@ -226,19 +277,30 @@ class CliPublicationTests(unittest.TestCase):
         self.assertEqual(report['candidateDigest'], manifest['candidateDigest'])
         self.assertEqual(manifest['artifact']['sha256'], candidate.digest_file(self.archive))
         self.assertEqual(manifest['source'], self.source)
-        self.assertEqual(report['runtimeIdentity'], self.runtime_identity)
-        self.assertEqual(report['host']['image'], publication.HOST_IMAGE)
+        self.assertEqual(report['schemaVersion'], 2)
+        self.assertEqual([host['id'] for host in report['hosts']],
+                         [fixture['id'] for fixture in publication.HOST_FIXTURES])
+        for host, fixture in zip(report['hosts'], publication.HOST_FIXTURES):
+            self.assertEqual(host, {'id': fixture['id'], 'image': fixture['image'],
+                                    'platform': 'linux/amd64', 'machine': 'x86_64',
+                                    'runtimeIdentity': self.runtime_identity})
         self.assertEqual(report['platform'], 'linux/amd64')
         self.assertEqual(report['goEvidence'], manifest['evidence']['go-binaries'])
         self.assertEqual(manifest['evidence'][publication.QUALIFICATION_KEY]['staticReport']['cgoEnabled'], False)
         self.assertEqual({record['path'] for record in report['reports']}, set(publication.REPORTS))
         docker_runs = [args for args, _ in self.commands if args[:2] == ['docker', 'run']]
-        self.assertEqual(len(docker_runs), 3)
-        self.assertTrue(all(args[args.index('--entrypoint') + 1] == '/usr/local/bin/leapviewctl'
-                            for args in docker_runs))
+        self.assertEqual(len(docker_runs), len(publication.HOST_FIXTURES) * 4)
+        self.assertEqual(sum(args[args.index('--entrypoint') + 1] == '/bin/cat'
+                             for args in docker_runs), len(publication.HOST_FIXTURES))
+        self.assertEqual(sum(args[args.index('--entrypoint') + 1] == '/usr/local/bin/leapviewctl'
+                             for args in docker_runs), len(publication.HOST_FIXTURES) * 3)
+        pulls = [args for args, _ in self.commands if args[:2] == ['docker', 'pull']]
+        self.assertEqual([args[-1] for args in pulls],
+                         [fixture['image'] for fixture in publication.HOST_FIXTURES])
         self.assertTrue(all('--privileged' not in args for args in docker_runs))
         self.assertTrue(all('--bundle' not in args for args, _ in self.commands))
         self.assertFalse(any(args[0] == str(self.archive) for args, _ in self.commands))
+        self.assertEqual({record['path'] for record in report['reports']}, set(publication.REPORTS))
         scan = next(args for args, _ in self.commands if args[0] == str(self.verifier)
                     and '-verify-binary-evidence' not in args)
         self.assertEqual(scan[scan.index('-root') + 1], str(candidate.ROOT))
@@ -277,7 +339,7 @@ class CliPublicationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_verify()
         self.identity_path.write_bytes(original_identity)
-        report = self.evidence_dir / 'runtime-help.txt'
+        report = self.evidence_dir / 'debian12-runtime-help.txt'
         content = report.read_bytes()
         report.unlink()
         report.symlink_to(self.archive)
@@ -352,6 +414,145 @@ class CliPublicationTests(unittest.TestCase):
                                     for args, _ in self.commands))
                 self.assertFalse((self.evidence_dir / 'candidate-manifest.json').exists())
         self.runtime_mode = 'valid'
+
+    def test_offline_verifier_reconstructs_all_fixture_os_and_runtime_evidence(self):
+        self.run_qualify()
+        for fixture in publication.HOST_FIXTURES:
+            os_report = self.evidence_dir / (fixture['id'] + '-os-release.txt')
+            runtime_report = self.evidence_dir / (fixture['id'] + '-runtime-version.json')
+            self.assertEqual(os_report.read_bytes(), self.os_releases[fixture['id']])
+            self.assertEqual(json.loads(runtime_report.read_bytes()), self.runtime_identity)
+        self.run_verify()
+
+    def test_offline_verifier_rejects_inconsistent_later_host_and_matrix_reordering(self):
+        self.run_qualify()
+        os_report = self.evidence_dir / 'debian13-os-release.txt'
+        original_os = os_report.read_bytes()
+        os_report.write_bytes(b'ID=debian\nVERSION_ID=12\n')
+        self._reseal_qualification_report('debian13-os-release.txt')
+        with self.assertRaisesRegex(ValueError, 'OS release'):
+            self.run_verify()
+        os_report.write_bytes(original_os)
+        self.run_qualify_again_after_cleanup()
+
+        report_path = self.evidence_dir / 'qualification.json'
+        manifest_path = self.evidence_dir / 'candidate-manifest.json'
+        report = json.loads(report_path.read_bytes())
+        report['hosts'][0], report['hosts'][1] = report['hosts'][1], report['hosts'][0]
+        self._write_resealed(report, report_path, manifest_path)
+        with self.assertRaisesRegex(ValueError, 'manifest|qualification'):
+            self.run_verify()
+
+    def test_offline_verifier_rejects_missing_extra_duplicate_and_forged_hosts(self):
+        self.run_qualify()
+        missing = self.evidence_dir / 'debian13-runtime-help.txt'
+        original = missing.read_bytes()
+        missing.unlink()
+        with self.assertRaisesRegex(ValueError, 'inventory'):
+            self.run_verify()
+        missing.write_bytes(original)
+        extra = self.evidence_dir / 'unexpected-host.txt'
+        extra.write_text('extra')
+        with self.assertRaisesRegex(ValueError, 'inventory'):
+            self.run_verify()
+        extra.unlink()
+
+        report_path = self.evidence_dir / 'qualification.json'
+        manifest_path = self.evidence_dir / 'candidate-manifest.json'
+        for mutation in ('duplicate', 'forged-image'):
+            self.run_qualify_again_after_cleanup()
+            report = json.loads(report_path.read_bytes())
+            if mutation == 'duplicate':
+                report['hosts'][1] = copy.deepcopy(report['hosts'][0])
+            else:
+                report['hosts'][2]['image'] = publication.HOST_FIXTURES[0]['image']
+            self._write_resealed(report, report_path, manifest_path)
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, 'manifest|qualification'):
+                self.run_verify()
+
+    def _reseal_qualification_report(self, changed_report):
+        report_path = self.evidence_dir / 'qualification.json'
+        manifest_path = self.evidence_dir / 'candidate-manifest.json'
+        report = json.loads(report_path.read_bytes())
+        for record in report['reports']:
+            if record['path'] == changed_report:
+                record['sha256'] = candidate.digest_file(self.evidence_dir / changed_report)
+        self._write_resealed(report, report_path, manifest_path)
+
+    def _write_resealed(self, report, report_path, manifest_path):
+        manifest = json.loads(manifest_path.read_bytes())
+        qualification = {key: value for key, value in report.items() if key != 'candidateDigest'}
+        manifest['evidence'][publication.QUALIFICATION_KEY] = qualification
+        manifest.pop('candidateDigest', None)
+        manifest['candidateDigest'] = candidate.digest_bytes(
+            b'leapview/nix-candidate-manifest/v1\n' + candidate.canonical_bytes(manifest))
+        report['candidateDigest'] = manifest['candidateDigest']
+        manifest_path.write_bytes(json.dumps(manifest, indent=2).encode() + b'\n')
+        report_path.write_bytes(json.dumps(report, indent=2).encode() + b'\n')
+
+    def run_qualify_again_after_cleanup(self):
+        import shutil
+        shutil.rmtree(self.evidence_dir)
+        self.commands.clear()
+        self.run_qualify()
+
+    def test_probe_hosts_writes_matrix_receipt_without_duplicate_scans(self):
+        receipt = self.run_probe_hosts()
+        self.assertEqual(receipt['scope'], 'static-cli-host-compatibility')
+        self.assertEqual(receipt['archive']['sha256'], candidate.digest_file(self.archive))
+        self.assertEqual(receipt['staticBinarySHA256'], receipt['staticReport']['binarySHA256'])
+        self.assertEqual(receipt['source'], self.source)
+        self.assertEqual([host['id'] for host in receipt['hosts']],
+                         [fixture['id'] for fixture in publication.HOST_FIXTURES])
+        self.assertFalse(receipt['releaseAdmission'])
+        self.assertEqual({path.name for path in self.evidence_dir.iterdir()},
+                         {'static.json', 'host-compatibility.json', *(
+                             fixture['id'] + suffix for fixture in publication.HOST_FIXTURES
+                             for suffix in ('-os-release.txt', '-runtime-version.json',
+                                            '-runtime-help.txt', '-runtime-host-help.txt'))})
+        self.assertEqual(self.evidence_dir.stat().st_mode & 0o777, 0o700)
+        self.assertFalse(any(args[0] in {'syft', 'gh'} or args[0] == str(self.verifier)
+                             for args, _ in self.commands))
+
+    def test_probe_hosts_rejects_later_fixture_failure_and_cleans_containers(self):
+        self.evidence_dir = self.root / 'failed-probe'
+        self.fail_fixture = 'debian13'
+        with self.assertRaisesRegex(ValueError, 'host probe'):
+            self.run_probe_hosts()
+        runs = [args for args, _ in self.commands if args[:2] == ['docker', 'run']]
+        removed = [args[3] for args, _ in self.commands if args[:3] == ['docker', 'rm', '--force']]
+        self.assertEqual(len(runs), 9)
+        self.assertEqual(len(removed), len(runs))
+        self.assertEqual([args[args.index('--name') + 1] for args in runs], removed)
+        self.assertFalse((self.evidence_dir / 'host-compatibility.json').exists())
+
+    def test_probe_hosts_rejects_later_fixture_oversized_output_and_cleans_container(self):
+        self.evidence_dir = self.root / 'oversized-later-probe'
+        self.oversized_fixture = 'debian13'
+        with self.assertRaisesRegex(ValueError, 'output|host-probe'):
+            self.run_probe_hosts()
+        runs = [args for args, _ in self.commands if args[:2] == ['docker', 'run']]
+        removed = [args[3] for args, _ in self.commands if args[:3] == ['docker', 'rm', '--force']]
+        self.assertEqual(len(runs), 10)
+        self.assertEqual(len(removed), len(runs))
+        self.assertEqual([args[args.index('--name') + 1] for args in runs], removed)
+        self.assertFalse((self.evidence_dir / 'host-compatibility.json').exists())
+
+    def test_probe_hosts_rejects_inconsistent_os_release_and_runtime_on_later_fixture(self):
+        for bad_fixture in ('debian13-os', 'debian13-runtime'):
+            self.evidence_dir = self.root / bad_fixture
+            if bad_fixture.endswith('-os'):
+                self.bad_os_fixture = 'debian13'
+            else:
+                self.bad_runtime_fixture = 'debian13'
+            with self.subTest(bad_fixture=bad_fixture), self.assertRaises(ValueError):
+                self.run_probe_hosts()
+            self.assertFalse((self.evidence_dir / 'host-compatibility.json').exists())
+            import shutil
+            shutil.rmtree(self.evidence_dir)
+            self.commands.clear()
+            self.bad_os_fixture = None
+            self.bad_runtime_fixture = None
 
     def test_source_version_and_build_time_come_from_trusted_checkout(self):
         source = self.source
@@ -528,7 +729,8 @@ class CliHostRuntimeTests(unittest.TestCase):
                 binary.chmod(0o755)
                 evidence = root / 'evidence'
                 evidence.mkdir()
-                identifiers = [uuid.uuid4().hex for _ in publication.RUNTIME_COMMANDS]
+                identifiers = [uuid.uuid4().hex for _ in publication.HOST_FIXTURES
+                               for _ in range(len(publication.RUNTIME_COMMANDS) + 1)]
                 names = ['leapview-cli-probe-' + identifier for identifier in identifiers]
                 generated = iter(identifiers)
                 with patch.object(publication.uuid, 'uuid4',
@@ -537,15 +739,24 @@ class CliHostRuntimeTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, 'host.probe'):
                             publication._run_host(binary, arch, evidence)
                     else:
-                        runtime, machine = publication._run_host(binary, arch, evidence)
-                        self.assertEqual(runtime, {'fixture': 'bounded'})
+                        hosts, machine = publication._run_host(binary, arch, evidence)
+                        self.assertEqual([host['id'] for host in hosts],
+                                         [fixture['id'] for fixture in publication.HOST_FIXTURES])
+                        self.assertTrue(all(host['runtimeIdentity'] == {'fixture': 'bounded'}
+                                            for host in hosts))
                         self.assertEqual(machine, publication.ARCH_MACHINE[arch])
-                        self.assertEqual((evidence / 'runtime-help.txt').read_bytes(), b'fixture help\n')
-                        self.assertEqual((evidence / 'runtime-host-help.txt').read_bytes(), b'fixture help\n')
+                        for fixture in publication.HOST_FIXTURES:
+                            publication._validate_os_release(
+                                (evidence / (fixture['id'] + '-os-release.txt')).read_bytes(), fixture)
+                            self.assertEqual((evidence / (fixture['id'] + '-runtime-help.txt')).read_bytes(),
+                                             b'fixture help\n')
+                            self.assertEqual((evidence / (fixture['id'] + '-runtime-host-help.txt')).read_bytes(),
+                                             b'fixture help\n')
                 for name in names:
                     inspected = subprocess.run(['docker', 'inspect', name],
                                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     self.assertNotEqual(inspected.returncode, 0, 'probe container was not removed')
+
 
 
 if __name__ == '__main__':

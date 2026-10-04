@@ -442,10 +442,16 @@ The candidate build has no signing authority. Separate native runners download
 its immutable artifact ID, then use the protected workflow revision's extractor,
 static ELF/Go checks, fresh binary-mode govulncheck, and pinned Syft SPDX inventory.
 The inventory must describe the exact extracted controller's Go modules. Each
-qualifier executes version and command discovery in the independently pinned
-Debian 12 fixture with no network, a read-only filesystem, an unprivileged user
-and no capabilities. These probes establish the existing baseline command
-contract; they do not establish installation or recovery acceptance.
+qualifier executes version and command discovery in all independently pinned
+Debian 12, Ubuntu 24.04 and Debian 13 fixtures with no network, a read-only
+filesystem, an unprivileged user and no capabilities. Debian 12 preserves the
+existing client baseline. The other two fixtures reflect the advertised Linux
+bootstrap hosts in `deploy/host/bootstrap-linux.sh`; candidate-provided libraries
+or deployment files cannot select these fixtures. `/etc/os-release` must identify
+the expected distribution and version in each fixture.
+These are userland executable checks; systemd, Docker installation, NixOS host
+execution and the complete install/upgrade/rollback/recovery lifecycle still need
+separate qualification.
 Probe stdout and stderr each have a 1 MiB limit, and Docker daemon logging is
 disabled so candidate output cannot bypass those limits through daemon log files.
 
@@ -456,6 +462,18 @@ executing candidate code. The protected signing job downloads only the two
 qualifiers' exact artifact IDs, reverifies the reports, reauthorizes the current
 source, and attests the unchanged archive bytes and their bound SPDX documents.
 It runs no candidate executable.
+
+The qualification contract requires the ordered three-host matrix and all twelve
+raw host outputs (OS identity, version JSON and two help outputs per host).
+Every output hash, fixture digest, native architecture and runtime identity is
+bound into the candidate manifest. Missing, extra or altered reports, a partial
+matrix or a changed fixture fail verification. Older single-host receipts must
+be regenerated under the current contract.
+
+PR compatibility jobs use `scripts/nix_cli_publication.py probe-hosts` for the same
+bounded extractor and host probes. Its receipt binds archive/source/platform and
+binary identity to all raw matrix reports. It grants no signing or release
+authority; the protected producer reruns the entire matrix with main-owned tools.
 
 The final read-only `verify-signed` job retrieves the signing job's exact artifact
 ID and repeats offline verification. It then asks GitHub to verify each file's
