@@ -112,9 +112,13 @@ func runQualificationHistoricalTransitionScenario(
 	options qualificationHistoricalTransitionOptions,
 ) qualificationHistoricalTransitionChecks {
 	t.Helper()
+	phaseStarted := time.Now()
 	fixture := startQualificationHistoricalPredecessorFixture(t, ctx, repoRoot)
+	t.Logf("historical_transition_phase=predecessor_fixture elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
 	require.Equal(t, qualificationHistoricalPredecessorRevision, fixture.LegacyPublication.RuntimeRevision)
+	phaseStarted = time.Now()
 	candidate := runQualificationHistoricalCandidateTransition(t, ctx, repoRoot, options, fixture)
+	t.Logf("historical_transition_phase=candidate_transition elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
 	intent := candidate.Request.AccessTransition
 	require.NotNil(t, intent, "the native maintenance request must carry the actual typed access intent")
 	require.Equal(t, fixture.Seed.TargetID, intent.TargetID)
@@ -155,6 +159,7 @@ func runQualificationHistoricalTransitionScenario(
 	// run the ordinary publication adapter against the already migrated project.
 	// This proves subsequent replacement compatibility; it does not claim a
 	// second image digest was tested.
+	phaseStarted = time.Now()
 	require.NoError(t, runQualificationHistoricalBrowserValidation(ctx, t, repoRoot, fixture.Seed, candidate.Proxy),
 		"the newly activated typed generation must render the real CFO query proof")
 	require.NoError(t, verifyQualificationHistoricalTransitionAuthorization(ctx, candidate, fixture.Seed),
@@ -163,6 +168,8 @@ func runQualificationHistoricalTransitionScenario(
 		"gracefully stop and verify the candidate before starting its replacement")
 	_, err := candidate.Candidate.Remove(ctx)
 	require.NoError(t, err, "remove the stopped candidate before starting its replacement")
+	t.Logf("historical_transition_phase=initial_browser_auth_and_candidate_handoff elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
+	phaseStarted = time.Now()
 	replacementRuntime := newTestcontainersQualificationRuntime()
 	replacementCandidate, replacementEndpoint := startQualificationHistoricalServer(t, ctx, replacementRuntime,
 		fixture.Network, fixture.StateVolume, options.CandidateImage, fixture.ApplicationEnv,
@@ -192,6 +199,7 @@ func runQualificationHistoricalTransitionScenario(
 		qualificationHistoricalDashboardOverviewURL(fixture.Seed.DashboardID)))
 	require.NoError(t, runQualificationHistoricalBrowserValidation(ctx, t, repoRoot, replacementSeed, replacementProxy),
 		"the subsequent normal deployment must retain the real CFO query proof")
+	t.Logf("historical_transition_phase=replacement_publish_browser_proofs elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
 
 	checks := qualificationHistoricalTransitionChecks{
 		LegacyPublication:       fixture.LegacyPublication.PublicationID != "",
