@@ -3,6 +3,8 @@ import { chromium, expect as browserExpect, type Browser, type Page } from '@pla
 import { chartExamples } from './chart-fixtures'
 import { playgroundResponse } from './server'
 import { startTestPlayground } from './test-server'
+import { tokenExamples } from './catalog'
+import { openExample } from './browser-review/helpers'
 
 let browser: Browser
 let server: Awaited<ReturnType<typeof startTestPlayground>>
@@ -18,7 +20,7 @@ afterAll(async () => { await browser?.close(); await server?.stop(true) })
 beforeEach(async () => {
   errors = []
   unexpectedRequests = []
-  page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
+  page = await browser.newPage({ baseURL: server.url.href, viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   page.setDefaultTimeout(7000)
   page.on('pageerror', error => errors.push(error.message))
   page.on('request', request => {
@@ -124,6 +126,26 @@ test('a failed example module leaves navigation usable and reload can recover', 
   await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
 })
 
+test('browser review waits for the actual preview while its module is delayed', async () => {
+  const gate = await delayControlsModule()
+  const opening = openExample(page, 'controls/select', { theme: 'light' })
+  try {
+    await gate.started
+    await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Loading example…')
+    await page.evaluate(async () => { await document.fonts.ready })
+    expect(await Promise.race([
+      opening.then(() => 'ready'),
+      new Promise<string>(resolve => setTimeout(() => resolve('pending'), 100)),
+    ])).toBe('pending')
+    gate.release()
+    await opening
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+  } finally {
+    gate.release()
+    await opening
+  }
+})
+
 for (const example of chartExamples) {
   test(`standalone ${example.id} renders the production adapter without backend requests`, async () => {
     await open(`charts/${example.id}`)
@@ -136,6 +158,14 @@ for (const example of chartExamples) {
   }, 20_000)
 }
 
+for (const { id } of tokenExamples) {
+  test(`token ${id} discovers production values standalone`, async () => {
+    await open(`tokens/${id}`)
+    await browserExpect.poll(() => page.locator('playground-tokens .token').count()).toBeGreaterThan(0)
+    await browserExpect(page.locator('playground-tokens .count')).toContainText(/\d+ tokens/)
+  })
+}
+
 for (const id of ['buttons', 'fields', 'select', 'multiselect', 'date-picker', 'filter-menu', 'toast', 'loading']) {
   test(`control ${id} renders standalone`, async () => {
     await open(`controls/${id}`)
@@ -143,6 +173,69 @@ for (const id of ['buttons', 'fields', 'select', 'multiselect', 'date-picker', '
     await browserExpect(page.locator('.documentation')).toContainText('Source')
   })
 }
+
+test('each lazy module loads its preview through mobile navigation', async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await open('tokens/colors')
+  const navigation = page.getByRole('navigation', { name: 'Examples', exact: true })
+  const examples = await page.getByRole('navigation', { name: 'Examples', exact: true, includeHidden: true }).locator('a[href^="#"]').evaluateAll(links =>
+    [...new Map(links.map(link => [link.getAttribute('href')!, link.textContent!.trim()])).entries()],
+  )
+  expect(examples.length).toBeGreaterThan(0)
+  const visitedModules = new Set<string>()
+  for (const [href, label] of examples) {
+    const route = href.slice(1)
+    const module = route.startsWith('recipes/') ? route : route.split('/')[0]
+    if (visitedModules.has(module)) continue
+    visitedModules.add(module)
+    await page.getByRole('button', { name: 'Browse', exact: true }).click()
+    await page.getByLabel('Find an example', { exact: true }).fill(label)
+    await navigation.getByRole('link', { name: label, exact: true }).click()
+    await browserExpect(page).toHaveURL(`${server.url}${href}`)
+    await browserExpect(page.getByRole('heading', { level: 1, name: label, exact: true })).toBeVisible()
+    await browserExpect(page.locator('.viewport [part~="preview"]').first()).toBeVisible()
+    for (const host of await page.locator('.viewport lv-visualization-host').all()) {
+      await host.evaluate(async (element: any) => { await element.ensureMounted() })
+      await browserExpect(host.locator('.error')).toHaveCount(0)
+      expect(await host.locator('.renderer').evaluate(element => element.childElementCount)).toBeGreaterThan(0)
+    }
+  }
+}, 120_000)
+
+test('linked dashboard reloads and propagates table selection into its chart', async () => {
+  await open('recipes/linked-visuals')
+  for (const reload of [false, true]) {
+    if (reload) await page.reload()
+    await browserExpect(page.locator('playground-linked-visuals .dashboard')).toBeVisible()
+    await browserExpect(page.locator('lv-visualization-host')).toHaveCount(3)
+    for (const host of await page.locator('lv-visualization-host').all()) {
+      await host.evaluate(async (element: any) => { await element.ensureMounted() })
+      await browserExpect(host.locator('.error')).toHaveCount(0)
+      expect(await host.locator('.renderer').evaluate(element => element.childElementCount)).toBeGreaterThan(0)
+    }
+  }
+  await page.locator('lv-report-table').getByRole('button', { name: 'Region: West', exact: true }).press('Enter')
+  await browserExpect(page.locator('playground-linked-visuals .filter-bar > .summary')).toContainText('West')
+  await browserExpect.poll(() => page.locator('playground-linked-visuals .chart lv-visualization-host').evaluate((element: any) => element.envelope.highlights.length)).toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
+  await browserExpect(page.locator('playground-linked-visuals .filter-bar > .summary')).toContainText('select a region')
+}, 20_000)
+
+test('drawer recipe reloads and saves through its real nested controls', async () => {
+  await open('recipes/overlay-form')
+  for (const reload of [false, true]) {
+    if (reload) await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Edit schedule', exact: true })).toBeVisible()
+  }
+  await page.getByRole('button', { name: 'Edit schedule', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Report name', exact: true }).fill('Weekly review')
+  await page.getByRole('button', { name: 'Delivery frequency', exact: true }).click()
+  await page.getByRole('option', { name: 'Every month', exact: true }).click()
+  await page.getByRole('button', { name: 'Save schedule', exact: true }).click()
+  await browserExpect(page.locator('playground-overlay-recipe .summary')).toContainText('Weekly review')
+  await browserExpect(page.locator('playground-overlay-recipe .summary')).toContainText('Every month')
+  await browserExpect(page.getByRole('button', { name: 'Edit schedule', exact: true })).toBeFocused()
+})
 
 test('select keyboard interactions update the public value and respect disabled state', async () => {
   await open('controls/select')
