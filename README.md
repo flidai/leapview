@@ -1,107 +1,137 @@
 # LeapView
 
-[![CI](https://github.com/flidai/leapview/actions/workflows/ci.yml/badge.svg)](https://github.com/flidai/leapview/actions/workflows/ci.yml)
+**Metrics your whole team can build on.**
+
+Open-source business intelligence for defining metrics once, building interactive
+dashboards, and asking questions through AI—all using shared semantic definitions
+and governed access.
+
+[Get started](deploy/local/INSTALL.md) · [Documentation](https://leapview.dev/docs) ·
+[Current alpha](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1) ·
+[Contributing](docs/articles/contributing/repository.md)
+
+[![Nightly CI](https://github.com/flidai/leapview/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/flidai/leapview/actions/workflows/nightly.yml)
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-LeapView is an open-source, agent-native BI platform. Build governed semantic
-models and dashboards as code, review every change in Git, and explore the
-same trusted analytics through interactive dashboards and AI agents.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme-executive-sales-dark.png">
+  <img src=".github/assets/readme-executive-sales-light.png" alt="Executive Sales dashboard showing revenue, average order value, interactive charts, filters, and an orders table">
+</picture>
 
-![LeapView dashboard with KPIs, charts, and an analytical table](site/static/product-dashboard-light.png)
+*Executive Sales, the repository's Olist-backed showcase, in a development build.
+It is separate from the synthetic Sales overview starter created by the authoring CLI.*
 
 ## Why LeapView?
 
-- **Analytics as code:** define models, metrics, dashboards, and access rules as
-  version-controlled resources.
-- **One governed layer:** dashboards and agents use the same metrics,
-  permissions, and data.
-- **Self-hosted:** run the Go application on your own infrastructure with
-  DuckDB and DuckLake execution.
-- **Built for existing data stacks:** connect databases, object storage, and
-  open lakehouse formats without moving dashboard definitions out of Git.
+- **Analytics as code.** Keep connections, transformations, semantic models,
+  refresh pipelines, and dashboards in version control. Validate the resource
+  graph and review changes before publishing a candidate.
+- **One definition of your metrics.** Reuse dimensions, relationships, and
+  business calculations across dashboards, headless queries, and agent tools.
+  Semantic queries run through the governed query layer.
+- **Interactive dashboards.** Build pages with charts, maps, KPI cards, filters,
+  and analytical tables, including matrices and pivots. The browser builder
+  creates governed drafts with previews and YAML export; exporting does not
+  automatically commit a change to Git.
+- **Access controls that follow the query.** Use roles, resource grants, row
+  filters, column masks, OIDC sign-in, and SCIM provisioning. Semantic access
+  rules can live in versioned model definitions; identities, attribute and role
+  assignments, resource-grant assignments, and publication state belong to the
+  target instance.
+- **Run it on your infrastructure.** Go serves the application, DuckDB executes
+  analytical queries, DuckLake manages analytical snapshots, and PostgreSQL
+  stores control state and the DuckLake catalog. Connect supported databases,
+  object stores, and files without putting credentials in portable analytics.
 
-## Run LeapView
+Built-in AI is optional and requires a configured provider and credentials.
+External clients can connect to the deployment's OAuth-protected
+[MCP endpoint](https://leapview.dev/docs/guides/integrate/mcp) to use governed
+catalog, query, documentation, and dashboard-authoring tools.
 
-LeapView uses PostgreSQL for its control plane and DuckLake catalog in every
-installation. Follow the [installation guide](https://leapview.dev/docs/installation)
-for the supported Compose deployment, database bootstrap, and first project.
+## Get started
 
-## Documentation
+Choose the workflow that matches what you want to do:
 
-- [Documentation](https://leapview.dev/docs)
-- [Getting started](https://leapview.dev/docs/getting-started)
-- [Build dashboards](https://leapview.dev/docs/guides/build)
-- [Self-hosting](https://leapview.dev/docs/guides/operate/self-hosting)
-- [Architecture](https://leapview.dev/docs/architecture)
-- [Architecture decision log](adr/README.md)
-- [CLI, API, configuration, and resource reference](https://leapview.dev/docs/reference)
+| Goal | Starting point |
+| --- | --- |
+| Author analytics locally | [Install the alpha authoring CLI](deploy/local/INSTALL.md), then follow the [analytics development guide](docs/guides/cli/analytics-development.md). |
+| Operate a self-hosted instance | Follow [Installation](docs/articles/start/installation.md) for the version-matched Compose package, external PostgreSQL control/DuckLake databases, and managed storage. |
+| Develop LeapView itself | Follow the [contributor setup](docs/articles/contributing/repository.md), including authenticated sample-data setup. |
 
-The repository also contains a release-oriented
-[Docker Compose package](deploy/compose/README.md) for self-hosted deployments.
+The authoring CLI packages a matching local Docker runtime and a small,
+deterministic **Sales overview** starter. Linux and macOS archives are published
+for AMD64 and ARM64. Check the installation guide for host, Docker Compose, and
+native credential-store requirements; package availability does not establish
+that every host/provider workflow is qualified.
 
-The public website uses the [manual Kamal operator](deploy/kamal-site/README.md).
-Its [2 October live acceptance evidence](deploy/kamal-site/evidence/final-acceptance-20261002.md)
-records the completed observation and recovery audit. Automatic VPS activation
-remains deferred.
+The current server release, **v0.3.0-alpha.1**, is for controlled evaluation.
+Interfaces may change and workflows may be incomplete. The default branch and
+its documentation can contain changes beyond that release. Use the
+[release notes and exact artifacts](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
+when evaluating a packaged version.
 
-## Development
+## Define once, use throughout the dashboard
 
-On x86_64 Linux, use `./scripts/develop.sh` to enter the default locked Nix
-environment, then run the Task commands below. For one command, use
-`./scripts/develop.sh task ci`. The launcher preserves the conventional tools on
-other supported platforms. `nix build .#leapview` builds the application; `nix build .#leapview-image`
-builds its container archive. See the [Nix guide](nix/README.md) for prerequisites,
-qualification and current scope. Docker must be running for database fixtures.
+The starter's [semantic model](internal/app/cli/projectinit/template/dashboards/semantic-models/sales.yaml)
+defines revenue under `spec.datasets[name=sales].metrics`:
 
-Start the worktree-local development server:
-
-```sh
-task dev
+```yaml
+- name: revenue
+  type: simple
+  empty: zero
+  label: Revenue
+  format: currency
+  agg: sum
+  field: amount
 ```
 
-The default uses real local authentication. Each worktree keeps the same URL
-across restarts, and its browser cookies are isolated from other localhost
-worktrees. Open the URL printed by `task dev` and choose **Continue as Local
-Developer**. This loopback-only shortcut creates the same durable, audited
-browser session as password login without exposing the private worktree
-password to the browser. `task dev:credentials` remains available when testing
-the password-login flow explicitly. The
-normal development session lasts up to 30 days and survives server restarts;
-production keeps its standard eight-hour session. `task dev:bypass` is an explicit convenience mode for
-fixture seeding or work that does not exercise credential-bound authorization.
-On a new database, run `LEAPVIEW_DEV_ONCE=1 task dev:bypass` once to stage the
-bundled dataset, then use `task dev` for real-auth testing. Server startup does
-not implicitly publish a release. `task dev:publish`
-publishes a fresh candidate with scoped authority and reuses staged data;
-`task dev:auth-smoke` tests login, role activation after a release, and revocation.
+Its [dashboard](internal/app/cli/projectinit/template/dashboards/dashboards/sales-overview.yaml)
+reuses that metric in a KPI under `spec.visuals`:
 
-Use `task dev:status`, `task dev:logs`, and `task dev:stop` to manage it. Run
-focused Go and browser tests locally during iteration. Before a meaningful push, `task ci`
-runs the fast pull-request contract locally. Every pull request runs the same contract on an
-ephemeral GitHub-hosted runner, the merge queue runs `task ci:full` against the exact
-candidate, and scheduled CI runs `task ci:nightly` daily. Use `task ci:pr` for fast local validation or
-`task ci:local` (an alias for `task ci:full`) when the complete contract must run locally.
-Read the [GitHub-hosted CI architecture](https://leapview.dev/docs/architecture/github-hosted-ci)
-for trust, caching, execution, and operations boundaries.
+```yaml
+- id: revenue
+  type: kpi
+  query: {type: aggregate, dimensions: [], metrics: [revenue]}
+  presentation: {type: kpi, note: Synthetic revenue, tone: success}
+```
 
-See the
-[repository and development workflow](https://leapview.dev/docs/contributing/repository)
-for prerequisites, generation rules, architecture boundaries, and the full
-contribution process.
+The monthly trend and category chart query the same metric. These are excerpts;
+the linked files contain the complete resources, including identity and layout.
 
-## Project status
+```mermaid
+flowchart LR
+  accTitle: LeapView analytics resource flow
+  accDescr: Connections identify inputs for Sources. Models transform Sources, Semantic Models define business meaning, and Dashboards present it. Pipelines orchestrate refresh for a Semantic Model.
+  C[Connection] --> S[Source] --> M[Model] --> SM[Semantic Model] --> D[Dashboard]
+  P[Pipeline] -. refresh .-> SM
+```
 
-LeapView is under active development. Follow
-[GitHub releases](https://github.com/flidai/leapview/releases) for published
-versions and use the [issue tracker](https://github.com/flidai/leapview/issues)
-for bugs and feature proposals.
+## Explore further
+
+- **Build:** [dashboard guides](https://leapview.dev/docs/guides/build),
+  [visual catalog](https://leapview.dev/docs/visuals/overview), and
+  [connector capabilities](https://leapview.dev/docs/reference/data-resource-connectors).
+- **Integrate:** [headless BI](https://leapview.dev/docs/guides/integrate/headless-bi),
+  [dbt's published relations and Parquet](https://leapview.dev/docs/guides/integrate/dbt-warehouse-boundary),
+  and [semantic-model interchange](https://leapview.dev/docs/concepts/ossie-interchange).
+- **Operate:** [self-hosting](https://leapview.dev/docs/guides/operate/self-hosting),
+  [authorization](https://leapview.dev/docs/security/authorization), and
+  [backup and restore](https://leapview.dev/docs/guides/operate/backup-restore).
+- **Understand:** [architecture](https://leapview.dev/docs/architecture),
+  [architecture decisions](adr/README.md), and
+  [CLI/API/resource reference](https://leapview.dev/docs/reference).
+
+## Contribute
+
+After [setup](docs/articles/contributing/repository.md), use `task dev` for the
+application and `task ci` for the local pull-request contract. `task playground`
+opens the [component and chart workbench](playground/README.md) without application
+services or a database. Toolchain and Nix instructions live in the contributor guide.
+
+Report bugs and feature proposals through [Issues](https://github.com/flidai/leapview/issues).
+Report vulnerabilities privately through the [security policy](SECURITY.md).
 
 ## License
 
 LeapView is available under the [Apache License 2.0](LICENSE).
-
-## Component playground
-
-Run `task playground` to explore production components and all visualization types
-with deterministic local data, without starting the monolith. See
-[the playground guide](playground/README.md) for prerequisites, examples, and extension instructions.

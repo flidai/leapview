@@ -1,6 +1,15 @@
 # Installation
 
-LeapView ships as a public multi-architecture container image. Pulling that image is the primary onboarding path; no source checkout, registry login, or installer is required. A production instance also requires external PostgreSQL control and DuckLake databases and configured managed-object storage; its local volume is not a complete recovery copy.
+LeapView publishes an authoring CLI and a multi-architecture server image.
+For local analytics authoring, follow [Install the authoring CLI](https://github.com/flidai/leapview/blob/main/deploy/local/INSTALL.md)
+and the [analytics development workflow](https://github.com/flidai/leapview/blob/main/docs/guides/cli/analytics-development.md).
+The CLI provisions its checkout-scoped local runtime through Docker.
+
+For self-hosting, use the version-matched Compose operations package below.
+A server instance requires external PostgreSQL control and DuckLake databases
+and configured managed-object storage; its local volume is not a complete
+recovery copy. Changing LeapView itself uses the separate
+[contributor workflow](https://github.com/flidai/leapview/blob/main/docs/articles/contributing/repository.md).
 
 ## Current controlled-testing release
 
@@ -36,7 +45,7 @@ storage.
 
 ## Choose an installation
 
-The supported installation is the PostgreSQL-backed Compose deployment below.
+The self-hosting installation is the PostgreSQL-backed Compose deployment below.
 It uses the same native control, delivery, and recovery architecture in local,
 staging, and production environments; there is no embedded control-plane mode.
 
@@ -47,8 +56,8 @@ same public image. It is not a separate LeapView distribution. It supplies
 hardened container settings, generated production secrets, and optional Caddy
 HTTPS. Production PostgreSQL/DuckLake backup and restore remain provider-native
 operations covered by the [PostgreSQL operations
-guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
-guide](/docs/guides/operate/backup-restore); Compose does not provide
+guide](https://leapview.dev/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](https://leapview.dev/docs/guides/operate/backup-restore); Compose does not provide
 image-and-state upgrade or rollback.
 
 1. Select, download, verify, and extract the current platform archive:
@@ -186,27 +195,26 @@ workflow for upgrades or host rollback. The target-level `leapview rollback`
 command remains available for a retained serving generation, but it does not
 restore PostgreSQL, DuckLake, object-store, or Compose state. Those recovery
 operations are external; use the [PostgreSQL operations
-guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
-guide](/docs/guides/operate/backup-restore).
+guide](https://leapview.dev/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](https://leapview.dev/docs/guides/operate/backup-restore).
 
 ## Contributor installation
 
 Source checkout is the contributor workflow, not the production packaging path. Install the Go version from `go.mod`, Bun, and Task, then run:
 
 ```sh
-task node:deps
-task generate
 task dev
 ```
 
 `task dev` provisions a loopback-only PostgreSQL 18 service scoped to the
 worktree, runs the local physical-pool qualification/bootstrap once, and
-starts one native PostgreSQL target with the private authoring watcher. On a
-new database, first run `LEAPVIEW_DEV_ONCE=1 task dev:bypass` to stage the
-bundled managed-data fixture. Subsequent `task dev` starts a credentialed
-server without publishing, and `task dev:publish` creates a fresh release with
-scoped authority while reusing staged data. The generated credentials
-remain in `.tmp/postgres-dev.env` (mode 0600); do not
+starts one native PostgreSQL-backed server. On a
+new database, the authenticated workflow creates private development credentials,
+stages the bundled managed-data fixture, and publishes the sample candidate.
+Subsequent starts reuse active managed data; `task dev:publish` explicitly
+publishes a fresh candidate with scoped authority while skipping data sync.
+The generated database credentials remain in `.tmp/postgres-dev.env`
+(mode 0600); do not
 reuse them outside this worktree. The browser uses a real local session by
 default. Open the login page and choose **Continue as Local Developer**; the
 loopback-only shortcut creates the same durable, audited browser session as
@@ -218,17 +226,14 @@ Managed development sessions
 last up to 30 days, while production retains its eight-hour lifetime. Sign-out,
 browser-data clearing, database reset, or expiry requires another click.
 `task dev:auth-smoke` checks browser login,
-group-role activation after a fresh release, revocation, and cleanup. Use
-`task dev:bypass` only for fixture seeding or when intentionally testing a
-flow that does not need credential-bound authority. For a durable rollout,
-use the canonical `plan`, `build`, and
-`publish CANDIDATE_ID` commands shown above. Use `task dev:status`,
+group-role activation after a fresh release, revocation, and cleanup. For a durable rollout,
+follow [Develop, review, and publish](https://github.com/flidai/leapview/blob/main/docs/guides/cli/validate-deploy.md). Use `task dev:status`,
 `task dev:logs`, and `task dev:stop` for lifecycle operations. Run `task ci`
 before handing off substantial changes.
 
 ## Validate
 
-For the local image path, run `docker inspect --format '{{.State.Health.Status}}' leapview` and expect `healthy`. For Compose, run `docker compose config --quiet` and `./leapviewctl status`. A production application container must report healthy, and its resolved image must include a `sha256` digest.
+For Compose, run `docker compose config --quiet` and `./leapviewctl status`. A production application container must report healthy, and its resolved image must include a `sha256` digest.
 
 For a released Compose archive, verify that every shipped surface has the same
 identity before trusting the deployment:
@@ -265,7 +270,7 @@ identity.
 
 ## Verify
 
-Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Verify the instance identity and readiness through the authenticated capabilities endpoint; follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore) for PostgreSQL/DuckLake protection.
+Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Verify the instance identity and readiness through the authenticated capabilities endpoint; follow the [PostgreSQL operations guide](https://leapview.dev/docs/guides/operate/postgresql-operations) and [Backup and restore guide](https://leapview.dev/docs/guides/operate/backup-restore) for PostgreSQL/DuckLake protection.
 
 ## Troubleshooting
 
@@ -273,6 +278,6 @@ Use `./leapviewctl logs` when startup or health checks fail. A second process ca
 
 ## Next steps
 
-Continue with [Self-hosting](/docs/guides/operate/self-hosting), [Connect a data source](/docs/guides/build/connect-data), and [Build your first dashboard](/docs/first-dashboard).
+Continue with [Self-hosting](https://leapview.dev/docs/guides/operate/self-hosting), [Connect a data source](https://leapview.dev/docs/guides/build/connect-data), and [Build your first dashboard](https://github.com/flidai/leapview/blob/main/docs/articles/start/first-dashboard.md).
 
-The commands above illustrate the installation workflow. Use the generated [`admin` CLI reference](/docs/cli/admin), [`serve` CLI reference](/docs/cli/serve), and [environment variable reference](/docs/configuration) for the exact current command and runtime contracts.
+The commands above illustrate the installation workflow. Use the generated [`admin` CLI reference](https://leapview.dev/docs/cli/admin), [`serve` CLI reference](https://leapview.dev/docs/cli/serve), and [environment variable reference](https://leapview.dev/docs/configuration) for the exact current command and runtime contracts.
