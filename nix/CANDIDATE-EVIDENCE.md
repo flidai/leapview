@@ -493,3 +493,19 @@ and green PR checks still require a positive protected run after landing.
 Complete supported-host, installation, publication, upgrade, rollback and recovery
 qualification remain required before adopting either controller architecture;
 conventional and supported non-Linux release builders remain selected.
+
+### Compose installation-bundle assembly
+
+The canonical shared packager consumes an exact prebuilt controller and an
+explicit immutable image plus matching release identity. Nix exposes clean-source
+Compose controller candidates with canonical release metadata separately from
+its standalone development-controller candidates. Static checks and assembly
+checks do not establish installed-runtime compatibility or grant release admission.
+
+Bundle assembly uses the same canonical Compose, PostgreSQL qualification and
+local-runtime assets as conventional release packaging, with fixed file modes,
+complete inner SHA256SUMS and a deterministic outer archive. A completed bundle
+must separately pass the existing native installed-candidate and host lifecycle
+journeys against its selected admitted image and acquire provenance over the
+outer archive hash. Protected signing and adoption remain pending for these Nix
+bundle candidates; no published builder is replaced by this assembly mechanism.

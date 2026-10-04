@@ -56,6 +56,18 @@
       };
       application = patchedRuntime.application;
       deploymentCLI = import ./nix/deployment-cli.nix {
+        purpose = "development";
+        inherit
+          pkgs
+          toolchain
+          revision
+          dirty
+          buildTime
+          ;
+        src = source;
+      };
+      composeCLI = import ./nix/deployment-cli.nix {
+        purpose = "compose";
         inherit
           pkgs
           toolchain
@@ -119,6 +131,8 @@
         leapview-linux = portable;
         leapviewctl-linux-amd64 = deploymentCLI;
         leapviewctl-linux-arm64 = deploymentCLI.arm64;
+        leapviewctl-compose-linux-amd64 = composeCLI;
+        leapviewctl-compose-linux-arm64 = composeCLI.arm64;
         map-assets = assets.maps;
         extension-supply = assets.extensions;
         glibc-runtime = patchedRuntime.glibc;

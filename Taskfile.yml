@@ -21,6 +21,12 @@ tasks:
       # Nix adds the selected output's -arm64 suffix to this prefix.
       - nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli
 
+  nix:compose:controllers:
+    desc: Build release-compatible controller candidates for Compose bundle assembly
+    cmds:
+      - nix build --no-update-lock-file .#leapviewctl-compose-linux-amd64 --out-link result-compose-cli-amd64
+      - nix build --no-update-lock-file .#leapviewctl-compose-linux-arm64 --out-link result-compose-cli
+
   nix:qualify:
     desc: Qualify the Nix image through the existing production deployment checks
     cmds:
@@ -551,6 +557,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/nix_ci_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
       - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
