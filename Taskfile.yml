@@ -559,6 +559,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_archive_go_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_go_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
