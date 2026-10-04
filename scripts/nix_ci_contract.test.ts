@@ -163,6 +163,40 @@ test('static controller qualification preserves the host baseline and exact arti
   expect(retention.with['if-no-files-found']).toBe('warn')
 })
 
+test('Nix development retains clean-source Compose controllers in a separate candidate artifact', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const build = workflow.jobs['cli-build']
+  const buildStep = build.steps.find((step: any) => step.name === 'Build both controller architectures without undeclared network access')
+  for (const output of ['.#leapviewctl-compose-linux-amd64', '.#leapviewctl-compose-linux-arm64']) {
+    expect(buildStep.run).toContain(`nix build --no-update-lock-file ${output}`)
+  }
+  expect(buildStep.run).toContain('result-compose-cli-amd64')
+  expect(buildStep.run).toContain('result-compose-cli-$arch')
+  for (const file of ['leapviewctl-linux-$arch.tar.gz', 'archive-identity.json', 'controller-build-identity.json', 'static-compatibility.json']) {
+    expect(buildStep.run).toContain(file)
+  }
+  expect(buildStep.run).toContain('result-compose-cli-$arch/bin/leapviewctl compose-candidates/$arch/bin/')
+
+  const uploads = build.steps.filter((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(uploads).toHaveLength(2)
+  expect(uploads[0].id).toBe('upload')
+  expect(uploads[0].with.name).toBe('nix-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}')
+  expect(uploads[0].with.path).toBe('cli-candidates/')
+  expect(uploads[1].name).toBe('Retain separate Compose controller candidates and static reports')
+  expect(uploads[1].with.name).toBe('nix-compose-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}')
+  expect(uploads[1].with.path).toBe('compose-candidates/')
+  expect(uploads[1].with['retention-days']).toBe(14)
+  expect(uploads[1].with['if-no-files-found']).toBe('error')
+  expect(build.outputs.artifact_id).toBe('${{ steps.upload.outputs.artifact-id }}')
+
+  for (const jobName of ['cli-security', 'cli-compatibility']) {
+    const consumer = workflow.jobs[jobName]
+    const download = consumer.steps.find((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+    expect(download.with['artifact-ids']).toBe('${{ needs.cli-build.outputs.artifact_id }}')
+    expect(download.with.name).toBeUndefined()
+  }
+})
+
 test('controller fixtures preserve the client baseline and advertised bootstrap hosts', () => {
   const result = spawnSync('python3', ['-c',
     'import json,sys; sys.path.insert(0,"scripts"); import nix_cli_publication as p; print(json.dumps(p.HOST_FIXTURES))'],
