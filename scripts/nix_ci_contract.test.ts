@@ -5,13 +5,21 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 
-test('protected controller adversarial checks run in local and hosted CI', () => {
+test('protected controller and Compose adversarial checks run in local and hosted CI', () => {
   const command = 'python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py'
   expect(readFileSync('Taskfile.yml', 'utf8')).toContain(command)
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
   expect(workflow.jobs.image.steps.some((step: any) =>
     step.run?.includes(`env LEAPVIEW_TEST_NIX_CLI_RUNTIME=1 ${command}`))).toBe(true)
+  for (const script of ['package_compose_bundle', 'nix_compose_qualification']) {
+    const testCommand = `python3 -m unittest discover -s scripts/tests -p test_${script}.py`
+    expect(readFileSync('Taskfile.yml', 'utf8')).toContain(testCommand)
+    expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(testCommand))).toBe(true)
+    expect(workflow.on.pull_request.paths).toContain(`scripts/${script}.py`)
+    expect(workflow.on.pull_request.paths).toContain(`scripts/tests/test_${script}.py`)
+  }
+  expect(workflow.on.pull_request.paths).toContain('.github/workflows/nix-compose-candidate.yml')
 })
 
 const action = parse(readFileSync('.github/actions/setup-ci/action.yml', 'utf8'))
