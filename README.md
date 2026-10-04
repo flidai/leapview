@@ -1,12 +1,12 @@
-# LeapView
+# <img src="site/static/favicon.svg" width="32" height="32" alt=""> LeapView
 
-**Metrics your whole team can build on.**
+**Define metrics in code. Explore them everywhere.**
 
-Open-source business intelligence for defining metrics once, building interactive
-dashboards, and asking questions through AI—all using shared semantic definitions
-and governed access.
+LeapView is open-source business intelligence for teams who want their analytics
+in Git and their data on their own infrastructure. Define a metric once, then use
+it across interactive dashboards, APIs, and optional AI tools with governed access.
 
-[Get started](deploy/local/INSTALL.md) · [Documentation](https://leapview.dev/docs) · [Current alpha](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1) · [Contributing](docs/articles/contributing/repository.md)
+[Get started](#get-started) · [Documentation](https://leapview.dev/docs) · [Current alpha](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1) · [Contributing](docs/articles/contributing/repository.md)
 
 [![Nightly CI](https://github.com/flidai/leapview/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/flidai/leapview/actions/workflows/nightly.yml) [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -28,46 +28,61 @@ It is separate from the synthetic Sales overview starter created by the authorin
 
 </details>
 
+<details>
+<summary>Watch a category filter update the dashboard</summary>
+
+![A category filter narrows Executive Sales to health_beauty, updating the order count, revenue, average order value, and monthly trend; clearing it restores the overview](.github/assets/readme-filter-demo.gif)
+
+*Recorded in the development showcase. Enter `health_beauty` in Category to narrow
+all views to health and beauty products; clear it to return to the overview.*
+
+</details>
+
 ## Why LeapView?
 
-- **Analytics as code.** Keep connections, transformations, semantic models,
-  refresh pipelines, and dashboards in version control. Validate the resource
-  graph and review changes before publishing a candidate.
-- **One definition of your metrics.** Reuse dimensions, relationships, and
+- **Review analytics like code.** Version connections, transformations, semantic
+  models, refresh pipelines, and dashboards in Git. Validate the resource graph
+  before publishing a candidate to your instance.
+- **Give every view the same metrics.** Reuse dimensions, relationships, and
   business calculations across dashboards, headless queries, and agent tools.
-  Semantic queries run through the governed query layer.
-- **Interactive dashboards.** Build pages with charts, maps, KPI cards, filters,
-  and analytical tables, including matrices and pivots. The browser builder
-  creates governed drafts with previews and YAML export; exporting does not
-  automatically commit a change to Git.
-- **Access controls that follow the query.** Use roles, resource grants, row
-  filters, column masks, OIDC sign-in, and SCIM provisioning. Semantic access
-  rules can live in versioned model definitions; identities, attribute and role
-  assignments, resource-grant assignments, and publication state belong to the
-  target instance.
-- **Run it on your infrastructure.** Go serves the application, DuckDB executes
-  analytical queries, DuckLake manages analytical snapshots, and PostgreSQL
-  stores control state and the DuckLake catalog. Connect supported databases,
-  object stores, and files without putting credentials in portable analytics.
+- **Explore without rebuilding.** Combine charts, maps, KPI cards, filters, and
+  analytical tables, including matrices and pivots. The browser builder offers
+  governed drafts, previews, and YAML export.
+- **Keep access consistent.** Apply roles, resource grants, row filters, and
+  column masks through the governed query layer, with OIDC sign-in and SCIM
+  provisioning for identity management.
+- **Run on your infrastructure.** Go serves the application, DuckDB executes
+  queries, DuckLake manages analytical snapshots, and PostgreSQL stores control
+  state and the DuckLake catalog. Connect supported databases, object stores,
+  and files.
+
+Semantic access rules can be versioned with models. Identities, attribute and
+role assignments, resource-grant assignments, credentials, and publication state
+belong to the target instance. Browser YAML export does not commit to Git.
+See [authorization](https://leapview.dev/docs/security/authorization) for the boundaries.
 
 Built-in AI is optional and requires a configured provider and credentials.
-External clients can connect to the deployment's OAuth-protected
-[MCP endpoint](https://leapview.dev/docs/guides/integrate/mcp) to use governed
+External clients use the deployment's OAuth-protected
+[MCP endpoint](https://leapview.dev/docs/guides/integrate/mcp) for governed
 catalog, query, documentation, and dashboard-authoring tools.
 
 ## Get started
 
-Choose the workflow that matches what you want to do:
+Choose your starting point and what you want to have running:
 
-| Goal | Starting point |
-| --- | --- |
-| Author analytics locally | [Install the alpha authoring CLI](deploy/local/INSTALL.md), then follow the [analytics development guide](docs/guides/cli/analytics-development.md). |
-| Operate a self-hosted instance | Follow [Installation](docs/articles/start/installation.md) for the version-matched Compose package, external PostgreSQL control/DuckLake databases, and managed storage. |
-| Develop LeapView itself | Follow the [contributor setup](docs/articles/contributing/repository.md), including authenticated sample-data setup. |
+- **Author analytics.** Get a local Docker runtime and the synthetic **Sales
+  overview** starter. [Install the alpha CLI](deploy/local/INSTALL.md), then
+  follow the [analytics development guide](docs/guides/cli/analytics-development.md).
+- **Operate an instance.** Run LeapView on your infrastructure. Follow
+  [Installation](docs/articles/start/installation.md) for the version-matched
+  Compose package and external PostgreSQL/storage prerequisites.
+- **Contribute to LeapView.** Build the application from source with the
+  **Executive Sales** showcase. Follow the
+  [contributor setup](docs/articles/contributing/repository.md), including
+  authenticated sample-data setup.
 
-The authoring CLI packages a matching local Docker runtime and a small,
-deterministic **Sales overview** starter. Linux and macOS archives are published
-for AMD64 and ARM64. Check the installation guide for host, Docker Compose, and
+CLI archives are published for Linux and macOS on AMD64 and ARM64. Check the
+installation guide for host, Docker Compose, and
 native credential-store requirements; package availability does not establish
 that every host/provider workflow is qualified.
 
@@ -77,9 +92,10 @@ its documentation can contain changes beyond that release. Use the
 [release notes and exact artifacts](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
 when evaluating a packaged version.
 
-## Define once, use throughout the dashboard
+## One revenue definition, several views
 
-The starter's [semantic model](internal/app/cli/projectinit/template/dashboards/semantic-models/sales.yaml)
+Start with the deterministic **Sales overview** project created by the CLI.
+Its [semantic model](internal/app/cli/projectinit/template/dashboards/semantic-models/sales.yaml)
 defines revenue under `spec.datasets[name=sales].metrics`:
 
 ```yaml
@@ -102,8 +118,10 @@ reuses that metric in a KPI under `spec.visuals`:
   presentation: {type: kpi, note: Synthetic revenue, tone: success}
 ```
 
-The monthly trend and category chart query the same metric. These are excerpts;
-the linked files contain the complete resources, including identity and layout.
+The KPI shows the total. The monthly trend groups that revenue by month; the
+category chart groups it by category. All three reference `revenue`, keeping the
+calculation in the semantic model. These are excerpts; the linked files contain
+the complete resources, including identity and layout.
 
 ```mermaid
 flowchart LR

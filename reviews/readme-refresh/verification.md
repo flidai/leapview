@@ -7,7 +7,7 @@ Source revision: `81b99e5fb480e1d7bf5aff1971bd222c823c6615`.
 
 - Rewrote the README around product benefits, three onboarding audiences,
   accurate starter excerpts, governance, and the published alpha boundary.
-  It contains 660 words excluding fenced code.
+  It contains 750 words excluding fenced code.
 - Corrected directly linked installation, contributor, tutorial, project
   structure, and authoring-package documentation. Regenerated `docs/llms.txt`
   from the corrected navigation summaries.
@@ -129,3 +129,43 @@ retained; other worktrees were left untouched.
   application test suite. The previously recorded watchdog and native
   credential-store limitations remain explicit; hosted CI runs on the updated
   PR head.
+
+
+## Product-story polish
+
+- Paired the existing theme-aware brand mark with “Define metrics in code.
+  Explore them everywhere.” Reworked the benefits around reader outcomes while
+  retaining the portable-policy, instance-identity, optional-AI, and alpha
+  qualifications.
+- Pointed the top Get started link to the three-path chooser. Each path states
+  its expected result. A mobile inspection caught a horizontally scrolling
+  three-column draft; the final paths use short list items.
+- Explained how the starter's total KPI, monthly trend, and category chart all
+  query the same `revenue` definition. Checked these references against the
+  complete initializer resources.
+- Added readable titles to the three Executive Sales KPIs and to the website's
+  exact copy of that example. Full source validation and `go test ./site`
+  passed. The initial local CI run caught the missing website copy; it was
+  synchronized before the corrected run.
+- Published the changed showcase to this worktree's isolated authenticated
+  development instance. Recaptured both hero and full-dashboard images in
+  both themes, with only the contributor inspector hidden.
+- Recorded the actual Category input and its change event, selecting
+  `health_beauty` and then clearing it. The displayed count/revenue changed
+  from 99.4K/16M to 8.81K/1.44M and back. The monthly chart changed with it;
+  server telemetry recorded six successful targets and zero target errors for
+  each filter refresh. The optional GIF was cropped and encoded from that
+  browser recording, without rewriting product text, values, or rendering.
+- Rebuilt the local preview from GitHub Markdown API output with GitHub-style
+  Markdown CSS, code highlighting, working local anchors, and locally rendered
+  Mermaid. The preview remains a worktree artifact, separate from the README.
+- Browser checks passed at 390 and 1000 pixels in light and dark themes, with
+  both expandable sections closed and open. Every image loaded, the correct
+  hero theme was selected, the diagram rendered, the Get started anchor
+  navigated correctly, and there was no document-level horizontal overflow.
+  Desktop, mobile onboarding, and recording contact sheets were inspected.
+- README relative links/assets, the Mermaid parser/accessibility metadata,
+  documentation generation verification, and `git diff --check` passed.
+- A corrected full `task ci` run was started after synchronizing the website
+  example. Its final result and the hosted PR/merge-queue results are reported
+  on PR #836; they are not assumed from the focused checks above.

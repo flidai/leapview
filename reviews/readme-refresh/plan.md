@@ -14,8 +14,10 @@ Rewrite the README as a clear, compelling introduction for analytics authors
 and teams evaluating LeapView. Target **600–800 words**, excluding code, with
 one product showcase and one reproducible starter example.
 
-Include only the README, its screenshot assets, and focused corrections to
-directly linked onboarding documentation. No runtime changes, compatibility
+Include the README, its screenshot and interaction-recording assets, focused
+corrections to directly linked onboarding documentation, and the three
+Executive Sales KPI display titles needed for authentic product captures
+(including the website's exact copy of that example). No runtime changes, compatibility
 interfaces, release-manifest redesign, website deployment, or release
 publication.
 
@@ -60,18 +62,21 @@ published-package functionality are separate evidence boundaries.
 
 ### Identity and positioning
 
-- Keep `# LeapView`.
-- Use **“Metrics your whole team can build on.”**
+- Pair the LeapView heading with the existing theme-aware brand mark.
+- Use **“Define metrics in code. Explore them everywhere.”**
 - Describe open-source BI with shared semantic definitions across dashboards,
   APIs, and optional AI integrations.
-- Add compact links to Getting Started, Documentation, the explicit alpha
-  release, and Contributing.
+- Add compact links to the in-page onboarding chooser, Documentation, the
+  explicit alpha release, and Contributing.
 - Use three badges: Nightly CI on `main`, Alpha, and Apache-2.0. Keep the alpha
   release link explicit rather than relying on a latest-release badge.
 
 ### Real product showcase
 
 - Show Executive Sales from the current source build in light and dark themes.
+  Use readable KPI titles in the actual dashboard configuration. Keep a focused
+  hero, an expandable full-dashboard capture, and an optional real recording
+  of a category filter changing the metrics and chart.
 - Caption it as a repository showcase from the development build, separate
   from the generated starter. Do not imply it is preloaded by `leapview init`
   or that its current interface is the published alpha's interface.
@@ -93,7 +98,7 @@ published-package functionality are separate evidence boundaries.
 ### Get started
 
 - Separate analytics authoring, self-hosted operation, and LeapView
-  contribution.
+  contribution, with an explicit expected result for each.
 - For the verified CLI path, link installation prerequisites immediately
   before the three-command quickstart. State the local Docker Engine and
   Compose requirements from the package guide.
@@ -117,7 +122,8 @@ published-package functionality are separate evidence boundaries.
   clearly identifying their containing fields and linking to complete files.
 - Retain current named-list syntax, the `sum` over `amount`, and the typed
   aggregate/KPI definitions.
-- Explain that the same metric feeds the starter's KPI and charts.
+- Frame the example as one revenue definition feeding several views: the
+  total KPI, monthly trend, and category chart.
 - Include a compact resource-flow diagram: Connection → Source → Model →
   SemanticModel → Dashboard, with Pipeline shown as refresh orchestration.
 
@@ -190,7 +196,8 @@ rules are in Git or that all access policy is target-owned.
   `task docs:check`, `task ci`, and `git diff --check`. Retain only intentional
   tracked generated changes.
 - Check relative links, release assets, hosted destinations, image rendering,
-  both themes, and narrow-screen readability.
+  both themes, and narrow-screen readability. The local GitHub-style preview
+  must highlight code and render the Mermaid diagram.
 - Report only checks actually performed. Do not add tests that merely assert
   marketing wording. Record unrelated check failures without representing
   them as successful validation or expanding this task into unrelated fixes.
