@@ -82,6 +82,43 @@ revision and architecture. This precedes timing-only test and evidence-document
 additions and is not a published or deployable qualification result. Required
 hosted validation must still build and test the final candidate revision.
 
+The screened predecessor host CLI variant uses `-trimpath`, matching the pinned
+predecessor image's build flag. Its disposable checkout directory changes Go's
+package action IDs. The variant preserves linker-injected version, revision,
+build time and clean state, but trims source paths and build settings. It is
+deferred and is not adopted by this change.
+
+A local controlled screen holds all 4,726 source inputs (including 153 generated
+ignored outputs), pinned predecessor revision, compiler, identity and platform
+constant. It uses empty `GOFLAGS`; required Taskfile CI additionally sets
+`-tags=duckdb_arrow`, so this is a narrower host CLI screen. Separate empty caches
+cost 146.22s for the baseline seed and 140.36s
+for the treatment seed, with 1,384 compile actions each. Three alternating-order
+rebuild pairs in fresh paths measured baseline/treatment times of 53.25/18.15s,
+71.02/13.06s and 55.25/28.81s. Each baseline recompiles 381 Go packages; each
+treatment recompiles none. All eight binaries report the exact pinned identity,
+and the four trimmed binaries are byte-identical. Resource and binary receipts
+are included in the measurement file.
+
+This is local screening, not hosted confirmation or whole-CI improvement. The
+current hosted transition reader restores `full-validation`, while that job's
+main publisher writes `historical-transition`. Nightly/merge producers run
+`ci:full:extras:hosted`, which omits the historical transition. A manual main
+recovery-evidence run can seed compatible packages through `ci:full:extras`, but
+that workflow has no push trigger. Go hashes the trimpath flag for standard and
+external packages too, so untrimmed archives do not supply those actions. Adding
+the flag alone could increase cold consumer work. Keep current compiler flags and
+cache ownership pending a matching producer and complete producer, transfer,
+storage and consumer measurements with the actual CI tag.
+
+The complete receipt-free transition diagnostic with the experimental trimmed CLI
+passes in 535.94s. Predecessor setup takes 306.016s, candidate transition 59.107s,
+initial browser/auth and handoff 45.272s, and replacement publication/browser
+107.386s. It runs against the same immutable local candidate image above and
+preserves every migration, browser, recovery and isolation assertion. Cold/shared
+cache state and concurrent VPS activity differ from the earlier diagnostic;
+the two functional runs are not a controlled whole-scenario speed comparison.
+
 ## Completion criteria
 
 These fixes do not establish a passing whole-CI SLO. Retain FAI-1067 as open

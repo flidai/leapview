@@ -542,5 +542,173 @@
     "transition_receipt_written": false,
     "command": "LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC=1 LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC_IMAGE=<image ID> LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC_REVISION=<full candidate revision> go test ./internal/app/cli/composectl -run ^TestQualificationHistoricalTransitionDiagnostic$ -count=1 -timeout=110m -v",
     "limit": "Single local receipt-free scenario while two local PR contracts also ran. All functional scenario assertions execute, but this does not qualify a final artifact, validate final-HEAD validator cleanliness, establish a comparable speedup or support p95. Phase sum excludes test setup/assertion overhead and cleanup."
+  },
+  "predecessor_build_screen": {
+    "source_revision": "28bfc7e7e8f8074847229c05c42f0bbc2dd79336",
+    "compiler": "go version go1.27.1 linux/amd64",
+    "platform": {
+      "GOOS": "linux",
+      "GOARCH": "amd64",
+      "CGO_ENABLED": 1,
+      "GOMAXPROCS": 4,
+      "go_build_package_parallelism": 2,
+      "GOFLAGS": ""
+    },
+    "generated_source": {
+      "generator": "scripts/generate_build_sources.sh",
+      "generator_sha256": "a447e1a34d6905bf9f2379770842c18a32e51168a35357e0e79c7228ab92e814",
+      "input_count": 4726,
+      "input_sha256": "f21d308df8a9b5cb3e59b2e5c58ea59e4a4d605358ef53a6650ebbd3f46a2fb5",
+      "ignored_outputs": 153,
+      "all_four_roots_equal_and_clean": true
+    },
+    "identity": {
+      "product": "leapview",
+      "version": "0.3.0-alpha.1+main.28bfc7e7e8f8",
+      "revision": "28bfc7e7e8f8074847229c05c42f0bbc2dd79336",
+      "buildTime": "2026-09-25T19:35:40Z",
+      "dirty": false,
+      "development": true
+    },
+    "method": {
+      "baseline": "go build -x -p 2 -ldflags <same pinned identity> -o <outside root> ./cmd/leapview",
+      "treatment": "same command with -trimpath",
+      "caches": "separate empty local GOCACHE per mode; shared module cache; no hosted import/export",
+      "order": [
+        "A baseline cold",
+        "A trimpath cold",
+        "B baseline then trimpath",
+        "C trimpath then baseline",
+        "D baseline then trimpath"
+      ],
+      "pair_order": "B baseline/trimpath; C trimpath/baseline; D baseline/trimpath"
+    },
+    "rows": [
+      {
+        "label": "seed-A-baseline",
+        "wall_s": 146.22,
+        "go_compile": 1384,
+        "asm": 159,
+        "cgo": 24,
+        "link": 1,
+        "user_s": 419.88,
+        "system_s": 65.12,
+        "peak_rss_kib": 1531184,
+        "binary_sha256": "5a9a065411b07396c70d0aafccfa578805c7f1b1fe4205464c1768ac1042055d"
+      },
+      {
+        "label": "seed-A-trimpath",
+        "wall_s": 140.36,
+        "go_compile": 1384,
+        "asm": 159,
+        "cgo": 24,
+        "link": 1,
+        "user_s": 410.61,
+        "system_s": 61.41,
+        "peak_rss_kib": 1477876,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      },
+      {
+        "label": "pair-B-baseline",
+        "wall_s": 53.25,
+        "go_compile": 381,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 128.2,
+        "system_s": 20.78,
+        "peak_rss_kib": 1547128,
+        "binary_sha256": "7e9b56b69bcc96b131777a7ebad96b701cd38e23fa0253663f24679e23dd7452"
+      },
+      {
+        "label": "pair-B-trimpath",
+        "wall_s": 18.15,
+        "go_compile": 0,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 13.7,
+        "system_s": 4.19,
+        "peak_rss_kib": 1498556,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      },
+      {
+        "label": "pair-C-trimpath",
+        "wall_s": 13.06,
+        "go_compile": 0,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 12.93,
+        "system_s": 3.26,
+        "peak_rss_kib": 1505600,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      },
+      {
+        "label": "pair-C-baseline",
+        "wall_s": 71.02,
+        "go_compile": 381,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 128.04,
+        "system_s": 21.32,
+        "peak_rss_kib": 1442760,
+        "binary_sha256": "ac14a3efc363bdfc255cc78457d41749bedc90a265fa16acbaab6d39d201be4c"
+      },
+      {
+        "label": "pair-D-baseline",
+        "wall_s": 55.25,
+        "go_compile": 381,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 124.46,
+        "system_s": 20.56,
+        "peak_rss_kib": 1490676,
+        "binary_sha256": "2c368e155264546b2b791e32db7e002fec41d31022bbdaa068fb8aba06e7be69"
+      },
+      {
+        "label": "pair-D-trimpath",
+        "wall_s": 28.81,
+        "go_compile": 0,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 13.37,
+        "system_s": 4.61,
+        "peak_rss_kib": 1487344,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      }
+    ],
+    "all_identities_equal": true,
+    "trimpath_binaries_identical": true,
+    "limitations": [
+      "Local three-pair screening result, not hosted confirmation or p95 evidence.",
+      "Cold seed cost included; cache transfer, export and hosted producer cost not measured.",
+      "Current hosted transition reader uses full-validation; historical job publishes historical-transition. No cache ownership change is inferred from local reuse.",
+      "Only transient checkout-path differences removed; all sources, compiler and injected identity remain fixed.",
+      "The screen omits Taskfile CI GOFLAGS=-tags=duckdb_arrow; it is a narrower host CLI workload.",
+      "Normal nightly/merge full-validation producers omit the historical transition; only a manual main recovery-evidence dispatch can seed its trimmed packages.",
+      "Go hashes trimpath for standard/external packages, so adopting the flag alone risks cold dependency recompilation. Keep current flags until actual-tag producer/archive/consumer costs are measured."
+    ],
+    "functional_validation": {
+      "test": "TestQualificationHistoricalTransitionDiagnostic",
+      "result": "pass",
+      "validator_base_revision": "86f83da2a5c91b86eec4abb7753b14baa9161145",
+      "validator_change": "experimental -trimpath predecessor CLI build; not adopted",
+      "candidate_image": "sha256:0d7c1a01d91cccf1123d6981bb55371217713fda49cec8384b71281ef03c74f0",
+      "candidate_revision": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+      "elapsed_s": 535.94,
+      "phases_s": {
+        "predecessor_fixture": 306.016,
+        "candidate_transition": 59.107,
+        "initial_browser_auth_and_candidate_handoff": 45.272,
+        "replacement_publish_browser_proofs": 107.386
+      },
+      "deployable_receipt_written": false,
+      "limit": "Functional diagnostic only; different cache/load from prior run, not a comparable speedup or final hosted admission."
+    },
+    "adopted": false
   }
 }
