@@ -8,7 +8,9 @@ let
   );
   bunVersion = pkgs.lib.removePrefix "bun@" manifest.packageManager;
   # The locked package includes the fuzztime cancellation fix (Go issue 75804).
-  go = assert pkgs.go_1_27.version == goVersion; pkgs.go_1_27;
+  go =
+    assert pkgs.go_1_27.version == goVersion;
+    pkgs.go_1_27;
   bun = pkgs.bun.overrideAttrs {
     version = bunVersion;
     src = pkgs.fetchurl {
