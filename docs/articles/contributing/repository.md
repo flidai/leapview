@@ -32,18 +32,19 @@ LeapView uses a modular-monolith ownership rule:
 
 Capability modules are peers. `access`, `analytics`, `project`, `workload`, `runtimehost`, and `servingstate` are horizontal because several experiences and workflows use them, but they remain product capabilities rather than a shared technical layer. Depending on one requires an explicit contract and a declared dependency edge.
 
-Keep capability HTTP, API, UI, persistence, and worker adapters beside their owner. Do not introduce generic `internal/api`, `internal/ui`, or `internal/modules` roots. Read the [Architecture overview](/docs/architecture) before creating a new top-level package or cross-capability dependency.
+Keep capability HTTP, API, UI, persistence, and worker adapters beside their owner. Do not introduce generic `internal/api`, `internal/ui`, or `internal/modules` roots. Read the [Architecture overview](https://leapview.dev/docs/architecture) before creating a new top-level package or cross-capability dependency.
 
 ## Development loop
 
 On x86_64 Linux, the repository's `flake.nix` provides a locked development toolchain.
-Run `nix develop`, then use the same Task commands below. Docker must already be
-running and accessible. `nix develop -c task ci` runs the PR contract in that
+Run `./scripts/develop.sh`, then use the same Task commands below. Docker must already be
+running and accessible. `./scripts/develop.sh task ci` runs the PR contract in that
 environment; `task nix:check` checks the native toolchain and matching Chromium.
 `nix build .#leapview` and `nix build .#leapview-image` provide sandboxed application
 and container builds. `task nix:qualify` runs the existing production-image checks.
 See `nix/README.md` in the repository for setup, version updates and current limits.
-Nix is optional for contributors and is not required to run the published image.
+The launcher selects Nix on x86_64 Linux and the conventional installed
+toolchain on other platforms. Nix is not required to run the published image.
 
 Use red-green-refactor for behavior changes:
 
@@ -70,14 +71,14 @@ task dev:stop
 ```
 
 The workflow stores process state beneath `.tmp/` and pins a worktree-local port across restarts; a conflict fails visibly instead of moving the URL. Local browser cookies are also namespaced per worktree. Do not kill unrelated processes or reuse persistent state from another worktree implicitly.
-The default requires real local authentication and reuses staged managed data.
+The default uses real local authentication. On a fresh database it creates
+private development credentials, stages the sample data, and publishes the
+project; later starts reuse active managed data.
 Choose **Continue as Local Developer** on the login page to create an ordinary
 durable, audited browser session; use `task dev:credentials` only when
-explicitly testing password login. Seed a
-new database once with `LEAPVIEW_DEV_ONCE=1 task dev:bypass`; that explicit
-bypass mode cannot issue durable grants or test credential-bound authorization.
-The normal local session lasts up to 30 days and survives server restarts; production keeps its eight-hour lifetime. `task dev` only starts the server; use `task dev:publish` for a fresh authorized
-release.
+explicitly testing password login.
+The normal local session lasts up to 30 days and survives server restarts; production keeps its eight-hour lifetime. Use `task dev:publish` to explicitly publish a fresh authorized
+candidate without syncing data.
 `task dev:auth-smoke` uses a real browser session to grant a temporary group
 role, publish a fresh candidate, check activation, revoke, and clean up.
 

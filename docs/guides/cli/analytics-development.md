@@ -13,19 +13,19 @@ rotation/retirement, pinned preview state, and guided deployment operation
 descriptors. Those tests are evidence for the checkout; they are not a
 released-package qualification result.
 
-The qualification harness defines the boundary for a future or exact released
-authoring archive: it checks archive integrity, package/runtime identity, the
-executable version, and read-only command help. Its optional lifecycle requires
-the exact archive under test, a supported Linux or macOS host, an explicit
-local Unix Docker socket, Compose 2.17 or newer, and possibly a human browser
-approval. The current public archives are recorded as Compose/`leapviewctl`
-archives; the installable authoring CLI archive remains release-blocked until
-FAI-798 ships. Preview edit-to-visible measurements and production deploy
-qualification remain `not-run`/planned in the
-[qualification contract](../../../deploy/local/qualification/qualification-contract.json).
-Do not treat the qualification directory as evidence that a released authoring package currently exists.
-The [CLI contract](../../../adr/specifications/analytics-development-cli-contract.md)
-is the intended interface, not a claim that every row is released.
+The [v0.3.0-alpha.1 release](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
+publishes authoring CLI archives for Linux and macOS on AMD64 and ARM64. Its
+release jobs verify package integrity, executable identity, and command help;
+they do not establish every host/provider's complete authoring lifecycle.
+
+The qualification harness checks the exact released authoring package. Its
+optional lifecycle requires the archive under test, a supported Linux or macOS
+host, an explicit local Unix Docker socket, and Compose 2.17 or newer. Local
+bootstrap authentication is automatic. Preview edit-to-visible measurements
+and production deployment require their own observed evidence; see the
+[qualification contract](https://github.com/flidai/leapview/blob/main/deploy/local/qualification/qualification-contract.json).
+The [CLI contract](https://github.com/flidai/leapview/blob/main/adr/specifications/analytics-development-cli-contract.md)
+describes the interface, not a claim that every scenario has been qualified.
 
 ## Migrate from contributor development
 
@@ -34,11 +34,10 @@ expects the source checkout and contributor toolchain, builds the application,
 provisions contributor fixtures, and may enable diagnostics such as the
 Datastar inspector. It is not the installation or analytics-authoring path.
 
-For analytics authoring, install the versioned archive when an exact archive is
-available, and keep its `local-runtime` sibling next to the executable. The
-archive install and host requirements are in [Install the authoring CLI](../../../deploy/local/INSTALL.md).
-Use the generated [`init`](/docs/cli/init), [`dev`](/docs/cli/dev), and
-[`deploy`](/docs/cli/deploy) references for the exact flags of the build you
+For analytics authoring, install the versioned archive from the release, and
+keep its `local-runtime` sibling next to the executable. The archive install and host requirements are in [Install the authoring CLI](https://github.com/flidai/leapview/blob/main/deploy/local/INSTALL.md).
+Use the generated [`init`](https://leapview.dev/docs/cli/init), [`dev`](https://leapview.dev/docs/cli/dev), and
+[`deploy`](https://leapview.dev/docs/cli/deploy) references for the exact flags of the build you
 are running.
 
 ## Create or open a project
@@ -235,7 +234,7 @@ explicitly selected, supported dbt target after preview and confirmation; it
 will not establish general `profiles.yml` compatibility, execute arbitrary
 expressions, or push credentials to production.
 
-Continue with [Targets and environments](/docs/cli/targets),
-[Develop, review, and publish](/docs/cli/validate-deploy), and
-[Automation and CI](/docs/cli/automation). For implementation/release status,
-see the [Milestone 5 conformance evidence matrix](../../../adr/specifications/adr-0021-milestone-5-conformance-evidence.md).
+Continue with [Targets and environments](https://leapview.dev/docs/cli/targets),
+[Develop, review, and publish](https://leapview.dev/docs/cli/validate-deploy), and
+[Automation and CI](https://leapview.dev/docs/cli/automation). For implementation/release status,
+see the [Milestone 5 conformance evidence matrix](https://github.com/flidai/leapview/blob/main/adr/specifications/adr-0021-milestone-5-conformance-evidence.md).
