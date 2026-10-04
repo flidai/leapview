@@ -45,20 +45,20 @@ const (
 )
 
 type qualificationRecoveryOptions struct {
-	BundleRoot           string
-	EvidenceDir          string
-	PublisherToken       string
-	WorkloadToken        string
-	ProjectDataToken     string
-	RecoveryControlToken string
-	MetricsToken         string
-	AuthorPrincipalID    string
-	ReviewerPrincipalID  string
-	ContainerID          string
-	ComposeProject       string
-	ProjectID            string
-	Image                string
-	Target               string
+	BundleRoot              string
+	EvidenceDir             string
+	PublisherToken          string
+	WorkloadToken           string
+	ConnectionEvidenceToken qualificationConnectionEvidenceToken
+	RecoveryControlToken    string
+	MetricsToken            string
+	AuthorPrincipalID       string
+	ReviewerPrincipalID     string
+	ContainerID             string
+	ComposeProject          string
+	ProjectID               string
+	Image                   string
+	Target                  string
 }
 
 type qualificationRecoveryReport struct {
@@ -141,20 +141,20 @@ func (c *Controller) runQualificationRecovery(
 		return report, fmt.Errorf("recovery qualification requires exact evaluation project %q", manageddataqualificationbarrier.EvaluationProjectID)
 	}
 	for label, value := range map[string]string{
-		"bundle root":            options.BundleRoot,
-		"evidence directory":     options.EvidenceDir,
-		"publisher token":        options.PublisherToken,
-		"workload token":         options.WorkloadToken,
-		"project data token":     options.ProjectDataToken,
-		"recovery control token": options.RecoveryControlToken,
-		"metrics token":          options.MetricsToken,
-		"author principal id":    options.AuthorPrincipalID,
-		"reviewer principal id":  options.ReviewerPrincipalID,
-		"container":              options.ContainerID,
-		"Compose project":        options.ComposeProject,
-		"project":                options.ProjectID,
-		"image":                  options.Image,
-		"target":                 options.Target,
+		"bundle root":               options.BundleRoot,
+		"evidence directory":        options.EvidenceDir,
+		"publisher token":           options.PublisherToken,
+		"workload token":            options.WorkloadToken,
+		"connection evidence token": string(options.ConnectionEvidenceToken),
+		"recovery control token":    options.RecoveryControlToken,
+		"metrics token":             options.MetricsToken,
+		"author principal id":       options.AuthorPrincipalID,
+		"reviewer principal id":     options.ReviewerPrincipalID,
+		"container":                 options.ContainerID,
+		"Compose project":           options.ComposeProject,
+		"project":                   options.ProjectID,
+		"image":                     options.Image,
+		"target":                    options.Target,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return report, fmt.Errorf("recovery qualification %s is required", label)
@@ -238,19 +238,12 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "managed upload interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
-	var active struct {
-		Revision struct {
-			ID string `json:"id"`
-		} `json:"revision"`
-	}
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet,
-		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/active-revision",
-		options.ProjectDataToken, nil, "", &active,
-	); err != nil {
+	baselineRevision, err := qualificationActiveManagedRevision(
+		ctx, client, apiRoot, options.ProjectID, options.ConnectionEvidenceToken,
+	)
+	if err != nil {
 		return report, err
 	}
-	baselineRevision := active.Revision.ID
 	// A clean installation legitimately has no active managed-data revision
 	// until its first deployment selects a staged revision. The interruption
 	// invariant is still exact: the partial upload must leave that empty active
@@ -345,14 +338,13 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil || faultRevision == baselineRevision {
 		return report, fmt.Errorf("managed upload did not create a distinct staged revision")
 	}
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet,
-		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/active-revision",
-		options.ProjectDataToken, nil, "", &active,
-	); err != nil {
+	activeRevision, err := qualificationActiveManagedRevision(
+		ctx, client, apiRoot, options.ProjectID, options.ConnectionEvidenceToken,
+	)
+	if err != nil {
 		return report, err
 	}
-	if active.Revision.ID != baselineRevision {
+	if activeRevision != baselineRevision {
 		return report, fmt.Errorf("interrupted upload changed the active revision")
 	}
 	managedEvents, err := waitForQualificationEvents(

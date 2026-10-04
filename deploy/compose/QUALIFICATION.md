@@ -48,6 +48,27 @@ republishing. The report records the selected deployment image. The controller w
 `qualification-evidence/authoring-ci/authoring-report.json`. Both trusted and
 fork pull-request production-image jobs run this gate.
 
+## Qualification read credentials
+
+The installed journey issues separate, short-lived project credentials for its
+read-only evidence calls. `delivery.read` is used only for the candidate and
+generation status reads before and after application upgrade. `connection.read`
+is used only for active-revision reads before and after managed-upload
+interruption. These are already the endpoint authorization requirements; this
+qualification fix changes neither API policy nor project/workload grants, and
+does not reuse publisher or workload credentials for evidence reads.
+
+Both native jobs in [manual release workflow run 37196382702](https://github.com/flidai/leapview/actions/runs/37196382702)
+previously failed in application-upgrade qualification when the candidate-status
+request used a token without `delivery.read` and received HTTP 403. The same
+incorrect data credential would also fail recovery's active-revision request,
+which requires `connection.read`. The focused regressions reproduce both denied
+requests and verify the two dedicated bearer headers:
+
+```sh
+go test ./internal/app/cli/composectl -run 'TestQualification(DeliveryEvidence|ActiveRevision)' -count=1
+```
+
 ## Performance policy
 
 The installed-candidate gate assumes a dedicated Docker runtime with at least

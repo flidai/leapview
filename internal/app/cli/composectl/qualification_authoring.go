@@ -43,47 +43,6 @@ type qualificationAuthoringOptions struct {
 	Environment     string
 }
 
-type qualificationCredentials struct {
-	Email                      string `json:"email"`
-	TemporaryPassword          string `json:"temporaryPassword"`
-	ProjectClaimToken          string `json:"projectClaimToken"`
-	ProjectClaimTokenExpiresAt string `json:"projectClaimTokenExpiresAt"`
-	ClaimCredentialID          string `json:"claimCredentialId,omitempty"`
-	PublisherToken             string `json:"publisherToken"`
-	PublisherTokenExpires      string `json:"publisherTokenExpiresAt"`
-	WorkloadToken              string `json:"workloadToken,omitempty"`
-	ProjectDataToken           string `json:"projectDataToken,omitempty"`
-	RecoveryControlToken       string `json:"recoveryControlToken,omitempty"`
-	AuditToken                 string `json:"auditToken,omitempty"`
-	AuthorPrincipalID          string `json:"authorPrincipalId,omitempty"`
-	ReviewerPrincipalID        string `json:"reviewerPrincipalId,omitempty"`
-	QualificationPassword      string `json:"qualificationPassword"`
-}
-
-func (credentials qualificationCredentials) workloadToken() (string, error) {
-	token := strings.TrimSpace(credentials.WorkloadToken)
-	if token == "" {
-		return "", fmt.Errorf("dedicated qualification workload token is required")
-	}
-	return token, nil
-}
-
-func (credentials qualificationCredentials) projectDataToken() (string, error) {
-	token := strings.TrimSpace(credentials.ProjectDataToken)
-	if token == "" {
-		return "", fmt.Errorf("dedicated qualification project-data token is required")
-	}
-	return token, nil
-}
-
-func (credentials qualificationCredentials) recoveryControlToken() (string, error) {
-	token := strings.TrimSpace(credentials.RecoveryControlToken)
-	if token == "" {
-		return "", fmt.Errorf("dedicated qualification recovery-control token is required")
-	}
-	return token, nil
-}
-
 func qualificationWorkloadActions() []access.Action {
 	seen := make(map[access.Action]struct{})
 	actions := make([]access.Action, 0, 32)
@@ -99,10 +58,6 @@ func qualificationWorkloadActions() []access.Action {
 	}
 	sort.Slice(actions, func(left, right int) bool { return actions[left] < actions[right] })
 	return actions
-}
-
-func qualificationProjectDataActions() []access.Action {
-	return []access.Action{access.ActionDashboardRead, access.ActionSemanticRead, access.ActionSemanticConsume, access.ActionSemanticQuery}
 }
 
 func qualificationAdministratorActions() []access.Action {
@@ -580,7 +535,11 @@ func (c *Controller) runQualificationAuthoring(
 	if err != nil {
 		return report, err
 	}
-	projectDataToken, err := createAPIToken("qualification-project-data", qualificationProjectDataActions())
+	deliveryEvidenceToken, err := createAPIToken("qualification-delivery-evidence", qualificationDeliveryEvidenceActions())
+	if err != nil {
+		return report, err
+	}
+	connectionEvidenceToken, err := createAPIToken("qualification-connection-evidence", qualificationConnectionEvidenceActions())
 	if err != nil {
 		return report, err
 	}
@@ -589,7 +548,8 @@ func (c *Controller) runQualificationAuthoring(
 		return report, err
 	}
 	credentials.WorkloadToken = workloadToken
-	credentials.ProjectDataToken = projectDataToken
+	credentials.DeliveryEvidenceToken = deliveryEvidenceToken
+	credentials.ConnectionEvidenceToken = connectionEvidenceToken
 	credentials.RecoveryControlToken = reviewerToken.AccessToken
 	credentials.AuditToken = auditToken
 	credentials.AuthorPrincipalID = administrator.Principal.Id

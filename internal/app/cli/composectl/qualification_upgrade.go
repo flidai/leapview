@@ -37,7 +37,7 @@ type qualificationDeliveryPersistenceEvidence struct {
 func (c *Controller) runQualificationApplicationUpgrade(
 	ctx context.Context,
 	containerID string,
-	token string,
+	token qualificationDeliveryEvidenceToken,
 	authoring qualificationAuthoringReport,
 ) (string, error) {
 	if c == nil {
@@ -81,7 +81,8 @@ func (c *Controller) runQualificationApplicationUpgrade(
 
 func (c *Controller) qualificationDeliveryPersistenceEvidence(
 	ctx context.Context,
-	target, projectID, candidateID, generationID, token string,
+	target, projectID, candidateID, generationID string,
+	token qualificationDeliveryEvidenceToken,
 ) (qualificationDeliveryPersistenceEvidence, error) {
 	if c == nil {
 		return qualificationDeliveryPersistenceEvidence{}, errors.New("controller is required")
@@ -93,11 +94,11 @@ func (c *Controller) qualificationDeliveryPersistenceEvidence(
 		strings.TrimSpace(candidateID) == "" || strings.TrimSpace(generationID) == "" {
 		return qualificationDeliveryPersistenceEvidence{}, errors.New("qualification delivery identity inputs are required")
 	}
-	if strings.TrimSpace(token) == "" {
+	if strings.TrimSpace(string(token)) == "" {
 		return qualificationDeliveryPersistenceEvidence{}, errors.New("qualification delivery identity token is required")
 	}
 	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
-		target, token, &http.Client{Timeout: 30 * time.Second},
+		target, string(token), &http.Client{Timeout: 30 * time.Second},
 	))
 	candidate, err := client.GetDeliveryCandidateStatus(ctx, deploymentgen.GenGetDeliveryCandidateStatusClientRequest{
 		Project: projectID, Candidate: candidateID,
