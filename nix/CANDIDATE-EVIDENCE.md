@@ -509,3 +509,52 @@ must separately pass the existing native installed-candidate and host lifecycle
 journeys against its selected admitted image and acquire provenance over the
 outer archive hash. Protected signing and adoption remain pending for these Nix
 bundle candidates; no published builder is replaced by this assembly mechanism.
+
+### Protected Nix Compose candidates (FAI-1073)
+
+The manual `Protected Nix Compose candidate` workflow takes the run ID of a
+completed successful `release.yml` `workflow_dispatch` on `main`. The protected
+gate checks the repository, workflow path and workflow ID, run attempt, event,
+branch, completion result and source SHA. The source commit must be an ancestor of
+the protected workflow revision. The gate selects the single artifact named
+`release-candidate-candidate-RUN_ID-RUN_ATTEMPT`, downloads it by its exact API
+artifact ID, and compares the raw ZIP bytes with the API SHA-256 digest before
+extracting only `image-reference.txt`, `release-identity.json` and
+`assembled-image-admission.json`. A fresh successful release run is required
+after release identity format changes; older artifacts with a different identity
+format fail closed.
+
+Separate native AMD64 and ARM64 preflight jobs repeat the protected OCI
+admission check for the immutable image and exact release source, then capture
+the image's runtime version JSON before any Compose controller is executed.
+Those read-only, credentialed jobs publish immutable pre-execution evidence.
+The workflow builds both clean-source Nix Compose controllers without signing
+permissions and passes their original Nix build receipts to the protected
+`scripts/package_compose_bundle.py` assembler. The conventional bundle
+controllers and Darwin publisher outputs are not inputs to this candidate.
+
+Native AMD64 and ARM64 qualification jobs verify the outer archive, inner
+checksums, canonical bundle layout, trusted Go build metadata and matching
+original Nix build receipt. They consume exact same-run pre-execution artifact
+IDs, compare release and OCI evidence to the authorized handoff, check the
+installed controller's runtime identity, and run the full installed-candidate
+`--multi-node-process` journey without registry credentials. The retained
+evidence directory inventory and each file hash are bound into the
+qualification receipt. Diagnostics are retained even when a job fails; only a
+successful qualification can emit its qualified artifact. The protected signer
+consumes exact artifact IDs, byte-compares qualified files to the original Nix
+build and pre-execution evidence, then rechecks reports and receipts without
+running candidate code. It attests the exact outer archive and the receipt that
+records `releaseAdmission: false`. A separate read-only job verifies the live
+attestations against this workflow path, its actual protected `main` revision
+and the exact subject hashes.
+
+This is useful Compose installation evidence, but it is not full release
+admission. The current lane does not yet generate protected Go vulnerability
+reports or SPDX for the Compose controllers and does not repeat the three pinned
+Debian/Ubuntu host probes for these canonical-release controller binaries. Those
+gates, remaining host lifecycle qualification and promotion of the exact
+candidate remain open. No artifact is added to release downloads and the existing
+conventional Compose and Darwin publishers remain authoritative. A successful
+workflow run after this change lands on `main` is needed before recording live
+evidence in [FAI-1073](https://linear.app/flid/issue/FAI-1073).

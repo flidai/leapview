@@ -123,8 +123,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		report.Phases = phases.Evidence()
 		if runErr != nil {
-			report.CompletedAt = qualificationStartedAt(c.now())
-			report.ElapsedSeconds = int64(c.now().Sub(started).Seconds())
+			c.completeInstalledQualificationReport(&report, started)
 			_ = writeQualificationJSON(
 				filepath.Join(evidenceDir, "qualification-report.json"),
 				report,
@@ -613,8 +612,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	report.Phases = phases.Evidence()
 
 	report.Result = "success"
-	report.CompletedAt = qualificationStartedAt(c.now())
-	report.ElapsedSeconds = int64(c.now().Sub(started).Seconds())
+	c.completeInstalledQualificationReport(&report, started)
 	if err := writeQualificationJSON(
 		filepath.Join(evidenceDir, "qualification-report.json"),
 		report,
@@ -627,6 +625,12 @@ func (c *Controller) QualifyInstalledCandidate(
 		report.ElapsedSeconds,
 	)
 	return err
+}
+
+func (c *Controller) completeInstalledQualificationReport(report *qualificationInstalledReport, started time.Time) {
+	completed := c.now()
+	report.CompletedAt = qualificationStartedAt(completed)
+	report.ElapsedSeconds = int64(completed.Sub(started).Seconds())
 }
 
 func isQualificationLowerHex(value string) bool {

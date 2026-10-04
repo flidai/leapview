@@ -5,13 +5,21 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 
-test('protected controller adversarial checks run in local and hosted CI', () => {
+test('protected controller and Compose adversarial checks run in local and hosted CI', () => {
   const command = 'python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py'
   expect(readFileSync('Taskfile.yml', 'utf8')).toContain(command)
   const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
   expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
   expect(workflow.jobs.image.steps.some((step: any) =>
     step.run?.includes(`env LEAPVIEW_TEST_NIX_CLI_RUNTIME=1 ${command}`))).toBe(true)
+  for (const script of ['package_compose_bundle', 'nix_compose_qualification']) {
+    const testCommand = `python3 -m unittest discover -s scripts/tests -p test_${script}.py`
+    expect(readFileSync('Taskfile.yml', 'utf8')).toContain(testCommand)
+    expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(testCommand))).toBe(true)
+    expect(workflow.on.pull_request.paths).toContain(`scripts/${script}.py`)
+    expect(workflow.on.pull_request.paths).toContain(`scripts/tests/test_${script}.py`)
+  }
+  expect(workflow.on.pull_request.paths).toContain('.github/workflows/nix-compose-candidate.yml')
 })
 
 const action = parse(readFileSync('.github/actions/setup-ci/action.yml', 'utf8'))
@@ -683,6 +691,337 @@ esac
         expect(commands[2]).not.toContain(`sha256:${'a'.repeat(64)}`)
       }
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+const composeCandidateWorkflow = parse(readFileSync('.github/workflows/nix-compose-candidate.yml', 'utf8'))
+const ghExpr = (expression: string): string => '$' + '{{ ' + expression + ' }}'
+const workflowInlinePython = (run: string): string => {
+  const match = run.match(/python3 - <<'PY'\n([\s\S]*?)\nPY/)
+  if (!match) throw new Error('workflow step has no embedded Python contract')
+  return match[1]
+}
+
+test('Compose release authorization binds successful main run, source ancestry and exact artifact attempt', () => {
+  expect(Object.keys(composeCandidateWorkflow.on)).toEqual(['workflow_dispatch'])
+  expect(Object.keys(composeCandidateWorkflow.on.workflow_dispatch.inputs)).toEqual(['release_run_id'])
+  const authorizeJob = composeCandidateWorkflow.jobs.authorize
+  expect(authorizeJob.if).toBe("github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'")
+  const checkout = authorizeJob.steps.find((step: any) => step.uses?.startsWith('actions/checkout@'))
+  expect(checkout.with.ref).toBe(ghExpr('github.sha'))
+  expect(checkout.with['fetch-depth']).toBe(0)
+  expect(checkout.with['persist-credentials']).toBe(false)
+  const authorize = authorizeJob.steps.find((step: any) => step.id === 'authorize')
+  expect(authorize.run).toContain('actions/runs/$RELEASE_RUN_ID')
+  expect(authorize.run).toContain('actions/workflows/release.yml')
+  expect(authorize.run).toContain('actions/runs/$RELEASE_RUN_ID/artifacts')
+  expect(authorize.run).toContain('qualification.verify_release_run')
+
+  const root = mkdtempSync(join(tmpdir(), 'nix-compose-release-gate-'))
+  try {
+    const revisionResult = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), encoding: 'utf8' })
+    if (revisionResult.status !== 0) throw new Error(revisionResult.stderr)
+    const revision = revisionResult.stdout.trim()
+    const releaseRunId = 845001
+    const runAttempt = 2
+    const runData = {
+      repository: { full_name: 'flidai/leapview' }, workflow_id: 713, id: releaseRunId,
+      run_attempt: runAttempt, event: 'workflow_dispatch', status: 'completed',
+      conclusion: 'success', head_branch: 'main', head_sha: revision,
+    }
+    const workflowData = { id: 713, path: '.github/workflows/release.yml' }
+    const artifact = {
+      id: 901,
+      name: 'release-candidate-candidate-' + releaseRunId + '-' + runAttempt,
+      digest: 'sha256:' + 'a'.repeat(64),
+      expired: false,
+      workflow_run: { id: releaseRunId, head_branch: 'main', head_sha: revision },
+    }
+    const execute = (run: any, artifactValue: any) => {
+      writeFileSync(join(root, 'release-run-api.json'), JSON.stringify(run))
+      writeFileSync(join(root, 'release-workflow-api.json'), JSON.stringify(workflowData))
+      writeFileSync(join(root, 'release-artifact-pages.json'), JSON.stringify([{ artifacts: [artifactValue] }]))
+      let script = workflowInlinePython(authorize.run)
+      script = script
+        .replace('sys.path.insert(0, "scripts")', 'sys.path.insert(0, ' + JSON.stringify(resolve('scripts')) + ')')
+        .replace('source_root=Path("."),', 'source_root=Path(' + JSON.stringify(process.cwd()) + '),')
+        .replace('Path("release-run-binding.json").write_text(', 'Path(os.environ["TEST_OUTPUT_DIR"], "release-run-binding.json").write_text(')
+      return spawnSync('python3', ['-c', script], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          RUNNER_TEMP: root,
+          TEST_OUTPUT_DIR: root,
+          GITHUB_SHA: revision,
+          GITHUB_OUTPUT: join(root, 'outputs'),
+        },
+      })
+    }
+    const accepted = execute(runData, artifact)
+    if (accepted.status !== 0) throw new Error(accepted.stdout + accepted.stderr)
+    const binding = JSON.parse(readFileSync(join(root, 'release-run-binding.json'), 'utf8'))
+    expect(binding).toMatchObject({
+      releaseRunId, releaseRunAttempt: runAttempt, releaseArtifactId: artifact.id,
+      releaseArtifactDigest: artifact.digest, releaseWorkflowPath: '.github/workflows/release.yml',
+      releaseBranch: 'main', protectedWorkflowRevision: revision, releaseAdmission: false,
+    })
+    expect(readFileSync(join(root, 'outputs'), 'utf8')).toContain('release_artifact_id=901')
+    expect(authorizeJob.steps.find((step: any) => step.id === 'binding').run)
+      .toContain('sha256=')
+
+    expect(execute({ ...runData, head_branch: 'feature' }, {
+      ...artifact, workflow_run: { ...artifact.workflow_run, head_branch: 'feature' },
+    }).status).not.toBe(0)
+    expect(execute(runData, { ...artifact, name: 'release-candidate-candidate-' + releaseRunId + '-1' }).status).not.toBe(0)
+    expect(execute({ ...runData, conclusion: 'failure' }, artifact).status).not.toBe(0)
+
+    const bindingRoot = join(root, 'binding-step')
+    const bindingPath = join(bindingRoot, 'release-input', 'release-run-binding.json')
+    mkdirSync(join(bindingRoot, 'release-input'), { recursive: true })
+    writeFileSync(bindingPath, '{"releaseAdmission":false}\n')
+    const bindingStep = authorizeJob.steps.find((step: any) => step.id === 'binding')
+    const bindingOutput = join(bindingRoot, 'github-output')
+    const bindingRun = spawnSync('bash', ['-c', bindingStep.run], {
+      cwd: bindingRoot,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_OUTPUT: bindingOutput },
+    })
+    if (bindingRun.status !== 0) throw new Error(bindingRun.stdout + bindingRun.stderr)
+    const digest = spawnSync('sha256sum', [bindingPath], { encoding: 'utf8' }).stdout.split(/\s+/)[0]
+    expect(readFileSync(bindingOutput, 'utf8')).toBe('sha256=' + digest + '\n')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+
+  const rawDownload = authorizeJob.steps.find((step: any) => step.name?.includes('digest-check'))
+  expect(rawDownload.run).toContain('actions/artifacts/$ARTIFACT_ID/zip')
+  expect(rawDownload.run).toContain('--artifact-digest \"$ARTIFACT_DIGEST\"')
+  expect(rawDownload.run).toContain('--release-authorization release-run-binding.json')
+  expect(rawDownload.run).toContain('release-candidate.zip')
+})
+
+test('Compose image preflight is credentialed only for image admission and precedes controller execution', () => {
+  const { preflight, qualify, 'build-bundles': build } = composeCandidateWorkflow.jobs
+  expect(preflight.needs).toEqual(['authorize', 'build-bundles'])
+  expect(preflight.strategy.matrix.include.map((row: any) => [row.arch, row.runner]))
+    .toEqual([['amd64', 'ubuntu-24.04'], ['arm64', 'ubuntu-24.04-arm']])
+  expect(preflight.permissions).toEqual({
+    actions: 'read', attestations: 'read', contents: 'read', packages: 'read',
+  })
+  expect(preflight.steps.find((step: any) => step.uses === './.github/actions/oci-admission').with)
+    .toMatchObject({
+      image: ghExpr('needs.build-bundles.outputs.image_reference'),
+      'expected-workflow': 'flidai/leapview/.github/workflows/release.yml',
+      'source-revision': ghExpr('needs.authorize.outputs.source_revision'),
+      platform: 'linux/' + ghExpr('matrix.arch'),
+    })
+  const preflightRuntime = preflight.steps.findIndex((step: any) => step.name?.includes('actual release image runtime'))
+  const preflightUpload = preflight.steps.findIndex((step: any) => step.name?.includes('immutable pre-execution'))
+  expect(preflightRuntime).toBeLessThan(preflightUpload)
+  expect(preflight.steps[preflightRuntime].run).toContain('docker run --rm \"$IMAGE_REFERENCE\" version --json')
+  expect(preflight.steps.some((step: any) => step.run?.includes('leapviewctl'))).toBe(false)
+  expect(preflight.steps.some((step: any) => step.run?.includes('installed-candidate'))).toBe(false)
+  const preflightDiagnostics = preflight.steps.find((step: any) => step.name?.includes('admission diagnostics'))
+  expect(preflightDiagnostics.if).toBe('always()')
+  expect(preflightDiagnostics.with['if-no-files-found']).toBe('warn')
+  expect(build.outputs.image_reference).toBe(ghExpr('steps.image.outputs.reference'))
+
+  expect(qualify.needs).toEqual(['authorize', 'build-bundles', 'preflight'])
+  expect(qualify['timeout-minutes']).toBe(270)
+  expect(qualify.permissions).toEqual({ actions: 'read', contents: 'read' })
+  expect(qualify.environment).toBeUndefined()
+  expect(qualify.steps.some((step: any) => step.uses === './.github/actions/oci-admission')).toBe(false)
+  expect(qualify.steps.some((step: any) => step.uses?.startsWith('docker/login-action@'))).toBe(false)
+  const idResolver = qualify.steps.find((step: any) => step.id === 'preflight')
+  expect(idResolver.run).toContain('nix-compose-preflight-{run_id}-{attempt}-{arch}')
+  expect(idResolver.run).toContain('head_branch')
+  expect(idResolver.run).toContain('head_sha')
+  expect(idResolver.run).toContain('item.get(\"expired\") is False')
+  const downloads = qualify.steps.filter((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(downloads.map((step: any) => step.with['artifact-ids'])).toEqual([
+    ghExpr('needs.build-bundles.outputs.artifact_id'),
+    ghExpr('needs.authorize.outputs.handoff_artifact_id'),
+    ghExpr('steps.preflight.outputs.artifact_id'),
+  ])
+  const checks = qualify.steps.find((step: any) => step.name?.includes('Verify authorized source'))
+  expect(checks.run).toContain('cmp release-input/release-run-binding.json')
+  expect(checks.run).toContain('cmp release-input/image-reference.txt')
+  expect(checks.run).toContain('preflight/$ARCH/oci-admission.json')
+  const journey = qualify.steps.find((step: any) => step.name?.includes('full installed-candidate journey'))
+  expect(journey.run).toContain('--multi-node-process')
+  expect(journey.run).toContain('env -u GH_TOKEN -u GITHUB_TOKEN')
+  const record = qualify.steps.find((step: any) => step.name?.includes('write the success receipt'))
+  expect(record.run).toContain('record-qualification')
+  expect(record.run).toContain('--release-artifact-zip release-input/release-candidate.zip')
+  expect(record.run).toContain('--qualification-evidence-dir \"$EVIDENCE_ROOT\"')
+  expect(record.run).toContain('--runtime-identity \"candidate/$ARCH/image-runtime-identity.json\"')
+  expect(qualify.steps.find((step: any) => step.name?.includes('success-qualified')).if).toBe('success()')
+  const diagnostics = qualify.steps.find((step: any) => step.name?.includes('diagnostics even on failure'))
+  expect(diagnostics.if).toBe('always()')
+  expect(diagnostics.with['if-no-files-found']).toBe('warn')
+})
+
+test('Compose signer anchors every qualified copy to original build and pre-execution artifacts', () => {
+  const { sign, 'verify-attestations': verify } = composeCandidateWorkflow.jobs
+  expect(sign.needs).toEqual(['authorize', 'build-bundles', 'preflight', 'qualify'])
+  expect(sign.if).toBe("github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'")
+  expect(sign.environment).toBe('leapview-ephemeral-qualification')
+  expect(sign.permissions).toEqual({
+    actions: 'read', contents: 'read', attestations: 'write', 'id-token': 'write',
+  })
+  const resolver = sign.steps.find((step: any) => step.id === 'artifacts')
+  expect(resolver.run).toContain('nix-compose-{kind}-{run_id}-{attempt}-{arch}')
+  expect(resolver.run).toContain('head_branch')
+  expect(resolver.run).toContain('head_sha')
+  expect(resolver.run).toContain('sha256:[0-9a-f]{64}')
+  expect(resolver.run).toContain('a.get(\"expired\") is False')
+  const downloads = sign.steps.filter((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(downloads).toHaveLength(6)
+  expect(downloads.some((step: any) => step.with.path === 'original-build' &&
+    step.with['artifact-ids'] === ghExpr('needs.build-bundles.outputs.artifact_id'))).toBe(true)
+  const offline = sign.steps.find((step: any) => step.name?.includes('Recompute receipts'))
+  expect(offline.run).toContain('original-build/$arch/$file')
+  expect(offline.run).toContain('preflight/$arch/$file')
+  expect(offline.run).toContain('verify-qualification')
+  expect(offline.run).toContain('--qualification-evidence-dir')
+  expect(offline.run).toContain('cmp release-input/release-run-binding.json')
+  expect(offline.run).not.toContain('docker run')
+  expect(offline.run).not.toContain('qualify installed-candidate')
+  expect(sign.steps.filter((step: any) => step.uses?.startsWith('actions/attest@'))).toHaveLength(4)
+
+  expect(verify.needs).toEqual(['authorize', 'sign'])
+  expect(verify.permissions).toEqual({ actions: 'read', attestations: 'read', contents: 'read' })
+  expect(verify.environment).toBeUndefined()
+  expect(verify.permissions['id-token']).toBeUndefined()
+  expect(Object.values(verify.permissions).some((value: any) => value === 'write')).toBe(false)
+  const download = verify.steps.find((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(download.with['artifact-ids']).toBe(ghExpr('needs.sign.outputs.artifact_id'))
+  const live = verify.steps.find((step: any) => step.name?.includes('verify attestations read-only'))
+  expect(live.run).toContain('--source-digest \"$GITHUB_SHA\" --source-ref refs/heads/main')
+  expect(live.run).toContain('--signer-workflow flidai/leapview/.github/workflows/nix-compose-candidate.yml')
+  expect(live.run).toContain('--deny-self-hosted-runners')
+  expect(live.run).toContain('--predicate-type https://slsa.dev/provenance/v1 --format json --limit 10')
+  expect(live.run).toContain('statement.get(\"subject\")')
+  expect(live.run).toContain('subjects[0].get(\"digest\")')
+  expect(live.run).toContain('archive_before')
+  expect(live.run).toContain('receipt_before')
+  expect(verify.steps.find((step: any) => step.name?.includes('Retain independent'))?.if).toBe('always()')
+
+  const externalUses = Object.values(composeCandidateWorkflow.jobs).flatMap((job: any) =>
+    job.steps.flatMap((step: any) => step.uses?.startsWith('./') ? [] : step.uses ? [step.uses] : []))
+  for (const use of externalUses) expect(use).toMatch(/@[a-f0-9]{40}$/)
+  for (const job of Object.values(composeCandidateWorkflow.jobs) as any[]) {
+    for (const step of job.steps.filter((item: any) => item.uses?.startsWith('actions/checkout@'))) {
+      expect(step.with['persist-credentials']).toBe(false)
+    }
+  }
+})
+
+test('protected artifact API selector accepts exact current-attempt outputs and rejects substitutions', () => {
+  const resolver = composeCandidateWorkflow.jobs.sign.steps.find((step: any) => step.id === 'artifacts')
+  const script = workflowInlinePython(resolver.run)
+  const root = mkdtempSync(join(tmpdir(), 'nix-compose-artifact-authority-'))
+  const runId = '7755'
+  const attempt = '3'
+  const revision = 'a'.repeat(40)
+  const artifact = (id: number, kind: string, arch: string) => ({
+    id,
+    name: 'nix-compose-' + kind + '-' + runId + '-' + attempt + '-' + arch,
+    expired: false,
+    digest: 'sha256:' + 'b'.repeat(64),
+    workflow_run: { id: Number(runId), head_branch: 'main', head_sha: revision },
+  })
+  const rows = [
+    artifact(9100, 'qualified', 'amd64'), artifact(9101, 'qualified', 'arm64'),
+    artifact(9102, 'preflight', 'amd64'), artifact(9103, 'preflight', 'arm64'),
+  ]
+  const execute = (artifacts: any[]) => {
+    writeFileSync(join(root, 'artifacts.json'), JSON.stringify([{ artifacts }]))
+    return spawnSync('python3', ['-c', script], {
+      encoding: 'utf8',
+      env: {
+        ...process.env, RUNNER_TEMP: root, GITHUB_OUTPUT: join(root, 'outputs'),
+        EXPECTED_RUN_ID: runId, EXPECTED_RUN_ATTEMPT: attempt, EXPECTED_SOURCE_REVISION: revision,
+      },
+    })
+  }
+  try {
+    const accepted = execute(rows)
+    if (accepted.status !== 0) throw new Error(accepted.stdout + accepted.stderr)
+    const output = readFileSync(join(root, 'outputs'), 'utf8')
+    expect(output).toContain('qualified_amd64_id=9100')
+    expect(output).toContain('preflight_arm64_id=9103')
+    expect(execute(rows.map((row, index) => index === 3
+      ? { ...row, workflow_run: { ...row.workflow_run, head_branch: 'feature' } } : row)).status).not.toBe(0)
+    expect(execute(rows.map((row, index) => index === 2
+      ? { ...row, workflow_run: { ...row.workflow_run, head_sha: 'c'.repeat(40) } } : row)).status).not.toBe(0)
+    expect(execute([...rows, { ...rows[0], id: 9999 }]).status).not.toBe(0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('signer comparison accepts the original build binding and rejects extracted binding substitution', () => {
+  const signer = composeCandidateWorkflow.jobs.sign.steps.find((step: any) => step.name?.includes('Recompute receipts'))
+  const qualifier = composeCandidateWorkflow.jobs.qualify.steps.find((step: any) => step.name?.includes('Verify exact bundle'))
+  expect(qualifier.run).toContain('RUNTIME_BUNDLE_BINDING')
+  expect(qualifier.run).toContain('--output "$RUNTIME_BUNDLE_BINDING"')
+
+  const start = signer.run.indexOf('for arch in amd64 arm64; do')
+  const end = signer.run.indexOf('count="$(find', start)
+  expect(start).toBeGreaterThanOrEqual(0)
+  expect(end).toBeGreaterThan(start)
+  const comparisons = signer.run.slice(start, end)
+    .replaceAll('${{ needs.authorize.outputs.release_run_id }}', '7755')
+    .replaceAll('${{ needs.authorize.outputs.release_run_attempt }}', '3')
+  const root = mkdtempSync(join(tmpdir(), 'nix-compose-build-binding-'))
+  const buildFiles = [
+    'PACKAGE.tar.gz', 'PACKAGE.tar.gz.sha256', 'controller-build-identity.json',
+    'static-compatibility.json', 'release-identity.json', 'image-reference.txt',
+    'release-artifact-admission.json', 'release-run-binding.json', 'bundle-binding.json',
+  ]
+  const preflightFiles = [
+    'release-identity.json', 'image-reference.txt', 'assembled-image-admission.json',
+    'release-run-binding.json', 'oci-admission.json', 'image-runtime-identity.json',
+  ]
+  const files = (directory: string, names: string[], valueFor: (name: string) => string) => {
+    mkdirSync(directory, { recursive: true })
+    for (const name of names) writeFileSync(join(directory, name), valueFor(name))
+  }
+  const originalBinding = '{"source":"original Nix build verifier"}\n'
+  const extractedBinding = '{"source":"runtime extraction","extractedController":"candidate bytes"}\n'
+  try {
+    writeFileSync(join(root, 'release-run-binding.json'), '{"binding":"exact"}\n')
+    mkdirSync(join(root, 'release-input'), { recursive: true })
+    copyFileSync(join(root, 'release-run-binding.json'), join(root, 'release-input/release-run-binding.json'))
+    for (const arch of ['amd64', 'arm64']) {
+      const build = buildFiles.map((name) => name.replace('PACKAGE', `leapview-compose-candidate-7755-3-linux-${arch}`))
+      const buildValue = (name: string) => name === 'bundle-binding.json' ? originalBinding
+        : name === 'release-run-binding.json' ? '{"binding":"exact"}\n'
+          : ['release-identity.json', 'image-reference.txt'].includes(name) ? `handoff:${name}\n`
+            : `original:${name}\n`
+      const preflightValue = (name: string) => name === 'release-run-binding.json'
+        ? '{"binding":"exact"}\n'
+        : ['release-identity.json', 'image-reference.txt'].includes(name) ? `handoff:${name}\n`
+          : `preflight:${name}\n`
+      files(join(root, 'original-build', arch), build, buildValue)
+      files(join(root, 'qualified', arch), [...build, ...preflightFiles], (name) =>
+        name === 'bundle-binding.json' ? originalBinding
+          : preflightFiles.includes(name) ? preflightValue(name) : buildValue(name))
+      files(join(root, 'preflight', arch), preflightFiles, preflightValue)
+    }
+
+    const execute = () => spawnSync('bash', ['-c', 'set -euo pipefail\n' + comparisons + '\ndone\n'], {
+      cwd: root, encoding: 'utf8',
+    })
+    const original = execute()
+    if (original.status !== 0) throw new Error(original.stdout + original.stderr)
+
+    writeFileSync(join(root, 'qualified/amd64/bundle-binding.json'), extractedBinding)
+    expect(execute().status).not.toBe(0)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
