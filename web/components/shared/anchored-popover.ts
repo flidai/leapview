@@ -4,6 +4,7 @@ export type AnchoredPopoverOptions = {
   maxHeight?: number
   gap?: number
   viewportPadding?: number
+  align?: 'start' | 'end'
 }
 
 export function toggleAnchoredPopover(
@@ -28,7 +29,8 @@ export function toggleAnchoredPopover(
     availableWidth,
   )
   const visualWidth = width * scale
-  const left = Math.max(padding, Math.min(bounds.left, window.innerWidth - visualWidth - padding))
+  const anchorLeft = options.align === 'end' ? bounds.right - visualWidth : bounds.left
+  const left = Math.max(padding, Math.min(anchorLeft, window.innerWidth - visualWidth - padding))
   const availableBelow = window.innerHeight - bounds.bottom - visualGap - padding
   const availableAbove = bounds.top - visualGap - padding
   const openAbove = availableBelow < 220 * scale && availableAbove > availableBelow

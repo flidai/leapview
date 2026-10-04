@@ -276,6 +276,7 @@ export class ReportTable extends LitElement {
 
     .visual-actions .icon-action,
     .visual-options summary {
+      box-sizing: border-box;
       width: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
       height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
       min-height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
@@ -1670,6 +1671,7 @@ export class ReportTable extends LitElement {
                 </div>
               </div>
             </details>
+            <slot name="focus-action"></slot>
           </div>
         </div>
         ${this.table?.error ? html`<div class="error" role="status" aria-live="polite">${this.table.error}</div>` : nothing}

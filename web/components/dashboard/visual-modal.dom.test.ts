@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 
 let server: Server
 let baseURL = ''
@@ -78,9 +78,11 @@ test('focus action moves the live visual into the modal and restores it in place
   try {
     await page.locator('#trigger').focus()
     await dispatchVisualAction(page, 'first', 'focus')
+    const close = page.getByRole('button', { name: 'Close visual modal' })
+    await browserExpect(close).toBeFocused()
 
     const focusedState = await page.evaluate(() => {
-      const modal = document.querySelector('lv-visual-modal')!
+      const modal = document.querySelector('lv-visual-modal')! as any
       const first = document.getElementById('first')!
       const parent = document.getElementById('parent')!
       return {
@@ -88,7 +90,8 @@ test('focus action moves the live visual into the modal and restores it in place
         slot: first.getAttribute('slot'),
         sourcePosition: parent.children[0] === first,
         sourceInModal: modal.querySelector('[slot="focus-visual"]') === first,
-        activeInModal: (modal.shadowRoot as ShadowRoot)?.activeElement?.classList.contains('focus-close') ?? false,
+        activeInModal: modal.deepActiveElement() === first.querySelector('[slot="focus-action"]'),
+        nativeModal: modal.shadowRoot.querySelector('dialog')?.matches(':modal') ?? false,
       }
     })
 
@@ -98,14 +101,17 @@ test('focus action moves the live visual into the modal and restores it in place
       sourcePosition: false,
       sourceInModal: true,
       activeInModal: true,
+      nativeModal: true,
     })
 
+    // Chromium may move forward focus to browser chrome when the native dialog
+    // has only one control; reverse traversal must return to that real control.
     await page.keyboard.press('Tab')
-    expect(await page.locator('lv-visual-modal').evaluate((modal: any) => (
-      (modal.shadowRoot as ShadowRoot).activeElement?.classList.contains('focus-close') ?? false
-    ))).toBe(true)
+    await browserExpect(page.locator('#trigger')).not.toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await browserExpect(close).toBeFocused()
 
-    await page.locator('lv-visual-modal').evaluate((modal: any) => (modal.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.focus-close')!.click())
+    await close.click()
     await page.locator('lv-visual-modal').evaluate((modal: any) => modal.updateComplete)
 
     const restoredState = await page.evaluate(() => {
@@ -173,7 +179,7 @@ test('focused tables fit a few rows and cap tall tables at the viewport', async 
     ))
     expect(compactHeight).toBeLessThan(500)
 
-    await page.locator('lv-visual-modal').evaluate((modal: any) => (modal.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.focus-close')!.click())
+    await page.getByRole('button', { name: 'Close visual modal' }).click()
     await page.evaluate(() => {
       document.getElementById('second')!.dispatchEvent(new CustomEvent('lv-visual-action', {
         bubbles: true,
@@ -228,28 +234,31 @@ test('show-data mode captures, traps, and restores focus', async () => {
   try {
     await page.locator('#trigger').focus()
     await dispatchVisualAction(page, 'first', 'show-data')
+    const close = page.getByRole('button', { name: 'Close visual modal' })
+    await browserExpect(close).toBeFocused()
     const opened = await page.locator('lv-visual-modal').evaluate((modal: any) => ({
-      active: (modal.shadowRoot as ShadowRoot).activeElement?.getAttribute('aria-label'),
+      active: modal.deepActiveElement()?.getAttribute('aria-label'),
       dialog: (modal.shadowRoot as ShadowRoot).querySelector('[role="dialog"]')?.getAttribute('aria-modal'),
+      nativeModal: (modal.shadowRoot as ShadowRoot).querySelector('dialog')?.matches(':modal'),
     }))
-    expect(opened).toEqual({ active: 'Close visual modal', dialog: 'true' })
+    expect(opened).toEqual({ active: 'Close visual modal', dialog: 'true', nativeModal: true })
 
     await page.keyboard.press('Tab')
     const afterTab = await page.locator('lv-visual-modal').evaluate((modal: any) => {
       const active = modal.deepActiveElement()
       return {
         movedPastClose: active?.getAttribute('aria-label') !== 'Close visual modal',
-        remainsInDialog: Boolean(active && modal.focusableElements().includes(active)),
+        remainsInDialog: Boolean(active && modal.shadowRoot.querySelector('dialog')?.contains(active)),
       }
     })
     expect(afterTab).toEqual({ movedPastClose: true, remainsInDialog: true })
     await page.keyboard.press('Shift+Tab')
-    const afterReverseTab = await page.locator('lv-visual-modal').evaluate((modal: any) => (modal.shadowRoot as ShadowRoot).activeElement?.getAttribute('aria-label'))
-    expect(afterReverseTab).toBe('Close visual modal')
+    await browserExpect(close).toBeFocused()
 
     await page.keyboard.press('Escape')
     await page.locator('lv-visual-modal').evaluate((modal: any) => modal.updateComplete)
-    expect(await page.evaluate(() => document.activeElement?.id)).toBe('trigger')
+    await browserExpect(page.getByRole('dialog')).toHaveCount(0)
+    await browserExpect(page.locator('#trigger')).toBeFocused()
   } finally {
     await page.close()
   }
@@ -272,6 +281,150 @@ test('show-data dialog fits short viewports and keeps its close control reachabl
     expect(closeBounds!.y + closeBounds!.height).toBeLessThanOrEqual(390)
     await close.click()
     expect(await page.getByRole('dialog').count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('native modality blocks high-z-index background interaction and Escape restores the trigger', async () => {
+  const page = await setupPage()
+  try {
+    await page.addStyleTag({ content: `
+      #trigger { position: fixed; left: 50%; top: 50%; width: 120px; height: 40px;
+        transform: translate(-50%, -50%); z-index: 2147483647; }
+    ` })
+    await page.locator('#trigger').evaluate((trigger) => {
+      trigger.setAttribute('data-clicks', '0')
+      trigger.addEventListener('click', () => {
+        trigger.setAttribute('data-clicks', String(Number(trigger.getAttribute('data-clicks')) + 1))
+      })
+    })
+    await page.locator('#trigger').focus()
+    await dispatchVisualAction(page, 'first', 'focus')
+    const dialog = page.getByRole('dialog')
+    expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true)
+    await dialog.evaluate((element) => {
+      element.setAttribute('data-cancels', '0')
+      element.addEventListener('cancel', () => element.setAttribute('data-cancels', '1'))
+    })
+    await page.locator('#trigger').evaluate((trigger) => trigger.focus())
+    await browserExpect(page.getByRole('button', { name: 'Close visual modal' })).toBeFocused()
+
+    const bounds = await page.locator('#trigger').boundingBox()
+    expect(bounds).not.toBeNull()
+    await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2)
+    await browserExpect(page.locator('#trigger')).toHaveAttribute('data-clicks', '0')
+    await browserExpect(page.locator('#trigger')).not.toBeFocused()
+    await browserExpect(dialog).toBeVisible()
+
+    // Keep a handle so the native cancel event can be inspected after removal.
+    const dialogHandle = await dialog.elementHandle()
+    await page.keyboard.press('Escape')
+    await browserExpect(dialog).toHaveCount(0)
+    expect(await dialogHandle!.getAttribute('data-cancels')).toBe('1')
+    await browserExpect(page.locator('#trigger')).toBeFocused()
+    await browserExpect(page.locator('#parent > #first')).toHaveCount(1)
+  } finally {
+    await page.close()
+  }
+})
+
+for (const action of ['focus', 'show-data']) {
+  test(`closing ${action} before its asynchronous update does not reopen the dialog`, async () => {
+    const page = await setupPage()
+    try {
+      await page.locator('#trigger').focus()
+      const state = await page.evaluate(async (action) => {
+        const modal = document.querySelector('lv-visual-modal')! as any
+        const source = document.getElementById('first')!
+        source.dispatchEvent(new CustomEvent('lv-visual-action', {
+          bubbles: true,
+          composed: true,
+          detail: {
+            action, visualType: 'chart', visualId: 'first', title: 'first',
+            columns: [{ key: 'label', label: 'Label' }], rows: [{ label: 'A' }], selection: [],
+          },
+        }))
+        // Close in the same task, before Lit resolves the scheduled open render.
+        modal.close()
+        await modal.updateComplete
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        return {
+          dialogCount: modal.shadowRoot.querySelectorAll('dialog').length,
+          sourceParent: source.parentElement?.id,
+          sourceSlot: source.getAttribute('slot'),
+          hasClose: Boolean(source.querySelector('[slot="focus-action"]')),
+          active: modal.deepActiveElement()?.id,
+        }
+      }, action)
+      expect(state).toEqual({
+        dialogCount: 0, sourceParent: 'parent', sourceSlot: null, hasClose: false, active: 'trigger',
+      })
+    } finally {
+      await page.close()
+    }
+  })
+}
+
+test('switching a focused visual to show-data restores the original trigger on close', async () => {
+  const page = await setupPage()
+  try {
+    await page.locator('#trigger').focus()
+    await dispatchVisualAction(page, 'first', 'focus')
+    await browserExpect(page.getByRole('button', { name: 'Close visual modal' })).toBeFocused()
+    await dispatchVisualAction(page, 'first', 'show-data')
+
+    await browserExpect(page.getByRole('button', { name: 'Copy', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('button', { name: 'Close visual modal' })).toBeFocused()
+    await browserExpect(page.locator('#parent > #first')).toHaveCount(1)
+    await browserExpect(page.locator('#first')).not.toHaveAttribute('slot', 'focus-visual')
+    await browserExpect(page.locator('#first [slot="focus-action"]')).toHaveCount(0)
+    expect(await page.getByRole('dialog').evaluate((dialog) => dialog.matches(':modal'))).toBe(true)
+
+    await page.keyboard.press('Escape')
+    await browserExpect(page.getByRole('dialog')).toHaveCount(0)
+    await browserExpect(page.locator('#trigger')).toBeFocused()
+    expect(await page.locator('#parent').evaluate((parent) => parent.firstElementChild?.id)).toBe('first')
+  } finally {
+    await page.close()
+  }
+})
+
+test('a stale mount completion cannot steal focus after reopening the same source', async () => {
+  const page = await setupPage()
+  try {
+    await page.locator('#first').evaluate((source: any) => {
+      let mounts = 0
+      const pending = new Promise<void>((resolve) => { source.resolveFirstMount = resolve })
+      source.ensureMounted = () => ++mounts === 1 ? pending : Promise.resolve()
+    })
+    await page.locator('#trigger').focus()
+    await dispatchVisualAction(page, 'first', 'focus')
+    const close = page.getByRole('button', { name: 'Close visual modal' })
+    await browserExpect(close).toBeFocused()
+
+    // A programmatic close leaves the first dialog's interaction flag clear,
+    // so its eventual completion must be rejected by dialog identity alone.
+    await close.evaluate((button: HTMLButtonElement) => button.click())
+    await browserExpect(page.getByRole('dialog')).toHaveCount(0)
+    await browserExpect(page.locator('#trigger')).toBeFocused()
+    await dispatchVisualAction(page, 'first', 'focus')
+    await browserExpect(close).toBeFocused()
+    await page.locator('#first').evaluate((source) => {
+      const next = document.createElement('button')
+      next.textContent = 'Inspect reopened visual'
+      source.append(next)
+    })
+    await page.keyboard.press('Tab')
+    const next = page.getByRole('button', { name: 'Inspect reopened visual' })
+    await browserExpect(next).toBeFocused()
+
+    await page.locator('#first').evaluate(async (source: any) => {
+      source.resolveFirstMount()
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    await browserExpect(next).toBeFocused()
+    expect(await page.getByRole('dialog').evaluate((dialog) => dialog.matches(':modal'))).toBe(true)
   } finally {
     await page.close()
   }

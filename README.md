@@ -99,3 +99,9 @@ for bugs and feature proposals.
 ## License
 
 LeapView is available under the [Apache License 2.0](LICENSE).
+
+## Component playground
+
+Run `task playground` to explore production components and all visualization types
+with deterministic local data, without starting the monolith. See
+[the playground guide](playground/README.md) for prerequisites, examples, and extension instructions.

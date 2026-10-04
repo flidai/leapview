@@ -49,9 +49,11 @@ function applyCrossHighlight(option: Record<string, any>, envelope: Visualizatio
   if (!dataset) return
   const projection = projectVisualizationHighlights(envelope, dataset.id, dataset.columns, dataset.rows)
   const series = Array.isArray(option.series) ? option.series : option.series ? [option.series] : []
+  const highlightDimensions = new Map<Record<string, any>, string>()
   for (const item of series) {
     if (item.silent === true) continue
     const rowIndices = seriesRowIndices(envelope, dataset.columns, dataset.rows, item)
+    if (item.type === 'bar' && applyBarCrossHighlight(option, item, series.indexOf(item), rowIndices, projection.matchedRows, highlightDimensions)) continue
     const opacity = (params: { dataIndex?: number }) => {
       if (projection.matchedRows.size === 0) return 0.45
       const rowIndex = params.dataIndex === undefined ? undefined : rowIndices[params.dataIndex]
@@ -65,6 +67,54 @@ function applyCrossHighlight(option: Record<string, any>, envelope: Visualizatio
     enabled: true,
     description: [option.aria?.description, projection.announcement].filter(Boolean).join(' '),
   }
+}
+
+function applyBarCrossHighlight(
+  option: Record<string, any>,
+  series: Record<string, any>,
+  seriesIndex: number,
+  rowIndices: readonly number[],
+  matchedRows: ReadonlySet<number>,
+  highlightDimensions: Map<Record<string, any>, string>,
+): boolean {
+  if (series.data !== undefined) return false
+  const datasets = Array.isArray(option.dataset) ? option.dataset : [option.dataset]
+  let source = series.datasetId !== undefined
+    ? datasets.find((candidate: Record<string, any>) => candidate?.id === series.datasetId)
+    : datasets[series.datasetIndex ?? 0]
+  let transformed = false
+  const visited = new Set<unknown>()
+  while (source && source.fromDatasetId !== undefined && !visited.has(source)) {
+    visited.add(source)
+    transformed = true
+    source = datasets.find((candidate: Record<string, any>) => candidate?.id === source.fromDatasetId)
+  }
+  if (!Array.isArray(source?.source) || !Array.isArray(source.source[0])) return false
+  let dimension = highlightDimensions.get(source)
+  if (dimension === undefined) {
+    const baseDimension = '__lv_cross_highlight'
+    dimension = baseDimension
+    for (let suffix = 1; source.source[0].includes(dimension); suffix++) dimension = `${baseDimension}_${suffix}`
+    highlightDimensions.set(source, dimension)
+    // Filter transforms retain this dimension. Explicit normalized datasets use
+    // the series' existing source-row mapping, preserving original identities.
+    source.source = [
+      [...source.source[0], dimension],
+      ...source.source.slice(1).map((row: unknown[], index: number) => [
+        ...row, matchedRows.has(transformed ? index : rowIndices[index]!) ? 1 : 0,
+      ]),
+    ]
+  }
+  // ECharts evaluates color callbacks, but itemStyle.opacity is a literal.
+  // VisualMap writes a numeric opacity into each datum's visual style instead.
+  const visualMaps = option.visualMap === undefined ? [] : Array.isArray(option.visualMap) ? option.visualMap : [option.visualMap]
+  option.visualMap = [...visualMaps, {
+    id: `cross-highlight:${series.id ?? seriesIndex}`, type: 'piecewise', show: false,
+    dimension, seriesIndex,
+    pieces: [{ value: 1, opacity: 1 }, { value: 0, opacity: matchedRows.size ? 0.2 : 0.45 }],
+    inRange: { opacity: [0.2, 1] }, outOfRange: { opacity: 0.45 },
+  }]
+  return true
 }
 
 function seriesRowIndices(
@@ -198,9 +248,9 @@ export class EChartsHandle implements RendererHandle {
     const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
     const patch = responsiveEChartsPatch(option, this.lastWidth, this.lastHeight, focused)
-    // Exact compact widths only affect scroll legends. Avoid reapplying an
-    // unchanged proportional series while a card is continuously resized.
-    if (!force && compact && sameLayout && patch.legend === undefined) {
+    // Exact compact widths affect scroll legends and category-label budgets.
+    // Avoid reapplying other unchanged layouts during continuous resizing.
+    if (!force && compact && sameLayout && patch.legend === undefined && patch.yAxis === undefined) {
       this.compactWidth = this.lastWidth
       return
     }
@@ -276,7 +326,14 @@ export class EChartsHandle implements RendererHandle {
     const value = state as EChartsViewState
     const patch: Record<string, any> = {}
     if (restoreDataZoom && Array.isArray(value.dataZoom) && value.dataZoom.length > 0) patch.dataZoom = value.dataZoom
-    if (Array.isArray(value.series) && value.series.length > 0) patch.series = value.series
+    if (Array.isArray(value.series) && value.series.length > 0) {
+      // Empty hierarchy frames omit their series. Restoring a camera entry for
+      // a removed series would create a typeless ECharts series instead.
+      const currentSeries = this.responsiveOption?.series ?? []
+      const currentIDs = new Set(currentSeries.map((series: Record<string, any>) => series.id))
+      const retained = value.series.filter((series) => currentIDs.has(series.id))
+      if (retained.length > 0) patch.series = retained
+    }
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: false })
   }
 
@@ -546,9 +603,13 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption, initial
     if (labels.length > 0) patch.series = labels
   }
   if ((change & Change.Highlight) !== 0) {
+    patch.dataset = source.dataset
+    patch.visualMap = source.visualMap ?? []
     patch.series = source.series
     if (source.aria !== undefined) patch.aria = source.aria
-    if (!replaceMerge.includes('series')) replaceMerge.push('series')
+    for (const key of ['dataset', 'visualMap', 'series']) {
+      if (!replaceMerge.includes(key)) replaceMerge.push(key)
+    }
   }
   if ((change & Change.Status) !== 0) {
     patch.title = source.title ?? []
