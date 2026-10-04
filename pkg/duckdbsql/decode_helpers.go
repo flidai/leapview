@@ -152,29 +152,6 @@ func optionalInt64(raw json.RawMessage) (int64, error) {
 	}
 	return value, nil
 }
-func intValue(raw json.RawMessage) (int, error) {
-	i, e := int64Value(raw)
-	if e != nil {
-		return 0, e
-	}
-	if strconv.IntSize == 32 && (i > int64(^uint32(0)>>1) || i < -int64(^uint32(0)>>1)-1) {
-		return 0, fmt.Errorf("integer overflows platform int")
-	}
-	if strconv.IntSize == 64 && (i > int64(^uint64(0)>>1) || i < -int64(^uint64(0)>>1)-1) {
-		return 0, fmt.Errorf("integer overflows platform int")
-	}
-	return int(i), nil
-}
-func int64Value(raw json.RawMessage) (int64, error) {
-	var n json.Number
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(&n); err != nil {
-		return 0, err
-	}
-	i, e := strconv.ParseInt(n.String(), 10, 64)
-	return i, e
-}
 func isNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
 
 func stringsContains(s, needle string) bool {
