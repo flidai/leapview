@@ -213,6 +213,46 @@ test('view transition abort rejections are treated as progressive enhancement mi
   }
 })
 
+for (const failure of ['denied access', 'quota exceeded'] as const) {
+  test(`theme controls and notifications work with storage ${failure}`, async () => {
+    const page = await browser.newPage({ colorScheme: 'dark' })
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    try {
+      await page.addInitScript((failure) => {
+        if (failure === 'denied access') {
+          Object.defineProperty(window, 'localStorage', {
+            get() { throw new DOMException('Storage denied', 'SecurityError') },
+          })
+        } else {
+          Storage.prototype.setItem = () => { throw new DOMException('Storage full', 'QuotaExceededError') }
+        }
+      }, failure)
+      await page.goto(baseURL)
+      await page.waitForFunction(() => (window as any).themeBooted === true)
+      expect(await page.evaluate(() => ({
+        preference: document.documentElement.dataset.themePreference,
+        scheme: document.documentElement.style.colorScheme,
+      }))).toEqual({ preference: 'system', scheme: 'dark' })
+      await page.locator('[data-theme-toggle]').click()
+      expect(await page.evaluate(() => ({
+        preference: document.documentElement.dataset.themePreference,
+        scheme: document.documentElement.style.colorScheme,
+        events: (window as any).themeAppliedEvents,
+        toggle: document.querySelector<HTMLElement>('[data-theme-toggle]')?.dataset.themeMode,
+        lightHidden: document.querySelector<HTMLElement>('[data-theme-icon="light"]')?.hidden,
+      }))).toEqual({
+        preference: 'light', scheme: 'light',
+        events: [{ mode: 'light', resolvedMode: 'light' }],
+        toggle: 'light', lightHidden: false,
+      })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+}
+
 function testDocument(savedTheme = ''): string {
   return `
     <!doctype html>

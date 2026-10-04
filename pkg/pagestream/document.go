@@ -19,7 +19,10 @@ type PageSpec struct {
 	MainAttrs         []g.Node
 	DatastarScriptURL string
 	UpdatesURL        string
-	Body              []g.Node
+	// BeforeMain and AfterMain hold document chrome outside the main landmark.
+	BeforeMain []g.Node
+	Body       []g.Node
+	AfterMain  []g.Node
 }
 
 func RenderPage(spec PageSpec) g.Node {
@@ -40,7 +43,7 @@ func RenderPage(spec PageSpec) g.Node {
 		Language:  language,
 		HTMLAttrs: spec.HTMLAttrs,
 		Head:      head,
-		Body:      []g.Node{h.Main(main...)},
+		Body:      []g.Node{g.Group(spec.BeforeMain), h.Main(main...), g.Group(spec.AfterMain)},
 	})
 }
 
