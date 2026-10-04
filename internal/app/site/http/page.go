@@ -34,7 +34,7 @@ func sitePage(metadata sitePageMetadata) g.Node {
 	for _, theme := range []string{"dark", "light"} {
 		head = append(head, h.Link(h.Rel("preload"), h.Href("/static/product-dashboard-"+theme+".png"), g.Attr("as", "image")))
 	}
-	for _, script := range []string{"home", "layers", "project-explorer", "orbit"} {
+	for _, script := range []string{"layers", "project-explorer", "orbit"} {
 		head = append(head, h.Script(h.Type("module"), h.Src("/static/home/"+script+".js")))
 	}
 	return pagestream.RenderPage(pagestream.PageSpec{

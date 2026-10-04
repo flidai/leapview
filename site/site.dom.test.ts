@@ -131,9 +131,9 @@ test('homepage presents the new sections inside the shared site shell', async ()
     expect(await page.getByRole('heading', { level: 2, name: 'How LeapView works.' }).count()).toBe(1)
     expect(await page.getByRole('heading', { level: 2, name: 'Build your first dashboard.' }).count()).toBe(0)
     expect(await page.locator('.site-interfaces-section, .site-stack-section, .site-desktop-section').count()).toBe(0)
-    const screenshot = page.locator('#product-image')
+    const screenshot = page.locator('.product-frame img:visible')
     await page.waitForFunction(() => {
-      const image = document.querySelector<HTMLImageElement>('#product-image')
+      const image = [...document.querySelectorAll<HTMLImageElement>('.product-frame img')].find(image => getComputedStyle(image).display !== 'none')
       return image?.complete && image.naturalWidth === 1440
     })
     expect(await page.locator('.orbit-node').count()).toBe(17)
@@ -653,85 +653,121 @@ test('documentation header, sidebar, and article share the page background in bo
   }
 })
 
-test('site header follows homepage section colors on scroll', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  try {
-    await page.goto(baseURL)
-    const header = page.locator('.site-header')
-    expect(await header.evaluate((element) => element.classList.contains('is-scrolled'))).toBe(false)
-    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
-
-    await page.evaluate(() => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo(0, 600)
-    })
-    await page.waitForFunction(() => document.querySelector('.site-header')?.classList.contains('is-scrolled'))
-    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backdropFilter === 'blur(12px)')
-    expect(await header.evaluate((element) => getComputedStyle(element, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
-
-    const sectionFills: string[] = []
-    for (const id of ['enterprise', 'layers']) {
-      const section = page.locator(`#${id}`)
-      const color = await section.evaluate((element) => getComputedStyle(element).backgroundColor)
-      await section.evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY + 180))
-      await page.waitForFunction((expected) => document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(expected), color)
-      sectionFills.push(await header.evaluate((element) => element.style.getPropertyValue('--site-header-fill')))
-    }
-    expect(sectionFills[0]).not.toBe(sectionFills[1])
-
-    await page.evaluate(() => {
-      const section = document.querySelector('#openness')!
-      const header = document.querySelector<HTMLElement>('.site-header')!
-      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY - header.offsetHeight / 2)
-    })
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backgroundImage.includes('linear-gradient'))
-
-    await page.setViewportSize({ width: 390, height: 844 })
-    const menu = page.locator('lv-site-mobile-menu')
-    await menu.getByRole('button').click()
-    expect(await menu.getByRole('link', { name: 'Docs' }).isVisible()).toBe(true)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-
-    await page.evaluate(() => window.scrollTo(0, 0))
-    await page.waitForFunction(() => !document.querySelector('.site-header')?.classList.contains('is-scrolled'))
-  } finally {
-    await page.close()
+test('site header keeps one opaque surface across section boundaries', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme })
+    try {
+      await page.goto(baseURL)
+      for (const id of ['main-content', 'enterprise', 'layers', 'openness']) {
+        await page.evaluate((id) => {
+          document.documentElement.style.scrollBehavior = 'auto'
+          const section = document.getElementById(id)!
+          const header = document.querySelector<HTMLElement>('.site-header')!
+          window.scrollTo(0, section.getBoundingClientRect().top + scrollY - header.offsetHeight / 2)
+        }, id)
+        const colors = await page.locator('.site-header').evaluate(element => ({
+          fill: getComputedStyle(element).backgroundColor,
+          image: getComputedStyle(element).backgroundImage,
+          pseudo: getComputedStyle(element, '::before').backgroundImage,
+          page: getComputedStyle(document.body).backgroundColor,
+        }))
+        expect(colors.fill).toBe(colors.page)
+        expect(colors.fill).not.toBe('rgba(0, 0, 0, 0)')
+        expect(colors.image).toBe('none')
+        expect(colors.pseudo).toBe('none')
+      }
+    } finally { await page.close() }
   }
 })
 
 test('site theme control updates the homepage screenshot and colors', async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ colorScheme: 'dark' })
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark'))
     await page.goto(baseURL)
-    await page.waitForFunction(() => Boolean(customElements.get('lv-site-theme-toggle')))
     const toggle = page.locator('lv-site-theme-toggle button[data-theme-toggle]')
-    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
-    await page.evaluate(() => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      const section = document.querySelector('#enterprise')!
-      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY + 180)
-    })
-    await page.waitForFunction(() => {
-      const section = document.querySelector('#enterprise')!
-      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
-    })
-    const darkHeaderFill = await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))
+    await toggle.waitFor()
+    expect(await page.locator('#product-image-dark').isVisible()).toBe(true)
+    expect(await page.locator('#product-image-light').isVisible()).toBe(false)
+    const darkFill = await page.locator('.site-home').evaluate(el => getComputedStyle(el).backgroundColor)
     await toggle.click()
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'auto')
     await toggle.click()
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'light')
-    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-light.png')
-    expect(await page.locator('.site-home').evaluate((element) => element.classList.contains('is-light'))).toBe(true)
-    await page.waitForFunction(() => {
-      const section = document.querySelector('#enterprise')!
-      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
-    })
-    expect(await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))).not.toBe(darkHeaderFill)
-  } finally {
-    await page.close()
+    expect(await page.locator('#product-image-light').isVisible()).toBe(true)
+    expect(await page.locator('#product-image-dark').isVisible()).toBe(false)
+    expect(await page.locator('.site-home').evaluate(el => getComputedStyle(el).backgroundColor)).not.toBe(darkFill)
+  } finally { await page.close() }
+})
+
+// Block the exact secondary requests from the reported timeout, including all
+// homepage modules. First paint must still have the correct theme and source.
+test('homepage SSR remains readable when homepage scripts and sample requests fail', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const page = await browser.newPage({ colorScheme })
+    try {
+      await page.route('**/static/home/**/*.js', route => route.abort())
+      await page.route('**/static/home/project-files/**', route => route.abort())
+      await page.goto(baseURL)
+      expect(await page.locator('#project-code').textContent()).toContain('apiVersion: leapview.dev/v1')
+      expect(await page.locator(`#product-image-${colorScheme}`).isVisible()).toBe(true)
+      const colors = await page.evaluate(() => ({
+        home: getComputedStyle(document.querySelector('.site-home')!).backgroundColor,
+        page: getComputedStyle(document.body).backgroundColor,
+      }))
+      expect(colors.home).toBe(colors.page)
+    } finally { await page.close() }
   }
+})
+
+test('all project tabs work without sample network requests', async () => {
+  const page = await browser.newPage({ reducedMotion: 'reduce' })
+  const requests: string[] = []
+  page.on('request', request => { if (request.url().includes('/project-files/')) requests.push(request.url()) })
+  try {
+    await page.route('**/static/home/project-files/**', route => route.abort())
+    await page.goto(baseURL)
+    for (const key of ['connection', 'source', 'model', 'semantics', 'pipeline', 'dashboard']) {
+      await page.locator(`#project-tab-${key}`).click()
+      const expected = await page.locator(`template[data-project-source="${key}"]`).evaluate((el: HTMLTemplateElement) => el.content.querySelector('pre')!.textContent!.trimEnd())
+      const actual = await page.locator('.project-code-text').allTextContents()
+      expect(actual.join('\n')).toBe(expected)
+      expect(await page.locator('#project-file-panel').getAttribute('aria-labelledby')).toBe(`project-tab-${key}`)
+    }
+    expect(requests).toEqual([])
+  } finally { await page.close() }
+})
+
+test('mobile menu restores keyboard focus on Escape', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    const menu = page.locator('lv-site-mobile-menu')
+    const toggle = menu.getByRole('button')
+    await toggle.click()
+    await menu.getByRole('link', { name: 'Docs' }).focus()
+    await page.keyboard.press('Escape')
+    expect(await toggle.evaluate(el => el.matches(':focus'))).toBe(true)
+    expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+  } finally { await page.close() }
+})
+
+test('integration animation can be paused and stays still during keyboard interaction', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.locator('#connections').scrollIntoViewIfNeeded()
+    const control = page.getByRole('button', { name: 'Pause animation', exact: true })
+    await control.click()
+    expect(await page.locator('#orbit-stage').evaluate(el => el.classList.contains('motion-paused'))).toBe(true)
+    expect(await page.locator('.orbit-rotor').first().evaluate(el => getComputedStyle(el).animationPlayState)).toBe('paused')
+    await page.getByRole('button', { name: 'Resume animation', exact: true }).click()
+    expect(await page.locator('#orbit-stage').evaluate(el => el.classList.contains('motion-paused'))).toBe(false)
+    await page.locator('.orbit-node').first().focus()
+    expect(await page.locator('.orbit-rotor').first().evaluate(el => getComputedStyle(el).animationPlayState)).toBe('paused')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(await control.isVisible()).toBe(false)
+  } finally { await page.close() }
 })
 
 test('homepage theme changes render atomically without color transitions', async () => {
@@ -739,7 +775,7 @@ test('homepage theme changes render atomically without color transitions', async
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark'))
     await page.goto(baseURL)
-    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#product-image-dark')!).display !== 'none')
 
     const state = await page.evaluate(() => {
       document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: 'light' } }))
@@ -747,11 +783,11 @@ test('homepage theme changes render atomically without color transitions', async
       const frame = document.querySelector<HTMLElement>('.product-frame')!
       return {
         switching: document.documentElement.classList.contains('is-theme-switching'),
-        light: home.classList.contains('is-light'),
+        light: document.documentElement.dataset.colorMode === 'light',
         background: getComputedStyle(home).backgroundColor,
         color: getComputedStyle(home).color,
         frameBackground: getComputedStyle(frame).backgroundColor,
-        image: document.querySelector<HTMLImageElement>('#product-image')?.getAttribute('src'),
+        image: [...document.querySelectorAll<HTMLImageElement>('.product-frame img')].find(image => getComputedStyle(image).display !== 'none')?.getAttribute('src'),
       }
     })
 

@@ -45,6 +45,15 @@ mobileOrbit.addEventListener('change', syncOrbitAngles);
 syncOrbitAngles();
 orbitStage.classList.add('orbit-ready');
 
+const orbitMotionToggle = document.querySelector('.orbit-motion-toggle');
+if (orbitMotionToggle) {
+  orbitMotionToggle.hidden = false;
+  orbitMotionToggle.addEventListener('click', () => {
+    const paused = orbitStage.classList.toggle('motion-paused');
+    orbitMotionToggle.textContent = paused ? 'Resume animation' : 'Pause animation';
+  });
+}
+
 orbitButtons.forEach(button => button.addEventListener('click', () => {
   const selected = button.getAttribute('aria-pressed') !== 'true';
   orbitButtons.forEach(other => other.setAttribute('aria-pressed', String(selected && other === button)));

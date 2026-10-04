@@ -2,6 +2,7 @@ package siteassets
 
 import (
 	"bytes"
+	"html"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -95,6 +96,32 @@ func TestSpinnerLabExploresAccessibleApertureLoaders(t *testing.T) {
 	for _, expected := range []string{"motion-toggle", "theme-toggle", "data-sizes"} {
 		if !strings.Contains(string(script), expected) {
 			t.Errorf("spinner lab script does not contain %q", expected)
+		}
+	}
+}
+
+func TestHomepageServesProjectSourcesWithoutAssetRequests(t *testing.T) {
+	page := Homepage()
+	if strings.Contains(page, "Loading olist.yaml") {
+		t.Fatal("initial source must be rendered without JavaScript")
+	}
+	for key, path := range map[string]string{
+		"connection": "connections/olist.yaml",
+		"source":     "sources/olist.payments.yaml",
+		"model":      "models/sales_orders.yaml",
+		"semantics":  "semantic-models/sales.yaml",
+		"pipeline":   "pipelines/sales-refresh.yaml",
+		"dashboard":  "dashboards/executive-sales.yaml",
+	} {
+		source, err := fs.ReadFile(Static(), "home/project-files/"+path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(page, `data-project-source="`+key+`"`) {
+			t.Errorf("missing embedded source %s", key)
+		}
+		if !strings.Contains(page, html.EscapeString(string(source))) {
+			t.Errorf("missing escaped source content %s", key)
 		}
 	}
 }
