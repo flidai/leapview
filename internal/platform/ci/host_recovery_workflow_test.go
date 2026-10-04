@@ -161,7 +161,7 @@ func TestIsolatedHostRecoveryQualificationIsARequiredReusableContract(t *testing
 
 func TestHistoricalQualificationConcurrencySeparatesCallingWorkflows(t *testing.T) {
 	workflow := readQualificationWorkflow(t, "../../../.github/workflows/demo-upgrade-qualification.yml")
-	// CI and Main artifacts can qualify the same main ref concurrently. The
+	// PR CI and the main image workflow can qualify the same main ref concurrently. The
 	// reusable workflow must not cancel the other caller's required proof.
 	if !strings.Contains(workflow.Concurrency.Group, "${{ github.workflow }}") {
 		t.Fatal("historical qualification concurrency must distinguish calling workflows")

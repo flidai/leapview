@@ -419,16 +419,18 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
   for (const intent of intents.filter((item) => item.order === undefined)) appendConfigured(intent.value)
   for (const item of configured) appendConfigured(item.seriesValue)
   for (const category of available) appendConfigured(category.value)
-  const datasets: EChartsTranslation[] = [{ id: `dataset:${dataset.id}`, source: selectedDatasetSource(envelope, dataset) }]
+  const source = selectedDatasetSource(envelope, dataset)
+  const datasets: EChartsTranslation[] = [{ id: `dataset:${dataset.id}`, source }]
   const stack = stackingMode(spec)
   const normalizedSources = stack === 'percent' ? normalizedSeriesSources(envelope, dataset, spec, values) : undefined
   const series: EChartsTranslation[] = values.map((category) => {
     const token = encodeURIComponent(category.key)
     const datasetID = `dataset:series:${spec.series?.field}:${token}`
     const normalized = normalizedSources?.get(category.key)
-    datasets.push(normalized
-      ? { id: datasetID, source: normalized.source }
-      : { id: datasetID, fromDatasetId: `dataset:${dataset.id}`, transform: { type: 'filter', config: { dimension: spec.series?.field, '=': category.value } } })
+    const sourceRowIndices = dataset.rows.flatMap((row, rowIndex) => categoryIdentity(row[seriesIndex]) === category.key ? [rowIndex] : [])
+    // ECharts filter equality coerces numeric strings. Split by governed typed
+    // identity so values such as 1 and '1' remain distinct series.
+    datasets.push({ id: datasetID, source: normalized?.source ?? [source[0], ...sourceRowIndices.map((index) => source[index + 1])] })
     const combo = configured.find((item) => resolveCartesianCategory(categoryLookup, item.seriesValue)?.key === category.key)
     const intent = intents.find((item) => resolveCartesianCategory(categoryLookup, item.value)?.key === category.key)
     const mark = combo?.mark ?? (spec.mark === 'combo' ? 'line' : spec.mark)
@@ -440,7 +442,6 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     const intentColor = intent?.color ? seriesColor(category.key, intent.color, context) : paletteColor
     const fill = conditionalColorChain([markFill, seriesFill], intentColor)
     const markColor = governedSeriesColor ?? fill
-    const sourceRowIndices = dataset.rows.flatMap((row, rowIndex) => categoryIdentity(row[seriesIndex]) === category.key ? [rowIndex] : [])
     return {
       id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: category.name, type: cartesianSeriesType(mark),
       __lv_source_row_indices: sourceRowIndices,

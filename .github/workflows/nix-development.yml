@@ -1,4 +1,4 @@
-name: Nix development
+name: CI / Nix development
 
 on:
   pull_request:

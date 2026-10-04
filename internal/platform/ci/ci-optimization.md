@@ -131,8 +131,9 @@ Each adoption requires at least three paired runs holding source, toolchain,
 platform, and selected work constant: at least 10% median improvement in execution
 time or runner usage, with at most 5% regression in the other. Include producer and
 transfer costs and separate queues. Confirm over ten comparable subsequent runs;
-do not report p95 from fewer than twenty observations. No hosted performance
-experiment or release publication is implied by local contract tests.
+do not report p95 from fewer than twenty observations. The CI health report omits
+p95 below that count while retaining sample counts and p50 diagnostics. No hosted
+performance experiment or release publication is implied by local contract tests.
 
 Release qualification jobs are downstream of publication. Use GitHub's failed-job
 or individual-job rerun controls to retry qualification while retaining successful
@@ -149,15 +150,17 @@ The rollout is tracked in the [CI/CD Quality & Speed project](https://linear.app
 The three changes are [qualification correctness](https://github.com/flidai/leapview/pull/805),
 [bounded execution](https://github.com/flidai/leapview/pull/807), and
 [image layers](https://github.com/flidai/leapview/pull/808), registered in native
-GitHub stack #809. Submit the remaining stack through the protected merge queue;
-source-head PR checks do not replace exact merge-candidate validation.
+GitHub stack #809. All three changes merged through the protected merge queue.
+The [current reassessment](reassessment-2026-10-03.md) links final integrated
+qualification and remaining work; source-head PR checks do not replace exact
+merge-candidate validation.
 
 The first change merged as `3b92e515dedc5a85dc75b04071d662c5f2222d68` after
 [full merge validation](https://github.com/flidai/leapview/actions/runs/37020782062),
 [Security gate](https://github.com/flidai/leapview/actions/runs/37020782054), and
 [all four native proofs](https://github.com/flidai/leapview/actions/runs/37020781881)
-passed for that candidate. Remaining PRs must be rebased when main advances and
-receive their own passing candidate checks before merging.
+passed for that candidate. Subsequent PRs received their own passing candidate
+checks after rebasing onto the preceding merged source.
 
 [PR run 37016204441](https://github.com/flidai/leapview/actions/runs/37016204441)
 passed the cumulative contract. Rerunning only its terminal gate passed in

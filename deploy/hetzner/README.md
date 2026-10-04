@@ -44,7 +44,7 @@ is useful for evaluation. Set a domain you control for a durable installation.
 
 ## Hosted qualification
 
-The manually dispatched `Ephemeral Hetzner deployment` workflow exercises this
+The manually dispatched `Deploy / Ephemeral Hetzner` workflow exercises this
 topology from an immutable application image. It creates an isolated server,
 qualifies public health, consumes the one-time first-login credentials, verifies
 recovery-boundary readiness, and destroys the server even when an earlier step

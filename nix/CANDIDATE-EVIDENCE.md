@@ -388,7 +388,7 @@ builder or authorize publication. The image config digest is not the registry
 manifest digest. Load/push can change representation; protected qualification
 must bind the final immutable published digest and every supported platform.
 
-The existing OCI admission action and protected `Main artifacts` / release
+The existing OCI admission action and protected `Build / Main image` / release
 workflows remain the release authority. Conventional published builders remain
 selected. The runtime SPDX export is not a trusted SPDX attestation discoverable
 by that action, and Nix runtime evidence covers neither Go vulnerabilities nor

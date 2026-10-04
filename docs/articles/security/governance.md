@@ -22,18 +22,18 @@ component owner are consulted when a finding crosses their boundaries.
 
 ## Scanner ownership and required checks
 
-`Security gates` is the required workflow for every pull request and merge
-queue candidate. `Nightly CI / Nightly dependency security` provides the
+`Security / Policy and scans` is the required workflow for every pull request and merge
+queue candidate. `CI / Nightly validation / Nightly dependency security` provides the
 scheduled broad scan and catches drift between changes. Its lanes have stable
 ownership and names:
 
 | Lane | Scope | Primary owner |
 | --- | --- | --- |
-| `Security gates / Security policy contracts` | `.security` inventory, validated exceptions, and updater coverage | Security/platform owner |
-| `Security gates / Dependency vulnerability policy` | Every maintained Go, JavaScript, Terraform, image, and action surface | Component owners, coordinated by the security owner |
-| `Security gates / Secret and IaC policy` | Repository-history secrets plus pinned Trivy secret/misconfiguration scans | Platform/release owner |
-| `Security gates / Selected SAST (go)` and `(javascript-typescript)` | Selected CodeQL analysis | Go and frontend owners |
-| `Security gates / Security gate` | Requires every security lane to pass | Security owner |
+| `Security / Policy and scans / Security policy contracts` | `.security` inventory, validated exceptions, and updater coverage | Security/platform owner |
+| `Security / Policy and scans / Dependency vulnerability policy` | Every maintained Go, JavaScript, Terraform, image, and action surface | Component owners, coordinated by the security owner |
+| `Security / Policy and scans / Secret and IaC policy` | Repository-history secrets plus pinned Trivy secret/misconfiguration scans | Platform/release owner |
+| `Security / Policy and scans / Selected SAST (go)` and `(javascript-typescript)` | Selected CodeQL analysis | Go and frontend owners |
+| `Security / Policy and scans / Security gate` | Requires every security lane to pass | Security owner |
 
 The dependency lane has two deliberately different inputs. Its required
 default evaluates the checked-in
@@ -185,11 +185,11 @@ reviewing provenance:
 
 | Artifact class | Trusted workflow path | Workflow name |
 | --- | --- | --- |
-| Main OCI image | `.github/workflows/artifacts.yml` | `Main artifacts` |
-| Release OCI image | `.github/workflows/release.yml` | `Release image` |
-| Public-site OCI image | `.github/workflows/site-image.yml` | `Publish public site image` |
-| Desktop security evidence | `.github/workflows/electron-security-proof.yml` | `Electron security proof` |
-| Unsigned Desktop preview | `.github/workflows/desktop-preview-release.yml` | `Desktop unsigned preview release` |
+| Main OCI image | `.github/workflows/artifacts.yml` | `Build / Main image` |
+| Release OCI image | `.github/workflows/release.yml` | `Release / Server and CLI` |
+| Public-site OCI image | `.github/workflows/site-image.yml` | `Build / Public site image` |
+| Desktop security evidence | `.github/workflows/electron-security-proof.yml` | `Security / Electron proof` |
+| Unsigned Desktop preview | `.github/workflows/desktop-preview-release.yml` | `Release / Desktop unsigned preview` |
 
 The attestation identity is the repository-qualified workflow path
 `flidai/leapview/.github/workflows/<path>` at the reviewed ref. A similarly
@@ -201,8 +201,12 @@ The governed deployment environments are:
 | Environment | Use | Required boundary |
 | --- | --- | --- |
 | `leapview-demo` | Hosted Olist demonstration | Protected main branch and human review; deploy only an immutable qualified image |
-| `leapview-ephemeral-qualification` | Disposable Hetzner qualification | Human review; manual dispatch is restricted to the explicitly named workflow and an immutable attested image; destroy after the run |
+| `leapview-ephemeral-qualification` | Disposable Hetzner qualification | Protected main branch and human review; manual dispatch is restricted to the explicitly named workflow and an immutable attested image; destroy after the run |
 | `leapview-site-production` | Public-site infrastructure and promotion | Protected main branch, human review, immutable image promotion, and post-activation health verification |
+
+All three governed environments require `prevent_self_review=true` and must
+explicitly set `can_admins_bypass=false`. Administrators cannot bypass required
+environment review.
 
 The `desktop-preview` environment is an unsigned evaluation publication and
 does not authorize production signing or deployment. Environment settings must
@@ -305,7 +309,7 @@ release](/docs/desktop/release-verification) and independently check the
 platform-native signature: `spctl`/`codesign` on macOS, Authenticode status on
 Windows, and signed APT metadata on Ubuntu. Confirm that the artifact,
 updater companions, manifest, SBOM, provenance, source revision, architecture,
-and digest agree. The `Electron security proof / Electron gate` result is
+and digest agree. The `Security / Electron proof / Electron gate` result is
 required for merge-queue candidates; a JSON declaration alone is never a
 signature or provenance proof.
 

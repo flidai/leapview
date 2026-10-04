@@ -45,6 +45,7 @@ func TestAuditReportsEveryMissingGovernanceBoundary(t *testing.T) {
 		t.Fatal("invalid snapshot passed")
 	}
 	wantCodes := []string{
+		"environment.admin_bypass",
 		"environment.branch_policy",
 		"environment.missing",
 		"environment.review",
@@ -63,6 +64,43 @@ func TestAuditReportsEveryMissingGovernanceBoundary(t *testing.T) {
 	// Both contexts are independently required.
 	if countCode(report.Findings, "ruleset.required_check") != len(requiredChecks) {
 		t.Fatalf("required-check findings = %#v", report.Findings)
+	}
+	if countCode(report.Findings, "environment.admin_bypass") != 2 {
+		t.Fatalf("admin-bypass findings = %#v", report.Findings)
+	}
+}
+
+func TestAuditRequiresAdminBypassDisabledInEveryGovernedEnvironment(t *testing.T) {
+	t.Parallel()
+
+	values := []struct {
+		name  string
+		value *string
+	}{
+		{name: "true", value: stringPointer("true")},
+		{name: "missing"},
+		{name: "null", value: stringPointer("null")},
+	}
+	for _, envName := range []string{
+		"leapview-demo",
+		"leapview-ephemeral-qualification",
+		"leapview-site-production",
+	} {
+		for _, test := range values {
+			t.Run(envName+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+
+				snapshot := testSnapshot(t, true, true)
+				snapshot = withAdminBypassValue(t, snapshot, envName, test.value)
+				report, err := Audit(snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if report.OK || countCode(report.Findings, "environment.admin_bypass") != 1 {
+					t.Fatalf("report = %#v", report)
+				}
+			})
+		}
 	}
 }
 
@@ -155,14 +193,42 @@ func TestMainBranchPolicyAcceptsProtectedOrNamedCustomPolicy(t *testing.T) {
 	}
 }
 
+func TestAuditRequiresQualificationMainOnly(t *testing.T) {
+	t.Parallel()
+
+	snapshot := testSnapshot(t, true, true)
+	report, err := Audit(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.OK {
+		t.Fatalf("main-only snapshot = %#v", report)
+	}
+
+	snapshot = withEnvironmentBranchPolicies(t, snapshot, "leapview-ephemeral-qualification", []customBranchPolicy{
+		{Name: "main", Type: "branch"},
+		{Name: "ganesh/fai-522-replacement-host-rebuild", Type: "branch"},
+	})
+	report, err = Audit(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.OK || countCode(report.Findings, "environment.branch_policy") != 1 {
+		t.Fatalf("temporary qualification branch was accepted: %#v", report)
+	}
+	if !strings.Contains(report.Findings[0].Message, "leapview-ephemeral-qualification") {
+		t.Fatalf("qualification finding = %#v", report.Findings)
+	}
+}
+
 func TestAuditRequiresReviewerSelfReviewProtectionAndReviewer(t *testing.T) {
 	t.Parallel()
 
 	snapshot := testSnapshot(t, true, true)
 	snapshot.Environments = json.RawMessage(`[
-		{"name":"leapview-demo","protection_rules":[{"type":"required_reviewers","prevent_self_review":false,"reviewers":[]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true},"custom_branch_policies":[{"name":"main","type":"branch"}]},
-		{"name":"leapview-ephemeral-qualification","protection_rules":[{"type":"required_reviewers","prevent_self_review":false,"reviewers":[]}]},
-		{"name":"leapview-site-production","protection_rules":[{"type":"required_reviewers","prevent_self_review":false,"reviewers":[]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true},"custom_branch_policies":[{"name":"main","type":"branch"}]}
+		{"name":"leapview-demo","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":false,"reviewers":[]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true},"custom_branch_policies":[{"name":"main","type":"branch"}]},
+		{"name":"leapview-ephemeral-qualification","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":false,"reviewers":[]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true},"custom_branch_policies":[{"name":"main","type":"branch"}]},
+		{"name":"leapview-site-production","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":false,"reviewers":[]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true},"custom_branch_policies":[{"name":"main","type":"branch"}]}
 	]`)
 	report, err := Audit(snapshot)
 	if err != nil {
@@ -186,8 +252,8 @@ func TestReadLiveSnapshotFetchesEnabledCustomBranchPolicies(t *testing.T) {
 case "$4" in
   repos/flidai/leapview/rulesets) printf '[{"name":"main","id":1}]' ;;
   repos/flidai/leapview/rulesets/1) printf '{"name":"main","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI gate"},{"context":"Security gate"}]}}]}' ;;
-  repos/flidai/leapview/environments/leapview-demo|repos/flidai/leapview/environments/leapview-site-production) printf '{"name":"%s","protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' "$(basename "$4")" ;;
-  repos/flidai/leapview/environments/leapview-ephemeral-qualification) printf '{"name":"leapview-ephemeral-qualification","protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}]}' ;;
+  repos/flidai/leapview/environments/leapview-demo|repos/flidai/leapview/environments/leapview-site-production) printf '{"name":"%s","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' "$(basename "$4")" ;;
+  repos/flidai/leapview/environments/leapview-ephemeral-qualification) printf '{"name":"leapview-ephemeral-qualification","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' ;;
   repos/flidai/leapview/environments/*/deployment-branch-policies) printf '{"total_count":1,"branch_policies":[{"name":"main","type":"branch"}]}' ;;
   *) echo "unexpected gh resource: $4" >&2; exit 1 ;;
 esac
@@ -213,7 +279,7 @@ esac
 		t.Fatal(err)
 	}
 	for _, env := range environments {
-		if env.Name == "leapview-demo" || env.Name == "leapview-site-production" {
+		if env.Name == "leapview-demo" || env.Name == "leapview-ephemeral-qualification" || env.Name == "leapview-site-production" {
 			if len(env.CustomBranchPolicies) != 1 || env.CustomBranchPolicies[0].Name != "main" || env.CustomBranchPolicies[0].Type != "branch" {
 				t.Fatalf("environment %q custom policies = %#v", env.Name, env.CustomBranchPolicies)
 			}
@@ -230,15 +296,72 @@ func testSnapshot(t *testing.T, includeEnvironments, protectedBranches bool) Sna
 	envJSON := `[]`
 	if includeEnvironments {
 		envJSON = `[
-			{"name":"leapview-demo","protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],` + branchPolicy + `},
-			{"name":"leapview-ephemeral-qualification","protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}]},
-			{"name":"leapview-site-production","protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],` + branchPolicy + `}
+			{"name":"leapview-demo","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],` + branchPolicy + `},
+			{"name":"leapview-ephemeral-qualification","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],` + branchPolicy + `},
+			{"name":"leapview-site-production","can_admins_bypass":false,"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","id":1}]}],` + branchPolicy + `}
 		]`
 	}
 	return Snapshot{
 		Rulesets:     json.RawMessage(`[{"name":"main","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI gate"},{"context":"Security gate"}]}}]}]`),
 		Environments: json.RawMessage(envJSON),
 	}
+}
+
+func withAdminBypassValue(t *testing.T, snapshot Snapshot, envName string, value *string) Snapshot {
+	t.Helper()
+	var environments []map[string]json.RawMessage
+	if err := json.Unmarshal(snapshot.Environments, &environments); err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range environments {
+		var name string
+		if err := json.Unmarshal(env["name"], &name); err != nil {
+			t.Fatal(err)
+		}
+		if name != envName {
+			continue
+		}
+		if value == nil {
+			delete(env, "can_admins_bypass")
+		} else {
+			env["can_admins_bypass"] = json.RawMessage(*value)
+		}
+		encoded, err := json.Marshal(environments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot.Environments = encoded
+		return snapshot
+	}
+	t.Fatalf("environment %q not found", envName)
+	return Snapshot{}
+}
+
+func withEnvironmentBranchPolicies(t *testing.T, snapshot Snapshot, envName string, policies []customBranchPolicy) Snapshot {
+	t.Helper()
+	var environments []environment
+	if err := json.Unmarshal(snapshot.Environments, &environments); err != nil {
+		t.Fatal(err)
+	}
+	for i := range environments {
+		if environments[i].Name != envName {
+			continue
+		}
+		environments[i].DeploymentBranchPolicy = &deploymentBranchPolicy{CustomBranchPolicies: true}
+		environments[i].CustomBranchPolicies = policies
+		encoded, err := json.Marshal(environments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot.Environments = encoded
+		return snapshot
+	}
+	t.Fatalf("environment %q not found", envName)
+	return Snapshot{}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func countCode(findings []Finding, code string) int {

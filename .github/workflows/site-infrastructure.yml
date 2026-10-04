@@ -1,4 +1,4 @@
-name: Plan or apply permanent public-site infrastructure
+name: Infrastructure / Public site
 
 on:
   workflow_dispatch:

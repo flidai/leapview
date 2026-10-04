@@ -1,4 +1,4 @@
-name: Public adoption smoke
+name: Qualification / Public installation
 
 on:
   workflow_dispatch:

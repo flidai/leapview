@@ -1,4 +1,4 @@
-name: Released authoring package qualification
+name: Qualification / Authoring package
 
 on:
   workflow_call:

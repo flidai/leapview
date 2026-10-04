@@ -1,4 +1,4 @@
-name: Managed deployment scaffold
+name: CI / Managed deployment scaffold
 
 on:
   pull_request:

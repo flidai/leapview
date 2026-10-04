@@ -17,7 +17,10 @@ export const adapter: RendererAdapter = {
     const agentAction = document.createElement('slot')
     agentAction.name = 'agent-action'
     agentAction.slot = 'agent-action'
-    table.append(agentAction)
+    const focusAction = document.createElement('slot')
+    focusAction.name = 'focus-action'
+    focusAction.slot = 'focus-action'
+    table.append(agentAction, focusAction)
     container.replaceChildren(table)
     const handle = new TanStackHandle(container, table)
     handle.update(envelope)

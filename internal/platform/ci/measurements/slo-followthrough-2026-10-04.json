@@ -1,0 +1,714 @@
+{
+  "baseline": {
+    "generated_at": "2026-10-04T03:36:35.875770044Z",
+    "run_count": 522,
+    "successes": 222,
+    "failures": 66,
+    "cancellations": 139,
+    "incomplete": 207,
+    "missing_durations": 159,
+    "deferred": 18,
+    "full_pr": {
+      "count": 208,
+      "p50_seconds": 1020,
+      "p95_seconds": 1765
+    },
+    "merge": {
+      "count": 84,
+      "p50_seconds": 1131,
+      "p95_seconds": 1504
+    },
+    "selective": {
+      "count": 13,
+      "p50_seconds": 1077
+    },
+    "nightly": {
+      "count": 13,
+      "p50_seconds": 1142
+    },
+    "queue": {
+      "count": 357,
+      "p50_seconds": 4,
+      "p95_seconds": 107
+    },
+    "reruns": 18,
+    "rerun_percent": 3.5714285714285716,
+    "audit_samples": 14,
+    "audit_potential_misses": 0,
+    "alerts": [
+      "full CI p95 is 25m4s (limit 12m0s)",
+      "full PR p95 is 29m25s (limit 12m0s)",
+      "unknown CI p95 is 30m44s (limit 12m0s)",
+      "rerun rate is 3.6% (limit 3.0%)",
+      "207 runs have incomplete reporting evidence; health is not established"
+    ],
+    "workflow_source_revision": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+    "window_days": 7,
+    "repo": "flidai/leapview",
+    "reproduction": "GITHUB_TOKEN=<authenticated token> go run ./internal/app/tools/cireport --repo flidai/leapview --days 7 --output health.json --summary health.md"
+  },
+  "critical_path": {
+    "purpose": "Read-only FAI-1067 CI latency audit for four exact merge-group queue runs.",
+    "workflow_source_sha": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+    "runs": [
+      {
+        "run_id": 37134195995,
+        "candidate_sha": "545a27b7831da4734a30dce954e96280e6ee2811",
+        "measurements": {
+          "nix_environment_realization_s": 221.127,
+          "log_line_refs": {
+            "nix_environment_realization_s": 1677,
+            "go_cache_restore_s": 1818,
+            "bun_cache_restore_s": 1911,
+            "sourcegen_generate_s": 2981,
+            "sourcegen_mapassets_s": 4078,
+            "app_go_build_s": 4269,
+            "historical_e2e_test_s": 5259
+          },
+          "go_cache_restore_s": 26.837,
+          "bun_cache_restore_s": 13.459,
+          "sourcegen_generate_s": 229.4,
+          "sourcegen_mapassets_s": 136.4,
+          "app_go_build_s": 121.3,
+          "historical_e2e_test_s": 352.96,
+          "go_cache_hit": true,
+          "bun_cache_hit": true,
+          "go_cache_size_bytes": 1590309438,
+          "bun_cache_size_bytes": 139193306,
+          "setup_pinned_toolchain_step_s": 269.0,
+          "candidate_image_build_step_s": 614.0,
+          "historical_transition_task_step_s": 420.0,
+          "job_id": 111235239462
+        },
+        "url": "https://github.com/flidai/leapview/actions/runs/37134195995",
+        "job_log_api": "repos/flidai/leapview/actions/jobs/111235239462/logs"
+      },
+      {
+        "run_id": 37134196876,
+        "candidate_sha": "cce38e4b7ff27f24535a63bcda5c4c84e4f97e23",
+        "measurements": {
+          "nix_environment_realization_s": 213.845,
+          "log_line_refs": {
+            "nix_environment_realization_s": 1677,
+            "go_cache_restore_s": 1819,
+            "bun_cache_restore_s": 1907,
+            "sourcegen_generate_s": 2983,
+            "sourcegen_mapassets_s": 3327,
+            "app_go_build_s": 3521,
+            "historical_e2e_test_s": 4482
+          },
+          "go_cache_restore_s": 28.234,
+          "bun_cache_restore_s": 7.241,
+          "sourcegen_generate_s": 219.2,
+          "sourcegen_mapassets_s": 100.2,
+          "app_go_build_s": 118.4,
+          "historical_e2e_test_s": 363.05,
+          "go_cache_hit": true,
+          "bun_cache_hit": true,
+          "go_cache_size_bytes": 1590309438,
+          "bun_cache_size_bytes": 139193306,
+          "setup_pinned_toolchain_step_s": 258.0,
+          "candidate_image_build_step_s": 574.0,
+          "historical_transition_task_step_s": 425.0,
+          "job_id": 111235242154
+        },
+        "url": "https://github.com/flidai/leapview/actions/runs/37134196876",
+        "job_log_api": "repos/flidai/leapview/actions/jobs/111235242154/logs"
+      },
+      {
+        "run_id": 37134197372,
+        "candidate_sha": "cecbd974e046bf1019d0f81a8347ba11f7c6b0dd",
+        "measurements": {
+          "nix_environment_realization_s": 220.041,
+          "log_line_refs": {
+            "nix_environment_realization_s": 1678,
+            "go_cache_restore_s": 1822,
+            "bun_cache_restore_s": 1911,
+            "sourcegen_generate_s": 3017,
+            "sourcegen_mapassets_s": 3949,
+            "app_go_build_s": 4143,
+            "historical_e2e_test_s": 5106
+          },
+          "go_cache_restore_s": 30.171,
+          "bun_cache_restore_s": 6.311,
+          "sourcegen_generate_s": 221.8,
+          "sourcegen_mapassets_s": 114.8,
+          "app_go_build_s": 119.6,
+          "historical_e2e_test_s": 366.31,
+          "go_cache_hit": true,
+          "bun_cache_hit": true,
+          "go_cache_size_bytes": 1590309438,
+          "bun_cache_size_bytes": 139193306,
+          "setup_pinned_toolchain_step_s": 264.0,
+          "candidate_image_build_step_s": 601.0,
+          "historical_transition_task_step_s": 430.0,
+          "job_id": 111235243651
+        },
+        "url": "https://github.com/flidai/leapview/actions/runs/37134197372",
+        "job_log_api": "repos/flidai/leapview/actions/jobs/111235243651/logs"
+      },
+      {
+        "run_id": 37134198239,
+        "candidate_sha": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+        "measurements": {
+          "nix_environment_realization_s": 217.594,
+          "log_line_refs": {
+            "nix_environment_realization_s": 1677,
+            "go_cache_restore_s": 1816,
+            "bun_cache_restore_s": 1903,
+            "sourcegen_generate_s": 2923,
+            "sourcegen_mapassets_s": 3828,
+            "app_go_build_s": 4022,
+            "historical_e2e_test_s": 4980
+          },
+          "go_cache_restore_s": 25.707,
+          "bun_cache_restore_s": 7.19,
+          "sourcegen_generate_s": 226.0,
+          "sourcegen_mapassets_s": 115.6,
+          "app_go_build_s": 121.9,
+          "historical_e2e_test_s": 348.18,
+          "go_cache_hit": true,
+          "bun_cache_hit": true,
+          "go_cache_size_bytes": 1590309438,
+          "bun_cache_size_bytes": 139193306,
+          "setup_pinned_toolchain_step_s": 259.0,
+          "candidate_image_build_step_s": 585.0,
+          "historical_transition_task_step_s": 414.0,
+          "job_id": 111235246467
+        },
+        "url": "https://github.com/flidai/leapview/actions/runs/37134198239",
+        "job_log_api": "repos/flidai/leapview/actions/jobs/111235246467/logs"
+      }
+    ],
+    "cross_run_observations": {
+      "go_cache": "Go validation restore-key/primary cache hit in all four logs (~1.59 GB); restore 25.707\u201330.171 s.",
+      "bun_cache": "Bun primary cache hit in all four logs (~139 MB); restore 6.311\u201313.459 s.",
+      "nix": "Nix default environment realization action took 213.845\u2013221.127 s; job toolchain setup step 258\u2013269 s. Logs show 366 Nix store paths copied from cache.nixos.org.",
+      "docker_build": "BuildKit sourcegen (#39), dependent mapassets (#40), and app build (#99) are the only long vertices; in latest run #39+#40 sum to 341.6 s. #99 carries per-candidate revision/build-time linker flags, so no #99 cache saving is claimed.",
+      "qualification": "Task step took 414\u2013430 s; actual TestQualificationHistoricalTransitionEndToEnd took 348.18\u2013366.31 s. Browser-backed transition/report path remains required.",
+      "scope_limit": "Four targeted successful runs are diagnostic samples only; no p95 or SLO improvement claim is made."
+    },
+    "narrow_docker_context_candidate": {
+      "commit": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+      "parent": "cecbd974e046bf1019d0f81a8347ba11f7c6b0dd",
+      "changed_paths_from_parent": [
+        "scripts/check_generated_snapshots.sh",
+        "scripts/generated_snapshot_check.test.ts"
+      ],
+      "proof": "git diff-tree --no-commit-id --name-only -r <commit> returns exactly those two paths.",
+      "consumer_evidence": "Repository search finds these paths referenced only by Taskfile.yml and scripts/generated_snapshot_check.test.ts; neither is referenced in Dockerfile or scripts/generate_build_sources.sh. Workflow runs use the checked-out files outside Docker.",
+      "docker_context_edges": [
+        "Dockerfile:25 COPY . . (sourcegen)",
+        "Dockerfile:52 COPY scripts ./scripts (web)",
+        "Dockerfile:72 COPY . . (build)"
+      ],
+      "relevant_latest_buildkit_vertices_s": {
+        "sourcegen_generate_#39": 226.0,
+        "sourcegen_mapassets_#40": 115.6,
+        "web_build_#50": 1.9,
+        "app_build_#99": 121.9
+      },
+      "candidate": "Add only the two changed helper paths to .dockerignore. This keeps all host-side Taskfile/snapshot checks intact and only removes irrelevant paths from the Docker context; it should allow #39/#40 cache reuse when these two files are the only changed inputs and matching BuildKit layers exist.",
+      "estimated_reusable_compute_s": 341.6,
+      "estimate_limit": "Layer durations are measured, but the counterfactual cache hit was not run; this is an upper-bound opportunity for these two serial vertices, not a measured end-to-end saving or p95 claim. #99 is excluded from the estimate because its linked revision and build time vary by candidate."
+    }
+  },
+  "docker_context_probe": {
+    "probe": "FAI-1067 targeted Docker context invalidation probe",
+    "head": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+    "original_ignore_rules_revision": "f98b981f1",
+    "builder": "docker build on the existing selected default builder (docker driver, BuildKit v0.26.2)",
+    "docker_engine": "29.1.3",
+    "dockerfile": "FROM scratch\nCOPY . /context\n",
+    "dockerfile_sha256": "b8458a17e0ea54108be1b0e0375ae93a7473eb098d2bb06ea9193078d7049686",
+    "current_dockerignore_sha256": "623537a876072a8ccac7e75b1b4001de7c9154ffd2a72c2c1629392bf4b31c7e",
+    "original_dockerignore_sha256": "7c8f1f60f2b1e0621039fe9b63300b721ca22aa8bb894f4db02f2475e945b694",
+    "application_source": "internal/app/router.go",
+    "ignored_helpers": [
+      "scripts/check_generated_snapshots.sh",
+      "scripts/generated_snapshot_check.test.ts"
+    ],
+    "builds": [
+      {
+        "label": "current-baseline",
+        "image_id": "sha256:a659c8b59875786932d328a05bcdd8e74adac58de19de8cc494564447bbe2906",
+        "rootfs_layers": [
+          "sha256:1115cef6688fb7ae15630e2c9e670c5bf9e1dc14f0327f0fb708bd2887fba3fb"
+        ],
+        "copy_step": "CACHED",
+        "copy_cached": true,
+        "build_context_transfer_log": "10.49kB",
+        "log": "current-baseline.build.log"
+      },
+      {
+        "label": "current-helper-1-mutated",
+        "image_id": "sha256:851b8dd4012fcbff9b779ee4f4a3668cc81a7bee49064be4410b6192cada8830",
+        "rootfs_layers": [
+          "sha256:1115cef6688fb7ae15630e2c9e670c5bf9e1dc14f0327f0fb708bd2887fba3fb"
+        ],
+        "copy_step": "CACHED",
+        "copy_cached": true,
+        "build_context_transfer_log": "193B",
+        "log": "current-helper-1-mutated.build.log"
+      },
+      {
+        "label": "current-helper-2-mutated",
+        "image_id": "sha256:a6f9828fb42e43543f306b0497d886ffc416f87b61ebe7b79218eb34453b92dc",
+        "rootfs_layers": [
+          "sha256:1115cef6688fb7ae15630e2c9e670c5bf9e1dc14f0327f0fb708bd2887fba3fb"
+        ],
+        "copy_step": "CACHED",
+        "copy_cached": true,
+        "build_context_transfer_log": "193B",
+        "log": "current-helper-2-mutated.build.log"
+      },
+      {
+        "label": "current-application-source-mutated",
+        "image_id": "sha256:d7852a63c4afe694b1993c44770af813900f29740a834c0bf9af6536b6b67ddb",
+        "rootfs_layers": [
+          "sha256:76808143e8274f8bde1ea9e0f58769f9e8caab64189165368306626b659bc0e2"
+        ],
+        "copy_step": "DONE",
+        "copy_cached": false,
+        "build_context_transfer_log": "9.19kB",
+        "log": "current-application-source-mutated.build.log"
+      },
+      {
+        "label": "original-baseline",
+        "image_id": "sha256:f5aa773274a0ac2afd52d0aa2c964ae2836fc1b00fca11c1b4bdc080efd296dc",
+        "rootfs_layers": [
+          "sha256:818cefed17197fa20c3f658b301b62978806842aa7949ff7239afe98a20e8377"
+        ],
+        "copy_step": "DONE",
+        "copy_cached": false,
+        "build_context_transfer_log": "14.07kB",
+        "log": "original-baseline.build.log"
+      },
+      {
+        "label": "original-helper-1-mutated",
+        "image_id": "sha256:b48723b07dbf90de153ef1e4ebde24e265619b3c1b7675bc2b4cc7f8f6ff8ce2",
+        "rootfs_layers": [
+          "sha256:4456ea8dff4db22fdafe43f2cd4fcb3acfd78451a36dfccd4a32f7c9170b5a01"
+        ],
+        "copy_step": "DONE",
+        "copy_cached": false,
+        "build_context_transfer_log": "3.58kB",
+        "log": "original-helper-1-mutated.build.log"
+      },
+      {
+        "label": "original-helper-2-mutated",
+        "image_id": "sha256:8e088eacb879aee52e94a66b1aafb43fa1f472a3f3694eedb0dd9f7dc0a4a0a8",
+        "rootfs_layers": [
+          "sha256:32f7daad392e87c59ee885fab998d0b8d0e205f1baa21f8bad90e5144d2f4ea9"
+        ],
+        "copy_step": "DONE",
+        "copy_cached": false,
+        "build_context_transfer_log": "12.92kB",
+        "log": "original-helper-2-mutated.build.log"
+      }
+    ],
+    "assertions": {
+      "actual_helper_copy_layer_equals_baseline": true,
+      "actual_helper_copy_steps_cached": true,
+      "application_source_mutation_changes_copy_layer": true,
+      "application_source_mutation_invalidates_copy_cache": true,
+      "original_rules_helper_mutations_change_copy_layer": true,
+      "original_rules_helper_mutations_invalidate_copy_cache": true
+    },
+    "passed": true,
+    "scope_note": "Targeted COPY context probe only; no p95 or whole-build speedup claim.",
+    "context_inputs": [
+      ".dockerignore (copied from each specified source revision)",
+      "scripts/check_generated_snapshots.sh (copied source)",
+      "scripts/generated_snapshot_check.test.ts (copied source)",
+      "internal/app/router.go (copied source)",
+      "scratch COPY probe Dockerfile"
+    ],
+    "mutation_method": "Append a unique comment to one file at a time, build the same scratch Dockerfile, compare RootFS COPY layer digest and COPY CACHED marker, then restore that file. Current application positive control and original-rules helper negative controls are independent builds."
+  },
+  "reliability_validation": {
+    "toolchain": "locked Nix Go 1.27.1",
+    "upstream_regression_command": "GOMAXPROCS=4 go test cmd/internal/fuzztest -run '^TestScript/test_fuzz_fuzztime_timeout$' -v",
+    "upstream_regression_result": "PASS (22.022 seconds)",
+    "product_fuzz_result": "PASS (3-second bounded target; 83,686 executions; no crasher)",
+    "upstream_fix": "https://github.com/golang/go/issues/75804",
+    "nix_toolchain_check": "PASS: .#checks.x86_64-linux.toolchain; verifies locked compiler, CGO and separately pinned sqlc compiler",
+    "product_fuzz_target": "FuzzQualificationBoundedSchedulerOperation"
+  },
+  "validation_shell_closure": {
+    "source_revision": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+    "system": "x86_64-linux",
+    "flake_shell": "devShells.x86_64-linux.default",
+    "store_path": "/nix/store/74js1ij8c4kfyydxp1nwlf1ximibx9pm-nix-shell",
+    "nar_hash": "sha256-gbQBS/fCPfFBSY8o7xSRXcmEF1+eUrMAJOEUEXS+uiU=",
+    "closure_nar_bytes": 4452038472,
+    "closure_path_count": 347,
+    "measurement_command": "nix path-info --json --closure-size <realized shell path>; nix path-info --recursive <realized shell path>",
+    "limit": "This is the current uncompressed NAR closure, not archive size, transfer cost or a measured benefit from caching. Previous hosted logs use Go 1.26.8 and fetched 366 store paths; this Go 1.27.1 closure contains 347."
+  },
+  "failure_reconciliation": {
+    "issue": "FAI-1067",
+    "report_generated_at": "2026-10-04T03:36:35.875770044Z",
+    "report_version": 3,
+    "counts": {
+      "runs": 522,
+      "failed": 66,
+      "failed_by_workflow": {
+        "ci.yml": {
+          "runs": 35,
+          "full_pr": 31,
+          "unknown_category": 4
+        },
+        "merge-validation.yml": {
+          "runs": 24,
+          "merge": 24
+        },
+        "nightly.yml": {
+          "runs": 7,
+          "nightly": 7
+        }
+      },
+      "cancelled": 139,
+      "incomplete": 207,
+      "unknown_category": 27,
+      "unknown_selection_records": 180,
+      "audit_samples": 14,
+      "audit_potential_misses": 0
+    },
+    "failure_reconciliations": [
+      {
+        "run_id": 37140080894,
+        "workflow": "merge-validation.yml",
+        "candidate": "be1b1f5590d336e2075257ae5c7e244776175cf2",
+        "queue_branch": "gh-readonly-queue/main/pr-798-36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+        "failed_lane": "Frontend tests (merge queue, site)",
+        "cause": "UI visual regression snapshot mismatch in 3 visual-showcase cases (560-965 pixels, about 1%); CI gate failed as aggregator. This is PR #798, not PR #828.",
+        "later_success": {
+          "run_id": 37142791665,
+          "sha": "e4e4c419e433ae8fe1e8c9fc376161d8aa57300c",
+          "url": "https://github.com/flidai/leapview/actions/runs/37142791665"
+        },
+        "failure_url": "https://github.com/flidai/leapview/actions/runs/37140080894"
+      },
+      {
+        "run_ids": [
+          37133135305,
+          37133134683,
+          37133133543,
+          37133133021
+        ],
+        "workflow": "merge-validation.yml",
+        "failed_lane": "Frontend tests (merge queue, site)",
+        "cause": "UI route QA threw TypeError: modal.focusableElements is not a function in qa:datastar-lit-routes; CI gate failures were downstream aggregates.",
+        "later_success": {
+          "run_id": 37134198239,
+          "sha": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+          "url": "https://github.com/flidai/leapview/actions/runs/37134198239"
+        },
+        "failure_urls": [
+          "https://github.com/flidai/leapview/actions/runs/37133135305",
+          "https://github.com/flidai/leapview/actions/runs/37133134683",
+          "https://github.com/flidai/leapview/actions/runs/37133133543",
+          "https://github.com/flidai/leapview/actions/runs/37133133021"
+        ]
+      },
+      {
+        "run_id": 37132247615,
+        "workflow": "ci.yml",
+        "pull_request": 828,
+        "failed_lanes": [
+          "host-recovery-validation/historical-transition",
+          "host-recovery-validation/recovery"
+        ],
+        "cause": "Both qualification paths failed the security-policy contract because maintained workflow .github/workflows/nix-cli-candidate.yml was absent from coverage inventory.",
+        "later_success": {
+          "ci_run_id": 37136720762,
+          "security_run_id": 37136720574,
+          "sha": "1592826d1953605beb3580c516bebc990562a511",
+          "ci_url": "https://github.com/flidai/leapview/actions/runs/37136720762",
+          "security_url": "https://github.com/flidai/leapview/actions/runs/37136720574"
+        },
+        "failure_url": "https://github.com/flidai/leapview/actions/runs/37132247615"
+      },
+      {
+        "run_id": 37123517139,
+        "workflow": "ci.yml",
+        "pull_request": 798,
+        "failed_lane": "frontend-validation/reports",
+        "cause": "Frontend test pinned embedded previews unexpectedly changed recent-navigation state.",
+        "later_success": {
+          "run_id": 37141183712,
+          "sha": "1760878531afcf0fe9c46b45f43f9ac1be5220c1",
+          "url": "https://github.com/flidai/leapview/actions/runs/37141183712"
+        },
+        "failure_url": "https://github.com/flidai/leapview/actions/runs/37123517139"
+      },
+      {
+        "run_id": 37108881604,
+        "workflow": "nightly.yml",
+        "failed_lane": "Nightly dependency security",
+        "cause": "The scanner found high-severity GHSA-vfj7-8cjw-p6xm for braces in root-bun and desktop-bun; this was a real finding on that revision, not a runner outage.",
+        "later_success": {
+          "nightly_run_id": 37116991476,
+          "main_security_run_id": 37134198018,
+          "sha": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+          "nightly_url": "https://github.com/flidai/leapview/actions/runs/37116991476",
+          "main_security_url": "https://github.com/flidai/leapview/actions/runs/37134198018"
+        },
+        "failure_url": "https://github.com/flidai/leapview/actions/runs/37108881604"
+      }
+    ],
+    "current_success_receipts": {
+      "main_merge_queue": {
+        "run_id": 37134198239,
+        "sha": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+        "conclusion": "success",
+        "url": "https://github.com/flidai/leapview/actions/runs/37134198239"
+      },
+      "main_security": {
+        "run_id": 37134198018,
+        "sha": "36ef860e61c94cef65eb2d8ef3fa39d2b0bd3c25",
+        "conclusion": "success",
+        "url": "https://github.com/flidai/leapview/actions/runs/37134198018"
+      },
+      "latest_merge_candidate": {
+        "run_id": 37142791665,
+        "conclusion": "success",
+        "url": "https://github.com/flidai/leapview/actions/runs/37142791665"
+      },
+      "latest_full_pr": {
+        "run_id": 37141183712,
+        "conclusion": "success",
+        "url": "https://github.com/flidai/leapview/actions/runs/37141183712"
+      },
+      "latest_nightly": {
+        "run_id": 37116991476,
+        "conclusion": "success",
+        "url": "https://github.com/flidai/leapview/actions/runs/37116991476"
+      }
+    },
+    "assessment": {
+      "current_shared_job_failure_evidenced": false,
+      "performance_objective_still_open": {
+        "full_ci_p95_seconds": 1504,
+        "full_pr_p95_seconds": 1765,
+        "target_p95_seconds": 720,
+        "rerun_percent": 3.6,
+        "rerun_target_percent": 3.0
+      },
+      "inconclusive_records_preserved": {
+        "cancelled": 139,
+        "incomplete": 207,
+        "unknown_category": 27,
+        "unknown_selection_records": 180,
+        "unknown_conclusions": 0
+      },
+      "audit_potential_misses": 0,
+      "interpretation": "Historical candidate-specific failures and one historical vulnerability finding have later passing receipts; no persistent shared CI gate fault is shown by the current main receipts. Cancellation, incomplete, and unknown-selection evidence remains unresolved. FAI-1067 latency and rerun targets still fail the report thresholds."
+    }
+  },
+  "production_image_validation": {
+    "source_revision": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+    "platform": "linux/amd64",
+    "image_id": "sha256:0d7c1a01d91cccf1123d6981bb55371217713fda49cec8384b71281ef03c74f0",
+    "runtime_version": {
+      "product": "leapview",
+      "version": "development",
+      "revision": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+      "buildTime": "2026-10-04T03:57:40Z",
+      "dirty": false,
+      "development": true
+    },
+    "oci_revision": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+    "result": "PASS: complete Dockerfile build; exact clean runtime revision and OCI architecture/revision verified",
+    "limit": "Local immutable candidate only; not a published or production-qualified artifact. Build precedes timing-only test and evidence documentation additions; exact final candidate remains subject to hosted required validation."
+  },
+  "historical_transition_phase_diagnostic": {
+    "test": "TestQualificationHistoricalTransitionDiagnostic",
+    "result": "PASS",
+    "image_id": "sha256:0d7c1a01d91cccf1123d6981bb55371217713fda49cec8384b71281ef03c74f0",
+    "candidate_revision": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+    "validator_timing_revision": "6e422ec4d",
+    "compiler": "locked Nix Go 1.27.1",
+    "platform": "linux/amd64",
+    "complete_test_seconds": 509.93,
+    "phase_seconds": {
+      "predecessor_fixture": 283.285,
+      "candidate_transition": 58.858,
+      "initial_browser_auth_and_candidate_handoff": 37.902,
+      "replacement_publish_browser_proofs": 113.206
+    },
+    "attempts": 1,
+    "transition_receipt_written": false,
+    "command": "LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC=1 LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC_IMAGE=<image ID> LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC_REVISION=<full candidate revision> go test ./internal/app/cli/composectl -run ^TestQualificationHistoricalTransitionDiagnostic$ -count=1 -timeout=110m -v",
+    "limit": "Single local receipt-free scenario while two local PR contracts also ran. All functional scenario assertions execute, but this does not qualify a final artifact, validate final-HEAD validator cleanliness, establish a comparable speedup or support p95. Phase sum excludes test setup/assertion overhead and cleanup."
+  },
+  "predecessor_build_screen": {
+    "source_revision": "28bfc7e7e8f8074847229c05c42f0bbc2dd79336",
+    "compiler": "go version go1.27.1 linux/amd64",
+    "platform": {
+      "GOOS": "linux",
+      "GOARCH": "amd64",
+      "CGO_ENABLED": 1,
+      "GOMAXPROCS": 4,
+      "go_build_package_parallelism": 2,
+      "GOFLAGS": ""
+    },
+    "generated_source": {
+      "generator": "scripts/generate_build_sources.sh",
+      "generator_sha256": "a447e1a34d6905bf9f2379770842c18a32e51168a35357e0e79c7228ab92e814",
+      "input_count": 4726,
+      "input_sha256": "f21d308df8a9b5cb3e59b2e5c58ea59e4a4d605358ef53a6650ebbd3f46a2fb5",
+      "ignored_outputs": 153,
+      "all_four_roots_equal_and_clean": true
+    },
+    "identity": {
+      "product": "leapview",
+      "version": "0.3.0-alpha.1+main.28bfc7e7e8f8",
+      "revision": "28bfc7e7e8f8074847229c05c42f0bbc2dd79336",
+      "buildTime": "2026-09-25T19:35:40Z",
+      "dirty": false,
+      "development": true
+    },
+    "method": {
+      "baseline": "go build -x -p 2 -ldflags <same pinned identity> -o <outside root> ./cmd/leapview",
+      "treatment": "same command with -trimpath",
+      "caches": "separate empty local GOCACHE per mode; shared module cache; no hosted import/export",
+      "order": [
+        "A baseline cold",
+        "A trimpath cold",
+        "B baseline then trimpath",
+        "C trimpath then baseline",
+        "D baseline then trimpath"
+      ],
+      "pair_order": "B baseline/trimpath; C trimpath/baseline; D baseline/trimpath"
+    },
+    "rows": [
+      {
+        "label": "seed-A-baseline",
+        "wall_s": 146.22,
+        "go_compile": 1384,
+        "asm": 159,
+        "cgo": 24,
+        "link": 1,
+        "user_s": 419.88,
+        "system_s": 65.12,
+        "peak_rss_kib": 1531184,
+        "binary_sha256": "5a9a065411b07396c70d0aafccfa578805c7f1b1fe4205464c1768ac1042055d"
+      },
+      {
+        "label": "seed-A-trimpath",
+        "wall_s": 140.36,
+        "go_compile": 1384,
+        "asm": 159,
+        "cgo": 24,
+        "link": 1,
+        "user_s": 410.61,
+        "system_s": 61.41,
+        "peak_rss_kib": 1477876,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      },
+      {
+        "label": "pair-B-baseline",
+        "wall_s": 53.25,
+        "go_compile": 381,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 128.2,
+        "system_s": 20.78,
+        "peak_rss_kib": 1547128,
+        "binary_sha256": "7e9b56b69bcc96b131777a7ebad96b701cd38e23fa0253663f24679e23dd7452"
+      },
+      {
+        "label": "pair-B-trimpath",
+        "wall_s": 18.15,
+        "go_compile": 0,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 13.7,
+        "system_s": 4.19,
+        "peak_rss_kib": 1498556,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      },
+      {
+        "label": "pair-C-trimpath",
+        "wall_s": 13.06,
+        "go_compile": 0,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 12.93,
+        "system_s": 3.26,
+        "peak_rss_kib": 1505600,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      },
+      {
+        "label": "pair-C-baseline",
+        "wall_s": 71.02,
+        "go_compile": 381,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 128.04,
+        "system_s": 21.32,
+        "peak_rss_kib": 1442760,
+        "binary_sha256": "ac14a3efc363bdfc255cc78457d41749bedc90a265fa16acbaab6d39d201be4c"
+      },
+      {
+        "label": "pair-D-baseline",
+        "wall_s": 55.25,
+        "go_compile": 381,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 124.46,
+        "system_s": 20.56,
+        "peak_rss_kib": 1490676,
+        "binary_sha256": "2c368e155264546b2b791e32db7e002fec41d31022bbdaa068fb8aba06e7be69"
+      },
+      {
+        "label": "pair-D-trimpath",
+        "wall_s": 28.81,
+        "go_compile": 0,
+        "asm": 0,
+        "cgo": 0,
+        "link": 1,
+        "user_s": 13.37,
+        "system_s": 4.61,
+        "peak_rss_kib": 1487344,
+        "binary_sha256": "a2555e99dadb27a3cc6db8a7ca92d4566b3f79b5b8fb14d95ef3b428e4cce915"
+      }
+    ],
+    "all_identities_equal": true,
+    "trimpath_binaries_identical": true,
+    "limitations": [
+      "Local three-pair screening result, not hosted confirmation or p95 evidence.",
+      "Cold seed cost included; cache transfer, export and hosted producer cost not measured.",
+      "Current hosted transition reader uses full-validation; historical job publishes historical-transition. No cache ownership change is inferred from local reuse.",
+      "Only transient checkout-path differences removed; all sources, compiler and injected identity remain fixed.",
+      "The screen omits Taskfile CI GOFLAGS=-tags=duckdb_arrow; it is a narrower host CLI workload.",
+      "Normal nightly/merge full-validation producers omit the historical transition; only a manual main recovery-evidence dispatch can seed its trimmed packages.",
+      "Go hashes trimpath for standard/external packages, so adopting the flag alone risks cold dependency recompilation. Keep current flags until actual-tag producer/archive/consumer costs are measured."
+    ],
+    "functional_validation": {
+      "test": "TestQualificationHistoricalTransitionDiagnostic",
+      "result": "pass",
+      "validator_base_revision": "86f83da2a5c91b86eec4abb7753b14baa9161145",
+      "validator_change": "experimental -trimpath predecessor CLI build; not adopted",
+      "candidate_image": "sha256:0d7c1a01d91cccf1123d6981bb55371217713fda49cec8384b71281ef03c74f0",
+      "candidate_revision": "5be7e200d368dbaf6b8c33e1f25d2c5f91fd1be9",
+      "elapsed_s": 535.94,
+      "phases_s": {
+        "predecessor_fixture": 306.016,
+        "candidate_transition": 59.107,
+        "initial_browser_auth_and_candidate_handoff": 45.272,
+        "replacement_publish_browser_proofs": 107.386
+      },
+      "deployable_receipt_written": false,
+      "limit": "Functional diagnostic only; different cache/load from prior run, not a comparable speedup or final hosted admission."
+    },
+    "adopted": false
+  }
+}

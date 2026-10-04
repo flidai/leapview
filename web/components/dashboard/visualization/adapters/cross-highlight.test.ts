@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
@@ -19,17 +20,15 @@ test('mixed renderer targets preserve comparison frames and project one governed
   const faceted = facetedEnvelope()
   const originalRows = structuredClone(faceted.dataState.kind === 'inline' ? faceted.dataState.datasets[0]!.rows : [])
   const option = echartsOption(faceted) as any
-  const delivered = option.series.find((series: any) => series.name === 'delivered')
-  const canceled = option.series.find((series: any) => series.name === 'canceled')
-  expect(delivered.itemStyle.opacity({ dataIndex: 0 })).toBe(1)
-  expect(delivered.itemStyle.opacity({ dataIndex: 1 })).toBe(0.2)
-  expect(canceled.itemStyle.opacity({ dataIndex: 0 })).toBe(0.2)
+  const opacity = renderedBarOpacities(option)
+  expect(opacity.delivered).toEqual([1, 0.2])
+  expect(opacity.canceled).toEqual([0.2])
   expect(faceted.dataState.kind === 'inline' ? faceted.dataState.datasets[0]!.rows : []).toEqual(originalRows)
   expect(option.aria.description).toContain('Comparison totals are unchanged')
 
   faceted.highlights = []
   const cleared = echartsOption(faceted) as any
-  expect(cleared.series.every((series: any) => series.itemStyle?.opacity === undefined)).toBe(true)
+  expect(renderedBarOpacities(cleared)).toEqual({ delivered: [1, 1], canceled: [1] })
   expect(cleared.aria.description).not.toContain('Comparison totals are unchanged')
 
   const table = tableSignal(tableEnvelope())
@@ -51,10 +50,7 @@ test('ECharts cross-highlight maps typed category series to their source rows', 
     entries: [{ label: 'String one', mappings: [{ targetFieldID: 'orders.status', value: '1' }] }],
   }]
   const option = echartsOption(faceted) as any
-  const numberSeries = option.series.find((series: any) => series.name === '1 [number:1]')
-  const stringSeries = option.series.find((series: any) => series.name === '1 [string:1]')
-  expect(numberSeries.itemStyle.opacity({ dataIndex: 0 })).toBe(0.2)
-  expect(stringSeries.itemStyle.opacity({ dataIndex: 0 })).toBe(1)
+  expect(renderedBarOpacities(option)).toEqual({ '1 [number:1]': [0.2], '1 [string:1]': [1] })
 })
 
 test('MapLibre projects highlight state into governed feature properties and paint policy', () => {
@@ -168,4 +164,21 @@ function mapEnvelope(): VisualizationEnvelope {
     dataState: inlineState(['state', 'value'], [['SP', 10], ['RJ', 7]]),
     selection: [], highlights: highlight, status: { kind: 'ready' }, diagnostics: [],
   } as unknown as VisualizationEnvelope
+}
+
+function renderedBarOpacities(option: echarts.EChartsOption): Record<string, number[]> {
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(option)
+    const result: Record<string, number[]> = {}
+    // Inspect ECharts' resolved datum styles, including dataset transforms and visual maps.
+    ;(chart as any).getModel().eachSeries((series: any) => {
+      if (series.subType !== 'bar' || series.get('silent')) return
+      const data = series.getData()
+      result[series.name] = Array.from({ length: data.count() }, (_, index) => data.getItemVisual(index, 'style').opacity ?? 1)
+    })
+    return result
+  } finally {
+    chart.dispose()
+  }
 }

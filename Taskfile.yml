@@ -55,6 +55,14 @@ tasks:
       - task: map-assets:install
       - ./scripts/dev-server.sh start
 
+  playground:
+    desc: Start the standalone component and chart playground (no application services)
+    cmds:
+      - task: visualization-ir:generate
+      - task: layout-contract:generate
+      - task: lucide-icons:generate
+      - bun run playground
+
   dev:reset-login:
     desc: Explicitly restore the private local development login and restart the managed server
     cmds:
@@ -543,6 +551,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/nix_ci_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
@@ -568,6 +577,7 @@ tasks:
       - bun run test:app-shell
       - bun run test:settings
       - bun run typecheck:app
+      - bun run typecheck:playground
       - bun run typecheck:contracts
       - bun run typecheck:tests
       - bun run test:production-assets
@@ -579,6 +589,7 @@ tasks:
     desc: Run dashboard, visualization, and report browser tests
     cmds:
       - bun run test:visualization-ir
+      - bun run test:playground
       - bun run test:table-selection
       - bun run test:interaction-selection
       - bun run test:record-table

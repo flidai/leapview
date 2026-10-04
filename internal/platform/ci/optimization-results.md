@@ -3,7 +3,8 @@
 Progress and acceptance criteria are tracked in the
 [Linear project](https://linear.app/flid/project/leapview-cicd-quality-and-speed-8a7e28e7113f/overview).
 This records measured decisions and exact protected qualification. Production
-orchestration adoption still requires its own candidate checks and warm rollout.
+orchestration adoption completed in #821 with protected qualification and a warm rollout.
+See the [repository-wide reassessment](reassessment-2026-10-03.md) for subsequent findings.
 
 The initial rollout merged as [#805](https://github.com/flidai/leapview/pull/805),
 [#807](https://github.com/flidai/leapview/pull/807), and
@@ -70,9 +71,9 @@ passed every required lane, including live dependency scans, full validation,
 recovery and schema transition. The earlier failed nightly used pre-remediation
 main and is not a failure of the fixed source.
 
-The remaining production orchestration adoption needs protected qualification,
-trusted main publication and warm rollout verification before integrated project
-closeout. GitHub requires an independent write-access approving review before
-queue entry. No experiment has twenty comparable observations per mode, so this
+Production orchestration adoption merged in #821 and passed trusted main
+publication and warm rollout verification; the final integrated receipts are linked
+from the [reassessment](reassessment-2026-10-03.md). GitHub requires an independent
+write-access approving review before queue entry. No experiment has twenty comparable observations per mode, so this
 rollout makes no p95 claim. No release or live infrastructure was published or
 modified solely to exercise orchestration.

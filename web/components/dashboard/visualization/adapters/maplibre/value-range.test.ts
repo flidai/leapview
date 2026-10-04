@@ -31,7 +31,11 @@ test('map value ranges combine tiled raw and aggregate domains', () => {
 test('map value filters preserve authored layer filters and disappear at the full range', () => {
   const range = { minimum: 4, maximum: 10, selectedMinimum: 5, selectedMaximum: 9, step: 1 }
   const selection = mapValueFilterExpression('orders', range)
-  expect(selection).toEqual(['all', ['has', 'orders'], ['>=', ['get', 'orders'], 5], ['<=', ['get', 'orders'], 9]])
+  expect(selection).toEqual([
+    'case', ['in', ['typeof', ['get', 'orders']], ['literal', ['number', 'string']]],
+    ['all', ['>=', ['to-number', ['get', 'orders']], 5], ['<=', ['to-number', ['get', 'orders']], 9]],
+    false,
+  ])
   expect(combineMapFilters(['==', ['geometry-type'], 'Point'], selection)).toEqual(['all', ['==', ['geometry-type'], 'Point'], selection])
   expect(mapValueFilterExpression('orders', { ...range, selectedMinimum: 4, selectedMaximum: 10 })).toBeUndefined()
 })

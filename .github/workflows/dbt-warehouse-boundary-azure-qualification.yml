@@ -1,4 +1,4 @@
-name: dbt warehouse boundary Azure qualification
+name: Qualification / dbt Azure boundary
 
 on:
   workflow_dispatch:
