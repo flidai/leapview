@@ -201,7 +201,7 @@ The governed deployment environments are:
 | Environment | Use | Required boundary |
 | --- | --- | --- |
 | `leapview-demo` | Hosted Olist demonstration | Protected main branch and human review; deploy only an immutable qualified image |
-| `leapview-ephemeral-qualification` | Disposable Hetzner qualification | Human review; manual dispatch is restricted to the explicitly named workflow and an immutable attested image; destroy after the run |
+| `leapview-ephemeral-qualification` | Disposable Hetzner qualification | Protected main branch and human review; manual dispatch is restricted to the explicitly named workflow and an immutable attested image; destroy after the run |
 | `leapview-site-production` | Public-site infrastructure and promotion | Protected main branch, human review, immutable image promotion, and post-activation health verification |
 
 All three governed environments require `prevent_self_review=true` and must

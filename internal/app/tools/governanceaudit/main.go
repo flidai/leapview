@@ -43,7 +43,7 @@ var trustedBuilders = []Builder{
 // deployment environment in this audit.
 var governedEnvironments = []EnvironmentContract{
 	{Name: "leapview-demo", MainOnly: true, ReviewRequired: true},
-	{Name: "leapview-ephemeral-qualification", MainOnly: false, ReviewRequired: true},
+	{Name: "leapview-ephemeral-qualification", MainOnly: true, ReviewRequired: true},
 	{Name: "leapview-site-production", MainOnly: true, ReviewRequired: true},
 }
 
