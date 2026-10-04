@@ -14,16 +14,7 @@ import '../web/components/shared/toast'
 import '../web/components/shared/loading-spinner'
 import '../web/components/dashboard/filters/date-picker'
 
-export const controlExamples = [
-  { id: 'buttons', label: 'Buttons' },
-  { id: 'fields', label: 'Form fields' },
-  { id: 'select', label: 'Select menu' },
-  { id: 'multiselect', label: 'Entity multiselect' },
-  { id: 'date-picker', label: 'Date picker' },
-  { id: 'filter-menu', label: 'Filter menu' },
-  { id: 'toast', label: 'Toasts' },
-  { id: 'loading', label: 'Loading' },
-]
+export { controlExamples } from './catalog'
 
 const options = [
   { value: 'daily', label: 'Daily' },

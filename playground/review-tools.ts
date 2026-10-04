@@ -22,6 +22,7 @@ class PlaygroundReviewTools extends LitElement {
   @property({ attribute: false }) getCode?: () => string
   @property({ attribute: false }) getExample?: () => StatefulExample | null
   @property() route = ''
+  @property({ attribute: false }) exampleReady = false
   @state() private code = ''
   @state() private message = ''
   @state() private pinned = ''
@@ -38,7 +39,7 @@ class PlaygroundReviewTools extends LitElement {
   }
 
   protected updated(changed: Map<PropertyKey, unknown>) {
-    if (changed.has('route') && this.renderRoot.querySelector<HTMLDetailsElement>('.coverage')?.open) void this.refreshCoverage()
+    if ((changed.has('route') || changed.has('exampleReady')) && this.exampleReady && this.renderRoot.querySelector<HTMLDetailsElement>('.coverage')?.open) void this.refreshCoverage()
   }
 
   private refreshCoverage = async () => {

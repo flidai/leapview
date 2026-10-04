@@ -5,16 +5,7 @@ import { ChevronDown, Maximize2, Minimize2, Moon, PanelLeft, Star, Sun } from 'l
 import { lucideIcon } from '../web/components/shared/lucide-icons'
 import '../web/components/shared/brand-mark'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
-import { chartExamples } from './charts'
-import { controlExamples } from './controls'
-import { tokenExamples } from './tokens'
-import { graphExamples } from './graphs'
-import { contentExamples } from './content'
-import { tableExamples } from './tables'
-import { surfaceExamples } from './surfaces'
-import { filterExamples } from './filters'
-import './linked-visuals'
-import './overlay-recipe'
+import { chartExamples, controlExamples, tokenExamples, graphExamples, contentExamples, tableExamples, surfaceExamples, filterExamples } from './catalog'
 import './reload-client'
 import { decodeSnapshot, snapshotKey, type ExampleSnapshot, type StatefulExample } from './example-state'
 import { copyText, snapshotURL } from './review-tools'
@@ -63,6 +54,21 @@ const groups = [
 ]
 const shortcutExamples = new Map(groups.flatMap(group => group.examples.map(example => [`${group.id}/${example.id}`, { label: example.label, groupLabel: group.label }] as const)))
 
+const exampleModules: Record<string, { tag: string; load: () => Promise<unknown> }> = {
+  tokens: { tag: 'playground-tokens', load: () => import('./tokens') },
+  controls: { tag: 'playground-controls', load: () => import('./controls') },
+  charts: { tag: 'playground-charts', load: () => import('./charts') },
+  graphs: { tag: 'playground-graphs', load: () => import('./graphs') },
+  tables: { tag: 'playground-tables', load: () => import('./tables') },
+  content: { tag: 'playground-content', load: () => import('./content') },
+  surfaces: { tag: 'playground-surfaces', load: () => import('./surfaces') },
+  filters: { tag: 'playground-filters', load: () => import('./filters') },
+  'recipes/linked-visuals': { tag: 'playground-linked-visuals', load: () => import('./linked-visuals') },
+  'recipes/overlay-form': { tag: 'playground-overlay-recipe', load: () => import('./overlay-recipe') },
+}
+const moduleLoads = new Map<string, Promise<unknown>>()
+const moduleID = (route: string) => route.startsWith('recipes/') ? route : route.split('/')[0]
+
 class PlaygroundApp extends LitElement {
   @state() private route = location.hash.slice(1) || 'charts/bar'
   @state() private search = ''
@@ -76,11 +82,36 @@ class PlaygroundApp extends LitElement {
   @state() private previewOnly = embedded || initialSnapshot?.preview || parameters.get('preview') === '1'
   @state() private shareMessage = ''
   @state() private shareFallback = ''
+  @state() private loadError = ''
   private readonly beforeReload = () => {
     if (embedded) return
     try { sessionStorage.setItem(snapshotKey, JSON.stringify({ href: location.href, state: JSON.stringify(this.snapshot()) })) } catch { /* Storage unavailable. */ }
   }
-  protected async firstUpdated() { if (initialSnapshot) await this.restore(initialSnapshot) }
+  protected async firstUpdated() {
+    if (initialSnapshot) {
+      await this.loadCurrentExample()
+      await this.restore(initialSnapshot)
+    }
+  }
+
+  private async loadCurrentExample() {
+    const route = this.route
+    const id = moduleID(route)
+    const exampleModule = exampleModules[id]
+    if (!exampleModule) return
+    let load = moduleLoads.get(id)
+    if (!load) {
+      load = exampleModule.load()
+      moduleLoads.set(id, load)
+    }
+    try {
+      await load
+      if (this.route === route) { this.loadError = ''; this.requestUpdate() }
+    } catch (error) {
+      moduleLoads.delete(id)
+      if (this.route === route) this.loadError = error instanceof Error ? error.message : String(error)
+    }
+  }
 
   private exampleElement() { return this.renderRoot.querySelector<StatefulExample>('.viewport > *') }
 
@@ -130,10 +161,12 @@ class PlaygroundApp extends LitElement {
     const fromMobileNavigation = this.navigationOpen
     this.navigationOpen = false
     this.route = location.hash.slice(1) || 'charts/bar'
+    this.loadError = ''
     this.rememberExample()
     this.shareMessage = ''; this.shareFallback = ''
     const incoming = decodeSnapshot(new URLSearchParams(location.search).get('state'))
     this.expandedGroups = new Set([this.route.split('/')[0]])
+    await this.loadCurrentExample()
     await this.updateComplete
     if (previousRoute !== this.route && incoming?.route === this.route) await this.restore(incoming)
     const main = this.renderRoot.querySelector<HTMLElement>('main')
@@ -157,6 +190,7 @@ class PlaygroundApp extends LitElement {
     window.addEventListener('hashchange', this.navigate)
     window.addEventListener('keydown', this.exitPreview)
     window.addEventListener('playground-before-reload', this.beforeReload)
+    void this.loadCurrentExample()
   }
   disconnectedCallback() {
     document.removeEventListener('leapview-theme-applied', this.themeApplied)
@@ -231,7 +265,10 @@ class PlaygroundApp extends LitElement {
     const [groupID, exampleID] = this.route.split('/')
     const group = groups.find(item => item.id === groupID)
     const example = group?.examples.find(item => item.id === exampleID)
-    const preview = example ? keyed(this.route, groupID === 'charts'
+    const exampleModule = exampleModules[moduleID(this.route)]
+    const preview = example && !customElements.get(exampleModule?.tag || '')
+      ? html`<p role="status">${this.loadError || 'Loading example…'}</p>`
+      : example ? keyed(this.route, groupID === 'charts'
       ? html`<playground-charts .example=${exampleID} ?preview-only=${this.previewOnly}></playground-charts>`
       : groupID === 'graphs' ? html`<playground-graphs .example=${exampleID} ?preview-only=${this.previewOnly}></playground-graphs>`
       : groupID === 'tables' ? html`<playground-tables .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tables>`
@@ -283,7 +320,7 @@ class PlaygroundApp extends LitElement {
           <span class="share-message" role="status" ?hidden=${this.previewOnly}>${this.shareMessage}</span>
           ${this.shareFallback && !this.previewOnly ? html`<input class="settings-input share-fallback" readonly aria-label="Example link" .value=${this.shareFallback} @focus=${(event: Event) => (event.target as HTMLInputElement).select()}>` : nothing}
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
-          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
+          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${Boolean(example && customElements.get(exampleModule?.tag || ''))} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
         </main>
       </div>`
   }

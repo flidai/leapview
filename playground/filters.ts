@@ -16,9 +16,7 @@ function initialDockState(): DashboardFilterState {
   }
 }
 
-export const filterExamples = [
-  { id: 'leaf', label: 'Filter control' }, { id: 'pane', label: 'Filter pane card' }, { id: 'slicer', label: 'Dashboard slicer' }, { id: 'dock', label: 'Filter dock' },
-]
+export { filterExamples } from './catalog'
 export class PlaygroundFilters extends LitElement {
   @property() example = 'leaf'
   @state() private presentationStyle: DashboardFilterPresentation['style'] = 'dropdown'
