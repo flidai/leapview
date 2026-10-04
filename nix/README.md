@@ -213,21 +213,25 @@ conventional image OCI admission and capture image runtime identity before any
 Compose controller runs. The workflow builds both Nix controllers from that
 clean source, assembles them with the protected shared packager, and qualifies
 each installed bundle on native runners without registry credentials. The
-protected signer byte-compares qualified files with the original Nix build and
-pre-execution image evidence, verifies the retained qualification evidence
-inventory, and attests the unchanged outer archives and qualification receipts.
-The signing job does not execute candidate code; the read-only verifier checks
-live attestations against this workflow's protected revision. The receipt keeps
-`releaseAdmission: false`; successful live acceptance remains pending until the
-workflow lands on `main` and completes against a fresh successful release run.
+Before installed qualification, separate native jobs extract each verified
+controller and collect protected Go vulnerability evidence, a pinned Syft SPDX
+inventory and version/help probes in pinned Debian 12, Ubuntu 24.04 and Debian 13
+containers. The installed qualifier consumes the exact same-run evidence
+artifact. The protected signer byte-compares these evidence files and inventory
+with the original artifacts, verifies all retained receipts, and attests the
+unchanged outer archives and their SPDX predicates. The signing job does not
+execute candidate code; the read-only verifier checks live provenance and SPDX
+attestations against this workflow's protected revision and retained report. The
+receipt keeps `releaseAdmission: false`; successful live acceptance remains
+pending until the workflow lands on `main` and completes against a fresh
+successful release run.
 
 These are Nix Compose candidates only. Their receipts explicitly keep
-`releaseAdmission: false`. Protected Go vulnerability evidence, SPDX inventory,
-the three pinned host distribution probes for the Compose controller binaries,
-the remaining host lifecycle gates, and production promotion still require
+`releaseAdmission: false`. Full systemd/NixOS installation, upgrade, rollback and
+recovery, broader host lifecycle gates, and production promotion still require
 qualification. No release assets are adopted; conventional release and Darwin
-publishers remain selected. The standalone development-controller signature does
-not attest a composed bundle.
+publishers remain selected. The standalone development-controller signature
+does not attest a composed bundle.
 
 Controller builds retain Go function symbols (`-w`, without `-s`) so binary-mode
 vulnerability analysis can inspect the shipped code. A separate read-only lane

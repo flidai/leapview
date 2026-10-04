@@ -510,7 +510,7 @@ journeys against its selected admitted image and acquire provenance over the
 outer archive hash. Protected signing and adoption remain pending for these Nix
 bundle candidates; no published builder is replaced by this assembly mechanism.
 
-### Protected Nix Compose candidates (FAI-1073)
+### Protected Nix Compose candidates (FAI-1073, FAI-1074)
 
 The manual `Protected Nix Compose candidate` workflow takes the run ID of a
 completed successful `release.yml` `workflow_dispatch` on `main`. The protected
@@ -549,12 +549,21 @@ records `releaseAdmission: false`. A separate read-only job verifies the live
 attestations against this workflow path, its actual protected `main` revision
 and the exact subject hashes.
 
-This is useful Compose installation evidence, but it is not full release
-admission. The current lane does not yet generate protected Go vulnerability
-reports or SPDX for the Compose controllers and does not repeat the three pinned
-Debian/Ubuntu host probes for these canonical-release controller binaries. Those
-gates, remaining host lifecycle qualification and promotion of the exact
-candidate remain open. No artifact is added to release downloads and the existing
-conventional Compose and Darwin publishers remain authoritative. A successful
-workflow run after this change lands on `main` is needed before recording live
-evidence in [FAI-1073](https://linear.app/flid/issue/FAI-1073).
+This extends the candidate evidence with fresh protected Go vulnerability
+reports, a pinned Syft SPDX inventory and native version/help probes in pinned
+Debian 12, Ubuntu 24.04 and Debian 13 containers for each exact Compose
+controller. The evidence job runs before the installed bundle journey; its
+immutable reports are copied and hash-compared by the protected signer, which
+attests the exact outer archive and its SPDX predicate. The independent
+read-only verifier checks both live predicates against the protected workflow
+revision and retained evidence. Distribution probes use only digest-pinned
+containers with UID 65534, a read-only root filesystem, no network and no
+capabilities; no controller runs directly on the host.
+
+This is still not full release admission. Full systemd/NixOS installation,
+upgrade, rollback and recovery lifecycle qualification, other host qualification
+and promotion of the exact candidate remain open. The receipt keeps
+`releaseAdmission: false`; no artifact is added to release downloads and the
+existing conventional Compose and Darwin publishers remain authoritative. A
+successful workflow run after this change lands on `main` is needed before
+recording live evidence in [FAI-1074](https://linear.app/flid/issue/FAI-1074).

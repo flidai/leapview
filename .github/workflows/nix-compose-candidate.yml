@@ -262,9 +262,120 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  controller-evidence:
+    name: Native Compose controller security evidence (${{ matrix.arch }})
+    needs: [authorize, build-bundles]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - name: Check out protected Compose evidence tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out the authorized clean source assets
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+
+      - name: Install pinned protected Nix tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+
+      - name: Download the exact Nix bundle and release handoff artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
+          path: candidate
+      - name: Download the exact release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+
+      - name: Verify source, release identity and original bundle inputs
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          cmp release-input/release-run-binding.json "candidate/$ARCH/release-run-binding.json"
+          cmp release-input/release-identity.json "candidate/$ARCH/release-identity.json"
+          cmp release-input/image-reference.txt "candidate/$ARCH/image-reference.txt"
+          test "$(cat release-input/image-reference.txt)" = "$IMAGE_REFERENCE"
+
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
+
+      - name: Collect native Go, SPDX and isolated host evidence
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          RELEASE_RUN_ID: ${{ needs.authorize.outputs.release_run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ needs.authorize.outputs.release_run_attempt }}
+        run: |
+          set -euo pipefail
+          package="leapview-compose-candidate-${RELEASE_RUN_ID}-${RELEASE_RUN_ATTEMPT}-linux-${ARCH}"
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_compose_controller_evidence.py qualify-controller \
+            --archive "candidate/$ARCH/$package.tar.gz" \
+            --sidecar "candidate/$ARCH/$package.tar.gz.sha256" \
+            --controller-build-identity "candidate/$ARCH/controller-build-identity.json" \
+            --source-root source --release-identity "candidate/$ARCH/release-identity.json" \
+            --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
+            --platform "linux/$ARCH" \
+            --binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+            --evidence-dir "controller-evidence/$ARCH" \
+            --output "controller-evidence/$ARCH/controller-evidence.json"
+
+      - name: Retain successful native controller evidence
+        if: success()
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-controller-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: controller-evidence/${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain controller evidence diagnostics on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-controller-evidence-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: controller-evidence/${{ matrix.arch }}/
+          if-no-files-found: warn
+          retention-days: 14
+
   qualify:
     name: Native installed Compose candidate (${{ matrix.arch }})
-    needs: [authorize, build-bundles, preflight]
+    needs: [authorize, build-bundles, preflight, controller-evidence]
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
@@ -356,6 +467,49 @@ jobs:
           artifact-ids: ${{ steps.preflight.outputs.artifact_id }}
           path: preflight/${{ matrix.arch }}
 
+      - name: Resolve the exact same-run controller evidence artifact
+        id: controller-evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$EXPECTED_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/controller-evidence-artifacts.json"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+          pages = json.loads(Path(os.environ["RUNNER_TEMP"], "controller-evidence-artifacts.json").read_text())
+          if isinstance(pages, dict):
+              pages = [pages]
+          artifacts = [item for page in pages for item in page.get("artifacts", [])]
+          run_id = int(os.environ["EXPECTED_RUN_ID"])
+          attempt = int(os.environ["EXPECTED_RUN_ATTEMPT"])
+          arch = os.environ["ARCH"]
+          revision = os.environ["EXPECTED_SOURCE_REVISION"]
+          expected_name = f"nix-compose-controller-evidence-{run_id}-{attempt}-{arch}"
+          matches = [item for item in artifacts
+              if item.get("name") == expected_name and item.get("expired") is False
+              and re.fullmatch(r"sha256:[0-9a-f]{64}", item.get("digest", ""))
+              and (item.get("workflow_run") or {}).get("id") == run_id
+              and (item.get("workflow_run") or {}).get("head_branch") == "main"
+              and (item.get("workflow_run") or {}).get("head_sha") == revision]
+          if len(matches) != 1 or type(matches[0].get("id")) is not int:
+              raise SystemExit("no unique, immutable same-attempt native controller evidence artifact exists")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"artifact_id={matches[0]['id']}\n")
+          PY
+
+      - name: Download the exact native controller evidence by REST ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.controller-evidence.outputs.artifact_id }}
+          path: controller-evidence/${{ matrix.arch }}
+
       - name: Verify authorized source, binding and immutable image
         env:
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
@@ -377,6 +531,11 @@ jobs:
           cp -- "preflight/$ARCH/oci-admission.json" "candidate/$ARCH/oci-admission.json"
           cp -- "preflight/$ARCH/image-runtime-identity.json" "candidate/$ARCH/image-runtime-identity.json"
 
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
+
       - name: Verify exact bundle and safely extract the installed package
         env:
           IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
@@ -394,6 +553,27 @@ jobs:
             --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
             --platform linux/${{ matrix.arch }} --extract-dir extracted-package \
             --output "$RUNTIME_BUNDLE_BINDING"
+
+      - name: Verify exact controller security evidence before candidate execution
+        env:
+          ARCH: ${{ matrix.arch }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_compose_controller_evidence.py verify-controller-evidence \
+            --archive "candidate/$ARCH/$PACKAGE_NAME.tar.gz" \
+            --sidecar "candidate/$ARCH/$PACKAGE_NAME.tar.gz.sha256" \
+            --controller-build-identity "candidate/$ARCH/controller-build-identity.json" \
+            --source-root source --release-identity "candidate/$ARCH/release-identity.json" \
+            --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
+            --platform "linux/$ARCH" \
+            --evidence-dir "controller-evidence/$ARCH" \
+            --receipt "controller-evidence/$ARCH/controller-evidence.json" \
+            --binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+            > "$RUNNER_TEMP/controller-evidence-verified.json"
 
       - name: Check the extracted controller runtime identity without credentials
         env:
@@ -442,6 +622,8 @@ jobs:
             --runtime-identity "candidate/$ARCH/image-runtime-identity.json" \
             --qualification-report "$EVIDENCE_ROOT/qualification-report.json" \
             --qualification-evidence-dir "$EVIDENCE_ROOT" \
+            --controller-evidence-dir "controller-evidence/$ARCH" \
+            --controller-binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
             --release-authorization release-input/release-run-binding.json \
             --signer-revision "$GITHUB_SHA" \
             --output "qualified/$ARCH/qualification.json"
@@ -454,6 +636,7 @@ jobs:
             "candidate/$ARCH/release-run-binding.json" "candidate/$ARCH/bundle-binding.json" \
             controller-runtime-identity.json "candidate/$ARCH/image-runtime-identity.json" "qualified/$ARCH/"
           cp -R -- "$EVIDENCE_ROOT" "qualified/$ARCH/installed-evidence"
+          cp -R -- "controller-evidence/$ARCH" "qualified/$ARCH/controller-evidence"
 
       - name: Retain success-qualified exact archive and receipt
         if: success()
@@ -472,6 +655,7 @@ jobs:
           name: nix-compose-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: |
             preflight/${{ matrix.arch }}/
+            controller-evidence/${{ matrix.arch }}/
             ${{ runner.temp }}/compose-qualification-evidence/
             controller-runtime-identity.json
           if-no-files-found: warn
@@ -615,7 +799,7 @@ jobs:
           retention-days: 14
 
   sign:
-    needs: [authorize, build-bundles, preflight, qualify]
+    needs: [authorize, build-bundles, preflight, controller-evidence, qualify]
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -666,7 +850,7 @@ jobs:
           attempt = int(os.environ["EXPECTED_RUN_ATTEMPT"])
           revision = os.environ["EXPECTED_SOURCE_REVISION"]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              for kind in ("qualified", "preflight"):
+              for kind in ("qualified", "preflight", "controller-evidence"):
                   for arch in ("amd64", "arm64"):
                       name = f"nix-compose-{kind}-{run_id}-{attempt}-{arch}"
                       matches = [a for a in artifacts
@@ -677,7 +861,7 @@ jobs:
                           and (a.get("workflow_run") or {}).get("head_sha") == revision]
                       if len(matches) != 1 or type(matches[0].get("id")) is not int:
                           raise SystemExit(f"expected one exact successful {kind} {arch} artifact from this protected run attempt")
-                      output.write(f"{kind}_{arch}_id={matches[0]['id']}\n")
+                      output.write(f"{kind.replace('-', '_')}_{arch}_id={matches[0]['id']}\n")
           PY
       - name: Download exact amd64 native qualification
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -699,6 +883,16 @@ jobs:
         with:
           artifact-ids: ${{ steps.artifacts.outputs.preflight_arm64_id }}
           path: preflight/arm64
+      - name: Download exact amd64 controller evidence artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_amd64_id }}
+          path: original-controller-evidence/amd64
+      - name: Download exact arm64 controller evidence artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_arm64_id }}
+          path: original-controller-evidence/arm64
       - name: Download exact original Nix bundle artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -709,6 +903,10 @@ jobs:
         with:
           artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
           path: release-input
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
       - name: Recompute receipts offline without executing candidates
         env:
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
@@ -720,12 +918,26 @@ jobs:
           printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
           for arch in amd64 arm64; do
             package="leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${arch}"
+            cmp "original-controller-evidence/$arch/controller-evidence.json" \
+              "qualified/$arch/controller-evidence/controller-evidence.json"
             for file in "$package.tar.gz" "$package.tar.gz.sha256" controller-build-identity.json static-compatibility.json release-identity.json image-reference.txt release-artifact-admission.json release-run-binding.json bundle-binding.json; do
               cmp "original-build/$arch/$file" "qualified/$arch/$file"
             done
             for file in release-identity.json image-reference.txt assembled-image-admission.json release-run-binding.json oci-admission.json image-runtime-identity.json; do
               cmp "preflight/$arch/$file" "qualified/$arch/$file"
             done
+            nix develop --no-update-lock-file .#runtime-security -c \
+              python3 scripts/nix_compose_controller_evidence.py compare-controller-evidence \
+              --archive "original-build/$arch/$package.tar.gz" \
+              --sidecar "original-build/$arch/$package.tar.gz.sha256" \
+              --controller-build-identity "original-build/$arch/controller-build-identity.json" \
+              --source-root source --release-identity "original-build/$arch/release-identity.json" \
+              --image "$(cat "original-build/$arch/image-reference.txt")" \
+              --source-revision "$SOURCE_REVISION" --platform "linux/$arch" \
+              --left-evidence-dir "original-controller-evidence/$arch" \
+              --right-evidence-dir "qualified/$arch/controller-evidence" \
+              --binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+              > "$RUNNER_TEMP/controller-evidence-compare-$arch.json"
             count="$(find "qualified/$arch" -maxdepth 1 -type f -name '*.tar.gz' | wc -l)"
             test "$count" = 1
             archive="$(find "qualified/$arch" -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
@@ -744,6 +956,8 @@ jobs:
               --runtime-identity "qualified/$arch/image-runtime-identity.json" \
               --qualification-report "qualified/$arch/installed-evidence/qualification-report.json" \
               --qualification-evidence-dir "qualified/$arch/installed-evidence" \
+              --controller-evidence-dir "qualified/$arch/controller-evidence" \
+              --controller-binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
               --release-authorization release-input/release-run-binding.json \
             --signer-revision "$GITHUB_SHA"
           done
@@ -755,6 +969,12 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: qualified/amd64/qualification.json
+      - name: Attest amd64 controller SPDX against exact outer bundle
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/amd64/*.tar.gz
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: qualified/amd64/controller-evidence/sbom.spdx.json
       - name: Attest exact arm64 archive
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -763,6 +983,12 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: qualified/arm64/qualification.json
+      - name: Attest arm64 controller SPDX against exact outer bundle
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/arm64/*.tar.gz
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: qualified/arm64/controller-evidence/sbom.spdx.json
       - name: Retain exact attested archives and evidence
         id: signed
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -809,6 +1035,10 @@ jobs:
         with:
           artifact-ids: ${{ needs.sign.outputs.artifact_id }}
           path: signed
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
       - name: Recompute receipts and verify attestations read-only
         env:
           GH_TOKEN: ${{ github.token }}
@@ -839,6 +1069,8 @@ jobs:
               --runtime-identity "signed/qualified/$arch/image-runtime-identity.json" \
               --qualification-report "signed/qualified/$arch/installed-evidence/qualification-report.json" \
               --qualification-evidence-dir "signed/qualified/$arch/installed-evidence" \
+              --controller-evidence-dir "signed/qualified/$arch/controller-evidence" \
+              --controller-binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
               --release-authorization signed/release-input/release-run-binding.json \
               --signer-revision "$GITHUB_SHA" > "verification/$arch-receipt-check.json"
             archive_before="$(sha256sum "$archive")"
@@ -873,6 +1105,56 @@ jobs:
                   raise SystemExit("live attestation statement subject or digest differs from the exact retained file")
           PY
             done
+            spdx_path="signed/qualified/$arch/controller-evidence/sbom.spdx.json"
+            spdx_verification_path="verification/$arch-controller-spdx-attestation.json"
+            archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+            nix develop --no-update-lock-file .#runtime-security -c \
+              gh attestation verify "$archive" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow flidai/leapview/.github/workflows/nix-compose-candidate.yml \
+              --source-digest "$GITHUB_SHA" --source-ref refs/heads/main \
+              --deny-self-hosted-runners \
+              --predicate-type https://spdx.dev/Document/v2.3 --format json --limit 10 \
+              > "$spdx_verification_path"
+            python3 - "$spdx_verification_path" "$(basename "$archive")" "$archive_sha256" "$spdx_path" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          def unique_object(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError("duplicate JSON object key")
+                  value[key] = item
+              return value
+
+          def reject_nonfinite(value):
+              raise ValueError("non-finite JSON number is not allowed")
+
+          def strict_json(path):
+              return json.loads(Path(path).read_text(encoding="utf-8"),
+                                object_pairs_hook=unique_object, parse_constant=reject_nonfinite)
+
+          def canonical_json(value):
+              return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+          records = strict_json(sys.argv[1])
+          expected_spdx = strict_json(sys.argv[4])
+          if not isinstance(records, list) or not records:
+              raise SystemExit("live SPDX attestation verification returned no statements")
+          for record in records:
+              statement = record.get("verificationResult", {}).get("statement", {})
+              subjects = statement.get("subject")
+              if (statement.get("_type") != "https://in-toto.io/Statement/v1"
+                      or statement.get("predicateType") != "https://spdx.dev/Document/v2.3"
+                      or not isinstance(subjects, list) or len(subjects) != 1
+                      or subjects[0].get("name") != sys.argv[2]
+                      or subjects[0].get("digest") != {"sha256": sys.argv[3]}
+                      or canonical_json(statement.get("predicate")) != canonical_json(expected_spdx)):
+                  raise SystemExit("live SPDX attestation differs from exact archive subject or retained SPDX inventory")
+          PY
             test "$archive_before" = "$(sha256sum "$archive")"
             test "$receipt_before" = "$(sha256sum "$receipt")"
           done
