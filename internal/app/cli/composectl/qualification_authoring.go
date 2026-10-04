@@ -20,7 +20,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/app/api/clienttransport"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const qualificationBrowserImage = "mcr.microsoft.com/playwright:v1.63.0-noble"
@@ -359,6 +358,13 @@ func (c *Controller) runQualificationAuthoring(
 	if err != nil {
 		return report, err
 	}
+	policyRevision, policyDigest, err = c.stageQualificationRecoveryUploadGrant(
+		ctx, options, apiClient, administratorToken.AccessToken,
+		administrator.Principal.Id, policyRevision, policyDigest,
+	)
+	if err != nil {
+		return report, err
+	}
 	report.AuthorizationPolicyRevision = policyRevision
 	report.AuthorizationPolicyDigest = policyDigest
 	if err := browserWorker.CallContext(ctx, "signInReviewer", map[string]string{
@@ -502,54 +508,40 @@ func (c *Controller) runQualificationAuthoring(
 	if err := verifyExactAuthoringCandidate(candidate, publication, deployment); err != nil {
 		return report, err
 	}
-	createAPIToken := func(name string, actions []access.Action, exact ...access.PermissionPair) (string, error) {
-		projectID, err := projectgraph.NewResourceID(options.ProjectID)
-		if err != nil {
-			return "", fmt.Errorf("qualification project identity: %w", err)
-		}
-		permissions, err := access.ProjectPermissionPairsForActions(projectID, actions)
-		if err != nil {
-			return "", fmt.Errorf("qualification %s permission scope: %w", name, err)
-		}
-		permissions = append(permissions, exact...)
-		var response struct {
-			Token string `json:"token"`
-		}
-		err = browserWorker.CallContext(ctx, "createAdministratorAPIToken", map[string]any{
-			"name": name, "permissions": permissions,
-			"expiresAt": c.now().UTC().Add(2 * time.Hour).Format(time.RFC3339),
-		}, &response, nil)
-		if err != nil {
-			return "", err
-		}
-		if response.Token == "" {
-			return "", fmt.Errorf("browser worker returned an empty %s token", name)
-		}
-		return response.Token, nil
-	}
 	runPermission, err := qualificationPipelineRunPermission(options.ProjectID)
 	if err != nil {
 		return report, err
 	}
-	workloadToken, err := createAPIToken("qualification-workload", qualificationWorkloadActions(), runPermission)
+	workloadToken, err := c.createQualificationAPIToken(ctx, browserWorker, options, "qualification-workload", qualificationWorkloadActions(), runPermission)
 	if err != nil {
 		return report, err
 	}
-	deliveryEvidenceToken, err := createAPIToken("qualification-delivery-evidence", qualificationDeliveryEvidenceActions())
+	deliveryEvidenceToken, err := c.createQualificationAPIToken(ctx, browserWorker, options, "qualification-delivery-evidence", qualificationDeliveryEvidenceActions())
 	if err != nil {
 		return report, err
 	}
-	connectionEvidenceToken, err := createAPIToken("qualification-connection-evidence", qualificationConnectionEvidenceActions())
+	connectionEvidenceToken, err := c.createQualificationAPIToken(ctx, browserWorker, options, "qualification-connection-evidence", qualificationConnectionEvidenceActions())
 	if err != nil {
 		return report, err
 	}
-	auditToken, err := createAPIToken("qualification-audit", []access.Action{access.ActionProjectAccessRead, access.ActionAuditRead})
+	recoveryUploadGrant, err := qualificationRecoveryUploadGrant(options.ProjectID, administrator.Principal.Id)
+	if err != nil {
+		return report, err
+	}
+	recoveryUploadToken, err := c.createQualificationAPITokenWithPermissions(
+		ctx, browserWorker, "qualification-recovery-upload", recoveryUploadGrant.Permissions,
+	)
+	if err != nil {
+		return report, err
+	}
+	auditToken, err := c.createQualificationAPIToken(ctx, browserWorker, options, "qualification-audit", []access.Action{access.ActionProjectAccessRead, access.ActionAuditRead})
 	if err != nil {
 		return report, err
 	}
 	credentials.WorkloadToken = workloadToken
 	credentials.DeliveryEvidenceToken = deliveryEvidenceToken
 	credentials.ConnectionEvidenceToken = connectionEvidenceToken
+	credentials.RecoveryUploadToken = recoveryUploadToken
 	credentials.RecoveryControlToken = reviewerToken.AccessToken
 	credentials.AuditToken = auditToken
 	credentials.AuthorPrincipalID = administrator.Principal.Id

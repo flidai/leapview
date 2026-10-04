@@ -260,7 +260,7 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 	input := strings.Repeat("ordinary line\n", 600) +
 		"Authorization: Bearer secret-token\n" +
 		"LEAPVIEW_API_TOKEN=environment-secret\n" +
-		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","deliveryEvidenceToken":"delivery-evidence","connectionEvidenceToken":"connection-evidence","recoveryControlToken":"recovery-control","auditToken":"audit","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
+		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","deliveryEvidenceToken":"delivery-evidence","connectionEvidenceToken":"connection-evidence","recoveryUploadToken":"recovery-upload","recoveryControlToken":"recovery-control","auditToken":"audit","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
 		"\n"
 	redacted := redactQualificationLog([]byte(input), 500)
 	text := string(redacted)
@@ -272,6 +272,7 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 		`"workload"`,
 		`"delivery-evidence"`,
 		`"connection-evidence"`,
+		`"recovery-upload"`,
 		`"recovery-control"`,
 		`"audit"`,
 		`"temporary"`,

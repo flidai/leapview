@@ -442,6 +442,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	workloadToken := tokens.Workload
 	deliveryEvidenceToken := tokens.DeliveryEvidence
 	connectionEvidenceToken := tokens.Connection
+	recoveryUploadToken := tokens.RecoveryUpload
 	recoveryControlToken := tokens.RecoveryControl
 	report.Assertions.BrowserJourney = true
 	if err := phases.Finish(nil); err != nil {
@@ -529,6 +530,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		PublisherToken:          credentials.PublisherToken,
 		WorkloadToken:           workloadToken,
 		ConnectionEvidenceToken: connectionEvidenceToken,
+		RecoveryUploadToken:     recoveryUploadToken,
 		RecoveryControlToken:    recoveryControlToken,
 		MetricsToken:            metricsToken,
 		AuthorPrincipalID:       credentials.AuthorPrincipalID,

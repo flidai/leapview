@@ -43,12 +43,29 @@ func TestQualificationConnectionEvidenceTokenIsDedicatedFromOtherCredentials(t *
 	}
 }
 
-func TestQualificationInstalledTokensRequireBothEvidenceCredentials(t *testing.T) {
+func TestQualificationRecoveryUploadTokenIsDedicatedFromOtherCredentials(t *testing.T) {
+	credentials := qualificationCredentials{
+		PublisherToken: "publisher-secret",
+		WorkloadToken:  "release-operator-secret",
+	}
+	if _, err := credentials.recoveryUploadToken(); err == nil {
+		t.Fatal("recoveryUploadToken() error = nil, want a dedicated mutation credential")
+	}
+	credentials.RecoveryUploadToken = "recovery-upload-secret"
+	got, err := credentials.recoveryUploadToken()
+	require.NoError(t, err)
+	if string(got) != credentials.RecoveryUploadToken || string(got) == credentials.PublisherToken || string(got) == credentials.WorkloadToken {
+		t.Fatalf("recovery upload token = %q, want its dedicated exact-resource credential", got)
+	}
+}
+
+func TestQualificationInstalledTokensRequireEvidenceCredentials(t *testing.T) {
 	base := qualificationCredentials{
 		PublisherToken:          "publisher-secret",
 		WorkloadToken:           "release-operator-secret",
 		DeliveryEvidenceToken:   "delivery-read-secret",
 		ConnectionEvidenceToken: "connection-read-secret",
+		RecoveryUploadToken:     "recovery-upload-secret",
 		RecoveryControlToken:    "recovery-control-secret",
 	}
 	for _, test := range []struct {
@@ -61,6 +78,9 @@ func TestQualificationInstalledTokensRequireBothEvidenceCredentials(t *testing.T
 		}},
 		{name: "connection", missing: "connection-evidence", mutate: func(credentials *qualificationCredentials) {
 			credentials.ConnectionEvidenceToken = ""
+		}},
+		{name: "upload", missing: "recovery-upload", mutate: func(credentials *qualificationCredentials) {
+			credentials.RecoveryUploadToken = ""
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

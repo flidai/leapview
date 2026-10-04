@@ -51,12 +51,16 @@ fork pull-request production-image jobs run this gate.
 ## Qualification read credentials
 
 The installed journey issues separate, short-lived project credentials for its
-read-only evidence calls. `delivery.read` is used only for the candidate and
+evidence and upload calls. `delivery.read` is used only for the candidate and
 generation status reads before and after application upgrade. `connection.read`
-is used only for active-revision reads before and after managed-upload
-interruption. These are already the endpoint authorization requirements; this
-qualification fix changes neither API policy nor project/workload grants, and
-does not reuse publisher or workload credentials for evidence reads.
+is used for active-revision and upload-session list/status/event reads. A
+recovery-only credential carries exactly `connection.read` and
+`connection.upload` on `project:leapview-evaluation` and `connection:sample`; it
+is used only by the recovery `leapview data sync` command, including its
+upload-session mutations. Before publication, qualification stages and reads
+back that exact owner grant. The approved authorization-policy digest includes
+both it and the pipeline-run grant. No API endpoint policy or default role is
+changed, and publisher/workload credentials are not reused for upload evidence.
 
 Both native jobs in [manual release workflow run 37196382702](https://github.com/flidai/leapview/actions/runs/37196382702)
 previously failed in application-upgrade qualification when the candidate-status
