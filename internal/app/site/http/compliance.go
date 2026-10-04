@@ -17,9 +17,11 @@ func compliancePage(metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
+		},
+		Body: []g.Node{
 			h.Article(h.ID("main-content"), h.Class("site-compliance"),
 				h.Header(h.Class("site-compliance-hero"),
 					h.P(h.Class("site-compliance-eyebrow"), g.Text("Public assurance / Current status")),
@@ -101,8 +103,8 @@ func compliancePage(metadata sitePageMetadata) g.Node {
 					g.Text(". Public statements are reviewed and updated when the underlying evidence, service scope, or approval state changes."),
 				),
 			),
-			siteFooter(),
 		},
+		AfterMain: []g.Node{siteFooter()},
 	})
 }
 

@@ -357,12 +357,14 @@ func siteDocumentPage(metadata sitePageMetadata, body g.Node) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
-			body,
-			siteFooter(),
 		},
+		Body: []g.Node{
+			body,
+		},
+		AfterMain: []g.Node{siteFooter()},
 	})
 }
 
