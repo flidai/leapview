@@ -248,8 +248,8 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		t.Error("browser qualification must prove PROJECT_ADMIN denial with the project-bound restricted workload credential")
 	}
 	for _, required := range []string{
-		"cp -R deploy/compose/qualification",
-		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
+		"python3 scripts/package_compose_bundle.py assemble",
+		`--controller-build-identity "$controller.identity.json"`,
 		"args=(qualify installed-candidate",
 		"--multi-node-process",
 		"gh release create",
@@ -572,7 +572,9 @@ func TestReleaseIdentityContract(t *testing.T) {
 		"BUILD_DIRTY=false",
 		"BUILD_RELEASE=",
 		"release-identity.json",
-		"./leapviewctl version --json",
+		`"$controller" version --json`,
+		"python3 scripts/package_compose_bundle.py record-build-identity",
+		"python3 scripts/package_compose_bundle.py assemble",
 		"Verify published runtime identity",
 		`docker run --rm "$IMAGE_REFERENCE" version --json`,
 	} {
@@ -671,6 +673,9 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 		"linux arm64",
 		"darwin amd64",
 		"darwin arm64",
+		"python3 scripts/package_compose_bundle.py",
+		"--controller \"$controller\" --platform \"$os/$arch\"",
+		"--image-reference \"$IMAGE_REFERENCE\" --release-identity release-identity.json",
 	} {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release workflow missing Go controller packaging contract %q", required)
