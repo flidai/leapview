@@ -42,6 +42,9 @@ on:
       - 'scripts/nix_candidate_publication.py'
       - 'scripts/tests/test_nix_candidate_publication.py'
       - '.github/workflows/nix-candidate.yml'
+      - 'scripts/nix_cli_publication.py'
+      - 'scripts/tests/test_nix_cli_publication.py'
+      - '.github/workflows/nix-cli-candidate.yml'
       - 'scripts/generate_build_sources.sh'
       - 'pkg/apigen/**'
       - 'scripts/ensure_playwright*'
@@ -269,6 +272,8 @@ jobs:
             experimental-features = nix-command flakes
       - name: Check the pinned toolchain and native compiler
         run: nix flake check --no-update-lock-file -L
+      - name: Check the native ARM runtime-security shell
+        run: test "$(nix eval --raw --no-update-lock-file .#devShells.aarch64-linux.runtime-security.system)" = aarch64-linux
       - name: Check formatting
         run: nix fmt -- --check flake.nix nix/*.nix
       - name: Exercise the pinned browser and sqlc toolchain
@@ -320,6 +325,9 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
           python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
           python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
+          nix develop --no-update-lock-file .#runtime-security -c \
+            env LEAPVIEW_TEST_NIX_CLI_RUNTIME=1 python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
           nix develop --no-update-lock-file .#runtime-security -c \
             env LEAPVIEW_TEST_NIX_REGISTRY=1 python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
           nix develop --no-update-lock-file .#runtime-security -c \
