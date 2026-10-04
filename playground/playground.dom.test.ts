@@ -39,6 +39,91 @@ async function open(route: string) {
   await browserExpect(page.locator('playground-app')).toBeVisible()
 }
 
+async function delayControlsModule() {
+  let release!: () => void
+  let requested!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { requested = resolve })
+  await page.route('**/assets/chunks/controls-*.js', async route => {
+    requested()
+    await pending
+    await route.continue()
+  })
+  return { started, release }
+}
+
+for (const [label, disabled] of [['Select menu', true], ['Buttons', false]] as const) {
+  test(`delayed saved Select menu state ${disabled ? 'survives clicking its active link' : 'does not leak into Buttons'}`, async () => {
+    const gate = await delayControlsModule()
+    try {
+      const url = new URL(server.url)
+      url.searchParams.set('state', JSON.stringify({ version: 1, route: 'controls/select', width: 'responsive', height: '420', theme: 'light', preview: false, example: { disabled: true } }))
+      url.hash = 'controls/select'
+      await page.goto(url.href, { waitUntil: 'domcontentloaded' })
+      await gate.started
+      await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Loading example…')
+      await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('link', { name: label, exact: true }).click()
+      await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText(label)
+      gate.release()
+      await browserExpect(page.locator('playground-controls')).toBeVisible()
+      await browserExpect(page.getByLabel('Disabled', { exact: true })).toBeChecked({ checked: disabled })
+    } finally { gate.release() }
+  })
+}
+
+test('delayed mobile navigation cannot steal focus after choosing another example', async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await open('tokens/colors')
+  await browserExpect(page.locator('playground-tokens')).toBeVisible()
+  const gate = await delayControlsModule()
+  try {
+    const browse = page.getByRole('button', { name: 'Browse', exact: true })
+    const catalog = page.getByRole('navigation', { name: 'Examples', exact: true })
+    await browse.click()
+    await catalog.getByRole('button', { name: 'UI components', exact: true }).click()
+    await catalog.getByRole('link', { name: 'Select menu', exact: true }).click()
+    await gate.started
+    await browse.click()
+    await catalog.getByRole('button', { name: 'Design tokens', exact: true }).click()
+    await catalog.getByRole('link', { name: 'Colors', exact: true }).click()
+    await browserExpect(page.locator('main')).toBeFocused()
+    await browse.click()
+    const search = page.getByLabel('Find an example', { exact: true })
+    await search.focus()
+    gate.release()
+    await page.evaluate(async () => {
+      await customElements.whenDefined('playground-controls')
+      await new Promise(requestAnimationFrame)
+    })
+    await browserExpect(search).toBeFocused()
+    await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText('Colors')
+  } finally { gate.release() }
+})
+
+test('unknown prototype-named routes show the fallback and remain navigable', async () => {
+  for (const route of ['constructor/bar', '__proto__/bar', 'toString/bar']) {
+    await open(route)
+    await browserExpect(page.locator('.viewport')).toHaveText('Choose an example from the navigation.')
+    await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('button', { name: 'UI components', exact: true }).click()
+    await page.getByRole('link', { name: 'Select menu', exact: true }).click()
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+  }
+})
+
+test('a failed example module leaves navigation usable and reload can recover', async () => {
+  const moduleURL = '**/assets/chunks/controls-*.js'
+  await page.route(moduleURL, route => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'throw new Error("Fixture module unavailable")' }))
+  await open('controls/select')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Fixture module unavailable')
+  await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('button', { name: 'Design tokens', exact: true }).click()
+  await page.getByRole('link', { name: 'Colors', exact: true }).click()
+  await browserExpect(page.locator('playground-tokens')).toBeVisible()
+  await page.unroute(moduleURL)
+  await open('controls/select')
+  await page.reload()
+  await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+})
+
 for (const example of chartExamples) {
   test(`standalone ${example.id} renders the production adapter without backend requests`, async () => {
     await open(`charts/${example.id}`)
