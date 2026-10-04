@@ -169,3 +169,25 @@ retained; other worktrees were left untouched.
 - A corrected full `task ci` run was started after synchronizing the website
   example. Its final result and the hosted PR/merge-queue results are reported
   on PR #836; they are not assumed from the focused checks above.
+
+## Merge-queue visual baseline correction
+
+- The first merge candidate's site job passed its frontend tests, generated
+  checks, and all 13 route checks, then failed the two compact Executive Sales
+  screenshot comparisons. The reviewed failure artifacts showed that the
+  baselines still expected the old KPI IDs after the intentional title change.
+  The other ten visual comparisons passed.
+- Incorporated `main` through `3c8bb50f2` before refreshing the baselines. Used
+  `task qa:ui-framework:visual:update` to regenerate all four Executive Sales
+  snapshots, including desktop cases whose label differences were within the
+  existing tolerance. Reviewed every changed light/dark, desktop/compact PNG.
+- The official task passed all 24 QA configuration tests, all 12 snapshot
+  update cases, and all 12 cases in its separate fresh comparison run. It then
+  stopped its isolated development server and removed its QA PostgreSQL
+  services successfully. No comparison thresholds, masks, or test logic changed.
+- The corrected full local `task ci` run described above passed generation,
+  Go/application/external tests, PostgreSQL conformance, coverage, and the core
+  frontend shard, then hit the reports shard's unchanged 300-second watchdog
+  on both attempts. Later frontend shards were not reached in that invocation.
+  The hosted PR CI and Security gate passed on `8b8f2d06c`; validation of the
+  baseline correction and its new merge candidate is tracked on PR #836.

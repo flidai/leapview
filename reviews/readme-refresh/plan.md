@@ -17,7 +17,8 @@ one product showcase and one reproducible starter example.
 Include the README, its screenshot and interaction-recording assets, focused
 corrections to directly linked onboarding documentation, and the three
 Executive Sales KPI display titles needed for authentic product captures
-(including the website's exact copy of that example). No runtime changes, compatibility
+(including the website's exact copy of that example and the four affected
+visual-regression baselines). No runtime changes, compatibility
 interfaces, release-manifest redesign, website deployment, or release
 publication.
 
@@ -198,6 +199,9 @@ rules are in Git or that all access policy is target-owned.
 - Check relative links, release assets, hosted destinations, image rendering,
   both themes, and narrow-screen readability. The local GitHub-style preview
   must highlight code and render the Mermaid diagram.
+- Refresh the four Executive Sales visual baselines after changing KPI titles,
+  review every changed image, and pass the full 12-case visual matrix in a
+  separate comparison run with the existing thresholds.
 - Report only checks actually performed. Do not add tests that merely assert
   marketing wording. Record unrelated check failures without representing
   them as successful validation or expanding this task into unrelated fixes.
