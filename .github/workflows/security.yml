@@ -143,8 +143,12 @@ jobs:
 
       - name: Prove changed TypeSpec source was regenerated before extraction
         run: |
-          rg -n --fixed-strings codeqlQualificationProbe web/generated/signals/index.ts
-          rg -n --fixed-strings codeqlQualificationProbe internal/dashboard/ui/signals/models.gen.go
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          for path in [Path("web/generated/signals/index.ts"), Path("internal/dashboard/ui/signals/models.gen.go")]:
+              assert "codeqlQualificationProbe" in path.read_text(), f"TypeSpec probe missing from {path}"
+              print(f"Verified regenerated TypeSpec probe in {path}")
+          PYCODE
 
       - name: Check maintained TypeScript source graphs
         if: matrix.language == 'javascript-typescript'
