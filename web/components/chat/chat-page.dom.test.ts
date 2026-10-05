@@ -892,3 +892,49 @@ test('dashboard membership follows Preview, delete, Undo, and saved-library impo
     expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
   } finally { await page.close() }
 })
+
+test('reload restores the same dashboard draft and page without creating another dashboard', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/dashboards/demo/edit**', route => route.fulfill({ contentType: 'text/html', body: '<p>Saved dashboard draft</p>' }))
+    await page.goto(`${baseURL}/chats/c1?preview=builder`)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      e.dashboardPreview = true
+      e.builderOpen = true
+      e.pendingPreviewArtifacts = ['chart-one']
+      await e.updateComplete
+    })
+    await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
+      window.parent.postMessage({
+        type: 'lv-builder-saved', revisionId: 'rev-2', pageId: 'details',
+        href: '/dashboards/demo/edit?embed=chat&page=details',
+        reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], locations: [], context: [] },
+        components: [{id: 'visual_1', pageId: 'details'}], artifacts: [], visuals: {},
+      }, window.parent.location.origin)
+    })
+    await page.waitForFunction(() => (document.querySelector('lv-chat-page') as any)?.savedBuilderHref.includes('demo'))
+    expect(new URL(page.url()).searchParams.get('dashboard')).toBe('/dashboards/demo/edit?embed=chat&page=details')
+    await page.reload()
+    await page.getByRole('button', { name: 'Expand chat', exact: true }).waitFor()
+    await page.frameLocator('.builder-frame').getByText('Saved dashboard draft').waitFor()
+    expect(await chat.evaluate((e: any) => e.dashboardCopyLinks['chart-one'])).toEqual([{id: 'visual_1', pageId: 'details'}])
+    await page.getByRole('button', {name: 'Expand chat', exact: true}).click()
+    await page.reload()
+    expect(await chat.evaluate((e: any) => e.builderOpen)).toBe(false)
+    expect(await chat.evaluate((e: any) => e.savedBuilderHref)).toContain('/dashboards/demo/edit')
+  } finally { await page.close() }
+})
+
+test('preview restoration rejects external and non-builder destinations', async () => {
+  const page = await browser.newPage()
+  try {
+    for (const href of ['https://example.com/dashboards/demo/edit', '/logout', '/dashboards/demo/delete']) {
+      await page.goto(`${baseURL}/chats/c1?preview=builder&dashboard=${encodeURIComponent(href)}`)
+      await page.locator('lv-chat-composer').waitFor()
+      expect(await page.locator('lv-chat-page').evaluate((e: any) => e.savedBuilderHref)).toBe('')
+      expect(await page.locator('.builder-frame').getAttribute('src')).toBe(null)
+    }
+  } finally { await page.close() }
+})
