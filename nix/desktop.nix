@@ -19,6 +19,14 @@ let
     # SHA-256 checked against the official v44.4.3 SHASUMS256.txt release file.
     hash = "sha256-/ogKfjcWDP1OABk7xMcT6teneKv+dIYKLTbYb9C+SKg=";
   };
+  # Nix rejects real setuid chmod. Keep MakerDeb's chmod and archive writer in
+  # one fake metadata session; its inner fakeroot invocation cannot nest.
+  nestedFakerootDispatcher = pkgs.writeShellScriptBin "fakeroot" ''
+    if [ -n "''${FAKEROOTKEY:-}" ]; then
+      exec "$@"
+    fi
+    exec ${pkgs.fakeroot}/bin/fakeroot "$@"
+  '';
   nodeArchive = pkgs.fetchurl {
     url = "https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-linux-x64.tar.xz";
     # SHA-256 checked against the official Node v26.9.0 SHASUMS256.txt file.
@@ -104,12 +112,14 @@ pkgs.stdenvNoCC.mkDerivation {
     (
       cd desktop
       bun run build
-      LEAPVIEW_DESKTOP_DISTRIBUTION=preview bun scripts/run-electron.mjs make
+      export PATH="${nestedFakerootDispatcher}/bin:$PATH"
+      LEAPVIEW_DESKTOP_DISTRIBUTION=preview ${pkgs.fakeroot}/bin/fakeroot bun scripts/run-electron.mjs make
     )
     runHook postBuild
   '';
 
   installPhase = ''
+    set -o pipefail
     installers=()
     while IFS= read -r -d $'\0' installer; do
       installers+=("$installer")
@@ -118,6 +128,9 @@ pkgs.stdenvNoCC.mkDerivation {
       echo "expected exactly one Linux x64 Debian package, found ''${#installers[@]}" >&2
       exit 1
     fi
+    dpkg-deb --fsys-tarfile "''${installers[0]}" \
+      | tar -tvf - \
+      | awk '$1 == "-rwsr-xr-x" && $2 == "root/root" && $6 == "./usr/lib/leapview-desktop/chrome-sandbox" { found++ } END { if (found != 1) { print "Debian chrome-sandbox must be root-owned mode 04755" > "/dev/stderr"; exit 1 } }'
     mkdir -p "$out"
     install -m 0644 "''${installers[0]}" "$out/leapview-desktop-linux-x64.deb"
     test -s "$out/leapview-desktop-linux-x64.deb"
