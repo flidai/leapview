@@ -54,16 +54,16 @@ func Route(r *http.Request) string {
 }
 
 // PatchOnce writes and flushes one bootstrap patch, then returns.
-func PatchOnce(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) error {
-	if _, err := EnsureClientID(w, r); err != nil {
+func (policy ClientIDCookies) PatchOnce(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) error {
+	if _, err := policy.Ensure(w, r); err != nil {
 		return err
 	}
 	updates := pagestream.NewSignalStream(w, r)
 	return updates.Patch(patch)
 }
 
-func PatchAndWait(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) {
-	if _, err := EnsureClientID(w, r); err != nil {
+func (policy ClientIDCookies) PatchAndWait(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) {
+	if _, err := policy.Ensure(w, r); err != nil {
 		return
 	}
 	updates := pagestream.NewSignalStream(w, r)
@@ -76,8 +76,8 @@ func PatchAndWait(w http.ResponseWriter, r *http.Request, patch pagestream.Signa
 // PatchAndWatch rereads an authoritative page after a committed-change hint.
 // The caller subscribes before constructing bootstrap, closing the gap between
 // its first read and the live stream. Only changed read models are pushed.
-func PatchAndWatch(w http.ResponseWriter, r *http.Request, bootstrap pagestream.SignalPatch, wake <-chan pagestream.SignalPatch, read func() (pagestream.SignalPatch, error)) {
-	if _, err := EnsureClientID(w, r); err != nil {
+func (policy ClientIDCookies) PatchAndWatch(w http.ResponseWriter, r *http.Request, bootstrap pagestream.SignalPatch, wake <-chan pagestream.SignalPatch, read func() (pagestream.SignalPatch, error)) {
+	if _, err := policy.Ensure(w, r); err != nil {
 		return
 	}
 	updates := pagestream.NewSignalStream(w, r)

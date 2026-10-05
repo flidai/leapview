@@ -35,6 +35,28 @@ ownership and names:
 | `Security / Policy and scans / Selected SAST (go)` and `(javascript-typescript)` | Selected CodeQL analysis | Go and frontend owners |
 | `Security / Policy and scans / Security gate` | Requires every security lane to pass | Security owner |
 
+Each SAST matrix job prepares generated source using the locked validation
+profile. Go manually traces forced, read-only builds of all modules in the
+validated coverage inventory; JavaScript/TypeScript uses build mode `none`
+after generated-contract and type checks. Overlay databases and diff-informed
+queries are disabled. Checkout integrity is checked before and after analysis,
+including failed analysis paths.
+
+The SAST health checker consumes raw `go.sarif` or `javascript.sarif`, requires
+successful invocation records, and rejects execution/configuration warnings
+and errors. Available raw diagnostics are retained for fourteen days, including
+failures. Downloaded GitHub code-scanning SARIF may omit invocation diagnostics
+and must not substitute for this raw output. Vulnerability results are distinct
+from extraction health; a finding is not an extraction warning.
+
+`Security gate` enforces lane outcomes and analysis health. It does not currently
+block merges based on CodeQL finding severity. A separate ruleset change could
+require High-or-higher findings, but GitHub's native protection is limited to
+qualifying locations in the PR diff and excludes merge-queue groups. Complete
+result-based severity enforcement needs a separately reviewed policy, including
+false-positive handling. Neither healthy extraction nor an empty result list
+proves that all application vulnerabilities are absent.
+
 The dependency lane has two deliberately different inputs. Its required
 default evaluates the checked-in
 `.security/javascript-vulnerability-evidence.json` offline for JavaScript, then

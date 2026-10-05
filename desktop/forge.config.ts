@@ -16,6 +16,7 @@ import {
 import { ProjectFusesPlugin } from "./fuses-plugin.js";
 
 const desktopRoot = import.meta.dirname;
+const electronZipDir = process.env.LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR;
 const distributionResource = {
   preview: "preview-distribution.json",
   stable: "stable-distribution.json",
@@ -42,6 +43,7 @@ export const fuseConfig = createFuseConfig(process.platform);
 
 const config: ForgeConfig = {
   packagerConfig: {
+    ...(electronZipDir ? { electronZipDir } : {}),
     appBundleId: "dev.leapview.desktop",
     asar: true,
     executableName: "LeapView",

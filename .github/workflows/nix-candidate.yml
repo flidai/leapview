@@ -44,12 +44,10 @@ jobs:
   build:
     needs: authorize
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     permissions:
       contents: read
-    outputs:
-      artifact_id: ${{ steps.archive.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -65,27 +63,37 @@ jobs:
             sandbox = true
       - name: Build candidate recipes without signing or package credentials
         run: |
-          nix build --no-update-lock-file .#leapview-image --out-link result-image -L
+          test "$(uname -m)" = "${{ matrix.machine }}"
+          nix build --no-update-lock-file .#leapview-image-compose --out-link result-image -L
           mkdir -p candidate
           cp --dereference result-image candidate/image.tar
       - name: Retain the exact candidate archive
         id: archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nix-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          name: nix-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: candidate/
           if-no-files-found: error
           retention-days: 7
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
 
   qualify:
     needs: [authorize, build]
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     permissions:
       contents: read
-    outputs:
-      artifact_id: ${{ steps.evidence.outputs.artifact-id }}
+      actions: read
     steps:
       - name: Check out protected qualification and scanner code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -99,10 +107,22 @@ jobs:
           ref: ${{ inputs.source_revision }}
           path: source
           persist-credentials: false
+      - name: Resolve exact architecture artifacts from this protected run attempt
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/nix-artifacts.json"
+          python3 protected/scripts/nix_candidate_artifacts.py \
+            --metadata "$RUNNER_TEMP/nix-artifacts.json" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --revision "$GITHUB_SHA" --architecture "$ARCH" \
+            --phase candidate --github-output "$GITHUB_OUTPUT"
       - name: Download the exact build artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          artifact-ids: ${{ steps.artifacts.outputs.candidate_id }}
           merge-multiple: true
           path: candidate
       - name: Install protected Nix tools
@@ -119,9 +139,12 @@ jobs:
             go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
       - name: Scan the archive with protected tools and policy
         working-directory: protected
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
           nix develop --no-update-lock-file .#runtime-security -c \
-            python3 scripts/check_nix_runtime_security.py ../candidate/image.tar --evidence-dir ../candidate/runtime
+            python3 scripts/check_nix_runtime_security.py ../candidate/image.tar --kind application-image \
+            --source-revision "$SOURCE_REVISION" --evidence-dir ../candidate/runtime
       - name: Scan exact Go entrypoints without executing candidate binaries
         env:
           SOURCE_REVISION: ${{ inputs.source_revision }}
@@ -135,13 +158,13 @@ jobs:
           SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_candidate_publication.py record \
+            python3 protected/scripts/nix_candidate_publication.py record --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --output candidate/runtime/candidate-manifest.json
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_candidate_publication.py prepare \
+            python3 protected/scripts/nix_candidate_publication.py prepare --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
@@ -149,12 +172,12 @@ jobs:
       - name: Build the protected qualification CLI
         run: nix build --no-update-lock-file ./protected#leapview --out-link trusted-app -L
       - name: Qualify the already-built archive with protected PostgreSQL and browser fixtures
-        run: nix develop --no-update-lock-file ./protected -c bash protected/scripts/check_nix_image.sh candidate/image.tar trusted-app
+        run: nix develop --no-update-lock-file ./protected#runtime-security -c bash protected/scripts/check_nix_image.sh candidate/image.tar trusted-app
       - name: Retain the qualified archive and independently generated reports
         id: evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nix-qualified-${{ github.run_id }}-${{ github.run_attempt }}
+          name: nix-qualified-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: candidate/
           if-no-files-found: error
           retention-days: 7
@@ -162,7 +185,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nix-runtime-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          name: nix-runtime-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: candidate/runtime/
           if-no-files-found: ignore
           retention-days: 14
@@ -170,16 +193,26 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nix-image-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          name: nix-image-qualification-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: protected/.tmp/nix-image-qualification/evidence/image-qualification-report.json
           if-no-files-found: ignore
           include-hidden-files: true
           retention-days: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
 
   publish:
     needs: [authorize, qualify]
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     environment: leapview-ephemeral-qualification
     permissions:
@@ -188,9 +221,7 @@ jobs:
       packages: write
       attestations: write
       id-token: write
-    outputs:
-      image: ${{ steps.publish.outputs.image }}
-      bindings_artifact_id: ${{ steps.bindings.outputs.artifact-id }}
+      actions: read
     steps:
       # Candidate executables never run in this privileged job. Every command,
       # locked tool and security policy comes from the protected workflow SHA.
@@ -206,10 +237,22 @@ jobs:
           ref: ${{ inputs.source_revision }}
           path: source
           persist-credentials: false
+      - name: Resolve exact architecture artifacts from this protected run attempt
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/nix-artifacts.json"
+          python3 protected/scripts/nix_candidate_artifacts.py \
+            --metadata "$RUNNER_TEMP/nix-artifacts.json" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --revision "$GITHUB_SHA" --architecture "$ARCH" \
+            --phase qualified --github-output "$GITHUB_OUTPUT"
       - name: Download only this qualification job's immutable artifact ID
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ needs.qualify.outputs.artifact_id }}
+          artifact-ids: ${{ steps.artifacts.outputs.qualified_id }}
           merge-multiple: true
           path: candidate
       - name: Install protected Nix tools
@@ -229,7 +272,7 @@ jobs:
           SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_candidate_publication.py prepare \
+            python3 protected/scripts/nix_candidate_publication.py prepare --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
@@ -258,7 +301,7 @@ jobs:
           SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_candidate_publication.py publish \
+            python3 protected/scripts/nix_candidate_publication.py publish --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
@@ -287,7 +330,7 @@ jobs:
           IMAGE: ${{ steps.publish.outputs.image }}
         run: |
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_candidate_publication.py verify-signed \
+            python3 protected/scripts/nix_candidate_publication.py verify-signed --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
@@ -296,22 +339,33 @@ jobs:
         id: bindings
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nix-candidate-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          name: nix-candidate-binding-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/nix-prepared.json
             ${{ runner.temp }}/nix-published.json
             ${{ runner.temp }}/nix-signed.json
           if-no-files-found: error
           retention-days: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
 
   qualify-published:
     needs: [qualify, publish]
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     permissions:
       contents: read
       packages: read
+      actions: read
     steps:
       - name: Check out protected qualification and verifier code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -325,16 +379,28 @@ jobs:
           ref: ${{ inputs.source_revision }}
           path: source
           persist-credentials: false
+      - name: Resolve exact architecture artifacts from this protected run attempt
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/nix-artifacts.json"
+          python3 protected/scripts/nix_candidate_artifacts.py \
+            --metadata "$RUNNER_TEMP/nix-artifacts.json" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --revision "$GITHUB_SHA" --architecture "$ARCH" \
+            --phase qualified --phase binding --github-output "$GITHUB_OUTPUT"
       - name: Download the exact qualified archive and reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ needs.qualify.outputs.artifact_id }}
+          artifact-ids: ${{ steps.artifacts.outputs.qualified_id }}
           merge-multiple: true
           path: candidate
       - name: Download the exact publisher bindings
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ needs.publish.outputs.bindings_artifact_id }}
+          artifact-ids: ${{ steps.artifacts.outputs.binding_id }}
           merge-multiple: true
           path: bindings
       - name: Install protected Nix tools
@@ -349,14 +415,33 @@ jobs:
         run: |
           nix develop --no-update-lock-file .#runtime-security -c \
             go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Read the exact architecture publication binding
+        id: image
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          binding = json.loads(Path('bindings/nix-published.json').read_text())
+          image = binding['image']
+          if (not isinstance(image, str) or re.fullmatch(r'ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}', image) is None
+                  or binding['source']['revision'] != os.environ['SOURCE_REVISION']
+                  or binding['releaseAdmission'] is not False
+                  or not binding['tag'].endswith('-' + os.environ['ARCH'])):
+              raise SystemExit('publication binding does not name this exact source and architecture')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('image=' + image + '\n')
+          PY
       - name: Verify signed final content before executing the candidate
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_REVISION: ${{ inputs.source_revision }}
-          IMAGE: ${{ needs.publish.outputs.image }}
+          IMAGE: ${{ steps.image.outputs.image }}
         run: |
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_candidate_publication.py verify-signed \
+            python3 protected/scripts/nix_candidate_publication.py verify-signed --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
@@ -371,8 +456,8 @@ jobs:
           password: ${{ github.token }}
       - name: Qualify the final signed registry digest
         env:
-          IMAGE: ${{ needs.publish.outputs.image }}
-        run: nix develop --no-update-lock-file ./protected -c bash protected/scripts/check_nix_registry_image.sh "$IMAGE" trusted-app
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: nix develop --no-update-lock-file ./protected#runtime-security -c bash protected/scripts/check_nix_registry_image.sh "$IMAGE" trusted-app
       - name: Copy the exact qualification report for retention
         if: always()
         run: |
@@ -385,10 +470,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_REVISION: ${{ inputs.source_revision }}
-          IMAGE: ${{ needs.publish.outputs.image }}
+          IMAGE: ${{ steps.image.outputs.image }}
         run: |
           nix develop --no-update-lock-file ./protected#runtime-security -c \
-            python3 protected/scripts/nix_candidate_publication.py bind-qualified \
+            python3 protected/scripts/nix_candidate_publication.py bind-qualified --kind application-image \
             --source-root source --source-revision "$SOURCE_REVISION" \
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
@@ -400,7 +485,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nix-published-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          name: nix-published-qualification-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: candidate/final/
           if-no-files-found: warn
           retention-days: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm

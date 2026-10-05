@@ -28,7 +28,7 @@ const (
 	routeAdmin             = "admin"
 )
 
-func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *platformServices, _ *httpPolicy) {
+func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *platformServices, policy *httpPolicy) {
 	authorize := func(route, section string, next http.Handler) (http.Handler, bool) {
 		switch route {
 		case routeLogin:
@@ -77,7 +77,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 			adminHTTP.BootstrapUpdates(w, r)
 		}),
 		routeLogin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			uitransport.PatchOnce(w, r, routes.accessModule.LoginBootstrapSignals(r))
+			policy.clientIDs.PatchOnce(w, r, routes.accessModule.LoginBootstrapSignals(r))
 		}),
 	}
 	if routes.projectBrowser != nil {

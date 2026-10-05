@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "profile": "site-image",
+  "syftVersion": "1.52.0",
+  "grypeVersion": "0.119.0",
+  "databaseMaxAgeHours": 120,
+  "requiredFiles": [
+    "etc/ssl/certs/ca-certificates.crt",
+    "leapview-site"
+  ],
+  "mapAssetsPrefix": ".data/map-assets/",
+  "executableMode": "0555",
+  "dataMode": "0444",
+  "directoryMode": "0555",
+  "separateScannerTypes": ["go-module"],
+  "syntheticControl": {
+    "name": "glibc",
+    "vendor": "gnu",
+    "product": "glibc",
+    "version": "2.37-84",
+    "cve": "CVE-2023-4911"
+  }
+}

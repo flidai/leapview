@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -21,9 +22,12 @@ import (
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 const qualificationHistoricalInternalTarget = "http://localhost:8080"
+
+var qualificationHistoricalPostgresURLPattern = regexp.MustCompile(`(?i)postgres(?:ql)?://[^\s"'<>]+`)
 
 // qualificationHistoricalSeed is the actual predecessor workload created by
 // seedQualificationHistoricalRuntime. Client secrets and the viewer's
@@ -114,9 +118,10 @@ func seedQualificationHistoricalRuntime(
 	target string,
 	projectID string,
 	sourceRoot string,
+	controlMigratorURL string,
 	beforeBootstrap ...func(context.Context) error,
 ) (qualificationHistoricalSeed, error) {
-	initial, err := initializeQualificationHistoricalRuntime(ctx, t, app)
+	initial, err := initializeQualificationHistoricalRuntime(ctx, t, app, controlMigratorURL)
 	if err != nil {
 		return qualificationHistoricalSeed{}, err
 	}
@@ -131,6 +136,7 @@ func initializeQualificationHistoricalRuntime(
 	ctx context.Context,
 	t *testing.T,
 	app qualificationContainer,
+	controlMigratorURL string,
 ) (qualificationHistoricalInitialCredentials, error) {
 	var initial qualificationHistoricalInitialCredentials
 	if ctx == nil {
@@ -139,14 +145,56 @@ func initializeQualificationHistoricalRuntime(
 	if t == nil || app == nil {
 		return initial, errors.New("historical predecessor test and utility container are required")
 	}
-	initialOutput, err := app.Exec(ctx, nil, "leapview", "admin", "initialize", "--format", "json")
+	command, err := qualificationHistoricalPredecessorInitializationCommand(controlMigratorURL)
 	if err != nil {
-		return initial, errors.New("run predecessor admin initialize")
+		return initial, err
+	}
+	initialOutput, err := app.Exec(ctx, nil, command...)
+	if err != nil {
+		return initial, qualificationHistoricalPredecessorInitializationError(err, initialOutput, controlMigratorURL)
 	}
 	if err := validateQualificationHistoricalInitialCredentials(initialOutput, &initial); err != nil {
-		return qualificationHistoricalInitialCredentials{}, err
+		return qualificationHistoricalInitialCredentials{}, fmt.Errorf("%w (child output withheld; %d bytes)", err, len(initialOutput))
 	}
 	return initial, nil
+}
+
+func qualificationHistoricalPredecessorInitializationCommand(controlMigratorURL string) ([]string, error) {
+	command := []string{"leapview", "admin", "initialize", "--format", "json"}
+	controlMigratorURL = strings.TrimSpace(controlMigratorURL)
+	if controlMigratorURL == "" {
+		return nil, errors.New("predecessor initialization control migrator URL is required")
+	}
+	canonicalURL, err := canonicalPostgresConnectionURL(postgresConnection{
+		name: "predecessor initialization control migrator", value: controlMigratorURL,
+		role: qualificationNativePostgresControlMigratorRole, database: qualificationNativePostgresControlDatabase,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{
+		"env", "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=" + canonicalURL,
+	}, command...), nil
+}
+
+func qualificationHistoricalPredecessorInitializationError(err error, output []byte, secrets ...string) error {
+	detail := "command failed"
+	if err != nil {
+		safe := redactQualificationBytes([]byte(err.Error()))
+		for _, secret := range secrets {
+			if secret != "" {
+				safe = bytes.ReplaceAll(safe, []byte(secret), []byte("[REDACTED]"))
+			}
+		}
+		detail = string(qualificationHistoricalPostgresURLPattern.ReplaceAll(safe, []byte("[REDACTED]")))
+		detail = strings.TrimSpace(detail)
+		if detail == "" {
+			detail = "command failed"
+		}
+	}
+	// Initialization output includes one-time passwords and bearer credentials.
+	// Keep the byte count for failure triage, but never attach the child output.
+	return fmt.Errorf("run predecessor admin initialize: %s (child output withheld; %d bytes)", detail, len(output))
 }
 
 // seedQualificationHistoricalRuntimeWithCredentials finishes setup against a
@@ -849,6 +897,54 @@ func validateQualificationHistoricalInitialCredentials(output []byte, initial *q
 		return errors.New("predecessor admin initialize returned an invalid publisher credential expiry")
 	}
 	return nil
+}
+
+func TestQualificationHistoricalPredecessorInitializationScopesMigratorCredential(t *testing.T) {
+	topology := qualificationNativeEnvironmentTopologyFixture()
+	command, err := qualificationHistoricalPredecessorInitializationCommand(topology.ControlMigratorURL)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"env", "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=" + topology.ControlMigratorURL,
+		"leapview", "admin", "initialize", "--format", "json",
+	}, command)
+	joinedCommand := strings.Join(command, " ")
+	require.NotContains(t, joinedCommand, "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL")
+	require.NotContains(t, joinedCommand, "LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL")
+
+	servingEnvironment, err := qualificationHistoricalApplicationEnvironment(topology)
+	require.NoError(t, err)
+	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
+	} {
+		require.NotContains(t, servingEnvironment, key, "operation credentials must not enter candidate serving environment")
+	}
+
+	_, err = qualificationHistoricalPredecessorInitializationCommand("")
+	require.ErrorContains(t, err, "control migrator URL is required")
+}
+
+func TestQualificationHistoricalPredecessorInitializationErrorWithholdsChildCredentials(t *testing.T) {
+	controlMigratorURL := "postgres://leapview_control_migrator:private-$password@postgres.internal/leapview_control?sslmode=verify-full"
+	canonicalURL, err := canonicalPostgresConnectionURL(postgresConnection{
+		name: "predecessor initialization control migrator", value: controlMigratorURL,
+		role: qualificationNativePostgresControlMigratorRole, database: qualificationNativePostgresControlDatabase,
+	})
+	require.NoError(t, err)
+	require.Contains(t, canonicalURL, "%24", "canonical PostgreSQL URLs encode literal dollar signs in credentials")
+	childPassword := "historical-one-time-password"
+	childOutput := []byte(`{"temporaryPassword":"` + childPassword + `","publisherToken":"historical-bearer-token"}`)
+	err = qualificationHistoricalPredecessorInitializationError(
+		errors.New("exec failed using "+canonicalURL), childOutput, controlMigratorURL,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exec failed using [REDACTED]")
+	require.Contains(t, err.Error(), "child output withheld")
+	require.Contains(t, err.Error(), fmt.Sprintf("%d bytes", len(childOutput)))
+	require.NotContains(t, err.Error(), controlMigratorURL)
+	require.NotContains(t, err.Error(), childPassword)
+	require.NotContains(t, err.Error(), "historical-bearer-token")
 }
 
 func qualificationHistoricalSyntheticCFOData(t *testing.T) (string, error) {

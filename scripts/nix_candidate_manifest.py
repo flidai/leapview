@@ -16,15 +16,30 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA256 = re.compile(r'^sha256:[0-9a-f]{64}$')
 REVISION = re.compile(r'^[0-9a-f]{40}$')
 PLATFORMS = {'linux/amd64', 'linux/arm64'}
+ASSESSMENT_FILES = {'linux/amd64': 'runtime-assessments.vex.json',
+                    'linux/arm64': 'runtime-assessments.arm64.vex.json'}
 KINDS = {'application-image', 'site-image', 'cli-archive', 'application-archive', 'desktop-archive'}
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 128 * 1024 * 1024
 RUNTIME_REPORTS = {'sbom.syft.json', 'sbom.spdx.json', 'runtime.syft.json', 'runtime.grype.json',
                    'runtime.assessed.grype.json', 'controls.synthetic.syft.json', 'controls.grype.json',
                    'assessments.vex.json', 'syft-config.json', 'grype-config.json'}
+SITE_RUNTIME_REPORTS = {'sbom.syft.json', 'sbom.spdx.json', 'runtime.syft.json', 'runtime.grype.json',
+                        'controls.synthetic.syft.json', 'controls.grype.json', 'syft-config.json',
+                        'grype-config.json', 'site-image-inventory.json'}
 COMMON_GATES = ['provenance', 'spdx', 'go-and-embedded-native-coverage',
                 'canonical-release-identity', 'supported-platform-matrix', 'exact-artifact-promotion',
                 'supported-host-compatibility', 'installation-upgrade-rollback-recovery']
+SITE_GATES = ['provenance', 'spdx', 'go-vulnerability-coverage', 'canonical-release-identity',
+              'supported-platform-matrix', 'exact-artifact-promotion', 'supported-host-compatibility',
+              'oci-admission', 'nix-site-runtime-enforcement', 'site-image-inventory',
+              'native-site-image-qualification', 'site-profile-installation-upgrade-rollback-recovery',
+              'site-profile-observation']
+DESKTOP_GATES = ['provenance', 'spdx', 'canonical-release-identity', 'supported-platform-matrix',
+                 'exact-artifact-promotion', 'supported-host-compatibility',
+                 'desktop-native-linux-x64-deb-qualification',
+                 'desktop-installed-hostile-instance-proof', 'desktop-installer-install-reinstall-remove',
+                 'desktop-installer-upgrade-rollback-recovery', 'desktop-profile-observation']
 
 
 def digest_bytes(data):
@@ -156,7 +171,15 @@ def current_time():
     return datetime.now(timezone.utc)
 
 
-def runtime_evidence(directory, artifact):
+def runtime_assessment_path(platform, *, root=None):
+    try:
+        name = ASSESSMENT_FILES[platform]
+    except KeyError as error:
+        raise ValueError('unsupported runtime assessment platform: ' + str(platform)) from error
+    return Path(ROOT if root is None else root) / 'nix' / name
+
+
+def runtime_evidence(directory, artifact, source_revision):
     directory = Path(directory)
     with (directory / 'summary.json').open('rb') as stream:
         summary_bytes = stream.read(MAX_JSON_BYTES + 1)
@@ -166,8 +189,16 @@ def runtime_evidence(directory, artifact):
             summary.get('coverageQualified') is not True or
             summary.get('runtimeVulnerabilityGatePassed') is not True or 'error' in summary):
         raise ValueError('runtime scan did not complete in enforcement mode')
+    if (summary.get('kind') != artifact['kind'] or summary.get('profile') != 'application-image'
+            or summary.get('sourceRevision') != source_revision
+            or summary.get('releaseReady') is not False
+            or summary.get('configDigest') != artifact['configDigest']
+            or summary.get('layerDiffIDs') != artifact['layerDiffIDs']):
+        raise ValueError('runtime scan belongs to another candidate identity')
     if summary.get('archiveSHA256') != artifact['sha256'].removeprefix('sha256:'):
         raise ValueError('runtime scan belongs to another archive')
+    if summary.get('platform') != artifact['platform']:
+        raise ValueError('runtime scan belongs to another platform')
     policy_path = ROOT / 'nix/runtime-security-policy.json'
     policy = read_json_file(policy_path)
     if summary.get('policySHA256') != digest_file(policy_path).removeprefix('sha256:'):
@@ -202,8 +233,12 @@ def runtime_evidence(directory, artifact):
         if actual.removeprefix('sha256:') != expected[name]:
             raise ValueError('runtime report changed since scan: ' + name)
         reports.append({'path': name, 'sha256': actual})
-    assessments = digest_file(directory / 'assessments.vex.json')
-    if assessments != digest_file(ROOT / 'nix/runtime-assessments.vex.json') or (
+    assessment_source = runtime_assessment_path(artifact['platform'])
+    assessment_bytes = (directory / 'assessments.vex.json').read_bytes()
+    if assessment_bytes != assessment_source.read_bytes():
+        raise ValueError('runtime assessment bytes do not match the platform review')
+    assessments = digest_bytes(assessment_bytes)
+    if assessments != digest_file(assessment_source) or (
             summary.get('assessmentsSHA256') != assessments.removeprefix('sha256:')):
         raise ValueError('runtime assessment bytes changed since scan')
     spdx = read_json_file(directory / 'sbom.spdx.json', MAX_REPORT_BYTES)
@@ -211,7 +246,172 @@ def runtime_evidence(directory, artifact):
             not spdx.get('documentNamespace') or not spdx.get('packages')):
         raise ValueError('runtime SPDX inventory is missing or unsupported')
     return {'summarySHA256': digest_bytes(summary_bytes), 'reports': reports,
+            'assessmentSource': 'nix/' + assessment_source.name,
             'scope': 'nix-runtime-only', 'enforcementMode': 'enforce'}
+
+
+def site_runtime_evidence(directory, artifact, source_revision):
+    directory = Path(directory)
+    with (directory / 'summary.json').open('rb') as stream:
+        summary_bytes = stream.read(MAX_JSON_BYTES + 1)
+    summary = read_json(summary_bytes)
+    if (type(summary.get('schemaVersion')) is not int or summary['schemaVersion'] != 1
+            or summary.get('kind') != 'site-image' or summary.get('profile') != 'site-image'
+            or summary.get('sourceRevision') != source_revision
+            or summary.get('enforcementMode') != 'enforce'
+            or summary.get('coverageQualified') is not True
+            or summary.get('runtimeVulnerabilityGatePassed') is not True
+            or summary.get('releaseReady') is not False or 'error' in summary):
+        raise ValueError('site runtime scan did not complete for this enforced candidate')
+    if (summary.get('archiveSHA256') != artifact['sha256'].removeprefix('sha256:')
+            or summary.get('platform') != artifact['platform']
+            or summary.get('configDigest') != artifact['configDigest']
+            or summary.get('layerDiffIDs') != artifact['layerDiffIDs']):
+        raise ValueError('site runtime scan belongs to another candidate artifact')
+
+    policy_path = ROOT / 'nix/site-runtime-security-policy.json'
+    policy = read_json_file(policy_path)
+    if (policy.get('schemaVersion') != 1 or policy.get('profile') != 'site-image'
+            or summary.get('policySHA256') != digest_file(policy_path).removeprefix('sha256:')):
+        raise ValueError('site runtime policy changed since scan')
+    database = summary.get('database', {}).get('status', {})
+    if database.get('valid') is not True or not isinstance(database.get('built'), str):
+        raise ValueError('site runtime database validity or build time is missing')
+    try:
+        built = datetime.fromisoformat(database['built'])
+    except ValueError as error:
+        raise ValueError('invalid site runtime database build time') from error
+    if built.tzinfo is None:
+        raise ValueError('site runtime database build time must include its timezone')
+    age = current_time() - built
+    if age < timedelta(0) or age >= timedelta(hours=policy['databaseMaxAgeHours']):
+        raise ValueError('site runtime database is stale or from the future')
+    for scanner in ('syft', 'grype'):
+        if summary.get('scanners', {}).get(scanner) != policy[scanner + 'Version']:
+            raise ValueError('site runtime scanner does not match current policy')
+
+    expected = summary.get('reportSHA256', {})
+    if set(expected) != SITE_RUNTIME_REPORTS:
+        raise ValueError('site runtime report inventory is incomplete or unsupported')
+    reports = []
+    for name in sorted(SITE_RUNTIME_REPORTS):
+        path = directory / name
+        if path.stat().st_size > MAX_REPORT_BYTES:
+            raise ValueError('site runtime report exceeds its byte limit')
+        actual = digest_file(path)
+        if actual.removeprefix('sha256:') != expected[name]:
+            raise ValueError('site runtime report changed since scan: ' + name)
+        reports.append({'path': name, 'sha256': actual})
+
+    inventory = read_json_file(directory / 'site-image-inventory.json', MAX_REPORT_BYTES)
+    if (set(inventory) != {'schemaVersion', 'profile', 'archiveSHA256', 'platform', 'configDigest',
+                           'layerDiffIDs', 'files', 'directories'}
+            or type(inventory.get('schemaVersion')) is not int or inventory['schemaVersion'] != 1
+            or inventory.get('profile') != 'site-image'
+            or inventory.get('archiveSHA256') != artifact['sha256']
+            or inventory.get('platform') != artifact['platform']
+            or inventory.get('configDigest') != artifact['configDigest']
+            or inventory.get('layerDiffIDs') != artifact['layerDiffIDs']):
+        raise ValueError('site image inventory belongs to another artifact')
+    required_files = set(policy['requiredFiles'])
+    prefix = policy['mapAssetsPrefix'].rstrip('/') + '/'
+    required_directories = {'.data', '.data/map-assets', 'etc', 'etc/ssl', 'etc/ssl/certs'}
+    files, directories = inventory['files'], inventory['directories']
+    if not isinstance(files, list) or not isinstance(directories, list):
+        raise ValueError('site image inventory entries are malformed')
+    file_paths, directory_paths = [], []
+    for item in files:
+        if (not isinstance(item, dict) or set(item) != {'path', 'type', 'mode', 'size', 'sha256'}
+                or item.get('type') != 'file' or type(item.get('mode')) is not int
+                or type(item.get('size')) is not int or item['size'] <= 0
+                or not isinstance(item.get('sha256'), str) or not SHA256.fullmatch(item['sha256'])):
+            raise ValueError('site image file inventory entry is malformed')
+        path = safe_path(item['path'])
+        if path not in required_files and not path.startswith(prefix):
+            raise ValueError('site image inventory contains an unexpected file: ' + path)
+        expected_mode = int(policy['executableMode'], 8) if path == 'leapview-site' else int(policy['dataMode'], 8)
+        if item['mode'] != expected_mode:
+            raise ValueError('site image file mode differs from policy: ' + path)
+        if path == 'leapview-site' and item['size'] > 256 * 1024**2:
+            raise ValueError('site executable exceeds its inventory size limit')
+        file_paths.append(path)
+    for item in directories:
+        if (not isinstance(item, dict) or set(item) != {'path', 'type', 'mode', 'size'}
+                or item.get('type') != 'directory' or type(item.get('mode')) is not int
+                or type(item.get('size')) is not int or item['size'] != 0):
+            raise ValueError('site image directory inventory entry is malformed')
+        path = safe_path(item['path'])
+        allowed = path in {'.data', '.data/map-assets', 'etc', 'etc/ssl', 'etc/ssl/certs'} or path.startswith(prefix)
+        if not allowed or item['mode'] != int(policy['directoryMode'], 8):
+            raise ValueError('site image directory differs from policy: ' + path)
+        directory_paths.append(path)
+    if (file_paths != sorted(set(file_paths)) or directory_paths != sorted(set(directory_paths))
+            or not required_files.issubset(file_paths)
+            or not required_directories.issubset(directory_paths)
+            or not any(path.startswith(prefix) for path in file_paths)):
+        raise ValueError('site image inventory is incomplete or noncanonical')
+    if set(file_paths) & set(directory_paths):
+        raise ValueError('site image path is both a file and a directory')
+    directories_set = set(directory_paths)
+    for path in file_paths:
+        parent = PurePosixPath(path).parent
+        while str(parent) != '.':
+            if str(parent) not in directories_set:
+                raise ValueError('site image inventory omits a file parent directory: ' + str(parent))
+            parent = parent.parent
+    for path in directory_paths:
+        parent = PurePosixPath(path).parent
+        if str(parent) != '.' and str(parent) not in directories_set:
+            raise ValueError('site image inventory omits a directory parent: ' + str(parent))
+
+    spdx = read_json_file(directory / 'sbom.spdx.json', MAX_REPORT_BYTES)
+    if spdx.get('spdxVersion') != 'SPDX-2.3' or spdx.get('SPDXID') != 'SPDXRef-DOCUMENT' or (
+            not spdx.get('documentNamespace') or not spdx.get('packages')):
+        raise ValueError('site runtime SPDX inventory is missing or unsupported')
+    raw_sbom = read_json_file(directory / 'sbom.syft.json', MAX_REPORT_BYTES)
+    runtime_sbom = read_json_file(directory / 'runtime.syft.json', MAX_REPORT_BYTES)
+    if not isinstance(raw_sbom.get('artifacts'), list) or not isinstance(runtime_sbom.get('artifacts'), list):
+        raise ValueError('site Syft inventory is malformed')
+    if any(not isinstance(item, dict) or item.get('type') == 'nix' for item in raw_sbom['artifacts']):
+        raise ValueError('site inventory contains an unexpected Nix package')
+    omitted = set(policy['separateScannerTypes'])
+    expected_runtime = copy.deepcopy(raw_sbom)
+    expected_runtime['artifacts'] = [item for item in raw_sbom['artifacts'] if item.get('type') not in omitted]
+    expected_runtime['artifactRelationships'] = []
+    if canonical_bytes(runtime_sbom) != canonical_bytes(expected_runtime):
+        raise ValueError('site runtime SBOM differs from the exact Syft inventory')
+    runtime_report = read_json_file(directory / 'runtime.grype.json', MAX_REPORT_BYTES)
+    controls_report = read_json_file(directory / 'controls.grype.json', MAX_REPORT_BYTES)
+    if (runtime_report.get('descriptor', {}).get('db') != controls_report.get('descriptor', {}).get('db')
+            or runtime_report.get('descriptor', {}).get('db') != summary.get('database')):
+        raise ValueError('site runtime and control scans do not use the same database')
+    if summary.get('controlsPassed') != 1 or summary.get('blockingFindings'):
+        raise ValueError('site runtime matcher controls or vulnerability gate failed')
+    if runtime_report.get('ignoredMatches') or controls_report.get('ignoredMatches'):
+        raise ValueError('site runtime evidence may not filter vulnerability matches')
+    if any(match.get('vulnerability', {}).get('severity', '').upper() in ('HIGH', 'CRITICAL')
+           for match in runtime_report.get('matches', [])):
+        raise ValueError('site runtime report contains unresolved HIGH/CRITICAL findings')
+    synthetic = read_json_file(directory / 'controls.synthetic.syft.json', MAX_REPORT_BYTES)
+    control = policy['syntheticControl']
+    if (not isinstance(synthetic.get('artifacts'), list) or len(synthetic['artifacts']) != 1):
+        raise ValueError('site runtime matching control is missing')
+    control_artifact = synthetic['artifacts'][0]
+    expected_control_id = 'LEAPVIEW-SITE-RUNTIME-CONTROL'
+    expected_control_cpe = (f"cpe:2.3:a:{control['vendor']}:{control['product']}:{control['version']}:"
+                             '*:*:*:*:*:*:*')
+    if (control_artifact.get('id') != expected_control_id or control_artifact.get('name') != control['name']
+            or control_artifact.get('version') != control['version']
+            or control_artifact.get('cpes') != [{'cpe': expected_control_cpe,
+                                                  'source': 'leapview-reviewed-site-runtime-control'}]):
+        raise ValueError('site runtime matching control differs from policy')
+    if not any(match.get('artifact', {}).get('id') == expected_control_id
+               and match.get('vulnerability', {}).get('id') == control['cve']
+               for match in controls_report.get('matches', [])):
+        raise ValueError('site runtime matching control did not match its required CVE')
+
+    return {'summarySHA256': digest_bytes(summary_bytes), 'reports': reports,
+            'scope': 'site-image-runtime-only', 'enforcementMode': 'enforce'}
 
 
 def collect(archive, kind, source, *, archive_identity=None, runtime_dir=None,
@@ -221,7 +421,7 @@ def collect(archive, kind, source, *, archive_identity=None, runtime_dir=None,
     validate_source(source)
     if kind.endswith('-image'):
         artifact = image_identity(archive, source, kind)
-        gates = COMMON_GATES + ['oci-admission', 'nix-runtime-enforcement']
+        gates = SITE_GATES if kind == 'site-image' else COMMON_GATES + ['oci-admission', 'nix-runtime-enforcement']
     else:
         if not isinstance(archive_identity, dict) or set(archive_identity) != {'platform', 'version', 'sourceRevision'}:
             raise ValueError('archive requires an explicit source/platform/version identity')
@@ -230,16 +430,22 @@ def collect(archive, kind, source, *, archive_identity=None, runtime_dir=None,
         if not isinstance(archive_identity['version'], str) or not archive_identity['version'] or (
                 archive_identity['version'] != archive_identity['version'].strip()):
             raise ValueError('archive version is missing')
-        artifact = {'format': 'archive', 'platform': archive_identity['platform'],
+        if kind == 'desktop-archive' and archive_identity['platform'] != 'linux/amd64':
+            raise ValueError('desktop Nix candidate must be a native Linux x64 Debian package')
+        artifact = {'format': 'deb' if kind == 'desktop-archive' else 'archive',
+                    'platform': archive_identity['platform'],
                     'version': archive_identity['version']}
-        gates = COMMON_GATES + ['embedded-source-identity']
+        gates = DESKTOP_GATES if kind == 'desktop-archive' else COMMON_GATES + ['embedded-source-identity']
     artifact.update(kind=kind, sha256=digest_file(archive))
     manifest = {'schemaVersion': 1, 'artifact': artifact, 'source': copy.deepcopy(source),
                 'evidence': {}, 'requiredReleaseEvidence': sorted(gates), 'releaseAdmission': False}
     if runtime_dir is not None:
         if not kind.endswith('-image'):
             raise ValueError('image runtime evidence cannot qualify an archive output')
-        manifest['evidence']['nix-runtime'] = runtime_evidence(runtime_dir, artifact)
+        if kind == 'site-image':
+            manifest['evidence']['nix-runtime'] = site_runtime_evidence(runtime_dir, artifact, source['revision'])
+        else:
+            manifest['evidence']['nix-runtime'] = runtime_evidence(runtime_dir, artifact, source['revision'])
     if (go_dir is None) != (binary_verifier is None):
         raise ValueError('Go archive evidence requires a protected binary verifier')
     if go_dir is not None:

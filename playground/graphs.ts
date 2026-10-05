@@ -10,10 +10,7 @@ import '../web/components/shared/asset-lineage-graph'
 import '../web/components/shared/semantic-model-graph'
 import { lineageFixture, semanticFixture, type LineageFixture, type LineageScenario, type SemanticScenario } from './graph-fixtures'
 
-export const graphExamples = [
-  { id: 'asset-lineage', label: 'Asset lineage graph' },
-  { id: 'semantic-model', label: 'Semantic model graph' },
-]
+export { graphExamples } from './catalog'
 
 export class PlaygroundGraphs extends LitElement {
   @property() example = 'asset-lineage'

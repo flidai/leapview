@@ -190,6 +190,7 @@ type CreatorCommandInvocation struct {
 }
 
 type BrowserHandler struct {
+	ClientIDs          uitransport.ClientIDCookies
 	Graph              GraphReader
 	HistoricalGraph    HistoricalGraphReader
 	AssetVersions      AssetVersionsReader
@@ -964,12 +965,12 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	// serving generation activated while this SSE request remains open.
 	r = streamRequest
 	if livePipeline && wake != nil {
-		uitransport.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {
+		h.ClientIDs.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {
 			return h.livePipelinePage(r)
 		})
 		return
 	}
-	uitransport.PatchAndWait(w, r, pagestream.SignalPatch(patch))
+	h.ClientIDs.PatchAndWait(w, r, pagestream.SignalPatch(patch))
 }
 
 func livePipelineRoute(route, assetID string) bool {

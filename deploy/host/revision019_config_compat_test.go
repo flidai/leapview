@@ -183,7 +183,11 @@ func TestRevision019CannotRebindExistingUnboundInstallation(t *testing.T) {
 func TestCurrentInstallerKeepsItsConfiguration(t *testing.T) {
 	bootstrap := read(t, "bootstrap-linux.sh")
 	if !strings.Contains(bootstrap, `install_config="$config_file"`) ||
-		strings.Count(bootstrap, `if [[ "$leapview_image" == "$revision019_image" ]]`) != 3 {
+		strings.Count(bootstrap, `if [[ "$leapview_image" == "$revision019_image" ]]`) != 4 {
 		t.Fatal("current installers must receive the unmodified current configuration")
+	}
+	if !strings.Contains(bootstrap, "A first install requires an image with the operator-bootstrap lifecycle") ||
+		!strings.Contains(bootstrap, `install_arguments+=(--operator-config "$operator_config_file")`) {
+		t.Fatal("fresh installs must require the current operator-bootstrap contract")
 	}
 }

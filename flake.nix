@@ -19,6 +19,10 @@
       ...
     }:
     let
+      linuxSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
       revision = pkgs.lib.removeSuffix "-dirty" (self.rev or self.dirtyRev or "unknown");
@@ -46,61 +50,147 @@
             "scripts/testdata/nix"
           ]);
       };
-      assets = import ./nix/runtime-assets.nix {
-        inherit pkgs toolchain application;
-        src = source;
-      };
-      patchedRuntime = import ./nix/patched-runtime.nix {
-        inherit pkgs;
-        application = applicationBuild;
-      };
-      application = patchedRuntime.application;
-      deploymentCLI = import ./nix/deployment-cli.nix {
-        purpose = "development";
-        inherit
-          pkgs
-          toolchain
-          revision
-          dirty
-          buildTime
-          ;
-        src = source;
-      };
-      composeCLI = import ./nix/deployment-cli.nix {
-        purpose = "compose";
-        inherit
-          pkgs
-          toolchain
-          revision
-          dirty
-          buildTime
-          ;
-        src = source;
-      };
-      portable = import ./nix/portable.nix { inherit pkgs application toolchain; };
-      image = import ./nix/image.nix {
-        inherit
-          pkgs
-          application
-          assets
-          portable
-          patchedRuntime
-          revision
-          dirty
-          buildTime
-          ;
-      };
-      applicationBuild = import ./nix/application.nix {
-        inherit
-          pkgs
-          toolchain
-          revision
-          dirty
-          buildTime
-          ;
-        src = source;
-      };
       toolchain = import ./nix/toolchain.nix { inherit pkgs playwright-nixpkgs; };
+      packagesFor =
+        targetSystem:
+        let
+          targetPkgs = nixpkgs.legacyPackages.${targetSystem};
+          targetToolchain = import ./nix/toolchain.nix {
+            pkgs = targetPkgs;
+            inherit playwright-nixpkgs;
+          };
+          developmentBuild = import ./nix/application.nix {
+            pkgs = targetPkgs;
+            toolchain = targetToolchain;
+            inherit revision dirty buildTime;
+            purpose = "development";
+            src = source;
+          };
+          composeBuild = import ./nix/application.nix {
+            pkgs = targetPkgs;
+            toolchain = targetToolchain;
+            inherit revision dirty buildTime;
+            purpose = "compose";
+            src = source;
+          };
+          site = import ./nix/site.nix {
+            pkgs = targetPkgs;
+            toolchain = targetToolchain;
+            src = source;
+            inherit revision dirty;
+          };
+          siteImage = import ./nix/site-image.nix {
+            pkgs = targetPkgs;
+            inherit
+              site
+              revision
+              dirty
+              buildTime
+              ;
+          };
+          developmentRuntime = import ./nix/patched-runtime.nix {
+            pkgs = targetPkgs;
+            application = developmentBuild;
+          };
+          composeRuntime = import ./nix/patched-runtime.nix {
+            pkgs = targetPkgs;
+            application = composeBuild;
+          };
+          application = developmentRuntime.application;
+          composeApplication = composeRuntime.application;
+          assets = import ./nix/runtime-assets.nix {
+            pkgs = targetPkgs;
+            toolchain = targetToolchain;
+            application = developmentBuild;
+            src = source;
+          };
+          portable = import ./nix/portable.nix {
+            pkgs = targetPkgs;
+            application = application;
+            toolchain = targetToolchain;
+          };
+          composePortable = import ./nix/portable.nix {
+            pkgs = targetPkgs;
+            application = composeApplication;
+            toolchain = targetToolchain;
+          };
+          image = import ./nix/image.nix {
+            pkgs = targetPkgs;
+            application = application;
+            inherit
+              assets
+              revision
+              dirty
+              buildTime
+              ;
+            portable = portable;
+            patchedRuntime = developmentRuntime;
+            purpose = "development";
+          };
+          composeImage = import ./nix/image.nix {
+            pkgs = targetPkgs;
+            application = composeApplication;
+            inherit
+              assets
+              revision
+              dirty
+              buildTime
+              ;
+            portable = composePortable;
+            patchedRuntime = composeRuntime;
+            purpose = "compose";
+          };
+          controllers =
+            if targetSystem == system then
+              let
+                developmentCLI = import ./nix/deployment-cli.nix {
+                  pkgs = targetPkgs;
+                  toolchain = targetToolchain;
+                  inherit revision dirty buildTime;
+                  src = source;
+                  purpose = "development";
+                };
+                composeCLI = import ./nix/deployment-cli.nix {
+                  pkgs = targetPkgs;
+                  toolchain = targetToolchain;
+                  inherit revision dirty buildTime;
+                  src = source;
+                  purpose = "compose";
+                };
+                desktop = import ./nix/desktop.nix {
+                  pkgs = targetPkgs;
+                  toolchain = targetToolchain;
+                  src = source;
+                };
+              in
+              {
+                leapviewctl-linux-amd64 = developmentCLI;
+                leapviewctl-linux-arm64 = developmentCLI.arm64;
+                leapviewctl-compose-linux-amd64 = composeCLI;
+                leapviewctl-compose-linux-arm64 = composeCLI.arm64;
+                leapview-desktop-linux-x64 = desktop;
+              }
+            else
+              { };
+        in
+        {
+          default = application;
+          leapview = application;
+          leapview-image = image;
+          leapview-linux = portable;
+          leapview-compose = composeApplication;
+          leapview-image-compose = composeImage;
+          leapview-linux-compose = composePortable;
+          leapview-site = site.package;
+          leapview-site-image = siteImage;
+          leapview-tools = developmentBuild.tools;
+          map-assets = assets.maps;
+          extension-supply = assets.extensions;
+          glibc-runtime = developmentRuntime.glibc;
+          go-dependencies = developmentBuild.dependencies.go;
+          javascript-dependencies = developmentBuild.dependencies.javascript;
+        }
+        // controllers;
       runtimeSecurityShell =
         platform:
         let
@@ -119,27 +209,38 @@
             nativePkgs.gh
             nativePkgs.python3
             nativePkgs.docker-client
+            nativePkgs.stdenv.cc
+            nativePkgs.patchelf
+            nativePkgs.jq
+            nativePkgs.curl
           ];
           inherit (nativeToolchain) GOTOOLCHAIN;
         };
+      hostQualificationShell =
+        platform:
+        let
+          nativePkgs = nixpkgs.legacyPackages.${platform};
+        in
+        nativePkgs.mkShellNoCC (
+          {
+            packages = [
+              nativePkgs.qemu
+              nativePkgs.cloud-utils
+              nativePkgs.openssh
+              nativePkgs.python3
+              nativePkgs.curl
+              nativePkgs.jq
+            ];
+          }
+          // nativePkgs.lib.optionalAttrs (platform == "aarch64-linux") {
+            LEAPVIEW_QUALIFICATION_FIRMWARE = "${nativePkgs.OVMF.fd}/FV/QEMU_EFI.fd";
+          }
+        );
     in
     {
-      packages.${system} = {
-        default = application;
-        leapview = application;
-        leapview-image = image;
-        leapview-linux = portable;
-        leapviewctl-linux-amd64 = deploymentCLI;
-        leapviewctl-linux-arm64 = deploymentCLI.arm64;
-        leapviewctl-compose-linux-amd64 = composeCLI;
-        leapviewctl-compose-linux-arm64 = composeCLI.arm64;
-        map-assets = assets.maps;
-        extension-supply = assets.extensions;
-        glibc-runtime = patchedRuntime.glibc;
-        go-dependencies = applicationBuild.dependencies.go;
-        javascript-dependencies = applicationBuild.dependencies.javascript;
-      };
+      packages = pkgs.lib.genAttrs linuxSystems packagesFor;
       devShells.${system} = {
+        host-qualification = hostQualificationShell system;
         orchestration = pkgs.mkShellNoCC {
           packages = toolchain.orchestrationPackages;
           inherit (toolchain) GOTOOLCHAIN;
@@ -157,6 +258,7 @@
         runtime-security = runtimeSecurityShell system;
       };
       devShells.aarch64-linux.runtime-security = runtimeSecurityShell "aarch64-linux";
+      devShells.aarch64-linux.host-qualification = hostQualificationShell "aarch64-linux";
       checks.${system}.toolchain = import ./nix/check-toolchain.nix {
         inherit pkgs toolchain;
       };

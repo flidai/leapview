@@ -1,9 +1,13 @@
 # Nix development and builds
 
-The development shell and application/container builds support **x86_64 Linux**
-with Nix on an existing distribution or NixOS. Entering the shell does not install
+The flake defines native Linux application and tool outputs for **x86_64 and
+aarch64**. The default development shell and adopted Nix CI contract remain
+**x86_64-only**; ARM64 output discovery is not runtime or host
+qualification. ARM64 extension-supply bytes are pinned from native discovery;
+final image qualification remains separate.
+Nix runs on an existing distribution or NixOS. Entering the shell does not install
 an operating system or start services. The existing release pipeline remains in
-place while the Nix image path is qualified.
+place while Nix outputs are qualified.
 Docker must already be running and accessible to the current user for development
 PostgreSQL and integration tests.
 
@@ -28,6 +32,11 @@ nix develop --no-update-lock-file -c task ci
 nix develop --no-update-lock-file -c task nix:smoke
 nix flake check --no-update-lock-file -L
 ```
+
+To inspect the flake's native outputs and build the source-generation tools for
+the current Linux machine, run `nix flake show --no-update-lock-file` and
+`nix build --no-update-lock-file .#leapview-tools`. The latter selects the
+current machine's `x86_64-linux` or `aarch64-linux` package set.
 
 On a fresh checkout, run `nix develop -c task ci:prepare` before `task ci` to
 create the ignored generated inputs, as the existing hosted CI does.
@@ -100,8 +109,9 @@ candidate jobs restore them and run all selected checks even on a cache miss.
 
 Conventional release builders explicitly select `toolchain: conventional` until
 each output passes its compatibility and final-artifact admission gates. Other
-platforms keep their existing tool setup. The current flake qualifies x86_64 Linux;
-ARM64 development-shell adoption is still pending. Terraform/provider and specialist
+platforms keep their existing tool setup. The default development shell and its
+adopted CI lane remain x86_64-only; the flake's native ARM64 package outputs do not
+change that adoption boundary. Terraform/provider and specialist
 dbt/Electron dependencies retain their existing setup until their callers migrate.
 See [the caller inventory](CI-CALLERS.md) before removing any installer.
 
@@ -119,6 +129,9 @@ nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop -c docker load --input "$(readlink -f result-image)"
 # Full production-image qualification using disposable Docker fixtures:
 task nix:qualify
+nix build --no-update-lock-file .#leapview-site
+nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image
+nix develop -c docker load --input "$(readlink -f result-site-image)"
 ```
 
 `task nix:build`, `task nix:image`, and `task nix:qualify` expose the same paths.
@@ -131,11 +144,26 @@ loopback registry and existing PostgreSQL/browser fixtures.
 |---|---|
 | `leapview` (default) | Application and deployment CLI, generated contracts, frontend assets and runtime resources |
 | `leapview-linux` | Exported Linux CLI binaries for Ubuntu 24.04 or a compatible runtime; no Nix store required |
+| `leapview-tools` | Native source-generation tools, including the signed extension-supply publisher, for the current Linux ISA |
 | `leapviewctl-linux-amd64`, `leapviewctl-linux-arm64` | Standalone development controller, CGO-disabled, deterministic archive and static-link report; no Nix store or host glibc dependency |
 | `leapviewctl-compose-linux-amd64`, `leapviewctl-compose-linux-arm64` | Clean-source controller candidates with canonical release metadata for Compose bundle assembly; requires a matching immutable image and separate qualification |
 | `leapview-image` | Container archive with the existing entrypoint, UID/GID 999, health check, writable volume paths and deployment bundle |
+| `leapview-compose`, `leapview-linux-compose`, `leapview-image-compose` | Native application, portable binaries and image with canonical `VERSION`, exact clean source revision and `release=true`; candidate metadata grants no release admission |
+| `leapview-site` | Native Linux public-site binary with embedded CSS/JavaScript and map assets materialized on disk |
+| `leapview-site-image` | Minimal native Linux public-site image with canonical `VERSION`, exact revision labels, UID 65532, and read-only files; candidate metadata grants no release admission |
+| `leapview-desktop-linux-x64` | Linux x64 Debian package candidate assembled by the existing Electron Forge `MakerDeb` path with the preview distribution marker; no release admission |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
-| `map-assets`, `extension-supply` | Pinned runtime asset trees, using the existing map/extension publishers and integrity checks |
+| `map-assets` | Pinned runtime map assets |
+| `extension-supply` | Signed runtime extension assets pinned independently for both Linux ISAs |
+
+The application and tool package sets are declared for both Linux ISAs. Native
+[discovery run 37264692296](https://github.com/flidai/leapview/actions/runs/37264692296)
+built both application/tool outputs and verified native signed extension LOADs.
+The retained ARM64 ZIP digest and recomputed NAR hash agree with the receipt;
+`build-hashes.json` pins that exact tree. This does not establish final image or
+host qualification. The shared dependency output includes JavaScript packages for
+both Linux CPU variants. Each native build selects its TypeScript dependency tree
+and prunes mismatched CPU, OS and libc packages before patching executable helpers.
 
 The application derivation runs source generation, TypeSpec and frontend builds,
 and Go/CGO compilation inside the Nix sandbox. Only fixed-output dependency and
@@ -143,6 +171,54 @@ runtime-asset fetches use the network. Their complete outputs are pinned in
 `build-hashes.json`, in addition to the existing module/package locks and asset
 integrity checks. The final image assembly also runs without network access.
 Use a Nix installation with `sandbox = true`; the image CI job sets it explicitly.
+
+### Linux desktop package candidate
+
+`nix build .#leapview-desktop-linux-x64` builds only the Linux x64 Debian
+package. It uses the locked desktop Bun dependency tree, the official Electron
+and Node archives matching versions declared by `desktop/release-policy.json`,
+and the existing `desktop/scripts/run-electron.mjs make` Forge packaging path.
+The recipe passes the hash-verified Electron ZIP through
+`LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR` to Packager's explicit archive input; a download
+cache alone still triggers checksum network requests. Desktop CI requires
+`sandbox = true` and `sandbox-fallback = false` so a host without the required
+kernel namespaces cannot silently supply an online build.
+The package carries the preview distribution marker. The manual `Protected Nix
+desktop candidate` workflow qualifies the exact Debian bytes on native Ubuntu
+22.04 x86_64 using protected verifier code, then retains the package and a
+hash-bound receipt with `releaseAdmission: false`. It checks the protected
+control-field and dependency contract, package contents, the embedded Electron
+sandbox helper's root-owned setuid mode, installed-payload identity, startup,
+installer metadata, release evidence and the hostile-instance boundary. The
+`native-desktop` development lane exercises this host floor
+without publication credentials.
+
+That candidate qualification records install, reinstall, protocol registration
+and removal. Upgrade, rollback, recovery and profile observation remain pending;
+it does not establish production adoption, signing, publication or release
+admission. Conventional desktop release workflows remain authoritative.
+macOS and Windows outputs remain on their existing toolchains.
+
+### Standalone public-site candidates
+
+From a clean committed checkout, `nix build .#leapview-site-image` produces the
+native AMD64 or ARM64 site image. Its final Go binary is CGO-disabled and has no
+dynamic interpreter or Nix store references. Documentation generation uses the
+pinned signed extension supply during the build; those extensions and the
+application runtime are not included in the site image. The shared portable Go
+SDK preparation also serves the standalone controller build.
+
+The image contains the site executable, map assets and a CA bundle, with UID/GID
+65532 and port 8081. Run it with `--read-only`. The `native-site` manual lane in
+`nix-development.yml` builds both native architectures and checks health,
+readiness, exact served release/build metadata and installation documentation.
+It retains the exact archive and a runtime receipt with `releaseAdmission: false`.
+
+The protected site candidate workflow adds independent site inventory, Go and
+vulnerability evidence, then binds publication and native runtime checks to the
+same immutable image. Site adoption is independent of application or desktop
+adoption, and still requires its affected deployment-profile installation,
+recovery and observation evidence. See [candidate evidence](CANDIDATE-EVIDENCE.md).
 
 ### Runtime compatibility
 
@@ -188,10 +264,12 @@ hashes, and every host image digest.
 
 For installation-bundle candidates, `task nix:compose:controllers` builds the same
 CGO-disabled controller with canonical `VERSION`, exact clean source revision and
-commit timestamp, and `development=false`. This metadata can match a conventional
-release image; it does not authorize publication. Dirty source is rejected for
-this purpose. Standalone development-controller outputs and their qualifier keep
-their existing `VERSION+nix.<revision>` identity.
+commit timestamp, and `development=false`; the Compose image and controller also
+carry the release identity needed to match a conventional image. These metadata
+fields are candidate build identity only: they do not authorize publication or
+release admission. Dirty source is rejected for this purpose. Standalone
+development-controller outputs and their qualifier keep their existing
+`VERSION+nix.<revision>` identity.
 
 `scripts/package_compose_bundle.py` is the shared assembler used by the existing
 release workflow. It accepts a prebuilt controller, explicit platform, immutable
@@ -208,16 +286,16 @@ A Nix Compose controller is only an input to that assembler. The completed bundl
 can be exercised through the protected [Nix Compose candidate workflow](CANDIDATE-EVIDENCE.md#protected-nix-compose-candidates).
 It consumes only a successful `release.yml` `workflow_dispatch` run on `main`,
 and requires the release identity and source revision from that run's exact
-immutable artifact. Separate native AMD64 and ARM64 preflight jobs recheck
-conventional image OCI admission and capture image runtime identity before any
+immutable artifact. Separate platform preflight jobs recheck conventional image
+OCI admission and capture image runtime identity before any
 Compose controller runs. The workflow builds both Nix controllers from that
-clean source, assembles them with the protected shared packager, and qualifies
-each installed bundle on native runners without registry credentials. The
-Before installed qualification, separate native jobs extract each verified
-controller and collect protected Go vulnerability evidence, a pinned Syft SPDX
-inventory and version/help probes in pinned Debian 12, Ubuntu 24.04 and Debian 13
-containers. The installed qualifier consumes the exact same-run evidence
-artifact. The protected signer byte-compares these evidence files and inventory
+clean source and assembles each candidate bundle with the protected shared
+packager. Before installed-bundle qualification, separate native jobs extract
+each verified controller and collect protected Go vulnerability evidence, a
+pinned Syft SPDX inventory and version/help probes in pinned Debian 12, Ubuntu
+24.04 and Debian 13 containers. The installed qualifier consumes the exact
+same-run evidence artifact without registry credentials. The protected signer
+byte-compares these evidence files and inventory
 with the original artifacts, verifies all retained receipts, and attests the
 unchanged outer archives and their SPDX predicates. The signing job does not
 execute candidate code; the read-only verifier checks live provenance and SPDX
@@ -225,6 +303,16 @@ attestations against this workflow's protected revision and retained report. The
 receipt keeps `releaseAdmission: false`; successful live acceptance remains
 pending until the workflow lands on `main` and completes against a fresh
 successful release run.
+
+The native application dependency-discovery lane is manual and separate from
+release qualification. On a branch with this workflow, run
+`gh workflow run nix-development.yml --ref BRANCH -f checks=native-application`
+to build `leapview-tools` on native AMD64 and ARM64 runners, execute the signed
+extension-supply publisher, and retain the exact output bytes, NAR hash, and
+run-bound discovery receipt for 14 days. The receipt records
+`releaseAdmission: false`. The checked-in ARM64 pin comes from successful native
+discovery; any refresh must repeat that evidence. This lane does not claim final
+application-image or host qualification.
 
 These are Nix Compose candidates only. Their receipts explicitly keep
 `releaseAdmission: false`. Full systemd/NixOS installation, upgrade, rollback and
@@ -252,8 +340,10 @@ A separate read-only job verifies live provenance and the exact SPDX predicate
 against the protected main workflow revision. Offline verification of PR-generated
 reports alone is insufficient. See [the evidence contract](CANDIDATE-EVIDENCE.md#protected-static-controller-candidates).
 
-These are development candidates derived from canonical `VERSION`, clean source
-revision and commit timestamp, with `release=false`. Compatibility receipts retain
+The standalone `leapviewctl-linux-*` outputs are development candidates derived
+from clean source revision and commit timestamp, with `release=false` and a
+`VERSION+nix.<revision>` identity. Compose candidates carry canonical release
+identity as described above, while their candidate receipts still retain
 `releaseAdmission: false`. Container userland command execution does not establish
 installation, publication, upgrade, rollback or recovery acceptance. Signed
 successful live protected archive provenance/SPDX qualification, complete
@@ -295,8 +385,8 @@ existing release contract:
 
 | Gate | Required integration |
 |---|---|
-| Platform matrix | Build and qualify both AMD64 and ARM64, or explicitly review a change to the supported release matrix. This flake currently supplies AMD64 only. |
-| Release identity | Bind the canonical `VERSION`, clean source revision, commit timestamp and release flag consistently in the binaries and OCI labels. Current Nix outputs intentionally carry development identity. |
+| Platform matrix | Build and qualify both AMD64 and ARM64, or explicitly review a change to the supported release matrix. The flake defines native packages for both Linux ISAs, but that does not qualify the final image or host lifecycle on either platform. |
+| Release identity | Bind the canonical `VERSION`, clean source revision, commit timestamp and release flag consistently in the binaries and OCI labels. Development outputs use development identity; Compose candidates can match canonical release identity but still require final-artifact admission. |
 | Supply-chain admission | Publish by digest, attach trusted GitHub provenance and an SPDX SBOM discoverable by the existing OCI admission verifier, and pass its pinned vulnerability policy. A Docker-loadable archive alone does not supply these attestations. |
 | Installation package | Assemble the exported controller and Compose payload from the same build; qualify their loader/ABI compatibility on every advertised host platform. |
 | Upgrade and recovery | Run historical transition qualification against that exact clean image; run installed-candidate and host recovery journeys. Local candidate evidence does not replace final-artifact admission. |
@@ -331,7 +421,8 @@ verification remain enabled.
   SSH/Tailscale access and independently restored development secrets.
 - Adopt the Nix image in protected release publication after qualification and
   attestation/admission integration; then retire duplicate Dockerfile build logic.
-- Qualify other architectures and desktop/Electron packaging separately.
+- Complete native ARM64 extension-hash discovery and the remaining ARM64 runtime and
+  host qualification; qualify desktop/Electron packaging separately.
 
 Contributors and self-hosters can continue using the existing non-Nix workflows.
 No host migration or customer deployment is performed by these commands.

@@ -2,10 +2,11 @@
 
 `scripts/nix_candidate_manifest.py` collects a common, versioned identity record
 for Nix application images, site images, CLI archives, application archives and
-Linux desktop archives. The Nix qualification workflow currently integrates the
-application-image adapter on AMD64. Other outputs and ARM64 still need their own
-builders and qualification; accepting an identity in this format does not add a
-supported release platform.
+Linux desktop archives. The protected qualification workflows integrate the
+application-image and site-image adapters on AMD64, plus the Linux x64 Desktop
+Debian adapter. The standalone CLI archive and ARM64 outputs still need their
+own builders and qualification; accepting an identity in this format does not
+add a supported release platform.
 
 ## Collect and verify
 
@@ -15,7 +16,8 @@ qualification and the enforced runtime scan:
 ```sh
 task nix:qualify
 nix develop --no-update-lock-file .#runtime-security -c \
-  python3 scripts/check_nix_runtime_security.py result-image \
+  python3 scripts/check_nix_runtime_security.py result-image --kind application-image \
+  --source-revision "$(git rev-parse HEAD)" \
   --evidence-dir .tmp/nix-runtime-security
 python3 scripts/nix_candidate_manifest.py result-image --kind application-image \
   --runtime-evidence .tmp/nix-runtime-security \
@@ -235,7 +237,7 @@ regression checks the generated Compose environment and rejects registry startup
 retagging or republishing for a signed digest. The existing pre-publication archive
 qualification also remains enforced.
 
-`nix_candidate_publication.py bind-qualified` requires a successful schema-1
+`nix_candidate_publication.py bind-qualified --kind application-image` requires a successful schema-1
 image report for that same registry digest, all four current bounded phases and
 fresh, ordered phase timestamps. The qualifier preserves fractional-second UTC
 timestamps so millisecond phase durations can be checked for ordering without
@@ -567,3 +569,56 @@ and promotion of the exact candidate remain open. The receipt keeps
 existing conventional Compose and Darwin publishers remain authoritative. A
 successful workflow run after this change lands on `main` is needed before
 recording live evidence in [FAI-1074](https://linear.app/flid/issue/FAI-1074).
+
+## Standalone public-site candidates
+
+`nix-site-candidate.yml` runs protected code from `main` against one exact open
+PR head directly based on `main`. It builds the site's two native Linux images
+without signing credentials, checks the exact archive with the site inventory
+policy and Go binary verifier, and exercises the image on its native runner.
+The final site executable must be static and CGO-disabled. The site payload
+contains only that executable, map assets and the CA bundle; application glibc
+assessments cannot satisfy the site policy.
+
+The runtime check requires UID/GID 65532, a read-only filesystem, the declared
+command and environment, health/readiness, exact `release.json` bytes from the
+candidate checkout, matching revision/image in `build.json`, and installation
+documentation containing the canonical release URLs and identities. It rejects
+foreign architectures before starting the container and retains a bounded,
+source/archive/image-bound `site-qualification-report.json`.
+
+The publisher revalidates the retained reports and copies verified OCI content
+without rebuilding or executing candidate programs. It publishes only a unique
+candidate tag, signs exact provenance and SPDX subjects, and retains immutable
+bindings. A separate read-only native job verifies those live signatures and
+repeats the runtime checks against the published digest. Artifact selection uses
+the exact producer run, attempt, protected revision, architecture and artifact
+ID, with disjoint site artifact names. The site signer workflow is explicitly
+authorized for the site kind.
+
+These candidate receipts keep `releaseAdmission: false`. They do not satisfy the
+existing OCI admission/Trivy gate or the site's affected deployment-profile
+installation, upgrade, rollback, recovery and observation requirements. The
+conventional site publisher remains authoritative until independent site
+adoption passes those gates. Application and desktop adoption are not
+prerequisites for site adoption. Track the exact retained evidence and remaining
+requirements in [FAI-1024](https://linear.app/flid/issue/FAI-1024).
+
+### Linux Desktop Debian candidate
+
+The manual protected Desktop workflow selects one exact .deb artifact from its
+own build attempt, then qualifies those unchanged bytes on native Ubuntu 22.04
+x86_64 with protected verifier code. It compares candidate and protected Desktop
+package, lockfile and release-policy bytes; checks the package control identity,
+exact dependency fields, payload inventory, launcher, `chrome-sandbox`
+root-owned setuid mode and absence of maintainer scripts; then installs the exact
+package and runs the existing package, installer and hostile-instance checks
+against the installed payload. The separate `native-desktop` development lane
+exercises the same host floor without publication credentials.
+
+The receipt binds the archive hash, source revision, protected verifier revision,
+policy files, reports and host identity and keeps `releaseAdmission: false`. It
+records install, reinstall, protocol registration and removal checks; upgrade,
+rollback, recovery and profile observation remain pending. It does not sign,
+publish or adopt Desktop releases, and conventional desktop release workflows
+remain authoritative.

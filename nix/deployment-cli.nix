@@ -18,19 +18,8 @@ let
     else
       "${canonicalVersion}+nix.${builtins.substring 0 12 revision}";
   buildInfo = "github.com/flidai/leapview/internal/platform/buildinfo";
-  # The exported controller uses the conventional host's data files. Reverse
-  # only these locked NixOS data-path patches in a private SDK copy; retain
-  # compiler/linker fixes and the existing compiler/source hashes.
-  hostDataPatches = builtins.filter (
-    patch:
-    builtins.any (name: pkgs.lib.hasSuffix name (toString patch)) [
-      "iana-etc-1.25.patch"
-      "mailcap-1.17.patch"
-      "tzdata-1.19.patch"
-    ]
-  ) toolchain.go.patches;
+  portableGoSDK = import ./portable-go-sdk.nix { inherit pkgs toolchain; };
 in
-assert builtins.length hostDataPatches == 3;
 assert builtins.elem purpose [
   "development"
   "compose"
@@ -68,9 +57,10 @@ pkgs.stdenv.mkDerivation {
     export GOPATH="$TMPDIR/go" GOCACHE="$TMPDIR/go-cache"
     export npm_config_cache="$TMPDIR/npm-cache"
     cp -R ${dependencies.javascript}/app/node_modules ./node_modules
-    cp -R ${dependencies.javascript}/typespec/node_modules pkg/apigen/typespec/node_modules
+    cp -R ${dependencies.javascript}/typespec/${dependencies.nativeCPU}/node_modules pkg/apigen/typespec/node_modules
     chmod -R u+w node_modules pkg/apigen/typespec/node_modules
-    rm -rf node_modules/lightningcss-linux-x64-musl node_modules/@parcel/watcher-linux-x64-musl
+    ${dependencies.prunePlatformPackages} "$PWD/node_modules" "${dependencies.nativeCPU}"
+    ${dependencies.prunePlatformPackages} "$PWD/pkg/apigen/typespec/node_modules" "${dependencies.nativeCPU}"
     autoPatchelf node_modules pkg/apigen/typespec/node_modules
     patchShebangs node_modules pkg/apigen/typespec/node_modules
     export APIGEN_TYPESPEC_PACKAGE_DIR="$PWD/pkg/apigen/typespec"
@@ -79,12 +69,7 @@ pkgs.stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     ./scripts/generate_build_sources.sh
-    cp -R ${toolchain.go}/share/go "$TMPDIR/host-go"
-    chmod -R u+w "$TMPDIR/host-go"
-    (cd "$TMPDIR/host-go"
-      ${pkgs.lib.concatMapStringsSep "\n" (patch: "patch --reverse -p1 < ${patch}") hostDataPatches}
-    )
-    export GOROOT="$TMPDIR/host-go"
+    ${portableGoSDK}
     # Retain function symbols for exact binary-mode vulnerability analysis.
     # A Compose candidate must match the image's canonical release metadata.
     # Metadata grants no archive publication or adoption authority.
