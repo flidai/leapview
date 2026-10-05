@@ -1116,7 +1116,7 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
           graphNodeIDs: (graph?.graph?.nodes ?? []).map((node: any) => node.id),
           heading: root.querySelector('#pipeline-dependencies-title')?.textContent?.trim(),
           focusedNodeCount: graph?.querySelectorAll('.react-flow__node').length ?? 0,
-          scopeAction: graph?.querySelector('.asset-lineage-actions button')?.textContent?.trim(),
+          scopeAction: graph?.querySelector('.asset-lineage-scope')?.textContent?.trim(),
           recentRunCount: root.querySelectorAll('.recent-run').length,
           latestRunDate: root.querySelector('.summary-item:nth-child(3) a')?.textContent?.trim(),
           latestRunHref: root.querySelector('.summary-item:nth-child(3) a')?.getAttribute('href'),
@@ -1152,7 +1152,8 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
     expect((await dependencyHeading.textContent())?.trim()).toBe('Full dependency graph')
     expect(await scopeHint.count()).toBe(0)
     expect(await lineage.locator('.react-flow__node').count()).toBe(3)
-    await lineage.getByRole('button', { name: 'Fit', exact: true }).click()
+    await lineage.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await lineage.getByRole('button', { name: 'Fit graph', exact: true }).click()
     expect(await lineage.locator('.react-flow__node').count()).toBe(3)
     await lineage.getByRole('button', { name: 'Show direct dependencies' }).click()
     expect((await dependencyHeading.textContent())?.trim()).toBe('Direct dependencies')

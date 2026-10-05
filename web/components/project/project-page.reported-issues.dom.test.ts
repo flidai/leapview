@@ -131,9 +131,15 @@ test('pipeline Lineage renders dependency and explicit loading, empty, and error
         alert: root.querySelector('[role="alert"]')?.textContent?.trim() ?? '',
       }
     })
-    expect(retained).toEqual({ graph: true, alert: '' })
+    expect(retained).toEqual({ graph: true, alert: 'Lineage could not be refreshed: Lineage could not be loaded. Try again.' })
 
-    for (const [rootName, expected] of [['pipeline-lineage-loading', 'Loading lineage…'], ['pipeline-lineage-empty', 'No lineage dependencies are available for this asset.'], ['pipeline-lineage-error', 'Lineage could not be loaded. Try again.']]) {
+    await page.goto(`${baseURL}/?root=pipeline-lineage-empty`)
+    await page.locator('lv-asset-lineage-graph .asset-lineage-node').waitFor()
+    expect(await page.locator('lv-asset-lineage-graph .asset-lineage-node').count()).toBe(1)
+    expect(await page.getByRole('button', { name: /^Upstream/ }).isDisabled()).toBe(true)
+    expect(await page.getByRole('button', { name: /^Downstream/ }).isDisabled()).toBe(true)
+
+    for (const [rootName, expected] of [['pipeline-lineage-loading', 'Loading lineage…'], ['pipeline-lineage-error', 'Lineage could not be loaded. Try again.']]) {
       await page.goto(`${baseURL}/?root=${rootName}`)
       await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
       const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
