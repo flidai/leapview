@@ -61,6 +61,7 @@ model DashboardBuilderEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "builder", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard_builder" })
 model DashboardBuilderSignal {
+  codeqlQualificationProbe?: string;
   `projectId`: string;
   `dashboardId`: string;
   `draftId`: string;

@@ -8,6 +8,12 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      fault:
+        description: Disposable CodeQL qualification scenario; never merge this branch
+        required: true
+        type: choice
+        options: [missing-generated, warning, missing-sarif]
 
 permissions:
   contents: read
@@ -135,6 +141,11 @@ jobs:
       - name: Prepare generated source in this runner
         run: task security:sast:prepare
 
+      - name: Prove changed TypeSpec source was regenerated before extraction
+        run: |
+          rg -n --fixed-strings codeqlQualificationProbe web/generated/signals/index.ts
+          rg -n --fixed-strings codeqlQualificationProbe internal/dashboard/ui/signals/models.gen.go
+
       - name: Check maintained TypeScript source graphs
         if: matrix.language == 'javascript-typescript'
         run: task security:sast:typescript
@@ -148,6 +159,13 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+
+      - name: Remove a required generated package for disposable qualification
+        if: matrix.language == 'go' && inputs.fault == 'missing-generated'
+        run: |
+          test -n "$(find internal/access/postgres/internal/db -maxdepth 1 -name '*.go' -print -quit)"
+          test -z "$(git ls-files internal/access/postgres/internal/db)"
+          find internal/access/postgres/internal/db -maxdepth 1 -name '*.go' -print -delete
 
       - name: Trace every maintained Go module
         if: matrix.language == 'go'
@@ -171,6 +189,32 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
           output: ${{ runner.temp }}/codeql-results
+          # Disposable fault proof must not publish synthetic scan findings.
+          upload: never
+          upload-database: false
+
+      - name: Alter raw diagnostics for disposable qualification
+        if: matrix.language == 'javascript-typescript' && (inputs.fault == 'warning' || inputs.fault == 'missing-sarif')
+        env:
+          QUALIFICATION_FAULT: ${{ inputs.fault }}
+        run: |
+          python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ["RUNNER_TEMP"]) / "codeql-results/javascript.sarif"
+          if os.environ["QUALIFICATION_FAULT"] == "missing-sarif":
+              path.rename(path.with_name("javascript-withheld.sarif"))
+              print("Withheld expected SARIF; retained original under javascript-withheld.sarif")
+          else:
+              report = json.loads(path.read_text())
+              report["runs"][0]["invocations"][0].setdefault("toolExecutionNotifications", []).append({
+                  "level": "warning",
+                  "descriptor": {"id": "qualification/injected-warning"},
+                  "message": {"text": "Disposable warning must fail analysis health and Security gate"},
+              })
+              path.write_text(json.dumps(report))
+              print("Injected qualification/injected-warning into actual raw SARIF")
+          PYCODE
 
       - name: Require complete analysis diagnostics
         if: ${{ !cancelled() && steps.codeql_init.outcome == 'success' }}
