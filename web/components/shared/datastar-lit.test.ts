@@ -171,12 +171,12 @@ function fakeRuntime(state: Record<string, unknown>, effects: Array<() => void> 
 test('signal snapshots share work during a render and observe in-place changes on the next update', () => {
   let fieldReads = 0
   let title = 'Orders'
-  const dashboard = { get title() { fieldReads++; return title } }
-  setDatastarLitRuntimeForTests(fakeRuntime({ dashboard }))
+  const page = { get title() { fieldReads++; return title } }
+  setDatastarLitRuntimeForTests(fakeRuntime({ page }))
   class RepeatedReads extends TestElementBase {
     render(): unknown {
-      const first = this.signal('dashboard', {})
-      const second = this.signal('dashboard', {})
+      const first = this.signal('page', {})
+      const second = this.signal('page', {})
       return { first, second, same: first === second }
     }
   }
@@ -190,5 +190,5 @@ test('signal snapshots share work during a render and observe in-place changes o
   expect(fieldReads).toBe(2)
   expect(element.rendered.at(-1)).toEqual({ first: { title: 'Revenue' }, second: { title: 'Revenue' }, same: true })
   title = 'Fresh outside render'
-  expect(element.signal('dashboard', {})).toEqual({ title: 'Fresh outside render' })
+  expect(element.signal('page', {})).toEqual({ title: 'Fresh outside render' })
 })
