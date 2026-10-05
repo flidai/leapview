@@ -113,11 +113,11 @@ test('lineage selection, scope, and expanded dialog stay local and restore the g
   await browserExpect(page.locator('playground-graphs .documentation')).toContainText('orders-source')
   await graph.getByRole('button', { name: 'Show all upstream', exact: true }).click()
   await browserExpect(page.getByLabel('Graph scope')).toHaveValue('full')
-  await graph.getByRole('button', { name: 'Expand graph', exact: true }).click()
+  await graph.getByRole('button', { name: 'Expand to full page', exact: true }).click()
   await browserExpect(graph.getByRole('dialog')).toBeVisible()
   await page.keyboard.press('Escape')
   await browserExpect(graph.locator('dialog')).not.toHaveAttribute('open', '')
-  await browserExpect(graph.getByRole('button', { name: 'Expand graph', exact: true })).toBeVisible()
+  await browserExpect(graph.getByRole('button', { name: 'Expand to full page', exact: true })).toBeFocused()
 })
 
 test('semantic relationship inspector and field visibility use the real graph', async () => {

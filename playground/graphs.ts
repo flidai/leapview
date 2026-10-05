@@ -120,7 +120,7 @@ export class PlaygroundGraphs extends LitElement {
       </section>
       ${isLineage && this.lastSelected ? html`<p class="selection-feedback" role="status">Selected asset: <code>${this.lastSelected}</code></p>` : nothing}
       ${exampleDetails(html`<section class="documentation">
-        <p>${isLineage ? 'Select an asset to highlight its path. Switch scope, pan, zoom, or fit the included nodes. Expand graph opens the production dialog; Escape closes it.' : 'Select a dataset or relationship to inspect its connections. Use Related / All to reveal fields, drag datasets to arrange them, and Reset layout to restore the automatic layout.'}</p>
+        <p>${isLineage ? 'Select an asset to highlight its path. Switch scope, pan, zoom, or fit the included nodes. Expand to full page opens the complete explorer; Escape closes it.' : 'Select a dataset or relationship to inspect its connections. Use Related / All to reveal fields, drag datasets to arrange them, and Reset layout to restore the automatic layout.'}</p>
         <dl>
           <div><dt>Component</dt><dd><code>${isLineage ? '<lv-asset-lineage-graph>' : '<lv-semantic-model-graph>'}</code></dd></div>
           <div><dt>Source</dt><dd><code>${isLineage ? 'web/components/shared/asset-lineage-graph.ts' : 'web/components/shared/semantic-model-graph.ts'}</code></dd></div>
