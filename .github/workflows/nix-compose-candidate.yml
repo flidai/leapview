@@ -661,6 +661,173 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  host-qualification:
+    name: Fresh Linux host (${{ matrix.guest-os }}, ${{ matrix.arch }}, ${{ matrix.install-mode }})
+    needs: [authorize, build-bundles, preflight, controller-evidence]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        guest-os: [ubuntu2404, debian13]
+        install-mode: [bootstrap, nix-controller]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out protected guest verifier and fixture pins
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out authorized source identity and bootstrap bytes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Install pinned qualification tools without signing credentials
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Download exact original bundle and release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
+          path: candidate
+      - name: Download exact protected release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+      - name: Resolve original controller evidence from this exact run attempt
+        id: controller
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/controller-artifacts.json"
+          python3 - <<'VERIFY'
+          import json, os, re
+          from pathlib import Path
+          pages = json.loads(Path(os.environ['RUNNER_TEMP'], 'controller-artifacts.json').read_text())
+          if isinstance(pages, dict): pages = [pages]
+          name = f"nix-compose-controller-evidence-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}-{os.environ['ARCH']}"
+          matches = [a for page in pages for a in page.get('artifacts', [])
+              if a.get('name') == name and a.get('expired') is False
+              and re.fullmatch(r'sha256:[0-9a-f]{64}', a.get('digest', ''))
+              and (a.get('workflow_run') or {}).get('id') == int(os.environ['GITHUB_RUN_ID'])
+              and (a.get('workflow_run') or {}).get('head_branch') == 'main'
+              and (a.get('workflow_run') or {}).get('head_sha') == os.environ['GITHUB_SHA']]
+          if len(matches) != 1 or type(matches[0].get('id')) is not int:
+              raise SystemExit('expected one original same-attempt controller evidence artifact')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"artifact_id={matches[0]['id']}\n")
+          VERIFY
+      - name: Download original security evidence by immutable artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.controller.outputs.artifact_id }}
+          path: original-controller-evidence
+      - name: Verify authorized inputs and build protected binary verifier
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          cmp release-input/release-run-binding.json "candidate/$ARCH/release-run-binding.json"
+          cmp release-input/release-identity.json "candidate/$ARCH/release-identity.json"
+          cmp release-input/image-reference.txt "candidate/$ARCH/image-reference.txt"
+          test "$(cat release-input/image-reference.txt)" = "$IMAGE_REFERENCE"
+          cp -R original-controller-evidence retained-controller-evidence
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/host-controller-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Verify pinned vendor image and qualify a fresh disposable guest
+        env:
+          ARCH: ${{ matrix.arch }}
+          GUEST_OS: ${{ matrix.guest-os }}
+          INSTALL_MODE: ${{ matrix.install-mode }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p host-evidence
+          python3 - <<'DOWNLOAD'
+          import hashlib, json, os, pathlib, urllib.request
+          pins = json.loads(pathlib.Path('nix/guest-images.json').read_text())
+          matches = [x for x in pins['images'] if x['guestOS'] == os.environ['GUEST_OS'] and x['architecture'] == os.environ['ARCH']]
+          if pins['schemaVersion'] != 1 or len(matches) != 1: raise SystemExit('missing exact vendor image pin')
+          pin = matches[0]
+          vendor = hashlib.new(pin['checksum']['algorithm'])
+          sha256 = hashlib.sha256()
+          size = 0
+          with urllib.request.urlopen(pin['url'], timeout=60) as response, open(os.environ['RUNNER_TEMP'] + '/guest.qcow2', 'xb') as output:
+              while chunk := response.read(1024 * 1024):
+                  size += len(chunk)
+                  if size > 4 * 1024**3: raise SystemExit('cloud image exceeds fixture budget')
+                  vendor.update(chunk); sha256.update(chunk); output.write(chunk)
+          if not size or vendor.hexdigest() != pin['checksum']['hex']: raise SystemExit('vendor cloud image checksum mismatch')
+          pathlib.Path('host-evidence/vendor-image.json').write_text(json.dumps(pin | {'sha256': sha256.hexdigest(), 'sizeBytes': size}, indent=2) + '\n')
+          config = {'schemaVersion': 1, 'domain': 'leapview-qualification.invalid', 'adminEmail': 'qualification@example.test',
+              'environment': 'prod', 'https': False, 'image': os.environ['IMAGE_REFERENCE'], 'targetId': 'nix-host-qualification'}
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'host-config.json'
+          path.write_text(json.dumps(config) + '\n'); path.chmod(0o600)
+          DOWNLOAD
+          image_sha=$(python3 -c 'import json; print(json.load(open("host-evidence/vendor-image.json"))["sha256"])')
+          export GUEST_IMAGE_SHA256="$image_sha"
+          # Explicit TCG works on runners without KVM; receipts record software
+          # virtualization and matching host/guest ISA without a hardware claim.
+          # Expand qualification variables inside the locked shell.
+          # shellcheck disable=SC2016
+          nix develop --no-update-lock-file .#host-qualification -c bash -c '
+            set -euo pipefail
+            firmware=()
+            if [ "$ARCH" = arm64 ]; then firmware=(--firmware "$LEAPVIEW_QUALIFICATION_FIRMWARE"); fi
+            python3 scripts/nix_compose_guest_launcher.py run \
+              --cloud-image "$RUNNER_TEMP/guest.qcow2" --image-sha256 "$GUEST_IMAGE_SHA256" \
+              --guest-os "$GUEST_OS" --architecture "$ARCH" --virtualization-mode tcg \
+              --output-dir host-evidence/guest --launcher-receipt host-evidence/launcher.json \
+              --lifecycle-receipt host-evidence/lifecycle.json "${firmware[@]}" -- \
+              python3 scripts/nix_compose_host_guest.py qualify-guest \
+              --archive "candidate/$ARCH/$PACKAGE_NAME.tar.gz" \
+              --sidecar "candidate/$ARCH/$PACKAGE_NAME.tar.gz.sha256" \
+              --controller-build-identity "candidate/$ARCH/controller-build-identity.json" \
+              --source-root source --release-identity "candidate/$ARCH/release-identity.json" \
+              --source-revision "$SOURCE_REVISION" --image "$IMAGE_REFERENCE" --platform "linux/$ARCH" \
+              --original-controller-evidence original-controller-evidence \
+              --retained-controller-evidence retained-controller-evidence \
+              --controller-binary-verifier "$RUNNER_TEMP/host-controller-binary-verifier" \
+              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE"
+          '
+          python3 scripts/nix_compose_host_guest.py verify-receipt \
+            --receipt host-evidence/guest/host-guest-receipt.json --evidence-dir host-evidence/guest/evidence
+      - name: Retain exact fresh-host receipts and diagnostics without credentials
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-host-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}
+          path: host-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
   build-bundles:
     needs: authorize
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'

@@ -183,6 +183,10 @@ func (c *Controller) scoped(root string, stdout io.Writer) (*Controller, error) 
 }
 
 func (c *Controller) Initialize(ctx context.Context, options InitOptions) error {
+	return c.initialize(ctx, options, nil)
+}
+
+func (c *Controller) initialize(ctx context.Context, options InitOptions, operationEnvironment map[string]string) error {
 	var err error
 	options, err = NormalizeInitOptions(options)
 	if err != nil {
@@ -285,7 +289,7 @@ func (c *Controller) Initialize(ctx context.Context, options InitOptions) error 
 		cleanupInitialization()
 		return fmt.Errorf("Compose configuration is invalid; initialization can be retried: %w", err)
 	}
-	if err := c.captureInitialCredentials(ctx); err != nil {
+	if err := c.captureInitialCredentialsWithEnvironment(ctx, operationEnvironment); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(c.stdout, "initialized environment %s; run ./leapviewctl start\n", options.Environment)
@@ -376,6 +380,10 @@ func (c *Controller) FirstLogin() error {
 }
 
 func (c *Controller) captureInitialCredentials(ctx context.Context) error {
+	return c.captureInitialCredentialsWithEnvironment(ctx, nil)
+}
+
+func (c *Controller) captureInitialCredentialsWithEnvironment(ctx context.Context, operationEnvironment map[string]string) error {
 	path := c.path(credentialsName)
 	tmp, err := os.CreateTemp(c.root, ".initial-credentials-*.tmp")
 	if err != nil {
@@ -392,7 +400,12 @@ func (c *Controller) captureInitialCredentials(ctx context.Context) error {
 	if err := tmp.Chmod(0o600); err != nil {
 		return err
 	}
-	if err := c.compose(ctx, nil, tmp, c.stderr, "run", "--rm", "--no-deps", "leapview", "admin", "initialize", "--format", "json"); err != nil {
+	arguments := []string{"run", "--rm", "--no-deps"}
+	for _, name := range sortedEnvironmentNames(operationEnvironment) {
+		arguments = append(arguments, "--env", name)
+	}
+	arguments = append(arguments, "leapview", "admin", "initialize", "--format", "json")
+	if err := c.composeWithEnvironment(ctx, operationEnvironment, nil, tmp, c.stderr, arguments...); err != nil {
 		return fmt.Errorf("instance initialization did not deliver credentials; initialization can be retried: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
@@ -505,6 +518,10 @@ func (c *Controller) containerID(ctx context.Context) (string, error) {
 }
 
 func (c *Controller) compose(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
+	return c.composeWithEnvironment(ctx, nil, stdin, stdout, stderr, args...)
+}
+
+func (c *Controller) composeWithEnvironment(ctx context.Context, environment map[string]string, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
 	if c.composeOverride != nil {
 		return c.composeOverride(ctx, stdin, stdout, stderr, args...)
 	}
@@ -512,11 +529,20 @@ func (c *Controller) compose(ctx context.Context, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	processEnvironment, err := composeProcessEnvironment(c.root, nil)
+	processEnvironment, err := composeProcessEnvironment(c.root, environment)
 	if err != nil {
 		return err
 	}
 	return c.dockerWithEnvironment(ctx, stdin, stdout, stderr, processEnvironment, commandArgs...)
+}
+
+func sortedEnvironmentNames(environment map[string]string) []string {
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (c *Controller) docker(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {

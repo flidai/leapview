@@ -216,10 +216,31 @@
           ];
           inherit (nativeToolchain) GOTOOLCHAIN;
         };
+      hostQualificationShell =
+        platform:
+        let
+          nativePkgs = nixpkgs.legacyPackages.${platform};
+        in
+        nativePkgs.mkShellNoCC (
+          {
+            packages = [
+              nativePkgs.qemu
+              nativePkgs.cloud-utils
+              nativePkgs.openssh
+              nativePkgs.python3
+              nativePkgs.curl
+              nativePkgs.jq
+            ];
+          }
+          // nativePkgs.lib.optionalAttrs (platform == "aarch64-linux") {
+            LEAPVIEW_QUALIFICATION_FIRMWARE = "${nativePkgs.OVMF.fd}/FV/QEMU_EFI.fd";
+          }
+        );
     in
     {
       packages = pkgs.lib.genAttrs linuxSystems packagesFor;
       devShells.${system} = {
+        host-qualification = hostQualificationShell system;
         orchestration = pkgs.mkShellNoCC {
           packages = toolchain.orchestrationPackages;
           inherit (toolchain) GOTOOLCHAIN;
@@ -237,6 +258,7 @@
         runtime-security = runtimeSecurityShell system;
       };
       devShells.aarch64-linux.runtime-security = runtimeSecurityShell "aarch64-linux";
+      devShells.aarch64-linux.host-qualification = hostQualificationShell "aarch64-linux";
       checks.${system}.toolchain = import ./nix/check-toolchain.nix {
         inherit pkgs toolchain;
       };

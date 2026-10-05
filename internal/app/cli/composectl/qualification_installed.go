@@ -281,12 +281,12 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err != nil {
 		return err
 	}
-	if err := c.Initialize(ctx, InitOptions{
+	if err := c.InitializeFirstInstall(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
 		Image:       imageReference,
-	}); err != nil {
+	}, nativeTopology.ControlMigratorURL); err != nil {
 		return err
 	}
 	if err := appendOrReplaceQualificationEnv(

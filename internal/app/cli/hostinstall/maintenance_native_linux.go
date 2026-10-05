@@ -431,6 +431,8 @@ func (e *NativeEffects) stage(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// First-install defaults are candidate-owned seed data, not installed topology.
+	// Stage the new template without comparing or rewriting operator configuration.
 	predecessor, err := extractCandidatePayload(ctx, "docker", e.id.Predecessor, e.log)
 	if err != nil {
 		return err

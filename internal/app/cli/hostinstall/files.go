@@ -23,6 +23,7 @@ var legacyPayloadFiles = []payloadFile{
 	{Source: "compose.https.yaml", Target: func(paths Paths) string { return filepath.Join(paths.Root, "compose.https.yaml") }, Mode: 0o600},
 	{Source: "Caddyfile", Target: func(paths Paths) string { return filepath.Join(paths.Root, "Caddyfile") }, Mode: 0o600},
 	{Source: "deployment.env.example", Target: func(paths Paths) string { return filepath.Join(paths.Root, "deployment.env.example") }, Mode: 0o600},
+	{Source: "leapview.env.example", Target: func(paths Paths) string { return filepath.Join(paths.Root, "leapview.env.example") }, Mode: 0o600},
 	{Source: "leapviewctl-wrapper", Target: func(paths Paths) string { return filepath.Join(paths.SystemBin, "leapviewctl") }, Mode: 0o700},
 }
 

@@ -3,6 +3,14 @@ set -euo pipefail
 
 readonly image_file=/run/leapview/image-reference
 readonly config_file=/run/leapview/bootstrap.json
+readonly operator_config_file=/run/leapview/operator-bootstrap.json
+readonly install_marker=/opt/leapview/.host-install.json
+
+if [[ "$#" -ne 1 || ( "$1" != "prepare-host" && "$1" != "install" ) ]]; then
+  printf 'Usage: leapview-bootstrap prepare-host|install\n' >&2
+  exit 2
+fi
+readonly mode="$1"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   printf 'LeapView host bootstrap must run as root\n' >&2
@@ -41,21 +49,42 @@ if [[ ! -s "$config_file" ]]; then
   exit 1
 fi
 readonly revision019_image='ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368'
-install_config="$config_file"
 if [[ "$leapview_image" == "$revision019_image" ]]; then
   extra_packages+=(python3)
+fi
+
+if [[ "$mode" == "prepare-host" ]]; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends \
+    ca-certificates \
+    docker.io \
+    "$compose_package" "${extra_packages[@]}" \
+    unattended-upgrades
+  systemctl enable --now docker
+  docker version >/dev/null
+  docker compose version >/dev/null
+  exit 0
+fi
+
+if [[ "$leapview_image" == "$revision019_image" && ! -s "$install_marker" ]]; then
+  printf 'A first install requires an image with the operator-bootstrap lifecycle; revision-019 is supported only for an existing host\n' >&2
+  exit 1
+fi
+if [[ ! -s "$install_marker" && ! -s "$operator_config_file" ]]; then
+  printf 'Private operator PostgreSQL and physical-pool bootstrap input is missing: %s\n' "$operator_config_file" >&2
+  exit 1
+fi
+if ! command -v docker >/dev/null || ! systemctl is-active --quiet docker; then
+  printf 'Host prerequisites are missing; run leapview-bootstrap prepare-host first\n' >&2
+  exit 1
+fi
+docker compose version >/dev/null
+
+install_config="$config_file"
+if [[ "$leapview_image" == "$revision019_image" ]]; then
   install_config=/run/leapview/bootstrap-revision019.json
 fi
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y --no-install-recommends \
-  ca-certificates \
-  docker.io \
-  "$compose_package" "${extra_packages[@]}" \
-  unattended-upgrades
-systemctl enable --now docker
-docker version >/dev/null
-docker compose version >/dev/null
 
 if [[ "$leapview_image" == "$revision019_image" ]]; then
   /usr/local/libexec/leapview-revision019-config-compat prepare \
@@ -75,10 +104,16 @@ trap cleanup EXIT
 
 docker cp "$payload_container:/usr/local/share/leapview/deployment/." "$payload_dir"
 test -x "$payload_dir/leapviewctl"
-"$payload_dir/leapviewctl" host install \
-  --config "$install_config" \
-  --payload "$payload_dir" \
+install_arguments=(
+  host install
+  --config "$install_config"
+  --payload "$payload_dir"
   --source-image "$leapview_image"
+)
+if [[ "$leapview_image" != "$revision019_image" ]]; then
+  install_arguments+=(--operator-config "$operator_config_file")
+fi
+"$payload_dir/leapviewctl" "${install_arguments[@]}"
 if [[ "$leapview_image" == "$revision019_image" ]]; then
   /usr/local/libexec/leapview-revision019-config-compat verify \
     --config "$config_file" --image "$leapview_image" --translated "$install_config" \

@@ -301,7 +301,8 @@ class StagingTests(unittest.TestCase):
         self.release.mkdir(parents=True)
         self.payload = {name: b'packaged content' for name in
                         ['compose.yaml', 'compose.https.yaml', 'Caddyfile',
-                         'deployment.env.example', 'leapviewctl', 'leapviewctl-wrapper']}
+                         'deployment.env.example', 'leapview.env.example',
+                         'leapviewctl', 'leapviewctl-wrapper']}
         for name, data in self.payload.items():
             (self.release/name).write_bytes(data)
             (self.root/name).symlink_to('current/'+name)
@@ -317,6 +318,17 @@ class StagingTests(unittest.TestCase):
     def stage(self):
         with patch.object(self.rollout, 'out', return_value='container'), patch.object(self.rollout, 'run', side_effect=self.copy):
             return self.rollout.stage_release(self.image)
+
+    def test_new_generation_stages_seed_without_requiring_installed_template(self):
+        (self.root/'leapview.env.example').unlink()
+        (self.release/'leapview.env.example').unlink()
+        (self.root/'leapview.env').write_bytes(b'OPERATOR_SETTING=preserved\n')
+        self.image = 'ghcr.io/flidai/leapview@sha256:' + 'b' * 64
+        staged = self.stage()
+        self.assertEqual(staged.name, 'sha256-' + 'b' * 64)
+        self.assertEqual((staged/'leapview.env.example').read_bytes(), self.payload['leapview.env.example'])
+        self.assertEqual((self.root/'leapview.env').read_bytes(), b'OPERATOR_SETTING=preserved\n')
+        self.assertEqual((self.root/'current').resolve(), self.release)
 
     def test_same_image_retry_preserves_custom_configuration_on_rejection(self):
         (self.release/'Caddyfile').write_bytes(b'operator configuration')
