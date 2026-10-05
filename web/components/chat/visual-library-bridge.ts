@@ -4,7 +4,7 @@ import { uuidv7 } from '../shared/command'
 export const savedVisualDragType = 'application/x-leapview-saved-visual'
 export type SavedVisualLibraryMessage =
   | { type: 'lv-saved-visual-library'; library: SavedVisualLibrarySignal }
-  | { type: 'lv-add-saved-visual'; id: string; requestId?: string }
+  | { type: 'lv-add-saved-visual'; id: string; requestId?: string; pageId?: string }
   | { type: 'lv-remove-dashboard-visual'; pageId: string; componentId: string }
   | { type: 'lv-refresh-saved-visuals' }
 

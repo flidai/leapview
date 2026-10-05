@@ -164,7 +164,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     href.searchParams.set('embed', 'chat')
     if (page) href.searchParams.set('page', page.id)
     window.parent.postMessage({
-      type: 'lv-builder-saved', revisionId: builder.revision.id, fixingVisuals: Boolean(this.pendingFixVisuals), fixMessage: this.fixVisualsMessage, canArrange: Boolean(builder.capabilities.canEdit && !this.commandPending && !this.builderFilterController.pending && !this.builderFilterCommandInFlight && page?.visuals.length), pageId: page?.id ?? '', pageTitle: page?.title ?? '', modelId: builder.semanticModel.id, href: href.pathname + href.search,
+      type: 'lv-builder-saved', updating: this.commandPending || this.importingSavedVisual, revisionId: builder.revision.id, fixingVisuals: Boolean(this.pendingFixVisuals), fixMessage: this.fixVisualsMessage, canArrange: Boolean(builder.capabilities.canEdit && !this.commandPending && !this.builderFilterController.pending && !this.builderFilterCommandInFlight && page?.visuals.length), pageId: page?.id ?? '', pageTitle: page?.title ?? '', pages: builder.pages.map(page => ({id: page.id, title: page.title})), modelId: builder.semanticModel.id, href: href.pathname + href.search,
       reference: {
         reference: { kind: 'dashboard', id: builder.dashboardId }, name: page ? `${builder.title} · ${page.title}` : builder.title,
         hierarchy: [], href: href.pathname + href.search, locations: page ? [{dashboardId: builder.dashboardId, dashboardName: builder.title, pageId: page.id, pageName: page.title, href: href.pathname + href.search}] : [], context: ['Editable dashboard draft'],
@@ -3539,7 +3539,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 data-page-id=${item.id}
                 data-page-dragging=${this.draggedPageID === item.id}
                 data-page-drop=${this.pageDropTargetID === item.id}
-                @click=${(event: MouseEvent) => { if (item.id === page?.id) this.openPageSettings(item, event) }}
+                @click=${(event: MouseEvent) => { if (this.embeddedInChat) { event.preventDefault(); this.selectPage(item.id) } else if (item.id === page?.id) this.openPageSettings(item, event) }}
                 @dragstart=${(event: DragEvent) => this.startPageDrag(event, item.id)}
                 @dragover=${(event: DragEvent) => this.dragPageOver(event, item.id)}
                 @dragleave=${() => this.leavePageDrop(item.id)}
@@ -3736,6 +3736,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const fromParent = this.embeddedInChat && event.source === window.parent
     if (!fromParent && event.source !== this.savedVisualFrame?.contentWindow) return
     if (fromParent && (event.data as { type: string }).type === 'lv-arrange-dashboard-visuals') this.arrangeVisuals()
+    if (fromParent && (event.data as {type: string}).type === 'lv-select-dashboard-page') {
+      const pageId = (event.data as unknown as {pageId: string}).pageId
+      if (this.builder?.pages.some(page => page.id === pageId) && this.selectedPage(this.builder)?.id !== pageId) this.selectPage(pageId)
+    }
+    if (fromParent && event.data?.type === 'lv-add-saved-visual' && event.data.pageId && event.data.pageId !== (this.builder ? this.selectedPage(this.builder)?.id : undefined)) {
+      window.parent.postMessage({type: 'lv-builder-operation-error', message: 'The selected page changed. Select your destination and try again.'} satisfies ChatDashboardMessage, window.location.origin)
+      return
+    }
     if (fromParent && (event.data as { type: string }).type === 'lv-refresh-builder') this.refreshBuilderSignals()
     if (fromParent && ['lv-add-saved-visual', 'lv-remove-dashboard-visual'].includes(event.data?.type) && (this.commandPending || this.importingSavedVisual)) {
       window.parent.postMessage({ type: 'lv-builder-operation-error', message: 'The dashboard is finishing another update. Please try again.' } satisfies ChatDashboardMessage, window.location.origin)
@@ -3751,7 +3759,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private handleAgentVisualAdd = (event: CustomEvent<{savedId: string}>): void => {
     event.preventDefault()
     event.stopPropagation()
-    if (this.builder?.pages.some(page => page.visuals.some(visual => (this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)) === event.detail.savedId))) return
+    if ((this.builder ? this.selectedPage(this.builder)?.visuals : [])?.some(visual => (this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)) === event.detail.savedId)) return
     this.addSavedVisual(event.detail.savedId)
   }
 
@@ -3838,7 +3846,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div id="builder-agent-content" class="pane-content agent-pane-content" ?hidden=${collapsed}>
-          <lv-chat-drawer .dashboardSavedVisualIds=${this.builder?.pages.flatMap(page => page.visuals.map(visual => this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)).filter((id): id is string => Boolean(id))) ?? []} .open=${!collapsed} embedded @lv-chat-drawer-close=${this.closeAgentPane}></lv-chat-drawer>
+          <lv-chat-drawer .dashboardSavedVisualIds=${(this.builder ? this.selectedPage(this.builder)?.visuals : [])?.map(visual => this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)).filter((id): id is string => Boolean(id)) ?? []} .open=${!collapsed} embedded @lv-chat-drawer-close=${this.closeAgentPane}></lv-chat-drawer>
         </div>
       </aside>
     `

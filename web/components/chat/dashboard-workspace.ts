@@ -15,15 +15,18 @@ export type ChatDashboardMessage =
   | { type: 'lv-dashboard-mutation'; href: string; revisionId: string; pageId: string; reference: AgentReferenceSignal; components: DashboardChatComponent[] }
   | { type: 'lv-builder-back-to-chat' }
   | { type: 'lv-refresh-builder' }
+  | { type: 'lv-select-dashboard-page'; pageId: string }
   | { type: 'lv-arrange-dashboard-visuals' }
   | { type: 'lv-builder-operation-error'; message: string }
   | {
     type: 'lv-builder-saved'
     revisionId: string
     canArrange?: boolean
+    updating?: boolean
     fixingVisuals?: boolean
     fixMessage?: string
     pageId: string
+    pages?: Array<{id: string; title: string}>
     pageTitle?: string
     modelId?: string
     href: string

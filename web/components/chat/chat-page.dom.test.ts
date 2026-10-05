@@ -883,8 +883,8 @@ test('dashboard membership follows Preview, delete, Undo, and saved-library impo
       e.handleVisualLibraryState(new CustomEvent('lv-visual-library-state', {detail: {savedIds: ['chart-one'], libraryIds: {'chart-one': 'saved-one'}, savingId: '', error: ''}}))
       await e.updateComplete
     })
-    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
-    expect(await chat.evaluate((e: any) => e.dashboardCopies['chart-one'])).toMatchObject({id: 'saved_import', pageId: 'another-page'})
+    expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
+    expect(await chat.evaluate((e: any) => e.dashboardCopies['chart-one'])).toBeUndefined()
     await project([{id: 'saved_import', pageId: 'another-page', savedVisualId: 'saved-one'}, {id: 'second_copy', pageId: 'overview', savedVisualId: 'saved-one'}])
     await project([{id: 'second_copy', pageId: 'overview', savedVisualId: 'saved-one'}])
     expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
@@ -995,5 +995,64 @@ test('preview chat follows the selected page and targets visual imports there', 
     await page.waitForTimeout(200)
     expect(new URLSearchParams(posted).get('pageId')).toBe('pies')
     expect(new URL(new URL(page.url()).searchParams.get('dashboard')!,baseURL).searchParams.get('page')).toBe('pies')
+  } finally {await page.close()}
+})
+
+test('preview header stays aligned and visual membership is scoped to the chosen page', async () => {
+  const page = await browser.newPage({viewport: {width: 1400, height: 900}})
+  try {
+    await page.goto(baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      e.dashboardPreview = true; e.builderOpen = true
+      e.dashboardPageId = 'pies'; e.dashboardPageTitle = 'Pie charts with a long name'; e.savedBuilderHref='/dashboards/demo/edit?embed=chat&page=pies'
+      e.dashboardPages = [{id:'overview',title:'Overview'},{id:'pies',title:'Pie charts with a long name'}]
+      e.fixVisualsMessage = 'Completed 1 visual. Your layout is unchanged.'
+      e.dashboardCopyLinks = {one:[{id:'first',pageId:'overview'},{id:'second',pageId:'pies'}]}
+      e.dashboardComponents = [{id:'first',pageId:'overview'},{id:'second',pageId:'pies'}]
+      e.reconcileDashboardCopies(); await e.updateComplete
+    })
+    expect(await chat.evaluate((e: any)=>e.dashboardCopies.one)).toMatchObject({id:'second',pageId:'pies'})
+    const heading = await chat.locator('.chat-pane-heading').boundingBox()
+    const expand = await page.getByRole('button',{name:'Expand chat',exact:true}).boundingBox()
+    expect(Math.abs(heading!.y + heading!.height / 2 - expand!.y - expand!.height / 2)).toBeLessThan(2)
+    await chat.evaluate(async(e: any)=>{e.dashboardComponents=[{id:'first',pageId:'overview'}];e.reconcileDashboardCopies();await e.updateComplete})
+    expect(await chat.evaluate((e: any)=>e.dashboardCopies.one)).toBeUndefined()
+    await page.getByRole('button',{name:'Expand chat',exact:true}).click()
+    expect((await chat.locator('.dashboard-destination').boundingBox())!.height).toBeLessThan(65)
+  } finally {await page.close()}
+})
+
+test('removing a visual keeps the live builder mounted and sends its selected-page command', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async(e: any)=>{
+      e.dashboardPreview=true; await e.updateComplete
+      const frame=e.shadowRoot.querySelector('.builder-frame') as HTMLIFrameElement
+      frame.contentDocument!.body.innerHTML='<lv-dashboard-builder></lv-dashboard-builder>'
+      ;(window as any).builderDocument=frame.contentDocument
+      ;(window as any).builderCommands=[]
+      frame.contentWindow!.addEventListener('message',event=>(window as any).builderCommands.push(event.data))
+      e.savedBuilderHref='/dashboards/demo/edit?embed=chat&page=pies';e.dashboardPageId='pies'
+      e.dashboardCopies={one:{id:'second',pageId:'pies'}}
+      e.toggleDashboardVisual('one')
+    })
+    await page.waitForFunction(()=>(window as any).builderCommands.length>0,{},{timeout:2000})
+    expect(await page.evaluate(()=>(window as any).builderCommands[0])).toEqual({type:'lv-remove-dashboard-visual',pageId:'pies',componentId:'second'})
+    expect(await chat.evaluate((e: any)=>e.shadowRoot.querySelector('.builder-frame').contentDocument===(window as any).builderDocument)).toBe(true)
+    await chat.evaluate(async(e: any)=>{
+      e.savingDashboard=false; e.dashboardCopies={}; e.dashboardPages=[{id:'pies',title:'Pie charts'},{id:'overview',title:'Overview'}]
+      await e.addAgentVisual(new CustomEvent('lv-add-agent-visual',{detail:{savedId:'11111111-1111-1111-1111-111111111111',artifactId:'new-chart'}}))
+    })
+    await page.waitForFunction(()=>(window as any).builderCommands.length===2)
+    expect(await page.evaluate(()=>(window as any).builderCommands[1])).toMatchObject({type:'lv-add-saved-visual',pageId:'pies',id:'11111111-1111-1111-1111-111111111111'})
+    expect(await chat.evaluate((e: any)=>e.shadowRoot.querySelector('.builder-frame').contentDocument===(window as any).builderDocument)).toBe(true)
+    await chat.evaluate(async(e: any)=>{e.savingDashboard=false; e.selectDashboardPage({target:{value:'overview'}});await e.updateComplete})
+    await page.waitForFunction(()=>(window as any).builderCommands.length===3)
+    expect(await page.evaluate(()=>(window as any).builderCommands[2])).toEqual({type:'lv-select-dashboard-page',pageId:'overview'})
   } finally {await page.close()}
 })

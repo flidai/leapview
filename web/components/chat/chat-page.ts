@@ -62,6 +62,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private dashboardRevisionId = ''
   @state() private dashboardPageId = ''
   @state() private dashboardPageTitle = ''
+  @state() private dashboardPages: Array<{id: string; title: string}> = []
+  @state() private builderUpdating = false
+  @state() private pendingDashboardPageId = ''
   private builderNeedsRefresh = false
   private visualCacheKey = ''
   private visualCache: Record<string, VisualizationEnvelope> = {}
@@ -147,6 +150,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       return
     }
     if (event.data?.type === 'lv-builder-operation-error') {
+      this.pendingDashboardPageId = ''
       this.dashboardSaveError = event.data.message
       this.savingDashboard = false
       this.pendingDashboardChange = null
@@ -171,6 +175,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       if (component) this.rememberDashboardCopy(pending.artifactId, component)
       this.pendingDashboardChange = null
     }
+    if (!mutation || !this.dashboardPageId) this.dashboardPageId = event.data.pageId
     this.reconcileDashboardCopies()
     if (completed) {
       window.clearTimeout(this.saveTimer)
@@ -187,6 +192,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.persistDashboardLocation()
     if (event.data.type === 'lv-builder-saved') {
       this.dashboardPageTitle = event.data.pageTitle || event.data.pageId
+      this.dashboardPages = event.data.pages ?? this.dashboardPages
+      this.builderUpdating = event.data.updating === true
+      if (this.pendingDashboardPageId === event.data.pageId) this.pendingDashboardPageId = ''
       this.canArrangeDashboard = event.data.canArrange === true
       if (event.data.fixingVisuals !== undefined) this.fixingDashboardVisuals = event.data.fixingVisuals
       if (event.data.fixMessage !== undefined) this.fixVisualsMessage = event.data.fixMessage
@@ -218,7 +226,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
     const copies: Record<string, DashboardChatComponent> = {}
     for (const [artifactId, links] of Object.entries(this.dashboardCopyLinks)) {
-      const component = this.dashboardComponents.find(component => links.some(link => link.id === component.id && link.pageId === component.pageId))
+      const component = this.dashboardComponents.find(component => component.pageId === this.dashboardPageId && links.some(link => link.id === component.id && link.pageId === component.pageId))
       if (component) copies[artifactId] = component
     }
     this.dashboardCopies = copies
@@ -250,10 +258,24 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.builderFrame?.contentWindow?.postMessage({ type: 'lv-refresh-saved-visuals' }, window.location.origin)
   }
 
-  private beginDashboardChange(): void {
+  private get liveBuilder(): Window | null {
+    const frame = this.builderFrame
+    return !this.builderNeedsRefresh && frame?.contentDocument?.querySelector('lv-dashboard-builder') ? frame.contentWindow : null
+  }
+
+  private selectDashboardPage(event: Event): void {
+    const pageId = (event.target as HTMLSelectElement).value
+    if (!this.liveBuilder || pageId === this.dashboardPageId || !this.dashboardPages.some(page => page.id === pageId)) return
+    this.pendingDashboardPageId = pageId
+    this.liveBuilder.postMessage({type: 'lv-select-dashboard-page', pageId} satisfies ChatDashboardMessage, window.location.origin)
+  }
+
+  private beginDashboardChange(keepBuilder = false): void {
     this.savingDashboard = true
-    this.builderNeedsRefresh = true
-    if (this.builderFrame) this.builderFrame.src = 'about:blank'
+    if (!keepBuilder) {
+      this.builderNeedsRefresh = true
+      if (this.builderFrame) this.builderFrame.src = 'about:blank'
+    }
     this.dashboardSaveError = ''
     window.clearTimeout(this.saveTimer)
     this.saveTimer = window.setTimeout(() => {
@@ -265,14 +287,19 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private addAgentVisual = async (event: CustomEvent<{ savedId: string; artifactId: string }>): Promise<void> => {
     event.preventDefault()
-    if (this.savingDashboard || this.dashboardCopies[event.detail.artifactId]) return
+    if (this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId || this.dashboardCopies[event.detail.artifactId]) return
     const requestId = uuidv7()
     this.pendingDashboardChange = {
       artifactId: event.detail.artifactId,
       componentId: savedVisualComponentId(event.detail.savedId, requestId),
       remove: false,
     }
-    this.beginDashboardChange()
+    const builder = this.liveBuilder
+    this.beginDashboardChange(Boolean(builder))
+    if (builder) {
+      builder.postMessage({type: 'lv-add-saved-visual', id: event.detail.savedId, requestId, pageId: this.dashboardPageId}, window.location.origin)
+      return
+    }
     await this.updateComplete
     if (this.savedBuilderHref) {
       const path = new URL(this.savedBuilderHref, window.location.href).pathname.replace(/\/edit$/, '/draft/saved-visual')
@@ -289,14 +316,19 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private toggleDashboardVisual(artifactId: string): void {
-    if (this.savingDashboard) return
+    if (this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId) return
     const copy = this.dashboardCopies[artifactId]
     if (!copy) {
       this.savePreviewVisual(artifactId, true)
       return
     }
     this.pendingDashboardChange = { artifactId, componentId: copy.id, remove: true }
-    this.beginDashboardChange()
+    const builder = this.liveBuilder
+    this.beginDashboardChange(Boolean(builder))
+    if (builder) {
+      builder.postMessage({type: 'lv-remove-dashboard-visual', pageId: copy.pageId, componentId: copy.id}, window.location.origin)
+      return
+    }
     const path = new URL(this.savedBuilderHref, window.location.href).pathname.replace(/\/edit$/, '/draft/chat-remove-visual')
     submitVisualForm(path, this.mutationFrame, {
       chatReceipt: '1', pageId: copy.pageId, componentId: copy.id, revisionId: this.dashboardRevisionId,
@@ -521,6 +553,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel);
     }
     .preview-scroll { overflow: auto; min-height: 0; padding: 16px; overscroll-behavior: contain; }
+    .preview-panel:has(.dashboard-destination) { grid-template-rows: auto auto minmax(0, 1fr); }
     .preview-panel[hidden], .builder-stage[hidden], .builder-frame[hidden] { display: none; }
     .builder-stage { grid-area: builder; min-width: 0; min-height: 0; position: relative; }
     .builder-frame { display: block; width: 100%; height: 100%; border: 0; }
@@ -616,14 +649,17 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
 
     .body.with-chat-header { grid-template-rows: auto minmax(0, 1fr); }
-    .fix-result { flex-basis: 100%; margin: 0; font-size: 12px; line-height: 1.4; color: var(--lv-fg-muted); }
+    .fix-result { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.4; color: var(--lv-fg-muted); }
     .chat-pane-header {
-      flex-wrap: wrap;
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; min-height: 50px; padding: 0 12px; border-bottom: var(--lv-border-default);
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+      gap: 6px; min-height: 50px; padding: 0 12px; border-bottom: var(--lv-border-default);
     }
     .chat-pane-header[hidden] { display: none; }
-    .chat-pane-heading { display: flex; align-items: center; gap: 8px; font: var(--lv-type-body-compact); }
+    .chat-pane-heading { display: flex; min-width: 0; align-items: center; gap: 6px; white-space: nowrap; font: var(--lv-type-body-compact); }
+    .chat-page-name { overflow: hidden; text-overflow: ellipsis; }
+    .chat-pane-heading svg { flex-shrink: 0; }
+    .dashboard-destination { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: var(--lv-border-default); font: var(--lv-type-body-compact); }
+    .dashboard-destination select { min-width: 0; max-width: 240px; padding: 5px 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); }
     .arrange-dashboard { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-size: 12px; white-space: nowrap; cursor: pointer; }
     .arrange-dashboard svg { width: 14px; height: 14px; }
     .arrange-dashboard:disabled { opacity: .6; cursor: default; }
@@ -991,7 +1027,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             </section>
             <div class=${`body${this.builderOpen ? ' with-chat-header' : ''}`}>
               <div class="chat-pane-header" ?hidden=${!this.builderOpen}>
-                <span class="chat-pane-heading">${agentIcon()} Chat${this.dashboardPageTitle ? ` · ${this.dashboardPageTitle}` : ''}</span>
+                <span class="chat-pane-heading" title=${this.dashboardPageTitle ? `Chat · ${this.dashboardPageTitle}` : 'Chat'}>${agentIcon()}<span>Chat</span>${this.dashboardPageTitle ? html`<span class="chat-page-name"> · ${this.dashboardPageTitle}</span>` : null}</span>
                 <div class="titlebar-actions">
                   <button class="arrange-dashboard" type="button" aria-label="Fix view visuals" aria-busy=${this.fixingDashboardVisuals} title="Complete missing chart fields while keeping your positions and sizes" ?disabled=${!this.canArrangeDashboard || this.fixingDashboardVisuals} @click=${this.arrangeDashboard}>${lucideIcon(Grid2X2)} ${this.fixingDashboardVisuals ? 'Fixing…' : 'Fix view visuals'}</button>
                   <button class="chat-size-toggle" type="button" aria-label="Expand chat" title="Expand chat" @click=${this.closeDashboardPreview}>${lucideIcon(Maximize2)}</button>
@@ -1036,11 +1072,17 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           <h2>Visual</h2>
           <div class="preview-actions">
             <button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>
-            <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
+            <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
             <button class="preview-action preview-builder-action" type="button" aria-label="View in Dashboard Preview" title="View in Dashboard Preview" ?disabled=${this.savingDashboard || !artifacts.length} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview</button>
             <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
           </div>
         </div>
+        ${this.savedBuilderHref ? html`<label class="dashboard-destination">Dashboard page
+          <select aria-label="Dashboard page" .value=${this.pendingDashboardPageId || this.dashboardPageId} ?disabled=${this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || !this.dashboardPages.length} @change=${this.selectDashboardPage}>
+            ${this.dashboardPages.map(page => html`<option value=${page.id}>${page.title}</option>`)}
+          </select>
+          <span>${added ? 'Added to this page' : 'Add to this page'}</span>
+        </label>` : null}
         <div class="preview-scroll">
         ${this.visualLibraryState.error ? html`<p class="save-error" role="alert">${this.visualLibraryState.error}</p>` : null}
         ${this.dashboardSaveError ? html`<p class="save-error" role="alert">${this.dashboardSaveError}</p>` : null}

@@ -3875,3 +3875,25 @@ test('dragging an aggregate-only dimension creates a chart instead of an invalid
     expect(command).toMatchObject({action:'add_visual',type:'bar',fieldId:'driver_order',role:'dimension'})
   } finally {await page.close()}
 })
+
+test('embedded preview page tabs select in place instead of reloading the builder', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const builder = page.frameLocator('iframe[title="Chat builder"]').locator('lv-dashboard-builder')
+    await builder.waitFor()
+    const result = await builder.evaluate(async (element: any) => {
+      element.pageBaseHref='/dashboards/demo/edit?draft=draft-7'
+      await element.updateComplete
+      let selection: any
+      element.addEventListener('lv-builder-page-select',(event: CustomEvent)=>{selection=event.detail},{once:true})
+      const link=element.shadowRoot.querySelector('.page-tab[href*="page=details"]')
+      const prevented=!link.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}))
+      await element.updateComplete
+      return {prevented, selection, pageId:element.selectedPage(element.builder)?.id}
+    })
+    expect(result.prevented).toBe(true)
+    expect(result.selection).toMatchObject({pageId:'details'})
+    expect(result.pageId).toBe('details')
+  } finally {await page.close()}
+})
