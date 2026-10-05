@@ -128,6 +128,9 @@ nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop -c docker load --input "$(readlink -f result-image)"
 # Full production-image qualification using disposable Docker fixtures:
 task nix:qualify
+nix build --no-update-lock-file .#leapview-site
+nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image
+nix develop -c docker load --input "$(readlink -f result-site-image)"
 ```
 
 `task nix:build`, `task nix:image`, and `task nix:qualify` expose the same paths.
@@ -145,6 +148,8 @@ loopback registry and existing PostgreSQL/browser fixtures.
 | `leapviewctl-compose-linux-amd64`, `leapviewctl-compose-linux-arm64` | Clean-source controller candidates with canonical release metadata for Compose bundle assembly; requires a matching immutable image and separate qualification |
 | `leapview-image` | Container archive with the existing entrypoint, UID/GID 999, health check, writable volume paths and deployment bundle |
 | `leapview-compose`, `leapview-linux-compose`, `leapview-image-compose` | Native application, portable binaries and image with canonical `VERSION`, exact clean source revision and `release=true`; candidate metadata grants no release admission |
+| `leapview-site` | Native Linux public-site binary with embedded CSS/JavaScript and map assets materialized on disk |
+| `leapview-site-image` | Minimal native Linux public-site image with canonical `VERSION`, exact revision labels, UID 65532, and read-only files; candidate metadata grants no release admission |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets` | Pinned runtime map assets |
 | `extension-supply` | Pinned runtime extension assets; currently only the x86_64 hash is recorded |

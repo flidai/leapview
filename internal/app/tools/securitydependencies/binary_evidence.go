@@ -24,6 +24,7 @@ const (
 	maxBinaryReportBytes  = 32 << 20
 	maxBinarySummaryBytes = 2 << 20
 	binaryEvidenceMaxAge  = 120 * time.Hour
+	siteMainPackage       = "github.com/flidai/leapview/cmd/leapview-site"
 )
 
 type binaryEvidence struct {
@@ -91,6 +92,13 @@ func inspectExactBinary(data []byte, program, platform string) (*debug.BuildInfo
 	if !supported || file.Machine != want || file.Class != elf.ELFCLASS64 || file.Data != elf.ELFDATA2LSB {
 		return nil, "", errors.New("unsupported or mismatched ELF platform")
 	}
+	if program == siteMainPackage {
+		for _, segment := range file.Progs {
+			if segment.Type == elf.PT_INTERP || segment.Type == elf.PT_DYNAMIC {
+				return nil, "", errors.New("site binary must be statically linked")
+			}
+		}
+	}
 	info, err := buildinfo.Read(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", err
@@ -107,6 +115,9 @@ func inspectExactBinary(data []byte, program, platform string) (*debug.BuildInfo
 	}
 	if settings["GOOS"]+"/"+settings["GOARCH"] != platform {
 		return nil, "", errors.New("binary build settings differ from expected platform")
+	}
+	if program == siteMainPackage && settings["CGO_ENABLED"] != "0" {
+		return nil, "", errors.New("site binary must be built with CGO_ENABLED=0")
 	}
 	return info, binaryDigest(data), nil
 }
