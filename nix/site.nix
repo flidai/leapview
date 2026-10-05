@@ -52,14 +52,13 @@ let
     buildPhase = ''
       runHook preBuild
       ./scripts/generate_build_sources.sh
-      go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare
-      go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen
       go run ./internal/app/tools/clidocgen
       go run ./internal/app/tools/schemadocgen
       go run ./internal/app/tools/openapidocgen
       go run ./internal/app/tools/docsitegen
       mkdir -p "$tools/bin"
       CGO_ENABLED=0 go build -trimpath -buildvcs=false -o "$tools/bin/mapassets" ./internal/app/tools/mapassets
+      go build -tags=duckdb_arrow -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply
       runHook postBuild
     '';
     installPhase = ''
@@ -108,6 +107,17 @@ let
     '';
     buildPhase = ''
       runHook preBuild
+      # Source generation consumes the signed, fixed-output extension supply.
+      # Documentation tools load these exact local files without installation.
+      export DUCKDB_EXTENSION_DIRECTORY="$TMPDIR/site-extensions"
+      mkdir -m 0700 "$DUCKDB_EXTENSION_DIRECTORY"
+      for name in ducklake spatial postgres_scanner; do
+        artifacts=( ${assets.extensions}/artifacts/$name-*.duckdb_extension )
+        test "''${#artifacts[@]}" -eq 1
+        cp "''${artifacts[0]}" "$DUCKDB_EXTENSION_DIRECTORY/$name.duckdb_extension"
+      done
+      CGO_ENABLED=1 go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen
+      go run ./internal/app/tools/docsitegen
       bun scripts/generate_visualization_validator.ts
       bun run build:site
       ${portableGoSDK}
