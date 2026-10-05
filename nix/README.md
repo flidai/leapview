@@ -332,8 +332,10 @@ Duplicate files, links, extra paths and ambiguous tar metadata fail closed.
 Failed scans retain diagnostics and cannot produce a successful evidence manifest.
 These PR reports are unprivileged qualification evidence. The manual
 `Protected Nix controller candidate` workflow rescans exact AMD64 and ARM64
-archives with main-owned tools before signing. It requires one exact open PR head
-directly based on main, and checks that authorization again before signing.
+archives with main-owned tools before signing. Its `source_revision` must be the
+exact `GITHUB_SHA` from a `workflow_dispatch` on `main` or one exact open PR head
+directly based on main. It checks that PR authorization again before signing; a
+main dispatch remains bound to its immutable event SHA while the build runs.
 Native Linux host matrix probes run without signing credentials; the signing job only
 reverifies retained evidence and attests the already-qualified archive bytes.
 A separate read-only job verifies live provenance and the exact SPDX predicate
