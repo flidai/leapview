@@ -12,6 +12,7 @@ const qaPostgresEnv = {
 }
 const qaRuntimeEnv = {
   LEAPVIEW_HOME: qaHome,
+  LEAPVIEW_CLI_CONFIG: `${qaHome}/cli.json`,
   LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
   LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
 }
