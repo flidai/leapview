@@ -416,24 +416,33 @@ test('canvas selection does not open visual focus; the explicit expand action do
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any, preview) => {
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-dashboard-builder') as any
+      return Boolean(element?.builder?.pages?.length && !element.isUpdatePending)
+    })
+    const initialURL = page.url()
+    const navigations: string[] = []
+    page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations.push(frame.url()) })
+    const builder = page.locator('lv-dashboard-builder')
+    await builder.evaluate(async (element: any, preview) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: { preview: { active: true } }, builderVisuals: { 'sales-chart': preview } })
       await element.updateComplete
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-      await element.updateComplete
-      element.shadowRoot.querySelector('.visual')?.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }))
-      await element.updateComplete
-      const modal = element.shadowRoot.querySelector('lv-visual-modal') as any
-      const afterSelection = modal.shadowRoot.querySelector('[role="dialog"]') !== null
-      const host = element.shadowRoot.querySelector('lv-visualization-host') as any
-      host.shadowRoot.querySelector('[data-visualization-expand]')?.click()
-      await modal.updateComplete
-      await modal.updateComplete
-      return { afterSelection, afterExpand: modal.shadowRoot.querySelector('[role="dialog"]') !== null }
     }, governedBarPreviewEnvelope('rev-7'))
-    expect(state).toEqual({ afterSelection: false, afterExpand: true })
+    const expand = builder.locator('lv-visualization-host').getByRole('button', { name: 'Expand chart', exact: true })
+    await expand.waitFor({ state: 'visible' })
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => document.querySelector('lv-dashboard-builder')?.shadowRoot?.querySelector('.visual')?.getAttribute('data-selected') === 'false')
+    await builder.locator('.visual-drag-header').click()
+    await page.waitForFunction(() => document.querySelector('lv-dashboard-builder')?.shadowRoot?.querySelector('.visual')?.getAttribute('data-selected') === 'true')
+    const dialog = builder.locator('lv-visual-modal').getByRole('dialog', { includeHidden: true })
+    const afterSelection = await dialog.count() > 0
+    await expand.click()
+    await dialog.waitFor({ state: 'visible' })
+    const afterExpand = await dialog.count() > 0
+    expect({ afterSelection, afterExpand }).toEqual({ afterSelection: false, afterExpand: true })
+    expect(page.url()).toBe(initialURL)
+    expect(navigations).toEqual([])
   } finally { await page.close() }
 })
 
