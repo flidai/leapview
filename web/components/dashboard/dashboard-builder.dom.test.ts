@@ -1,8 +1,8 @@
 import { beforeAll, expect, test } from 'bun:test'
 import type { Browser } from '@playwright/test'
-import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser.fixture'
+import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser.test-fixture'
 import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope } from './dashboard-builder-test-fixtures'
-import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.fixture'
+import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test-fixture'
 
 const fixture = dashboardBuilderBrowserFixture()
 let browser: Browser
