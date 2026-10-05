@@ -46,6 +46,7 @@ class ChatThread extends LitElement {
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
   @property({ type: Boolean }) dashboardPreviewAvailable = false
   @property({ attribute: false }) selectedVisualId = ''
+  @property({ attribute: false }) dashboardVisualIds: string[] = []
   @property({ attribute: false }) savedVisualIds: string[] = []
   @property({ attribute: false }) savingVisualId = ''
   @state() private expandedVisuals = new Set<string>()
@@ -310,12 +311,13 @@ class ChatThread extends LitElement {
 
   private renderArtifactActions(id: string) {
     const saved = this.savedVisualIds.includes(id)
+    const added = this.dashboardVisualIds.includes(id)
     const save = (add: boolean) => this.dispatchEvent(new CustomEvent('lv-save-agent-visual', {
       bubbles: true, composed: true, detail: { artifactId: id, add },
     }))
     return html`<div class="artifact-actions">
       <button type="button" ?disabled=${Boolean(this.savingVisualId)} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => save(false)}>${lucideIcon(saved ? Check : Save)} ${this.savingVisualId === id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>
-      <button type="button" ?disabled=${Boolean(this.savingVisualId)} @click=${() => save(true)}>${lucideIcon(Plus)} Add to dashboard</button>
+      <button type="button" ?disabled=${added || Boolean(this.savingVisualId)} @click=${() => { if (!added) save(true) }}>${lucideIcon(added ? Check : Plus)} ${added ? 'Added to dashboard' : 'Add to dashboard'}</button>
     </div>`
   }
 

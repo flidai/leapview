@@ -151,6 +151,9 @@ func (h Handler) createChatDashboard(w nethttp.ResponseWriter, r *nethttp.Reques
 			return
 		}
 		id := fmt.Sprintf("visual_%d", i+1)
+		if savedID := r.FormValue("savedVisualId"); savedID != "" {
+			id = savedVisualComponentID(savedID, requestID)
+		}
 		input = input.forVisual(id)
 		doc.Spec.Visuals[id] = input.Visual
 		placement := chatVisualPlacement(string(input.Visual.Type), doc.Spec, page, 1, i == firstChart && (len(inputs) == 1 || chartCount >= 3 && chartCount%2 == 1))

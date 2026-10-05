@@ -890,6 +890,13 @@ test('dashboard membership follows Preview, delete, Undo, and saved-library impo
     expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
     await project([])
     expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
+    // A new tab has no history links; the authored source identity still matches.
+    await chat.evaluate((e: any) => {
+      e.dashboardCopyLinks = {}
+      e.visualLibraryState = {savedIds:['chart-one'],libraryIds:{'chart-one':'11111111-1111-1111-1111-111111111111'},savingId:'',error:''}
+    })
+    await project([{id: 'saved_11111111111111111111111111111111_22222222222222222222222222222222',pageId:'overview'}])
+    expect(await chat.getByRole('button', {name:'Remove from dashboard',exact:true}).count()).toBe(1)
   } finally { await page.close() }
 })
 
@@ -909,13 +916,13 @@ test('reload restores the same dashboard draft and page without creating another
     await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
       window.parent.postMessage({
         type: 'lv-builder-saved', revisionId: 'rev-2', pageId: 'details',
-        href: '/dashboards/demo/edit?embed=chat&page=details',
+        href: '/dashboards/demo/edit?embed=chat&draft=draft-1&page=details',
         reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], locations: [], context: [] },
         components: [{id: 'visual_1', pageId: 'details'}], artifacts: [], visuals: {},
       }, window.parent.location.origin)
     })
     await page.waitForFunction(() => (document.querySelector('lv-chat-page') as any)?.savedBuilderHref.includes('demo'))
-    expect(new URL(page.url()).searchParams.get('dashboard')).toBe('/dashboards/demo/edit?embed=chat&page=details')
+    expect(new URL(page.url()).searchParams.get('dashboard')).toBe('/dashboards/demo/edit?embed=chat&draft=draft-1&page=details')
     await page.reload()
     await page.getByRole('button', { name: 'Expand chat', exact: true }).waitFor()
     await page.frameLocator('.builder-frame').getByText('Saved dashboard draft').waitFor()
@@ -937,4 +944,27 @@ test('preview restoration rejects external and non-builder destinations', async 
       expect(await page.locator('.builder-frame').getAttribute('src')).toBe(null)
     }
   } finally { await page.close() }
+})
+
+
+test('Preview creates an empty draft instead of implicitly adding every chat visual', async () => {
+  const page = await browser.newPage()
+  try {
+    let submitted = ''
+    await page.route('**/dashboards/new', async route => { submitted = route.request().postData() ?? ''; await route.fulfill({contentType:'text/html',body:'<lv-dashboard-builder></lv-dashboard-builder>'}) })
+    await page.goto(baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      const {mergePatch} = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({agent:{transcript:[{kind:'tool',status:'complete',artifact:{id:'new-chart',type:'bar'},argumentsJson:JSON.stringify({semanticModelId:'semantic-model:sales',visual:{type:'bar'}})}]}})
+      await e.updateComplete
+      await e.saveDashboard(true)
+    })
+    await page.waitForTimeout(200)
+    const form = new URLSearchParams(submitted)
+    expect(form.get('semanticModel')).toBe('semantic-model:sales')
+    expect(form.get('embed')).toBe('chat')
+    expect(form.has('chatVisuals')).toBe(false)
+  } finally {await page.close()}
 })

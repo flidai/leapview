@@ -1,3 +1,4 @@
+import { savedVisualComponentId, savedVisualSourceId } from './dashboard-membership'
 import { submitVisualForm } from './visual-library-bridge'
 import './agent-visual-library'
 import type { VisualLibraryState } from './agent-visual-library'
@@ -198,7 +199,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private reconcileDashboardCopies(): void {
     for (const [artifactId, savedId] of Object.entries(this.visualLibraryState.libraryIds ?? {})) {
       for (const component of this.dashboardComponents) {
-        if (component.savedVisualId === savedId) this.rememberDashboardCopy(artifactId, component)
+        if ((component.savedVisualId ?? savedVisualSourceId(component.id)) === savedId) this.rememberDashboardCopy(artifactId, component)
       }
     }
     const copies: Record<string, DashboardChatComponent> = {}
@@ -254,7 +255,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const requestId = uuidv7()
     this.pendingDashboardChange = {
       artifactId: event.detail.artifactId,
-      componentId: this.savedBuilderHref ? `saved_${requestId.replaceAll('-', '')}` : 'visual_1',
+      componentId: savedVisualComponentId(event.detail.savedId, requestId),
       remove: false,
     }
     this.beginDashboardChange()
@@ -295,33 +296,26 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       return
     }
     if (this.savingDashboard) return
-    const definitions = []
-    for (const artifact of this.previewArtifacts) {
-      const item = [...(this.agent.transcript ?? [])].reverse().find(item => item.artifact?.id === artifact.id && item.status === 'complete')
-      try {
-        const input = JSON.parse(item?.argumentsJson || item?.inputJson || '')
-        if (!input.semanticModelId || !input.visual) throw new Error('Missing visual definition')
-        definitions.push({ semanticModelId: input.semanticModelId, visual: input.visual, filters: input.filters ?? [] })
-      } catch {
-        this.dashboardSaveError = 'This visual has no editable query definition. Ask the agent to recreate it before saving.'
-        return
-      }
-    }
-    if (!definitions.length) return
-    if (new Set(definitions.map(input => input.semanticModelId)).size !== 1) {
-      this.dashboardSaveError = 'To save one dashboard, its visuals must use the same semantic model.'
+    // Preview opens an empty draft until the user explicitly adds a visual.
+    const item = this.agent.transcript?.find(item => item.artifact && item.status === 'complete')
+    let semanticModel: string
+    try {
+      semanticModel = JSON.parse(item?.argumentsJson || item?.inputJson || '').semanticModelId
+      if (!semanticModel) throw new Error('Missing semantic model')
+    } catch {
+      this.dashboardSaveError = 'Ask the agent to create a visual before opening a dashboard.'
       return
     }
-    if (this.pendingSaveSignature !== this.artifactSignature) this.saveRequestID = uuidv7()
+    this.saveRequestID ||= uuidv7()
     this.pendingSaveSignature = this.artifactSignature
-    this.pendingPreviewArtifacts = this.previewArtifacts.map(artifact => artifact.id)
+    this.pendingPreviewArtifacts = []
     this.builderNeedsRefresh = false
     if (openBuilder) this.enterBuilder()
     this.savingDashboard = true
     await this.updateComplete
     submitVisualForm('/dashboards/new', this.builderFrame, {
       title: conversationTitle(this.agent),
-      chatVisuals: JSON.stringify(definitions),
+      semanticModel, embed: 'chat',
       idempotencyKey: this.saveRequestID,
     })
     this.saveTimer = window.setTimeout(() => {
@@ -374,6 +368,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       if (href.origin !== window.location.origin || !/^\/dashboards\/[^/]+\/edit$/.test(href.pathname)) return ''
       const result = new URL(href.pathname, window.location.origin)
       result.searchParams.set('embed', 'chat')
+      if (href.searchParams.has('draft')) result.searchParams.set('draft', href.searchParams.get('draft')!)
       if (href.searchParams.has('page')) result.searchParams.set('page', href.searchParams.get('page')!)
       return result.pathname + result.search
     } catch { return '' }

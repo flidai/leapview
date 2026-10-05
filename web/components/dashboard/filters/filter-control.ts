@@ -74,6 +74,7 @@ export class DashboardFilterLeaf extends LitElement {
   @state() private optionLoading = false
   @state() private rangeDraft?: RangeDraft
   @state() private rangeError = ''
+  private sliderDomain?: { min: number; max: number }
   @state() private dropdownOpen = false
   @state() private dropdownSearch = ''
   private dropdownSearchTimer = 0
@@ -172,6 +173,7 @@ export class DashboardFilterLeaf extends LitElement {
       // Report canvases scale visually; layout contracts resolve against the untransformed CSS box.
       this.applyResponsiveLayout(this.clientWidth, this.clientHeight)
     }
+    if (changed.has('definition') && (changed.get('definition') as DashboardCompiledFilterDefinition | undefined)?.id !== this.definition?.id) this.sliderDomain = undefined
     if (changed.has('expression') || changed.has('presentation') || changed.has('definition')) {
       this.syncRangeDraft()
     }
@@ -484,7 +486,7 @@ export class DashboardFilterLeaf extends LitElement {
   private renderRange(type: 'number' | 'date') {
     const draft = this.rangeDraft ?? rangeDraftFromExpression(this.expression, this.definition?.timezone)
     const invalid = this.rangeError !== ''
-    return html`<div class="range">
+    return html`<div class="range" data-numeric=${String(type === 'number')}>
       <label>
         <span class="field-label">${type === 'number' ? 'Minimum' : 'Start'}</span>
         ${type === 'date' ? html`
@@ -543,8 +545,48 @@ export class DashboardFilterLeaf extends LitElement {
           >
         `}
       </label>
+      ${type === 'number' ? this.renderRangeSlider(draft) : nothing}
       ${invalid ? html`<p class="range-error" id="range-error" role="alert">${this.rangeError}</p>` : nothing}
     </div>`
+  }
+
+  private renderRangeSlider(draft: RangeDraft) {
+    const lower = draft.lower === '' ? NaN : Number(draft.lower)
+    const upper = draft.upper === '' ? NaN : Number(draft.upper)
+    // The contract does not provide a dataset extent. Never invent a range or
+    // interpret a partial option page as the complete domain.
+    if (Number.isFinite(lower) && Number.isFinite(upper) && lower < upper) {
+      this.sliderDomain = {
+        min: Math.min(this.sliderDomain?.min ?? lower, lower),
+        max: Math.max(this.sliderDomain?.max ?? upper, upper),
+      }
+    }
+    const domain = this.sliderDomain
+    if (!domain) return html`<span class="range-hint">Enter both limits to use the slider.</span>`
+    const from = Number.isFinite(lower) ? Math.max(domain.min, Math.min(lower, domain.max)) : domain.min
+    const to = Number.isFinite(upper) ? Math.max(from, Math.min(upper, domain.max)) : domain.max
+    const span = domain.max - domain.min
+    const step = this.definition?.valueKind === 'integer' ? 1 : Number((span / 200).toPrecision(4))
+    return html`<div class="range-slider" style=${`--range-start:${(from-domain.min)/span*100}%;--range-end:${(to-domain.min)/span*100}%`}>
+      <div class="range-track"></div>
+      <input type="range" aria-label="Minimum value" min=${domain.min} max=${domain.max} step=${step}
+        .value=${String(from)} style=${from === domain.max ? 'z-index:3' : ''}
+        @input=${(event: Event) => this.onSliderInput(event, 'lower', to)} @change=${() => this.commitRangeDraft()}>
+      <input type="range" aria-label="Maximum value" min=${domain.min} max=${domain.max} step=${step}
+        .value=${String(to)} @input=${(event: Event) => this.onSliderInput(event, 'upper', from)} @change=${() => this.commitRangeDraft()}>
+    </div>`
+  }
+
+  private onSliderInput(event: Event, bound: 'lower' | 'upper', other: number): void {
+    const input = event.currentTarget as HTMLInputElement
+    const value = bound === 'lower' ? Math.min(Number(input.value), other) : Math.max(Number(input.value), other)
+    input.value = String(value)
+    this.rangeDraft = {
+      lower: String(bound === 'lower' ? value : other),
+      upper: String(bound === 'upper' ? value : other),
+      baseExpression: this.rangeDraft?.baseExpression ?? expressionKey(this.expression), dirty: true,
+    }
+    this.rangeError = ''
   }
 
   private renderRelative() {
@@ -580,7 +622,7 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private onRangeInput = () => {
-    const inputs = [...this.renderRoot.querySelectorAll<HTMLInputElement>('.range input')]
+    const inputs = [...this.renderRoot.querySelectorAll<HTMLInputElement>('.range input[type=number]')]
     const [lower = '', upper = ''] = inputs.map((input) => input.value)
     this.rangeDraft = {
       lower,
@@ -885,18 +927,18 @@ export class DashboardFilterPaneCard extends FilterShell {
       gap: var(--base-size-8);
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
-      padding: var(--lv-space-control);
+      padding: 10px;
       background: var(--lv-bg-panel);
       transition: border-color var(--lv-duration-fast), background-color var(--lv-duration-fast);
     }
     :host([active]) section {
-      border-color: var(--lv-line-accent);
-      background: var(--lv-accent-muted);
+      border-inline-start: 3px solid var(--lv-line-accent);
+      padding-inline-start: 8px;
     }
     .card-header {
       display: flex;
       min-width: 0;
-      align-items: start;
+      align-items: center;
       justify-content: space-between;
       gap: var(--base-size-8);
     }

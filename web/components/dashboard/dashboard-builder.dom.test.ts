@@ -74,7 +74,7 @@ test('saved visual imports update the current builder without navigation and ret
       expect(form.get('pageId')).toBe('overview')
       expect(form.get('savedVisualId')).toBe('saved-visual-1')
       const imported = envelope.builder.pages[0].visuals[1]
-      imported.id = imported.visualId = `saved_${form.get('idempotencyKey')!.replaceAll('-', '')}`
+      imported.id = imported.visualId = `saved_${form.get('savedVisualId')!.replaceAll('-', '')}_${form.get('idempotencyKey')!.replaceAll('-', '')}`
       await route.fulfill({ contentType: 'text/html', body: `<html><body><div id="chat-dashboard-receipt"></div><script>parent.postMessage(${JSON.stringify({ type: 'lv-builder-imported', envelope, agentContext: {} })}, location.origin)</script></body></html>` })
     })
     await page.locator('lv-dashboard-builder').evaluate((element: any) => element.addSavedVisual('saved-visual-1'))
@@ -3857,5 +3857,21 @@ test('Fix leaves complete filtered charts alone instead of treating loading data
     expect(result.commands).toEqual([])
     expect(result.message).toBe('Visuals are ready. Your layout is unchanged.')
     expect(result.unchanged).toBe(true)
+  } finally {await page.close()}
+})
+
+test('dragging an aggregate-only dimension creates a chart instead of an invalid records table', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const command = await page.locator('lv-dashboard-builder').evaluate(async (e: any) => {
+      await e.updateComplete
+      let command: unknown
+      e.addEventListener('lv-builder-command', (event: CustomEvent) => {command=event.detail}, {once:true})
+      e.createVisualFromField({id:'driver_order',label:'Driver order',kind:'dimension',dataType:'number',roles:['dimension']})
+      return command
+    })
+    expect(command).toMatchObject({action:'add_visual',type:'bar',fieldId:'driver_order',role:'dimension'})
   } finally {await page.close()}
 })

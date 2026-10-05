@@ -179,7 +179,11 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 	if result.Lifecycle.Draft != nil {
 		draftID = result.Lifecycle.Draft.ID.String()
 	}
-	nethttp.Redirect(w, r, dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit"), nethttp.StatusSeeOther)
+	href := dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit")
+	if r.FormValue("embed") == "chat" {
+		href += "&embed=chat"
+	}
+	nethttp.Redirect(w, r, href, nethttp.StatusSeeOther)
 }
 
 type dashboardSemanticModelOption struct {

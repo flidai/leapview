@@ -1,3 +1,4 @@
+import { savedVisualComponentId, savedVisualSourceId } from '../chat/dashboard-membership'
 import { savedVisualDragType, submitVisualForm, type SavedVisualLibraryMessage } from '../chat/visual-library-bridge'
 import type { ChatDashboardMessage, SavedVisualImportMessage } from '../chat/dashboard-workspace'
 import { LitElement, css, html, nothing } from 'lit'
@@ -168,7 +169,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         reference: { kind: 'dashboard', id: builder.dashboardId }, name: builder.title,
         hierarchy: [], href: href.pathname + href.search, locations: [], context: ['Editable dashboard draft'],
       },
-      components: builder.pages.flatMap(page => page.visuals.map(visual => ({ id: visual.id, pageId: page.id, savedVisualId: this.importedVisualSources.get(visual.id) }))),
+      components: builder.pages.flatMap(page => page.visuals.map(visual => ({ id: visual.id, pageId: page.id, savedVisualId: (this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)) }))),
       artifacts: ordered.map(visual => ({ id: this.visualSignalID(visual), type: visual.type, summary: visual.title })),
       visuals,
     } satisfies ChatDashboardMessage, window.location.origin)
@@ -3750,6 +3751,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private handleAgentVisualAdd = (event: CustomEvent<{savedId: string}>): void => {
     event.preventDefault()
     event.stopPropagation()
+    if (this.builder?.pages.some(page => page.visuals.some(visual => (this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)) === event.detail.savedId))) return
     this.addSavedVisual(event.detail.savedId)
   }
 
@@ -3779,7 +3781,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canEdit || !page || this.commandPending || this.importingSavedVisual || !id) return
     const importID = requestId || uuidv7()
-    this.pendingVisualSource = { componentID: `saved_${importID.replaceAll('-', '')}`, savedID: id }
+    this.pendingVisualSource = { componentID: savedVisualComponentId(id, importID), savedID: id }
     this.importingSavedVisual = true
     this.importRevision = this.currentRevisionReference()
     this.pendingAddVisual = { revision: this.revisionKey(builder), visualIDs: new Set(page.visuals.map(visual => visual.id)), pageID: page.id, autoArrange: row === undefined }
@@ -3836,7 +3838,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div id="builder-agent-content" class="pane-content agent-pane-content" ?hidden=${collapsed}>
-          <lv-chat-drawer .open=${!collapsed} embedded @lv-chat-drawer-close=${this.closeAgentPane}></lv-chat-drawer>
+          <lv-chat-drawer .dashboardSavedVisualIds=${this.builder?.pages.flatMap(page => page.visuals.map(visual => this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)).filter((id): id is string => Boolean(id))) ?? []} .open=${!collapsed} embedded @lv-chat-drawer-close=${this.closeAgentPane}></lv-chat-drawer>
         </div>
       </aside>
     `
@@ -6053,7 +6055,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private recommendedVisualForField(field: DashboardBuilderFieldSignal): BuilderVisualType {
-    return field.kind === 'metric' ? 'kpi' : 'table'
+    return field.kind === 'metric' ? 'kpi' : field.roles?.length && !field.roles.includes('detail') ? 'bar' : 'table'
   }
 
   private recommendedVisualForDraggedField(builder: DashboardBuilderSignal): BuilderVisualType {
@@ -6066,7 +6068,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canAddVisual || !page || this.commandPending || !this.fieldDataTypeSupported(field)) return false
     const type = this.recommendedVisualForField(field)
-    const role: BuilderFieldRole = field.kind === 'metric' ? 'metric' : 'detail'
+    const role: BuilderFieldRole = field.kind === 'metric' ? 'metric' : type === 'table' ? 'detail' : 'dimension'
     this.pendingAddVisual = { revision: this.revisionKey(builder), visualIDs: new Set(page.visuals.map((visual) => visual.id)), pageID: page.id }
     this.visualType = type
     this.gridInteractionMessage = `Creating a ${this.visualLabel(type, builder)} visual for ${field.label}.`

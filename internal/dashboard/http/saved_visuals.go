@@ -165,7 +165,7 @@ func (handler Handler) AddSavedVisual(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeBuilderError(w, r, err)
 		return
 	}
-	id := "saved_" + strings.ReplaceAll(requestID, "-", "")
+	id := savedVisualComponentID(saved.ID, requestID)
 	href := dashboardBuilderDraftRoute(dashboardID.String(), draft.Lifecycle.Draft.ID.String(), "/edit") + "&page=" + url.QueryEscape(r.FormValue("pageId"))
 	if r.FormValue("embed") == "chat" {
 		href += "&embed=chat"
@@ -237,4 +237,8 @@ func (handler Handler) UnsaveVisual(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	nethttp.Redirect(w, r, "/visuals/saved", nethttp.StatusSeeOther)
+}
+
+func savedVisualComponentID(savedID, requestID string) string {
+	return "saved_" + strings.ReplaceAll(savedID, "-", "") + "_" + strings.ReplaceAll(requestID, "-", "")
 }

@@ -627,3 +627,37 @@ test('filter choices stay below the trigger, follow loaded values, and fit near 
     expect(await menu.isVisible()).toBe(false)
   } finally { await page.close() }
 })
+
+test('numeric range slider commits on release, keeps its scale, and supports keyboard and reset', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = {id:'amount', label:'Amount', field:'amount', valueKind:'decimal', predicates:[{kind:'range',operators:[]}], options:{kind:'none',values:[]}, timezone:'UTC'}
+      leaf.binding = {key:'amount', readerEditable:true}
+      leaf.expression = {kind:'range',lower:{value:{kind:'decimal',value:-50},inclusive:true},upper:{value:{kind:'decimal',value:150},inclusive:true}}
+      leaf.presentation = {style:'numeric_range'}
+      leaf.showClearAction = true
+      ;(window as any).mutations = []
+      leaf.addEventListener('lv-filter-mutate', (event: any) => { (window as any).mutations.push(event.detail); leaf.expression = event.detail.expression })
+      document.body.append(leaf)
+      await leaf.updateComplete
+    })
+    const lower = page.getByRole('slider',{name:'Minimum value',exact:true})
+    await lower.waitFor()
+    await lower.evaluate((input: HTMLInputElement) => {input.value='25';input.dispatchEvent(new Event('input',{bubbles:true}))})
+    expect(await page.evaluate(()=>(window as any).mutations.length)).toBe(0)
+    await lower.dispatchEvent('change')
+    expect(await page.evaluate(()=>(window as any).mutations.at(-1).expression.lower.value.value)).toBe('25')
+    expect(await lower.getAttribute('min')).toBe('-50')
+    expect(await lower.getAttribute('max')).toBe('150')
+    await lower.focus()
+    await page.keyboard.press('ArrowRight')
+    expect(Number(await lower.inputValue())).toBeGreaterThan(25)
+    await page.getByRole('button',{name:'Clear Amount',exact:true}).click()
+    expect(await page.evaluate(()=>(window as any).mutations.at(-1).expression.kind)).toBe('unfiltered')
+    expect(await page.getByRole('spinbutton',{name:'Minimum',exact:true}).inputValue()).toBe('')
+  } finally {await page.close()}
+})

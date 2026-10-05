@@ -690,3 +690,22 @@ test('message edit action ignores a transcript item without a persisted ID', asy
     expect(await page.evaluate(() => (window as any).reuseCount)).toBe(0)
   } finally { await page.close() }
 })
+
+
+test('side chat marks dashboard visuals as added and prevents another import', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.transcript = [{id:'t',kind:'tool',name:'query_visual',status:'complete',artifact:{id:'chart-one',type:'bar',summary:'Revenue'}}]
+      e.dashboardVisualIds = ['chart-one']
+      await e.updateComplete
+    })
+    await page.getByRole('button',{name:'View inside',exact:true}).click()
+    expect(await page.getByRole('button',{name:'Added to dashboard',exact:true}).isDisabled()).toBe(true)
+    expect(await page.getByRole('button',{name:'Add to dashboard',exact:true}).count()).toBe(0)
+    await page.locator('lv-chat-thread').evaluate(async(e: any)=>{e.dashboardVisualIds=[];await e.updateComplete})
+    expect(await page.getByRole('button',{name:'Add to dashboard',exact:true}).isEnabled()).toBe(true)
+  } finally {await page.close()}
+})

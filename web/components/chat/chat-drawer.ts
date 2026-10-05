@@ -53,6 +53,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) embedded = false
   @property({ type: Boolean, reflect: true }) expanded = false
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
+  @property({ attribute: false }) dashboardSavedVisualIds: string[] = []
   @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
@@ -467,7 +468,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
         ` : null}
         <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${(event: CustomEvent<VisualLibraryState>) => { this.visualLibraryState = event.detail }}></lv-agent-visual-library>
         ${this.visualLibraryState.error ? html`<p role="alert">${this.visualLibraryState.error}</p>` : null}
-        <lv-chat-thread .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId} ?hidden=${showWelcome}
+        <lv-chat-thread .dashboardVisualIds=${Object.entries(this.visualLibraryState.libraryIds ?? {}).filter(([, id]) => this.dashboardSavedVisualIds.includes(id)).map(([artifactId]) => artifactId)} .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId} ?hidden=${showWelcome}
           surface="drawer"
           .transcript=${agent.transcript ?? []}
           .visuals=${this.visuals}
