@@ -25,6 +25,7 @@ MAX_DEB_BYTES = 1024 * 1024 * 1024
 MAX_DEB_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_DEB_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
 PACKAGE_NAME = 'leapview-desktop'
+APPLICATION_PACKAGE_NAME = '@leapview/desktop'
 APP_DIRECTORY = Path('usr/lib/leapview-desktop')
 APP_EXECUTABLE = APP_DIRECTORY / 'LeapView'
 SANDBOX_EXECUTABLE = APP_DIRECTORY / 'chrome-sandbox'
@@ -492,7 +493,7 @@ def evidence_files(evidence_directory, record):
             or release.get('source', {}).get('dirty') is not False
             or release.get('artifact', {}).get('sha256') != record['artifact']['sha256'].removeprefix('sha256:')
             or release.get('artifact', {}).get('format') != 'deb'
-            or release.get('application', {}).get('packageName') != PACKAGE_NAME
+            or release.get('application', {}).get('packageName') != APPLICATION_PACKAGE_NAME
             or release.get('application', {}).get('version') != record['artifact']['version']
             or release.get('support', {}).get('minimumVersion') != 'Ubuntu 22.04 LTS'
             or release.get('support', {}).get('qualification') != 'candidate'

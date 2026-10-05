@@ -353,7 +353,7 @@ class DesktopQualificationTests(unittest.TestCase):
         (evidence / 'candidate.release.json').write_text(json.dumps({
             'source': {'commit': self.revision, 'dirty': False},
             'artifact': {'sha256': record['artifact']['sha256'].removeprefix('sha256:'), 'format': 'deb'},
-            'application': {'packageName': 'leapview-desktop', 'version': '0.1.0'},
+            'application': {'packageName': '@leapview/desktop', 'version': '0.1.0'},
             'support': {'minimumVersion': 'Ubuntu 22.04 LTS', 'qualification': 'candidate'},
             'signing': {'state': 'unsigned-candidate', 'productionEligible': False, 'identity': None},
         }))
