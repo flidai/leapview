@@ -260,7 +260,7 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 	input := strings.Repeat("ordinary line\n", 600) +
 		"Authorization: Bearer secret-token\n" +
 		"LEAPVIEW_API_TOKEN=environment-secret\n" +
-		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","projectDataToken":"project-data","recoveryControlToken":"recovery-control","auditToken":"audit","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
+		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","deliveryEvidenceToken":"delivery-evidence","connectionEvidenceToken":"connection-evidence","recoveryUploadToken":"recovery-upload","recoveryControlToken":"recovery-control","auditToken":"audit","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
 		"\n"
 	redacted := redactQualificationLog([]byte(input), 500)
 	text := string(redacted)
@@ -270,7 +270,9 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 		`"access"`,
 		`"publisher"`,
 		`"workload"`,
-		`"project-data"`,
+		`"delivery-evidence"`,
+		`"connection-evidence"`,
+		`"recovery-upload"`,
 		`"recovery-control"`,
 		`"audit"`,
 		`"temporary"`,
@@ -297,21 +299,6 @@ func TestQualificationWorkloadTokenNeverFallsBackToPublisher(t *testing.T) {
 	require.NoError(t, err)
 	if got != credentials.WorkloadToken {
 		t.Fatalf("workloadToken() = %q, want dedicated workload token", got)
-	}
-}
-
-func TestQualificationProjectDataTokenNeverFallsBackToPublisher(t *testing.T) {
-	credentials := qualificationCredentials{
-		PublisherToken: "publisher-secret",
-	}
-	if _, err := credentials.projectDataToken(); err == nil {
-		t.Fatal("projectDataToken() error = nil, want a dedicated project-data credential")
-	}
-	credentials.ProjectDataToken = "project-data-secret"
-	got, err := credentials.projectDataToken()
-	require.NoError(t, err)
-	if got != credentials.ProjectDataToken {
-		t.Fatalf("projectDataToken() = %q, want dedicated project-data token", got)
 	}
 }
 
@@ -348,15 +335,6 @@ func TestQualificationWorkloadActionsAreExplicit(t *testing.T) {
 	} {
 		if slices.Contains(actions, forbidden) {
 			t.Errorf("workload actions unexpectedly include %s: %v", forbidden, actions)
-		}
-	}
-}
-
-func TestQualificationProjectDataActionsAreReadOnly(t *testing.T) {
-	actions := qualificationActionNames(qualificationProjectDataActions())
-	for _, forbidden := range []string{"dashboard.update", "delivery.plan", "connection.manage"} {
-		if slices.Contains(actions, forbidden) {
-			t.Fatalf("project-data actions include %s: %v", forbidden, actions)
 		}
 	}
 }
