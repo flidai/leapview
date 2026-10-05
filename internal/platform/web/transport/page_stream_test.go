@@ -21,7 +21,7 @@ func TestPatchAndWatchPushesChangedPageOnly(t *testing.T) {
 	wake <- pagestream.SignalPatch{"refreshChanged": true}
 	wake <- pagestream.SignalPatch{"refreshChanged": true}
 	close(wake)
-	PatchAndWatch(w, r, pagestream.SignalPatch{"page": map[string]any{"status": "queued"}}, wake, func() (pagestream.SignalPatch, error) {
+	(ClientIDCookies{}).PatchAndWatch(w, r, pagestream.SignalPatch{"page": map[string]any{"status": "queued"}}, wake, func() (pagestream.SignalPatch, error) {
 		reads++
 		status := "queued"
 		if reads >= 2 {
@@ -41,7 +41,7 @@ func TestPatchAndWatchDoesNotReadWithoutNotification(t *testing.T) {
 	r := httptest.NewRequest("GET", "/updates?route=pipelines", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 	reads := 0
-	PatchAndWatch(w, r, pagestream.SignalPatch{"page": map[string]any{"status": "queued"}}, make(chan pagestream.SignalPatch), func() (pagestream.SignalPatch, error) {
+	(ClientIDCookies{}).PatchAndWatch(w, r, pagestream.SignalPatch{"page": map[string]any{"status": "queued"}}, make(chan pagestream.SignalPatch), func() (pagestream.SignalPatch, error) {
 		reads++
 		return nil, nil
 	})

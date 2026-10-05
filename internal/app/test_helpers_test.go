@@ -276,6 +276,7 @@ type assemblyConfig struct {
 	DeploymentConfig        deploymentmodule.Config
 	ManagedDataTus          http.Handler
 	MCPOAuth                MCPOAuthConfig
+	CookieSecure            bool
 	PublicURL               string
 	DesktopDiscovery        desktopdiscovery.Config
 	RefreshPipelineClock    refreshmodule.Clock
@@ -448,7 +449,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			RequestBodyLimit: options.RequestBodyLimit, RequestLogging: options.RequestLogging,
 			Logger: options.Logger, JobLeaseTimeout: options.JobLeaseTimeout,
 			ManagedDataTus: options.ManagedDataTus, MCPOAuth: options.MCPOAuth,
-			PublicURL: publicURL, DesktopDiscovery: options.DesktopDiscovery,
+			CookieSecure: options.CookieSecure, PublicURL: publicURL, DesktopDiscovery: options.DesktopDiscovery,
 		},
 	)
 	if err != nil {

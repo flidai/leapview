@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -199,6 +200,7 @@ func NewNativePersistence(options NativePersistenceOptions) (*NativePersistence,
 }
 
 type HTTPConfig struct {
+	ClientIDs                     webtransport.ClientIDCookies
 	Metrics                       queryruntime.Metrics
 	ProjectID                     projectgraph.ResourceID
 	ResolveProjectID              func(context.Context) (projectgraph.ResourceID, error)
@@ -352,6 +354,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
+		ClientIDs:                  config.HTTP.ClientIDs,
 		Metrics:                    config.HTTP.Metrics,
 		ProjectID:                  config.HTTP.ProjectID,
 		ResolveProjectID:           config.HTTP.ResolveProjectID,

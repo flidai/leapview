@@ -170,27 +170,63 @@ export async function readTrustedShellAccessibility(
   const pending = new Map();
   let nextID = 1;
   let terminalError;
+  const fail = (error) => {
+    if (terminalError !== undefined) {
+      return;
+    }
+    terminalError = error;
+    for (const call of pending.values()) {
+      call.reject(terminalError);
+    }
+    pending.clear();
+    socket.close();
+  };
+  socket.addEventListener("close", () => {
+    fail(new Error("trusted shell accessibility debugger closed"));
+  });
+  socket.addEventListener("error", () => {
+    fail(new Error("trusted shell accessibility debugger failed"));
+  });
   socket.addEventListener("message", (event) => {
+    if (terminalError !== undefined) {
+      return;
+    }
     if (typeof event.data !== "string" || event.data.length > 4 * 1024 * 1024) {
-      terminalError = new Error(
+      fail(new Error(
         "trusted shell accessibility response is invalid",
-      );
-      socket.close();
+      ));
       return;
     }
     let message;
     try {
       message = JSON.parse(event.data);
     } catch {
-      terminalError = new Error(
+      fail(new Error(
         "trusted shell accessibility response is malformed",
-      );
-      socket.close();
+      ));
       return;
     }
-    if (Number.isSafeInteger(message.id)) {
-      pending.get(message.id)?.(message);
+    // The debugger is a protocol boundary, even on loopback. JSON.parse can
+    // return null or a primitive, neither of which is a response envelope.
+    if (message === null || typeof message !== "object" || Array.isArray(message)) {
+      fail(new Error("trusted shell accessibility response is invalid"));
+      return;
+    }
+    if (!Object.hasOwn(message, "id")) {
+      // CDP sends method notifications alongside command responses.
+      if (typeof message.method !== "string") {
+        fail(new Error("trusted shell accessibility response is invalid"));
+      }
+      return;
+    }
+    if (!Number.isSafeInteger(message.id) || message.id <= 0) {
+      fail(new Error("trusted shell accessibility response id is invalid"));
+      return;
+    }
+    const call = pending.get(message.id);
+    if (typeof call?.resolve === "function") {
       pending.delete(message.id);
+      call.resolve(message);
     }
   });
   try {
@@ -208,20 +244,26 @@ export async function readTrustedShellAccessibility(
             new Error(`trusted shell accessibility ${method} timed out`),
           );
         }, 3_000);
-        pending.set(id, (message) => {
-          clearTimeout(timeout);
-          if (message.error !== undefined) {
-            reject(
-              new Error(
-                `trusted shell accessibility ${method} failed`,
-              ),
-            );
-            return;
-          }
-          resolve(message.result);
+        pending.set(id, {
+          reject(error) {
+            clearTimeout(timeout);
+            reject(error);
+          },
+          resolve(message) {
+            clearTimeout(timeout);
+            if (message.error !== undefined) {
+              reject(new Error(`trusted shell accessibility ${method} failed`));
+              return;
+            }
+            resolve(message.result);
+          },
         });
       });
-      socket.send(JSON.stringify({ id, method }));
+      try {
+        socket.send(JSON.stringify({ id, method }));
+      } catch {
+        fail(new Error("trusted shell accessibility debugger send failed"));
+      }
       return response;
     };
     await call("Accessibility.enable");
@@ -242,7 +284,7 @@ export async function readTrustedShellAccessibility(
       }`,
     );
   } finally {
-    socket.close();
+    fail(new Error("trusted shell accessibility debugger closed"));
   }
 }
 
@@ -291,20 +333,26 @@ async function waitForSocket(socket) {
     return;
   }
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(
-        new Error("trusted shell accessibility debugger did not open"),
-      );
-    }, 3_000);
-    socket.addEventListener("open", () => {
+    const cleanup = () => {
       clearTimeout(timeout);
+      socket.removeEventListener("open", opened);
+      socket.removeEventListener("error", failed);
+      socket.removeEventListener("close", failed);
+    };
+    const opened = () => {
+      cleanup();
       resolve();
-    }, { once: true });
-    socket.addEventListener("error", () => {
-      clearTimeout(timeout);
-      reject(
-        new Error("trusted shell accessibility debugger failed"),
-      );
-    }, { once: true });
+    };
+    const failed = () => {
+      cleanup();
+      reject(new Error("trusted shell accessibility debugger failed to open"));
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("trusted shell accessibility debugger did not open"));
+    }, 3_000);
+    socket.addEventListener("open", opened);
+    socket.addEventListener("error", failed);
+    socket.addEventListener("close", failed);
   });
 }

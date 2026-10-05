@@ -1,14 +1,7 @@
 import { createChartFixture, defaultChartOptions } from './chart-fixtures'
 import type { ChatContextReference } from '../web/components/chat/reference'
 
-export const contentExamples = [
-  { id: 'code-editor', label: 'Code editor' },
-  { id: 'code-block', label: 'Code block' },
-  { id: 'config-viewer', label: 'Configuration viewer' },
-  { id: 'markdown-view', label: 'Markdown' },
-  { id: 'visual-artifact', label: 'Visual artifact' },
-  { id: 'chat-composer', label: 'Chat composer' },
-]
+export { contentExamples } from './catalog'
 
 export const composerReferences: ChatContextReference[] = [
   { reference: { kind: 'visual', id: 'regional-revenue' }, name: 'Regional revenue', description: 'Revenue by region', visualType: 'bar', hierarchy: ['Finance', 'Quarterly review'], href: '#charts/bar', locations: [], context: ['current_page'] },

@@ -2280,8 +2280,39 @@ tasks:
   security:policy:
     desc: Validate security coverage, updater ownership, exceptions, and pinned actions
     cmds:
-      - go test ./internal/app/securitypolicy ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults
+      - go test ./internal/app/securitypolicy ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults ./internal/app/tools/securitysast
       - go run ./internal/app/tools/securitypolicy -root .
+
+  security:sast:prepare:
+    desc: Prepare generated source in this SAST runner without building release assets
+    env:
+      NPM_CONFIG_AUDIT: "false"
+    cmds:
+      - task: go:deps
+      - task: db:generate
+      - task: config:generate
+      - task: api:generate
+      - task: ui-signals:generate
+      - task: agent-contracts:generate
+      - task: data-resource-contracts:generate
+      - task: pipeline-contracts:generate
+      - task: desktop-discovery:generate
+      - task: layout-contract:generate
+      - task: map-style:generate
+      - task: lucide-icons:generate
+      - task: visual-docs:generate
+
+  security:sast:typescript:
+    desc: Check maintained TypeScript graphs against prepared SAST source
+    cmds:
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.app.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.contracts.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.test.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.playground.json
+      - npm --prefix pkg/apigen/typespec run typecheck
+      - task: desktop:deps
+      - ./desktop/node_modules/.bin/tsc --noEmit --project desktop/tsconfig.json
+      - ./desktop/node_modules/.bin/tsc --noEmit --project desktop/tsconfig.test.json
 
   security:dependencies:
     desc: Evaluate .security/javascript-vulnerability-evidence.json offline and run live source-aware Go dependency checks

@@ -68,6 +68,14 @@ to the same images, source identities, installation profile and access intent.
 It captures a fresh recovery point; it never restores the older rehearsal copy
 over subsequently acknowledged writes.
 
+Maintenance verifies installed deployment files against the immutable predecessor
+image before staging the candidate. The application healthcheck command may move
+to the canonical `CMD /usr/local/bin/leapview healthcheck`; all other Compose
+settings, proxy configuration, and deployment defaults must remain unchanged.
+The candidate generation supplies the new command, and recovery reactivates the
+original predecessor generation. A changed port, volume, service, or healthcheck
+timing still requires a separately reviewed topology change.
+
 Image payloads are extracted into a separate temporary directory before validation.
 New releases contain the same six runtime files and permissions as the host
 installer. Documentation and qualification helpers remain in the image, outside

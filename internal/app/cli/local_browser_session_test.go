@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -200,4 +202,76 @@ func TestLocalSessionOriginRejectsRemoteAndAmbiguousEndpoints(t *testing.T) {
 	origin, err := localSessionOrigin("http://127.0.0.1:8080")
 	require.NoError(t, err)
 	require.Equal(t, "127.0.0.1:8080", origin.Host)
+}
+
+func TestLocalBrowserRejectsUnsafeOriginBeforeOpening(t *testing.T) {
+	for _, raw := range []string{
+		"http://127.0.0.1.evil.test:8080", "http://127.0.0.10:8080", "http://localhost:8080", "http://[::1]:8080", "http://example.com:8080", "http://127.0.0.1",
+		"https://127.0.0.1:8080", "file://127.0.0.1:8080", "http://user@127.0.0.1:8080", "http://127.0.0.1:8080/path", "http://127.0.0.1:8080/?x=y", "http://127.0.0.1:8080/#fragment",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			err := openLocalBrowserSession(t.Context(), raw, &http.Cookie{Name: localBrowserSessionCookie, Value: "session"}, func(string) error { t.Fatal("unsafe origin reached browser"); return nil })
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestLocalSessionAuthenticationDoesNotFollowRedirects(t *testing.T) {
+	var followed bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { followed = true }))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
+	defer source.Close()
+	client, err := localSessionHTTPClient(source.Client())
+	require.NoError(t, err)
+	response, err := client.Get(source.URL)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusFound, response.StatusCode)
+	require.False(t, followed)
+}
+
+func TestLocalHandoffRejectsWrongPathAndPreservesCookieAttributes(t *testing.T) {
+	origin, err := localSessionOrigin("http://127.0.0.1:8080")
+	require.NoError(t, err)
+	client, err := localSessionHTTPClient(nil)
+	require.NoError(t, err)
+	client.Jar.SetCookies(origin, []*http.Cookie{{Name: localBrowserSessionCookie, Value: "opaque", Path: "/"}})
+	cookie := browserSessionCookie(client, origin)
+	require.NotNil(t, cookie)
+	require.False(t, cookie.Secure)
+	require.True(t, cookie.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+	require.Empty(t, cookie.Domain)
+	require.Equal(t, "/", cookie.Path)
+	require.Equal(t, 2*time.Minute, localBrowserHandoffLifetime)
+	require.NoError(t, openLocalBrowserSession(t.Context(), origin.String(), cookie, func(handoff string) error {
+		parsed, err := url.Parse(handoff)
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1", parsed.Hostname())
+		require.NotEmpty(t, parsed.Port())
+		require.True(t, strings.HasPrefix(parsed.Path, "/session/"))
+		require.GreaterOrEqual(t, len(strings.TrimPrefix(parsed.Path, "/session/")), 32)
+		wrong := *parsed
+		wrong.Path = "/session/wrong"
+		response, err := client.Get(wrong.String())
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNotFound, response.StatusCode)
+		require.Empty(t, response.Cookies())
+		response.Body.Close()
+		response, err = client.Post(handoff, "text/plain", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNotFound, response.StatusCode)
+		require.Empty(t, response.Cookies())
+		response.Body.Close()
+		response, err = client.Get(handoff)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		require.Equal(t, http.StatusFound, response.StatusCode)
+		cookies := response.Cookies()
+		require.Len(t, cookies, 1)
+		require.Equal(t, cookie.String(), cookies[0].String())
+		require.Equal(t, origin.String(), response.Header.Get("Location"))
+		return nil
+	}))
 }

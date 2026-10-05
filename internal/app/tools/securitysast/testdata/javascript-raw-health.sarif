@@ -1,0 +1,136 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "semanticVersion": "2.27.1"
+        },
+        "extensions": [
+          {
+            "name": "codeql/javascript-queries",
+            "semanticVersion": "2.4.6+6e9f9e38390175c41b99070a423c875f450759ca",
+            "notifications": [
+              {
+                "id": "js/diagnostics/successfully-extracted-files",
+                "name": "js/diagnostics/successfully-extracted-files",
+                "shortDescription": {
+                  "text": "Extracted files"
+                },
+                "fullDescription": {
+                  "text": "Lists all files in the source code directory that were extracted."
+                },
+                "defaultConfiguration": {
+                  "enabled": true
+                },
+                "properties": {
+                  "tags": [
+                    "successfully-extracted-files"
+                  ],
+                  "description": "Lists all files in the source code directory that were extracted.",
+                  "id": "js/diagnostics/successfully-extracted-files",
+                  "kind": "diagnostic",
+                  "name": "Extracted files"
+                }
+              },
+              {
+                "id": "js/diagnostics/extraction-errors",
+                "name": "js/diagnostics/extraction-errors",
+                "shortDescription": {
+                  "text": "Extraction errors"
+                },
+                "fullDescription": {
+                  "text": "List all extraction errors for files in the source code directory."
+                },
+                "defaultConfiguration": {
+                  "enabled": true
+                },
+                "properties": {
+                  "description": "List all extraction errors for files in the source code directory.",
+                  "id": "js/diagnostics/extraction-errors",
+                  "kind": "diagnostic",
+                  "name": "Extraction errors"
+                }
+              }
+            ]
+          },
+          {
+            "name": "codeql/javascript-all",
+            "semanticVersion": "2.10.2+6e9f9e38390175c41b99070a423c875f450759ca"
+          },
+          {
+            "name": "codeql/threat-models",
+            "semanticVersion": "1.0.58+6e9f9e38390175c41b99070a423c875f450759ca"
+          }
+        ]
+      },
+      "automationDetails": {
+        "id": "/language:javascript-typescript/"
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolExecutionNotifications": [
+            {
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "desktop/scripts/accessibility-contract.mjs",
+                      "uriBaseId": "%SRCROOT%"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "text": ""
+              },
+              "level": "none",
+              "descriptor": {
+                "id": "js/diagnostics/successfully-extracted-files",
+                "index": 0,
+                "toolComponent": {
+                  "index": 0
+                }
+              },
+              "properties": {
+                "formattedMessage": {
+                  "text": ""
+                }
+              }
+            },
+            {
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "web/generated/signals/index.ts",
+                      "uriBaseId": "%SRCROOT%"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "text": ""
+              },
+              "level": "none",
+              "descriptor": {
+                "id": "js/diagnostics/successfully-extracted-files",
+                "index": 0,
+                "toolComponent": {
+                  "index": 0
+                }
+              },
+              "properties": {
+                "formattedMessage": {
+                  "text": ""
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
