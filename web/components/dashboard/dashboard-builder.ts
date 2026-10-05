@@ -164,10 +164,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     href.searchParams.set('embed', 'chat')
     if (page) href.searchParams.set('page', page.id)
     window.parent.postMessage({
-      type: 'lv-builder-saved', revisionId: builder.revision.id, fixingVisuals: Boolean(this.pendingFixVisuals), fixMessage: this.fixVisualsMessage, canArrange: Boolean(builder.capabilities.canEdit && !this.commandPending && !this.builderFilterController.pending && !this.builderFilterCommandInFlight && page?.visuals.length), pageId: page?.id ?? '', href: href.pathname + href.search,
+      type: 'lv-builder-saved', revisionId: builder.revision.id, fixingVisuals: Boolean(this.pendingFixVisuals), fixMessage: this.fixVisualsMessage, canArrange: Boolean(builder.capabilities.canEdit && !this.commandPending && !this.builderFilterController.pending && !this.builderFilterCommandInFlight && page?.visuals.length), pageId: page?.id ?? '', pageTitle: page?.title ?? '', modelId: builder.semanticModel.id, href: href.pathname + href.search,
       reference: {
-        reference: { kind: 'dashboard', id: builder.dashboardId }, name: builder.title,
-        hierarchy: [], href: href.pathname + href.search, locations: [], context: ['Editable dashboard draft'],
+        reference: { kind: 'dashboard', id: builder.dashboardId }, name: page ? `${builder.title} · ${page.title}` : builder.title,
+        hierarchy: [], href: href.pathname + href.search, locations: page ? [{dashboardId: builder.dashboardId, dashboardName: builder.title, pageId: page.id, pageName: page.title, href: href.pathname + href.search}] : [], context: ['Editable dashboard draft'],
       },
       components: builder.pages.flatMap(page => page.visuals.map(visual => ({ id: visual.id, pageId: page.id, savedVisualId: (this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)) }))),
       artifacts: ordered.map(visual => ({ id: this.visualSignalID(visual), type: visual.type, summary: visual.title })),

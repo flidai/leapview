@@ -1,3 +1,4 @@
+import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { savedVisualComponentId, savedVisualSourceId } from './dashboard-membership'
 import { submitVisualForm } from './visual-library-bridge'
 import './agent-visual-library'
@@ -59,7 +60,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private pendingDashboardChange: { artifactId: string; componentId: string; remove: boolean } | null = null
   private pendingPreviewArtifacts: string[] = []
   private dashboardRevisionId = ''
-  private dashboardPageId = 'overview'
+  @state() private dashboardPageId = ''
+  @state() private dashboardPageTitle = ''
   private builderNeedsRefresh = false
   private visualCacheKey = ''
   private visualCache: Record<string, VisualizationEnvelope> = {}
@@ -178,9 +180,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.savedBuilderHref = href.pathname + href.search
     this.savedSignature = this.pendingSaveSignature || this.savedSignature
     this.dashboardRevisionId = event.data.revisionId
-    this.dashboardPageId = event.data.pageId
+    if (mutation && this.dashboardPageId && this.savedBuilderHref) {
+      href.searchParams.set('page', this.dashboardPageId)
+      this.savedBuilderHref = href.pathname + href.search
+    } else this.dashboardPageId = event.data.pageId
     this.persistDashboardLocation()
     if (event.data.type === 'lv-builder-saved') {
+      this.dashboardPageTitle = event.data.pageTitle || event.data.pageId
       this.canArrangeDashboard = event.data.canArrange === true
       if (event.data.fixingVisuals !== undefined) this.fixingDashboardVisuals = event.data.fixingVisuals
       if (event.data.fixMessage !== undefined) this.fixVisualsMessage = event.data.fixMessage
@@ -188,7 +194,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       this.savedDashboardVisuals = event.data.visuals
     }
     const reference = event.data.reference
-    this.references = mergeReferences([...this.references, reference])
+    this.references = mergeReferences([reference], this.references.filter(item => item.reference.kind !== reference.reference.kind || item.reference.id !== reference.reference.id))
+    if (event.data.type === 'lv-builder-saved') void this.syncDashboardContext(reference.reference.id, event.data.pageId, this.dashboardPageTitle, event.data.modelId ?? '')
+  }
+
+  private async syncDashboardContext(dashboardId: string, pageId: string, pageTitle: string, modelId: string): Promise<void> {
+    const runtime = await loadDatastarRuntime()
+    // Ignore a projection superseded while the shared runtime was loading.
+    if (pageId !== this.dashboardPageId || !this.references.some(reference => reference.reference.kind === 'dashboard' && reference.reference.id === dashboardId)) return
+    runtime.mergePatch({agentContext: {surface: 'chat', dashboardId, pageId, pageTitle, modelId}})
   }
 
   private rememberDashboardCopy(artifactId: string, component: DashboardChatComponent): void {
@@ -977,7 +991,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             </section>
             <div class=${`body${this.builderOpen ? ' with-chat-header' : ''}`}>
               <div class="chat-pane-header" ?hidden=${!this.builderOpen}>
-                <span class="chat-pane-heading">${agentIcon()} Chat</span>
+                <span class="chat-pane-heading">${agentIcon()} Chat${this.dashboardPageTitle ? ` · ${this.dashboardPageTitle}` : ''}</span>
                 <div class="titlebar-actions">
                   <button class="arrange-dashboard" type="button" aria-label="Fix view visuals" aria-busy=${this.fixingDashboardVisuals} title="Complete missing chart fields while keeping your positions and sizes" ?disabled=${!this.canArrangeDashboard || this.fixingDashboardVisuals} @click=${this.arrangeDashboard}>${lucideIcon(Grid2X2)} ${this.fixingDashboardVisuals ? 'Fixing…' : 'Fix view visuals'}</button>
                   <button class="chat-size-toggle" type="button" aria-label="Expand chat" title="Expand chat" @click=${this.closeDashboardPreview}>${lucideIcon(Maximize2)}</button>
@@ -1022,7 +1036,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           <h2>Visual</h2>
           <div class="preview-actions">
             <button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>
-            <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
+            <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
             <button class="preview-action preview-builder-action" type="button" aria-label="View in Dashboard Preview" title="View in Dashboard Preview" ?disabled=${this.savingDashboard || !artifacts.length} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview</button>
             <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
           </div>

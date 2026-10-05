@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -78,10 +79,51 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			}
 			references = append(references, TurnReferenceFromCatalog(item.Item, projectID))
 		}
-		return agent.TurnContext{Surface: "chat", References: references}, nil
+		resolved := agent.TurnContext{Surface: "chat", References: references}
+		// Chat stays attached to its conversation while edits target the active
+		// builder page. Resolve the selection against the authorized draft;
+		// client-provided page names and model IDs are never authoritative.
+		dashboardID := strings.TrimSpace(candidate.DashboardID)
+		pageID := strings.TrimSpace(candidate.PageID)
+		for _, reference := range references {
+			if reference.Reference.Kind != "dashboard" || reference.Reference.ID != dashboardID || pageID == "" {
+				continue
+			}
+			if m.dashboardAuthoring == nil || scope.Credential.Restricted {
+				return agent.TurnContext{}, errors.New("dashboard draft context is unavailable")
+			}
+			draft, err := m.dashboardAuthoring.Draft(r.Context(), authoringapplication.DraftRequest{ProjectID: projectgraph.ResourceID(projectID), ActorID: scope.PrincipalID, DashboardID: authoring.DashboardID(dashboardID)})
+			if err != nil {
+				return agent.TurnContext{}, errors.New("dashboard draft is unknown or unauthorized")
+			}
+			resolved.DashboardID = dashboardID
+			resolved.DashboardTitle = draft.Lifecycle.Title
+			resolved.ModelID = draft.Lifecycle.SemanticModel.String()
+			return withChatDraftPage(resolved, draft.Revision.Document, pageID)
+		}
+		return resolved, nil
 	default:
 		return agent.TurnContext{}, errors.New("unsupported agent context surface")
 	}
+}
+
+// Called only after the draft facade has authorized the actor and dashboard.
+func withChatDraftPage(resolved agent.TurnContext, doc document.DashboardDocument, pageID string) (agent.TurnContext, error) {
+	for _, page := range doc.Spec.Pages {
+		if page.ID != pageID {
+			continue
+		}
+		resolved.PageID, resolved.PageTitle = page.ID, page.Title
+		for i := range resolved.References {
+			reference := &resolved.References[i]
+			if reference.Reference.Kind == "dashboard" && reference.Reference.ID == resolved.DashboardID {
+				reference.PageID = page.ID
+				reference.Context = append(reference.Context, fmt.Sprintf("Active builder page: %s (%s). Add new visuals to this page unless the user explicitly selects another destination.", page.Title, page.ID))
+			}
+		}
+		return resolved, nil
+	}
+	return agent.TurnContext{}, fmt.Errorf("dashboard page %q no longer exists; select another page before asking the agent to edit", pageID)
 }
 
 func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {

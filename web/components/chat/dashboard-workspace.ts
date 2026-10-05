@@ -24,6 +24,8 @@ export type ChatDashboardMessage =
     fixingVisuals?: boolean
     fixMessage?: string
     pageId: string
+    pageTitle?: string
+    modelId?: string
     href: string
     reference: AgentReferenceSignal
     components: DashboardChatComponent[]

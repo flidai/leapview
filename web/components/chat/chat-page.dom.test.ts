@@ -968,3 +968,32 @@ test('Preview creates an empty draft instead of implicitly adding every chat vis
     expect(form.has('chatVisuals')).toBe(false)
   } finally {await page.close()}
 })
+
+test('preview chat follows the selected page and targets visual imports there', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {e.dashboardPreview=true;e.builderOpen=true;await e.updateComplete})
+    const project = async (id: string, title: string) => {
+      await page.frameLocator('.builder-frame').locator('body').evaluate((_, selected) => {
+        window.parent.postMessage({type:'lv-builder-saved',revisionId:'revision-1',pageId:selected.id,pageTitle:selected.title,modelId:'semantic-model:sales',href:`/dashboards/demo/edit?embed=chat&page=${selected.id}`,
+          reference:{reference:{kind:'dashboard',id:'demo'},name:`Sales · ${selected.title}`,hierarchy:[],locations:[],context:[]},components:[],artifacts:[],visuals:{}},window.parent.location.origin)
+      },{id,title})
+      await page.waitForFunction(id=>(document.querySelector('lv-chat-page') as any)?.context?.pageId===id,id)
+    }
+    await project('overview','Overview')
+    await project('pies','Pie charts')
+    expect(await chat.evaluate((e: any)=>e.context.dashboardId)).toBe('demo')
+    expect(await chat.evaluate((e: any)=>e.references.filter((r: any)=>r.reference.id==='demo').map((r: any)=>r.name))).toEqual(['Sales · Pie charts'])
+    expect(await chat.locator('.chat-pane-heading').innerText()).toContain('Pie charts')
+    await page.getByRole('button',{name:'Expand chat',exact:true}).click()
+    let posted = ''
+    await page.route('**/dashboards/demo/draft/saved-visual', async route=>{posted=route.request().postData()??'';await route.fulfill({contentType:'text/html',body:'<div id="chat-dashboard-receipt"></div>'})})
+    await chat.evaluate(async(e: any)=>e.addAgentVisual(new CustomEvent('lv-add-agent-visual',{detail:{savedId:'11111111-1111-1111-1111-111111111111',artifactId:'pie'}})))
+    await page.waitForTimeout(200)
+    expect(new URLSearchParams(posted).get('pageId')).toBe('pies')
+    expect(new URL(new URL(page.url()).searchParams.get('dashboard')!,baseURL).searchParams.get('page')).toBe('pies')
+  } finally {await page.close()}
+})
