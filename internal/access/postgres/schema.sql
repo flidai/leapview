@@ -904,7 +904,7 @@ CREATE TABLE access.authorization_grant (
     CHECK (
         access.valid_permission_pairs(permission_profile, permissions)
         AND ((permission_profile IS NULL AND permissions IS NULL AND resource_id IS NOT NULL AND resource_kind IS NOT NULL AND capability IS NOT NULL)
-             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND jsonb_array_length(permissions) = 1 AND resource_id IS NULL AND resource_kind IS NULL AND capability IS NULL))
+             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND jsonb_array_length(permissions) >= 1 AND resource_id IS NULL AND resource_kind IS NULL AND capability IS NULL))
     )
 );
 CREATE UNIQUE INDEX authorization_grant_active_key ON access.authorization_grant(project_id, environment, generation_id, subject_kind, subject_id, resource_id, resource_kind, capability) WHERE revoked_at IS NULL;
