@@ -581,6 +581,8 @@ test('record table emits configured row actions without stealing interactive con
         columns: [
           { id: 'query', header: 'Query', kind: 'query', width: '520px', toggleable: false },
           { id: 'runtime', header: 'Runtime', width: '160px' },
+          { id: 'name', header: 'Asset', kind: 'entity' },
+          { id: 'actions', header: 'Actions', kind: 'actions' },
         ],
         rows: [{
           id: 'query_1',
@@ -592,6 +594,8 @@ test('record table emits configured row actions without stealing interactive con
             expandedContent: 'select *\nfrom orders',
           },
           runtime: 'sales',
+          name: { label: 'Orders', href: '#orders' },
+          actions: [{ label: 'Refresh', action: 'refresh' }],
         }],
       }
       ;(window as any).recordTableActions = []
@@ -617,6 +621,26 @@ test('record table emits configured row actions without stealing interactive con
     await page.keyboard.press('Space')
     await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
     expect(await rowActionState(page)).toEqual({ count: 3, action: 'detail', rowID: 'query_1', expanded: true })
+
+    const expand = page.getByRole('button', { name: 'Collapse query text' })
+    await expand.focus()
+    await page.keyboard.press('Enter')
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await rowActionState(page)).toEqual({ count: 3, action: 'detail', rowID: 'query_1', expanded: false })
+    await page.keyboard.press('Space')
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await rowActionState(page)).toEqual({ count: 3, action: 'detail', rowID: 'query_1', expanded: true })
+
+    await page.getByRole('button', { name: 'Refresh' }).focus()
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Space')
+    expect(await rowActionState(page)).toEqual({ count: 5, action: 'refresh', rowID: 'query_1', expanded: true })
+    await page.getByRole('link', { name: 'Orders' }).click()
+    expect(new URL(page.url()).hash).toBe('#orders')
+    expect(await rowActionState(page)).toEqual({ count: 5, action: 'refresh', rowID: 'query_1', expanded: true })
+    await page.getByRole('link', { name: 'Orders' }).focus()
+    await page.keyboard.press('Enter')
+    expect(await rowActionState(page)).toEqual({ count: 5, action: 'refresh', rowID: 'query_1', expanded: true })
 
     await page.locator('lv-record-table').evaluate((element: any) => {
       element.table = {

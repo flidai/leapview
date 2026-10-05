@@ -198,10 +198,17 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
 
       const rows = Array.from(root.querySelectorAll('.row[role="row"]')).map((row) => ({
         busy: row.getAttribute('aria-busy'),
+        rowIndex: Number(row.getAttribute('aria-rowindex')),
         text: row.textContent?.replace(/\s+/g, ' ').trim(),
       }))
       return {
         firstRequest,
+        accessibleTable: {
+          name: root.querySelector('[role="table"]')?.getAttribute('aria-label'),
+          rows: root.querySelector('[role="table"]')?.getAttribute('aria-rowcount'),
+          headerIndex: root.querySelector('.head')?.getAttribute('aria-rowindex'),
+          indices: rows.map(row => row.rowIndex),
+        },
         delayedFrameHeld: Boolean(delayedFrame),
         requestBeforeFrameRelease: Boolean(requestBeforeFrameRelease),
         staleAccepted: staleText.includes('stale'),
@@ -210,6 +217,11 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
       }
     })
 
+    expect(state.accessibleTable.name).toBe('Customers')
+    expect(state.accessibleTable.rows).toBe('201')
+    expect(state.accessibleTable.headerIndex).toBe('1')
+    expect(state.accessibleTable.indices[0]).toBeGreaterThan(100)
+    expect(state.accessibleTable.indices.every((index, position, indices) => position === 0 || index === indices[position - 1] + 1)).toBe(true)
     expect(state.firstRequest.block).toBeTruthy()
     expect(state.firstRequest.count).toBe(50)
     expect(state.delayedFrameHeld).toBe(true)

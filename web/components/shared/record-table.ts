@@ -403,7 +403,7 @@ class RecordTable extends LitElement {
     const additions = Number((value as RecordCell).additions ?? 0)
     const deletions = Number((value as RecordCell).deletions ?? 0)
     return html`
-      <span class="record-diff" aria-label=${label}>
+      <span class="record-diff" role="img" aria-label=${label}>
         <span class="record-diff-additions">+${additions}</span>
         <span class="record-diff-deletions">-${deletions}</span>
       </span>
@@ -479,7 +479,7 @@ class RecordTable extends LitElement {
         </span>
       </span>
     `
-    return href && href !== '-' ? html`<a class="record-entity-link" href=${href}>${content}</a>` : content
+    return href && href !== '-' ? html`<a class="record-entity-link" href=${href} @click=${(event: Event) => event.stopPropagation()}>${content}</a>` : content
   }
 
   private renderButton(column: RecordColumn, value: unknown, row: RecordRow) {
@@ -510,7 +510,7 @@ class RecordTable extends LitElement {
     const icon = statusIcon(value, statusLabel)
     return html`
       <span class="record-query">
-        <span class=${`record-query-status record-status-${tone}`} title=${statusLabel} aria-label=${statusLabel}>
+        <span class=${`record-query-status record-status-${tone}`} role="img" title=${statusLabel} aria-label=${statusLabel}>
           <span aria-hidden="true">${this.renderStatusIcon(icon)}</span>
         </span>
         ${content ? html`
@@ -652,7 +652,7 @@ class RecordTable extends LitElement {
   }
 
   private handleRowKeydown(event: KeyboardEvent, action: string, row: RecordRow): void {
-    if (!action) return
+    if (!action || event.target !== event.currentTarget) return
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     this.emitAction(action, row)

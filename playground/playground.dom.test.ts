@@ -461,6 +461,32 @@ for (const layer of ['point', 'heat', 'density', 'choropleth', 'path', 'referenc
 }
 
 
+test('map value ranges support keyboard endpoints and dragging with usable targets', async () => {
+  await open('charts/map')
+  await page.locator('lv-visualization-host').evaluate(async (element: any) => { await element.ensureMounted() })
+  const minimum = page.getByRole('slider', { name: 'Minimum Orders' })
+  const maximum = page.getByRole('slider', { name: 'Maximum Orders' })
+  const box = await minimum.boundingBox()
+  if (!box) throw new Error('Map minimum range is not visible')
+  expect(box.width).toBeGreaterThanOrEqual(24)
+  expect(box.height).toBeGreaterThanOrEqual(24)
+  const initial = Number(await minimum.inputValue())
+  await minimum.focus()
+  await page.keyboard.press('ArrowRight')
+  await browserExpect.poll(async () => Number(await minimum.inputValue())).toBeGreaterThan(initial)
+  await page.mouse.move(box.x + box.height / 2 + 1, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * .4, box.y + box.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await browserExpect.poll(async () => Number(await minimum.inputValue())).toBeGreaterThan(initial + 1)
+  await minimum.focus()
+  await page.keyboard.press('Home')
+  await browserExpect(minimum).toHaveValue((await minimum.getAttribute('min'))!)
+  await maximum.focus()
+  await page.keyboard.press('End')
+  await browserExpect(maximum).toHaveValue((await maximum.getAttribute('max'))!)
+}, 20_000)
+
 test('category dropdowns support keyboard navigation, active routes and search', async () => {
   await open('charts/bar')
   const nav = page.getByRole('navigation', { name: 'Examples' })

@@ -74,8 +74,8 @@ stable screenshot comparison reduce timing noise without masking content.
 ## Accessibility sweep
 
 The catalog sweep takes several minutes per theme.
-The initial sweep reports [findings needing component review](ACCESSIBILITY.md).
-Expect a nonzero exit while those findings remain; no rules are disabled.
+See the latest [review results and coverage limits](ACCESSIBILITY.md).
+The command fails when findings remain; no rules are disabled.
 
 The sweep uses `discoverExamples` to read the actual **Examples** navigation links,
 including collapsed categories. Every route opens with default fixtures in each
