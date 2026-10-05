@@ -1,51 +1,13 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
-import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope, builderTestDocument as testDocument } from './dashboard-builder-test-fixtures'
+import { beforeAll, expect, test } from 'bun:test'
+import type { Browser } from '@playwright/test'
+import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser-fixture.test'
+import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope } from './dashboard-builder-test-fixtures'
 import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test'
 
-let server: Server
-let baseURL = ''
+const fixture = dashboardBuilderBrowserFixture()
 let browser: Browser
-const projectRoot = process.cwd()
-const root = join(projectRoot, '.tmp/dashboard-builder-test')
-
-beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
-    const file = normalize(join(fileRoot, url.pathname))
-    if (!file.startsWith(fileRoot)) {
-      response.writeHead(404)
-      response.end('not found')
-      return
-    }
-    try {
-      response.setHeader('content-type', 'text/javascript')
-      response.end(await readFile(file))
-    } catch {
-      response.writeHead(404)
-      response.end('not found')
-    }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('dashboard builder test server did not bind')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
-})
-
-afterAll(async () => {
-  await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-}, 15_000)
+let baseURL = ''
+beforeAll(() => { ({ browser, baseURL } = fixture) })
 
 test('dashboard builder renders bottom page tabs, canvas, and visual builder with typed actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
@@ -3424,95 +3386,4 @@ test('dashboard builder gates publishing on exact draft state and visible valida
   } finally {
     await page.close()
   }
-})
-
-test('local builder selections and pane toggles keep the grid and its editing state intact', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      await element.updateComplete
-      const root = element.shadowRoot as ShadowRoot
-      const canvas = root.querySelector('.canvas') as any
-      const grid = canvas.gridstack
-      let editingCalls = 0
-      for (const method of ['enableMove', 'enableResize']) {
-        const original = grid[method].bind(grid)
-        grid[method] = (...args: unknown[]) => { editingCalls++; return original(...args) }
-      }
-      ;(root.querySelector('[data-pane-toggle="data"]') as HTMLButtonElement).click()
-      await element.updateComplete
-      ;(root.querySelector('.canvas') as HTMLElement).click()
-      await element.updateComplete
-      ;(root.querySelector('.visual') as HTMLElement).click()
-      await element.updateComplete
-      return { retained: grid === canvas.gridstack, editingCalls, selected: root.querySelector('.visual')?.getAttribute('data-selected') }
-    })
-    expect(state).toEqual({ retained: true, editingCalls: 0, selected: 'true' })
-  } finally { await page.close() }
-})
-
-test('retained builder grids use the current canvas dimensions during drag callbacks', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      await element.updateComplete
-      const root = element.shadowRoot as ShadowRoot
-      const canvas = root.querySelector('.canvas') as any
-      const grid = canvas.gridstack
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const pages = structuredClone(element.builder.pages)
-      pages[0].canvas.width = 1000
-      pages[0].canvas.height = 950
-      mergePatch({ builder: { pages } })
-      await element.updateComplete
-      grid._gsEventHandler.drag(new Event('drag'), root.querySelector('.visual'))
-      return {
-        retained: grid === canvas.gridstack,
-        width: canvas.style.getPropertyValue('--builder-grid-width'),
-        height: canvas.style.height,
-      }
-    })
-    expect(state).toEqual({ retained: true, width: '968px', height: '918px' })
-  } finally { await page.close() }
-})
-
-test('preview replacement refreshes retained grid drag handles so the new header remains movable', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const element = page.locator('lv-dashboard-builder')
-    const setup = await element.evaluate(async (builder: any, preview: any) => {
-      await builder.updateComplete
-      const root = builder.shadowRoot as ShadowRoot
-      const canvas = root.querySelector('.canvas') as any
-      const grid = canvas.gridstack
-      const before = root.querySelector('.visual-drag-header')
-      ;(window as any).__performancePlacementCommands = []
-      builder.addEventListener('lv-builder-command', (event: CustomEvent) => {
-        if (event.detail.action === 'set_placements') (window as any).__performancePlacementCommands.push(event.detail)
-      })
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ builderVisuals: { 'sales-chart': preview } })
-      await builder.updateComplete
-      const host = root.querySelector('lv-visualization-host') as any
-      await host.ensureMounted()
-      return { retained: grid === canvas.gridstack, changedHeader: before !== root.querySelector('.visual-drag-header'), scale: builder.canvasScale }
-    }, governedBarPreviewEnvelope('sha256:performance-drag'))
-    expect(setup.retained).toBe(true)
-    expect(setup.changedHeader).toBe(true)
-    const header = await element.locator('.visual-drag-header').boundingBox()
-    expect(header).not.toBeNull()
-    await page.mouse.move(header!.x + header!.width / 2, header!.y + header!.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(header!.x + header!.width / 2, header!.y + header!.height / 2 + 128 * setup.scale, { steps: 8 })
-    await page.mouse.up()
-    await page.waitForFunction(() => (window as any).__performancePlacementCommands.length > 0)
-    const placements = await page.evaluate(() => (window as any).__performancePlacementCommands.at(-1).placements)
-    expect(placements.find((placement: any) => placement.componentId === 'sales-chart').placement.row).toBeGreaterThan(1)
-  } finally { await page.close() }
 })

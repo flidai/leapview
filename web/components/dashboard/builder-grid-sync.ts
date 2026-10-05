@@ -76,3 +76,14 @@ function canonicalGridNodes(root: ShadowRoot | null, components: CanonicalGridCo
     }] : []
   })
 }
+
+export function refreshBuilderGridDragHandles(grid: GridStack, previousHandles: Map<GridItemHTMLElement, Element[]>): void {
+  for (const item of grid.getGridItems()) {
+    const handles = Array.from(item.querySelectorAll('.component-drag-handle'))
+    const previous = previousHandles.get(item)
+    if (previous && (previous.length !== handles.length || handles.some((handle, index) => handle !== previous[index]))) {
+      grid.refreshDragHandles(item)
+    }
+    previousHandles.set(item, handles)
+  }
+}
