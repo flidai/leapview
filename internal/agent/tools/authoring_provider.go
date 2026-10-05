@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
@@ -19,6 +21,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/google/uuid"
 )
 
 // Dashboard authoring tools intentionally expose the existing application
@@ -251,10 +254,14 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if !ok {
 				return result
 			}
+			ctx, auditErr := dashboardToolMutationContext(ctx, scope, project, dashboardauthoring.Command{ID: dashboardToolCommandID(scope, project, input.DraftID, call), DashboardID: id, DraftID: input.DraftID})
+			if auditErr != nil {
+				return authoringToolError(auditErr)
+			}
 			value, err := p.Application.EditSource(ctx, authoringapplication.SourceEditRequest{
 				ProjectID: project, ActorID: scope.PrincipalID, DashboardID: id,
 				DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, Edits: input.Edits,
-				CommandID:  dashboardauthoring.CommandID(strings.TrimSpace(call.ID)),
+				CommandID:  dashboardToolCommandID(scope, project, input.DraftID, call),
 				Provenance: dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID},
 			})
 			if err != nil {
@@ -330,8 +337,12 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				return result
 			}
 			input.Command.DashboardID = id
-			input.Command.ID = dashboardauthoring.CommandID(strings.TrimSpace(call.ID))
+			input.Command.ID = dashboardToolCommandID(scope, project, input.Command.DraftID, call)
 			input.Command.Provenance = dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID}
+			ctx, auditErr := dashboardToolMutationContext(ctx, scope, project, input.Command)
+			if auditErr != nil {
+				return authoringToolError(auditErr)
+			}
 			value, err := p.Application.Execute(ctx, project, input.Command)
 			if err != nil {
 				return authoringToolError(err)
@@ -474,13 +485,53 @@ func (p DashboardAuthoringProvider) executeIntent(ctx context.Context, scope Sco
 		return result
 	}
 	command.DashboardID = id
-	command.ID = dashboardauthoring.CommandID(strings.TrimSpace(call.ID))
+	command.ID = dashboardToolCommandID(scope, project, command.DraftID, call)
 	command.Provenance = dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID}
+	ctx, auditErr := dashboardToolMutationContext(ctx, scope, project, command)
+	if auditErr != nil {
+		return authoringToolError(auditErr)
+	}
 	value, err := p.Application.ExecuteIntent(ctx, authoringapplication.IntentRequest{ProjectID: project, ActorID: scope.PrincipalID, Command: command})
 	if err != nil {
 		return authoringToolError(err)
 	}
 	return agentcore.ToolResult{Content: value}
+}
+
+// Derive a replay-stable native command identity from its draft and the original
+// provider call. Retain the draft's UUIDv7 timestamp and derive the entropy from
+// the scoped call identity, like other native successor identities. Invalid
+// draft IDs are still rejected by the application before any mutation.
+func dashboardToolCommandID(scope Scope, project projectgraph.ResourceID, draft dashboardauthoring.DraftID, call agentcore.ToolCall) dashboardauthoring.CommandID {
+	identity, _ := json.Marshal([]string{"leapview:dashboard-agent-command", project.String(), scope.PrincipalID, scope.ConversationID, draft.String(), strings.TrimSpace(call.ID)})
+	digest := sha256.Sum256(identity)
+	id, _ := uuid.Parse(draft.String())
+	copy(id[6:], digest[:10])
+	id[6] = (id[6] & 0x0f) | 0x70
+	id[8] = (id[8] & 0x3f) | 0x80
+	return dashboardauthoring.CommandID(id.String())
+}
+
+// Agent tools use the same source-owned transactional audit contract as other
+// dashboard command producers. The repository commits this intent atomically
+// with the revision, using the exact same native identity as the command.
+func dashboardToolMutationContext(ctx context.Context, scope Scope, project projectgraph.ResourceID, command dashboardauthoring.Command) (context.Context, error) {
+	contract, ok := dashboardgen.GetAPIGenCommandRuntimeContract("executeDashboardAuthoringCommand")
+	if !ok {
+		return ctx, fmt.Errorf("dashboard authoring command contract is unavailable")
+	}
+	metadata, err := dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{OperationId: contract.OperationID, ProjectId: project.String(), DashboardId: command.DashboardID.String(), DraftId: command.DraftID.String(), Origin: string(dashboardauthoring.OriginAgent)})
+	if err != nil {
+		return ctx, err
+	}
+	capability := access.CapabilityResourceEdit
+	if command.Publish != nil {
+		capability = access.CapabilityResourcePublish
+	}
+	if command.Archive != nil {
+		capability = access.CapabilityResourceManage
+	}
+	return dashboardauthoring.WithAuditIntent(ctx, access.AuditIntent{EventID: string(command.ID), Source: "dashboard.authoring", Operation: contract.OperationID, ActorID: scope.PrincipalID, PrincipalID: scope.PrincipalID, Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: command.DashboardID.String(), Capability: capability, Outcome: "success", MetadataJSON: metadata}), nil
 }
 
 func authoredDashboardID(raw string) (dashboardauthoring.DashboardID, agentcore.ToolResult, bool) {

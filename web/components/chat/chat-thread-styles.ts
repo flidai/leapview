@@ -419,6 +419,8 @@ export const chatThreadStyles = css`
       color: var(--lv-fg-muted);
     }
 
+    .page-visuals { display: grid; gap: 8px; min-width: 0; }
+    .page-visuals h3 { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .visual-reference {
       display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
       padding: 12px; border: var(--lv-border-default); border-radius: var(--lv-radius-large);

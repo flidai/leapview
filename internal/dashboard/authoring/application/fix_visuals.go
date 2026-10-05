@@ -106,6 +106,13 @@ func missingVisualFields(doc document.DashboardDocument, pageID string, model *s
 		counts := visualFieldCounts(visual)
 		var missing []authoring.FieldRole
 		limits := authoring.CanonicalVisualRoleLimits(visual.Type)
+		// Cartesian renderers need an X/category binding as well as a measure.
+		// The catalog permits zero dimensions for editing intermediate drafts;
+		// use renderable minima when completing an unfinished chart.
+		switch visual.Type {
+		case document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn, document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeCombo:
+			limits = []authoring.VisualRoleLimit{{Role: "metric", Minimum: 1}, {Role: "dimension", Minimum: 1}}
+		}
 		if visual.Type == document.DashboardVisualTypeTable {
 			limits = []authoring.VisualRoleLimit{{Role: "detail", Minimum: 1}}
 		}

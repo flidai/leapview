@@ -45,6 +45,8 @@ class ChatThread extends LitElement {
   @property({ attribute: 'conversation-id' }) conversationId = ''
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
   @property({ type: Boolean }) dashboardPreviewAvailable = false
+  @property({ attribute: false }) pageArtifacts: ChatArtifactSignal[] = []
+  @property({ type: String }) pageTitle = ''
   @property({ attribute: false }) selectedVisualId = ''
   @property({ attribute: false }) dashboardVisualIds: string[] = []
   @property({ attribute: false }) savedVisualIds: string[] = []
@@ -74,6 +76,7 @@ class ChatThread extends LitElement {
             ${!unavailable && this.status.error ? html`<div class="alert" role="alert">${this.status.error}</div>` : nothing}
             ${empty && !unavailable ? this.renderEmptyState('Start a conversation') : nothing}
             ${groupTranscript(transcript).map((unit) => this.renderUnit(unit))}
+            ${this.dashboardPreviewAvailable && this.pageArtifacts.length ? html`<section class="page-visuals" aria-label="Current page visuals"><h3>${this.pageTitle || 'Current page'} visuals</h3>${this.pageArtifacts.map(artifact => this.renderArtifact(artifact))}</section>` : nothing}
             ${showWorking ? html`
               <div class="working" role="status" aria-label="Working" aria-live="polite">
                 <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -90,7 +93,7 @@ class ChatThread extends LitElement {
   }
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('transcript') || changed.has('transcriptAttribute') || changed.has('status') || changed.has('conversationId')) {
+    if (changed.has('transcript') || changed.has('transcriptAttribute') || changed.has('status') || changed.has('conversationId') || changed.has('pageArtifacts')) {
       this.scheduleScrollToBottom()
     }
   }

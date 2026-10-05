@@ -166,3 +166,26 @@ func TestFixVisualsCompletesScatterAxesAndIdentity(t *testing.T) {
 		t.Fatal("completed scatter cannot render")
 	}
 }
+
+func TestFixVisualsCompletesEmptyCartesianCharts(t *testing.T) {
+	for _, kind := range []document.DashboardVisualType{document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn, document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeCombo} {
+		t.Run(string(kind), func(t *testing.T) {
+			doc, model := fixVisualFixture()
+			visual := doc.Spec.Visuals["empty"]
+			visual.Type = kind
+			visual.Presentation = document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian"}}
+			doc.Spec.Visuals["empty"] = visual
+			fields, err := missingVisualFields(doc, "overview", model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixed, err := authoring.WithAssignedVisualFields(doc, fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !previewableVisual(fixed, "empty", model) {
+				t.Fatalf("%s remains unrenderable with fields %+v", kind, fields)
+			}
+		})
+	}
+}

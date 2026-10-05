@@ -133,7 +133,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private get artifactSignature(): string {
-    return JSON.stringify(this.previewArtifacts.map(artifact => artifact.id))
+    return JSON.stringify((this.agent.transcript ?? []).flatMap(item => item.status === 'complete' && item.artifact ? [item.artifact.id] : []))
   }
 
   private get dashboardSaved(): boolean {
@@ -162,6 +162,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     if (href.origin !== window.location.origin || !href.pathname.startsWith('/dashboards/')) return
     const components = event.data.components
     this.dashboardComponents = components
+    for (const component of components) if (component.artifactId) this.rememberDashboardCopy(component.artifactId, component)
     for (const [index, artifactId] of this.pendingPreviewArtifacts.entries()) {
       const component = components.find(component => component.id === `visual_${index + 1}`)
       if (component) this.rememberDashboardCopy(artifactId, component)
@@ -494,7 +495,16 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     for (const item of this.agent.transcript ?? []) {
       if (item.artifact && item.status === 'complete') artifacts.set(item.artifact.id, item.artifact)
     }
+    for (const artifact of this.savedDashboardArtifacts) artifacts.set(artifact.id, artifact)
     return [...artifacts.values()]
+  }
+
+  private get pageVisualLinks(): ChatArtifactSignal[] {
+    const conversationIDs = new Set((this.agent.transcript ?? []).flatMap(item => item.artifact ? [item.artifact.id] : []))
+    return this.savedDashboardArtifacts.filter(artifact => {
+      const component = this.dashboardCopies[artifact.id]
+      return !component || !Object.entries(this.dashboardCopies).some(([id, copy]) => conversationIDs.has(id) && copy.id === component.id && copy.pageId === component.pageId)
+    })
   }
 
   @state() private references: AgentReferenceSignal[] = []
@@ -980,7 +990,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       this.visualCacheKey = key
       this.visualCache = chatVisualsFromSignals(this.signal<Record<string, VisualizationEnvelope>>('visuals', {}))
     }
-    return this.visualCache
+    return { ...this.visualCache, ...this.savedDashboardVisuals }
   }
 
   get pending(): boolean {
@@ -1066,12 +1076,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const saved = Boolean(selected && this.visualLibraryState.savedIds.includes(selected.id))
     const saving = Boolean(this.visualLibraryState.savingId)
     const added = Boolean(selected && this.dashboardCopies[selected.id])
+    const canSave = Boolean(selected && this.agent.transcript?.some(item => item.artifact?.id === selected.id))
     return html`
       <section class="preview-panel" aria-label="Dashboard preview" ?hidden=${!visible}>
         <div class="preview-heading">
           <h2>Visual</h2>
           <div class="preview-actions">
-            <button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>
+            ${canSave ? html`<button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>` : null}
             <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
             <button class="preview-action preview-builder-action" type="button" aria-label="View in Dashboard Preview" title="View in Dashboard Preview" ?disabled=${this.savingDashboard || !artifacts.length} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview</button>
             <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
@@ -1079,7 +1090,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         </div>
         ${this.savedBuilderHref ? html`<label class="dashboard-destination">Dashboard page
           <select aria-label="Dashboard page" .value=${this.pendingDashboardPageId || this.dashboardPageId} ?disabled=${this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || !this.dashboardPages.length} @change=${this.selectDashboardPage}>
-            ${this.dashboardPages.map(page => html`<option value=${page.id}>${page.title}</option>`)}
+            ${this.dashboardPages.map(page => html`<option value=${page.id} .selected=${page.id === (this.pendingDashboardPageId || this.dashboardPageId)}>${page.title}</option>`)}
           </select>
           <span>${added ? 'Added to this page' : 'Add to this page'}</span>
         </label>` : null}
@@ -1143,6 +1154,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${this.handleVisualLibraryState}></lv-agent-visual-library>
         <lv-chat-thread .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId}
           .transcript=${this.displayTranscript(agent.transcript ?? [])}
+          .pageArtifacts=${this.pageVisualLinks}
+          .pageTitle=${this.dashboardPageTitle}
           .visuals=${this.visuals ?? {}}
           .status=${status}
           .dashboardPreviewAvailable=${true}

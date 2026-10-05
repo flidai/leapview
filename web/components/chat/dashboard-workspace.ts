@@ -7,7 +7,7 @@ export type SavedVisualImportMessage = {
   agentContext: AgentContextSignal
 }
 
-export type DashboardChatComponent = { id: string; pageId: string; savedVisualId?: string }
+export type DashboardChatComponent = { id: string; pageId: string; artifactId?: string; savedVisualId?: string }
 
 // Same-origin bridge between the existing builder and its owning chat.
 // The parent validates both origin and the exact iframe window before use.

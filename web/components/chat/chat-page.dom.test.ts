@@ -1056,3 +1056,26 @@ test('removing a visual keeps the live builder mounted and sends its selected-pa
     expect(await page.evaluate(()=>(window as any).builderCommands[2])).toEqual({type:'lv-select-dashboard-page',pageId:'overview'})
   } finally {await page.close()}
 })
+
+test('side agent exposes dashboard-authored visuals in the individual side view', async () => {
+ const page=await browser.newPage()
+ try {
+  await page.goto(baseURL)
+  const chat=page.locator('lv-chat-page');await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async(e: any)=>{
+   e.dashboardPreview=true;e.builderOpen=true;await e.updateComplete
+  })
+  await page.frameLocator('.builder-frame').locator('body').evaluate(()=>{
+   window.parent.postMessage({type:'lv-builder-saved',revisionId:'rev-pie',pageId:'pies',pageTitle:'Pie charts',pages:[{id:'overview',title:'Overview'},{id:'pies',title:'Pie charts'}],href:'/dashboards/demo/edit?embed=chat&page=pies',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components:[{id:'component-pie',pageId:'pies',artifactId:'authored-pie'}],artifacts:[{id:'authored-pie',type:'pie',summary:'Agent pie chart'}],visuals:{}},window.parent.location.origin)
+  })
+  await page.getByRole('button',{name:'Open Agent pie chart in visuals sidebar',exact:true}).click()
+  expect(await chat.evaluate((e: any)=>({builderOpen:e.builderOpen,selected:e.selectedPreviewVisual,page:e.dashboardPageId}))).toEqual({builderOpen:false,selected:'authored-pie',page:'pies'})
+  expect(await page.getByRole('button',{name:'Remove from dashboard',exact:true}).isVisible()).toBe(true)
+  expect(await chat.locator('.preview-card:not([hidden]) lv-visual-artifact').getAttribute('artifact-id')).toBe('authored-pie')
+  expect(await page.getByRole('combobox',{name:'Dashboard page',exact:true}).inputValue()).toBe('pies')
+  expect(await page.getByTitle('Save visual',{exact:true}).count()).toBe(0)
+  expect(await page.getByTitle('Unsave visual',{exact:true}).count()).toBe(0)
+  await page.getByRole('button',{name:'View in Dashboard Preview',exact:true}).click()
+  expect(await chat.evaluate((e: any)=>({builderOpen:e.builderOpen,page:e.dashboardPageId}))).toEqual({builderOpen:true,page:'pies'})
+ } finally {await page.close()}
+})
