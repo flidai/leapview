@@ -3,14 +3,6 @@ import { Menu, Monitor, Moon, Search, Sun, X } from 'lucide'
 import { DatastarLit } from '../../web/components/shared/datastar-lit'
 import { lucideIcon } from '../../web/components/shared/lucide-icons'
 
-const siteHeader = document.querySelector<HTMLElement>('.site-header')
-if (siteHeader) {
-  const updateHeaderBackdrop = () => siteHeader.classList.toggle('is-scrolled', window.scrollY > 8)
-  updateHeaderBackdrop()
-  window.addEventListener('scroll', updateHeaderBackdrop, { passive: true })
-  window.addEventListener('pageshow', updateHeaderBackdrop)
-}
-
 type ThemeMode = 'system' | 'light' | 'dark'
 
 const nextThemeMode: Record<ThemeMode, ThemeMode> = {
@@ -200,7 +192,6 @@ class SiteMobileMenu extends LitElement {
     return html`<button type="button" aria-label=${label} aria-controls="site-mobile-navigation" aria-expanded=${String(this.open)} @click=${this.toggle}>${lucideIcon(this.open ? X : Menu, { size: 20, strokeWidth: 2 })}</button>
       <nav id="site-mobile-navigation" aria-label="Site navigation" ?hidden=${!this.open}>
         <a href="/docs" @click=${this.close}>Docs</a>
-        <a href="/compliance" @click=${this.close}>Compliance</a>
         <a href="/docs/search" @click=${this.close}>Search</a>
         ${this.showcase ? html`<a href="/showcase" @click=${this.close}>Live demo</a>` : null}
       </nav>`
@@ -217,7 +208,10 @@ class SiteMobileMenu extends LitElement {
   }
 
   private readonly handleKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && this.open) this.close()
+    if (event.key === 'Escape' && this.open) {
+      this.close()
+      this.renderRoot.querySelector<HTMLButtonElement>('button')?.focus()
+    }
   }
 }
 

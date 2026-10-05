@@ -25,18 +25,18 @@ import (
 const qualificationPostgreSQL18Image = "docker.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
 
 const (
-	qualificationNativePostgresControlDatabase  = "leapview_control"
-	qualificationNativePostgresDuckLakeDatabase = "leapview_ducklake"
+	qualificationNativePostgresControlDatabase  = postgresControlDatabase
+	qualificationNativePostgresDuckLakeDatabase = postgresDuckLakeDatabase
 	qualificationNativePostgresBootstrapRole    = "leapview_bootstrap"
 
-	qualificationNativePostgresControlRuntimeRole      = "leapview_control_runtime"
+	qualificationNativePostgresControlRuntimeRole      = postgresControlRuntimeRole
 	qualificationNativePostgresControlReadonlyRole     = "leapview_control_readonly"
-	qualificationNativePostgresControlMigratorRole     = "leapview_control_migrator"
+	qualificationNativePostgresControlMigratorRole     = postgresControlMigratorRole
 	qualificationNativePostgresControlUpgradeRole      = "leapview_control_upgrade_coordinator"
-	qualificationNativePostgresControlMaintenanceRole  = "leapview_control_maintenance"
-	qualificationNativePostgresDuckLakeRuntimeRole     = "leapview_ducklake_runtime"
-	qualificationNativePostgresDuckLakeMigratorRole    = "leapview_ducklake_migrator"
-	qualificationNativePostgresDuckLakeMaintenanceRole = "leapview_ducklake_maintenance"
+	qualificationNativePostgresControlMaintenanceRole  = postgresControlMaintenanceRole
+	qualificationNativePostgresDuckLakeRuntimeRole     = postgresDuckLakeRuntimeRole
+	qualificationNativePostgresDuckLakeMigratorRole    = postgresDuckLakeMigratorRole
+	qualificationNativePostgresDuckLakeMaintenanceRole = postgresDuckLakeMaintenanceRole
 
 	qualificationNativePostgresReadyTimeout = 2 * time.Minute
 	qualificationNativePostgresRootCertPath = "/var/lib/leapview/home/postgres-root.crt"

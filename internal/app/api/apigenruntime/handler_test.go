@@ -51,6 +51,40 @@ func commandLookup(operationID string) (apigencommand.Contract, bool) {
 	}, true
 }
 
+func TestGeneratedBoundaryRejectsForbiddenReplayKeyBeforeDecoding(t *testing.T) {
+	for _, value := range []string{"", "supplied-key"} {
+		t.Run(value, func(t *testing.T) {
+			calls := 0
+			handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool {
+				calls++
+				return true
+			}, func(string) (apigencommand.Contract, bool) {
+				contract, _ := commandLookup("createWidget")
+				contract.Idempotency = apigencommand.IdempotencyPolicy("forbidden")
+				contract.Guarantee = apigencommand.GuaranteeTransactional
+				return contract, true
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/widgets", nil)
+			body := &forbiddenBodyReader{}
+			request.Body = body
+			request.Header.Set("Idempotency-Key", value)
+			recorder := httptest.NewRecorder()
+			handler.HandleAPIGen("createWidget", recorder, request)
+			if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "IDEMPOTENCY_KEY_FORBIDDEN") || calls != 0 || body.read {
+				t.Fatalf("status=%d calls=%d bodyRead=%v", recorder.Code, calls, body.read)
+			}
+		})
+	}
+}
+
+type forbiddenBodyReader struct{ read bool }
+
+func (b *forbiddenBodyReader) Read([]byte) (int, error) { b.read = true; return 0, io.EOF }
+func (*forbiddenBodyReader) Close() error               { return nil }
+
 func TestGeneratedCommandBoundaryRejectsSuccessfulBypass(t *testing.T) {
 	handler, err := buildTestHandler(func(_ string, w http.ResponseWriter, _ *http.Request) bool {
 		w.WriteHeader(http.StatusCreated)

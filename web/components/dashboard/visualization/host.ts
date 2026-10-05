@@ -1,9 +1,9 @@
 import { LitElement, html } from 'lit'
 import { EllipsisVertical } from 'lucide'
 import { lucideIcon } from '../../shared/lucide-icons'
+import { toggleAnchoredPopover } from '../../shared/anchored-popover'
 import { property, query, state } from 'lit/decorators.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
-import validateGeneratedEnvelope from '../../../generated/visualization/validate'
 import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
@@ -21,24 +21,71 @@ export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, su
 /** Start mounting within 600 CSS pixels above or below the viewport. */
 export const visualizationNearViewportRootMargin = '600px 0px'
 
+type GeneratedEnvelopeValidator = typeof import('../../../generated/visualization/validate')['default']
+let generatedEnvelopeValidator: GeneratedEnvelopeValidator | undefined
+let envelopeValidatorLoad: Promise<GeneratedEnvelopeValidator> | undefined
+
+function loadEnvelopeValidator(): Promise<GeneratedEnvelopeValidator> {
+  if (generatedEnvelopeValidator) return Promise.resolve(generatedEnvelopeValidator)
+  return envelopeValidatorLoad ??= import('../../../generated/visualization/validate').then(({ default: validate }) => {
+    generatedEnvelopeValidator = validate
+    return validate
+  }, (error: unknown) => {
+    envelopeValidatorLoad = undefined
+    throw error
+  })
+}
+
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
   private resizeSuspendedValue = false
   @property({ attribute: false })
   get envelope(): VisualizationEnvelope | undefined { return this.envelopeValue }
   set envelope(value: VisualizationEnvelope | undefined) {
-    const previous = this.envelopeValue
     // Keep the shell and actions on the same valid revision as the renderer,
     // both before and after a deferred host mounts. Spec revisions are opaque
     // identities (and may legitimately revert); data revisions order one spec.
     // Eager hosts retain their existing validation/error boundary.
     if (this.deferMount && !this.authoring) {
-      if (value && !isAcceptedEnvelope(value)) return
-      if (value && previous && previous.specRevision === value.specRevision && value.dataRevision < previous.dataRevision) return
+      if (value && !validateEnvelopeBoundary(value)) return
+      if (value && !generatedEnvelopeValidator) {
+        this.queueEnvelopeValidation(value)
+        return
+      }
+      if (value && (!generatedEnvelopeValidator!(value) || this.isStaleEnvelope(value))) return
     }
+    this.envelopeAssignmentGeneration++
+    this.assignEnvelope(value)
+  }
+
+  private assignEnvelope(value: VisualizationEnvelope | undefined): void {
+    const previous = this.envelopeValue
     if (Object.is(previous, value)) return
     this.envelopeValue = value
     this.requestUpdate('envelope', previous)
+  }
+
+  private isStaleEnvelope(value: VisualizationEnvelope): boolean {
+    const previous = this.envelopeValue
+    return previous !== undefined && previous.specRevision === value.specRevision && value.dataRevision < previous.dataRevision
+  }
+
+  private queueEnvelopeValidation(value: VisualizationEnvelope): void {
+    const generation = this.envelopeAssignmentGeneration
+    // Validate in assignment order so a rejected newer input still leaves the
+    // last valid envelope available to the shell and actions.
+    const pending = (this.pendingEnvelopeValidation ?? Promise.resolve()).then(async () => {
+      if (generation !== this.envelopeAssignmentGeneration) return
+      const validate = await loadEnvelopeValidator()
+      if (generation !== this.envelopeAssignmentGeneration) return
+      if (validate(value) && !this.isStaleEnvelope(value)) this.assignEnvelope(value)
+    }).catch((error: unknown) => {
+      if (generation === this.envelopeAssignmentGeneration) this.error = error instanceof Error ? error.message : String(error)
+    })
+    this.pendingEnvelopeValidation = pending
+    void pending.then(() => {
+      if (this.pendingEnvelopeValidation === pending) this.pendingEnvelopeValidation = undefined
+    })
   }
   /** Keep observing layout, but defer expensive renderer resizing until release. */
   get resizeSuspended(): boolean { return this.resizeSuspendedValue }
@@ -56,6 +103,7 @@ export class VisualizationHost extends LitElement {
   @state() private applying = false
   @state() private presented = false
   @state() private announcement = ''
+  @state() private optionsOpen = false
   private controller?: VisualizationController
   private resizeObserver?: ResizeObserver
   private applyGeneration = 0
@@ -68,6 +116,9 @@ export class VisualizationHost extends LitElement {
   private pendingApply?: Promise<void>
   private applyQueued = false
   private mountEpoch = 0
+  private envelopeAssignmentGeneration = 0
+  private pendingEnvelopeValidation?: Promise<void>
+  private optionsScrollRoots: Array<Document | ShadowRoot> = []
 
   static styles = [visualActionStyles, visualizationHostStyles]
 
@@ -129,7 +180,7 @@ export class VisualizationHost extends LitElement {
     this.controller = new VisualizationController(
       visualizationRegistry,
       this.rendererContainer,
-      (value): value is VisualizationEnvelope => validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value),
+      (value): value is VisualizationEnvelope => validateEnvelopeBoundary(value) && generatedEnvelopeValidator!(value),
       (detail) => this.dispatchEvent(new CustomEvent('lv-visualization-observation', { bubbles: true, composed: true, detail })),
     )
     this.controller.setResizeSuspended(this.resizeSuspendedValue)
@@ -156,6 +207,8 @@ export class VisualizationHost extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.closeOptions()
+    this.removeOptionsListeners()
     const generation = ++this.connectionGeneration
     super.disconnectedCallback()
     // A synchronous DOM move fires disconnected/connected callbacks even though
@@ -187,6 +240,7 @@ export class VisualizationHost extends LitElement {
     this.mountRequested = true
     try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
     this.mountObserver = undefined
+    while (this.pendingEnvelopeValidation) await this.pendingEnvelopeValidation
     await this.updateComplete
     if (!this.isConnected || this.mountEpoch !== epoch) throw new Error('visualization mount superseded')
     this.ensureController()
@@ -226,9 +280,10 @@ export class VisualizationHost extends LitElement {
             <slot name="agent-action"></slot>
             ${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}
             ${this.visualActions()}
+            <slot name="focus-action"></slot>
           </div>
         </header>
-      ` : tableActions ? null : html`<div class="headerless-actions"><div class="visual-actions"><slot name="agent-action"></slot>${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}</div></div>`}
+      ` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
@@ -299,8 +354,9 @@ export class VisualizationHost extends LitElement {
 
   private async applyEnvelope(): Promise<void> {
     const envelope = this.envelope
-    if (!envelope || !this.controller) return
-    const previous = this.controller.envelope
+    const controller = this.controller
+    if (!envelope || !controller) return
+    const previous = controller.envelope
     if (this.presentedRendererID !== envelope.rendererID) {
       this.presentedRendererID = envelope.rendererID
       this.presented = false
@@ -308,7 +364,9 @@ export class VisualizationHost extends LitElement {
     const generation = ++this.applyGeneration
     this.applying = true
     try {
-      await this.controller.apply(envelope, this.rendererContext())
+      if (!generatedEnvelopeValidator) await loadEnvelopeValidator()
+      if (generation !== this.applyGeneration || controller !== this.controller) return
+      await controller.apply(envelope, this.rendererContext())
       if (generation === this.applyGeneration && envelope === this.envelope) {
         this.error = ''
         this.presented = true
@@ -360,21 +418,86 @@ export class VisualizationHost extends LitElement {
   private visualActions() {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return null
-    return html`<details class="visual-options">
-      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
-      <div class="menu" role="menu">
+    return html`<div class="visual-options">
+      <button class="options-trigger" type="button" aria-label="Visual options" aria-haspopup="menu" aria-expanded=${String(this.optionsOpen)} popovertarget="visual-options-menu" title="Visual options" @click=${this.toggleOptions} @keydown=${this.optionsTriggerKeydown}>${lucideIcon(EllipsisVertical)}</button>
+      <div id="visual-options-menu" class="menu" popover="auto" role="menu" aria-label="Visualization actions" @toggle=${this.optionsToggled} @keydown=${this.optionsKeydown}>
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
         ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
       </div>
-    </details>`
+    </div>`
+  }
+
+  private toggleOptions = (event: Event): void => {
+    event.preventDefault()
+    const trigger = this.renderRoot.querySelector<HTMLElement>('.options-trigger')
+    const menu = this.renderRoot.querySelector<HTMLElement>('.menu')
+    if (trigger && menu && toggleAnchoredPopover(trigger, menu, { minWidth: 220, align: 'end' })) {
+      menu.querySelector<HTMLElement>('[role=menuitem]')?.focus()
+    }
+  }
+
+  private optionsTriggerKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    this.toggleOptions(event)
+    if (event.key === 'ArrowUp') this.renderRoot.querySelector<HTMLElement>('.menu [role=menuitem]:last-child')?.focus()
+  }
+
+  private closeOptions = (): void => {
+    const menu = this.renderRoot.querySelector<HTMLElement>('.menu')
+    if (menu?.matches(':popover-open')) menu.hidePopover()
+  }
+
+  private optionsToggled = (event: Event): void => {
+    this.optionsOpen = (event.currentTarget as HTMLElement).matches(':popover-open')
+    this.removeOptionsListeners()
+    if (this.optionsOpen && this.isConnected) {
+      // Scroll events do not cross shadow boundaries. Observe each ancestor root.
+      let root: Node = this.renderRoot
+      while (root instanceof ShadowRoot || root instanceof Document) {
+        root.addEventListener('scroll', this.dismissOptionsOnScroll, true)
+        this.optionsScrollRoots.push(root)
+        if (root instanceof Document) break
+        root = root.host.getRootNode()
+      }
+      window.addEventListener('resize', this.closeOptions)
+    }
+  }
+
+  private removeOptionsListeners(): void {
+    for (const root of this.optionsScrollRoots) root.removeEventListener('scroll', this.dismissOptionsOnScroll, true)
+    this.optionsScrollRoots = []
+    window.removeEventListener('resize', this.closeOptions)
+  }
+
+  private dismissOptionsOnScroll = (event: Event): void => {
+    const menu = this.renderRoot.querySelector('.menu')
+    if (!menu || !event.composedPath().includes(menu)) this.closeOptions()
+  }
+
+  private optionsKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      this.closeOptions()
+      this.renderRoot.querySelector<HTMLElement>('.options-trigger')?.focus({ preventScroll: true })
+      return
+    }
+    if (event.key === 'Tab') { queueMicrotask(this.closeOptions); return }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const items = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role=menuitem]:not(:disabled)'))
+    const current = items.indexOf(event.target as HTMLElement)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
+    items[next]?.focus()
   }
 
   private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return
-    this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.removeAttribute('open')
+    this.closeOptions()
+    this.renderRoot.querySelector<HTMLElement>('.options-trigger')?.focus({ preventScroll: true })
     const data = accessibleVisualizationData(envelope, this.rendererContext())
     const metadata = resolveVisualizationMetadata(envelope)
     if (action === 'clear-selection') {
@@ -470,7 +593,3 @@ export class VisualizationHost extends LitElement {
 if (!customElements.get('lv-visualization-host')) customElements.define('lv-visualization-host', VisualizationHost)
 
 declare global { interface HTMLElementTagNameMap { 'lv-visualization-host': VisualizationHost } }
-
-function isAcceptedEnvelope(value: unknown): value is VisualizationEnvelope {
-  return validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value)
-}

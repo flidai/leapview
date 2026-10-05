@@ -211,7 +211,31 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-cli-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-compose-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/nix-development.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-desktop-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-site-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/orchestration-cache.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

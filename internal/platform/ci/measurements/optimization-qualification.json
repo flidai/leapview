@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "protectedQueueReceipts": [
+    {
+      "pullRequest": 815,
+      "mergeRevision": "091947762e3223798bdb9a7b82ed2dfe7e207584",
+      "mergedAt": "2026-10-03T08:14:34Z",
+      "requiredRuns": [
+        {
+          "runID": 37107696663,
+          "attempt": 1,
+          "sourceRevision": "091947762e3223798bdb9a7b82ed2dfe7e207584",
+          "workflow": "Merge validation",
+          "conclusion": "success"
+        },
+        {
+          "runID": 37107696503,
+          "attempt": 1,
+          "sourceRevision": "091947762e3223798bdb9a7b82ed2dfe7e207584",
+          "workflow": "Security gates",
+          "conclusion": "success"
+        },
+        {
+          "runID": 37107696516,
+          "attempt": 1,
+          "sourceRevision": "091947762e3223798bdb9a7b82ed2dfe7e207584",
+          "workflow": "Electron security proof",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "pullRequest": 816,
+      "mergeRevision": "61fc1849263fbf8abfbf800e33cf4435ab54b8ff",
+      "mergedAt": "2026-10-03T08:14:34Z",
+      "requiredRuns": [
+        {
+          "runID": 37107720182,
+          "attempt": 1,
+          "sourceRevision": "61fc1849263fbf8abfbf800e33cf4435ab54b8ff",
+          "workflow": "Merge validation",
+          "conclusion": "success"
+        },
+        {
+          "runID": 37107719973,
+          "attempt": 1,
+          "sourceRevision": "61fc1849263fbf8abfbf800e33cf4435ab54b8ff",
+          "workflow": "Security gates",
+          "conclusion": "success"
+        },
+        {
+          "runID": 37107719939,
+          "attempt": 1,
+          "sourceRevision": "61fc1849263fbf8abfbf800e33cf4435ab54b8ff",
+          "workflow": "Electron security proof",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "pullRequest": 819,
+      "mergeRevision": "c5aea6cc2768cffa504fc3000a3d235a098da1af",
+      "mergedAt": "2026-10-03T08:14:34Z",
+      "requiredRuns": [
+        {
+          "runID": 37107721103,
+          "attempt": 1,
+          "sourceRevision": "c5aea6cc2768cffa504fc3000a3d235a098da1af",
+          "workflow": "Merge validation",
+          "conclusion": "success"
+        },
+        {
+          "runID": 37107720932,
+          "attempt": 1,
+          "sourceRevision": "c5aea6cc2768cffa504fc3000a3d235a098da1af",
+          "workflow": "Security gates",
+          "conclusion": "success"
+        },
+        {
+          "runID": 37107720943,
+          "attempt": 1,
+          "sourceRevision": "c5aea6cc2768cffa504fc3000a3d235a098da1af",
+          "workflow": "Electron security proof",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "limits": "These receipts qualify the already-merged security, release cache and fresh-store repair commits. Production orchestration adoption requires its own protected candidate checks.",
+  "currentMainQualification": [
+    {
+      "runID": 37110933016,
+      "attempt": 1,
+      "sourceRevision": "c5aea6cc2768cffa504fc3000a3d235a098da1af",
+      "workflow": "Nightly CI",
+      "conclusion": "success"
+    },
+    {
+      "runID": 37109042166,
+      "attempt": 1,
+      "sourceRevision": "c5aea6cc2768cffa504fc3000a3d235a098da1af",
+      "workflow": "Main artifacts",
+      "conclusion": "success"
+    }
+  ]
+}

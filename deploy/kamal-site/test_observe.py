@@ -1,13 +1,17 @@
 import ast
 import copy
+import errno
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 import subprocess
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 import observe
@@ -141,6 +145,222 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(result['samples'], 1)
             self.assertEqual(json.loads((out / 'summary.json').read_text())['status'], 'failed')
         finally: tmp.cleanup()
+
+    def test_sample_append_enospc_is_reported_and_best_effort_failure_is_durable(self):
+        original_append=observe._append_jsonl
+        def fail_sample(path,value):
+            if value.get('type')=='sample': raise OSError(errno.ENOSPC,'private /operator/path secret')
+            return original_append(path,value)
+        stderr=io.StringIO()
+        with patch.object(observe,'_append_jsonl',side_effect=fail_sample), redirect_stderr(stderr):
+            tmp,out,result,events=self.run_fixture()
+        try:
+            expected='observer I/O failure during sample append (errno 28 ENOSPC)'
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(result['failure'],expected)
+            self.assertEqual(json.loads((out/'summary.json').read_text())['failure'],expected)
+            self.assertEqual([event['type'] for event in events],['rejected'])
+            self.assertIn(expected,stderr.getvalue())
+            self.assertNotIn('/operator/path',stderr.getvalue())
+            self.assertNotIn('private',stderr.getvalue())
+        finally: tmp.cleanup()
+
+    def test_sample_summary_eio_keeps_recorded_sample_but_fails_interval(self):
+        original_write=observe._write_json_atomic
+        raised=False
+        def fail_sample_summary(path,value):
+            nonlocal raised
+            if Path(path).name=='summary.json' and value.get('samples')==1 and value.get('status')=='running' and not raised:
+                raised=True
+                raise OSError(errno.EIO,'secret /operator/ssh/config')
+            return original_write(path,value)
+        stderr=io.StringIO()
+        with patch.object(observe,'_write_json_atomic',side_effect=fail_sample_summary), redirect_stderr(stderr):
+            tmp,out,result,events=self.run_fixture()
+        try:
+            expected='observer I/O failure during sample summary write (errno 5 EIO)'
+            summary=json.loads((out/'summary.json').read_text())
+            self.assertTrue(raised)
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(summary['status'],'failed')
+            self.assertEqual(summary['samples'],1)
+            self.assertEqual(summary['failure'],expected)
+            self.assertEqual([event['type'] for event in events],['sample','rejected'])
+            self.assertIn(expected,stderr.getvalue())
+            self.assertNotIn('/operator/ssh/config',stderr.getvalue())
+        finally: tmp.cleanup()
+
+    def test_failed_final_summary_write_cannot_leave_a_pass(self):
+        original_write=observe._write_json_atomic
+        raised=False
+        def fail_final_pass(path,value):
+            nonlocal raised
+            if Path(path).name=='summary.json' and value.get('status')=='health_storage_passed' and not raised:
+                raised=True
+                original_write(path,value)
+                raise OSError(errno.EIO,'sensitive path /operator/state')
+            return original_write(path,value)
+        stderr=io.StringIO()
+        with patch.object(observe,'_write_json_atomic',side_effect=fail_final_pass), redirect_stderr(stderr):
+            tmp,out,result,events=self.run_fixture()
+        try:
+            expected='observer I/O failure during final summary write (errno 5 EIO)'
+            summary=json.loads((out/'summary.json').read_text())
+            self.assertTrue(raised)
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(summary['status'],'failed')
+            self.assertEqual(summary['failure'],expected)
+            self.assertIn(expected,stderr.getvalue())
+            self.assertNotIn('/operator/state',stderr.getvalue())
+            self.assertEqual(events[-1]['type'],'rejected')
+        finally: tmp.cleanup()
+
+    def test_secondary_failure_persistence_errors_do_not_mask_primary_errno(self):
+        original_append=observe._append_jsonl
+        original_write=observe._write_json_atomic
+        def fail_sample(path,value):
+            if value.get('type')=='sample': raise OSError(errno.ENOSPC,'primary /secret')
+            if value.get('type')=='rejected':
+                original_append(path,value)
+                raise OSError(errno.EIO,'secondary /secret')
+            return original_append(path,value)
+        def fail_failed_summary(path,value):
+            if Path(path).name=='summary.json' and value.get('status')=='failed':
+                raise OSError(errno.EIO,'secondary /secret')
+            return original_write(path,value)
+        stderr=io.StringIO()
+        with patch.object(observe,'_append_jsonl',side_effect=fail_sample), \
+                patch.object(observe,'_write_json_atomic',side_effect=fail_failed_summary), \
+                redirect_stderr(stderr):
+            tmp,out,result,events=self.run_fixture()
+        try:
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(result['failure'],'observer I/O failure during sample append (errno 28 ENOSPC)')
+            self.assertIn('sample append (errno 28 ENOSPC)',stderr.getvalue())
+            self.assertNotIn('EIO',stderr.getvalue())
+            self.assertNotIn('/secret',stderr.getvalue())
+        finally: tmp.cleanup()
+
+    def test_unexpected_loop_oserror_keeps_errno_and_sanitizes_exception_text(self):
+        def fail_probe(): raise OSError(errno.EIO,'private /operator/ssh/id_ed25519')
+        stderr=io.StringIO()
+        with redirect_stderr(stderr):
+            tmp,out,result,events=self.run_fixture(http=fail_probe)
+        try:
+            expected='observer I/O failure during observation loop (errno 5 EIO)'
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(result['failure'],expected)
+            self.assertEqual(json.loads((out/'summary.json').read_text())['failure'],expected)
+            self.assertEqual(events[-1]['type'],'rejected')
+            self.assertIn(expected,stderr.getvalue())
+            self.assertNotIn('/operator/ssh/id_ed25519',stderr.getvalue())
+        finally: tmp.cleanup()
+
+    def test_failed_observation_maps_to_nonzero_command_status(self):
+        args=['run','--record','record','--prior-version',PRIOR_VERSION,
+              '--active-image-id',ACTIVE_ID,'--prior-image-id',PRIOR_ID,
+              '--min-free-bytes','1','--min-free-inodes','1','--ssh-config','ssh',
+              '--fingerprint-file','fingerprint','--target','127.0.0.1','--output-dir','run']
+        with patch.object(observe,'prepare_config',return_value=config()), \
+                patch.object(observe,'run_supervised',return_value=1):
+            self.assertEqual(observe.main(args),1)
+
+    def test_supervisor_receipt_prevents_pass_after_final_fsync_and_recovery_failures(self):
+        original_write=observe._write_json_atomic
+        original_append=observe._append_jsonl
+        original_identity=observe.proc_identity
+        child_pid=987654321
+        child_start='12345'
+        child_boot=observe.proc_boot_id()
+
+        class FakeChild:
+            pid=child_pid
+            returncode=None
+            def communicate(self,payload):
+                worker_config=json.loads(payload)
+                clock=FakeClock()
+                def fail_summary(path,value):
+                    if Path(path).name=='summary.json' and value.get('status')=='health_storage_passed':
+                        original_write(path,value)
+                        raise OSError(errno.EIO,'sensitive /operator/state')
+                    if Path(path).name=='summary.json' and value.get('status')=='failed':
+                        raise OSError(errno.ENOSPC,'sensitive /operator/state')
+                    return original_write(path,value)
+                def fail_rejection(path,value):
+                    if value.get('type')=='rejected': raise OSError(errno.ENOSPC,'sensitive /operator/state')
+                    return original_append(path,value)
+                with patch.multiple(observe,DURATION=240,PROBE_INTERVAL=60,HOST_INTERVAL=120,GAP_GRACE=5), \
+                        patch.object(observe.os,'getpid',return_value=child_pid), \
+                        patch.object(observe,'proc_identity',return_value={'state':'S','start_ticks':child_start}), \
+                        patch.object(observe,'proc_boot_id',return_value=child_boot), \
+                        patch.object(observe,'_write_json_atomic',side_effect=fail_summary), \
+                        patch.object(observe,'_append_jsonl',side_effect=fail_rejection):
+                    result=observe.run_observation(worker_config,run_dir,http_probe=http_good,host_sample=host_sample,
+                        monotonic=clock.monotonic,wall_time=clock.wall,sleep=clock.sleep,gap_grace=5,
+                        run_id=worker_config['run_id'],output_dir_exists=True)
+                self.returncode=0 if result['status']=='health_storage_passed' else 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir=Path(directory)/'run'
+            cfg=config()
+            stderr=io.StringIO(); stdout=io.StringIO()
+            def identity(pid):
+                return {'state':'S','start_ticks':child_start} if pid==child_pid else original_identity(pid)
+            with patch.object(observe.subprocess,'Popen',return_value=FakeChild()), \
+                    patch.object(observe,'proc_identity',side_effect=identity), \
+                    redirect_stderr(stderr),redirect_stdout(stdout):
+                result=observe.run_supervised(cfg,run_dir)
+            self.assertEqual(result,1)
+            self.assertEqual(json.loads((run_dir/'summary.json').read_text())['status'],'health_storage_passed')
+            receipt=json.loads((run_dir/'exit.json').read_text())
+            self.assertEqual(receipt['returncode'],1)
+            self.assertEqual(receipt['child'],{'pid':child_pid,'start_ticks':child_start,'boot_id':child_boot})
+            summary,status=observe.status(run_dir)
+            self.assertEqual(status,'failed')
+            self.assertEqual(summary['status'],'failed')
+            self.assertIn('supervised observer exited unsuccessfully',summary['failure'])
+            self.assertNotIn('/operator/state',stderr.getvalue())
+
+    def test_failed_exit_receipt_commit_is_removed_and_never_reports_pass(self):
+        original_write=observe._write_json_atomic
+        original_identity=observe.proc_identity
+        child_pid=987654320
+        child_start='12346'
+        child_boot=observe.proc_boot_id()
+        class FakeChild:
+            pid=child_pid
+            returncode=0
+            def communicate(self,payload):
+                worker_config=json.loads(payload)
+                now=time.time()
+                summary=observe._initial_summary(worker_config,now,observe.CLOCK_TOLERANCE)
+                summary.update(status='health_storage_passed',ended_at=observe.utc(now),
+                               ended_wall_unix_seconds=now)
+                process={'pid':child_pid,'start_ticks':child_start,'boot_id':child_boot,
+                         'observer_sha256':worker_config['observer_sha256'],'run_id':worker_config['run_id']}
+                original_write(run_dir/'summary.json',summary)
+                original_write(run_dir/'process.json',process)
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir=Path(directory)/'run'
+            def identity(pid):
+                return {'state':'S','start_ticks':child_start} if pid==child_pid else original_identity(pid)
+            def fail_exit_commit(path,value):
+                if Path(path).name=='exit.json':
+                    original_write(path,value)
+                    raise OSError(errno.EIO,'private /operator/state')
+                return original_write(path,value)
+            stderr=io.StringIO(); stdout=io.StringIO()
+            cfg=config(); cfg['observer_sha256']=observe.observer_source_sha256()
+            with patch.object(observe.subprocess,'Popen',return_value=FakeChild()), \
+                    patch.object(observe,'proc_identity',side_effect=identity), \
+                    patch.object(observe,'_write_json_atomic',side_effect=fail_exit_commit), \
+                    redirect_stderr(stderr),redirect_stdout(stdout):
+                result=observe.run_supervised(cfg,run_dir)
+            self.assertEqual(result,2)
+            self.assertFalse((run_dir/'exit.json').exists())
+            self.assertEqual(observe.status(run_dir)[1],'interrupted')
+            self.assertIn('exit receipt write (errno 5 EIO)',stderr.getvalue())
+            self.assertNotIn('/operator/state',stderr.getvalue())
 
     def test_missing_public_endpoint_fails_sample(self):
         def missing_readyz():
@@ -425,11 +645,14 @@ class ObserverTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out=Path(tmp)
             sha=observe.observer_source_sha256()
-            (out/'summary.json').write_text(json.dumps({'status':'running','samples':5,'observer_sha256':sha})); os.chmod(out/'summary.json',0o600)
-            (out/'process.json').write_text(json.dumps({'pid':987654321,'start_ticks':'1','boot_id':'old','observer_sha256':sha})); os.chmod(out/'process.json',0o600)
+            run_id='c'*32
+            (out/'summary.json').write_text(json.dumps({'status':'running','samples':5,'observer_sha256':sha,'run_id':run_id})); os.chmod(out/'summary.json',0o600)
+            (out/'process.json').write_text(json.dumps({'pid':987654321,'start_ticks':'1','boot_id':'old','observer_sha256':sha,'run_id':run_id})); os.chmod(out/'process.json',0o600)
+            (out/'supervisor.json').write_text(json.dumps({'pid':987654321,'start_ticks':'1','boot_id':'old','observer_sha256':sha,'run_id':run_id})); os.chmod(out/'supervisor.json',0o600)
             with patch.object(observe,'proc_identity',side_effect=FileNotFoundError):
                 summary,result=observe.status(out)
-            self.assertEqual(summary['status'],'running')
+            self.assertEqual(summary['status'],'interrupted')
+            self.assertIn('dead or its recorded identity/source is stale',summary['failure'])
             self.assertEqual(result,'interrupted')
             with patch.object(observe,'proc_identity',return_value={'state':'S','start_ticks':'1'}), \
                  patch.object(observe,'proc_boot_id',return_value='old'):

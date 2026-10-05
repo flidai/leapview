@@ -53,7 +53,6 @@ type Administration interface {
 	Create(context.Context, string, TargetBindingInput) (TargetBinding, error)
 	PlanConfigurationChange(context.Context, string, BindingKey, TargetBindingConfiguration) (BindingChangePlan, error)
 	UpdateConfiguration(context.Context, UpdateConfigurationRequest) (TargetBinding, error)
-	Test(context.Context, string, BindingKey) (BindingHealthStatus, error)
 	RefreshNow(context.Context, string, BindingKey) (BindingHealthStatus, error)
 	Enable(context.Context, string, BindingKey) (TargetBinding, error)
 	Disable(context.Context, string, BindingKey) (TargetBinding, error)

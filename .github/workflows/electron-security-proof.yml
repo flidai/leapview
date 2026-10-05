@@ -1,4 +1,4 @@
-name: Electron security proof
+name: Security / Electron proof
 
 on:
   merge_group:
@@ -47,32 +47,13 @@ jobs:
       LEAPVIEW_DESKTOP_DISTRIBUTION: preview
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: Linux x64
-            os: ubuntu-24.04
-            artifact: linux-x64
-            format: deb
-          - name: macOS Intel
-            os: macos-15-intel
-            artifact: macos-x64
-            format: dmg
-          - name: macOS Apple silicon
-            os: macos-15
-            artifact: macos-arm64
-            format: dmg
-          - name: Windows x64
-            os: windows-2025
-            artifact: windows-x64
-            format: exe
+      matrix: ${{ fromJSON(github.event_name == 'pull_request' && '{"include":[{"name":"Linux x64","os":"ubuntu-24.04","artifact":"linux-x64","format":"deb"}]}' || '{"include":[{"name":"Linux x64","os":"ubuntu-24.04","artifact":"linux-x64","format":"deb"},{"name":"macOS Intel","os":"macos-15-intel","artifact":"macos-x64","format":"dmg"},{"name":"macOS Apple silicon","os":"macos-15","artifact":"macos-arm64","format":"dmg"},{"name":"Windows x64","os":"windows-2025","artifact":"windows-x64","format":"exe"}]}') }}
 
     steps:
       - name: Checkout
-        if: ${{ github.event_name != 'pull_request' || matrix.artifact == 'linux-x64' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Build, prove, qualify, and upload the exact preview candidate
-        if: ${{ github.event_name != 'pull_request' || matrix.artifact == 'linux-x64' }}
         uses: ./.github/actions/desktop-preview-candidate
         with:
           artifact-name: leapview-desktop-${{ matrix.artifact }}

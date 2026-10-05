@@ -1,51 +1,13 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
-import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope, builderTestDocument as testDocument } from './dashboard-builder-test-fixtures'
+import { beforeAll, expect, test } from 'bun:test'
+import type { Browser } from '@playwright/test'
+import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser-fixture.test'
+import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope } from './dashboard-builder-test-fixtures'
 import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test'
 
-let server: Server
-let baseURL = ''
+const fixture = dashboardBuilderBrowserFixture()
 let browser: Browser
-const projectRoot = process.cwd()
-const root = join(projectRoot, '.tmp/dashboard-builder-test')
-
-beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
-    const file = normalize(join(fileRoot, url.pathname))
-    if (!file.startsWith(fileRoot)) {
-      response.writeHead(404)
-      response.end('not found')
-      return
-    }
-    try {
-      response.setHeader('content-type', 'text/javascript')
-      response.end(await readFile(file))
-    } catch {
-      response.writeHead(404)
-      response.end('not found')
-    }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('dashboard builder test server did not bind')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
-})
-
-afterAll(async () => {
-  await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-}, 15_000)
+let baseURL = ''
+beforeAll(() => { ({ browser, baseURL } = fixture) })
 
 test('dashboard builder renders bottom page tabs, canvas, and visual builder with typed actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
@@ -2544,6 +2506,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
       const root = (element.shadowRoot as ShadowRoot)
       const host = root.querySelector('.visual-preview lv-visualization-host') as any
       const initialEnvelope = host?.envelope
+      const initialGrid = (root.querySelector('.canvas') as any).gridstack
       const pages = element.builder.pages.map((page: any) => page.id === 'overview'
         ? { ...page, visuals: page.visuals.map((visual: any) => visual.id === 'sales-chart'
           ? { ...visual, placement: { ...visual.placement, colSpan: Math.max(1, visual.placement.colSpan - 1) } }
@@ -2565,7 +2528,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
         envelopeStableAfterLayout: hostAfterLayout?.envelope === initialEnvelope,
         gridWidthAfterLayout: visualAfterLayout?.gridstackNode?.w,
         gridWidthAttributeAfterLayout: visualAfterLayout?.getAttribute('gs-w'),
-        gridLayoutKeyAfterLayout: element.gridLayoutKey,
+        gridRetainedAfterLayout: initialGrid === (root.querySelector('.canvas') as any).gridstack,
         hostAuthoring: host?.authoring,
         hostPointerEvents: host ? getComputedStyle(host).pointerEvents : '',
         wrapperInert: previewWrapper?.hasAttribute('inert'),
@@ -2583,7 +2546,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
       const modal = root.querySelector('lv-visual-modal') as any
       await modal?.updateComplete
       const focusDialog = modal?.shadowRoot?.querySelector('[role="dialog"]')?.getAttribute('aria-label')
-      const close = modal?.shadowRoot?.querySelector('button[aria-label="Close visual modal"]') as HTMLButtonElement | null
+      const close = host?.querySelector('button[aria-label="Close visual modal"]') as HTMLButtonElement | null
       const closeButton = close?.getAttribute('aria-label')
       close?.click()
       await modal?.updateComplete
@@ -2602,7 +2565,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
     expect(state.hostVisualID).toBe('sales-chart')
     expect(state.envelopeStableAfterLayout).toBe(true)
     expect(state.gridWidthAttributeAfterLayout).toBe('5')
-    expect(state.gridLayoutKeyAfterLayout).toBe('overview:sales-chart:12:48:16')
+    expect(state.gridRetainedAfterLayout).toBe(true)
     expect(state.gridWidthAfterLayout).toBe(5)
     expect(state.hostAuthoring).toBe(true)
     expect(state.hostPointerEvents).toBe('auto')

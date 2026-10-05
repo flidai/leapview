@@ -98,6 +98,8 @@ func TestMiddlewareNonBypassedCommandStillClaimsDurableIdempotency(t *testing.T)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/groups", strings.NewReader(`{"name":"group"}`))
 	request.Header.Set("Authorization", "Bearer credential")
 	request.Header.Set("Idempotency-Key", "group-key")
+	// A caller's UI claim cannot change the generated route's replay policy.
+	request.Header.Set("X-LeapView-Operation-ID", "saveTestCredentialDraft")
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	protocol.Middleware(next).ServeHTTP(recorder, request)

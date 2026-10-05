@@ -866,3 +866,60 @@ func (f *fakeJobsAuthority) GetTx(_ context.Context, _ jobspostgres.Tx, _ string
 func (f *fakeJobsAuthority) CancelTx(_ context.Context, _ jobspostgres.Tx, _ string) error {
 	return nil
 }
+
+func TestPostgreSQL18ConversationSummariesPreserveOwnerHistoryWithoutTranscripts(t *testing.T) {
+	pool, repo := agentPostgresTestRepo(t, "summaries")
+	ctx := t.Context()
+	for _, title := range []string{"Older", "Pinned", "Pending", "Deleted", "Archived"} {
+		chat, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: "owner", Title: title})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.UpdateConversationTranscript(ctx, "owner", chat.ID, `[{"role":"user","content":"large transcript payload"}]`, chat.TranscriptRevision); err != nil {
+			t.Fatal(err)
+		}
+		metadata, status := `{}`, "active"
+		switch title {
+		case "Pinned":
+			metadata = `{"_leapview_chat":{"pinned":true}}`
+		case "Pending":
+			metadata = `{"_leapview_chat":{"pendingAction":"archive"}}`
+		case "Deleted":
+			metadata = `{"_leapview_chat":{"deletedAt":"2026-10-01T00:00:00Z"}}`
+		case "Archived":
+			status = "archived"
+		}
+		if _, err := pool.Exec(ctx, `UPDATE agent.conversations SET metadata_json=$1::jsonb WHERE id=$2`, metadata, chat.ID); err != nil {
+			t.Fatal(err)
+		}
+		if status == "archived" {
+			if _, err := repo.ArchiveConversation(ctx, "owner", chat.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	full, err := repo.ListConversations(ctx, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := repo.ListConversationSummaries(ctx, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full) != 2 || len(summaries) != 2 || summaries[0].Title != "Pinned" {
+		t.Fatalf("history projection mismatch: full=%#v summaries=%#v", full, summaries)
+	}
+	for i, summary := range summaries {
+		if full[i].TranscriptJSON == "" || summary.TranscriptJSON != "" {
+			t.Fatal("summary must omit transcript while full API retains it")
+		}
+		full[i].TranscriptJSON = ""
+		if summary != full[i] {
+			t.Fatalf("summary changed metadata or ordering: %#v != %#v", summary, full[i])
+		}
+	}
+	other, err := repo.ListConversationSummaries(ctx, "other")
+	if err != nil || len(other) != 0 {
+		t.Fatalf("cross-owner summaries=%#v err=%v", other, err)
+	}
+}

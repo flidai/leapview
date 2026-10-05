@@ -261,7 +261,7 @@ type ConnectionLifecycleSignal struct {
 	AuthenticationMode    string                            `json:"authenticationMode" yaml:"authenticationMode"`
 	BindingID             string                            `json:"bindingId" yaml:"bindingId"`
 	CanManage             bool                              `json:"canManage" yaml:"canManage"`
-	CanTest               bool                              `json:"canTest" yaml:"canTest"`
+	CanRefresh            bool                              `json:"canRefresh" yaml:"canRefresh"`
 	ConnectorKind         string                            `json:"connectorKind" yaml:"connectorKind"`
 	CredentialEnvironment string                            `json:"credentialEnvironment" yaml:"credentialEnvironment"`
 	CredentialProjectID   string                            `json:"credentialProjectId" yaml:"credentialProjectId"`

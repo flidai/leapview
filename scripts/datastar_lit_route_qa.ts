@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect, type Locator, type Page } from '@playwright/test'
-import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
+import { blockingAxeViolations, formatAxeViolations, nonBlockingAxeViolationDetails } from './axe_accessibility'
 import { ensureDashboardVisualizationsMounted } from './dashboard_visualization_readiness'
 import { verifyDashboardCopyBuilder } from './dashboard_copy_builder_qa'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
@@ -236,10 +236,14 @@ async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute): Promise<
       .withTags(wcagTags)
       .analyze()
     const blocking = blockingAxeViolations(results.violations)
+    const nonBlocking = nonBlockingAxeViolationDetails(results.violations)
+    if (nonBlocking.length > 0) {
+      console.log(`${route.label} (${route.path}): WCAG non-blocking findings: ${JSON.stringify(nonBlocking)}`)
+    }
     if (blocking.length > 0) throw new Error(formatAxeViolations(route, blocking))
 
     assertNoBlockingConsoleMessages(`${route.label} accessibility scan`, messages)
-    console.log(`${route.label} (${route.path}): WCAG scan passed; ${results.violations.length} non-blocking violation${results.violations.length === 1 ? '' : 's'} omitted`)
+    console.log(`${route.label} (${route.path}): WCAG scan passed`)
   } finally {
     await context.close()
   }
@@ -290,19 +294,20 @@ async function verifyKeyboardAccessibilityJourney(): Promise<void> {
     await expect(close, 'opening a visual modal must move focus to its Close control').toBeFocused()
 
     await page.keyboard.press('Shift+Tab')
-    const reverseTrap = await page.locator('lv-visual-modal').evaluate((modal: any) => {
-      const active = modal.deepActiveElement()
-      return {
-        active: describeElement(active),
-        contained: Boolean(active && modal.focusableElements().includes(active)),
+    const reverseTrap = await page.locator('lv-visual-modal').evaluate((modal) => {
+      let active: Element | null = document.activeElement
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+      const dialog = modal.shadowRoot?.querySelector('dialog[open]')
+      let ancestor: Node | null = active
+      while (ancestor && ancestor !== dialog) {
+        ancestor = ancestor instanceof Element && ancestor.assignedSlot
+          ? ancestor.assignedSlot
+          : ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null)
       }
-
-      function describeElement(element: HTMLElement | null): string {
-        if (!element) return '<none>'
-        return element.getAttribute('aria-label')
-          || element.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
-          || element.localName
-      }
+      const activeName = active?.getAttribute('aria-label')
+        || active?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
+        || active?.localName || '<none>'
+      return { active: activeName, contained: Boolean(dialog && ancestor === dialog) }
     })
     if (!reverseTrap.contained) {
       throw new Error(`visual modal: Shift+Tab escaped the dialog to ${reverseTrap.active}`)

@@ -37,6 +37,7 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 		"LeapViewAPI.Access:",
 		"LeapViewAPI.Agent:",
 		"LeapViewAPI.Analytics:",
+		"LeapViewAPI.Credential:",
 		"LeapViewAPI.Dashboard:",
 		"LeapViewAPI.Deployment:",
 		"LeapViewAPI.ManagedData:",
@@ -44,6 +45,7 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 		"LeapViewAPI.Protocol:",
 		"LeapViewAPI.Refresh:",
 		"LeapViewAPI.Release:",
+		"import_path: github.com/flidai/leapview/internal/credential/api/gen",
 		"import_path: github.com/flidai/leapview/internal/app/api/gen",
 	} {
 		if !strings.Contains(manifestText, want) {
@@ -57,6 +59,8 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	}
 	taskText := string(taskfile)
 	for _, want := range []string{
+		"internal/credential/api/gen/request_models.gen.go",
+		"internal/credential/api/gen/server.apigen.gen.go",
 		"- task: api:generate\n      - task: agent-contracts:generate\n      - task: ui-signals:generate\n      - task: schema:generate",
 		"- task: desktop-discovery:generate",
 		"schema:generate:\n    desc: Generate JSON Schema artifacts for LeapView YAML contracts\n    deps:\n      - db:generate\n      - config:generate\n      - api:generate\n      - ui-signals:generate",

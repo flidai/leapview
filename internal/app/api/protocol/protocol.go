@@ -129,6 +129,12 @@ type apiCursor struct {
 const CursorSnapshotHeader = "X-LeapView-Cursor-Snapshot"
 
 func (p *Protocol) Middleware(next http.Handler) http.Handler {
+	return p.middleware(next, apiaggregate.GetAPIGenOperationContractForRequest)
+}
+
+// The private lookup seam lets tests exercise the complete transport before a
+// new product operation is exposed. Production always uses the generated registry.
+func (p *Protocol) middleware(next http.Handler, lookup func(string, string) (apiaggregate.GenOperationContract, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p != nil && p.config.PublicRequest != nil && p.config.PublicRequest(r) {
 			PrepareRequest(w, r)
@@ -136,6 +142,10 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		if !p.Authenticate(w, r) {
+			return
+		}
+		contract, known := lookup(r.Method, r.URL.Path)
+		if known && contract.Command != nil && contract.Command.Idempotency == "forbidden" && !ValidateNonReplayableRequest(w, r) {
 			return
 		}
 		if snapshot := p.cursorSnapshot(r); strings.TrimSpace(snapshot) != "" {
@@ -146,32 +156,18 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 		if !unwrapAPIPageCursor(w, r) {
 			return
 		}
-		if p.bypassDurableIdempotency(r) {
+		if !known || contract.Command == nil || contract.Command.Idempotency != "required" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !requiresAPIIdempotency(r) {
+		// Only generated replay-required commands may use the separate
+		// handler-owned transactional replay bypass.
+		if _, bypass := p.config.BypassDurableIdempotency[contract.OperationID]; bypass {
 			next.ServeHTTP(w, r)
 			return
 		}
 		p.serveIdempotent(w, r, next)
 	})
-}
-
-// bypassDurableIdempotency resolves the generated operation contract before
-// consulting the explicit composition-owned bypass set. Matching through the
-// generated registry keeps operation identity stable and avoids path
-// substring heuristics.
-func (p *Protocol) bypassDurableIdempotency(r *http.Request) bool {
-	if p == nil || r == nil || len(p.config.BypassDurableIdempotency) == 0 {
-		return false
-	}
-	contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path)
-	if !ok || contract.Command == nil || contract.Command.Idempotency != "required" {
-		return false
-	}
-	_, bypass := p.config.BypassDurableIdempotency[contract.OperationID]
-	return bypass
 }
 
 // BrowserMutationMiddleware applies the same durable idempotency protocol as
@@ -326,16 +322,6 @@ func SignResponseCursor(r *http.Request, body []byte) []byte {
 		return body
 	}
 	return append(encoded, '\n')
-}
-
-func requiresAPIIdempotency(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	if contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path); ok {
-		return contract.Command != nil && contract.Command.Idempotency == "required"
-	}
-	return false
 }
 
 func IsQueryRequest(r *http.Request) bool {

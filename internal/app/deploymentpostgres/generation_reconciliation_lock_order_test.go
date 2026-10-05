@@ -94,39 +94,52 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 		admissionDone <- admissionOutcome{result: result, err: runErr}
 	}()
 
-	// A lease-lock probe must time out once admission has acquired the lease
-	// and is waiting on the gated attempt. Successful probes are rolled back
-	// and retried; the channel below is the synchronization point, not a raw
-	// sleep.
-	leaseLocked := false
-	probeDeadline := time.NewTimer(5 * time.Second)
-	defer probeDeadline.Stop()
+	// Holding the lease does not prove admission has reached the attempt lock:
+	// it still reads the authoritative plan between those two locks. Observe
+	// the database wait queue before letting reconciliation race with it.
+	waitCtx, waitCancel := context.WithTimeout(runCtx, 10*time.Second)
+	defer waitCancel()
 	probeTicker := time.NewTicker(10 * time.Millisecond)
 	defer probeTicker.Stop()
-	for !leaseLocked {
-		probeCtx, probeCancel := context.WithTimeout(runCtx, 100*time.Millisecond)
-		probeTx, beginErr := p.Begin(probeCtx)
-		if beginErr != nil {
-			probeCancel()
-			t.Fatal(beginErr)
+	for {
+		var queuedOnGate bool
+		if err := p.QueryRow(waitCtx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stat_activity
+				WHERE datname = current_database()
+				  AND $1::integer = ANY(pg_blocking_pids(pid))
+			)`, int(gateTx.Conn().PgConn().PID())).Scan(&queuedOnGate); err != nil {
+			t.Fatalf("observe admission waiting on the delivery attempt: %v", err)
 		}
-		_, probeErr := delivery.LockLeaseTx(probeCtx, probeTx, input.Fence.LeaseID)
-		probeCancel()
-		_ = probeTx.Rollback(context.Background())
-		if isLockWaitTimeout(probeErr) {
-			leaseLocked = true
+		if queuedOnGate {
 			break
-		}
-		if probeErr != nil {
-			t.Fatalf("target lease lock probe: %v", probeErr)
 		}
 		select {
 		case outcome := <-admissionDone:
-			t.Fatalf("admission finished before exposing lease-before-attempt ordering: %#v, %v", outcome.result, outcome.err)
-		case <-probeDeadline.C:
-			t.Fatal("admission did not acquire the target lease while waiting on the delivery attempt")
+			t.Fatalf("admission finished before waiting on the delivery attempt: %#v, %v", outcome.result, outcome.err)
+		case <-waitCtx.Done():
+			t.Fatal("admission did not queue on the gated delivery attempt")
 		case <-probeTicker.C:
 		}
+	}
+
+	// While admission is queued on the attempt, verify it already holds the
+	// lease. Only a server lock_timeout proves contention; client deadlines
+	// and general query cancellation can also mean a slow runner.
+	probeCtx, probeCancel := context.WithTimeout(runCtx, 5*time.Second)
+	defer probeCancel()
+	probeTx, err := p.Begin(probeCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = probeTx.Rollback(context.Background()) }()
+	if _, err := probeTx.Exec(probeCtx, "SET LOCAL lock_timeout = '100ms'"); err != nil {
+		t.Fatal(err)
+	}
+	_, probeErr := delivery.LockLeaseTx(probeCtx, probeTx, input.Fence.LeaseID)
+	_ = probeTx.Rollback(context.Background())
+	if !isLockWaitTimeout(probeErr) {
+		t.Fatalf("target lease lock probe = %v, want server lock timeout while admission waits on the attempt", probeErr)
 	}
 
 	type reconciliationOutcome struct {
@@ -147,9 +160,9 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 		reconciliationDone <- reconciliationOutcome{result: result, err: runErr}
 	}()
 
-	// Both callers are now waiting on the same canonical attempt lock. The
-	// admission request arrived first, so releasing the gate deterministically
-	// lets it commit before reconciliation obtains its exact replay lock.
+	// Admission is already queued on the canonical attempt lock. Reconciliation
+	// must either queue behind it or read its committed result after the gate
+	// is released; scheduling its goroutine cannot change the winner.
 	if err := gateTx.Rollback(runCtx); err != nil {
 		t.Fatal(err)
 	}
@@ -192,9 +205,25 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 }
 
 func isLockWaitTimeout(err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "57014"
+	return errors.As(err, &pgErr) && pgErr.Code == "55P03"
+}
+
+func TestIsLockWaitTimeoutRequiresServerLockContention(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "client deadline", err: context.DeadlineExceeded},
+		{name: "query cancellation", err: &pgconn.PgError{Code: "57014"}},
+		{name: "server lock timeout", err: &pgconn.PgError{Code: "55P03"}, want: true},
+		{name: "successful lock"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLockWaitTimeout(tc.err); got != tc.want {
+				t.Fatalf("lock contention = %t, want %t for %v", got, tc.want, tc.err)
+			}
+		})
+	}
 }

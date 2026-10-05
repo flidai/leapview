@@ -123,8 +123,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		report.Phases = phases.Evidence()
 		if runErr != nil {
-			report.CompletedAt = qualificationStartedAt(c.now())
-			report.ElapsedSeconds = int64(c.now().Sub(started).Seconds())
+			c.completeInstalledQualificationReport(&report, started)
 			_ = writeQualificationJSON(
 				filepath.Join(evidenceDir, "qualification-report.json"),
 				report,
@@ -282,12 +281,12 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err != nil {
 		return err
 	}
-	if err := c.Initialize(ctx, InitOptions{
+	if err := c.InitializeFirstInstall(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
 		Image:       imageReference,
-	}); err != nil {
+	}, nativeTopology.ControlMigratorURL); err != nil {
 		return err
 	}
 	if err := appendOrReplaceQualificationEnv(
@@ -436,25 +435,22 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := readQualificationJSON(credentialsPath, &credentials); err != nil {
 		return err
 	}
-	workloadToken, err := credentials.workloadToken()
+	tokens, err := credentials.installedTokens()
 	if err != nil {
 		return err
 	}
-	projectDataToken, err := credentials.projectDataToken()
-	if err != nil {
-		return err
-	}
-	recoveryControlToken, err := credentials.recoveryControlToken()
-	if err != nil {
-		return err
-	}
+	workloadToken := tokens.Workload
+	deliveryEvidenceToken := tokens.DeliveryEvidence
+	connectionEvidenceToken := tokens.Connection
+	recoveryUploadToken := tokens.RecoveryUpload
+	recoveryControlToken := tokens.RecoveryControl
 	report.Assertions.BrowserJourney = true
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
 	ctx = phases.Begin(rootContext, "application upgrade", 15*time.Minute)
 	containerID, err = c.runQualificationApplicationUpgrade(
-		ctx, containerID, projectDataToken, authoringReport,
+		ctx, containerID, deliveryEvidenceToken, authoringReport,
 	)
 	if err != nil {
 		return err
@@ -529,20 +525,21 @@ func (c *Controller) QualifyInstalledCandidate(
 	ctx = phases.Begin(rootContext, "interruption recovery", 60*time.Minute)
 
 	recoveryReport, err := c.runQualificationRecovery(ctx, qualificationRecoveryOptions{
-		BundleRoot:           c.root,
-		EvidenceDir:          evidenceDir,
-		PublisherToken:       credentials.PublisherToken,
-		WorkloadToken:        workloadToken,
-		ProjectDataToken:     projectDataToken,
-		RecoveryControlToken: recoveryControlToken,
-		MetricsToken:         metricsToken,
-		AuthorPrincipalID:    credentials.AuthorPrincipalID,
-		ReviewerPrincipalID:  credentials.ReviewerPrincipalID,
-		ContainerID:          containerID,
-		ComposeProject:       primaryProject,
-		ProjectID:            "project:leapview-evaluation",
-		Image:                imageReference,
-		Target:               target,
+		BundleRoot:              c.root,
+		EvidenceDir:             evidenceDir,
+		PublisherToken:          credentials.PublisherToken,
+		WorkloadToken:           workloadToken,
+		ConnectionEvidenceToken: connectionEvidenceToken,
+		RecoveryUploadToken:     recoveryUploadToken,
+		RecoveryControlToken:    recoveryControlToken,
+		MetricsToken:            metricsToken,
+		AuthorPrincipalID:       credentials.AuthorPrincipalID,
+		ReviewerPrincipalID:     credentials.ReviewerPrincipalID,
+		ContainerID:             containerID,
+		ComposeProject:          primaryProject,
+		ProjectID:               "project:leapview-evaluation",
+		Image:                   imageReference,
+		Target:                  target,
 	})
 	if err != nil {
 		return err
@@ -613,8 +610,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	report.Phases = phases.Evidence()
 
 	report.Result = "success"
-	report.CompletedAt = qualificationStartedAt(c.now())
-	report.ElapsedSeconds = int64(c.now().Sub(started).Seconds())
+	c.completeInstalledQualificationReport(&report, started)
 	if err := writeQualificationJSON(
 		filepath.Join(evidenceDir, "qualification-report.json"),
 		report,
@@ -627,6 +623,12 @@ func (c *Controller) QualifyInstalledCandidate(
 		report.ElapsedSeconds,
 	)
 	return err
+}
+
+func (c *Controller) completeInstalledQualificationReport(report *qualificationInstalledReport, started time.Time) {
+	completed := c.now()
+	report.CompletedAt = qualificationStartedAt(completed)
+	report.ElapsedSeconds = int64(completed.Sub(started).Seconds())
 }
 
 func isQualificationLowerHex(value string) bool {

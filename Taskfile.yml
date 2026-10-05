@@ -14,10 +14,25 @@ tasks:
     cmds:
       - nix build --no-update-lock-file .#leapview-image --out-link result-image
 
+  nix:cli:
+    desc: Build CGO-disabled Linux deployment controller candidates for AMD64 and ARM64
+    cmds:
+      - nix build --no-update-lock-file .#leapviewctl-linux-amd64 --out-link result-cli-amd64
+      # Nix adds the selected output's -arm64 suffix to this prefix.
+      - nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli
+
+  nix:compose:controllers:
+    desc: Build release-compatible controller candidates for Compose bundle assembly
+    cmds:
+      - nix build --no-update-lock-file .#leapviewctl-compose-linux-amd64 --out-link result-compose-cli-amd64
+      - nix build --no-update-lock-file .#leapviewctl-compose-linux-arm64 --out-link result-compose-cli
+
   nix:qualify:
     desc: Qualify the Nix image through the existing production deployment checks
     cmds:
-      - nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
+      - task: nix:build
+      - task: nix:image
+      - nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh result-image result-app
 
   nix:check:
     desc: Check the locked Nix toolchain and real browser integration
@@ -45,6 +60,14 @@ tasks:
       - task: bootstrap
       - task: map-assets:install
       - ./scripts/dev-server.sh start
+
+  playground:
+    desc: Start the standalone component and chart playground (no application services)
+    cmds:
+      - task: visualization-ir:generate
+      - task: layout-contract:generate
+      - task: lucide-icons:generate
+      - bun run playground
 
   dev:reset-login:
     desc: Explicitly restore the private local development login and restart the managed server
@@ -497,7 +520,14 @@ tasks:
       - task: build
 
   ci:test:docs-site:
-    desc: Validate authored documentation and the independently deployable public site
+    desc: Prepare and validate complete documentation and site coverage independently
+    cmds:
+      - task: ci:prepare
+      - task: ci:test:docs
+      - task: ci:test:frontend:site
+
+  ci:test:docs:
+    desc: Validate documentation generation, snapshots, observation and site Go contracts on prepared assets
     cmds:
       - |
         bash scripts/check_generated_snapshots.sh \
@@ -516,9 +546,6 @@ tasks:
           -- task --force docs:generate
       - task: site:observation:test
       - task: docs:check
-      - task: site:build
-      - bun run test:docs-diagrams
-      - bun run test:site
       - go test ./cmd/leapview-site ./docs ./site ./internal/app/site/...
 
   ci:test:frontend:core:
@@ -526,7 +553,31 @@ tasks:
     cmds:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
+      - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_compose_candidate_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
+      - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_artifacts.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_archive_go_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_go_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_site_image.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/agent_e2e_config.test.ts
@@ -537,9 +588,11 @@ tasks:
       - bun run test:datastar-lit
       - bun run test:ui-command-boundaries
       - bun run test:command-failure
+      - node scripts/ensure_playwright.mjs && bun test web/components/shared/command.dom.test.ts
       - bun run test:app-shell
       - bun run test:settings
       - bun run typecheck:app
+      - bun run typecheck:playground
       - bun run typecheck:contracts
       - bun run typecheck:tests
       - bun run test:production-assets
@@ -551,6 +604,7 @@ tasks:
     desc: Run dashboard, visualization, and report browser tests
     cmds:
       - bun run test:visualization-ir
+      - bun run test:playground
       - bun run test:table-selection
       - bun run test:interaction-selection
       - bun run test:record-table
@@ -785,6 +839,7 @@ tasks:
   generate:
     desc: Generate all checked-out derived code needed for local development
     cmds:
+      - task: go:deps
       - task: adr0016-conformance:generate
       - task: duckdbsql:generate
       - task: db:generate
@@ -962,6 +1017,7 @@ tasks:
     sources:
       - Taskfile.yml
       - internal/app/cli/**/*.go
+      - internal/admin/cli/**/*.go
       - internal/app/tools/clidocgen/**/*.go
     generates:
       - docs/reference/cli/catalog.json
@@ -1261,6 +1317,9 @@ tasks:
       - internal/app/tools/openapidocgen/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/json-ir.json
       - api/gen/openapi.yaml
@@ -1273,6 +1332,9 @@ tasks:
       - internal/analytics/api/gen/request_models.gen.go
       - internal/analytics/api/gen/server.apigen.gen.go
       - internal/analytics/api/gen/client.apigen.gen.go
+      - internal/credential/api/gen/request_models.gen.go
+      - internal/credential/api/gen/server.apigen.gen.go
+      - internal/credential/api/gen/client.apigen.gen.go
       - internal/dashboard/api/gen/request_models.gen.go
       - internal/dashboard/api/gen/server.apigen.gen.go
       - internal/dashboard/api/gen/client.apigen.gen.go
@@ -1320,6 +1382,9 @@ tasks:
       - internal/agent/contracts/generate/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - internal/agent/contracts/gen/agent-tools-ir.json
       - internal/agent/contracts/gen/agent-tools.schema.json
@@ -1345,6 +1410,9 @@ tasks:
       - internal/analytics/connectors/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/data-resources-ir.json
       - internal/project/contracts/gen/data-resources.schema.json
@@ -1369,6 +1437,9 @@ tasks:
       - api/desktop-discovery/**/*.tsp
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/desktop-discovery-ir.json
       - schemas/desktop/discovery.schema.json
@@ -1431,6 +1502,9 @@ tasks:
       - internal/app/tools/signalcontracts/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/ui-signals-ir.json
       - internal/access/ui/signals/models.gen.go
@@ -1457,6 +1531,9 @@ tasks:
       - scripts/generate_visualization_validator.ts
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/visualization-ir.json
       - internal/dashboard/visualization/ir/models.gen.go
@@ -1484,6 +1561,9 @@ tasks:
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/src/**/*.ts
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/dashboard-ir.json
       - internal/dashboard/document/models.gen.go
@@ -1504,6 +1584,9 @@ tasks:
       - api/pipeline/**/*.tsp
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/pipeline-ir.json
       - internal/project/contracts/pipeline_models.gen.go
@@ -1780,10 +1863,20 @@ tasks:
   test:go:app:shards:
     desc: Run stable application shards with three-process parallelism
     cmds:
+      - task: go:deps
       - task --parallel --concurrency 3 test:go:app:0 test:go:app:1 test:go:app:2 test:go:app:3
+
+  go:deps:
+    desc: Prepare the locked module graph before parallel test compilation
+    run: once
+    cmds:
+      # Match sqlc's proxy transport setting only for module acquisition.
+      # Test processes retain the caller's GODEBUG and HTTP/2 behavior.
+      - GODEBUG=http2client=0 go mod download
 
   test:go:packages:
     cmds:
+      - task: go:deps
       # Container-backed PostgreSQL tests are run once, fail closed, by the
       # dedicated conformance lane. Derive the exclusion by source so a new
       # harness user cannot silently run in both lanes. App tests use the same
@@ -1998,6 +2091,7 @@ tasks:
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
+      - task: go:deps
       - task: ci:extensions:prepare
       - task: generate
       - task: build
@@ -2142,7 +2236,7 @@ tasks:
       - api:generate
     cmds:
       - go test ./cmd/leapviewctl ./internal/app/cli/composectl ./internal/app/cli/hostinstall ./deploy/compose ./deploy/host
-      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualificationContainerRuntimeLifecycle$'
+      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualification(ContainerRuntimeLifecycle|HistoricalDockerClientPortable)$'
       - go test ./deploy/hetzner
       - go test ./deploy/hetzner-site
       - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/kamal-site -p 'test_*.py'
@@ -2212,8 +2306,39 @@ tasks:
   security:policy:
     desc: Validate security coverage, updater ownership, exceptions, and pinned actions
     cmds:
-      - go test ./internal/app/securitypolicy ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults
+      - go test ./internal/app/securitypolicy ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults ./internal/app/tools/securitysast
       - go run ./internal/app/tools/securitypolicy -root .
+
+  security:sast:prepare:
+    desc: Prepare generated source in this SAST runner without building release assets
+    env:
+      NPM_CONFIG_AUDIT: "false"
+    cmds:
+      - task: go:deps
+      - task: db:generate
+      - task: config:generate
+      - task: api:generate
+      - task: ui-signals:generate
+      - task: agent-contracts:generate
+      - task: data-resource-contracts:generate
+      - task: pipeline-contracts:generate
+      - task: desktop-discovery:generate
+      - task: layout-contract:generate
+      - task: map-style:generate
+      - task: lucide-icons:generate
+      - task: visual-docs:generate
+
+  security:sast:typescript:
+    desc: Check maintained TypeScript graphs against prepared SAST source
+    cmds:
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.app.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.contracts.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.test.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.playground.json
+      - npm --prefix pkg/apigen/typespec run typecheck
+      - task: desktop:deps
+      - ./desktop/node_modules/.bin/tsc --noEmit --project desktop/tsconfig.json
+      - ./desktop/node_modules/.bin/tsc --noEmit --project desktop/tsconfig.test.json
 
   security:dependencies:
     desc: Evaluate .security/javascript-vulnerability-evidence.json offline and run live source-aware Go dependency checks

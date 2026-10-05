@@ -6,10 +6,10 @@ export const visualActionStyles = css`
     flex: 0 0 auto;
     align-items: center;
     gap: var(--base-size-4);
-    margin-inline-end: var(--lv-visual-focus-close-space, 0);
   }
 
-  .icon-action {
+  .icon-action, ::slotted([slot="focus-action"]) {
+    box-sizing: border-box;
     display: grid;
     flex: 0 0 auto;
     width: var(--lv-visual-action-target, var(--lv-button-height-xs, var(--control-xsmall-size)));
@@ -35,7 +35,9 @@ export const visualActionStyles = css`
   }
 
   .icon-action:hover,
-  .icon-action:focus-visible {
+  .icon-action:focus-visible,
+  ::slotted([slot="focus-action"]:hover),
+  ::slotted([slot="focus-action"]:focus-visible) {
     border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
     background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
     color: var(--lv-icon-default, var(--lv-fg-default));

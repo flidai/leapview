@@ -4,6 +4,7 @@ export type AnchoredPopoverOptions = {
   maxHeight?: number
   gap?: number
   viewportPadding?: number
+  align?: 'start' | 'end'
 }
 
 export function toggleAnchoredPopover(
@@ -28,7 +29,8 @@ export function toggleAnchoredPopover(
     availableWidth,
   )
   const visualWidth = width * scale
-  const left = Math.max(padding, Math.min(bounds.left, window.innerWidth - visualWidth - padding))
+  const anchorLeft = options.align === 'end' ? bounds.right - visualWidth : bounds.left
+  const left = Math.max(padding, Math.min(anchorLeft, window.innerWidth - visualWidth - padding))
   const availableBelow = window.innerHeight - bounds.bottom - visualGap - padding
   const availableAbove = bounds.top - visualGap - padding
   const openAbove = availableBelow < 220 * scale && availableAbove > availableBelow
@@ -48,8 +50,14 @@ export function toggleAnchoredPopover(
 }
 
 function anchoredPopoverScale(trigger: HTMLElement, bounds: DOMRect): number {
-  if (trigger.offsetWidth <= 0 || bounds.width <= 0) return 1
-  const scale = bounds.width / trigger.offsetWidth
+  const style = getComputedStyle(trigger)
+  // offsetWidth rounds to integer pixels and can mistake a fractional layout
+  // width for an ancestor scale, shrinking otherwise unscaled menu rows.
+  const borderBoxWidth = Number.parseFloat(style.width) + (style.boxSizing === 'border-box' ? 0 :
+    Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight) +
+    Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.borderRightWidth))
+  if (!Number.isFinite(borderBoxWidth) || borderBoxWidth <= 0 || bounds.width <= 0) return 1
+  const scale = bounds.width / borderBoxWidth
   if (!Number.isFinite(scale) || scale <= 0) return 1
   return Math.abs(scale - 1) < 0.001 ? 1 : scale
 }

@@ -29,6 +29,13 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 	return emit(normalized, opts)
 }
 
+func uiActionConstructor(command *ir.Command) string {
+	if command != nil && command.Idempotency == "forbidden" {
+		return "MustNonReplayableAction"
+	}
+	return "MustAction"
+}
+
 func cloneDocumentForEmit(doc ir.Document) ir.Document {
 	clone := doc
 	clone.Endpoints = append([]ir.Endpoint(nil), doc.Endpoints...)
@@ -240,7 +247,7 @@ func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]
 		if endpoint.Command == nil || endpoint.Command.UI == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "\t\tapigenui.MustAction(%q, %q),\n", endpoint.Command.UI.ActionID, endpoint.OperationID)
+		fmt.Fprintf(&b, "\t\tapigenui.%s(%q, %q),\n", uiActionConstructor(endpoint.Command), endpoint.Command.UI.ActionID, endpoint.OperationID)
 	}
 	b.WriteString("\t}\n}\n\n")
 	for _, endpoint := range doc.Endpoints {
@@ -248,7 +255,7 @@ func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]
 			continue
 		}
 		fmt.Fprintf(&b, "// GenUIAction%s returns the generated UI binding for %s.\n", exportedName(endpoint.OperationID), endpoint.OperationID)
-		fmt.Fprintf(&b, "func GenUIAction%s() apigenui.Action { return apigenui.MustAction(%q, %q) }\n\n", exportedName(endpoint.OperationID), endpoint.Command.UI.ActionID, endpoint.OperationID)
+		fmt.Fprintf(&b, "func GenUIAction%s() apigenui.Action { return apigenui.%s(%q, %q) }\n\n", exportedName(endpoint.OperationID), uiActionConstructor(endpoint.Command), endpoint.Command.UI.ActionID, endpoint.OperationID)
 	}
 	b.WriteString("type GenOperationSurface string\n\n")
 	b.WriteString("const (\n\tGenOperationSurfaceUI GenOperationSurface = \"ui\"\n\tGenOperationSurfaceAgent GenOperationSurface = \"agent\"\n\tGenOperationSurfaceAutomation GenOperationSurface = \"automation\"\n)\n\n")

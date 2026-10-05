@@ -3,17 +3,17 @@
   :scope {
     --section-title-size: clamp(32px, 3vw, 42px);
     --mission-title-size: clamp(27px, 2.5vw, 34px);
-    --bg: #0d1117;
-    --ink: #f0f6fc;
-    --muted: #9198a1;
-    --accent: #4493f8;
-    --button: #1f6feb;
+    --bg: light-dark(#fff, #0d1117);
+    --ink: light-dark(#1f2328, #f0f6fc);
+    --muted: light-dark(#59636e, #9198a1);
+    --accent: light-dark(#0969da, #4493f8);
+    --button: light-dark(#0969da, #1f6feb);
     --accent-ink: #fff;
-    --border: #3d444d;
-    --frame-bg: #151b23;
-    --frame-border: #3d444d;
-    --frame-shadow: rgba(0, 0, 0, .46);
-    --glow: rgba(31, 111, 235, .22);
+    --border: light-dark(#d1d9e0, #3d444d);
+    --frame-bg: light-dark(#fff, #151b23);
+    --frame-border: light-dark(#d1d9e0, #3d444d);
+    --frame-shadow: light-dark(rgba(31, 35, 40, .17), rgba(0, 0, 0, .46));
+    --glow: light-dark(rgba(9, 105, 218, .16), rgba(31, 111, 235, .22));
     min-width: 320px;
     margin: 0;
     background: var(--bg);
@@ -23,18 +23,6 @@
     -webkit-font-smoothing: antialiased;
     scroll-behavior: smooth;
     transition: background-color .45s, color .45s;
-  }
-  :scope.is-light {
-    --bg: #fff;
-    --ink: #1f2328;
-    --muted: #59636e;
-    --accent: #0969da;
-    --button: #0969da;
-    --border: #d1d9e0;
-    --frame-bg: #fff;
-    --frame-border: #d1d9e0;
-    --frame-shadow: rgba(31, 35, 40, .17);
-    --glow: rgba(9, 105, 218, .16);
   }
   .home-container {
     width: min(100%, var(--site-layout-width));
@@ -143,11 +131,10 @@
     left: 7%;
     height: 85%;
     border-radius: 50%;
-    background: radial-gradient(ellipse, rgba(31, 111, 235, .17), transparent 69%);
+    background: radial-gradient(ellipse, light-dark(rgba(9, 105, 218, .10), rgba(31, 111, 235, .17)), transparent 69%);
     filter: blur(40px);
     pointer-events: none;
   }
-  :scope.is-light .stage-halo { background: radial-gradient(ellipse, rgba(9, 105, 218, .10), transparent 69%); }
   .product-frame {
     position: relative;
     width: 587px;
@@ -181,7 +168,6 @@
   }
   .image-scroller::-webkit-scrollbar { display: none; }
   .image-scroller img {
-    display: block;
     width: 100%;
     height: auto;
     max-width: none;

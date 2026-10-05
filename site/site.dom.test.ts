@@ -32,77 +32,24 @@ afterAll(async () => {
   }
 })
 
-test('compliance page shows distinct, bounded assurance categories', async () => {
-  const page = await browser.newPage()
-  try {
-    const response = await page.goto(`${baseURL}/compliance`)
-    expect(response?.status()).toBe(200)
-    expect(await page.title()).toBe('Compliance & Security — LeapView')
-    expect(await page.getByRole('heading', { level: 1 }).allTextContents()).toEqual(['Compliance & Security'])
-    for (const heading of [
-      'Current assurance state',
-      'Implemented capabilities',
-      'Qualification-tested capabilities',
-      'Pending verification & approval',
-      'Certifications & regulatory status',
-      'Documentation & security reporting',
-    ]) {
-      expect(await page.getByRole('heading', { level: 2, name: heading }).count()).toBe(1)
-    }
-    expect(await page.getByText('Pending approval', { exact: true }).count()).toBeGreaterThan(0)
-    expect(await page.getByText('Not currently claimed', { exact: true }).count()).toBe(1)
-    expect(await page.getByText('ISO/IEC 27001 certification is not currently claimed.').count()).toBe(1)
-    expect(await page.locator('time[datetime="2026-09-24"]').count()).toBe(1)
-    expect(await page.getByRole('link', { name: 'Report a security issue privately' }).getAttribute('href'))
-      .toBe('https://github.com/flidai/leapview/security/advisories/new')
-    const copy = await page.locator('#main-content').innerText()
-    for (const unsupported of ['GDPR compliant', 'ISO certified', 'fully compliant', 'production-ready', '24/7 support', '99.9% availability']) {
-      expect(copy).not.toContain(unsupported)
-    }
-  } finally {
-    await page.close()
-  }
-})
-
-test('compliance page remains readable and navigable on desktop and mobile', async () => {
+test('compliance is unpublished and absent from desktop and mobile navigation', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
-    await page.goto(`${baseURL}/compliance`)
-    for (const width of [320, 390, 768, 1280]) {
-      await page.setViewportSize({ width, height: 900 })
-      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
-      expect(await page.locator('.site-header').count()).toBe(1)
-      expect(await page.locator('.site-footer').count()).toBe(1)
-      expect(await page.locator('#main-content').isVisible()).toBe(true)
-    }
-    await page.setViewportSize({ width: 1280, height: 900 })
-    await page.keyboard.press('Tab')
-    expect(await page.locator('.skip-link').evaluate((link) => link === document.activeElement)).toBe(true)
-    await page.keyboard.press('Enter')
-    expect(new URL(page.url()).hash).toBe('#main-content')
-    await page.getByRole('navigation', { name: 'On this page' }).getByRole('link', { name: 'Pending' }).click()
-    expect(new URL(page.url()).hash).toBe('#pending')
+    const response = await page.goto(`${baseURL}/compliance`)
+    expect(response?.status()).toBe(404)
+    expect(await page.locator('.site-compliance').count()).toBe(0)
+    expect(await page.locator('meta[name="robots"]').getAttribute('content')).toBe('noindex,follow')
+
+    await page.goto(baseURL)
+    expect(await page.locator('a[href^="/compliance"]').count()).toBe(0)
     await page.setViewportSize({ width: 390, height: 900 })
     await page.getByRole('button', { name: 'Open site navigation' }).click()
-    expect(await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('link', { name: 'Compliance' }).count()).toBe(1)
+    const navigation = page.getByRole('navigation', { name: 'Site navigation' })
+    expect(await navigation.isVisible()).toBe(true)
+    expect(await navigation.getByRole('link', { name: 'Docs', exact: true }).isVisible()).toBe(true)
+    expect(await page.locator('a[href^="/compliance"]').count()).toBe(0)
   } finally {
     await page.close()
-  }
-})
-
-test('compliance content passes the public-site accessibility audit', async () => {
-  const context = await browser.newContext({ viewport: { width: 390, height: 900 } })
-  const page = await context.newPage()
-  try {
-    await page.goto(`${baseURL}/compliance`)
-    // The shared PageSpec currently nests the existing site footer in <main>.
-    // Keep the page-wide scan, but do not expand this FAI-991 change into a
-    // cross-site landmark refactor.
-    const results = await new AxeBuilder({ page }).disableRules(['landmark-contentinfo-is-top-level']).analyze()
-    expect(results.violations).toEqual([])
-  } finally {
-    await page.close()
-    await context.close()
   }
 })
 
@@ -131,9 +78,9 @@ test('homepage presents the new sections inside the shared site shell', async ()
     expect(await page.getByRole('heading', { level: 2, name: 'How LeapView works.' }).count()).toBe(1)
     expect(await page.getByRole('heading', { level: 2, name: 'Build your first dashboard.' }).count()).toBe(0)
     expect(await page.locator('.site-interfaces-section, .site-stack-section, .site-desktop-section').count()).toBe(0)
-    const screenshot = page.locator('#product-image')
+    const screenshot = page.locator('.product-frame img:visible')
     await page.waitForFunction(() => {
-      const image = document.querySelector<HTMLImageElement>('#product-image')
+      const image = [...document.querySelectorAll<HTMLImageElement>('.product-frame img')].find(image => getComputedStyle(image).display !== 'none')
       return image?.complete && image.naturalWidth === 1440
     })
     expect(await page.locator('.orbit-node').count()).toBe(17)
@@ -154,6 +101,22 @@ test('homepage presents the new sections inside the shared site shell', async ()
     await page.close()
   }
 })
+
+test('homepage landmarks and controls pass accessibility checks in both themes', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const context = await browser.newContext({ colorScheme, reducedMotion: 'reduce', viewport: { width: 390, height: 900 } })
+    const page = await context.newPage()
+    try {
+      await page.goto(baseURL)
+      expect(await page.locator('body > header.site-header').count()).toBe(1)
+      expect(await page.locator('body > main.site-page').count()).toBe(1)
+      expect(await page.locator('body > footer.site-footer').count()).toBe(1)
+      expect(await page.locator('main > footer.site-footer').count()).toBe(0)
+      const results = await new AxeBuilder({ page }).analyze()
+      expect(results.violations).toEqual([])
+    } finally { await context.close() }
+  }
+}, 20000)
 
 test('homepage content aligns with the shared header and footer across screen sizes', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 900 } })
@@ -653,85 +616,159 @@ test('documentation header, sidebar, and article share the page background in bo
   }
 })
 
-test('site header follows homepage section colors on scroll', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  try {
-    await page.goto(baseURL)
-    const header = page.locator('.site-header')
-    expect(await header.evaluate((element) => element.classList.contains('is-scrolled'))).toBe(false)
-    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
-
-    await page.evaluate(() => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo(0, 600)
-    })
-    await page.waitForFunction(() => document.querySelector('.site-header')?.classList.contains('is-scrolled'))
-    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backdropFilter === 'blur(12px)')
-    expect(await header.evaluate((element) => getComputedStyle(element, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
-
-    const sectionFills: string[] = []
-    for (const id of ['enterprise', 'layers']) {
-      const section = page.locator(`#${id}`)
-      const color = await section.evaluate((element) => getComputedStyle(element).backgroundColor)
-      await section.evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY + 180))
-      await page.waitForFunction((expected) => document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(expected), color)
-      sectionFills.push(await header.evaluate((element) => element.style.getPropertyValue('--site-header-fill')))
-    }
-    expect(sectionFills[0]).not.toBe(sectionFills[1])
-
-    await page.evaluate(() => {
-      const section = document.querySelector('#openness')!
-      const header = document.querySelector<HTMLElement>('.site-header')!
-      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY - header.offsetHeight / 2)
-    })
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backgroundImage.includes('linear-gradient'))
-
-    await page.setViewportSize({ width: 390, height: 844 })
-    const menu = page.locator('lv-site-mobile-menu')
-    await menu.getByRole('button').click()
-    expect(await menu.getByRole('link', { name: 'Docs' }).isVisible()).toBe(true)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-
-    await page.evaluate(() => window.scrollTo(0, 0))
-    await page.waitForFunction(() => !document.querySelector('.site-header')?.classList.contains('is-scrolled'))
-  } finally {
-    await page.close()
+test('site header keeps one opaque surface across section boundaries', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme })
+    try {
+      await page.goto(baseURL)
+      for (const id of ['main-content', 'enterprise', 'layers', 'openness']) {
+        await page.evaluate((id) => {
+          document.documentElement.style.scrollBehavior = 'auto'
+          const section = document.getElementById(id)!
+          const header = document.querySelector<HTMLElement>('.site-header')!
+          window.scrollTo(0, section.getBoundingClientRect().top + scrollY - header.offsetHeight / 2)
+        }, id)
+        const colors = await page.locator('.site-header').evaluate(element => ({
+          fill: getComputedStyle(element).backgroundColor,
+          image: getComputedStyle(element).backgroundImage,
+          pseudo: getComputedStyle(element, '::before').backgroundImage,
+          page: getComputedStyle(document.body).backgroundColor,
+        }))
+        expect(colors.fill).toBe(colors.page)
+        expect(colors.fill).not.toBe('rgba(0, 0, 0, 0)')
+        expect(colors.image).toBe('none')
+        expect(colors.pseudo).toBe('none')
+      }
+    } finally { await page.close() }
   }
 })
 
 test('site theme control updates the homepage screenshot and colors', async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ colorScheme: 'dark' })
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark'))
     await page.goto(baseURL)
-    await page.waitForFunction(() => Boolean(customElements.get('lv-site-theme-toggle')))
     const toggle = page.locator('lv-site-theme-toggle button[data-theme-toggle]')
-    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
-    await page.evaluate(() => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      const section = document.querySelector('#enterprise')!
-      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY + 180)
-    })
-    await page.waitForFunction(() => {
-      const section = document.querySelector('#enterprise')!
-      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
-    })
-    const darkHeaderFill = await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))
+    await toggle.waitFor()
+    expect(await page.locator('#product-image-dark').isVisible()).toBe(true)
+    expect(await page.locator('#product-image-light').isVisible()).toBe(false)
+    const darkFill = await page.locator('.site-home').evaluate(el => getComputedStyle(el).backgroundColor)
     await toggle.click()
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'auto')
     await toggle.click()
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'light')
-    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-light.png')
-    expect(await page.locator('.site-home').evaluate((element) => element.classList.contains('is-light'))).toBe(true)
-    await page.waitForFunction(() => {
-      const section = document.querySelector('#enterprise')!
-      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
-    })
-    expect(await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))).not.toBe(darkHeaderFill)
-  } finally {
-    await page.close()
+    expect(await page.locator('#product-image-light').isVisible()).toBe(true)
+    expect(await page.locator('#product-image-dark').isVisible()).toBe(false)
+    expect(await page.locator('.site-home').evaluate(el => getComputedStyle(el).backgroundColor)).not.toBe(darkFill)
+  } finally { await page.close() }
+})
+
+// Block the exact secondary requests from the reported timeout, including all
+// homepage modules. First paint must still have the correct theme and source.
+test('homepage SSR remains readable when homepage scripts and sample requests fail', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const page = await browser.newPage({ colorScheme })
+    try {
+      await page.route('**/static/home/**/*.js', route => route.abort())
+      await page.route('**/static/home/project-files/**', route => route.abort())
+      await page.goto(baseURL)
+      expect(await page.locator('#project-code').textContent()).toContain('apiVersion: leapview.dev/v1')
+      expect(await page.locator(`#product-image-${colorScheme}`).isVisible()).toBe(true)
+      const colors = await page.evaluate(() => ({
+        home: getComputedStyle(document.querySelector('.site-home')!).backgroundColor,
+        page: getComputedStyle(document.body).backgroundColor,
+      }))
+      expect(colors.home).toBe(colors.page)
+    } finally { await page.close() }
   }
+})
+
+test('all project tabs work without sample network requests', async () => {
+  const page = await browser.newPage({ reducedMotion: 'reduce' })
+  const requests: string[] = []
+  page.on('request', request => { if (request.url().includes('/project-files/')) requests.push(request.url()) })
+  try {
+    await page.route('**/static/home/project-files/**', route => route.abort())
+    await page.goto(baseURL)
+    for (const key of ['connection', 'source', 'model', 'semantics', 'pipeline', 'dashboard']) {
+      await page.locator(`#project-tab-${key}`).click()
+      const expected = await page.locator(`template[data-project-source="${key}"]`).evaluate((el: HTMLTemplateElement) => el.content.querySelector('pre')!.textContent!.trimEnd())
+      const actual = await page.locator('.project-code-text').allTextContents()
+      expect(actual.join('\n')).toBe(expected)
+      expect(await page.locator('#project-file-panel').getAttribute('aria-labelledby')).toBe(`project-tab-${key}`)
+    }
+    expect(requests).toEqual([])
+  } finally { await page.close() }
+})
+
+test('mobile menu restores keyboard focus on Escape', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    const menu = page.locator('lv-site-mobile-menu')
+    const toggle = menu.getByRole('button')
+    await toggle.click()
+    await menu.getByRole('link', { name: 'Docs' }).focus()
+    await page.keyboard.press('Escape')
+    expect(await toggle.evaluate(el => el.matches(':focus'))).toBe(true)
+    expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+  } finally { await page.close() }
+})
+
+test('mobile integrations remain named, visible, and clear of the heading without reduced motion', async () => {
+  const context = await browser.newContext({ reducedMotion: 'no-preference' })
+  const page = await context.newPage()
+  try {
+    await page.goto(baseURL)
+    for (const width of [320, 390, 700]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.locator('#connections').scrollIntoViewIfNeeded()
+      const layout = await page.locator('#orbit-stage').evaluate(stage => {
+        const heading = stage.querySelector('.orbit-center')!.getBoundingClientRect()
+        return [...stage.querySelectorAll('.orbit-node')].map(node => {
+          const rect = node.getBoundingClientRect()
+          return { name: node.getAttribute('aria-label'), label: node.querySelector('.orbit-label')!.textContent,
+            left: rect.left, right: rect.right, clearOfHeading: rect.top >= heading.bottom,
+            labelVisible: getComputedStyle(node.querySelector('.orbit-label')!).visibility,
+          }
+        })
+      })
+      expect(layout).toHaveLength(17)
+      for (const item of layout) {
+        expect(item.name).toBe(item.label)
+        expect(item.left).toBeGreaterThanOrEqual(0)
+        expect(item.right).toBeLessThanOrEqual(width)
+        expect(item.clearOfHeading).toBe(true)
+        expect(item.labelVisible).toBe('visible')
+      }
+      expect(await page.locator('.orbit-motion-toggle').isVisible()).toBe(false)
+      for (const button of await page.locator('.orbit-node').all()) {
+        await button.click()
+        expect(await button.getAttribute('aria-pressed')).toBe('true')
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const results = await new AxeBuilder({ page }).include('#orbit-stage').withRules(['button-name']).analyze()
+    expect(results.violations).toEqual([])
+  } finally { await context.close() }
+}, 20000)
+
+test('integration animation can be paused and stays still during keyboard interaction', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.locator('#connections').scrollIntoViewIfNeeded()
+    const control = page.getByRole('button', { name: 'Pause animation', exact: true })
+    await control.click()
+    expect(await page.locator('#orbit-stage').evaluate(el => el.classList.contains('motion-paused'))).toBe(true)
+    expect(await page.locator('.orbit-rotor').first().evaluate(el => getComputedStyle(el).animationPlayState)).toBe('paused')
+    await page.getByRole('button', { name: 'Resume animation', exact: true }).click()
+    expect(await page.locator('#orbit-stage').evaluate(el => el.classList.contains('motion-paused'))).toBe(false)
+    await page.locator('.orbit-node').first().focus()
+    expect(await page.locator('.orbit-rotor').first().evaluate(el => getComputedStyle(el).animationPlayState)).toBe('paused')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(await control.isVisible()).toBe(false)
+  } finally { await page.close() }
 })
 
 test('homepage theme changes render atomically without color transitions', async () => {
@@ -739,7 +776,7 @@ test('homepage theme changes render atomically without color transitions', async
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark'))
     await page.goto(baseURL)
-    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#product-image-dark')!).display !== 'none')
 
     const state = await page.evaluate(() => {
       document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: 'light' } }))
@@ -747,11 +784,11 @@ test('homepage theme changes render atomically without color transitions', async
       const frame = document.querySelector<HTMLElement>('.product-frame')!
       return {
         switching: document.documentElement.classList.contains('is-theme-switching'),
-        light: home.classList.contains('is-light'),
+        light: document.documentElement.dataset.colorMode === 'light',
         background: getComputedStyle(home).backgroundColor,
         color: getComputedStyle(home).color,
         frameBackground: getComputedStyle(frame).backgroundColor,
-        image: document.querySelector<HTMLImageElement>('#product-image')?.getAttribute('src'),
+        image: [...document.querySelectorAll<HTMLImageElement>('.product-frame img')].find(image => getComputedStyle(image).display !== 'none')?.getAttribute('src'),
       }
     })
 

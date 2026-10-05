@@ -1,4 +1,5 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
+import { responsiveBarCategoryAxis, compactInset, compactBottomInset } from './responsive-cartesian'
 import { compactScrollLegendGeometry } from './compact-scroll-legend'
 import { proportionalOutsideLabelsFitCompactCanvas } from './proportional-label-fit'
 
@@ -80,6 +81,9 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const movedSide = (compact || focused) && hasPieSeries(option.series) ? proportionalSideLegend(option.legend) : undefined
   const responsiveLegend = movedSide ? compactProportionalSideLegend(option.legend) : option.legend
   const visibleBottomLegend = hasBottomLegend(responsiveLegend)
+  const visibleTopLegend = hasTopLegend(responsiveLegend)
+  const visibleVisualMap = (Array.isArray(option.visualMap) ? option.visualMap : [option.visualMap])
+    .some((visualMap: Record<string, any> | undefined) => visualMap && visualMap.show !== false)
   const bottomLegend = (compact || focused) && visibleBottomLegend
   const narrowWithoutLegend = option.legend === undefined && width < 600 && hasPieSeries(option.series)
   const narrowBottomLegend = visibleBottomLegend && width < 600 && hasPieSeries(option.series)
@@ -92,6 +96,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
   const treeSeries = responsiveSingleNodeTreeSeries(option.series, width, height)
   const gaugeGraphic = responsiveGaugeGraphic(option.graphic, width)
+  const barCategoryAxis = responsiveBarCategoryAxis(option, width, compact)
   const patch: Record<string, any> = {}
   if (option.grid !== undefined) {
     const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
@@ -104,13 +109,15 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
         ...(compact ? {
           left: compactInset(source.left, 8),
           right: compactInset(source.right, 8),
-          top: compactInset(source.top, 10),
-          bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
+          // The builder reserves this space for a top legend and its title.
+          top: visibleTopLegend ? source.top ?? 10 : compactInset(source.top, 10),
+          bottom: compactBottomInset(source.bottom, compactBottom, visibleVisualMap),
         } : {}),
       }
     })
     patch.grid = Array.isArray(option.grid) ? grid : grid[0]
   }
+  if (barCategoryAxis !== undefined) patch.yAxis = barCategoryAxis
   if (proportionalSeries !== undefined) patch.series = proportionalSeries
   if (gaugeSeries !== undefined) patch.series = gaugeSeries
   if (graphSeries !== undefined) patch.series = graphSeries
@@ -126,7 +133,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(responsiveLegend, hasPieSeries(option.series))
   }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
-    ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
+    ? compactDataZoom(option.dataZoom, bottomLegend, visibleVisualMap)
     : stripDataZoomNavigation(option.dataZoom)
   return patch
 }
@@ -513,21 +520,18 @@ function proportionalLabelLineEndLength(width: number): number {
   return Math.min(48, Math.max(20, Math.round(width * 0.035)))
 }
 
-function compactInset(value: unknown, fallback: number): unknown {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.min(value, fallback)
-  if (typeof value === 'string') return value
-  return fallback
-}
-
-function compactBottomInset(value: unknown, fallback: number, preserveExisting: boolean): unknown {
-  if (preserveExisting && typeof value === 'number' && Number.isFinite(value)) return Math.max(value, fallback)
-  if (typeof value === 'string') return value
-  return fallback
-}
-
 function hasBottomLegend(value: unknown): boolean {
   const legends = Array.isArray(value) ? value : [value]
   return legends.some(isHorizontalBottomLegend)
+}
+
+function hasTopLegend(value: unknown): boolean {
+  const legends = Array.isArray(value) ? value : [value]
+  return legends.some((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
+    const legend = entry as Record<string, unknown>
+    return legend.show !== false && legend.orient !== 'vertical' && legend.top !== undefined && legend.top !== 'auto'
+  })
 }
 
 function isHorizontalBottomLegend(value: unknown): value is Record<string, unknown> {

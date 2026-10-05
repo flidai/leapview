@@ -1,4 +1,4 @@
-name: Ephemeral Hetzner deployment
+name: Deploy / Ephemeral Hetzner
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy, recover, and destroy
+    name: Prepare fresh host; first-install acceptance pending
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     environment: leapview-ephemeral-qualification
@@ -115,39 +115,19 @@ jobs:
           done
           exit 1
 
-      - name: Verify public and container health
-        working-directory: deploy/hetzner
+      - name: Report private bootstrap and first-install acceptance pending
         run: |
-          url="$(terraform output -raw url)"
-          server_ip="$(terraform output -raw server_ipv4)"
-          public_ready=false
-          for _ in $(seq 1 60); do
-            if curl -fsS --connect-timeout 5 --max-time 10 "$url/healthz" >/dev/null 2>&1 && \
-              curl -fsS --connect-timeout 5 --max-time 10 "$url/readyz" >/dev/null 2>&1; then
-              public_ready=true
-              break
-            fi
-            sleep 5
-          done
-          if [[ "$public_ready" != "true" ]]; then
-            echo "Public HTTPS did not become ready" >&2
-            ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'leapviewctl status' || true
-            ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'leapviewctl logs caddy' || true
-            exit 1
-          fi
-          curl -fsS -L "$url/" >/dev/null
-          ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'leapviewctl status'
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Host preparation complete; first-install acceptance pending
 
-      - name: Consume first-login credentials
-        working-directory: deploy/hetzner
-        run: |
-          server_ip="$(terraform output -raw server_ipv4)"
-          credentials="$(ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'leapviewctl first-login')"
-          jq -e '.email and .temporaryPassword and .publisherToken and .publisherTokenExpiresAt' <<<"$credentials" >/dev/null
-          if ssh -i "$RUNNER_TEMP/leapview-ci" root@"$server_ip" 'leapviewctl first-login'; then
-            echo "first-login credentials were retrievable more than once" >&2
-            exit 1
-          fi
+          Terraform created a fresh disposable Ubuntu host and `cloud-init status --wait` completed.
+          Cloud-init runs only `leapview-bootstrap prepare-host`. This workflow has no private
+          delivery channel for `/run/leapview/operator-bootstrap.json`, which must contain external
+          PostgreSQL credentials and reviewed physical-pool evidence. It did not install LeapView,
+          check application health, consume first-login credentials, or qualify recovery. This run
+          is infrastructure preparation only, not host/application acceptance.
+          EOF
+          echo "::warning title=First-install acceptance pending::Private PostgreSQL and pool bootstrap input has no automated delivery channel."
 
       - name: Destroy ephemeral deployment
         if: always()

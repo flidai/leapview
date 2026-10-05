@@ -56,6 +56,7 @@ func DynamicEnvironmentPrefixes() []string {
 }
 
 var settings = []Setting{
+	{Name: "LEAPVIEW_CREDENTIAL_KEYRING_FILE", Field: "CredentialKeyringFile", Type: TypeString, Category: "security", Scope: "serve,admin credentials setup", Description: "Private credential-keyring-v1 file for customer credentials, bound to the durable instance ID. Configure after admin initialization and declare the customer owner with admin credentials setup. Key bytes never belong in environment variables or PostgreSQL.", Example: "/run/secrets/leapview-credentials.json", Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_ADDR", Field: "Addr", Type: TypeString, Category: "server", Scope: "serve,healthcheck", Description: "HTTP listen address.", Example: ":8080", Runtime: true, Lifecycle: "supported"},
 	{Name: "LEAPVIEW_AGENT_API_KEY", Field: "AgentAPIKey", Type: TypeString, Category: "agent", Scope: "serve", Description: "API key for the configured agent model provider.", Example: SecretPlaceholder, Secret: true, Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_AGENT_BASE_URL", Field: "AgentBaseURL", Type: TypeString, Default: "https://api.openai.com/v1", Category: "agent", Scope: "serve", Description: "OpenAI-compatible agent API base URL.", Example: "https://api.openai.com/v1", Runtime: true, Lifecycle: "supported", Commented: true},

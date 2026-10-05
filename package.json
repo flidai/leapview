@@ -32,10 +32,10 @@
     "test:viewport-qualification-harness": "bun test scripts/viewport_qualification.test.ts",
     "test:public-site-smoke": "bun test scripts/public_site_smoke.test.ts",
     "test:visual-modal": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts visual-modal && bun test web/components/dashboard/visual-modal-focus.test.ts web/components/dashboard/visual-modal.dom.test.ts",
-    "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts web/components/app/catalog-page.pins.dom.test.ts && bun test web/components/app/catalog-pins.test.ts web/components/app/catalog-table.dom.test.ts && bun test web/components/app/catalog-copy.dom.test.ts && bun test web/components/app/dashboard-icon-picker.test.ts",
+    "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts && bun test web/components/app/catalog-page.pins.dom.test.ts && bun test web/components/app/catalog-pins.test.ts web/components/app/catalog-table.dom.test.ts && bun test web/components/app/catalog-copy.dom.test.ts && bun test web/components/app/dashboard-icon-picker.test.ts",
     "test:dashboard-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-page && bun test web/components/dashboard/dashboard-page.dom.test.ts && bun test web/components/dashboard/dashboard-development-session-status.dom.test.ts && bun test web/components/dashboard/dashboard-page.agent.dom.test.ts && bun test web/components/dashboard/dashboard-page.visuals.dom.test.ts && bun test web/components/dashboard/report-canvas.dom.test.ts && bun scripts/build_test_assets.ts visualization-host && bun test web/components/dashboard/visualization/host.dom.test.ts",
     "test:date-picker": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts date-picker && bun test web/components/dashboard/filters/date-picker.dom.test.ts web/components/dashboard/filters/timestamp-date-range.test.ts",
-    "test:dashboard-builder": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-builder && bun test web/components/dashboard/builder-pane-layout.dom.test.ts && bun test web/components/dashboard/builder-grid-sync.dom.test.ts && bun test web/components/dashboard/dashboard-builder.dom.test.ts && bun test web/components/dashboard/dashboard-builder-preview.dom.test.ts web/components/dashboard/builder-visualization-state.test.ts",
+    "test:dashboard-builder": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-builder && bun test web/components/dashboard/builder-pane-layout.dom.test.ts && bun test web/components/dashboard/builder-grid-sync.dom.test.ts && bun test web/components/dashboard/dashboard-builder.dom.test.ts && bun test web/components/dashboard/dashboard-builder-performance.dom.test.ts && bun test web/components/dashboard/dashboard-builder-preview.dom.test.ts web/components/dashboard/builder-visualization-state.test.ts",
     "test:chat-composer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-composer && bun test web/components/chat/chat-composer.dom.test.ts",
     "test:chat-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-page && bun test web/components/chat/chat-page.dom.test.ts",
     "test:chat-thread": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-thread && bun test web/components/chat/chat-thread.dom.test.ts",
@@ -59,7 +59,10 @@
     "qa:datastar-lit-routes": "node scripts/ensure_playwright.mjs && bun scripts/datastar_lit_route_qa.ts",
     "qa:dashboard-performance": "node scripts/ensure_playwright.mjs && bun scripts/dashboard_performance.ts",
     "qa:movielens-performance": "LEAPVIEW_PERF_SCENARIO=scripts/performance/movielens.json bun run qa:dashboard-performance",
-    "qa:viewport-qualification": "node scripts/ensure_playwright.mjs && bun scripts/viewport_qualification.ts"
+    "qa:viewport-qualification": "node scripts/ensure_playwright.mjs && bun scripts/viewport_qualification.ts",
+    "playground": "bun playground/server.ts",
+    "typecheck:playground": "tsc --noEmit --project tsconfig.playground.json",
+    "test:playground": "node scripts/ensure_playwright.mjs && bun test --timeout 30000 playground/chart-fixtures.test.ts playground/table-fixtures.test.ts && bun test --timeout 30000 playground/playground.dom.test.ts && bun test --timeout 30000 playground/expanded.dom.test.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
@@ -91,7 +94,7 @@
   },
   "dependencies": {
     "@shikijs/monaco": "^4.3.0",
-    "dompurify": "^3.4.13",
+    "dompurify": "^3.4.16",
     "gridstack": "14.0.0",
     "lucide": "^1.21.0",
     "markdown-it": "^15.0.1",
@@ -103,10 +106,11 @@
     "yaml": "2.9.1"
   },
   "overrides": {
-    "dompurify": "3.4.13",
+    "@parcel/watcher": "2.6.0",
+    "dompurify": "3.4.16",
     "fast-uri": "3.1.8",
     "lodash-es": "4.18.1",
-    "undici": "7.29.0"
+    "undici": "7.29.1"
   },
   "trustedDependencies": [
     "@parcel/watcher"

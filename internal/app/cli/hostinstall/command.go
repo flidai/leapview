@@ -32,6 +32,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 		},
 	}
 	configPath := "/run/leapview/bootstrap.json"
+	operatorConfigPath := operatorBootstrapConfig
 	payloadPath := ""
 	sourceImage := ""
 	install := &cobra.Command{
@@ -50,8 +51,11 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 				}
 				payload = filepath.Dir(executable)
 			}
+			paths := DefaultPaths(payload, configPath)
+			paths.OperatorConfig = operatorConfigPath
 			installer, err := New(Options{
-				Paths: DefaultPaths(payload, configPath), DockerBin: options.DockerBin, ExpectedImage: sourceImage,
+				Paths:     paths,
+				DockerBin: options.DockerBin, ExpectedImage: sourceImage,
 				Stdin: options.Stdin, Stdout: options.Stdout, Stderr: options.Stderr,
 			})
 			if err != nil {
@@ -61,6 +65,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 		},
 	}
 	install.Flags().StringVar(&configPath, "config", configPath, "private bootstrap configuration file")
+	install.Flags().StringVar(&operatorConfigPath, "operator-config", operatorConfigPath, "private PostgreSQL and delivery-pool bootstrap input required on first install")
 	install.Flags().StringVar(&payloadPath, "payload", payloadPath, "immutable deployment payload (defaults to the leapviewctl directory)")
 	install.Flags().StringVar(&sourceImage, "source-image", sourceImage, "immutable image from which the deployment payload was extracted")
 	host.AddCommand(install)

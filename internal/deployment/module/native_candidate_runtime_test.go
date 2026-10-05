@@ -227,15 +227,19 @@ func TestEnsureNativeCandidateRuntimeOpensPre017QualifiedCandidate(t *testing.T)
 		},
 		Compiler: release.CandidateCompilerEvidence{Graph: project},
 	}
-	recoveryCalled, prepareCalled := false, false
+	recoveryCalled, prepareCalled, admissionReleased := false, false, false
 	m := nativeReadModule(rows)
 	m.instanceEnvironment = servingstate.Environment("prod")
 	m.nativeMetadataSchema = func(string) string { return "metadata-legacy" }
 	m.candidateAdmission = CandidatePreparationAdmitterFunc(func(ctx context.Context) (CandidatePreparationLease, error) {
-		return nativeDeliveryTestPreparationLease{ctx: ctx}, nil
+		admissionReleased = false
+		return nativeDeliveryTestPreparationLease{ctx: ctx, released: &admissionReleased}, nil
 	})
 	m.candidateArtifactRecovery = nativeCandidateRecoveryFunc(func(_ context.Context, request release.CandidateArtifactRecoveryRequest) (release.CandidateArtifactSet, error) {
 		recoveryCalled = true
+		if admissionReleased {
+			t.Fatal("candidate preparation admission released before artifact recovery")
+		}
 		if request.AuthorizationPolicyRevision != 0 || request.AuthorizationPolicyDigest != "" || request.AuthorizationFingerprint != plan.Governance.AuthorizationDigest {
 			t.Fatalf("pre-017 recovery request = %#v", request)
 		}
@@ -243,6 +247,9 @@ func TestEnsureNativeCandidateRuntimeOpensPre017QualifiedCandidate(t *testing.T)
 	})
 	m.candidateRuntimes = nativeCandidateRuntimePreparerFunc(func(_ context.Context, request deployment.CandidateRuntimeRequest) (deployment.CandidateRuntimeReceipt, error) {
 		prepareCalled = true
+		if admissionReleased {
+			t.Fatal("candidate preparation admission released before runtime registration")
+		}
 		if request.AuthorizationFingerprint != plan.Governance.AuthorizationDigest || request.Generation.Identity != identity {
 			t.Fatalf("pre-017 runtime request = %#v", request)
 		}
@@ -253,6 +260,9 @@ func TestEnsureNativeCandidateRuntimeOpensPre017QualifiedCandidate(t *testing.T)
 	}
 	if !recoveryCalled || !prepareCalled {
 		t.Fatalf("pre-017 preview recovery=%t prepare=%t", recoveryCalled, prepareCalled)
+	}
+	if !admissionReleased {
+		t.Fatal("candidate preparation admission was not released after registration returned")
 	}
 
 	t.Run("rejects mismatched policy digest before recovery", func(t *testing.T) {

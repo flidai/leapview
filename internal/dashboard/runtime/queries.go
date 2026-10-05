@@ -140,7 +140,7 @@ func (s *SnapshotService) QueryDashboardPage(ctx context.Context, dashboardID, p
 		}
 		visuals[visualID] = envelope
 	}
-	inlineVisuals, err := s.visualizations.visuals(ctx, runtime, report, filters, inlineIDs)
+	inlineVisuals, err := s.visualizations.pageVisuals(ctx, runtime, report, filters, inlineIDs)
 	if err != nil {
 		inlineVisuals = make(map[string]visualizationir.VisualizationEnvelope, len(inlineIDs))
 		for _, visualID := range inlineIDs {

@@ -1,4 +1,4 @@
-name: Desktop unsigned preview release
+name: Release / Desktop unsigned preview
 
 on:
   workflow_dispatch:

@@ -322,6 +322,8 @@ type EventInput struct {
 type Repository interface {
 	CreateConversation(ctx context.Context, input ConversationInput) (Conversation, error)
 	ListConversations(ctx context.Context, principalID string) ([]Conversation, error)
+	// ListConversationSummaries preserves active history ordering without reading transcripts.
+	ListConversationSummaries(ctx context.Context, principalID string) ([]Conversation, error)
 	ListConversationsPage(ctx context.Context, principalID string, page Page) ([]Conversation, error)
 	GetConversation(ctx context.Context, principalID, conversationID string) (Conversation, error)
 	UpdateConversation(ctx context.Context, input ConversationUpdate) (Conversation, error)

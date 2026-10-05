@@ -1,0 +1,190 @@
+name: Maintenance / Orchestration cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - nix/**/*.nix
+      - go.mod
+      - package.json
+      - scripts/export_nix_ci_environment.py
+      - scripts/measure_orchestration_cache.py
+      - .github/workflows/orchestration-cache.yml
+      - .github/actions/setup-ci/action.yml
+      - .github/workflows/ci.yml
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Produce a trusted main archive or run paired measurements
+        required: true
+        type: choice
+        default: measure
+        options: [produce, measure]
+      source_revision:
+        description: Optional exact alternate-source SHA (restore only)
+        type: string
+      cache_service:
+        description: Controlled cache-service absence scenario
+        type: choice
+        default: available
+        options: [available, unavailable]
+
+permissions:
+  contents: read
+
+cache-mode: read
+
+concurrency:
+  group: orchestration-cache-${{ github.ref }}-${{ inputs.operation || 'produce' }}-${{ inputs.operation == 'measure' && format('{0}-{1}', inputs.source_revision, inputs.cache_service) || 'publisher' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      operation: ${{ steps.identity.outputs.operation }}
+      cache_hit: ${{ steps.lookup.outputs.cache-hit }}
+      revision: ${{ steps.identity.outputs.revision }}
+      input_id: ${{ steps.identity.outputs.input_id }}
+      cache_key: ${{ steps.identity.outputs.cache_key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision || github.sha }}
+          persist-credentials: false
+      - name: Verify source and producer authority
+        id: identity
+        env:
+          OPERATION: ${{ github.event_name == 'push' && 'produce' || inputs.operation }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          INPUT_ID: ${{ hashFiles('flake.nix', 'flake.lock', 'nix/**/*.nix', 'go.mod', 'package.json', 'scripts/export_nix_ci_environment.py', 'scripts/measure_orchestration_cache.py', '.github/workflows/orchestration-cache.yml', '.github/actions/setup-ci/action.yml', '.github/workflows/ci.yml') }}
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in produce|measure) ;; *) exit 1 ;; esac
+          revision="$(git rev-parse HEAD)"
+          if [ "$OPERATION" = produce ]; then
+            test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+            test -z "$SOURCE_REVISION"
+            test "$revision" = "$GITHUB_SHA"
+          elif [ -n "$SOURCE_REVISION" ]; then
+            [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+            test "$revision" = "$SOURCE_REVISION"
+          else
+            test "$revision" = "$GITHUB_SHA"
+          fi
+          test -n "$INPUT_ID"
+          {
+            echo "operation=$OPERATION"
+            echo "revision=$revision"
+            echo "input_id=$INPUT_ID"
+            echo "cache_key=nix-orchestration-v1-Linux-X64-2.31.2-$INPUT_ID"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this exact input is already published
+        id: lookup
+        if: steps.identity.outputs.operation == 'produce'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/orchestration-cache
+          key: ${{ steps.identity.outputs.cache_key }}
+          lookup-only: true
+
+  producer:
+    if: needs.resolve.outputs.operation == 'produce' && needs.resolve.outputs.cache_hit != 'true'
+    needs: resolve
+    cache-mode: write-only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.revision }}
+          persist-credentials: false
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Serialize only the locked orchestration closure before application execution
+        env:
+          CACHE_INPUT_ID: ${{ needs.resolve.outputs.input_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/measure_orchestration_cache.py produce
+      - name: Retain only three bounded default-branch toolchain identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CACHE_INPUT_ID: ${{ needs.resolve.outputs.input_id }}
+          CACHE_KEY: ${{ needs.resolve.outputs.cache_key }}
+        run: python3 scripts/measure_orchestration_cache.py retain
+      - name: Publish the bounded toolchain archive
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/orchestration-cache
+          key: ${{ needs.resolve.outputs.cache_key }}
+      - name: Retain producer cost and storage evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: orchestration-cache-producer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/orchestration-cache-metrics.json
+            ${{ runner.temp }}/orchestration-cache/manifest.json
+            ${{ runner.temp }}/orchestration-cache-retention.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  measure:
+    if: needs.resolve.outputs.operation == 'measure'
+    needs: resolve
+    name: Orchestration setup (${{ matrix.treatment }}, pair ${{ matrix.sample }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: ['1', '2', '3']
+        treatment: [baseline, restore]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.revision }}
+          persist-credentials: false
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Restore only the exact toolchain input archive
+        id: restore
+        if: matrix.treatment == 'restore' && inputs.cache_service == 'available'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/orchestration-cache
+          key: ${{ needs.resolve.outputs.cache_key }}
+      - name: Measure import and complete locked environment realization
+        env:
+          CACHE_INPUT_ID: ${{ needs.resolve.outputs.input_id }}
+          CACHE_SAMPLE: ${{ matrix.sample }}
+          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+        run: python3 scripts/measure_orchestration_cache.py ${{ matrix.treatment }}
+      - name: Retain consumer measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: orchestration-cache-${{ matrix.treatment }}-${{ matrix.sample }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/orchestration-cache-metrics.json
+          retention-days: 14
+          if-no-files-found: error

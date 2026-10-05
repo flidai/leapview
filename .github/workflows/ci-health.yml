@@ -1,4 +1,4 @@
-name: CI health
+name: Maintenance / CI health
 
 on:
   schedule:

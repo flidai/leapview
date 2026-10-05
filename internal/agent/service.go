@@ -28,7 +28,7 @@ const (
 )
 
 func IsBusy(err error) bool {
-	return errors.Is(err, ErrBusy)
+	return errors.Is(err, ErrBusy) || agentcore.IsCode(err, agentcore.ErrorCodeBusy)
 }
 
 type Scope struct {
@@ -451,6 +451,10 @@ func (s *Service) CreateConversation(ctx context.Context, scope Scope, title str
 
 func (s *Service) ListConversations(ctx context.Context, scope Scope) ([]Conversation, error) {
 	return s.repo.ListConversations(ctx, scope.PrincipalID)
+}
+
+func (s *Service) ListConversationSummaries(ctx context.Context, scope Scope) ([]Conversation, error) {
+	return s.repo.ListConversationSummaries(ctx, scope.PrincipalID)
 }
 
 func (s *Service) ListConversationsPage(ctx context.Context, scope Scope, page Page) ([]Conversation, error) {

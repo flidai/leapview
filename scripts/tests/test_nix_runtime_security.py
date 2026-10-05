@@ -2,6 +2,9 @@ import copy
 import datetime
 import importlib.util
 import io
+import json
+import hashlib
+import subprocess
 import tarfile
 import tempfile
 import pathlib
@@ -14,7 +17,191 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 
+class NativePlatformTests(unittest.TestCase):
+    def image_archive(self, directory, architecture):
+        revision = 'a' * 40
+        config = json.dumps({'os': 'linux', 'architecture': architecture,
+                             'rootfs': {'type': 'layers', 'diff_ids': []},
+                             'config': {'Labels': {
+                                 'org.opencontainers.image.source': 'https://github.com/flidai/leapview',
+                                 'org.opencontainers.image.revision': revision,
+                                 'org.opencontainers.image.version': '0.3.0-alpha.1',
+                                 'dev.leapview.build.kind': 'application-image',
+                                 'dev.leapview.build.dirty': 'false'}}}).encode()
+        config_name = hashlib.sha256(config).hexdigest() + '.json'
+        archive = pathlib.Path(directory) / 'image.tar'
+        with tarfile.open(archive, 'w') as output:
+            for name, data in [('manifest.json', json.dumps([{'Config': config_name, 'Layers': []}]).encode()),
+                               (config_name, config)]:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                output.addfile(member, io.BytesIO(data))
+        return archive
+
+    def test_candidate_image_platform_selects_the_native_nix_glibc_output(self):
+        for architecture, platform, system in [('amd64', 'linux/amd64', 'x86_64-linux'),
+                                                ('arm64', 'linux/arm64', 'aarch64-linux')]:
+            with self.subTest(platform=platform), patch.object(m, 'run', return_value='/nix/store/glibc') as run:
+                with tempfile.TemporaryDirectory() as directory:
+                    archive = self.image_archive(directory, architecture)
+                    identity = m.candidate_manifest.image_identity(
+                        archive, {'revision': 'a' * 40}, 'application-image')
+                self.assertEqual(identity['platform'], platform)
+                self.assertEqual(m.native_glibc_path(identity['platform']), '/nix/store/glibc')
+                self.assertEqual(run.call_args.args[-1],
+                                 '.#packages.' + system + '.glibc-runtime.outPath')
+        self.assertEqual(m.assessment_file('linux/amd64').name, 'runtime-assessments.vex.json')
+        self.assertEqual(m.assessment_file('linux/arm64').name, 'runtime-assessments.arm64.vex.json')
+        with self.assertRaisesRegex(ValueError, 'unsupported runtime assessment platform'):
+            m.assessment_file('linux/riscv64')
+        protected_root = pathlib.Path('/protected/checkout')
+        with patch.object(m, 'ROOT', protected_root):
+            self.assertEqual(m.assessment_file('linux/arm64'),
+                             protected_root / 'nix/runtime-assessments.arm64.vex.json')
+
+    def test_candidate_image_identity_rejects_unsupported_isa(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = self.image_archive(directory, 'riscv64')
+            with self.assertRaisesRegex(ValueError, 'unsupported Nix candidate platform'):
+                m.candidate_manifest.image_identity(
+                    archive, {'revision': 'a' * 40}, 'application-image')
+        for platform in ['linux/riscv64', 'darwin/arm64']:
+            with self.subTest(platform=platform), self.assertRaisesRegex(ValueError, 'unsupported native runtime platform'):
+                m.native_glibc_path(platform)
+
+
 class CoverageTests(unittest.TestCase):
+    def image_archive(self, path, revision):
+        config = {'architecture': 'amd64', 'os': 'linux', 'rootfs': {'type': 'layers', 'diff_ids': []},
+                  'config': {'Labels': {
+                      'org.opencontainers.image.source': 'https://github.com/flidai/leapview',
+                      'org.opencontainers.image.revision': revision,
+                      'org.opencontainers.image.version': '0.3.0-alpha.1',
+                      'dev.leapview.build.kind': 'application-image',
+                      'dev.leapview.build.dirty': 'false'}}}
+        config_bytes = json.dumps(config).encode()
+        config_name = hashlib.sha256(config_bytes).hexdigest() + '.json'
+        with tarfile.open(path, 'w') as output:
+            for name, data in [('manifest.json', json.dumps([{'Config': config_name, 'Layers': []}]).encode()),
+                               (config_name, config_bytes)]:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                output.addfile(member, io.BytesIO(data))
+
+    def test_spdx_export_and_partial_scan_evidence_fail_closed(self):
+        for coverage_only, export in [(False, 'SPDX-2.3'), (True, 'SPDX-2.2'), (False, 'command-failure')]:
+            with self.subTest(coverage_only=coverage_only, export=export), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                archive = root / 'image.tar'
+                revision = 'a' * 40
+                self.image_archive(archive, revision)
+                evidence = root / 'evidence'
+
+                def run(*args, **kwargs):
+                    if args[1] == 'version':
+                        return json.dumps({'version': m.POLICY[args[0] + 'Version']})
+                    if args[0] == 'nix':
+                        return '/nix/store/' + 'a' * 32 + '-glibc-2.42-84'
+                    output = pathlib.Path(args[-1].split('=', 1)[1])
+                    if 'convert' in args:
+                        original = pathlib.Path(args[args.index('convert') + 1])
+                        self.assertEqual(original, evidence / 'sbom.syft.json')
+                        self.assertEqual(json.loads(original.read_bytes()), {'artifacts': []})
+                        if export == 'command-failure':
+                            raise subprocess.CalledProcessError(1, args)
+                        output.write_text(json.dumps({'spdxVersion': export}))
+                    else:
+                        output.write_text('{"artifacts": []}')
+                    return ''
+
+                argv = ['scan', str(archive), '--kind', 'application-image', '--source-revision', revision,
+                        '--evidence-dir', str(evidence)]
+                if coverage_only:
+                    argv.append('--coverage-only')
+                with patch('sys.argv', argv), patch.object(m, 'run', side_effect=run):
+                    with self.assertRaises(SystemExit):
+                        m.main()
+                summary = json.loads((evidence / 'summary.json').read_bytes())
+                self.assertEqual(summary['enforcementMode'], 'coverage-only' if coverage_only else 'enforce')
+                self.assertFalse(summary['coverageQualified'])
+                self.assertFalse(summary['releaseReady'])
+                self.assertIn('error', summary)
+                self.assertEqual((evidence / 'sbom.syft.json').read_bytes(), b'{"artifacts": []}')
+                names = {'sbom.syft.json', 'grype-config.json', 'syft-config.json'}
+                if export != 'command-failure':
+                    names.add('sbom.spdx.json')
+                self.assertEqual(set(summary['reportSHA256']), names)
+                for name, digest in summary['reportSHA256'].items():
+                    self.assertEqual(digest, hashlib.sha256((evidence / name).read_bytes()).hexdigest())
+
+
+class SiteInventoryTests(unittest.TestCase):
+    def image_archive(self, directory, extra=None):
+        revision = 'a' * 40
+        files = {'leapview-site': (b'go-site-binary', 0o555),
+                 'etc/ssl/certs/ca-certificates.crt': (b'ca-certificates', 0o444),
+                 '.data/map-assets/world.bin': (b'map-data', 0o444)}
+        if extra:
+            files.update(extra)
+        layer_bytes = io.BytesIO()
+        with tarfile.open(fileobj=layer_bytes, mode='w') as layer:
+            for path in ['.data', '.data/map-assets', 'etc', 'etc/ssl', 'etc/ssl/certs']:
+                entry = tarfile.TarInfo('/' + path)
+                entry.type = tarfile.DIRTYPE
+                entry.mode = 0o555
+                layer.addfile(entry)
+            for path, (data, mode) in files.items():
+                entry = tarfile.TarInfo('/' + path)
+                entry.size = len(data)
+                entry.mode = mode
+                layer.addfile(entry, io.BytesIO(data))
+        layer_data = layer_bytes.getvalue()
+        config = {'architecture': 'amd64', 'os': 'linux',
+                  'rootfs': {'type': 'layers', 'diff_ids': ['sha256:' + hashlib.sha256(layer_data).hexdigest()]},
+                  'config': {'Entrypoint': ['/leapview-site'], 'Cmd': ['-addr=:8081'],
+                             'User': '65532:65532', 'WorkingDir': '/',
+                             'ExposedPorts': {'8081/tcp': {}},
+                             'Env': ['LEAPVIEW_SITE_BASE_URL=', 'LEAPVIEW_SITE_SHOWCASE_EMBED_URL='],
+                             'Labels': {
+                                 'org.opencontainers.image.source': 'https://github.com/flidai/leapview',
+                                 'org.opencontainers.image.revision': revision,
+                                 'org.opencontainers.image.version': '0.3.0-alpha.1',
+                                 'dev.leapview.build.kind': 'site-image',
+                                 'dev.leapview.build.dirty': 'false'}}}
+        config_bytes = json.dumps(config).encode()
+        config_name = hashlib.sha256(config_bytes).hexdigest() + '.json'
+        archive = pathlib.Path(directory) / 'site-image.tar.gz'
+        with tarfile.open(archive, 'w:gz') as output:
+            for name, data in [('manifest.json', json.dumps([{'Config': config_name, 'Layers': ['layer/layer.tar']}]).encode()),
+                               (config_name, config_bytes), ('layer/layer.tar', layer_data)]:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                output.addfile(member, io.BytesIO(data))
+        artifact = m.candidate_manifest.image_identity(archive, {'revision': revision}, 'site-image')
+        artifact.update(kind='site-image', sha256=m.candidate_manifest.digest_file(archive))
+        return archive, artifact, files
+
+    def test_exact_site_payload_inventory_hashes_each_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, artifact, files = self.image_archive(directory)
+            inventory = m.site_payload_inventory(archive, artifact)
+            self.assertEqual(inventory['profile'], 'site-image')
+            self.assertEqual({item['path'] for item in inventory['files']}, set(files))
+            expected = {'sha256:' + hashlib.sha256(data).hexdigest() for data, _ in files.values()}
+            self.assertEqual({item['sha256'] for item in inventory['files']}, expected)
+            self.assertEqual(inventory['configDigest'], artifact['configDigest'])
+            self.assertEqual(inventory['layerDiffIDs'], artifact['layerDiffIDs'])
+
+    def test_site_payload_rejects_unlisted_files_and_writable_modes(self):
+        for extra, expected in [({'etc/passwd': (b'account', 0o444)}, 'unexpected file'),
+                                ({'.data/map-assets/.wh.world': (b'', 0o444)}, 'whiteouts'),
+                                ({'../escape': (b'escape', 0o444)}, 'relative'),
+                                ({'leapview-site': (b'go-site-binary', 0o755)}, 'permissions')]:
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as directory:
+                archive, artifact, _ = self.image_archive(directory, extra)
+                with self.assertRaisesRegex(ValueError, expected):
+                    m.site_payload_inventory(archive, artifact)
+
     def package(self, name='glibc', version='2.42-84'):
         path = '/nix/store/' + 'a' * 32 + '-' + name + '-' + version
         return {'id': name, 'name': name, 'version': version, 'type': 'nix',
@@ -81,6 +268,15 @@ class CoverageTests(unittest.TestCase):
         paths.add('/nix/store/' + 'b' * 32 + '-leapview-map-assets')
         self.assertEqual(m.check_inventory({'artifacts': packages}, paths), packages)
 
+    def test_image_glibc_must_match_the_native_isa_output(self):
+        packages = [self.package(name) for name in m.POLICY['runtime']]
+        arm_path = '/nix/store/f4b8yxq1bn6y0n38km6bcahpm6vdgsh2-glibc-2.42-84'
+        next(package for package in packages if package['name'] == 'glibc')['metadata']['path'] = arm_path
+        paths = {package['metadata']['path'] for package in packages}
+        amd_path = '/nix/store/kj7ia0isvb6xh74qavgcshmb7fcskj4l-glibc-2.42-84'
+        with self.assertRaisesRegex(ValueError, 'does not match the patched Nix output'):
+            m.check_inventory({'artifacts': packages}, paths, amd_path)
+
     def test_sbom_from_different_image_fails(self):
         packages = [self.package(name) for name in m.POLICY['runtime']]
         with self.assertRaisesRegex(ValueError, 'absent from image'):
@@ -112,6 +308,26 @@ class AssessmentTests(unittest.TestCase):
         self.packages[0]['metadata']['path'] = self.path.replace('kj7ia0', 'aaaaaa')
         with self.assertRaisesRegex(ValueError, 'identity'):
             self.validate()
+
+    def test_arm_document_is_bound_to_the_native_arm64_identity(self):
+        arm_document = m.json.loads((ROOT / 'nix/runtime-assessments.arm64.vex.json').read_text())
+        amd_decisions = [(item['vulnerability']['name'], item['status']) for item in self.document['statements']]
+        arm_decisions = [(item['vulnerability']['name'], item['status']) for item in arm_document['statements']]
+        self.assertEqual(arm_decisions, amd_decisions)
+        arm_path = '/nix/store/f4b8yxq1bn6y0n38km6bcahpm6vdgsh2-glibc-2.42-84'
+        arm_purl = 'pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2'
+        arm_packages = [{'name': 'glibc', 'version': '2.42-84', 'purl': arm_purl,
+                         'metadata': {'path': arm_path}}]
+        self.assertEqual(len(m.validate_assessments(arm_document, arm_packages,
+                                                    datetime.date(2026, 10, 5))), 11)
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            m.validate_assessments(self.document, arm_packages, datetime.date(2026, 10, 5))
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            m.validate_assessments(arm_document, self.packages, datetime.date(2026, 10, 5))
+        probe_claim = next(item['impact_statement'] for item in arm_document['statements']
+                           if item['vulnerability']['name'] == 'CVE-2026-19499')
+        self.assertIn('still required', probe_claim)
+        self.assertIn('does not claim that the probe passed', probe_claim)
 
     def test_expired_assessment_fails(self):
         with self.assertRaisesRegex(ValueError, 'expired'):

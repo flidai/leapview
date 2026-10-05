@@ -19,9 +19,9 @@ const phaseLabel = document.querySelector('#project-phase-label');
 const phaseDetail = document.querySelector('#project-phase-detail');
 const code = document.querySelector('#project-code');
 const codeScroll = document.querySelector('#project-code-scroll');
-const fileCache = new Map();
+const fileSources = new Map([...document.querySelectorAll('template[data-project-source]')]
+  .map(template => [template.dataset.projectSource, template.content.querySelector('pre').textContent]));
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-let latestSelection = 0;
 let phaseIndex = 0;
 let inView = false;
 let userPaused = false;
@@ -91,10 +91,9 @@ function renderSource(source, animate = false) {
   codeScroll.scrollTo(0, 0);
 }
 
-async function selectFile(key, animate = false) {
+function selectFile(key, animate = false) {
   const file = projectFiles[key];
   if (!file) return;
-  const selection = ++latestSelection;
   const selectedTab = tabs.find(tab => tab.dataset.projectFile === key);
   tabs.forEach(tab => {
     const selected = tab === selectedTab;
@@ -114,22 +113,7 @@ async function selectFile(key, animate = false) {
   document.querySelector('#project-file-path').textContent = `sales-project / ${file.path.replace('/', ' / ')}`;
   codeScroll.setAttribute('aria-label', `${file.path} source code`);
 
-  if (fileCache.has(key)) {
-    renderSource(fileCache.get(key), animate);
-    return;
-  }
-  code.textContent = 'Loading file…';
-  try {
-    const response = await fetch(`/static/home/project-files/${file.path}`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const source = await response.text();
-    fileCache.set(key, source);
-    if (selection === latestSelection) renderSource(source, animate);
-  } catch {
-    if (selection === latestSelection) {
-      code.textContent = 'Could not load this file.';
-    }
-  }
+  renderSource(fileSources.get(key), animate);
 }
 
 function canAdvance() {

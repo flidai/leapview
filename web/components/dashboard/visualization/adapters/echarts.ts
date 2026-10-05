@@ -4,6 +4,8 @@ import { Change, defaultRendererContext, normalizeRendererLocale, type RendererA
 import { clearInteractionCommand, interactionCommandForRow } from '../interaction-command'
 import { projectVisualizationHighlights } from '../highlight'
 import { baseOption } from './echarts/common'
+import { waitForEChartsFrame } from './echarts/readiness'
+export { EChartsReadinessError, waitForEChartsFrame } from './echarts/readiness'
 import { CategoryColorRegistry, categoryColorRegistryFor, categoryIdentity } from './echarts/category-colors'
 import { cartesianOption } from './echarts/cartesian'
 import { hierarchyOption } from './echarts/hierarchy'
@@ -36,6 +38,8 @@ export function echartsOption(envelope: VisualizationEnvelope, context: Renderer
     default: throw new Error(`ECharts cannot render visualization kind ${JSON.stringify(envelope.spec.kind)}`)
   }
   const option = { ...base, ...translated } as Record<string, any>
+  // Tooltip transitions have their own defaults, independent of animation:false.
+  option.tooltip = { ...option.tooltip, transitionDuration: 0, displayTransition: false }
   if (base.aria || translated.aria) option.aria = { ...(base.aria ?? {}), ...(translated.aria ?? {}) }
   if (base.graphic && translated.graphic) option.graphic = [...base.graphic, ...translated.graphic]
   applyCrossHighlight(option, envelope)
@@ -49,9 +53,11 @@ function applyCrossHighlight(option: Record<string, any>, envelope: Visualizatio
   if (!dataset) return
   const projection = projectVisualizationHighlights(envelope, dataset.id, dataset.columns, dataset.rows)
   const series = Array.isArray(option.series) ? option.series : option.series ? [option.series] : []
+  const highlightDimensions = new Map<Record<string, any>, string>()
   for (const item of series) {
     if (item.silent === true) continue
     const rowIndices = seriesRowIndices(envelope, dataset.columns, dataset.rows, item)
+    if (item.type === 'bar' && applyBarCrossHighlight(option, item, series.indexOf(item), rowIndices, projection.matchedRows, highlightDimensions)) continue
     const opacity = (params: { dataIndex?: number }) => {
       if (projection.matchedRows.size === 0) return 0.45
       const rowIndex = params.dataIndex === undefined ? undefined : rowIndices[params.dataIndex]
@@ -65,6 +71,54 @@ function applyCrossHighlight(option: Record<string, any>, envelope: Visualizatio
     enabled: true,
     description: [option.aria?.description, projection.announcement].filter(Boolean).join(' '),
   }
+}
+
+function applyBarCrossHighlight(
+  option: Record<string, any>,
+  series: Record<string, any>,
+  seriesIndex: number,
+  rowIndices: readonly number[],
+  matchedRows: ReadonlySet<number>,
+  highlightDimensions: Map<Record<string, any>, string>,
+): boolean {
+  if (series.data !== undefined) return false
+  const datasets = Array.isArray(option.dataset) ? option.dataset : [option.dataset]
+  let source = series.datasetId !== undefined
+    ? datasets.find((candidate: Record<string, any>) => candidate?.id === series.datasetId)
+    : datasets[series.datasetIndex ?? 0]
+  let transformed = false
+  const visited = new Set<unknown>()
+  while (source && source.fromDatasetId !== undefined && !visited.has(source)) {
+    visited.add(source)
+    transformed = true
+    source = datasets.find((candidate: Record<string, any>) => candidate?.id === source.fromDatasetId)
+  }
+  if (!Array.isArray(source?.source) || !Array.isArray(source.source[0])) return false
+  let dimension = highlightDimensions.get(source)
+  if (dimension === undefined) {
+    const baseDimension = '__lv_cross_highlight'
+    dimension = baseDimension
+    for (let suffix = 1; source.source[0].includes(dimension); suffix++) dimension = `${baseDimension}_${suffix}`
+    highlightDimensions.set(source, dimension)
+    // Filter transforms retain this dimension. Explicit normalized datasets use
+    // the series' existing source-row mapping, preserving original identities.
+    source.source = [
+      [...source.source[0], dimension],
+      ...source.source.slice(1).map((row: unknown[], index: number) => [
+        ...row, matchedRows.has(transformed ? index : rowIndices[index]!) ? 1 : 0,
+      ]),
+    ]
+  }
+  // ECharts evaluates color callbacks, but itemStyle.opacity is a literal.
+  // VisualMap writes a numeric opacity into each datum's visual style instead.
+  const visualMaps = option.visualMap === undefined ? [] : Array.isArray(option.visualMap) ? option.visualMap : [option.visualMap]
+  option.visualMap = [...visualMaps, {
+    id: `cross-highlight:${series.id ?? seriesIndex}`, type: 'piecewise', show: false,
+    dimension, seriesIndex,
+    pieces: [{ value: 1, opacity: 1 }, { value: 0, opacity: matchedRows.size ? 0.2 : 0.45 }],
+    inRange: { opacity: [0.2, 1] }, outOfRange: { opacity: 0.45 },
+  }]
+  return true
 }
 
 function seriesRowIndices(
@@ -152,7 +206,8 @@ export class EChartsHandle implements RendererHandle {
   update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
     if (this.disposed) return
     const previous = this.envelope
-    const viewState = previous && preservesEChartsViewState(previous, envelope) ? this.captureViewState() : undefined
+    const preserveViewState = previous !== undefined && preservesEChartsViewState(previous, envelope)
+    const viewState = preserveViewState ? this.captureViewState() : undefined
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
@@ -160,9 +215,8 @@ export class EChartsHandle implements RendererHandle {
     const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
     const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
-    const preserveHeatmapFocus = previous !== undefined && preservesEChartsViewState(previous, envelope)
     const resetHeatmapFocus = isHeatmapWithDataZoom(envelope)
-      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveHeatmapFocus))
+      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveViewState))
     const plan = echartsUpdatePlan(change, option, initializeDataZoom, refreshHeatmapDataZoom)
     if ((change & Change.Spec) !== 0 || initializeDataZoom || resetDataZoom) this.dataZoomInitialized = hasEChartsDataZoom(option)
     if (resetHeatmapFocus) {
@@ -177,6 +231,11 @@ export class EChartsHandle implements RendererHandle {
 
   resize(width: number, height: number): void {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    if (width === this.lastWidth && height === this.lastHeight) {
+      this.applyResponsiveLayout(false)
+      this.syncHeatmapFocusZoom()
+      return
+    }
     // Deferred hosts can report their initial 0×0 layout before the renderer
     // frame has entered the document. ECharts' hierarchy layouts assume a
     // positive viewport and can dereference a missing layout slot during that
@@ -198,9 +257,9 @@ export class EChartsHandle implements RendererHandle {
     const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
     const patch = responsiveEChartsPatch(option, this.lastWidth, this.lastHeight, focused)
-    // Exact compact widths only affect scroll legends. Avoid reapplying an
-    // unchanged proportional series while a card is continuously resized.
-    if (!force && compact && sameLayout && patch.legend === undefined) {
+    // Exact compact widths affect scroll legends and category-label budgets.
+    // Avoid reapplying other unchanged layouts during continuous resizing.
+    if (!force && compact && sameLayout && patch.legend === undefined && patch.yAxis === undefined) {
       this.compactWidth = this.lastWidth
       return
     }
@@ -276,7 +335,14 @@ export class EChartsHandle implements RendererHandle {
     const value = state as EChartsViewState
     const patch: Record<string, any> = {}
     if (restoreDataZoom && Array.isArray(value.dataZoom) && value.dataZoom.length > 0) patch.dataZoom = value.dataZoom
-    if (Array.isArray(value.series) && value.series.length > 0) patch.series = value.series
+    if (Array.isArray(value.series) && value.series.length > 0) {
+      // Empty hierarchy frames omit their series. Restoring a camera entry for
+      // a removed series would create a typeless ECharts series instead.
+      const currentSeries = this.responsiveOption?.series ?? []
+      const currentIDs = new Set(currentSeries.map((series: Record<string, any>) => series.id))
+      const retained = value.series.filter((series) => currentIDs.has(series.id))
+      if (retained.length > 0) patch.series = retained
+    }
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: false })
   }
 
@@ -546,9 +612,13 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption, initial
     if (labels.length > 0) patch.series = labels
   }
   if ((change & Change.Highlight) !== 0) {
+    patch.dataset = source.dataset
+    patch.visualMap = source.visualMap ?? []
     patch.series = source.series
     if (source.aria !== undefined) patch.aria = source.aria
-    if (!replaceMerge.includes('series')) replaceMerge.push('series')
+    for (const key of ['dataset', 'visualMap', 'series']) {
+      if (!replaceMerge.includes(key)) replaceMerge.push(key)
+    }
   }
   if ((change & Change.Status) !== 0) {
     patch.title = source.title ?? []
@@ -585,51 +655,4 @@ function hasEChartsDataZoom(option: EChartsOption): boolean {
 function hasEmptyEChartsDataZoom(option: EChartsOption): boolean {
   const dataZoom = (option as Record<string, any>).dataZoom
   return Array.isArray(dataZoom) && dataZoom.length === 0
-}
-
-type EChartsFrameChart = Pick<ECharts, 'on' | 'off' | 'getWidth' | 'getHeight'>
-
-export class EChartsReadinessError extends Error {
-  constructor(readonly reason: 'timeout' | 'invalid_layout', readonly width: number, readonly height: number) {
-    super(reason === 'invalid_layout'
-      ? `ECharts cannot render its first frame with invalid layout ${width}x${height}`
-      : 'ECharts did not complete its first frame')
-    this.name = 'EChartsReadinessError'
-  }
-}
-
-export function waitForEChartsFrame(chart: EChartsFrameChart, timeoutMs = 5_000, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let settled = false
-    const cleanup = () => {
-      if (timer !== undefined) clearTimeout(timer)
-      chart.off('rendered', rendered)
-      signal?.removeEventListener('abort', aborted)
-    }
-    const complete = (action: () => void) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      action()
-    }
-    const rendered = () => {
-      const width = chart.getWidth()
-      const height = chart.getHeight()
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
-      complete(resolve)
-    }
-    const aborted = () => { complete(resolve) }
-    chart.on('rendered', rendered)
-    if (signal?.aborted) {
-      aborted()
-      return
-    }
-    signal?.addEventListener('abort', aborted, { once: true })
-    timer = setTimeout(() => {
-      const width = chart.getWidth()
-      const height = chart.getHeight()
-      complete(() => reject(new EChartsReadinessError(width > 0 && height > 0 ? 'timeout' : 'invalid_layout', width, height)))
-    }, timeoutMs)
-  })
 }

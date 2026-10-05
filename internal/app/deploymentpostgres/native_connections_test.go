@@ -164,6 +164,27 @@ func TestBuildNativePhysicalWithCandidateBindingsScopesLeaseToPhysicalWork(t *te
 	}
 }
 
+func TestBuildNativePhysicalWithCandidateBindingsDoesNotOpenAfterAcquireFailure(t *testing.T) {
+	acquireErr := errors.New("candidate credential authority unavailable")
+	leaser := &nativeConnectionLeaser{err: acquireErr}
+	request := deployment.CandidateConnectionRequest{Requirements: []deployment.CandidateConnectionRequirement{{ConnectionID: projectgraph.ResourceID("warehouse"), ConnectorKind: "postgres"}}}
+	opened := false
+	_, _, err := buildNativePhysicalWithCandidateBindingsEvidence(
+		t.Context(), leaser, request, createPlanTestDigest('7'), nativePhysicalFixtureInput(t),
+		NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+			opened = true
+			return nil, nil
+		}),
+	)
+	if !errors.Is(err, acquireErr) || opened || leaser.calls != 1 {
+		t.Fatalf("candidate acquisition failure = %v opened=%t acquire=%d, want original error, unopened environment, and one acquisition", err, opened, leaser.calls)
+	}
+	failure, ok := NativePhysicalBuildFailureOf(err)
+	if !ok || failure.Phase != NativePhysicalBuildPhaseValidation || failure.Classification != NativePhysicalFailureDeterministic {
+		t.Fatalf("candidate acquisition failure classification = %#v, want deterministic validation failure", failure)
+	}
+}
+
 func TestBuildNativePhysicalWithCandidateBindingsEvidenceAllowsNoBindings(t *testing.T) {
 	input := nativePhysicalFixtureInput(t)
 	emptyDigest, err := deployment.BindingFingerprint(nil)

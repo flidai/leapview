@@ -30,7 +30,7 @@ type ProfileApplicationAdmissionChecker = connectionbinding.ProfileApplicationAd
 
 const (
 	PermissionManageConnectionMetadata = connectionbinding.PermissionManageConnectionMetadata
-	PermissionTestConnection           = connectionbinding.PermissionTestConnection
+	PermissionUseConnection            = connectionbinding.PermissionUseConnection
 	PermissionViewConnectionHealth     = connectionbinding.PermissionViewConnectionHealth
 )
 

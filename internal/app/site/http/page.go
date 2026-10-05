@@ -34,7 +34,7 @@ func sitePage(metadata sitePageMetadata) g.Node {
 	for _, theme := range []string{"dark", "light"} {
 		head = append(head, h.Link(h.Rel("preload"), h.Href("/static/product-dashboard-"+theme+".png"), g.Attr("as", "image")))
 	}
-	for _, script := range []string{"home", "layers", "project-explorer", "orbit"} {
+	for _, script := range []string{"layers", "project-explorer", "orbit"} {
 		head = append(head, h.Script(h.Type("module"), h.Src("/static/home/"+script+".js")))
 	}
 	return pagestream.RenderPage(pagestream.PageSpec{
@@ -44,12 +44,14 @@ func sitePage(metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
-			g.Raw(siteassets.Homepage()),
-			siteFooter(),
 		},
+		Body: []g.Node{
+			g.Raw(siteassets.Homepage()),
+		},
+		AfterMain: []g.Node{siteFooter()},
 	})
 }
 
@@ -61,9 +63,11 @@ func visualsPage(metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates?view=visuals",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
+		},
+		Body: []g.Node{
 			h.Div(h.Class("site-shell site-showcase-shell"),
 				h.Section(h.ID("main-content"), h.Class("site-showcase-intro"),
 					h.P(h.Class("site-eyebrow"), g.Text(siteBrandName+" visual system")),
@@ -75,8 +79,8 @@ func visualsPage(metadata sitePageMetadata) g.Node {
 				),
 				g.El("lv-site-visual-showcase"),
 			),
-			siteFooter(),
 		},
+		AfterMain: []g.Node{siteFooter()},
 	})
 }
 
@@ -88,9 +92,11 @@ func responsiveWidgetsPage(metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates?view=responsive-widgets",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
+		},
+		Body: []g.Node{
 			h.Div(h.Class("site-shell site-showcase-shell"),
 				h.Section(h.ID("main-content"), h.Class("site-showcase-intro"),
 					h.P(h.Class("site-eyebrow"), g.Text(siteBrandName+" responsive QA")),
@@ -103,8 +109,8 @@ func responsiveWidgetsPage(metadata sitePageMetadata) g.Node {
 				),
 				g.El("lv-site-responsive-widget-reference"),
 			),
-			siteFooter(),
 		},
+		AfterMain: []g.Node{siteFooter()},
 	})
 }
 
@@ -119,9 +125,11 @@ func showcasePage(metadata sitePageMetadata, embedURL *url.URL) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
+		},
+		Body: []g.Node{
 			h.Div(h.Class("site-shell site-live-showcase-shell"),
 				h.Section(h.ID("main-content"), h.Class("site-showcase-intro"),
 					h.P(h.Class("site-eyebrow"), g.Text("Live dashboard")),
@@ -139,8 +147,8 @@ func showcasePage(metadata sitePageMetadata, embedURL *url.URL) g.Node {
 					),
 				),
 			),
-			siteFooter(),
 		},
+		AfterMain: []g.Node{siteFooter()},
 	})
 }
 
@@ -152,9 +160,11 @@ func docsIndexPage(metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(true, metadata.showcase),
+		},
+		Body: []g.Node{
 			siteDocsLayout(nil, siteDocsIndex()),
 		},
 	})
@@ -168,9 +178,11 @@ func docsSearchPage(query string, metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(true, metadata.showcase),
+		},
+		Body: []g.Node{
 			siteDocsLayout(nil, siteDocsSearch(query)),
 		},
 	})
@@ -188,9 +200,11 @@ func docsArticlePage(document siteDocument, metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        updatesURL,
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(true, metadata.showcase),
+		},
+		Body: []g.Node{
 			siteDocsLayout(&document, siteDocsArticle(document)),
 		},
 	})
@@ -204,9 +218,11 @@ func notFoundPage(metadata sitePageMetadata) g.Node {
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
-		Body: []g.Node{
+		BeforeMain: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
+		},
+		Body: []g.Node{
 			h.Div(h.Class("site-shell"),
 				h.Section(h.ID("main-content"), h.Class("site-showcase-intro"),
 					h.P(h.Class("site-eyebrow"), g.Text("404")),
@@ -218,8 +234,8 @@ func notFoundPage(metadata sitePageMetadata) g.Node {
 					),
 				),
 			),
-			siteFooter(),
 		},
+		AfterMain: []g.Node{siteFooter()},
 	})
 }
 
@@ -260,7 +276,6 @@ func siteHeader(isDocs, showcase bool) g.Node {
 	} else {
 		actions = append(actions, h.Div(h.Class("site-nav-links"),
 			h.A(h.Href("/docs"), g.Text("Docs")),
-			h.A(h.Href("/compliance"), g.Text("Compliance")),
 			g.If(showcase, h.A(h.Href("/showcase"), g.Text("Live demo"))),
 		))
 		actions = append(actions, h.Div(h.Class("site-social-links"),
@@ -328,7 +343,6 @@ func siteFooter() g.Node {
 			siteFooterGroup("Learn", []siteFooterLink{
 				{label: "Documentation", href: "/docs"},
 				{label: "Get started", href: "/docs/getting-started"},
-				{label: "Compliance & Security", href: "/compliance"},
 			}),
 			siteFooterGroup("Project", []siteFooterLink{
 				{label: "GitHub", href: "https://github.com/flidai/leapview"},

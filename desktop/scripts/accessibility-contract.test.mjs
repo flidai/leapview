@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { verifyTrustedShellAccessibility } from "./accessibility-contract.mjs";
+import { readTrustedShellAccessibility, verifyTrustedShellAccessibility } from "./accessibility-contract.mjs";
 
 const node = (role, name, properties = []) => ({
   role: { value: role },
@@ -19,6 +19,113 @@ const treeNode = (
   ...node(role, name, properties),
   nodeId: id,
   childIds,
+});
+
+// Exercise the actual protocol listener, including malformed debugger replies.
+async function withDebugger(t, onCommand, check, beforeOpen) {
+  const original = globalThis.WebSocket;
+  const sockets = [];
+  const listenerErrors = [];
+  class DebuggerSocket {
+    static OPEN = 1;
+    readyState = 1;
+    listeners = new Map();
+    closed = false;
+    constructor() {
+      sockets.push(this);
+      if (beforeOpen) {
+        this.readyState = 0;
+        queueMicrotask(() => beforeOpen(this));
+      }
+    }
+    addEventListener(type, listener) {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+    removeEventListener(type, listener) {
+      this.listeners.get(type)?.delete(listener);
+    }
+    emit(type, event = {}) {
+      for (const listener of this.listeners.get(type) ?? []) {
+        try { listener(event); } catch (error) { listenerErrors.push(error); }
+      }
+    }
+    receive(data) { this.emit("message", { data }); }
+    send(raw) { queueMicrotask(() => onCommand(this, JSON.parse(raw))); }
+    close() {
+      if (!this.closed) {
+        this.closed = true;
+        this.emit("close");
+      }
+    }
+  }
+  globalThis.WebSocket = DebuggerSocket;
+  t.after(() => { globalThis.WebSocket = original; });
+  await check(readTrustedShellAccessibility("ws://127.0.0.1:9222/devtools/page/test"));
+  assert.deepEqual(listenerErrors, [], "protocol listener must not throw");
+  assert.ok(sockets.every(socket => socket.closed), "debugger socket must close");
+}
+
+test("rejects JSON null from the debugger without an uncaught listener error", async (t) => {
+  await withDebugger(t, (socket, command) => {
+    socket.receive("null");
+    // Settle the old implementation too, so a failing regression leaves no timer.
+    socket.receive(JSON.stringify({ id: command.id, error: {} }));
+  }, result => assert.rejects(result, /response is (invalid|malformed)/u));
+});
+
+for (const [name, frame] of [
+  ["array", "[]"], ["string", '"payload"'], ["number", "42"],
+  ["boolean", "true"], ["malformed JSON", "{"],
+  ["oversized frame", " ".repeat(4 * 1024 * 1024 + 1)],
+  ["binary frame", new Uint8Array([1])], ["empty envelope", "{}"],
+  ["string id", '{"id":"1"}'], ["prototype id", '{"id":"__proto__"}'],
+  ["zero id", '{"id":0}'], ["negative id", '{"id":-1}'],
+  ["unsafe id", '{"id":9007199254740992}'],
+]) {
+  test(`rejects debugger ${name} cleanly`, { timeout: 1_000 }, async (t) => {
+    await withDebugger(t, socket => socket.receive(frame),
+      result => assert.rejects(result, /response.*(invalid|malformed)/u));
+  });
+}
+
+for (const event of ["close", "error"]) {
+  test(`rejects a pending command on debugger ${event}`, { timeout: 1_000 }, async (t) => {
+    await withDebugger(t, socket => socket.emit(event),
+      result => assert.rejects(result, /debugger (closed|failed)/u));
+  });
+  test(`rejects debugger ${event} before opening`, { timeout: 1_000 }, async (t) => {
+    await withDebugger(t, () => assert.fail("must not send a command"),
+      result => assert.rejects(result, /failed to open/u), socket => socket.emit(event));
+  });
+}
+
+test("rejects protocol errors without leaking a pending call", async (t) => {
+  await withDebugger(t, (socket, command) => {
+    socket.receive(JSON.stringify({ id: command.id, error: { code: -1 } }));
+  }, result => assert.rejects(result, /Accessibility.enable failed/u));
+});
+
+test("ignores notifications and unknown/duplicate ids while resolving only registered calls", async (t) => {
+  const calls = [];
+  await withDebugger(t, (socket, command) => {
+    calls.push(command.method);
+    socket.receive('{"method":"Accessibility.nodesUpdated","params":{}}');
+    socket.receive('{"id":12345,"error":{}}');
+    const result = command.method === "Accessibility.enable" ? {} : { nodes: [
+      node("RootWebArea", "LeapView", [{ name: "focused", value: { value: true } }]),
+      node("main", ""), node("heading", "Connect to LeapView"),
+      node("region", "Connect an instance"),
+      node("textbox", "LeapView URL", [
+        { name: "focused", value: { value: true } },
+        { name: "required", value: { value: true } },
+      ]), node("button", "Verify & open"),
+    ] };
+    socket.receive(JSON.stringify({ id: command.id, result }));
+    socket.receive(JSON.stringify({ id: command.id, error: {} }));
+  }, async result => assert.equal((await result).mode, "open"));
+  assert.deepEqual(calls, ["Accessibility.enable", "Accessibility.getFullAXTree"]);
 });
 
 test("accepts the named, focused trusted-shell accessibility contract", () => {

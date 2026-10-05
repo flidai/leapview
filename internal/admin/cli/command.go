@@ -142,6 +142,7 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 
 	parent.AddCommand(initialize, maintenance)
 	parent.AddCommand(accessGrantCommand(ctx, operations))
+	parent.AddCommand(credentialSetupCommand(ctx, operations))
 	parent.AddCommand(projectClaimCommand(ctx, operations))
 	delivery := deliveryPoolCommand(ctx, operations)
 	parent.AddCommand(delivery)

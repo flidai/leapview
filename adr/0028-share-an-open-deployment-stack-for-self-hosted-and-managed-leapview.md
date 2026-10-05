@@ -558,9 +558,11 @@ candidate-first deployment or an undocumented Kamal hook implements it.
 For each release, record finite budgets for preflight, admission closure, draining,
 stop/lock release, candidate start, verification and reopening, plus a measured
 end-to-end interruption budget. The specification does not invent numeric service
-targets; the service owner must review measured values before production use. On a
-phase timeout or lost runner, remain closed, record/reconcile the handoff state, and
-do not start a second process owner. A stop timeout is not a successful drain.
+targets; the service owner must review measured values before production use.
+Preflight timeout or runner loss before admission closure leaves the predecessor
+serving. After closure begins, a phase timeout or lost runner keeps admission
+closed; record and reconcile the handoff state without starting a second process
+owner. A stop timeout is not a successful drain.
 
 Rollback restarts a compatible prior release; it does not depend on a warm
 standby. Retain the required immutable images and matching release configuration,

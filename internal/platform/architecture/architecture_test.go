@@ -33,7 +33,7 @@ var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
 	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "semanticvalue": {}, "platform": {},
-	"recoveryset": {},
+	"recoveryset": {}, "credential": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
@@ -41,7 +41,7 @@ var approvedInternalRoots = map[string]struct{}{
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
 	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
-	"recoveryset": {},
+	"recoveryset": {}, "credential": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -1048,7 +1048,7 @@ func TestRefreshOwnsDurableRunState(t *testing.T) {
 
 func TestCapabilityModuleSurfacesExist(t *testing.T) {
 	root := repoRoot(t)
-	for _, capability := range []string{"access", "analytics", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin"} {
+	for _, capability := range []string{"access", "analytics", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin", "credential"} {
 		dir := "internal/" + capability + "/module"
 		if !packageDirExists(root, dir) {
 			t.Errorf("capability composition package %s does not exist", dir)
@@ -2819,11 +2819,11 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	text := string(workflow)
 	for _, want := range []string{
-		"name: CI",
+		"name: CI / Pull requests",
 		"pull_request:",
 		"types: [opened, synchronize, reopened, ready_for_review, stacked, labeled, unlabeled]",
 		"workflow_dispatch:",
-		"group: ci-${{ github.workflow }}-${{ github.event.pull_request.stack.id || github.ref }}",
+		"group: ci-${{ github.workflow }}-${{ github.ref }}",
 		"apigen-validation:",
 		"name: APIGen tests (PR)",
 		"go-packages-validation:",
@@ -2923,7 +2923,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	mergeText := string(mergeWorkflow)
 	for _, want := range []string{
-		"name: Merge validation",
+		"name: CI / Merge queue",
 		"merge_group:",
 		"types: [checks_requested]",
 		"group: merge-validation-${{ github.ref }}",
@@ -2981,7 +2981,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	artifactText := string(artifactWorkflow)
 	for _, want := range []string{
-		"name: Main artifacts",
+		"name: Build / Main image",
 		"push:",
 		"branches: [main]",
 		"build-production-image:",
@@ -3593,7 +3593,7 @@ func TestContinuousIntegrationHealthWorkflowReportsAndAlerts(t *testing.T) {
 	}
 	text := string(workflow)
 	for _, want := range []string{
-		"name: CI health",
+		"name: Maintenance / CI health",
 		"schedule:",
 		"workflow_dispatch:",
 		"actions: read",
@@ -4019,8 +4019,8 @@ func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
 		t.Fatalf("Dockerfile.site downloads Go modules %d times, want one shared dependency stage", count)
 	}
 	const seededModuleCache = "type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked"
-	if count := strings.Count(string(siteDockerfile), seededModuleCache); count != 3 {
-		t.Fatalf("Dockerfile.site uses the seeded persistent Go module cache %d times, want source generation, visual documentation, and compilation", count)
+	if count := strings.Count(string(siteDockerfile), seededModuleCache); count != 2 {
+		t.Fatalf("Dockerfile.site uses the seeded persistent Go module cache %d times, want source generation (including visual documentation) and compilation", count)
 	}
 
 	gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))

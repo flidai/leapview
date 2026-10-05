@@ -134,6 +134,7 @@ func upgradeFixture(t *testing.T) (*Upgrader, UpgradeRequest, *upgradeStore, *up
 	result := upgradePreflightFixture(t)
 	predecessor := result.Evidence.Predecessor.Release.Image
 	writeConfig(t, paths.Config, Config{SchemaVersion: 1, Domain: "dash.example.com", AdminEmail: "admin@example.com", Environment: "prod", Image: predecessor, TargetID: "target", HTTPS: boolPointer(true)})
+	writeOperatorConfig(t, paths.OperatorConfig)
 	installer, err := New(Options{Paths: paths, LifecycleFactory: func(string) (Lifecycle, error) { return &recordingLifecycle{}, nil }})
 	require.NoError(t, err)
 	require.NoError(t, installer.Install(t.Context()))

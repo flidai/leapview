@@ -19,7 +19,7 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 		"lease": "0198f2c0-7c7a-7f00-8a11-000000000007",
 	}
 	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: "target_sales_prod", ProjectID: "project_sales", GenerationID: ids["generation"], CompiledGraphDigest: testDigest('b')}}
-	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
+	r := NewWithOptions(p, Options{ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: "target_sales_prod", ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}

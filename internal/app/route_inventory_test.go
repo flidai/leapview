@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "2f9e916deaa7ff02eb58766e264b7bf1a433786581922733b2a003ffca7ddfeb"
+	const expectedRouteContractDigest = "68ee1d6bf8736ef1033fcf07cd0cdbd7650fab9fc308a67889ea55c60f3bd818"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -209,6 +209,7 @@ func apiOwner(tags []string) (string, bool) {
 	owners := map[string]string{
 		"Access": "access", "Current User": "access", "Service Principals": "access",
 		"Connections": "analytics",
+		"Credentials": "credential",
 		"Agent":       "agent", "BI": "dashboard", "Dashboards": "dashboard", "Publications": "dashboard",
 		"Deployments": "deployment", "Delivery": "deployment", "Managed Data": "manageddata", "Refresh": "refresh",
 		"Releases": "release", "Projects": "release",

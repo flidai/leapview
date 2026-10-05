@@ -139,7 +139,7 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !ok {
 		return
 	}
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.options.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
@@ -180,7 +180,7 @@ func (h *Handler) ChatStop(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !ok {
 		return
 	}
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.options.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
@@ -361,7 +361,7 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	scope := h.chatScope(r)
 	signal, view := h.chatBootstrapSignal(r, scope)
 	projectID := ""
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.options.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
@@ -381,7 +381,7 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h *Handler) renderChat(w nethttp.ResponseWriter, r *nethttp.Request, view string, signal ui.ChatViewState) {
-	if _, ok := webtransport.RequireClientID(w, r); !ok {
+	if _, ok := h.options.ClientIDs.Require(w, r); !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

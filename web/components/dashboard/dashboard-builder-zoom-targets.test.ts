@@ -29,8 +29,10 @@ export async function verifyBuilderZoomActionTargets(page: Page, baseURL: string
       if (reportInverseScale === undefined) host.style.removeProperty('--report-canvas-inverse-scale')
       else host.style.setProperty('--report-canvas-inverse-scale', reportInverseScale)
       await new Promise((resolve) => requestAnimationFrame(resolve))
-      const options = (host.shadowRoot as ShadowRoot).querySelector('.visual-options') as HTMLDetailsElement
-      options.open = true
+      const options = (host.shadowRoot as ShadowRoot).querySelector('.options-trigger') as HTMLButtonElement
+      // Clicking a zoom control dismisses the auto popover; reopen at this scale.
+      if (host.shadowRoot?.querySelector('.menu')?.matches(':popover-open')) options.click()
+      options.click()
       await new Promise((resolve) => requestAnimationFrame(resolve))
       const rect = (selector: string) => {
         const bounds = ((host.shadowRoot as ShadowRoot).querySelector(selector) as HTMLElement).getBoundingClientRect()
@@ -38,7 +40,7 @@ export async function verifyBuilderZoomActionTargets(page: Page, baseURL: string
       }
       return {
         scale: canvas.style.getPropertyValue('--builder-canvas-scale'),
-        actions: [rect('[data-visualization-expand]'), rect('.visual-options summary')],
+        actions: [rect('[data-visualization-expand]'), rect('.visual-options .options-trigger')],
         menu: Array.from((host.shadowRoot as ShadowRoot).querySelectorAll('.visual-options .menu button')).map((button) => {
           const bounds = (button as HTMLElement).getBoundingClientRect()
           return { width: bounds.width, height: bounds.height }

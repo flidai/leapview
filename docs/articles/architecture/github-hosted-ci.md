@@ -131,9 +131,11 @@ and Go test contention and shortens wall-clock feedback without increasing per-j
 
 For a native GitHub pull-request stack, only the top pull request runs those validation lanes.
 Lower layers report a successful `CI gate` with a summary that validation is deferred to the
-stack tip. The workflow listens for the `stacked` action, and its concurrency key uses the native
-stack ID, so rebasing a stack cancels obsolete feedback for the whole stack instead of filling the
-runner queue. Standalone pull requests use the selected plan; manual dispatch runs the complete PR tier.
+stack tip. The workflow listens for the `stacked` action. CI and security concurrency are scoped
+to each PR ref: a new revision cancels obsolete runs for that PR while other stack layers finish
+their own required checks. A stack-wide key can cancel lower-layer planning and aggregate gates
+when the tip starts, leaving the stack unable to enter the merge queue. Standalone pull requests
+use the selected plan; manual dispatch runs the complete PR tier.
 Stack planning compares the cumulative candidate against its merge base with the fetched
 default branch, including lower-layer changes. For stacks targeting another branch this
 is a conservative broader diff. Label changes also trigger planning.
@@ -148,7 +150,7 @@ inputs. The always-running CI gate still requires every lane to succeed and the 
 proof to succeed for the exact merge candidate. Local full validation remains sequential to avoid
 contention on a shared machine.
 
-Nightly CI also runs security scans in parallel. Post-merge artifact CI builds and pushes the
+`CI / Nightly validation` also runs security scans in parallel. Post-merge artifact CI builds and pushes the
 production image using a BuildKit cache, then qualifies its immutable digest on a second clean runner.
 
 Splitting production build and qualification prevents build layers from consuming the local

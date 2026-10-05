@@ -25,7 +25,7 @@ Measured inputs were GitHub conclusions, job names, and timestamps. Planned jobs
 came from artifacts when present; missing plans, full/selective classification,
 and “all jobs selected” were inferred. Those inferences were not labeled.
 
-## Version 2 reporting model
+## Version 3 reporting model
 
 The reporter collects PR, merge-validation, and nightly workflows, including
 nightly dependency security and vulnerability-evidence refresh jobs. It keeps
@@ -41,17 +41,18 @@ Execution categories and their duration samples are separate:
 | `full_pr` | `ci.yml` PR with supported full plan or audit, or a supported manual full run |
 | `merge` | `merge-validation.yml` and `merge_group` |
 | `nightly` | `nightly.yml` schedule or manual dispatch |
-| `deferred` | PR gate success and complete observed stack-deferral job pattern |
-| `unknown` | Missing/incompatible workflow metadata or PR planning evidence |
+| `deferred` | A valid run/attempt-bound PR plan marks this run as deferred |
+| `unknown` | Missing/incompatible workflow revision, contract, or PR planning evidence |
 
 A known execution category does not imply complete evidence or successful checks.
 For example, a merge or nightly run with no `ci-plan` artifact remains a latency
-sample and can have verified selection confidence from the exhaustive workflow
-registry. Failed or cancelled runs with complete timestamps remain in their
+sample. Its expected jobs come from the immutable workflow contract at the run's
+`head_sha`; an unavailable or unsupported contract leaves selection confidence
+incomplete. Failed or cancelled runs with complete timestamps remain in their
 category's latency samples and their own conclusion counts.
 Deferred stack runs are excluded from latency and rerun denominators.
 
-`HealthReport.version` is 2. The existing JSON `full` field remains an alias for
+`HealthReport.version` is 3. The existing JSON `full` field remains an alias for
 **merge only** for structural compatibility; it must no longer be interpreted as
 a combined PR/merge population. Historical JSON remains decodable. Unsupported or
 unversioned plans are never upgraded implicitly. Version-1 plan artifacts remain
@@ -64,29 +65,35 @@ Each JSON run includes:
 
 - `planned_jobs`: exact expected matrix members from a supported artifact, or null
   when evidence is missing/invalid/unsupported.
-- `expected_jobs` and `expected_source`: a supported PR plan, or the centralized
-  current exhaustive workflow registry for merge/nightly. A partial plan cannot
-  redefine required merge/nightly jobs.
+- `head_sha` and `workflow_sha`: GitHub's run head and the immutable workflow
+  source revision. For PRs, the workflow revision is the validated tested merge
+  candidate from the run/attempt-bound plan; other events use the run head.
+- `workflow_jobs`, `workflow_required_jobs` and `plan_independent_jobs`: IDs
+  parsed from that revision's maintained workflow and local reusable workflow.
+  `contract_issue` explains missing or unsupported source evidence.
+- `expected_jobs` and `expected_source`: a supported PR plan plus source-derived
+  plan-independent reusable jobs, or the exact gate `needs` contract for
+  merge/nightly. A partial plan cannot redefine required merge/nightly jobs.
 - `executed_jobs`: observed known non-skipped terminal job conclusions, including
   failures and cancellations; this is not a claim that every test step ran.
 - `skipped_jobs`: observed skipped conclusions. A skip alone does not prove intent.
 - `unknown_jobs`: missing expected jobs, unrecognized display names, or unknown
   conclusions. An unfamiliar name can count as executed and unknown simultaneously.
 - `selection_confidence`: `unknown` when neither supported planning evidence nor
-  exhaustive workflow registry evidence applies; `verified` when a supported
-  plan or the exhaustive registry establishes the expected selection and every
-  expected result is present; `incomplete` when that evidence has selection
-  mismatches or missing results, or a supported plan cannot establish a
-  recognized category.
+  an immutable workflow contract applies; `verified` when a supported plan or
+  exact contract establishes the expected selection and every expected result
+  is present; `incomplete` when source evidence is unavailable, selection
+  mismatches, or expected results are missing.
 - `problems`: expected-job failures/skips, missing/unknown evidence, timestamp and
   metadata limitations. `results` retains individual matrix results.
 
 The planned-selection table counts supported plans only, with `planned_runs` as
 its denominator. It does not claim that a planned job executed. A separate table
 counts expected, executed, skipped and unknown jobs per run/matrix member. Missing
-plans never increment planned-selection counts. The registry defines observational
-identifiers and current exhaustive expectations; it is not a second selector and
-is never consumed by a workflow gate.
+plans never increment planned-selection counts. Source parsing is deliberately
+bounded to the maintained workflow shapes and local reusable qualification
+workflow; unsupported expressions and matrices remain explicit unavailable
+evidence. Workflow source is read at an immutable revision and is never executed.
 
 Conclusions have separate success/failure/cancelled/skipped/unknown counters.
 Timeout, startup failure and action-required conclusions count as failures. Unknown
@@ -100,8 +107,9 @@ problems rather than rewriting GitHub's history.
 Planner selection rates use supported `pull_request` plans only. Supported full
 manual CI runs remain full-validation latency samples; other manual plans remain
 unclassified and do not inflate PR selection rates.
-Merge and nightly workflows use the exhaustive workflow registry and do not need a
-`ci-plan` artifact; missing plans are evidence gaps only for planner-driven PR CI.
+Merge and nightly workflows use their source-derived `ci-gate.needs` contract and
+do not need a `ci-plan` artifact; missing plans are evidence gaps only for
+planner-driven PR CI.
 
 ## Time and thresholds
 
@@ -112,7 +120,10 @@ waiting before GitHub started the workflow attempt. The old creation-to-update
 window is no longer a latency fallback. Missing/inconsistent timestamps use `-1`
 in run JSON and are excluded from percentiles, not converted to zero. Reports show
 sample counts, missing-duration counts, and `N/A` for zero-sample populations.
-Nearest-rank p50/p95 calculations are unchanged.
+Nearest-rank p50 is available for every nonempty population. p95 requires at least
+20 observations: JSON omits `p95_seconds` and Markdown shows `N/A (<20 samples)`
+below that count, and p95 thresholds are evaluated only when the estimate is
+available.
 
 Threshold values remain 12 minutes exhaustive/full, 6 minutes selective PR,
 2 minutes queue, and 3% reruns. The 12-minute bound is applied independently to
@@ -122,23 +133,23 @@ report alerts. This also prevents the unchanged weekly workflow from closing #52
 on an empty or incomplete report. Full health cannot be established until the
 missing evidence is repaired; this reporting change alone will not clear the alert.
 
-Audit sample counts accompany audit misses. A missing/non-successful lane added
-by an audit is reported as a potential miss, not proof of a dependency mistake.
-Zero misses with zero audit samples is not evidence of selector correctness.
+Audit sample counts accompany potential misses. Only explicit failure or timeout
+of a planned non-nominal job counts as a potential selector miss. Cancellation,
+skip, unknown conclusion, or missing job evidence is inconclusive and keeps the
+report incomplete. Zero potential misses with zero audit samples is not evidence
+of selector correctness.
 
 ## Phase 2.2 handoff and remaining limitations
 
-- Reconnect the existing planner only after updating its schema for current lane
-  names, required contracts, and matrix membership. Phase 2.1 left the legacy version-1 model intact; Phase 2.2 below adds the current
-  PR projection without changing merge execution.
-- Publish artifact provenance tying a plan to workflow, commit, and attempt.
-  GitHub artifacts are run-scoped; a rerun's legacy plan is conservatively
-  untrusted because it might belong to an earlier attempt. Version-2 plans carry
-  candidate/run/attempt identity, which the reporter checks.
-- The display-name registry is centralized in `health_jobs.go`. Its tests read
-  the actual three workflow files and verify all lanes and matrix members. Old
-  monolithic layouts may remain recognizable but incomplete against the current
-  exhaustive inventory; unsupported layouts are not silently declared complete.
+- Historical workflow contracts are parsed from the immutable source revision
+  recorded for each run. PR plans must be valid and bound to the same run and
+  attempt before their tested candidate can identify workflow source. Missing,
+  expired, or invalid provenance leaves historical job naming and selection
+  incomplete; the collector does not fall back to today's workflow inventory.
+- Contract parsing supports the maintained static shard matrices, the PR
+  frontend matrix supplied by a validated plan, `ci-gate.needs`, and the local
+  reusable qualification workflow. Other dynamic shapes remain unavailable
+  evidence until deliberately supported.
 - The reporter observes GitHub conclusions, not test inventories or runtime
   attestation. It cannot independently prove that an intentionally skipped job
   was irrelevant or that a workflow's command body preserved coverage.
@@ -205,17 +216,16 @@ Draft PR events skip planning, validation, and the gate. Marking a PR ready for
 review starts CI automatically; `workflow_dispatch` runs CI on the selected
 branch even while its PR is a draft. For eligible runs, the gate still evaluates
 every outcome, including planning or validation failures.
-The same draft policy applies to Security gates, Electron security proof,
-Recovery evidence qualification, and Local Docker macOS tests. Each supports
+The same draft policy applies to `Security / Policy and scans`, `Security / Electron proof`,
+`Qualification / Recovery evidence`, and `CI / Local Docker macOS`. Each supports
 manual dispatch and ready-for-review events; existing path filters still apply.
 Push, merge-group, and scheduled validation retain their existing behavior.
 Selected jobs still use full preparation and all of their existing validation
 commands. Converting a running PR to draft does not cancel an existing run.
-Health reporting records successful/skipped PR runs with the complete known
-job inventory skipped (including planner and gate) as `skipped_pr`. These runs
-need no plan artifact or execution timestamps and are excluded from latency,
-rerun, and selection metrics. Missing jobs, unknown jobs, failures, cancellations,
-and executed jobs still follow the normal evidence checks.
+Cold or draft PR runs without a valid plan and immutable tested candidate remain
+unknown, even when the observed planner and gate jobs are skipped. Their skipped
+results remain visible, but are not treated as evidence that the run was
+intentionally deferred or healthy.
 
 Cross-language quality is a separate PR-only lane for changes that select
 frontend or documentation work without selecting Go package validation. It
@@ -259,11 +269,11 @@ unexpected result keys, invalid shards and frontend matrices differing from the
 plan. Job-level conditions apply uniformly before matrix expansion; no per-shard
 skip conditions exist. Gate and workflow tests retain that contract.
 
-Reporting compatibility is extended only to read the new schema and provenance,
-recognize the planner/docs jobs, and expand planned frontend members. Historical
-version-1 artifacts remain readable; missing/incompatible evidence remains unknown.
-The artifact name remains `ci-plan`; reruns overwrite it, and consumers verify
-its embedded attempt identity rather than trusting its name.
+Health reporting reads the supported plan and reconstructs job names from the
+immutable workflow source revision. Historical run records without source
+provenance remain incomplete; names are not inferred from a present-day alias
+table. The artifact name remains `ci-plan`; reruns overwrite it, and consumers
+verify its embedded attempt identity rather than trusting its name.
 Use **Re-run all jobs** when retrying a PR run: retrying only failed jobs can retain
 the earlier successful planning job and its artifact, which the gate deliberately
 rejects as belonging to a different attempt.

@@ -24,7 +24,20 @@ artifacts do not imply a Windows CLI or local-runtime support contract. Use a
 listed Linux or macOS host; do not route local development through a remote or
 forwarded Docker daemon.
 
+## Credential-store prerequisite
+
+The CLI stores authentication credentials in the operating system's native
+credential store. Linux needs a working D-Bus Secret Service (for example, an
+unlocked desktop keyring); macOS uses Keychain. A headless Linux host without
+`org.freedesktop.secrets` cannot complete local session setup even if Docker
+and the executable work. See [CLI authentication](https://github.com/flidai/leapview/blob/main/docs/guides/cli/authentication.md).
+
 ## Verify and install
+
+The [v0.3.0-alpha.1 release](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
+contains `leapview-cli-` archives for Linux and macOS on AMD64 and ARM64.
+Select the archive matching the machine that runs the CLI; the `leapview-compose-`
+archives contain the operations controller instead.
 
 Download the archive and its adjacent `.sha256` file from the same GitHub
 release. On Linux:

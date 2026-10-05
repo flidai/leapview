@@ -467,7 +467,7 @@ func candidateReleaseProvenance(
 	}
 	bindings := make([]release.BindingEvidence, len(receipt.Bindings))
 	for index, item := range receipt.Bindings {
-		bindings[index] = release.BindingEvidence{BindingID: item.BindingID, ConnectionID: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ValidatedVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash, Access: item.Access}
+		bindings[index] = release.BindingEvidence{BindingID: item.BindingID, ConnectionID: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ValidatedVersion: item.ProviderVersion, CredentialVersionID: item.CredentialVersionID, EndpointConfigHash: item.EndpointConfigHash, Access: item.Access}
 	}
 	identity := artifacts.Generation.Identity
 	var baseIdentity *projectgraph.ServingIdentity

@@ -76,6 +76,8 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=placeholder",
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE=placeholder",
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE=placeholder",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE=placeholder",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=",
@@ -97,7 +99,15 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 	for key, want := range serving {
 		require.Equal(t, want, values[key], key)
 	}
+	readonlyURL, err := canonicalPostgresConnectionURL(postgresConnection{
+		name: "control readonly", value: topology.ControlReadonlyURL,
+		role: qualificationNativePostgresControlReadonlyRole, database: qualificationNativePostgresControlDatabase,
+	})
+	require.NoError(t, err)
+	require.Equal(t, readonlyURL, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"])
+	require.Equal(t, qualificationNativePostgresControlReadonlyRole, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"])
 	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
 	} {
@@ -110,9 +120,50 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 
 	operation, err := qualificationNativePostgresOperationEnvironment(topology)
 	require.NoError(t, err)
-	require.Len(t, operation, 2)
+	require.Len(t, operation, 4)
+	require.Equal(t, topology.ControlMigratorURL, operation["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL"])
 	require.Equal(t, topology.DuckLakeMigratorURL, operation["LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL"])
+	require.Equal(t, qualificationNativePostgresControlMigratorRole, operation["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"])
 	require.Equal(t, qualificationNativePostgresDuckLakeMigratorRole, operation["LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE"])
+}
+
+func TestQualificationNativeEnvironmentWritesShippedTemplateWithReadonlyTopology(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "compose", "leapview.env.example"))
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.env.example"), template, 0o644))
+	require.NoError(t, seedQualificationNativeEnvironment(root))
+
+	topology := qualificationNativeEnvironmentTopologyFixture()
+	require.NotEmpty(t, topology.ControlReadonlyURL)
+	require.NoError(t, writeQualificationNativePostgresEnvironment(filepath.Join(root, appEnvName), topology))
+
+	contents, err := os.ReadFile(filepath.Join(root, appEnvName))
+	require.NoError(t, err)
+	values := environmentValues(string(contents))
+	serving, err := qualificationNativePostgresServingEnvironment(topology)
+	require.NoError(t, err)
+	for key, want := range serving {
+		require.Equal(t, want, values[key], key)
+	}
+	readonlyURL, err := canonicalPostgresConnectionURL(postgresConnection{
+		name: "control readonly", value: topology.ControlReadonlyURL,
+		role: qualificationNativePostgresControlReadonlyRole, database: qualificationNativePostgresControlDatabase,
+	})
+	require.NoError(t, err)
+	require.Equal(t, readonlyURL, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"])
+	require.Equal(t, qualificationNativePostgresControlReadonlyRole, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"])
+	require.Equal(t, "<generated-by-leapviewctl>", values["LEAPVIEW_CSRF_KEY"])
+	require.NoError(t, assertQualificationNativeServingCredentialBoundary(filepath.Join(root, appEnvName)))
+	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
+	} {
+		_, present := values[key]
+		require.False(t, present, key)
+	}
 }
 
 func TestQualificationNativeEnvironmentRejectsAliasURLsAndRoles(t *testing.T) {
@@ -214,4 +265,118 @@ func TestAssertQualificationNativeServingCredentialBoundary(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 	require.Error(t, assertQualificationNativeServingCredentialBoundary(path))
+}
+
+func TestAssertQualificationNativeServingCredentialBoundaryValidatesOptionalReadonlyPair(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, appEnvName)
+	topology := qualificationNativeEnvironmentTopologyFixture()
+	values, err := qualificationNativePostgresServingEnvironment(topology)
+	require.NoError(t, err)
+	writeValues := func(t *testing.T, values map[string]string) {
+		t.Helper()
+		lines := make([]string, 0, len(values))
+		for key, value := range values {
+			lines = append(lines, key+"="+value)
+		}
+		require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	}
+	cloneValues := func(values map[string]string) map[string]string {
+		cloned := make(map[string]string, len(values))
+		for key, value := range values {
+			cloned[key] = value
+		}
+		return cloned
+	}
+	writeValues(t, values)
+	require.NoError(t, assertQualificationNativeServingCredentialBoundary(path))
+
+	t.Run("readonly pair absent", func(t *testing.T) {
+		withoutReadonly := cloneValues(values)
+		delete(withoutReadonly, "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL")
+		delete(withoutReadonly, "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE")
+		writeValues(t, withoutReadonly)
+		require.NoError(t, assertQualificationNativeServingCredentialBoundary(path))
+	})
+
+	for name, mutate := range map[string]func(map[string]string){
+		"readonly URL missing": func(values map[string]string) {
+			delete(values, "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL")
+		},
+		"readonly role missing": func(values map[string]string) {
+			delete(values, "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE")
+		},
+		"readonly role is invalid": func(values map[string]string) {
+			values["LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"] = "custom_readonly"
+		},
+		"readonly URL has the wrong role": func(values map[string]string) {
+			parsed, parseErr := url.Parse(values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"])
+			require.NoError(t, parseErr)
+			password, present := parsed.User.Password()
+			require.True(t, present)
+			parsed.User = url.UserPassword(qualificationNativePostgresControlRuntimeRole, password)
+			values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"] = parsed.String()
+		},
+		"readonly URL is invalid": func(values map[string]string) {
+			parsed, parseErr := url.Parse(values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"])
+			require.NoError(t, parseErr)
+			parsed.RawQuery = "sslmode=disable"
+			values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"] = parsed.String()
+		},
+		"readonly credential aliases runtime": func(values map[string]string) {
+			runtimeURL, parseErr := url.Parse(values["LEAPVIEW_POSTGRES_CONTROL_URL"])
+			require.NoError(t, parseErr)
+			password, present := runtimeURL.User.Password()
+			require.True(t, present)
+			readonlyURL, parseErr := url.Parse(values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"])
+			require.NoError(t, parseErr)
+			readonlyURL.User = url.UserPassword(readonlyURL.User.Username(), password)
+			values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"] = readonlyURL.String()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := cloneValues(values)
+			mutate(mutated)
+			writeValues(t, mutated)
+			require.Error(t, assertQualificationNativeServingCredentialBoundary(path))
+		})
+	}
+
+	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE",
+	} {
+		t.Run("duplicate "+key, func(t *testing.T) {
+			writeValues(t, values)
+			contents, readErr := os.ReadFile(path)
+			require.NoError(t, readErr)
+			require.NoError(t, os.WriteFile(path, append(contents, []byte(key+"=duplicate\n")...), 0o600))
+			require.Error(t, assertQualificationNativeServingCredentialBoundary(path))
+		})
+	}
+}
+
+func TestQualificationNativeEnvironmentClearsReadonlyWhenTopologyOmitsIt(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "compose", "leapview.env.example"))
+	require.NoError(t, err)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.env.example"), template, 0o644))
+	require.NoError(t, seedQualificationNativeEnvironment(root))
+	environmentPath := filepath.Join(root, appEnvName)
+	require.NoError(t, appendOrReplaceEnvFile(environmentPath, "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL", "stale-readonly-url"))
+	require.NoError(t, appendOrReplaceEnvFile(environmentPath, "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE", qualificationNativePostgresControlReadonlyRole))
+
+	topology := qualificationNativeEnvironmentTopologyFixture()
+	topology.ControlReadonlyURL = ""
+	topology.ControlReadonlyRole = ""
+	require.NoError(t, writeQualificationNativePostgresEnvironment(environmentPath, topology))
+
+	contents, err := os.ReadFile(environmentPath)
+	require.NoError(t, err)
+	values := environmentValues(string(contents))
+	_, hasReadonlyURL := values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"]
+	_, hasReadonlyRole := values["LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"]
+	require.False(t, hasReadonlyURL)
+	require.False(t, hasReadonlyRole)
+	require.NoError(t, assertQualificationNativeServingCredentialBoundary(environmentPath))
 }

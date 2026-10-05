@@ -25,6 +25,7 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
+	credentialmodule "github.com/flidai/leapview/internal/credential/module"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
@@ -106,6 +107,7 @@ type capabilityRoutes struct {
 
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
+	credentialDraftAPI             credentialmodule.CredentialDraftAPIGenConfig
 	profileApplications            connectionbinding.ProfileApplicationStore
 	developmentSessions            developmentsessionmodule.Store
 	metrics                        QueryMetrics
@@ -209,6 +211,7 @@ type platformServices struct {
 }
 
 type httpPolicy struct {
+	clientIDs            uitransport.ClientIDCookies
 	defaultEnvironment   string
 	scimBearerToken      string
 	metricsBearerToken   string
@@ -335,6 +338,7 @@ type capabilityAssemblyInputs struct {
 	Agent               *agentmodule.Service
 	ManagedDataModule   *manageddatamodule.Module
 	AnalyticsModule     *analyticsmodule.Module
+	CredentialDraftAPI  credentialmodule.CredentialDraftAPIGenConfig
 	ProfileApplications connectionbinding.ProfileApplicationStore
 	DevelopmentSessions developmentsessionmodule.Store
 	Authoring           *dashboardmodule.AuthoringApplication
@@ -416,6 +420,7 @@ type runtimeAssemblyInputs struct {
 }
 
 type httpAssemblyInputs struct {
+	CookieSecure     bool
 	RateLimits       apihttpmiddleware.RateLimitConfig
 	SecurityHeaders  apihttpmiddleware.SecurityHeadersConfig
 	RequestBodyLimit apihttpmiddleware.RequestBodyLimitConfig
@@ -770,6 +775,7 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
+	runtime.credentialDraftAPI = capabilities.CredentialDraftAPI
 	runtime.profileApplications = capabilities.ProfileApplications
 	runtime.developmentSessions = capabilities.DevelopmentSessions
 	// Development sessions exist before the first serving generation. Their
@@ -795,6 +801,7 @@ func buildApplicationSurfaces(
 	storage.instanceID = runtimeConfig.InstanceID
 	policy.defaultEnvironment = string(servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(runtimeConfig.DefaultEnvironment)))
 	storage.publicURL = strings.TrimSuffix(strings.TrimSpace(httpConfig.PublicURL), "/")
+	policy.clientIDs = uitransport.ClientIDCookies{Secure: httpConfig.CookieSecure || strings.HasPrefix(strings.ToLower(storage.publicURL), "https://")}
 	if strings.TrimSpace(httpConfig.DesktopDiscovery.CanonicalOrigin) != "" {
 		discovery, err := desktopdiscovery.NewHandler(httpConfig.DesktopDiscovery)
 		if err != nil {
@@ -836,7 +843,8 @@ func buildApplicationSurfaces(
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
+		ClientIDs: policy.clientIDs,
+		Graph:     capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		SavedExplorations:       capabilities.SavedExplorations,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
@@ -1056,7 +1064,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					switch permission {
 					case analyticsmodule.PermissionManageConnectionMetadata:
 						action = access.ActionConnectionManage
-					case analyticsmodule.PermissionTestConnection:
+					case analyticsmodule.PermissionUseConnection:
 						action = access.ActionConnectionUse
 					case analyticsmodule.PermissionViewConnectionHealth:
 						action = access.ActionConnectionRead
@@ -1111,7 +1119,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if runtime.analyticsModule != nil {
 			bindings := runtime.analyticsModule.ConnectionUICommandBindings()
 			routes.projectBrowser.ConnectionCommands = projecthttp.ConnectionCommandBindings{
-				Create: bindings.Create, Update: bindings.Update, Test: bindings.Test,
+				Create: bindings.Create, Update: bindings.Update,
 				Refresh: bindings.Refresh, Enable: bindings.Enable, Disable: bindings.Disable,
 			}
 			routes.projectBrowser.BeginConnectionCommand = func(ctx context.Context, invocation projecthttp.CreatorCommandInvocation) (context.Context, error) {
@@ -1244,6 +1252,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		DevelopmentProfiles: developmentProfileAPI,
 	}
+	credentialAPI := runtime.credentialDraftAPI
+	credentialAPI.Environment = runtimeConfig.DefaultEnvironment
+	credentialAPI.CurrentPrincipal = func(r *http.Request) (string, bool) {
+		principal, ok := routes.accessModule.CurrentPrincipal(r)
+		return principal.ID, ok
+	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
 		return errors.New("application composition requires an explicit access module")
@@ -1362,6 +1376,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			RequirePublication:       persistence.requireNativeDashboard,
 			Authoring:                routes.dashboardAuthoring,
 			HTTP: dashboardmodule.HTTPConfig{
+				ClientIDs:                  policy.clientIDs,
 				LocalDevelopmentSession:    runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" && runtime.developmentProjectIDResolver != nil,
 				Metrics:                    runtime.metrics,
 				ProjectID:                  runtime.projectID,
@@ -1681,7 +1696,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return ctx
 			},
 			HTTP: agentmodule.HTTPConfig{
-				Settings: persistence.agentSettings, Broker: runtime.broker,
+				ClientIDs: policy.clientIDs,
+				Settings:  persistence.agentSettings, Broker: runtime.broker,
 				ResolveGroupIDs: func(ctx context.Context, principalID string) ([]string, error) {
 					subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
 					if err != nil {
@@ -1819,12 +1835,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
-			EnsureClientID: func(w http.ResponseWriter, r *http.Request) bool {
-				_, ok := uitransport.RequireClientID(w, r)
-				return ok
-			},
-			Broker:  runtime.broker,
-			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
+			ClientIDs: policy.clientIDs,
+			Broker:    runtime.broker,
+			Product:   persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
 			ProductUICommands: productUICommandContract(),
 			SettingsAccess:    settingsAccess,
 			PersonalAvatar:    routes.accessModule.PersonalAvatar(),
@@ -2119,6 +2132,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if err != nil {
 		return fmt.Errorf("build Analytics APIGen transport: %w", err)
 	}
+	credentialAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
+		return credentialmodule.DispatchAPIGenOperation(credentialAPI, operationID, platform.logger, w, r)
+	}, apiaggregate.GetAPIGenCommandRuntimeContract)
+	if err != nil {
+		return fmt.Errorf("build Credential APIGen transport: %w", err)
+	}
 	projectAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return projecthttp.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, w, r)
 	}, apiaggregate.GetAPIGenCommandRuntimeContract)
@@ -2157,7 +2176,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	platform.apiGenServers = apiaggregate.Servers{
 		Access: accessAPIHandler, Agent: agentAPIHandler, Analytics: analyticsAPIHandler,
-		Dashboard: dashboardAPIHandler, Deployment: deploymentAPIHandler, LeapViewAPI: appAPIHandler,
+		Credential: credentialAPIHandler,
+		Dashboard:  dashboardAPIHandler, Deployment: deploymentAPIHandler, LeapViewAPI: appAPIHandler,
 		ManagedData: managedDataAPIHandler, Project: projectAPIHandler,
 		Refresh: refreshAPIHandler, Release: releaseAPIHandler,
 	}

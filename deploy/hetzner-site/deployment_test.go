@@ -401,7 +401,7 @@ func TestRemoteStateAndReviewedApplyWorkflow(t *testing.T) {
 		requireContains(t, backend, fragment)
 	}
 	for _, fragment := range []string{
-		"name: Plan or apply permanent public-site infrastructure",
+		"name: Infrastructure / Public site",
 		"workflow_dispatch:",
 		"group: leapview-site-infrastructure",
 		"environment: leapview-site-production",

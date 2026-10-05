@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -85,6 +86,63 @@ func TestCandidateRuntimeServiceBindsGateEvidenceIntoReceiptAndCompatibility(t *
 	require.NotNil(t, receipt.GateEvidence)
 	require.Equal(t, evidence.Digest, receipt.GateEvidence.Digest)
 	require.Equal(t, evidence.Digest, host.inputs[0].Registration.Compatibility.GateEvidenceDigest)
+}
+
+func TestCandidateRuntimeServiceCarriesLocalCredentialPinAcrossFingerprints(t *testing.T) {
+	const versionID = "0198f2c0-7c7a-7f00-8a11-000000000301"
+	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
+	candidate := candidateRuntimeTestCandidate(t, now)
+	binding := CandidateConnectionEvidence{
+		BindingID: "binding_warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7,
+		CredentialVersionID: versionID, EndpointConfigHash: "sha256:" + strings.Repeat("9", 64),
+	}
+	connections, host := &candidateRuntimeConnections{evidence: []CandidateConnectionEvidence{binding}}, &candidateRuntimeHost{}
+	service, err := NewCandidateRuntimeService(CandidateRuntimeServiceConfig{Connections: connections, Runtime: host, RuntimeVersion: "leapview:test"})
+	require.NoError(t, err)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}
+	generation := candidateRuntimeGeneration(identity, CandidateDataRefreshSources, "sources:managed")
+	generation.ManagedDataConnections = []string{"managed_1"}
+	generation.Connections = []CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}}
+	candidateRuntimeSetGateBinding(t, &generation, []CandidateConnectionEvidence{binding})
+
+	receipt, err := service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: candidate, AuthorizationFingerprint: "policy:v1", Generation: generation})
+	require.NoError(t, err)
+	require.Equal(t, versionID, receipt.Bindings[0].CredentialVersionID)
+	require.Equal(t, versionID, host.inputs[0].Registration.Compatibility.Bindings[0].CredentialVersionID)
+	require.Equal(t, receipt.BindingFingerprint, host.inputs[0].Registration.Compatibility.BindingFingerprint)
+
+	provenanceBinding := release.BindingEvidence{
+		BindingID: binding.BindingID, ConnectionID: binding.ConnectionID.String(), ConnectorKind: binding.ConnectorKind,
+		Revision: binding.Revision, CredentialVersionID: versionID, EndpointConfigHash: binding.EndpointConfigHash,
+	}
+	require.Equal(t, receipt.BindingFingerprint, release.BindingFingerprint([]release.BindingEvidence{provenanceBinding}))
+}
+
+func TestCandidateBindingCredentialVersionMustBeCanonicalPrivatePostgres(t *testing.T) {
+	const validVersionID = "0198f2c0-7c7a-7f00-8a11-000000000301"
+	base := CandidateConnectionEvidence{
+		BindingID: "binding_warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7,
+		CredentialVersionID: validVersionID, EndpointConfigHash: "sha256:" + strings.Repeat("9", 64),
+	}
+	tests := map[string]func(*CandidateConnectionEvidence){
+		"malformed UUID": func(value *CandidateConnectionEvidence) { value.CredentialVersionID = "not-a-uuid" },
+		"nil UUID": func(value *CandidateConnectionEvidence) {
+			value.CredentialVersionID = "00000000-0000-0000-0000-000000000000"
+		},
+		"both version sources": func(value *CandidateConnectionEvidence) { value.ProviderVersion = "provider:v1" },
+		"non-postgres":         func(value *CandidateConnectionEvidence) { value.ConnectorKind = "s3" },
+		"public binding":       func(value *CandidateConnectionEvidence) { value.Access = semanticmodel.ConnectionAccessPublic },
+		"unknown access":       func(value *CandidateConnectionEvidence) { value.Access = semanticmodel.ConnectionAccess("unknown") },
+		"missing both":         func(value *CandidateConnectionEvidence) { value.CredentialVersionID = "" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			value := base
+			mutate(&value)
+			_, err := BindingFingerprint([]CandidateConnectionEvidence{value})
+			require.ErrorIs(t, err, ErrCandidateInvalid)
+		})
+	}
 }
 
 func TestCandidateRuntimeServiceRequiresQualifyingGateEvidence(t *testing.T) {
@@ -199,6 +257,7 @@ func candidateRuntimeTestCandidate(t *testing.T, now time.Time) Candidate {
 type candidateRuntimeConnections struct {
 	requests []CandidateConnectionRequest
 	leases   []*candidateRuntimeConnectionLeases
+	evidence []CandidateConnectionEvidence
 	err      error
 }
 
@@ -207,8 +266,8 @@ func (connections *candidateRuntimeConnections) Acquire(_ context.Context, reque
 	if connections.err != nil {
 		return nil, connections.err
 	}
-	evidence := []CandidateConnectionEvidence{}
-	if len(request.Requirements) > 0 {
+	evidence := append([]CandidateConnectionEvidence(nil), connections.evidence...)
+	if connections.evidence == nil && len(request.Requirements) > 0 {
 		evidence = append(evidence, CandidateConnectionEvidence{BindingID: "binding_warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7, ProviderVersion: "provider:v3", EndpointConfigHash: "sha256:" + strings.Repeat("9", 64)})
 	}
 	lease := &candidateRuntimeConnectionLeases{evidence: evidence}
