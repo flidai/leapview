@@ -54,6 +54,86 @@ async function delayControlsModule() {
   return { started, release }
 }
 
+test('review actions wait for saved state and preserve toolbar changes during a delayed module load', async () => {
+  const gate = await delayControlsModule()
+  try {
+    const url = new URL(server.url)
+    url.searchParams.set('state', JSON.stringify({ version: 1, route: 'controls/select', width: 'responsive', height: '420', theme: 'light', preview: false, example: { disabled: true } }))
+    url.hash = 'controls/select'
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' })
+    await gate.started
+    await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Loading example…')
+    await page.getByLabel('Preview width', { exact: true }).selectOption('360')
+    await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click()
+    const review = page.locator('playground-review-tools')
+    await review.locator('summary').first().click()
+    await review.locator('details.coverage > summary').click()
+    const copyLink = page.getByRole('button', { name: 'Copy link', exact: true })
+    const actions = ['Copy component code', 'Pin comparison', 'Check accessibility', 'Refresh fixture summary']
+    for (const name of actions) {
+      const button = review.getByRole('button', { name, exact: true })
+      await browserExpect(button).toBeDisabled()
+      await button.dispatchEvent('click')
+    }
+    await browserExpect(copyLink).toBeDisabled()
+    await copyLink.dispatchEvent('click')
+    await browserExpect(review.getByLabel('Current component code', { exact: true })).toHaveCount(0)
+    await browserExpect(review.locator('iframe')).toHaveCount(0)
+    await browserExpect(review.getByRole('button', { name: 'Check accessibility', exact: true })).toBeDisabled()
+    await browserExpect(review.locator('details.coverage dl')).toHaveCount(0)
+    await browserExpect(page.getByLabel('Example link', { exact: true })).toHaveCount(0)
+    gate.release()
+    await browserExpect(copyLink).toBeEnabled()
+    await browserExpect(page.getByLabel('Preview width', { exact: true })).toHaveValue('360')
+    await browserExpect(page.locator('html')).toHaveAttribute('data-theme-preference', 'dark')
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeDisabled()
+    expect(await page.locator('playground-controls').evaluate((element: any) => element.getExampleState().disabled)).toBe(true)
+    for (const name of actions) await browserExpect(review.getByRole('button', { name, exact: true })).toBeEnabled()
+    await review.getByRole('button', { name: 'Copy component code', exact: true }).click()
+    await browserExpect(review.getByLabel('Current component code', { exact: true })).toContainText('<lv-select-menu')
+    await review.getByRole('button', { name: 'Pin comparison', exact: true }).click()
+    const pinned = new URL((await review.locator('iframe').getAttribute('src'))!)
+    expect(JSON.parse(pinned.searchParams.get('state')!)).toMatchObject({ route: 'controls/select', width: '360', theme: 'dark', example: { disabled: true } })
+  } finally { gate.release() }
+})
+
+test('review actions wait for public state restoration after the component mounts', async () => {
+  await page.addInitScript(() => {
+    const testWindow = window as any
+    const pending = new Promise<void>(resolve => { testWindow.__releaseControlsRestore = resolve })
+    void customElements.whenDefined('playground-controls').then(() => {
+      const prototype = customElements.get('playground-controls')!.prototype
+      const restore = prototype.restoreExampleState
+      prototype.restoreExampleState = async function(this: any, state: Record<string, unknown>) {
+        testWindow.__controlsRestoreStarted = true
+        await pending
+        return restore.call(this, state)
+      }
+    })
+  })
+  try {
+    const url = new URL(server.url)
+    url.searchParams.set('state', JSON.stringify({ version: 1, route: 'controls/select', width: 'responsive', height: '420', theme: 'light', preview: false, example: { disabled: true } }))
+    url.hash = 'controls/select'
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => (window as any).__controlsRestoreStarted === true)
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+    expect(await page.locator('playground-controls').evaluate((element: any) => element.getExampleState().disabled)).toBe(false)
+    const review = page.locator('playground-review-tools')
+    await review.locator('summary').first().click()
+    await review.locator('details.coverage > summary').click()
+    const copyLink = page.getByRole('button', { name: 'Copy link', exact: true })
+    const actions = ['Copy component code', 'Pin comparison', 'Check accessibility', 'Refresh fixture summary']
+    await browserExpect(copyLink).toBeDisabled()
+    for (const name of actions) await browserExpect(review.getByRole('button', { name, exact: true })).toBeDisabled()
+    await page.evaluate(() => (window as any).__releaseControlsRestore())
+    await browserExpect(copyLink).toBeEnabled()
+    for (const name of actions) await browserExpect(review.getByRole('button', { name, exact: true })).toBeEnabled()
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeDisabled()
+    expect(await page.locator('playground-controls').evaluate((element: any) => element.getExampleState().disabled)).toBe(true)
+  } finally { await page.evaluate(() => (window as any).__releaseControlsRestore?.()) }
+})
+
 for (const [label, disabled] of [['Select menu', true], ['Buttons', false]] as const) {
   test(`delayed saved Select menu state ${disabled ? 'survives clicking its active link' : 'does not leak into Buttons'}`, async () => {
     const gate = await delayControlsModule()

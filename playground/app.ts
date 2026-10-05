@@ -83,17 +83,15 @@ class PlaygroundApp extends LitElement {
   @state() private shareMessage = ''
   @state() private shareFallback = ''
   @state() private loadError = ''
+  @state() private exampleReady = false
   private navigationRevision = 0
+  private examplePreparation: Promise<void> = Promise.resolve()
   private readonly beforeReload = () => {
     if (embedded) return
     try { sessionStorage.setItem(snapshotKey, JSON.stringify({ href: location.href, state: JSON.stringify(this.snapshot()) })) } catch { /* Storage unavailable. */ }
   }
-  protected async firstUpdated() {
-    if (initialSnapshot && this.route === initialSnapshot.route) {
-      const revision = this.navigationRevision
-      await this.loadCurrentExample()
-      await this.restore(initialSnapshot, revision)
-    }
+  protected firstUpdated() {
+    this.examplePreparation = this.prepareCurrentExample(initialSnapshot)
   }
 
   private async loadCurrentExample() {
@@ -130,20 +128,24 @@ class PlaygroundApp extends LitElement {
     preview: this.previewOnly, example: this.exampleElement()?.getExampleState?.() || {},
   })
 
-  private async restore(snapshot: ExampleSnapshot, revision: number) {
-    if (revision !== this.navigationRevision || snapshot.route !== this.route) return
-    this.width = snapshot.width; this.height = snapshot.height; this.previewOnly = embedded || snapshot.preview
-    applyTheme(snapshot.theme, snapshot.themeAttributes)
+  private async prepareCurrentExample(snapshot?: ExampleSnapshot) {
+    const revision = this.navigationRevision
+    this.exampleReady = false
+    await this.loadCurrentExample()
+    if (revision !== this.navigationRevision || this.loadError) return
     await this.updateComplete
     if (revision !== this.navigationRevision) return
     const example = this.exampleElement()
-    if (example) {
-      await example.updateComplete
-      if (revision === this.navigationRevision) await example.restoreExampleState?.(snapshot.example)
-    }
+    if (!example?.getExampleState) return
+    await example.updateComplete
+    if (revision !== this.navigationRevision) return
+    if (snapshot?.route === this.route) await example.restoreExampleState?.(snapshot.example)
+    await example.updateComplete
+    if (revision === this.navigationRevision) this.exampleReady = true
   }
 
   private readonly share = async () => {
+    if (!this.exampleReady) return
     const url = snapshotURL(this.snapshot()).href
     if (url.length > 8000) {
       this.shareMessage = 'This example is too large for a link. Use Copy component code instead.'
@@ -171,16 +173,19 @@ class PlaygroundApp extends LitElement {
     this.route = location.hash.slice(1) || 'charts/bar'
     if (previousRoute !== this.route) this.navigationRevision++
     const revision = this.navigationRevision
-    this.loadError = ''
     this.rememberExample()
     this.shareMessage = ''; this.shareFallback = ''
     const incoming = decodeSnapshot(new URLSearchParams(location.search).get('state'))
     this.expandedGroups = new Set([this.route.split('/')[0]])
-    await this.loadCurrentExample()
-    if (revision !== this.navigationRevision) return
-    await this.updateComplete
-    if (revision !== this.navigationRevision) return
-    if (previousRoute !== this.route && incoming?.route === this.route) await this.restore(incoming, revision)
+    if (previousRoute !== this.route || this.loadError) {
+      this.loadError = ''
+      if (previousRoute !== this.route && incoming?.route === this.route) {
+        this.width = incoming.width; this.height = incoming.height; this.previewOnly = embedded || incoming.preview
+        applyTheme(incoming.theme, incoming.themeAttributes)
+      }
+      this.examplePreparation = this.prepareCurrentExample(incoming)
+    }
+    await this.examplePreparation
     if (revision !== this.navigationRevision) return
     const main = this.renderRoot.querySelector<HTMLElement>('main')
     if (main) main.scrollTop = 0
@@ -203,7 +208,6 @@ class PlaygroundApp extends LitElement {
     window.addEventListener('hashchange', this.navigate)
     window.addEventListener('keydown', this.exitPreview)
     window.addEventListener('playground-before-reload', this.beforeReload)
-    void this.loadCurrentExample()
   }
   disconnectedCallback() {
     document.removeEventListener('leapview-theme-applied', this.themeApplied)
@@ -326,14 +330,14 @@ class PlaygroundApp extends LitElement {
               ${(['charts', 'graphs', 'tables'].includes(groupID) || this.route === 'recipes/linked-visuals') ? html`<label>Height<select aria-label="Preview height" title=${this.route === 'recipes/linked-visuals' ? 'Minimum chart height; wide layouts also fit the KPI and table.' : 'Preview height'} class="settings-input" .value=${this.height} @change=${(event: Event) => { this.height = (event.target as HTMLSelectElement).value }}>
                 <option value="260">260 px</option><option value="420">420 px</option><option value="640">640 px</option>
               </select></label>` : nothing}
-              <button type="button" class="settings-button" title="Share fixture, options, theme, and size" @click=${this.share}>Copy link</button>
+              <button type="button" class="settings-button" title="Share fixture, options, theme, and size" ?disabled=${!this.exampleReady} @click=${this.share}>Copy link</button>
               <button type="button" class="settings-button preview-toggle" aria-label="Preview" title="Hide controls and details" @click=${this.enterPreview}>${lucideIcon(Maximize2, { size: 16 })} Preview</button>
             </div>
           </div>
           <span class="share-message" role="status" ?hidden=${this.previewOnly}>${this.shareMessage}</span>
           ${this.shareFallback && !this.previewOnly ? html`<input class="settings-input share-fallback" readonly aria-label="Example link" .value=${this.shareFallback} @focus=${(event: Event) => (event.target as HTMLInputElement).select()}>` : nothing}
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
-          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${Boolean(example && customElements.get(exampleModule?.tag || ''))} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
+          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${this.exampleReady} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
         </main>
       </div>`
   }

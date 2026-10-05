@@ -43,10 +43,12 @@ class PlaygroundReviewTools extends LitElement {
   }
 
   private refreshCoverage = async () => {
+    if (!this.exampleReady) return
     const route = this.route
     const example = this.getExample?.()
+    if (!example) return
     await example?.updateComplete
-    if (route === this.route) this.coverage = fixtureCoverage(example?.shadowRoot)
+    if (this.exampleReady && route === this.route && example === this.getExample?.()) this.coverage = fixtureCoverage(example.shadowRoot)
   }
 
   static styles = [settingsLayoutStyles, css`
@@ -73,11 +75,13 @@ class PlaygroundReviewTools extends LitElement {
   `]
 
   private showCode = async () => {
+    if (!this.exampleReady) return
     this.code = this.getCode?.() || '// See Usage & events for this component.'
     this.message = await copyText(this.code) ? 'Code copied.' : 'Clipboard unavailable. Select and copy the code below.'
   }
 
   private pin = () => {
+    if (!this.exampleReady) return
     const state = this.getSnapshot?.()
     if (!state) return
     const url = snapshotURL({ ...state, preview: true })
@@ -89,17 +93,20 @@ class PlaygroundReviewTools extends LitElement {
   }
 
   private scan = async () => {
-    if (this.scanning) return
+    if (!this.exampleReady || this.scanning) return
     this.scanning = true
     this.scanSummary = 'Inspecting the rendered preview…'
     this.findings = []
     const route = this.route
+    const example = this.getExample?.()
     try {
       // Existing axe-core dependency; loaded only on an explicit reviewer action.
       const { default: axe } = await import('axe-core')
+      if (!this.exampleReady || route !== this.route || example !== this.getExample?.()) { this.scanSummary = ''; return }
       const result = await axe.run({ include: [{ fromShadowDom: ['playground-app', '.viewport'] }] }, {
         runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
       })
+      if (!this.exampleReady || route !== this.route || example !== this.getExample?.()) { this.scanSummary = ''; return }
       this.findings = result.violations.map(item => ({ id: item.id, help: item.help, helpUrl: item.helpUrl, nodes: item.nodes.length, targets: item.nodes.map(node => JSON.stringify(node.target)) }))
       this.scannedRoute = route
       this.scanSummary = `${result.violations.length} rule violations; ${result.incomplete.length} rules need manual review. Snapshot of ${route} at ${new Date().toLocaleTimeString()}.`
@@ -112,17 +119,17 @@ class PlaygroundReviewTools extends LitElement {
     const chart = this.route.startsWith('charts/') ? this.route.split('/')[1] : ''
     return html`<details><summary>Code & review</summary><div class="body">
       <div class="actions">
-        <button class="settings-button" @click=${this.showCode}>Copy component code</button>
-        <button class="settings-button" @click=${this.pin}>${this.pinned ? 'Replace comparison' : 'Pin comparison'}</button>
+        <button class="settings-button" ?disabled=${!this.exampleReady} @click=${this.showCode}>Copy component code</button>
+        <button class="settings-button" ?disabled=${!this.exampleReady} @click=${this.pin}>${this.pinned ? 'Replace comparison' : 'Pin comparison'}</button>
         ${this.pinned ? html`<button class="settings-button" @click=${() => { this.pinned = ''; this.pinnedLabel = '' }}>Clear comparison</button>` : nothing}
-        <button class="settings-button" ?disabled=${this.scanning} @click=${this.scan}>${this.scanning ? 'Inspecting…' : 'Check accessibility'}</button>
+        <button class="settings-button" ?disabled=${!this.exampleReady || this.scanning} @click=${this.scan}>${this.scanning ? 'Inspecting…' : 'Check accessibility'}</button>
       </div>
       <p class="note">Compare a fixed fixture with changes above. Accessibility checks cover the rendered preview; keyboard, canvas charts, and screen-reader behavior still need manual review.</p>
       <details class="coverage" @toggle=${(event: Event) => { if ((event.target as HTMLDetailsElement).open) void this.refreshCoverage() }}>
         <summary>Fixtures & states</summary><div class="body">
           <p class="note">Available options for this configuration, not test results. Refresh after changing options.</p>
           ${this.coverage.length ? html`<dl>${this.coverage.map(control => html`<div><dt>${control.label}</dt><dd>${control.choices.join(' · ')}</dd></div>`)}</dl>` : html`<p class="note">This example has no selectable fixture variants. See Usage & events for its interactions and limitations.</p>`}
-          <div><button class="settings-button" @click=${this.refreshCoverage}>Refresh fixture summary</button></div>
+          <div><button class="settings-button" ?disabled=${!this.exampleReady} @click=${this.refreshCoverage}>Refresh fixture summary</button></div>
         </div>
       </details>
       ${chart ? html`<a href=${`https://github.com/flidai/leapview/blob/main/docs/visuals/${encodeURIComponent(chart)}.md`}>Authored ${chart} YAML examples</a>` : nothing}
