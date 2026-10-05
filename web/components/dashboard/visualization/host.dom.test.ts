@@ -137,6 +137,8 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       canvas.append(deferred)
       document.body.append(canvas)
       await deferred.updateComplete
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
+      await deferred.updateComplete
 
       const observers = (window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }>
       const record = observers.find((candidate) => candidate.target === (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')) as any
@@ -641,7 +643,8 @@ test('existing and authoring hosts stay eager by default, including with no inte
       authoring.envelope = JSON.parse(JSON.stringify(source.envelope))
       document.body.append(authoring)
       await authoring.updateComplete
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      await Promise.all([source.pendingApply, authoring.pendingApply])
+      await Promise.all([source.updateComplete, authoring.updateComplete])
       return {
         defaultMounted: ((source.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         authoringMounted: ((authoring.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
@@ -850,4 +853,54 @@ test('narrow chart cards keep long titles and renderer geometry within the card'
     })
     expect(widths.renderer).toBeLessThanOrEqual(widths.card)
   } finally { await page.close() }
+})
+
+test('lazy validation leaves empty hosts unloaded and retains the last valid queued envelope', async () => {
+  const page = await browser.newPage()
+  const requests: string[] = []
+  let release!: () => void
+  const blocked = new Promise<void>((resolve) => { release = resolve })
+  try {
+    await page.route(baseURL + '/', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><body><lv-visualization-host></lv-visualization-host><script type="module">import '/visualization-host-under-test.js'; window.__envelopes = ${JSON.stringify(testVisualizationEnvelopes())};</script>` }))
+    await page.route('**/chunks/validate-*.js', async (route) => {
+      requests.push(route.request().url())
+      await blocked
+      await route.continue()
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__envelopes)
+    expect(requests).toHaveLength(0)
+    const pending = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      host.style.cssText = 'display:block;width:320px;height:160px'
+      const first = structuredClone((window as any).__envelopes.orders_kpi)
+      const newer = structuredClone(first)
+      newer.dataRevision = 2
+      newer.dataState.dataRevision = 2
+      for (const dataset of newer.dataState.datasets) dataset.dataRevision = 2
+      const invalid = structuredClone(newer)
+      invalid.spec.kind = 'invalid-kind'
+      host.envelope = first
+      host.envelope = newer
+      host.envelope = invalid
+      host.envelope = first
+      document.body.append(host)
+      ;(window as any).__queuedHost = host
+      ;(window as any).__queuedMount = host.ensureMounted()
+      await host.updateComplete
+      return { envelope: host.envelope ?? null, children: host.shadowRoot.querySelector('.renderer').childElementCount }
+    })
+    expect(pending).toEqual({ envelope: null, children: 0 })
+    release()
+    const accepted = await page.evaluate(async () => {
+      await (window as any).__queuedMount
+      const host = (window as any).__queuedHost
+      return { revision: host.envelope.dataRevision, kind: host.envelope.spec.kind, snapshot: await (await host.snapshot()).text() }
+    })
+    expect(requests).toHaveLength(1)
+    expect(accepted.revision).toBe(2)
+    expect(accepted.kind).toBe('kpi')
+    expect(accepted.snapshot).toContain('Orders')
+  } finally { release(); await page.close() }
 })

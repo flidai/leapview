@@ -60,6 +60,7 @@ const builds: AssetBuild[] = [
       target: 'browser',
       format: 'esm',
       splitting: true,
+      minify: true,
       define: { 'process.env.NODE_ENV': '"production"' },
       external: externalModules,
       outdir: 'static',

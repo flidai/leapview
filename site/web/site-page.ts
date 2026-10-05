@@ -12,8 +12,6 @@ import { visualExampleHighlightLines } from './visual-example-highlights'
 import type { VisualPayload } from './site-types'
 import './site-shell'
 import './site-docs-navigation'
-import './site-responsive-reference'
-import './site-visual-showcase'
 
 
 
@@ -728,7 +726,11 @@ async function loadRouteComponents(): Promise<void> {
     imports.push(import('../../web/components/dashboard/visualization/host'))
   }
   if (document.querySelector('lv-site-responsive-widget-reference')) {
+    imports.push(import('./site-responsive-reference'))
     imports.push(import('../../web/components/dashboard/filters/filter-control'))
+  }
+  if (document.querySelector('lv-site-visual-showcase')) {
+    imports.push(import('./site-visual-showcase'))
   }
   if (document.querySelector('lv-site-flow-background')) {
     imports.push(import('./site-flow-background'))

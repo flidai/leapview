@@ -255,6 +255,37 @@ type BrowserHandler struct {
 	Authenticate      func(stdhttp.Handler) stdhttp.Handler
 }
 
+type browserReadContextKey struct{}
+
+// browserRequestReads shares successful projections within a single read
+// request. It never survives a request or crosses a principal, and mutation
+// handlers and live refresh callbacks do not opt in to it.
+type browserRequestReads struct {
+	projectID    projectgraph.ResourceID
+	assets       []projectview.DevelopAssetView
+	edges        []projectview.DevelopEdgeView
+	assetsLoaded bool
+	navigation   *projectnavigation.Catalog
+	definition   *projectmanifest.ResourceManifest
+	compiled     map[string]*semanticquery.CompiledModel
+}
+
+func browserReadRequest(r *stdhttp.Request) *stdhttp.Request {
+	return r.WithContext(context.WithValue(r.Context(), browserReadContextKey{}, &browserRequestReads{}))
+}
+
+func (h *BrowserHandler) projectDefinitionSnapshot(ctx context.Context) (projectmanifest.ResourceManifest, map[string]*semanticquery.CompiledModel, error) {
+	reads, _ := ctx.Value(browserReadContextKey{}).(*browserRequestReads)
+	if reads != nil && reads.definition != nil {
+		return *reads.definition, reads.compiled, nil
+	}
+	definition, compiled, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx)
+	if err == nil && reads != nil {
+		reads.definition, reads.compiled = &definition, compiled
+	}
+	return definition, compiled, err
+}
+
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
 // paths are intentionally absent; requests to them remain ordinary 404s.
 func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
@@ -480,6 +511,7 @@ func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	r = browserReadRequest(r)
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSemanticModel}) {
 		return
 	}
@@ -496,6 +528,7 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	r = browserReadRequest(r)
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSemanticModel}) {
 		return
 	}
@@ -529,6 +562,7 @@ func (h *BrowserHandler) SemanticModelDataExplorerCommand(w stdhttp.ResponseWrit
 }
 
 func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, expectedType string) {
+	r = browserReadRequest(r)
 	kind, ok := catalogKindForAssetType(expectedType)
 	if !ok || !h.authorizeAny(w, r, []projectgraph.Kind{kind}) {
 		return
@@ -847,6 +881,8 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 }
 
 func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	streamRequest := r
+	r = browserReadRequest(r)
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 		return
 	}
@@ -924,6 +960,9 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			return
 		}
 	}
+	// Live refreshes must re-read the graph after bootstrap, including any
+	// serving generation activated while this SSE request remains open.
+	r = streamRequest
 	if livePipeline && wake != nil {
 		uitransport.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {
 			return h.livePipelinePage(r)
@@ -1303,7 +1342,7 @@ func (h *BrowserHandler) projectAssetReadModel(ctx context.Context, asset projec
 	if h.ProjectDefinitionReader == nil {
 		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
 	}
-	definition, compiled, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx)
+	definition, compiled, err := h.projectDefinitionSnapshot(ctx)
 	if err != nil {
 		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s: %v", ErrProjectDefinitionUnavailable, asset.ID, err)
 	}
@@ -1400,7 +1439,7 @@ func (h *BrowserHandler) projectAssetReadModels(ctx context.Context, assets []pr
 	if h == nil || h.ProjectDefinitionReader == nil {
 		return nil, ErrProjectDefinitionUnavailable
 	}
-	definition, compiled, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx)
+	definition, compiled, err := h.projectDefinitionSnapshot(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProjectDefinitionUnavailable, err)
 	}
@@ -1541,6 +1580,19 @@ func (e assetLoadError) Unwrap() error { return e.err }
 // Its callers can preserve a committed command response when reprojection is
 // temporarily unavailable, without fabricating an HTTP response writer.
 func (h *BrowserHandler) loadAssets(r *stdhttp.Request) (projectgraph.ResourceID, []projectview.DevelopAssetView, []projectview.DevelopEdgeView, error) {
+	reads, _ := r.Context().Value(browserReadContextKey{}).(*browserRequestReads)
+	if reads != nil && reads.assetsLoaded {
+		return reads.projectID, reads.assets, reads.edges, nil
+	}
+	projectID, assets, edges, err := h.readAssets(r)
+	if err == nil && reads != nil {
+		reads.projectID, reads.assets, reads.edges = projectID, assets, edges
+		reads.assetsLoaded = true
+	}
+	return projectID, assets, edges, err
+}
+
+func (h *BrowserHandler) readAssets(r *stdhttp.Request) (projectgraph.ResourceID, []projectview.DevelopAssetView, []projectview.DevelopEdgeView, error) {
 	projectID, err := h.boundProject(r.Context())
 	if err != nil {
 		return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: err}
@@ -1693,6 +1745,18 @@ func (h *BrowserHandler) boundProject(ctx context.Context) (projectgraph.Resourc
 }
 
 func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation.Catalog {
+	reads, _ := r.Context().Value(browserReadContextKey{}).(*browserRequestReads)
+	if reads != nil && reads.navigation != nil {
+		return *reads.navigation
+	}
+	catalog := h.readNavigationCatalog(r)
+	if reads != nil {
+		reads.navigation = &catalog
+	}
+	return catalog
+}
+
+func (h *BrowserHandler) readNavigationCatalog(r *stdhttp.Request) projectnavigation.Catalog {
 	if h.Catalog == nil || h.CurrentUser == nil {
 		return projectnavigation.Catalog{}
 	}
@@ -1838,7 +1902,7 @@ func (h *BrowserHandler) enrichDashboardAppearances(ctx context.Context, project
 		byID[catalog.Dashboards[index].ID] = &catalog.Dashboards[index]
 	}
 	if h.ProjectDefinitionReader != nil {
-		if project, _, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx); err == nil {
+		if project, _, err := h.projectDefinitionSnapshot(ctx); err == nil {
 			for _, source := range project.DashboardSources {
 				dashboard := byID[source.Document.Metadata.ID]
 				if dashboard == nil || source.Document.Spec.Appearance == nil {
@@ -1943,7 +2007,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	definition, compiledModels, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(r.Context())
+	definition, compiledModels, err := h.projectDefinitionSnapshot(r.Context())
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false

@@ -36,6 +36,8 @@ export function echartsOption(envelope: VisualizationEnvelope, context: Renderer
     default: throw new Error(`ECharts cannot render visualization kind ${JSON.stringify(envelope.spec.kind)}`)
   }
   const option = { ...base, ...translated } as Record<string, any>
+  // Tooltip transitions have their own defaults, independent of animation:false.
+  option.tooltip = { ...option.tooltip, transitionDuration: 0, displayTransition: false }
   if (base.aria || translated.aria) option.aria = { ...(base.aria ?? {}), ...(translated.aria ?? {}) }
   if (base.graphic && translated.graphic) option.graphic = [...base.graphic, ...translated.graphic]
   applyCrossHighlight(option, envelope)
@@ -202,7 +204,8 @@ export class EChartsHandle implements RendererHandle {
   update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
     if (this.disposed) return
     const previous = this.envelope
-    const viewState = previous && preservesEChartsViewState(previous, envelope) ? this.captureViewState() : undefined
+    const preserveViewState = previous !== undefined && preservesEChartsViewState(previous, envelope)
+    const viewState = preserveViewState ? this.captureViewState() : undefined
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
@@ -210,9 +213,8 @@ export class EChartsHandle implements RendererHandle {
     const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
     const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
-    const preserveHeatmapFocus = previous !== undefined && preservesEChartsViewState(previous, envelope)
     const resetHeatmapFocus = isHeatmapWithDataZoom(envelope)
-      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveHeatmapFocus))
+      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveViewState))
     const plan = echartsUpdatePlan(change, option, initializeDataZoom, refreshHeatmapDataZoom)
     if ((change & Change.Spec) !== 0 || initializeDataZoom || resetDataZoom) this.dataZoomInitialized = hasEChartsDataZoom(option)
     if (resetHeatmapFocus) {
@@ -227,6 +229,11 @@ export class EChartsHandle implements RendererHandle {
 
   resize(width: number, height: number): void {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    if (width === this.lastWidth && height === this.lastHeight) {
+      this.applyResponsiveLayout(false)
+      this.syncHeatmapFocusZoom()
+      return
+    }
     // Deferred hosts can report their initial 0×0 layout before the renderer
     // frame has entered the document. ECharts' hierarchy layouts assume a
     // positive viewport and can dereference a missing layout slot during that

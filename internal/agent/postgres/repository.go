@@ -365,6 +365,22 @@ func (r *Repository) CreateConversation(ctx context.Context, input agent.Convers
 func (r *Repository) ListConversations(ctx context.Context, principal string) ([]agent.Conversation, error) {
 	return r.ListConversationsPage(ctx, principal, agent.Page{})
 }
+func (r *Repository) ListConversationSummaries(ctx context.Context, principal string) ([]agent.Conversation, error) {
+	principal, err := principalID(principal)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := agentdb.New(r.db).ListAgentConversationSummaries(ctx, principal)
+	if err != nil {
+		return nil, mapDBError(err)
+	}
+	out := make([]agent.Conversation, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapConversationFields(row.ID, row.PrincipalID, row.Title, row.Status, row.MetadataJson, "", row.TranscriptRevision, row.CreatedAt, row.UpdatedAt, row.ArchivedAt))
+	}
+	return out, nil
+}
+
 func (r *Repository) ListConversationsPage(ctx context.Context, principal string, page agent.Page) ([]agent.Conversation, error) {
 	principal, err := principalID(principal)
 	if err != nil {

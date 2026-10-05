@@ -82,3 +82,13 @@ test('decimal rounding does not render a negative zero', () => {
   expect(formatValue('en-US', { kind: 'number', minimumFractionDigits: 0, maximumFractionDigits: 2 }, '-0.004')).toBe('0')
   expect(formatValue('en-US', { kind: 'number', minimumFractionDigits: 2, maximumFractionDigits: 2 }, '-0.004')).toBe('0.00')
 })
+
+test('auto display units handle a large frame without argument spreading and preserve exact-decimal scale decisions', () => {
+  const values: unknown[] = new Array(200_000).fill(1)
+  values[values.length - 1] = 999_500
+  expect(resolveDisplayUnit('auto', values)).toEqual({ scale: 1_000_000, suffix: 'M', exact: false })
+  values[0] = '1.00'
+  expect(resolveDisplayUnit('auto', values)).toEqual({ scale: 1_000, suffix: 'K', exact: false })
+  values.push('-1000000000.00', null, Infinity, 'not-a-decimal')
+  expect(resolveDisplayUnit('auto', values)).toEqual({ scale: 1_000_000_000, suffix: 'B', exact: false })
+})

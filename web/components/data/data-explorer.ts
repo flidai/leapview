@@ -86,7 +86,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private exploreVisibleColumns: string[] = []
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
-  private exploreTimer = 0
+  private exploreFrame = 0
   private agentStateInitialized = false
   private agentRestoreDispatched = false
   private restoredAgentConversationId = ''
@@ -1014,7 +1014,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   disconnectedCallback(): void {
-    window.clearTimeout(this.exploreTimer)
+    window.cancelAnimationFrame(this.exploreFrame)
     this.browserResizeCleanup?.()
     super.disconnectedCallback()
   }
@@ -1447,14 +1447,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private emitExplore(next: DataExploreCommand, immediate = false) {
-    window.clearTimeout(this.exploreTimer)
+    window.cancelAnimationFrame(this.exploreFrame)
     const current = this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.explore(current, next, immediate)
     this.optimisticExplore = command
     if (!this.embedded) replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ mode: 'explore', explore: command })
     if (immediate) dispatch()
-    else this.exploreTimer = window.setTimeout(dispatch, 320)
+    else this.exploreFrame = window.requestAnimationFrame(dispatch)
   }
 
   private agentSuggestions(explorer: DataExplorerSignal): AgentReferenceSignal[] {

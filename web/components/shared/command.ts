@@ -1,3 +1,5 @@
+import { installNavigationPreload } from './navigation-preload'
+
 type CommandHeaders = Record<string, string>
 type CommandOperation = string | readonly string[]
 
@@ -72,5 +74,6 @@ declare global {
 }
 
 if (typeof window !== 'undefined') window.LeapViewCommand = { headers, nonReplayableHeaders }
+if (typeof document !== 'undefined') installNavigationPreload()
 
 export {}

@@ -453,6 +453,10 @@ func (s *Service) ListConversations(ctx context.Context, scope Scope) ([]Convers
 	return s.repo.ListConversations(ctx, scope.PrincipalID)
 }
 
+func (s *Service) ListConversationSummaries(ctx context.Context, scope Scope) ([]Conversation, error) {
+	return s.repo.ListConversationSummaries(ctx, scope.PrincipalID)
+}
+
 func (s *Service) ListConversationsPage(ctx context.Context, scope Scope, page Page) ([]Conversation, error) {
 	return s.repo.ListConversationsPage(ctx, scope.PrincipalID, normalizePage(page))
 }

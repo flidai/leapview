@@ -274,3 +274,14 @@ test('a single-category tree shows its value without an artificial parent or con
     }
   }
 })
+
+test('duplicate positive observer sizes do not render the chart again', () => {
+  const sizes: Array<{ width: number; height: number }> = []
+  const chart = { on() {}, off() {}, resize(size: { width: number; height: number }) { sizes.push(size) } }
+  const handle = new EChartsHandle({} as HTMLElement, {} as HTMLElement, chart as any, new CategoryColorRegistry())
+  handle.resize(320, 180)
+  handle.resize(320, 180)
+  handle.resize(480, 180)
+  expect(sizes).toHaveLength(2)
+  expect(sizes.map(({ width, height }) => [width, height])).toEqual([[320, 180], [480, 180]])
+})

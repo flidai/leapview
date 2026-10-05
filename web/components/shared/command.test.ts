@@ -76,3 +76,45 @@ describe('shared browser command identity', () => {
     expect(() => nonReplayableHeaders('  ')).toThrow('operation identity is required')
   })
 })
+
+describe('navigation intent preloads', () => {
+  test('warms only versioned same-origin route modules, deduplicates and respects the budget', async () => {
+    const { JSDOM } = await import('jsdom')
+    const { installNavigationPreload } = await import('./navigation-preload')
+    const dom = new JSDOM('<head><script src="/static/command.js?v=release"></script></head><body></body>', { url: 'https://leapview.example/' })
+    const names = ['window', 'document', 'navigator', 'HTMLAnchorElement'] as const
+    const descriptors = names.map(name => Object.getOwnPropertyDescriptor(globalThis, name))
+    for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] })
+    dom.window.DOMTokenList.prototype.supports = () => true
+    const intent = (href: string, target?: string) => {
+      const anchor = dom.window.document.createElement('a')
+      anchor.href = href
+      if (target) anchor.target = target
+      dom.window.document.body.append(anchor)
+      anchor.dispatchEvent(new dom.window.Event('focusin', { bubbles: true, composed: true }))
+    }
+    try {
+      installNavigationPreload()
+      intent('https://external.example/explore')
+      intent('/explore', '_blank')
+      intent('/unknown')
+      expect(dom.window.document.querySelectorAll('link')).toHaveLength(0)
+      intent('/explore')
+      intent('/explore')
+      expect(dom.window.document.querySelectorAll('link')).toHaveLength(1)
+      expect(dom.window.document.querySelector('link')?.href).toBe('https://leapview.example/static/data-explorer.js?v=release')
+      for (const route of ['/dashboards', '/dashboards/new', '/dashboards/sales', '/chats', '/admin/users', '/models', '/dashboards/other']) intent(route)
+      const links = Array.from(dom.window.document.querySelectorAll('link'))
+      expect(links).toHaveLength(8)
+      expect(links.every(link => link.rel === 'modulepreload' && new URL(link.href).pathname.startsWith('/static/'))).toBe(true)
+      expect(new Set(links.map(link => link.href)).size).toBe(8)
+    } finally {
+      names.forEach((name, index) => {
+        const descriptor = descriptors[index]
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+        else Reflect.deleteProperty(globalThis, name)
+      })
+      dom.window.close()
+    }
+  })
+})
