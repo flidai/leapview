@@ -500,4 +500,6 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           include-hidden-files: true
-          path: .tmp/nix-image-qualification/evidence/image-qualification-report.json
+          path: |
+            .tmp/nix-image-qualification/evidence/image-qualification-report.json
+            .tmp/nix-image-qualification/evidence/compose.log
