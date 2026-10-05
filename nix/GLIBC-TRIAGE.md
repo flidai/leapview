@@ -5,8 +5,9 @@
 Of the eleven HIGH/CRITICAL matches in the original candidate scan, **eight have
 fixes in the pinned Nixpkgs patch bundle, two are disputed/non-security issues,
 and one was a confirmed defect in the shipped library**. The Nix candidate now
-adds the upstream stable fix for that defect. Candidate enforcement now consumes
-the eleven exact-package [OpenVEX assessments](runtime-assessments.vex.json),
+adds the upstream stable fix for that defect. Candidate enforcement consumes
+eleven exact-package OpenVEX dispositions bound to each native output
+([AMD64](runtime-assessments.vex.json), [ARM64](runtime-assessments.arm64.vex.json)),
 while retaining the raw findings. These assessments are proposed for review in
 the draft PR. Production promotion remains blocked by the other release gates.
 
@@ -44,13 +45,33 @@ that all eight upstream regression tests were rerun on the installed binary.
 | CVE-2026-5435 | Fixed in installed backport bundle | `299e1d25c32c5f9ef78ddd6cbfd0c6a09a1f4227`: removes the problematic TSIG printer handling. |
 | CVE-2019-1010022 | Disputed/non-security; eligible for reviewed classification | [Debian's security assessment](https://security-tracker.debian.org/tracker/CVE-2019-1010022) marks this unimportant and records upstream's non-security position. It is not a patched-version claim. |
 | CVE-2019-1010023 | Disputed/non-security; eligible for reviewed classification | [Debian's security assessment](https://security-tracker.debian.org/tracker/CVE-2019-1010023) records the same position. The scenario involves running `ldd` on an attacker-supplied executable; do not turn this into permission to inspect arbitrary executables. |
-| CVE-2026-19499 | Fixed in the new Nix candidate | The pinned bundle lacks the fix. The candidate applies upstream stable commit `6ad255db1dad9f2761935d3125b5bc7fa0e6128f` and its controlled boundary probe passes against the patched image. |
+| CVE-2026-19499 | Fixed in the tested AMD64 Nix candidate | The pinned bundle lacks the fix. The candidate applies upstream stable commit `6ad255db1dad9f2761935d3125b5bc7fa0e6128f` and its controlled boundary probe passes against the patched AMD64 image. |
 
 The two disputed records remain described as unfixed in Debian's package table;
 its non-security classification does not mean they have been patched. Sourceware
 Bugzilla was inaccessible during this review, so the assessment uses Debian's
 published security position and the CVE descriptions, not a claimed direct reading
 of those Bugzilla discussions.
+
+## ARM64 package assessment
+
+The separate [ARM64 OpenVEX file](runtime-assessments.arm64.vex.json) binds
+these same reviewed dispositions to the exact ARM64 glibc output
+`/nix/store/f4b8yxq1bn6y0n38km6bcahpm6vdgsh2-glibc-2.42-84`. Its derivation is
+`/nix/store/5q59xwfbd50svb0clkwghd7zz8ymvqzv-glibc-2.42-84.drv`. Nix evaluation
+shows that AMD64 and ARM64 refer to the same source path
+`/nix/store/6zxixmszg0vbhpaa8rxwfr05by9axj68-glibc-2.42.tar.xz`, the same pinned
+Nixpkgs backport bundle
+`/nix/store/f3xrdrys50y52ij1vg5lk6qdqpvqmf9r-2.42-master.patch`, and the same
+local upstream stable fix. The local patch SHA-256 is
+`21b4138b0c7cdbda4405d776592bab40d92fee4a50e9a73484feef598d797fcd`. ARM64 also
+uses its architecture-specific Nixpkgs integration patch.
+
+No controlled native ARM64 boundary-probe result is recorded here. The ARM64
+CVE-2026-19499 impact statement requires both this exact source/patch evidence
+and a passing probe against the installed ARM64 output; this assessment does
+not claim that probe has passed. The controlled probe result below is for
+AMD64 only.
 
 ## Confirmed strfmon defect
 
@@ -92,7 +113,7 @@ library bug, not application-level remote exploitability. Reachability through
 LeapView, DuckDB and its native extensions has not been established; absence of a
 direct application call is not enough to exempt transitive native code.
 
-The patched glibc output is
+The patched AMD64 glibc output is
 `/nix/store/kj7ia0isvb6xh74qavgcshmb7fcskj4l-glibc-2.42-84`.
 Running the same probe through its dynamic loader returned
 `glibc=2.42 result=10 bytes_changed_past_declared_size=0`, exit 0. The rebuilt

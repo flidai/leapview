@@ -11,11 +11,25 @@ let
   go =
     assert pkgs.go_1_27.version == goVersion;
     pkgs.go_1_27;
+  bunArtifact =
+    if pkgs.stdenv.hostPlatform.isx86_64 then
+      {
+        name = "bun-linux-x64-baseline.zip";
+        sha256 = "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7";
+      }
+    else if pkgs.stdenv.hostPlatform.isAarch64 then
+      {
+        name = "bun-linux-aarch64.zip";
+        # GitHub's release API digest for the official bun-v1.3.14 asset.
+        sha256 = "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b";
+      }
+    else
+      throw "LeapView's Nix application toolchain supports x86_64-linux and aarch64-linux";
   bun = pkgs.bun.overrideAttrs {
     version = bunVersion;
     src = pkgs.fetchurl {
-      url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-x64-baseline.zip";
-      sha256 = "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7";
+      url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/${bunArtifact.name}";
+      inherit (bunArtifact) sha256;
     };
   };
   # sqlc currently deliberately selects this version through GOTOOLCHAIN. Expose

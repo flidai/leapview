@@ -9,6 +9,7 @@ from pathlib import Path
 import ssl
 import subprocess
 import sys
+import tarfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -38,6 +39,59 @@ class PublicationTests(unittest.TestCase):
         self.source_root = self.root.parent / 'source'
         self.commands = []
         self.verifier = Path('/protected/verifier')
+        self.source = {'repository': 'flidai/leapview', 'revision': 'a' * 40,
+                       'inputs': [{'path': 'flake.nix', 'sha256': candidate.digest_bytes(b'locked flake')}]}
+
+    def docker_archive(self, platform='linux/arm64', kind=publication.KIND):
+        architecture = platform.split('/', 1)[1]
+        layer = ('native-' + platform).encode()
+        config = {'os': 'linux', 'architecture': architecture,
+                  'rootfs': {'type': 'layers', 'diff_ids': [candidate.digest_bytes(layer)]},
+                  'config': {'Labels': {
+                      'org.opencontainers.image.source': 'https://github.com/flidai/leapview',
+                      'org.opencontainers.image.revision': self.source['revision'],
+                      'org.opencontainers.image.version': '1.2.3',
+                      'dev.leapview.build.dirty': 'false',
+                      'dev.leapview.build.kind': kind,
+                  }}}
+        config_bytes = candidate.canonical_bytes(config)
+        config_name = candidate.digest_bytes(config_bytes)[7:] + '.json'
+        docker_manifest = candidate.canonical_bytes([{
+            'Config': config_name, 'RepoTags': ['leapview:test'], 'Layers': ['layer.tar'],
+        }])
+        archive = self.root.parent / f'{architecture}-{kind}.tar'
+        with tarfile.open(archive, 'w') as output:
+            for name, data in [('manifest.json', docker_manifest), (config_name, config_bytes), ('layer.tar', layer)]:
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                output.addfile(entry, io.BytesIO(data))
+        return archive
+
+    def native_candidate(self, platform='linux/arm64', kind=publication.KIND):
+        architecture = platform.split('/', 1)[1]
+        archive = self.docker_archive(platform, kind)
+        record = candidate.collect(archive, kind, self.source)
+        report_path = self.runtime / 'sbom.spdx.json'
+        record['evidence']['nix-runtime'] = {'reports': [
+            {'path': 'sbom.spdx.json', 'sha256': candidate.digest_file(report_path)}]}
+        unsigned = copy.deepcopy(record)
+        unsigned.pop('candidateDigest')
+        record['candidateDigest'] = candidate.digest_bytes(
+            b'leapview/nix-candidate-manifest/v1\n' + candidate.canonical_bytes(unsigned))
+        manifest = self.root.parent / f'{architecture}-{kind}-manifest.json'
+        manifest.write_text(json.dumps(record))
+        return archive, manifest, record
+
+    def install_native_layout(self, platform='linux/arm64'):
+        archive, manifest, record = self.native_candidate(platform)
+        self.paths = (str(archive), str(manifest), str(self.runtime))
+        self.record = record
+        layout = self.root.parent / f"{platform.split('/', 1)[1]}-layout"
+        digest = publication.oci.export_layout(archive, record, layout)
+        self.root = layout
+        self.digest = digest
+        self.image = 'ghcr.io/flidai/leapview@' + digest
+        return record
 
     def push(self, args, **kwargs):
         self.commands.append((args, kwargs))
@@ -57,7 +111,7 @@ class PublicationTests(unittest.TestCase):
         args, options = self.commands[0]
         self.assertIn('--preserve-digests', args)
         self.assertIn('--dest-tls-verify=true', args)
-        self.assertEqual(args[-1], 'docker://ghcr.io/flidai/leapview:nix-candidate-123-1')
+        self.assertEqual(args[-1], 'docker://ghcr.io/flidai/leapview:nix-candidate-123-1-amd64')
         self.assertEqual(options['timeout'], 300)
         self.assertEqual(options['stderr'], subprocess.DEVNULL)
         self.assertEqual(result['image'], self.image)
@@ -102,7 +156,7 @@ class PublicationTests(unittest.TestCase):
                     self.assertRaises(ValueError):
                 self.publish()
 
-    def test_unique_run_identity_and_amd64_scope_are_required(self):
+    def test_unique_run_identity_and_actual_oci_platform_binding_are_required(self):
         for run_id, attempt in [(0, 1), (1, 0), (True, 1), ('123', 1), (1, -1)]:
             with patch.object(publication.subprocess, 'run') as run, self.assertRaises(ValueError):
                 publication.publish(self.source_root, self.paths, self.root, run_id, attempt, self.verifier)
@@ -110,6 +164,79 @@ class PublicationTests(unittest.TestCase):
         self.record['artifact']['platform'] = 'linux/arm64'
         with self.context(), patch.object(publication.subprocess, 'run') as run, self.assertRaises(ValueError):
             self.publish()
+        run.assert_not_called()
+
+    def test_native_arm_candidate_exports_and_publishes_the_matching_arm_oci_content(self):
+        record = self.install_native_layout('linux/arm64')
+        with self.context(), patch.object(publication.oci, 'export_layout', wraps=publication.oci.export_layout):
+            prepared = publication.prepare(self.source_root, self.paths, self.root.parent / 'arm-prepared-layout', self.verifier)
+        self.assertEqual([entry['platform'] for entry in prepared['platforms']], ['linux/arm64'])
+        self.assertFalse(prepared['releaseAdmission'])
+        self.digest = prepared['oci']['digest']
+        self.image = 'ghcr.io/flidai/leapview@' + self.digest
+        with self.context(), patch.object(publication.subprocess, 'run', side_effect=self.push), \
+                patch.object(registry, 'bind_registry', return_value={'registryBindingDigest': 'arm-bound'}) as bind:
+            result = self.publish()
+        self.assertEqual(result['image'], self.image)
+        self.assertFalse(result['releaseAdmission'])
+        self.assertEqual(self.commands[0][0][-1],
+                         'docker://ghcr.io/flidai/leapview:nix-candidate-123-1-arm64')
+        bind.assert_called_once_with(self.image, 'application-image', [record], ['linux/arm64'])
+
+    def test_signed_and_qualified_arm_receipts_follow_the_verified_archive_and_oci_platform(self):
+        record = self.install_native_layout('linux/arm64')
+        spdx = {'platform': 'linux/arm64', 'candidateDigest': record['candidateDigest'],
+                'predicateSHA256': candidate.digest_bytes(candidate.canonical_bytes(self.document))}
+        live = {'source': record['source'], 'image': self.image,
+                'signedEvidenceBindingDigest': 'sha256:' + 'd' * 64, 'spdx': [spdx]}
+        with self.context(), patch.object(publication.signed, 'collect', return_value=live) as collect:
+            result = publication.verify_signed(self.source_root, self.paths, self.image, 'c' * 40, self.verifier)
+        self.assertEqual(result, live)
+        self.assertEqual(collect.call_args.args[4], ['linux/arm64'])
+
+        self.qualification_fixture()
+        self.live = live
+        self.signed_receipt.write_text(json.dumps(live))
+        with self.context(), patch.object(publication.signed, 'collect', return_value=live) as collect, \
+                patch.object(candidate, 'current_time', return_value=self.now):
+            qualified = self.qualified()
+        self.assertEqual(qualified['platform'], 'linux/arm64')
+        self.assertEqual(qualified['candidateDigest'], record['candidateDigest'])
+        self.assertFalse(qualified['releaseAdmission'])
+        self.assertEqual(collect.call_args.args[4], ['linux/arm64'])
+
+        wrong_platform = {**live, 'spdx': [{**spdx, 'platform': 'linux/amd64'}]}
+        with self.context(), patch.object(publication.signed, 'collect', return_value=wrong_platform), \
+                self.assertRaisesRegex(ValueError, 'does not bind the verified candidate platform'):
+            publication.verify_signed(self.source_root, self.paths, self.image, 'c' * 40, self.verifier)
+
+    def test_wrong_unsupported_platform_kind_and_cross_platform_runtime_report_fail_before_push(self):
+        invalid = [
+            ('linux/386', publication.KIND, 'unsupported Nix candidate platform'),
+            ('linux/arm64', 'site-image', 'image belongs to a different output kind'),
+        ]
+        invalid_manifest = self.root.parent / 'invalid-manifest.json'
+        invalid_manifest.write_text('{}')
+        for platform, kind, message in invalid:
+            archive = self.docker_archive(platform, kind)
+            with self.subTest(platform=platform, kind=kind), \
+                    patch.object(candidate, 'checkout_source', return_value=self.source), \
+                    patch.object(publication.subprocess, 'run') as run, self.assertRaisesRegex(ValueError, message):
+                publication.publish(self.source_root, (str(archive), str(invalid_manifest),
+                                                       str(self.runtime)), self.root, 123, 1, self.verifier)
+            run.assert_not_called()
+
+        arm_archive, arm_manifest, _ = self.native_candidate('linux/arm64')
+        amd_archive, _, _ = self.native_candidate('linux/amd64')
+        summary = {'schemaVersion': 1, 'enforcementMode': 'enforce', 'coverageQualified': True,
+                   'runtimeVulnerabilityGatePassed': True,
+                   'archiveSHA256': candidate.digest_file(amd_archive).removeprefix('sha256:')}
+        (self.runtime / 'summary.json').write_text(json.dumps(summary))
+        with patch.object(candidate, 'checkout_source', return_value=self.source), \
+                patch.object(publication.subprocess, 'run') as run, \
+                self.assertRaisesRegex(ValueError, 'runtime scan belongs to another archive'):
+            publication.publish(self.source_root, (str(arm_archive), str(arm_manifest), str(self.runtime)),
+                                self.root, 123, 1, self.verifier)
         run.assert_not_called()
 
     def test_publisher_reads_candidate_identity_but_keeps_protected_policy_root(self):
@@ -151,10 +278,12 @@ class PublicationTests(unittest.TestCase):
         publication.signed.validate_signer(publication.KIND, publication.WORKFLOW, signer_revision)
         with self.assertRaises(ValueError):
             publication.signed.validate_signer('site-image', publication.WORKFLOW, signer_revision)
-        result = {'spdx': [{'predicateSHA256': candidate.digest_bytes(candidate.canonical_bytes(self.document))}]}
+        result = {'spdx': [{'platform': 'linux/amd64', 'candidateDigest': self.record['candidateDigest'],
+                            'predicateSHA256': candidate.digest_bytes(candidate.canonical_bytes(self.document))}]}
         with self.context(), patch.object(publication.signed, 'collect', return_value=result) as collect:
             self.assertEqual(publication.verify_signed(self.source_root, self.paths, self.image, signer_revision, self.verifier), result)
         self.assertEqual(collect.call_args.args[-2:], (publication.WORKFLOW, signer_revision))
+        self.assertEqual(collect.call_args.args[4], ['linux/amd64'])
         with self.context(ValueError('expired')), \
                 patch.object(publication.signed, 'collect', return_value=result), self.assertRaises(ValueError):
             publication.verify_signed(self.source_root, self.paths, self.image, signer_revision, self.verifier)
@@ -180,7 +309,8 @@ class PublicationTests(unittest.TestCase):
         self.signed_receipt = self.root.parent / 'signed.json'
         self.live = {'source': self.record['source'], 'image': self.image,
                      'signedEvidenceBindingDigest': 'sha256:' + 'd' * 64,
-                     'spdx': [{'platform': 'linux/amd64', 'candidateDigest': self.record['candidateDigest']}]}
+                     'spdx': [{'platform': 'linux/amd64', 'candidateDigest': self.record['candidateDigest'],
+                               'predicateSHA256': candidate.digest_bytes(candidate.canonical_bytes(self.document))}]}
         self.signed_receipt.write_text(json.dumps(self.live))
         self.report = {'schemaVersion': 1, 'image': self.image, 'result': 'success', 'phases': []}
         for index, (name, timeout) in enumerate([('image bundle', 1200), ('target bootstrap', 1200),
@@ -196,7 +326,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_qualified_receipt_binds_live_signature_candidate_and_exact_report(self):
         self.qualification_fixture()
-        with patch.object(publication, 'verify_signed', return_value=self.live) as verify, \
+        with self.context(), patch.object(publication.signed, 'collect', return_value=self.live) as collect, \
                 patch.object(candidate, 'current_time', return_value=self.now):
             result = self.qualified()
         self.assertEqual(result['image'], self.image)
@@ -204,7 +334,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(result['signedEvidenceBindingDigest'], self.live['signedEvidenceBindingDigest'])
         self.assertEqual(result['qualification']['sha256'], candidate.digest_file(self.qualification))
         self.assertFalse(result['releaseAdmission'])
-        verify.assert_called_once_with(self.source_root, self.paths, self.image, 'c' * 40, self.verifier)
+        self.assertEqual(collect.call_args.args[4], ['linux/amd64'])
 
     def test_wrong_digest_missing_failed_or_stale_phases_cannot_qualify(self):
         self.qualification_fixture()
@@ -226,10 +356,10 @@ class PublicationTests(unittest.TestCase):
             report = copy.deepcopy(self.report)
             mutate(report)
             self.qualification.write_text(json.dumps(report))
-            with self.subTest(report=report), patch.object(publication, 'verify_signed') as verify, \
+            with self.subTest(report=report), patch.object(publication.signed, 'collect') as collect, \
                     patch.object(candidate, 'current_time', return_value=self.now), self.assertRaises(ValueError):
                 self.qualified()
-            verify.assert_not_called()
+            collect.assert_not_called()
 
     def test_nanosecond_timestamps_preserve_sequential_millisecond_phases(self):
         self.qualification_fixture()
@@ -237,7 +367,7 @@ class PublicationTests(unittest.TestCase):
         for phase, started in zip(self.report['phases'], starts):
             phase.update(startedAt='2026-10-03T08:50:' + started + 'Z', durationMillis=1500)
         self.qualification.write_text(json.dumps(self.report))
-        with patch.object(publication, 'verify_signed', return_value=self.live), \
+        with self.context(), patch.object(publication.signed, 'collect', return_value=self.live), \
                 patch.object(candidate, 'current_time', return_value=self.now):
             self.assertFalse(self.qualified()['releaseAdmission'])
 
@@ -255,7 +385,8 @@ class PublicationTests(unittest.TestCase):
             with patch.object(sys, 'argv', args), \
                     patch.object(candidate, 'checkout_source', return_value=self.record['source']), \
                     patch.object(candidate, 'current_time', return_value=self.now), \
-                    patch.object(publication, 'verify_signed', return_value=self.live), redirect_stdout(io.StringIO()):
+                    self.context(), patch.object(publication.signed, 'collect', return_value=self.live), \
+                    redirect_stdout(io.StringIO()):
                 if result == 'failure':
                     with self.assertRaises(SystemExit):
                         publication.main()
@@ -275,7 +406,8 @@ class PublicationTests(unittest.TestCase):
                 path = self.qualification if target == 'report' else self.signed_receipt
                 path.write_text('{}')
                 return self.live
-            with self.subTest(target=target), patch.object(publication, 'verify_signed', side_effect=verify), \
+            with self.subTest(target=target), self.context(), \
+                    patch.object(publication.signed, 'collect', side_effect=verify), \
                     patch.object(candidate, 'current_time', return_value=self.now), self.assertRaises(ValueError):
                 self.qualified()
 
@@ -286,15 +418,15 @@ class PublicationTests(unittest.TestCase):
         target.write_bytes(valid)
         self.qualification.unlink()
         self.qualification.symlink_to(target)
-        with patch.object(publication, 'verify_signed') as verify, self.assertRaises(ValueError):
+        with patch.object(publication.signed, 'collect') as collect, self.assertRaises(ValueError):
             self.qualified()
-        verify.assert_not_called()
+        collect.assert_not_called()
         self.qualification.unlink()
         for data in [b'{"result":"failure","result":"success"}', b'x' * (candidate.MAX_JSON_BYTES + 1)]:
             self.qualification.write_bytes(data)
-            with patch.object(publication, 'verify_signed') as verify, self.assertRaises(ValueError):
+            with patch.object(publication.signed, 'collect') as collect, self.assertRaises(ValueError):
                 self.qualified()
-            verify.assert_not_called()
+            collect.assert_not_called()
 
     @unittest.skipUnless(os.environ.get('LEAPVIEW_TEST_NIX_REGISTRY') == '1', 'requires locked Skopeo')
     def test_real_skopeo_publishes_over_tls_and_refetches_preserved_content(self):
@@ -404,7 +536,7 @@ class PublicationTests(unittest.TestCase):
                 result = self.publish()
             self.assertEqual(result['image'], repository + '@' + self.digest)
             self.assertFalse(result['releaseAdmission'])
-            self.assertIn(('PUT', '/v2/fixture/manifests/nix-candidate-123-1'), calls)
+            self.assertIn(('PUT', '/v2/fixture/manifests/nix-candidate-123-1-amd64'), calls)
             self.assertIn(('GET', '/v2/fixture/manifests/' + self.digest), calls)
             self.assertEqual(set(blobs), {self.record['artifact']['configDigest'], self.record['artifact']['layerDiffIDs'][0]})
         finally:

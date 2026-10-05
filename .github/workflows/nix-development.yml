@@ -42,6 +42,8 @@ on:
       - 'scripts/tests/test_nix_signed_evidence.py'
       - 'scripts/nix_candidate_publication.py'
       - 'scripts/tests/test_nix_candidate_publication.py'
+      - 'scripts/nix_candidate_artifacts.py'
+      - 'scripts/tests/test_nix_candidate_artifacts.py'
       - '.github/workflows/nix-candidate.yml'
       - 'scripts/nix_cli_publication.py'
       - 'scripts/tests/test_nix_cli_publication.py'
@@ -63,7 +65,7 @@ on:
         description: Validation lanes (pull requests always run both)
         type: choice
         default: all
-        options: [all, development, image]
+        options: [all, development, image, native-application]
       contract:
         description: Existing development contract to qualify (image lane is independent)
         type: choice
@@ -78,6 +80,73 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-application:
+    name: Native application dependency discovery (${{ matrix.arch }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-application' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build native application tools and derive signed extension supply
+        env:
+          ARCH: ${{ matrix.arch }}
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$MACHINE"
+          mkdir -p .tmp/native-application
+          nix build --no-update-lock-file .#leapview-tools --no-link --json -L \
+            > .tmp/native-application/build.json
+          tools=$(python3 -c 'import json; print(json.load(open(".tmp/native-application/build.json"))[0]["outputs"]["tools"])')
+          # Discovery executes native LOAD/signature verification, not a cross
+          # build or an unverified download. It grants no release admission.
+          "$tools/bin/extensionsupply" --out "$PWD/.tmp/native-application/extensions"
+          find .tmp/native-application/extensions -type d -exec chmod 0755 {} +
+          find .tmp/native-application/extensions -type f -exec chmod 0644 {} +
+          nix hash path --type sha256 --sri .tmp/native-application/extensions \
+            > .tmp/native-application/extensions.nar-sha256
+          TOOLS="$tools" python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path('.tmp/native-application')
+          tool = pathlib.Path(os.environ['TOOLS']) / 'bin/extensionsupply'
+          receipt = {
+              'schemaVersion': 1, 'sourceRevision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'architecture': os.environ['ARCH'], 'machine': os.environ['MACHINE'],
+              'nativeExecution': True, 'releaseAdmission': False,
+              'extensionSupplyToolSHA256': hashlib.file_digest(tool.open('rb'), 'sha256').hexdigest(),
+              'extensionSupplyNARHash': (root / 'extensions.nar-sha256').read_text().strip(),
+          }
+          (root / 'discovery.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+      - name: Retain native derivation evidence and exact extension bytes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-application-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/native-application/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
   cli-build:
     name: Static Linux controller candidates
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all') }}
@@ -242,7 +311,7 @@ jobs:
           if-no-files-found: warn
 
   development:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'image') }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'development') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -284,7 +353,7 @@ jobs:
 
   image:
     name: Application and image
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'development') }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'image') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -310,6 +379,7 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
           python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
           python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_candidate_artifacts.py
           python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
           python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
           python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
@@ -379,4 +449,6 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           include-hidden-files: true
-          path: .tmp/nix-image-qualification/evidence/image-qualification-report.json
+          path: |
+            .tmp/nix-image-qualification/evidence/image-qualification-report.json
+            .tmp/nix-image-qualification/evidence/compose.log

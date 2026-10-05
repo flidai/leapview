@@ -368,7 +368,7 @@ test('protected Nix candidates isolate build, qualification and signing authorit
   }
   const { authorize, build, qualify, publish } = config.jobs
   expect(build.permissions).toEqual({ contents: 'read' })
-  expect(qualify.permissions).toEqual({ contents: 'read' })
+  expect(qualify.permissions).toEqual({ contents: 'read', actions: 'read' })
   expect(build.needs).toBe('authorize')
   expect(qualify.needs).toEqual(['authorize', 'build'])
   expect(publish.needs).toEqual(['authorize', 'qualify'])
@@ -389,7 +389,12 @@ test('protected Nix candidates isolate build, qualification and signing authorit
   expect(qualify.steps.find((s: any) => s.run?.includes('check_nix_image.sh')).run)
     .toContain('protected/scripts/check_nix_image.sh candidate/image.tar trusted-app')
   expect(publish.steps.find((s: any) => s.uses?.startsWith('actions/download-artifact@')).with['artifact-ids'])
-    .toBe('${{ needs.qualify.outputs.artifact_id }}')
+    .toBe('${{ steps.artifacts.outputs.qualified_id }}')
+  for (const job of [build, qualify, publish]) {
+    expect(job.strategy.matrix.include.map((entry: any) => [entry.arch, entry.runner]))
+      .toEqual([['amd64', 'ubuntu-24.04'], ['arm64', 'ubuntu-24.04-arm']])
+    expect(job.outputs).toBeUndefined()
+  }
 })
 
 test('protected producer preserves current-head authorization and signs the bound SPDX', () => {
@@ -420,7 +425,7 @@ test('protected producer preserves current-head authorization and signs the boun
   expect(qualifier).not.toContain('nix build')
   expect(qualifier).toContain('test "$#" = 2')
   expect(qualifier).toContain('^leapview-nix:[0-9a-f]{12}$')
-  expect(qualifier).toContain('image="$(docker image inspect "$reference" --format')
+  expect(qualifier).toContain('read -r image_platform image extra <<< "$identity"')
   const tasks = parse(readFileSync('Taskfile.yml', 'utf8'))
   expect(tasks.tasks['nix:qualify'].cmds.slice(0, 2)).toEqual([{ task: 'nix:build' }, { task: 'nix:image' }])
 })
@@ -453,13 +458,12 @@ test('published qualification verifies the final signed digest in a separate rea
   const { jobs } = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
   const final = jobs['qualify-published']
   expect(final.needs).toEqual(['qualify', 'publish'])
-  expect(final.permissions).toEqual({ contents: 'read', packages: 'read' })
+  expect(final.permissions).toEqual({ contents: 'read', packages: 'read', actions: 'read' })
   expect(final.environment).toBeUndefined()
-  expect(jobs.publish.outputs.image).toBe('${{ steps.publish.outputs.image }}')
-  expect(jobs.publish.outputs.bindings_artifact_id).toBe('${{ steps.bindings.outputs.artifact-id }}')
+  expect(jobs.publish.outputs).toBeUndefined()
   const downloads = final.steps.filter((step: any) => step.uses?.startsWith('actions/download-artifact@'))
   expect(downloads.map((step: any) => step.with['artifact-ids']))
-    .toEqual(['${{ needs.qualify.outputs.artifact_id }}', '${{ needs.publish.outputs.bindings_artifact_id }}'])
+    .toEqual(['${{ steps.artifacts.outputs.qualified_id }}', '${{ steps.artifacts.outputs.binding_id }}'])
   const verify = final.steps.findIndex((step: any) => step.run?.includes('nix_candidate_publication.py verify-signed'))
   const run = final.steps.findIndex((step: any) => step.run?.includes('check_nix_registry_image.sh'))
   const bind = final.steps.findIndex((step: any) => step.run?.includes('bind-qualified'))
@@ -467,7 +471,7 @@ test('published qualification verifies the final signed digest in a separate rea
   expect(run).toBeGreaterThan(verify)
   expect(bind).toBeGreaterThan(run)
   for (const index of [verify, run, bind]) {
-    expect(final.steps[index].env.IMAGE).toBe('${{ needs.publish.outputs.image }}')
+    expect(final.steps[index].env.IMAGE).toBe('${{ steps.image.outputs.image }}')
     expect(final.steps[index].if).toBeUndefined()
   }
   expect(final.steps[bind].run).toContain('--signed-evidence bindings/nix-signed.json')
@@ -477,7 +481,7 @@ test('published qualification verifies the final signed digest in a separate rea
   expect(retain.with.path).toBe('candidate/final/')
 })
 
-test('registry image qualification retains the immutable reference and stops on pull failure', () => {
+test('registry image qualification retains the immutable reference and stops on pull failure for native Linux', () => {
   const root = mkdtempSync(join(tmpdir(), 'nix-published-image-'))
   const script = join(root, 'scripts', 'check_nix_registry_image.sh')
   const calls = join(root, 'calls')
@@ -487,32 +491,70 @@ test('registry image qualification retains the immutable reference and stops on 
     mkdirSync(join(root, 'bin'))
     mkdirSync(join(root, 'application', 'bin'), { recursive: true })
     copyFileSync(resolve('scripts/check_nix_registry_image.sh'), script)
-    writeFileSync(join(root, 'bin', 'docker'), '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$CALLS"\nif [ "$1" = pull ]; then exit "$PULL_STATUS"; fi\n[ "$1" = run ]\n', { mode: 0o755 })
-    writeFileSync(join(root, 'bin', 'cc'), '#!/bin/sh\ntouch "$3"\n', { mode: 0o755 })
-    writeFileSync(join(root, 'bin', 'patchelf'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'uname'), '#!/bin/sh\nprintf "%s\\n" "$RUNNER_MACHINE"\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'docker'), `#!/bin/sh
+printf 'docker %s\\n' "$*" >> "$CALLS"
+case "$1 $2" in
+  'pull --platform') exit "$PULL_STATUS" ;;
+  'image inspect') printf '%s\\n' "$INSPECTED_PLATFORM" ;;
+  'run --platform') exit 0 ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'cc'), '#!/bin/sh\nprintf "cc %s\\n" "$*" >> "$CALLS"\ntouch "$3"\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'patchelf'), '#!/bin/sh\nprintf "patchelf %s\\n" "$*" >> "$CALLS"\n', { mode: 0o755 })
     writeFileSync(join(root, 'application', 'bin', 'leapviewctl'), '#!/bin/sh\nprintf "cli %s\\n" "$*" >> "$CALLS"\n', { mode: 0o755 })
-    for (const fixture of [
-      { image: 'ghcr.io/flidai/leapview:latest', pull: '0', status: 1, expected: [] },
-      { image: `example.com/leapview@sha256:${'a'.repeat(64)}`, pull: '0', status: 1, expected: [] },
-      { image, pull: '17', status: 17, expected: [`docker pull --platform linux/amd64 ${image}`] },
-      { image, pull: '0', status: 0, expected: [`docker pull --platform linux/amd64 ${image}`] },
-    ]) {
+    const invoke = (fixture: { image: string, machine: string, inspectedPlatform: string, pull: string }) => {
       rmSync(calls, { force: true })
       const run = spawnSync('bash', [script, fixture.image, join(root, 'application')], {
-        env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, CALLS: calls, PULL_STATUS: fixture.pull },
+        env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, CALLS: calls,
+          PULL_STATUS: fixture.pull, RUNNER_MACHINE: fixture.machine,
+          INSPECTED_PLATFORM: fixture.inspectedPlatform },
       })
-      expect(run.status).toBe(fixture.status)
-      const commands = fixture.expected.length ? readFileSync(calls, 'utf8').trim().split('\n') : []
-      if (!fixture.expected.length) expect(() => readFileSync(calls)).toThrow()
-      expect(commands.slice(0, fixture.expected.length)).toEqual(fixture.expected)
-      if (fixture.status === 0) {
-        expect(commands).toHaveLength(3)
-        expect(commands[1]).toEndWith(image)
-        expect(commands[2]).toContain(`qualify image --image ${image} --require-immutable`)
-        expect(commands.join('\n')).not.toContain('docker push')
-        expect(commands.join('\n')).not.toContain('docker tag')
-      }
+      let commands: string[] = []
+      try { commands = readFileSync(calls, 'utf8').trim().split('\n') } catch { /* invalid input stops before Docker */ }
+      return { run, commands }
     }
+    for (const fixture of [
+      { machine: 'x86_64', arch: 'amd64', interpreter: '/lib64/ld-linux-x86-64.so.2' },
+      { machine: 'aarch64', arch: 'arm64', interpreter: '/lib/ld-linux-aarch64.so.1' },
+    ]) {
+      const pull = invoke({ image: 'ghcr.io/flidai/leapview:latest', machine: fixture.machine,
+        inspectedPlatform: `linux/${fixture.arch}`, pull: '0' })
+      expect(pull.run.status).toBe(1)
+      expect(pull.commands).toEqual([])
+
+      const failedPull = invoke({ image, machine: fixture.machine,
+        inspectedPlatform: `linux/${fixture.arch}`, pull: '17' })
+      expect(failedPull.run.status).toBe(17)
+      expect(failedPull.commands).toEqual([`docker pull --platform linux/${fixture.arch} ${image}`])
+
+      const foreign = invoke({ image, machine: fixture.machine,
+        inspectedPlatform: `linux/${fixture.arch === 'arm64' ? 'amd64' : 'arm64'}`, pull: '0' })
+      expect(foreign.run.status).toBe(1)
+      expect(foreign.commands).toEqual([
+        `docker pull --platform linux/${fixture.arch} ${image}`,
+        `docker image inspect ${image} --format {{.Os}}/{{.Architecture}}`,
+      ])
+      expect(foreign.commands.join('\n')).not.toMatch(/\b(?:cc|patchelf|run|cli)\b/)
+
+      const qualified = invoke({ image, machine: fixture.machine,
+        inspectedPlatform: `linux/${fixture.arch}`, pull: '0' })
+      expect(qualified.run.status).toBe(0)
+      expect(qualified.commands).toEqual([
+        `docker pull --platform linux/${fixture.arch} ${image}`,
+        `docker image inspect ${image} --format {{.Os}}/{{.Architecture}}`,
+        'cc scripts/testdata/nix/strfmon_probe.c -o ' + join(root, '.tmp/nix-published-qualification/strfmon_probe'),
+        `patchelf --no-sort --set-interpreter ${fixture.interpreter} --remove-rpath ${join(root, '.tmp/nix-published-qualification/strfmon_probe')}`,
+        `docker run --platform linux/${fixture.arch} --rm --network none --read-only --cap-drop ALL --volume ${join(root, '.tmp/nix-published-qualification/strfmon_probe')}:/tmp/strfmon_probe:ro --entrypoint /tmp/strfmon_probe ${image}`,
+        `cli qualify image --image ${image} --require-immutable --evidence-dir ${join(root, '.tmp/nix-published-qualification/evidence')}`,
+      ])
+      expect(qualified.commands.join('\n')).not.toContain('docker push')
+      expect(qualified.commands.join('\n')).not.toContain('docker tag')
+    }
+    const unsupported = invoke({ image, machine: 'riscv64', inspectedPlatform: 'linux/amd64', pull: '0' })
+    expect(unsupported.run.status).toBe(1)
+    expect(unsupported.commands).toEqual([])
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
@@ -656,43 +698,100 @@ test('Nix development evaluates the native ARM runtime-security shell without bu
   expect(armShell).toBeLessThan(format)
 })
 
-test('image qualification rejects fixture tags and uses the normalized Docker image ID', () => {
+test('image qualification rejects fixture tags and checks native platform before the Docker image ID probe', () => {
   const root = mkdtempSync(join(tmpdir(), 'nix-image-import-'))
   const script = join(root, 'scripts', 'check_nix_image.sh')
+  const application = join(root, 'application')
   const archive = join(root, 'image.tar')
   const calls = join(root, 'docker-calls')
   const imageID = `sha256:${'b'.repeat(64)}`
+  const registryDigest = `sha256:${'c'.repeat(64)}`
+  const registryReference = `127.0.0.1:5000/leapview@${registryDigest}`
   try {
     mkdirSync(join(root, 'scripts'))
     mkdirSync(join(root, 'bin'))
+    mkdirSync(join(application, 'bin'), { recursive: true })
+    mkdirSync(join(application, 'share', 'leapview', 'deploy', 'compose'), { recursive: true })
     copyFileSync(resolve('scripts/check_nix_image.sh'), script)
+    writeFileSync(join(root, 'bin', 'uname'), '#!/bin/sh\nprintf "%s\\n" "$RUNNER_MACHINE"\n', { mode: 0o755 })
     writeFileSync(join(root, 'bin', 'docker'), `#!/bin/sh
 printf '%s\\n' "$*" >> '${calls}'
 case "$1" in
   load) exit 0 ;;
-  image) printf '%s\\n' '${imageID}' ;;
-  run) exit 77 ;;
+  image)
+    if [ "$2" = inspect ] && [ "$5" = '{{json .RepoDigests}}' ]; then
+      printf '["%s"]\\n' "$REGISTRY_REFERENCE"
+    elif [ "$2" = inspect ]; then
+      printf '%s %s\\n' "$INSPECTED_PLATFORM" '${imageID}'
+    else exit 0
+    fi ;;
+  run)
+    if [ "$2" = --platform ]; then exit 0; fi
+    printf '%s\\n' registry-container ;;
+  port) printf '%s\\n' '127.0.0.1:5000' ;;
+  tag|push|rm) exit 0 ;;
   *) exit 1 ;;
 esac
 `, { mode: 0o755 })
-    writeFileSync(join(root, 'bin', 'cc'), '#!/bin/sh\ntouch "$3"\n', { mode: 0o755 })
-    writeFileSync(join(root, 'bin', 'patchelf'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-    for (const tag of ['postgres:18', 'leapview-nix:abcdef123456']) {
-      writeFileSync(join(root, 'manifest.json'), JSON.stringify([{ Config: `${'a'.repeat(64)}.json`, RepoTags: [tag] }]))
-      expect(spawnSync('tar', ['-cf', archive, '-C', root, 'manifest.json']).status).toBe(0)
-      const run = spawnSync('bash', [script, archive, root], {
-        env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}` },
+    writeFileSync(join(root, 'bin', 'cc'), '#!/bin/sh\nprintf "cc %s\\n" "$*" >> "' + calls + '"\ntouch "$3"\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'patchelf'), '#!/bin/sh\nprintf "patchelf %s\\n" "$*" >> "' + calls + '"\n', { mode: 0o755 })
+    writeFileSync(join(root, 'bin', 'curl'), '#!/bin/sh\nprintf "curl %s\\n" "$*" >> "' + calls + '"\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(application, 'bin', 'leapviewctl'), '#!/bin/sh\nprintf "cli %s\\n" "$*" >> "$CALLS"\n', { mode: 0o755 })
+    writeFileSync(join(root, 'manifest.json'), JSON.stringify([{ Config: `${'a'.repeat(64)}.json`, RepoTags: ['leapview-nix:abcdef123456'] }]))
+    expect(spawnSync('tar', ['-cf', archive, '-C', root, 'manifest.json']).status).toBe(0)
+    const invoke = (machine: string, inspectedPlatform: string) => {
+      rmSync(calls, { force: true })
+      const run = spawnSync('bash', [script, archive, application], {
+        env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`,
+          RUNNER_MACHINE: machine, INSPECTED_PLATFORM: inspectedPlatform, REGISTRY_REFERENCE: registryReference,
+          CALLS: calls },
       })
-      if (tag === 'postgres:18') {
-        expect(run.status).toBe(1)
-        expect(() => readFileSync(calls)).toThrow()
-      } else {
-        expect(run.status).toBe(77)
-        const commands = readFileSync(calls, 'utf8').trim().split('\n')
-        expect(commands[2]).toEndWith(imageID)
-        expect(commands[2]).not.toContain(`sha256:${'a'.repeat(64)}`)
-      }
+      let commands: string[] = []
+      try { commands = readFileSync(calls, 'utf8').trim().split('\n') } catch { /* qualification stops before Docker */ }
+      return { run, commands }
     }
+    for (const fixture of [
+      { machine: 'x86_64', arch: 'amd64', interpreter: '/lib64/ld-linux-x86-64.so.2' },
+      { machine: 'aarch64', arch: 'arm64', interpreter: '/lib/ld-linux-aarch64.so.1' },
+    ]) {
+      const foreign = invoke(fixture.machine, `linux/${fixture.arch === 'arm64' ? 'amd64' : 'arm64'}`)
+      expect(foreign.run.status).toBe(1)
+      expect(foreign.commands).toEqual([
+        'load --input ' + archive,
+        `image inspect leapview-nix:abcdef123456 --format {{.Os}}/{{.Architecture}} {{.Id}}`,
+      ])
+      expect(foreign.commands.join('\n')).not.toMatch(/\b(?:cc|patchelf|run)\b/)
+
+      const native = invoke(fixture.machine, `linux/${fixture.arch}`)
+      expect(native.run.status).toBe(0)
+      expect(native.commands[0]).toBe('load --input ' + archive)
+      expect(native.commands[1]).toBe(
+        'image inspect leapview-nix:abcdef123456 --format {{.Os}}/{{.Architecture}} {{.Id}}')
+      expect(native.commands[2]).toBe(
+        `cc scripts/testdata/nix/strfmon_probe.c -o ${join(root, '.tmp/nix-image-qualification/strfmon_probe')}`)
+      expect(native.commands[3]).toBe(
+        `patchelf --no-sort --set-interpreter ${fixture.interpreter} --remove-rpath ${join(root, '.tmp/nix-image-qualification/strfmon_probe')}`)
+      expect(native.commands[4]).toBe(
+        `run --platform linux/${fixture.arch} --rm --network none --read-only --cap-drop ALL --volume ${join(root, '.tmp/nix-image-qualification/strfmon_probe')}:/tmp/strfmon_probe:ro --entrypoint /tmp/strfmon_probe ${imageID}`)
+      expect(native.commands[4]).not.toContain(`sha256:${'a'.repeat(64)}`)
+      expect(native.commands).toContain(`tag ${imageID} 127.0.0.1:5000/leapview:nix`)
+      expect(native.commands).toContain('push 127.0.0.1:5000/leapview:nix')
+      expect(native.commands).toContain(`image inspect 127.0.0.1:5000/leapview:nix --format {{json .RepoDigests}}`)
+      expect(native.commands).toContain(
+        `cli qualify image --image 127.0.0.1:5000/leapview@${registryDigest} --require-immutable --evidence-dir ${join(root, '.tmp/nix-image-qualification/evidence')}`)
+    }
+    const invalidManifest = JSON.stringify([{ Config: `${'a'.repeat(64)}.json`, RepoTags: ['postgres:18'] }])
+    writeFileSync(join(root, 'manifest.json'), invalidManifest)
+    expect(spawnSync('tar', ['-cf', archive, '-C', root, 'manifest.json']).status).toBe(0)
+    const invalid = invoke('x86_64', 'linux/amd64')
+    expect(invalid.run.status).toBe(1)
+    expect(invalid.commands).toEqual([])
+
+    writeFileSync(join(root, 'manifest.json'), JSON.stringify([{ Config: `${'a'.repeat(64)}.json`, RepoTags: ['leapview-nix:abcdef123456'] }]))
+    expect(spawnSync('tar', ['-cf', archive, '-C', root, 'manifest.json']).status).toBe(0)
+    const unsupported = invoke('riscv64', 'linux/amd64')
+    expect(unsupported.run.status).toBe(1)
+    expect(unsupported.commands).toEqual([])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

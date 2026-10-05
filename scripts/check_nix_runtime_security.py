@@ -5,6 +5,7 @@ import copy
 from collections import Counter
 from datetime import date, datetime, timezone
 import hashlib
+import importlib.util
 import gzip
 import shutil
 import tempfile
@@ -17,6 +18,13 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = json.loads((ROOT / 'nix/runtime-security-policy.json').read_text())
+NIX_SYSTEMS = {'linux/amd64': 'x86_64-linux', 'linux/arm64': 'aarch64-linux'}
+_candidate_spec = importlib.util.spec_from_file_location(
+    'nix_candidate_manifest_runtime', ROOT / 'scripts/nix_candidate_manifest.py')
+if _candidate_spec is None or _candidate_spec.loader is None:
+    raise RuntimeError('cannot load the candidate manifest contract')
+candidate_manifest = importlib.util.module_from_spec(_candidate_spec)
+_candidate_spec.loader.exec_module(candidate_manifest)
 
 
 def write(path, value):
@@ -25,6 +33,54 @@ def write(path, value):
 
 def run(*args, env=None):
     return subprocess.check_output(args, text=True, env=env)
+
+
+def archive_platform(archive):
+    """Read the platform declared by the sole Docker archive image."""
+    with tarfile.open(archive, 'r:*') as outer:
+        members = {}
+        for member in outer:
+            name = member.name.removeprefix('./')
+            if name == 'manifest.json' or name.endswith('.json'):
+                if name in members:
+                    raise ValueError('duplicate Docker archive JSON file: ' + name)
+                members[name] = member
+
+        def read_json(name):
+            member = members.get(name)
+            if member is None or not member.isfile() or member.size > 2 * 1024 * 1024:
+                raise ValueError('Docker archive JSON is missing or oversized: ' + name)
+            data = outer.extractfile(member).read(candidate_manifest.MAX_JSON_BYTES + 1)
+            return candidate_manifest.read_json(data)
+
+        manifest = read_json('manifest.json')
+        if not isinstance(manifest, list) or len(manifest) != 1:
+            raise ValueError('Docker archive must contain exactly one image')
+        config_name = manifest[0].get('Config') if isinstance(manifest[0], dict) else None
+        if (not isinstance(config_name, str) or not config_name or config_name.startswith('/') or
+                '\\' in config_name or '..' in Path(config_name).parts):
+            raise ValueError('Docker archive config path is invalid')
+        config = read_json(config_name.removeprefix('./'))
+        if not isinstance(config, dict) or not isinstance(config.get('os'), str) or not isinstance(
+                config.get('architecture'), str):
+            raise ValueError('Docker archive platform is missing')
+        platform = config['os'] + '/' + config['architecture']
+        if platform not in NIX_SYSTEMS:
+            raise ValueError('unsupported native runtime platform: ' + platform)
+        return platform
+
+
+def native_glibc_path(platform, env=None):
+    try:
+        system = NIX_SYSTEMS[platform]
+    except KeyError as error:
+        raise ValueError('unsupported native runtime platform: ' + str(platform)) from error
+    return run('nix', 'eval', '--no-update-lock-file', '--raw',
+               '.#packages.' + system + '.glibc-runtime.outPath', env=env).strip()
+
+
+def assessment_file(platform):
+    return candidate_manifest.runtime_assessment_path(platform, root=ROOT)
 
 
 def store_paths(archive):
@@ -222,15 +278,15 @@ def main():
             '-o', 'spdx-json=' + str(spdx_path), env=env)
         if json.loads(spdx_path.read_text()).get('spdxVersion') != 'SPDX-2.3':
             raise ValueError('runtime SPDX export has an unsupported version')
-        expected_glibc_path = run(
-            'nix', 'eval', '--no-update-lock-file', '--raw',
-            '.#packages.x86_64-linux.glibc-runtime.outPath', env=env).strip()
-        packages = check_inventory(sbom, store_paths(archive), expected_glibc_path)
-        summary['expectedGlibcPath'] = expected_glibc_path
+        platform = archive_platform(archive)
+        glibc_path = native_glibc_path(platform, env)
+        packages = check_inventory(sbom, store_paths(archive), glibc_path)
+        summary['expectedGlibcPath'] = glibc_path
+        summary['platform'] = platform
         summary['image'] = sbom['source']
         summary['inventory'] = [{'name': p['name'], 'version': p['version'], 'path': p['metadata']['path']} for p in packages]
-        vex_bytes = (ROOT / 'nix/runtime-assessments.vex.json').read_bytes()
-        vex = json.loads(vex_bytes)
+        vex_bytes = assessment_file(platform).read_bytes()
+        vex = candidate_manifest.read_json(vex_bytes)
         assessments = validate_assessments(vex, packages, datetime.now(timezone.utc).date())
         vex_path = evidence / 'assessments.vex.json'
         vex_path.write_bytes(vex_bytes)

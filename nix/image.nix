@@ -7,13 +7,16 @@
   revision,
   dirty,
   buildTime,
+  purpose,
 }:
 let
+  loaderDir = pkgs.stdenv.hostPlatform.libDir;
+  loader = builtins.baseNameOf pkgs.stdenv.cc.bintools.dynamicLinker;
   runtime = pkgs.runCommand "leapview-image-root" { } ''
-    mkdir -p "$out"/{app,bin,sbin,lib64,etc,usr/bin,usr/local/bin,usr/local/libexec,usr/local/share/leapview,var/lib/leapview/home,tmp}
+    mkdir -p "$out/app" "$out/bin" "$out/sbin" "$out/${loaderDir}" "$out/etc" "$out/usr/bin" "$out/usr/local/bin" "$out/usr/local/libexec" "$out/usr/local/share/leapview" "$out/var/lib/leapview/home" "$out/tmp"
     cp ${portable}/bin/leapview "$out/usr/local/bin/leapview"
     cp ${portable}/bin/leapviewctl "$out/usr/local/libexec/leapviewctl"
-    ln -s ${patchedRuntime.glibc}/lib/ld-linux-x86-64.so.2 "$out/lib64/ld-linux-x86-64.so.2"
+    ln -s ${patchedRuntime.glibc}/lib/${loader} "$out/${loaderDir}/${loader}"
     ln -s ${patchedRuntime.busybox}/bin "$out/busybox"
     ln -s ${patchedRuntime.busybox}/bin/sh "$out/bin/sh"
     ln -s ${patchedRuntime.busybox}/bin/env "$out/usr/bin/env"
@@ -36,6 +39,11 @@ let
     find "$out/usr/local/share/leapview/extensions" -type f -exec chmod 0444 {} +
   '';
 in
+assert builtins.elem purpose [
+  "development"
+  "compose"
+];
+assert purpose != "compose" || !dirty;
 pkgs.dockerTools.buildLayeredImage {
   name = "leapview-nix";
   tag = "${builtins.substring 0 12 revision}${if dirty then "-dirty" else ""}";
@@ -49,7 +57,7 @@ pkgs.dockerTools.buildLayeredImage {
   '';
   enableFakechroot = true;
   fakeRootCommands = ''
-    chown -hR 0:0 ./app ./bin ./lib64 ./sbin ./etc ./usr ./var ./tmp
+    chown -hR 0:0 ./app ./bin ./${loaderDir} ./sbin ./etc ./usr ./var ./tmp
     chown -h 0:0 ./busybox
     chmod 0500 ./usr/local/share/leapview/deployment/{leapviewctl,leapviewctl-wrapper}
     chmod 0400 ./usr/local/share/leapview/deployment/{compose.yaml,compose.https.yaml,Caddyfile,deployment.env.example,leapview.env.example,README.md,QUALIFICATION.md,qualification/*}
@@ -106,7 +114,7 @@ pkgs.dockerTools.buildLayeredImage {
       "org.opencontainers.image.revision" = revision;
       "org.opencontainers.image.created" = buildTime;
       "dev.leapview.build.dirty" = if dirty then "true" else "false";
-      "dev.leapview.build.release" = "false";
+      "dev.leapview.build.release" = if purpose == "compose" then "true" else "false";
       "dev.leapview.build.kind" = "application-image";
     };
   };

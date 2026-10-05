@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA256 = re.compile(r'^sha256:[0-9a-f]{64}$')
 REVISION = re.compile(r'^[0-9a-f]{40}$')
 PLATFORMS = {'linux/amd64', 'linux/arm64'}
+ASSESSMENT_FILES = {'linux/amd64': 'runtime-assessments.vex.json',
+                    'linux/arm64': 'runtime-assessments.arm64.vex.json'}
 KINDS = {'application-image', 'site-image', 'cli-archive', 'application-archive', 'desktop-archive'}
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 128 * 1024 * 1024
@@ -156,6 +158,14 @@ def current_time():
     return datetime.now(timezone.utc)
 
 
+def runtime_assessment_path(platform, *, root=None):
+    try:
+        name = ASSESSMENT_FILES[platform]
+    except KeyError as error:
+        raise ValueError('unsupported runtime assessment platform: ' + str(platform)) from error
+    return Path(ROOT if root is None else root) / 'nix' / name
+
+
 def runtime_evidence(directory, artifact):
     directory = Path(directory)
     with (directory / 'summary.json').open('rb') as stream:
@@ -168,6 +178,8 @@ def runtime_evidence(directory, artifact):
         raise ValueError('runtime scan did not complete in enforcement mode')
     if summary.get('archiveSHA256') != artifact['sha256'].removeprefix('sha256:'):
         raise ValueError('runtime scan belongs to another archive')
+    if summary.get('platform') != artifact['platform']:
+        raise ValueError('runtime scan belongs to another platform')
     policy_path = ROOT / 'nix/runtime-security-policy.json'
     policy = read_json_file(policy_path)
     if summary.get('policySHA256') != digest_file(policy_path).removeprefix('sha256:'):
@@ -202,8 +214,12 @@ def runtime_evidence(directory, artifact):
         if actual.removeprefix('sha256:') != expected[name]:
             raise ValueError('runtime report changed since scan: ' + name)
         reports.append({'path': name, 'sha256': actual})
-    assessments = digest_file(directory / 'assessments.vex.json')
-    if assessments != digest_file(ROOT / 'nix/runtime-assessments.vex.json') or (
+    assessment_source = runtime_assessment_path(artifact['platform'])
+    assessment_bytes = (directory / 'assessments.vex.json').read_bytes()
+    if assessment_bytes != assessment_source.read_bytes():
+        raise ValueError('runtime assessment bytes do not match the platform review')
+    assessments = digest_bytes(assessment_bytes)
+    if assessments != digest_file(assessment_source) or (
             summary.get('assessmentsSHA256') != assessments.removeprefix('sha256:')):
         raise ValueError('runtime assessment bytes changed since scan')
     spdx = read_json_file(directory / 'sbom.spdx.json', MAX_REPORT_BYTES)
@@ -211,6 +227,7 @@ def runtime_evidence(directory, artifact):
             not spdx.get('documentNamespace') or not spdx.get('packages')):
         raise ValueError('runtime SPDX inventory is missing or unsupported')
     return {'summarySHA256': digest_bytes(summary_bytes), 'reports': reports,
+            'assessmentSource': 'nix/' + assessment_source.name,
             'scope': 'nix-runtime-only', 'enforcementMode': 'enforce'}
 
 

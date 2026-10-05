@@ -68,9 +68,10 @@ pkgs.stdenv.mkDerivation {
     export GOPATH="$TMPDIR/go" GOCACHE="$TMPDIR/go-cache"
     export npm_config_cache="$TMPDIR/npm-cache"
     cp -R ${dependencies.javascript}/app/node_modules ./node_modules
-    cp -R ${dependencies.javascript}/typespec/node_modules pkg/apigen/typespec/node_modules
+    cp -R ${dependencies.javascript}/typespec/${dependencies.nativeCPU}/node_modules pkg/apigen/typespec/node_modules
     chmod -R u+w node_modules pkg/apigen/typespec/node_modules
-    rm -rf node_modules/lightningcss-linux-x64-musl node_modules/@parcel/watcher-linux-x64-musl
+    ${dependencies.prunePlatformPackages} "$PWD/node_modules" "${dependencies.nativeCPU}"
+    ${dependencies.prunePlatformPackages} "$PWD/pkg/apigen/typespec/node_modules" "${dependencies.nativeCPU}"
     autoPatchelf node_modules pkg/apigen/typespec/node_modules
     patchShebangs node_modules pkg/apigen/typespec/node_modules
     export APIGEN_TYPESPEC_PACKAGE_DIR="$PWD/pkg/apigen/typespec"
