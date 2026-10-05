@@ -70,7 +70,7 @@ async function verifyZoom(graph: Locator) {
   await graph.getByRole('button', { name: 'Zoom out', exact: true }).click()
   await expect(zoom).toHaveText('100%')
   await graph.getByRole('button', { name: 'Zoom in', exact: true }).click()
-  await graph.getByRole('button', { name: 'Actual size (100%)', exact: true }).click()
+  await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
   await expect(zoom).toHaveText('100%')
   const fit = graph.getByRole('button', { name: 'Fit graph', exact: true })
   if (await fit.isEnabled()) await fit.click()

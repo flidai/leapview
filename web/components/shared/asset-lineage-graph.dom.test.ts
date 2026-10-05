@@ -300,7 +300,7 @@ test('viewport controls explain their actions and keep zoom anchored without cha
     const zoom = controls.getByRole('status', { name: 'Zoom level' })
     await browserExpect(zoom).not.toHaveText('100%')
     await browserExpect(controls.getByRole('button', { name: 'Fit graph', exact: true })).toBeDisabled()
-    await controls.getByRole('button', { name: 'Actual size (100%)' }).click()
+    await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
     await browserExpect(zoom).toHaveText('100%')
     const viewport = () => graph.evaluate(el => {
       const transform = (el.querySelector('.react-flow__viewport') as HTMLElement).style.transform
@@ -332,7 +332,7 @@ test('viewport controls explain their actions and keep zoom anchored without cha
     expect(await graph.locator('.asset-lineage-node-selected').count()).toBe(1)
     await graph.getByRole('button', { name: /^Upstream/ }).click()
     await browserExpect(graph.locator('.asset-lineage-node')).toHaveCount(2)
-    await controls.getByRole('button', { name: 'Actual size (100%)' }).click()
+    await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
     await browserExpect(graph.getByRole('button', { name: /^Upstream/ })).toHaveAttribute('aria-pressed', 'true')
   } finally { await page.close() }
 }, 15_000)

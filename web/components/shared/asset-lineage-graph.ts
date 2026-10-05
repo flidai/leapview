@@ -695,7 +695,6 @@ function LineageViewportControls({ expanded, onToggleExpanded }: { expanded: boo
     control('−', 'Zoom out', 'Zoom out to see more of the graph', () => step('out'), zoom <= ZOOM_LEVELS[0]! + 0.001),
     React.createElement('output', { className: 'asset-lineage-zoom-level', role: 'status', 'aria-label': 'Zoom level', 'aria-live': 'polite' }, `${Math.round(zoom * 100)}%`),
     control('+', 'Zoom in', 'Zoom in to read asset details', () => step('in'), zoom >= 2 - 0.001),
-    control('100%', 'Actual size (100%)', 'Show asset cards at their readable original size', () => zoomTo(1), Math.abs(zoom - 1) < 0.001),
     control('Fit graph', 'Fit graph', isFitted ? 'All visible assets already fit in the graph' : 'Centre and fit all visible assets', () => { void setViewport(fitted) }, isFitted, 'asset-lineage-fit'),
     React.createElement('button', {
       type: 'button', className: 'asset-lineage-expand', onClick: onToggleExpanded,
