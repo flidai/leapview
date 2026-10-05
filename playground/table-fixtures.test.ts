@@ -61,3 +61,22 @@ test('exploration sort returns ordered results with the requested response seque
   expect(values).toEqual([...values].sort((a, b) => b - a))
   expect(exploreFixture(command, 'error').error).toBeTruthy()
 })
+
+
+test('preview fixtures explicitly distinguish loading from settled current results', () => {
+  for (const state of ['populated', 'empty', 'loading', 'error'] as const) {
+    const preview = previewFixture(windowedFixture(state))
+    expect(preview.loading).toBe(state === 'loading')
+    expect(preview.stale).toBe(false)
+  }
+})
+
+test('exploration fixtures initialize canonical selections for result-table sorting', () => {
+  const command = exploreCommand()
+  expect(command.spec).toEqual({
+    schemaVersion: 1, modelId: 'playground-sales', datasetId: 'orders',
+    dimensions: command.dimensions.map(field => ({ field })),
+    metrics: command.metrics.map(field => ({ field })),
+    filters: [], sort: [], limit: 75,
+  })
+})

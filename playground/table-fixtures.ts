@@ -1,3 +1,4 @@
+import { emptyDataExploreCommand, explorationSpecFromCommand } from '../web/components/data/data-explorer-spec'
 import type { DataExploreCommand, DataExploreResultSignal, DataExplorerCommand, DataPreviewSignal, RecordTableSignal } from '../web/generated/signals'
 import type { EntityListColumn, EntityListItem } from '../web/components/shared/entity-list'
 import type { WindowedTableBlockID, WindowedTableColumn, WindowedTablePayload, WindowedTableRequest, WindowedTableSort } from '../web/components/shared/windowed-table'
@@ -83,12 +84,13 @@ export function previewFixture(table: WindowedTablePayload): DataPreviewSignal {
     chunkSize: table.chunkSize ?? 50, rowHeight: table.rowHeight ?? 34, resetVersion: table.resetVersion ?? 0,
     sort: { column: table.sort?.key || table.sort?.column || '', direction: table.sort?.direction || '' },
     blocks, totalRowLabel: String(table.totalRows ?? 0), loadingBlock: table.loadingBlock, error: table.error,
-    sql: 'SELECT * FROM orders',
+    sql: 'SELECT * FROM orders', loading: Boolean(table.loadingBlock), stale: false,
   }
 }
 
 export function exploreCommand(): DataExploreCommand {
-  return { semanticModelId: 'playground-sales', datasetId: 'orders', dimensions: ['id', 'customer', 'region', 'ordered_at', 'fulfilled'], metrics: ['revenue'], filters: [], sort: [], limit: 75, requestSeq: 0, resetVersion: 0, columnWidths: {} }
+  const command: DataExploreCommand = { ...emptyDataExploreCommand, semanticModelId: 'playground-sales', datasetId: 'orders', dimensions: ['id', 'customer', 'region', 'ordered_at', 'fulfilled'], metrics: ['revenue'], filters: [], sort: [], limit: 75, requestSeq: 0, resetVersion: 0, columnWidths: {} }
+  return { ...command, spec: explorationSpecFromCommand(command) }
 }
 
 export function exploreFixture(command: DataExploreCommand, state: TableState = 'populated', truncated = false): DataExploreResultSignal {

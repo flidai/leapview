@@ -4,6 +4,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { exampleDetails, exampleChromeStyles } from './example-chrome'
+import { explorationSpecFromCommand } from '../web/components/data/data-explorer-spec'
 import type { DataExploreCommand, DataExplorerCommand } from '../web/generated/signals'
 import type { EntityListItem } from '../web/components/shared/entity-list'
 import type { WindowedTablePayload, WindowedTableRequest } from '../web/components/shared/windowed-table'
@@ -153,11 +154,12 @@ export class PlaygroundTables extends LitElement {
   private onExplore = (event: CustomEvent<Partial<DataExploreCommand>>) => {
     this.log(event.type, event.detail)
     const sorted = Boolean(event.detail.sort)
-    this.exploreCommand = {
+    const command = {
       ...this.exploreCommand, ...event.detail,
       requestSeq: this.exploreCommand.requestSeq + (sorted ? 1 : 0),
       resetVersion: this.exploreCommand.resetVersion + (sorted ? 1 : 0),
     }
+    this.exploreCommand = { ...command, spec: explorationSpecFromCommand(command) }
   }
 
   private onEntity = (event: CustomEvent<{ item?: EntityListItem; action?: string; query?: string; filter?: string }>) => {

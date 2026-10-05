@@ -41,14 +41,15 @@ func TestDashboardAuthoringPrivateAuthorizationMatrix(t *testing.T) {
 	})
 
 	// Three fixed create wrappers (new dashboard and the shared fork wrapper),
-	// eleven dashboard read wrappers (including the nested fork source read), five update routes,
+	// twelve dashboard read wrappers (including the nested fork source read and
+	// visual-to-Explorer handoff), five update routes,
 	// one read-only export route, and the archive and delete routes are registered. The command route is intentionally
 	// body-dependent and is checked by the HTTP qualification test.
 	if countAction(resourceActions, access.ActionDashboardCreate) != 3 {
 		t.Fatalf("browser create action count = %d, want 3 (%v)", countAction(resourceActions, access.ActionDashboardCreate), resourceActions)
 	}
-	if countAction(resourceActions, access.ActionDashboardRead) != 11 {
-		t.Fatalf("browser dashboard-read action count = %d, want 11 (%v)", countAction(resourceActions, access.ActionDashboardRead), resourceActions)
+	if countAction(resourceActions, access.ActionDashboardRead) != 12 {
+		t.Fatalf("browser dashboard-read action count = %d, want 12 (%v)", countAction(resourceActions, access.ActionDashboardRead), resourceActions)
 	}
 	if countAction(authoringActions, access.ActionDashboardUpdate) != 5 || countAction(authoringActions, access.ActionDashboardRead) != 1 || countAction(authoringActions, access.ActionDashboardDelete) != 2 {
 		t.Fatalf("browser authoring action matrix = %v, want five update, one read, and two delete", authoringActions)
