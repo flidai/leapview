@@ -177,12 +177,22 @@ Use a Nix installation with `sandbox = true`; the image CI job sets it explicitl
 `nix build .#leapview-desktop-linux-x64` builds only the Linux x64 Debian
 package. It uses the locked desktop Bun dependency tree, the official Electron
 and Node archives matching versions declared by `desktop/release-policy.json`,
-and the existing `desktop/scripts/run-electron.mjs make` Forge packaging path. The
-package carries the preview distribution marker and is a build candidate only.
-The declared Ubuntu 22.04 LTS floor still needs native qualification; this output
-does not establish desktop support, production adoption, signing, publication,
-or release admission. macOS and Windows outputs remain on their existing
-toolchains.
+and the existing `desktop/scripts/run-electron.mjs make` Forge packaging path.
+The package carries the preview distribution marker. The manual `Protected Nix
+desktop candidate` workflow qualifies the exact Debian bytes on native Ubuntu
+22.04 x86_64 using protected verifier code, then retains the package and a
+hash-bound receipt with `releaseAdmission: false`. It checks the protected
+control-field and dependency contract, package contents, the embedded Electron
+sandbox helper's root-owned setuid mode, installed-payload identity, startup,
+installer metadata, release evidence and the hostile-instance boundary. The
+`native-desktop` development lane exercises this host floor
+without publication credentials.
+
+That candidate qualification records install, reinstall, protocol registration
+and removal. Upgrade, rollback, recovery and profile observation remain pending;
+it does not establish production adoption, signing, publication or release
+admission. Conventional desktop release workflows remain authoritative.
+macOS and Windows outputs remain on their existing toolchains.
 
 ### Standalone public-site candidates
 

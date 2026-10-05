@@ -488,6 +488,50 @@ test('protected Nix site candidates keep native qualification separate from site
   }
 })
 
+test('native and protected Desktop qualification bind the exact Ubuntu 22.04 Debian candidate', () => {
+  const development = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const native = development.jobs['native-desktop']
+  expect(native['runs-on']).toBe('ubuntu-22.04')
+  expect(native.if).toContain("inputs.checks == 'native-desktop'")
+  expect(native.steps.some((step: any) => step.run?.includes('nix_desktop_qualification.py qualify'))).toBe(true)
+  const python = native.steps.find((step: any) => step.uses?.startsWith('actions/setup-python@'))
+  expect(python.with['python-version']).toBe('3.13.14')
+  const retainedNative = native.steps.find((step: any) => step.with?.name?.startsWith('native-desktop-'))
+  expect(retainedNative.if).toBe('always()')
+  expect(retainedNative.with['if-no-files-found']).toBe('ignore')
+  expect(native.steps.some((step: any) => step.uses?.startsWith('actions/attest@'))).toBe(false)
+
+  const qualificationTest = 'python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py'
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain(qualificationTest)
+  expect(development.jobs.image.steps.some((step: any) => step.run?.includes(qualificationTest))).toBe(true)
+  for (const path of ['scripts/nix_desktop_qualification.py', 'scripts/tests/test_nix_desktop_qualification.py',
+    '.github/workflows/nix-desktop-candidate.yml']) {
+    expect(development.on.pull_request.paths).toContain(path)
+  }
+  expect(development.on.pull_request.paths).toContain('desktop/**')
+  const coverage = parse(readFileSync('.security/coverage.yaml', 'utf8'))
+  expect(coverage.surfaces.some((surface: any) =>
+    surface.path === '.github/workflows/nix-desktop-candidate.yml' &&
+    surface.kind === 'github-actions' && surface.scanners.includes('action-pin-policy'))).toBe(true)
+
+  const protectedWorkflow = parse(readFileSync('.github/workflows/nix-desktop-candidate.yml', 'utf8'))
+  expect(protectedWorkflow.permissions).toEqual({ contents: 'read' })
+  expect(protectedWorkflow.jobs.publish).toBeUndefined()
+  const qualify = protectedWorkflow.jobs.qualify
+  expect(qualify['runs-on']).toBe('ubuntu-22.04')
+  expect(qualify.permissions).toEqual({ actions: 'read', contents: 'read' })
+  expect(qualify.steps.find((step: any) => step.uses?.startsWith('actions/setup-python@'))
+    .with['python-version']).toBe('3.13.14')
+  expect(qualify.steps.find((step: any) => step.with?.path === 'protected').with.ref).toBe('${{ github.sha }}')
+  expect(qualify.steps.find((step: any) => step.with?.path === 'source').with.ref)
+    .toBe('${{ inputs.source_revision }}')
+  const commands = qualify.steps.map((step: any) => step.run ?? '').join('\n')
+  expect(commands).toContain('protected/scripts/nix_desktop_qualification.py qualify')
+  expect(commands).toContain('--verifier-root protected')
+  expect(commands).not.toMatch(/\b(?:python3|bun|go)\b[^\n]*\bsource\//)
+  expect(commands).not.toContain('cd source')
+})
+
 test('protected producer preserves current-head authorization and signs the bound SPDX', () => {
   const { jobs } = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
   for (const job of [jobs.authorize, jobs.publish]) {

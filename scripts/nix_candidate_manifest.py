@@ -35,6 +35,11 @@ SITE_GATES = ['provenance', 'spdx', 'go-vulnerability-coverage', 'canonical-rele
               'oci-admission', 'nix-site-runtime-enforcement', 'site-image-inventory',
               'native-site-image-qualification', 'site-profile-installation-upgrade-rollback-recovery',
               'site-profile-observation']
+DESKTOP_GATES = ['provenance', 'spdx', 'canonical-release-identity', 'supported-platform-matrix',
+                 'exact-artifact-promotion', 'supported-host-compatibility',
+                 'desktop-native-linux-x64-deb-qualification',
+                 'desktop-installed-hostile-instance-proof', 'desktop-installer-install-reinstall-remove',
+                 'desktop-installer-upgrade-rollback-recovery', 'desktop-profile-observation']
 
 
 def digest_bytes(data):
@@ -425,9 +430,12 @@ def collect(archive, kind, source, *, archive_identity=None, runtime_dir=None,
         if not isinstance(archive_identity['version'], str) or not archive_identity['version'] or (
                 archive_identity['version'] != archive_identity['version'].strip()):
             raise ValueError('archive version is missing')
-        artifact = {'format': 'archive', 'platform': archive_identity['platform'],
+        if kind == 'desktop-archive' and archive_identity['platform'] != 'linux/amd64':
+            raise ValueError('desktop Nix candidate must be a native Linux x64 Debian package')
+        artifact = {'format': 'deb' if kind == 'desktop-archive' else 'archive',
+                    'platform': archive_identity['platform'],
                     'version': archive_identity['version']}
-        gates = COMMON_GATES + ['embedded-source-identity']
+        gates = DESKTOP_GATES if kind == 'desktop-archive' else COMMON_GATES + ['embedded-source-identity']
     artifact.update(kind=kind, sha256=digest_file(archive))
     manifest = {'schemaVersion': 1, 'artifact': artifact, 'source': copy.deepcopy(source),
                 'evidence': {}, 'requiredReleaseEvidence': sorted(gates), 'releaseAdmission': False}
