@@ -172,7 +172,7 @@ func evaluateQualificationPerformance(
 	report qualificationPerformanceReport,
 	policy qualificationPerformancePolicy,
 ) []string {
-	var failures []string
+	failures := validateQualificationPerformanceLatencies(report, policy)
 	for _, phase := range qualificationLatencyPhases {
 		actual := report.Latency[phase.Field].P95
 		limit := phase.Budget(policy)
@@ -231,19 +231,69 @@ func evaluateQualificationPerformance(
 	return failures
 }
 
+func validateQualificationPerformanceLatencies(report qualificationPerformanceReport, policy qualificationPerformancePolicy) []string {
+	samples := policy.Assumptions.Samples
+	expectedSamples := map[string]int{
+		"coldDashboardReadyMs": samples.ColdDashboardLoads,
+		"warmDashboardReadyMs": samples.WarmDashboardLoads,
+		"filterToSettleMs":     samples.FilterInteractions,
+		"tableInteractionMs":   samples.TableInteractions,
+		"governedQueryMs":      samples.GovernedQueries,
+		"refreshMs":            samples.RefreshRuns,
+		"concurrentQueryMs":    samples.ConcurrentReaders,
+	}
+	var failures []string
+	for _, phase := range qualificationLatencyPhases {
+		summary, present := report.Latency[phase.Field]
+		if !present {
+			failures = append(failures, "latency."+phase.Field+" is missing")
+			continue
+		}
+		expected := expectedSamples[phase.Field]
+		if summary.Samples <= 0 || summary.Samples != expected {
+			failures = append(failures, fmt.Sprintf("latency.%s has %d samples, expected %d", phase.Field, summary.Samples, expected))
+		}
+		valid := true
+		for _, metric := range []struct {
+			name  string
+			value float64
+		}{{"p50", summary.P50}, {"p95", summary.P95}, {"max", summary.Max}} {
+			if metric.value < 0 || math.IsNaN(metric.value) || math.IsInf(metric.value, 0) {
+				failures = append(failures, fmt.Sprintf("latency.%s.%s must be finite and nonnegative", phase.Field, metric.name))
+				valid = false
+			}
+		}
+		if valid && (summary.P50 > summary.P95 || summary.P95 > summary.Max) {
+			failures = append(failures, "latency."+phase.Field+" must satisfy p50 <= p95 <= max")
+		}
+	}
+	return failures
+}
+
 func compareQualificationPerformance(
 	candidate,
 	baseline qualificationPerformanceReport,
 	policy qualificationPerformancePolicy,
 ) []string {
 	var failures []string
+	for _, failure := range validateQualificationPerformanceLatencies(candidate, policy) {
+		failures = append(failures, "candidate "+failure)
+	}
+	for _, failure := range validateQualificationPerformanceLatencies(baseline, policy) {
+		failures = append(failures, "baseline "+failure)
+	}
+	if len(failures) > 0 {
+		return failures
+	}
 	for _, phase := range qualificationLatencyPhases {
 		previous := baseline.Latency[phase.Field].P95
 		current := candidate.Latency[phase.Field].P95
-		if previous <= 0 || current < 0 {
-			continue
+		ratio := 1.0
+		if previous > 0 {
+			ratio = current / previous
+		} else if current > 0 {
+			ratio = math.Inf(1)
 		}
-		ratio := current / previous
 		if ratio > policy.Comparison.MaxRegressionRatio &&
 			current-previous >= policy.Comparison.MinimumMeaningfulLatencyDeltaMs {
 			failures = append(failures, fmt.Sprintf(
@@ -286,6 +336,7 @@ func finalizeQualificationPerformanceReport(
 	report.Image = image
 	report.Architecture = architecture
 	var comparisonFailures []string
+	report.Comparison.Baseline = nil
 	if strings.TrimSpace(baselinePath) != "" {
 		var baseline qualificationPerformanceReport
 		if err := readQualificationJSON(baselinePath, &baseline); err != nil {
@@ -317,7 +368,7 @@ func finalizeQualificationPerformanceReport(
 	absoluteFailures := evaluateQualificationPerformance(report, policy)
 	report.Assertions.Environment = len(environmentFailures) == 0
 	report.Assertions.AbsoluteBudgets = len(absoluteFailures) == 0
-	report.Assertions.ComparisonTolerance = len(comparisonFailures) == 0
+	report.Assertions.ComparisonTolerance = report.Comparison.Baseline != nil && len(comparisonFailures) == 0
 	report.Assertions.ErrorFree = report.Reliability.Errors == 0 &&
 		len(report.Reliability.Failures) == 0
 	report.Failures = append(report.Failures, environmentFailures...)
