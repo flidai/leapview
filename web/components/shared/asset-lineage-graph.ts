@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import '@xyflow/react/dist/style.css'
 import {
   Background,
-  Panel,
+  ReactFlowProvider,
   Handle,
   MarkerType,
   Position,
@@ -27,6 +27,7 @@ type LineageGraph = {
 
 type LineageScope = 'focused' | 'full'
 type LineageScopeMode = 'dependencies' | 'run'
+type LineageViewportState = { mode: 'automatic' | 'overview' | 'manual' }
 
 type LineageNode = {
   id: string
@@ -88,6 +89,13 @@ class AssetLineageGraph extends LitElement {
   private dialog?: HTMLDialogElement
   private expanded = false
   private previousOverflow = ''
+  private viewportState: LineageViewportState = { mode: 'automatic' }
+
+  private changeViewportMode = (mode: LineageViewportState['mode']): void => {
+    if (this.viewportState.mode === mode) return
+    this.viewportState.mode = mode
+    this.renderFlow()
+  }
 
   private expand(): void {
     if (!this.dialog || !this.mount || this.expanded) return
@@ -227,7 +235,7 @@ class AssetLineageGraph extends LitElement {
       type: 'button', onClick, ...options,
     }, label)
     const signature = JSON.stringify([nodes.map((node) => node.id).sort(), edges.map((edge) => [edge.source, edge.target]).sort()])
-    this.root.render(React.createElement('div', {
+    this.root.render(React.createElement(ReactFlowProvider, null, React.createElement('div', {
       className: 'asset-lineage-layout',
       onClick: (event: React.MouseEvent) => {
         if (event.target instanceof Element && event.target.matches('.react-flow__renderer')) clearSelection()
@@ -261,7 +269,10 @@ class AssetLineageGraph extends LitElement {
         button(this.scopeActionLabel, () => this.changeScope(this.scope === 'full' ? 'focused' : 'full'), { className: 'asset-lineage-scope' }),
         button('Focus selected', () => {
           const node = selectedNode ? this.flow?.getNode(selectedNode.id) : undefined
-          if (node) void this.flow?.setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: 1 })
+          if (node) {
+            this.changeViewportMode('manual')
+            void this.flow?.setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: FIT_OPTIONS.maxZoom })
+          }
         }, { disabled: !selectedNode }),
       ),
       React.createElement('div', { className: 'asset-lineage-flow', 'aria-label': 'Asset lineage graph' },
@@ -270,18 +281,19 @@ class AssetLineageGraph extends LitElement {
           edges: edges.map((edge) => toFlowEdge(edge, pathState, nodeRanks)),
           nodeTypes,
           onInit: (flow: ReactFlowInstance) => { this.flow = flow },
-          fitView: true, fitViewOptions: FIT_OPTIONS, minZoom: 0.02, maxZoom: 2,
+          minZoom: FIT_OPTIONS.minZoom, maxZoom: 2,
           nodesDraggable: false, nodesConnectable: false, nodesFocusable: false,
           edgesFocusable: false, elementsSelectable: true,
           panOnDrag: true, zoomOnScroll: false, preventScrolling: false,
           onPaneClick: clearSelection,
+          onMoveStart: (event: MouseEvent | TouchEvent | null) => { if (event) this.changeViewportMode('manual') },
           children: [
             React.createElement(Background, { key: 'background', gap: 18, size: 1 }),
-            React.createElement(LineageViewportControls, { key: 'controls', expanded: this.expanded, onToggleExpanded: () => this.expanded ? this.collapse() : this.expand() }),
-            React.createElement(FitLineage, { key: 'fit', signature, scope: this.scope, selectedID: this.selectedNodeID }),
+            React.createElement(FitLineage, { key: 'fit', viewportState: this.viewportState, signature, scope: this.scope, selectedID: this.selectedNodeID }),
           ],
         }) : React.createElement('div', { className: 'asset-lineage-empty', role: 'status' }, 'No assets in this lineage.'),
       ),
+      nodes.length ? React.createElement(LineageViewportControls, { viewportState: this.viewportState, onModeChange: this.changeViewportMode, expanded: this.expanded, onToggleExpanded: () => this.expanded ? this.collapse() : this.expand() }) : null,
       React.createElement('div', { className: 'asset-lineage-summary', role: 'status' },
         React.createElement('span', null, `${nodes.length} of ${graph.nodes.length} assets in this view · ${edges.length} connections`),
         selectedNode ? React.createElement('span', { className: 'asset-lineage-selection' },
@@ -290,7 +302,7 @@ class AssetLineageGraph extends LitElement {
           selectedNode.href ? React.createElement('a', { href: selectedNode.href }, 'Open asset') : null,
         ) : React.createElement('span', null, 'Select an asset to trace its dependencies. Data flows left to right.'),
       ),
-    ))
+    )))
   }
 
   private changeScope(scope: LineageScope): void {
@@ -385,7 +397,7 @@ const assetLineageGraphStyles = `
   lv-asset-lineage-graph .asset-lineage-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(120px, 1fr) auto;
+    grid-template-rows: auto minmax(120px, 1fr) auto auto;
     outline: 0;
   }
 
@@ -520,6 +532,8 @@ const assetLineageGraphStyles = `
   lv-asset-lineage-graph .react-flow__attribution { display: none; }
 
   lv-asset-lineage-graph .asset-lineage-viewport-controls {
+    justify-self: start;
+    margin: var(--base-size-12);
     display: flex;
     align-items: center;
     gap: 2px;
@@ -662,7 +676,7 @@ const assetLineageGraphStyles = `
 
 const ZOOM_LEVELS = [0.02, 0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]
 
-function LineageViewportControls({ expanded, onToggleExpanded }: { expanded: boolean; onToggleExpanded: () => void }) {
+function LineageViewportControls({ viewportState, onModeChange, expanded, onToggleExpanded }: { viewportState: LineageViewportState; onModeChange: (mode: LineageViewportState['mode']) => void; expanded: boolean; onToggleExpanded: () => void }) {
   const { getNodes, getNodesBounds, getViewport, setViewport } = useReactFlow()
   const zoom = useStore((state) => state.transform[2])
   const x = useStore((state) => state.transform[0])
@@ -675,6 +689,7 @@ function LineageViewportControls({ expanded, onToggleExpanded }: { expanded: boo
   // Read the latest viewport inside each click so rapid clicks cannot reuse a
   // stale zoom or queue competing animations. Keep the viewport centre fixed.
   const zoomTo = (next: number) => {
+    onModeChange('manual')
     const current = getViewport()
     const ratio = next / current.zoom
     void setViewport({
@@ -691,11 +706,11 @@ function LineageViewportControls({ expanded, onToggleExpanded }: { expanded: boo
   }
   const control = (text: string, label: string, title: string, onClick: () => void, disabled: boolean, className?: string) =>
     React.createElement('button', { type: 'button', 'aria-label': label, title, onClick, disabled, className }, text)
-  return React.createElement(Panel, { position: 'bottom-left', className: 'asset-lineage-viewport-controls', role: 'group', 'aria-label': 'Graph view' },
+  return React.createElement('div', { className: 'asset-lineage-viewport-controls', role: 'group', 'aria-label': 'Graph view' },
     control('−', 'Zoom out', 'Zoom out to see more of the graph', () => step('out'), zoom <= ZOOM_LEVELS[0]! + 0.001),
     React.createElement('output', { className: 'asset-lineage-zoom-level', role: 'status', 'aria-label': 'Zoom level', 'aria-live': 'polite' }, `${Math.round(zoom * 100)}%`),
     control('+', 'Zoom in', 'Zoom in to read asset details', () => step('in'), zoom >= 2 - 0.001),
-    control('Fit graph', 'Fit graph', isFitted ? 'All visible assets already fit in the graph' : 'Centre and fit all visible assets', () => { void setViewport(fitted) }, isFitted, 'asset-lineage-fit'),
+    control('Fit graph', 'Fit graph', isFitted && viewportState.mode === 'overview' ? 'All visible assets already fit in the graph' : 'Centre and fit all visible assets', () => { onModeChange('overview'); void setViewport(fitted) }, isFitted && viewportState.mode === 'overview', 'asset-lineage-fit'),
     React.createElement('button', {
       type: 'button', className: 'asset-lineage-expand', onClick: onToggleExpanded,
       'aria-label': expanded ? 'Exit full page' : 'Expand to full page', 'aria-expanded': expanded,
@@ -707,23 +722,46 @@ function LineageViewportControls({ expanded, onToggleExpanded }: { expanded: boo
   )
 }
 
-function FitLineage({ signature, scope, selectedID }: { signature: string; scope: LineageScope; selectedID?: string }) {
+function FitLineage({ viewportState, signature, scope, selectedID }: { viewportState: LineageViewportState; signature: string; scope: LineageScope; selectedID?: string }) {
   const { getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport } = useReactFlow()
-  const previous = useRef<{ signature: string; scope: LineageScope } | undefined>(undefined)
+  const previous = useRef<{ signature: string; scope: LineageScope; selectedID?: string } | undefined>(undefined)
+  const dimensions = useRef<{ width: number; height: number } | undefined>(undefined)
   const domNode = useStore((state) => state.domNode)
   useEffect(() => {
     if (!domNode) return
     let frame = 0
     const scopeChanged = previous.current !== undefined && previous.current.scope !== scope
+    const selectionChanged = previous.current !== undefined && previous.current.selectedID !== selectedID
     const topologyChanged = previous.current?.signature !== signature
-    previous.current = { signature, scope }
-    const fit = () => {
+    previous.current = { signature, scope, selectedID }
+    let centerChangedSelection = Boolean(selectedID && (scopeChanged || (topologyChanged && (selectionChanged || viewportState.mode === 'manual'))))
+    const resize = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         const { width, height } = domNode.getBoundingClientRect()
         if (!width || !height) return
-        const bounds = getNodesBounds(getNodes())
-        void setViewport(getViewportForBounds(bounds, width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding))
+        const oldDimensions = dimensions.current
+        dimensions.current = { width, height }
+        if (centerChangedSelection) {
+          centerChangedSelection = false
+          const node = selectedID ? getNode(selectedID) : undefined
+          if (node) {
+            void setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: getViewport().zoom })
+            return
+          }
+        }
+        if (viewportState.mode === 'manual' && oldDimensions) {
+          const current = getViewport()
+          void setViewport({ ...current, x: current.x + (width - oldDimensions.width) / 2, y: current.y + (height - oldDimensions.height) / 2 })
+          return
+        }
+        const nodes = getNodes()
+        const fitted = getViewportForBounds(getNodesBounds(nodes), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
+        const anchor = (selectedID ? getNode(selectedID) : undefined) ?? nodes[0]
+        // Automatic views keep an asset readable; Fit graph explicitly requests the complete overview.
+        void setViewport(viewportState.mode === 'automatic' && fitted.zoom < FIT_OPTIONS.maxZoom && anchor
+          ? getViewportForBounds(getNodesBounds([anchor]), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
+          : fitted)
       })
     }
     let observedWidth = domNode.clientWidth
@@ -732,19 +770,12 @@ function FitLineage({ signature, scope, selectedID }: { signature: string; scope
       if (domNode.clientWidth === observedWidth && domNode.clientHeight === observedHeight) return
       observedWidth = domNode.clientWidth
       observedHeight = domNode.clientHeight
-      fit()
+      resize()
     })
     observer.observe(domNode)
-    const anchorID = selectedID
-    if (scopeChanged && anchorID) {
-      // Scope is an inclusion control. Preserve the user's zoom as it changes.
-      frame = requestAnimationFrame(() => {
-        const node = getNode(anchorID)
-        if (node) void setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: getViewport().zoom })
-      })
-    } else if (topologyChanged) fit()
+    if (topologyChanged || scopeChanged) resize()
     return () => { observer.disconnect(); cancelAnimationFrame(frame) }
-  }, [signature, scope, selectedID, getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport, domNode])
+  }, [viewportState, signature, scope, selectedID, getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport, domNode])
   return null
 }
 
@@ -860,6 +891,8 @@ function LineageNodeComponent({ data }: { data: LineageNodeData }) {
   const styles = nodeStyle(data)
   const { getNode, getViewport, setCenter } = useReactFlow()
   const onFocus = (event: React.FocusEvent<HTMLDivElement>) => {
+    // Pointer focus must not move the target before its click completes.
+    if (!event.currentTarget.matches(':focus-visible')) return
     const bounds = event.currentTarget.getBoundingClientRect()
     const surface = event.currentTarget.closest('.asset-lineage-flow')?.getBoundingClientRect()
     if (!surface || (bounds.left >= surface.left && bounds.right <= surface.right && bounds.top >= surface.top && bounds.bottom <= surface.bottom)) return

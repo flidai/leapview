@@ -77,6 +77,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
         edgeRouting: edgePath.getAttribute('class') ?? '',
         nodePosition: getComputedStyle(node).position,
         nodeInsideFlow: nodeRect.top >= flowRect.top && nodeRect.top < flowRect.bottom,
+        controlsOutsideCanvas: controlRect.top >= flowRect.bottom,
         controlDisplay: getComputedStyle(controlButton).display,
         controlWidth: Math.round(controlRect.width),
         controlHeight: Math.round(controlRect.height),
@@ -93,6 +94,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       edgeRouting: expect.stringContaining('react-flow__edge-smoothstep'),
       nodePosition: 'absolute',
       nodeInsideFlow: true,
+      controlsOutsideCanvas: true,
       controlDisplay: 'flex',
       controlWidth: 36,
       controlHeight: 36,
@@ -199,6 +201,7 @@ test('asset lineage keeps dense graphs readable on initial fit', async () => {
       return graph?.querySelectorAll('.react-flow__node').length === 14
     })
 
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText('100%')
     const state = await graph.evaluate((element) => {
       const viewport = element.querySelector('.react-flow__viewport') as HTMLElement
       const flow = element.querySelector('.react-flow') as HTMLElement
@@ -216,13 +219,55 @@ test('asset lineage keeps dense graphs readable on initial fit', async () => {
         allNodesVerticallyVisible: nodeRects.every((rect) => rect.top >= flowRect.top && rect.bottom <= flowRect.bottom && rect.left >= flowRect.left && rect.right <= flowRect.right),
       }
     })
-    expect(state.scale).toBeGreaterThan(0)
+    expect(state.scale).toBe(1)
     expect(state.selectedVisible).toBe(true)
-    expect(state.allNodesVerticallyVisible).toBe(true)
+    expect(state.allNodesVerticallyVisible).toBe(false)
+    await graph.getByRole('button', { name: 'Fit graph', exact: true }).click()
+    await browserExpect.poll(() => graph.evaluate(element => {
+      const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+      return [...element.querySelectorAll('.react-flow__node')].every(node => {
+        const rect = node.getBoundingClientRect()
+        return rect.top >= flow.top && rect.bottom <= flow.bottom && rect.left >= flow.left && rect.right <= flow.right
+      })
+    })).toBe(true)
   } finally {
     await page.close()
   }
 })
+
+test('clipped nodes remain clickable and keyboard focus brings the next asset into view', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((el: HTMLElement & { selections?: string[] }) => {
+      el.style.height = '300px'
+      el.selections = []
+      el.addEventListener('lv-lineage-select', event => el.selections!.push((event as CustomEvent).detail.id))
+    })
+    for (let i = 0; i < 3; i++) await graph.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText('200%')
+    const source = graph.getByRole('button', { name: 'Source orders', exact: true })
+    expect(await source.evaluate(el => {
+      const node = el.getBoundingClientRect()
+      const canvas = el.closest('.asset-lineage-flow')!.getBoundingClientRect()
+      return node.top < canvas.top || node.left < canvas.left
+    })).toBe(true)
+    await source.click()
+    await browserExpect.poll(() => graph.evaluate((el: any) => el.selections)).toEqual(['source'])
+    await page.keyboard.press('Tab')
+    const next = graph.getByRole('button', { name: 'Dashboard Executive Sales Dashboard', exact: true })
+    await browserExpect(next).toBeFocused()
+    await browserExpect.poll(() => next.evaluate(el => {
+      const node = el.getBoundingClientRect()
+      const canvas = el.closest('.asset-lineage-flow')!.getBoundingClientRect()
+      return node.left + node.width / 2 - canvas.left - canvas.width / 2
+    })).toBeCloseTo(0, 1)
+    await page.keyboard.press('Enter')
+    await browserExpect.poll(() => graph.evaluate((el: any) => el.selections)).toEqual(['source', 'dashboard'])
+  } finally { await page.close() }
+}, 15_000)
 
 test('lineage toolbar opens assets and filters actual dependency paths', async () => {
   const page = await browser.newPage()
@@ -281,11 +326,57 @@ test('lineage zoom, fit, resize and signal refresh preserve a usable view', asyn
         return r.left >= flow.left && r.right <= flow.right && r.top >= flow.top && r.bottom <= flow.bottom
       })
     })
+    await browserExpect.poll(scale).toBeCloseTo(1, 2)
+    await graph.getByRole('button', { name: 'Fit graph' }).click()
     await browserExpect.poll(allVisible).toBe(true)
     for (let i = 0; i < 4; i++) await graph.getByRole('button', { name: 'Zoom in' }).click()
     await browserExpect.poll(allVisible).toBe(false)
     await graph.getByRole('button', { name: 'Fit graph' }).click()
     await browserExpect.poll(allVisible).toBe(true)
+  } finally { await page.close() }
+}, 15_000)
+
+test('choosing an already fitted overview survives resize and manual views retain their center', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    const zoom = graph.getByRole('status', { name: 'Zoom level' })
+    const fit = graph.getByRole('button', { name: 'Fit graph', exact: true })
+    await browserExpect(zoom).toHaveText('100%')
+    await browserExpect(fit).toBeEnabled()
+    await fit.click()
+    await browserExpect(fit).toBeDisabled()
+    await browserExpect(zoom).toHaveText('100%')
+    await graph.evaluate((el: HTMLElement) => { el.style.width = '346px' })
+    await browserExpect(zoom).not.toHaveText('100%')
+    await browserExpect(fit).toBeDisabled()
+    await browserExpect.poll(() => graph.evaluate(el => {
+      const flow = el.querySelector('.react-flow')!.getBoundingClientRect()
+      return [...el.querySelectorAll('.react-flow__node')].every(node => {
+        const r = node.getBoundingClientRect()
+        return r.left >= flow.left && r.right <= flow.right && r.top >= flow.top && r.bottom <= flow.bottom
+      })
+    })).toBe(true)
+    const flow = (await graph.locator('.react-flow').boundingBox())!
+    await page.mouse.move(flow.x + flow.width - 24, flow.y + 24)
+    await page.mouse.down()
+    await page.mouse.move(flow.x + flow.width - 64, flow.y + 44, { steps: 5 })
+    await page.mouse.up()
+    await browserExpect(fit).toBeEnabled()
+    const view = () => graph.evaluate(el => {
+      const match = (el.querySelector('.react-flow__viewport') as HTMLElement).style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/)!
+      const bounds = el.querySelector('.react-flow')!.getBoundingClientRect()
+      const scale = Number(match[3])
+      return { scale, centerX: (bounds.width / 2 - Number(match[1])) / scale, centerY: (bounds.height / 2 - Number(match[2])) / scale }
+    })
+    const before = await view()
+    await graph.evaluate((el: HTMLElement & { graph: any }) => { el.graph = structuredClone(el.graph); el.style.width = '620px' })
+    await browserExpect.poll(async () => (await view()).centerX).toBeCloseTo(before.centerX, 1)
+    const after = await view()
+    expect(after.scale).toBe(before.scale)
+    expect(after.centerY).toBeCloseTo(before.centerY, 1)
   } finally { await page.close() }
 }, 15_000)
 
@@ -298,8 +389,8 @@ test('viewport controls explain their actions and keep zoom anchored without cha
     await graph.evaluate((el: HTMLElement) => { el.style.width = '346px' })
     const controls = graph.getByRole('group', { name: 'Graph view' })
     const zoom = controls.getByRole('status', { name: 'Zoom level' })
-    await browserExpect(zoom).not.toHaveText('100%')
-    await browserExpect(controls.getByRole('button', { name: 'Fit graph', exact: true })).toBeDisabled()
+    await browserExpect(zoom).toHaveText('100%')
+    await browserExpect(controls.getByRole('button', { name: 'Fit graph', exact: true })).toBeEnabled()
     await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
     await browserExpect(zoom).toHaveText('100%')
     const viewport = () => graph.evaluate(el => {
