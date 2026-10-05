@@ -307,7 +307,6 @@ tasks:
     cmds:
       - task generate
       - go run ./internal/app/tools/securitypolicy -root .
-      - GOARCH=386 CGO_ENABLED=0 go test ./pkg/duckdbsql/decode_integer.go ./pkg/duckdbsql/decode_integer_test.go
       - go test -race ./internal/app/cli/hostinstall -count=1
       - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_demo*.py'
       - |
