@@ -45,6 +45,38 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('selecting a field in another semantic model clears the previous model time', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const command = await page.evaluate(() => {
+      const explorer = document.createElement('lv-data-explorer') as any
+      explorer.embedded = true
+      const time = { field: 'orders.created_at', grain: 'month' }
+      const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, time }
+      const current = { spec, semanticModelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {}, time }
+      const explore = { command: current, fields: [] }
+      Object.defineProperty(explorer, 'dataExplorer', { value: {
+        selectedObject: { key: 'orders', semanticModelId: 'sales' }, explore,
+      } })
+      explorer.toggleUnifiedField(
+        { id: 'stock.available', kind: 'metric', datasetId: 'stock', compatible: true },
+        { key: 'stock', semanticModelId: 'inventory', datasetId: 'stock', columns: [{ key: 'status' }] },
+        explore,
+        true,
+      )
+      cancelAnimationFrame(explorer.exploreFrame)
+      return explorer.optimisticExplore
+    })
+    expect(command.spec.modelId).toBe('inventory')
+    expect(command.spec.datasetId).toBe('stock')
+    expect(command.spec.metrics).toEqual([{ field: 'stock.available' }])
+    expect(command.spec.time).toBeUndefined()
+    expect(command.time).toBeUndefined()
+  } finally { await page.close() }
+})
+
 test('Data Explorer retains the last good result through draft and run lifecycle failures', async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   try {

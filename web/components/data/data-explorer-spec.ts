@@ -3,6 +3,8 @@ import type {
   ExplorationFilterExpression,
   ExplorationFilterValue,
   ExplorationSpec,
+  ExplorationVisualizationConfig,
+  ExplorationVisualizationFieldRef,
 } from '../../generated/exploration'
 import type { DataExploreCommand } from '../../generated/signals'
 import type { DataExploreDatasetSignal, DataExploreFieldSignal, DataExplorerObjectSignal } from '../../generated/signals'
@@ -57,7 +59,9 @@ export function explorationSpecFor(command: Pick<Partial<DataExploreCommand>, 's
  * typed filters, and display configuration.
  */
 export function explorationSpecFromCommand(command: DataExploreCommand): ExplorationSpec {
-  const base = explorationSpecFor(command)
+  const current = explorationSpecFor(command)
+  const modelID = command.semanticModelId?.trim() || current.modelId
+  const base = modelID !== current.modelId ? emptyExplorationSpec : current
   const dimensionsByField = new Map(base.dimensions.map((item) => [item.field, item]))
   const metricsByField = new Map(base.metrics.map((item) => [item.field, item]))
   const usedFilters = new Set<number>()
@@ -74,18 +78,20 @@ export function explorationSpecFromCommand(command: DataExploreCommand): Explora
   const spec: ExplorationSpec = {
     ...base,
     schemaVersion: 1,
-    modelId: command.semanticModelId?.trim() || base.modelId,
+    modelId: modelID,
     datasetId: command.datasetId?.trim() || base.datasetId,
     dimensions: command.dimensions === undefined ? base.dimensions : command.dimensions.map((field) => dimensionsByField.get(field) ?? { field }),
     metrics: command.metrics === undefined ? base.metrics : command.metrics.map((field) => metricsByField.get(field) ?? { field }),
     filters,
     sort: command.sort === undefined ? base.sort : command.sort.map((item) => ({ field: item.field, direction: item.direction as 'asc' | 'desc' })),
-    time: command.time ? { ...base.time, field: command.time.field, grain: command.time.grain as ExplorationTimeGrainValue, alias: command.time.alias } : base.time,
+    time: Object.hasOwn(command, 'time')
+      ? command.time ? { ...base.time, field: command.time.field, grain: command.time.grain as ExplorationTimeGrainValue, alias: command.time.alias } : undefined
+      : base.time,
     limit: command.limit || base.limit || 100,
   }
   if (!spec.datasetId) delete spec.datasetId
-  if (!command.time && !base.time) delete spec.time
-  return spec
+  if (!spec.time) delete spec.time
+  return reconcileExplorationPresentation(spec)
 }
 
 export function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
@@ -186,12 +192,45 @@ export function toggleExplorationField(spec: ExplorationSpec, fieldID: string, k
   const values = spec[key]
   const selected = values.some((value) => value.field === fieldID)
   const next = selected ? values.filter((value) => value.field !== fieldID) : [...values, { field: fieldID }]
-  return { ...spec, [key]: next, sort: explorationSortsWithoutField(spec, fieldID) } as ExplorationSpec
+  return reconcileExplorationPresentation({ ...spec, [key]: next, sort: explorationSortsWithoutField(spec, fieldID) })
 }
 
 export function removeExplorationField(spec: ExplorationSpec, fieldID: string, kind: 'dimension' | 'metric'): ExplorationSpec {
   const key = kind === 'metric' ? 'metrics' : 'dimensions'
-  return { ...spec, [key]: spec[key].filter((field) => field.field !== fieldID), sort: explorationSortsWithoutField(spec, fieldID) } as ExplorationSpec
+  return reconcileExplorationPresentation({ ...spec, [key]: spec[key].filter((field) => field.field !== fieldID), sort: explorationSortsWithoutField(spec, fieldID) })
+}
+
+/** Keep display bindings valid after selection edits, including authored aliases. */
+export function reconcileExplorationPresentation(spec: ExplorationSpec): ExplorationSpec {
+  const refs = [...spec.dimensions, ...spec.metrics, ...(spec.time ? [spec.time] : []),
+    ...(spec.pivot ? [...spec.pivot.rows, ...spec.pivot.columns, ...spec.pivot.metrics] : [])]
+  const selected = new Set(refs.flatMap((ref) => [ref.field, ref.alias?.trim() ?? '']).filter(Boolean))
+  const next = { ...spec }
+  if (spec.table?.columns) {
+    next.table = { ...spec.table, columns: spec.table.columns.filter((column) => selected.has(column.field)) }
+  }
+  if (spec.visualization && visualizationFields(spec.visualization).some((ref) => !selected.has(ref.field))) {
+    // Required bindings differ by visualization kind. Let the server choose a
+    // new default instead of retaining a partially configured chart.
+    next.visualization = undefined
+  }
+  return next
+}
+
+function visualizationFields(visualization: ExplorationVisualizationConfig): ExplorationVisualizationFieldRef[] {
+  const optional = (...refs: Array<ExplorationVisualizationFieldRef | undefined>) => refs.filter((ref): ref is ExplorationVisualizationFieldRef => !!ref)
+  switch (visualization.kind) {
+    case 'cartesian': return [...optional(visualization.x, visualization.series), ...(visualization.y ?? [])]
+    case 'point': return [...optional(visualization.x, visualization.y, visualization.size, visualization.color), ...(visualization.identity ?? [])]
+    case 'proportional': return optional(visualization.category, visualization.value, visualization.series)
+    case 'hierarchy': return optional(visualization.node, visualization.parent, visualization.value)
+    case 'polar': return optional(visualization.category, visualization.value, visualization.series)
+    case 'table': return visualization.columns
+    case 'matrix':
+    case 'pivot': return [...visualization.rows, ...visualization.columns, ...visualization.metrics]
+    case 'kpi': return optional(visualization.value, visualization.comparison, visualization.goal, visualization.trend?.category, visualization.trend?.value)
+    case 'geographic': return optional(visualization.latitude, visualization.longitude, visualization.color, visualization.size)
+  }
 }
 
 export function explorationSortsWithoutField(spec: ExplorationSpec, fieldID: string): ExplorationSpec['sort'] {
@@ -311,19 +350,19 @@ export function setExplorationTime(
     ? new Set([previousTime.field.trim(), previousTime.alias?.trim() ?? ''].filter(Boolean))
     : undefined
   if (!key) {
-    const { time: _time, ...withoutTime } = spec
-    return {
-      ...withoutTime,
+    return reconcileExplorationPresentation({
+      ...spec,
+      time: undefined,
       sort: previousTimeKeys
         ? spec.sort.filter((sort) => !previousTimeKeys.has(sort.field))
         : spec.sort,
-    } as ExplorationSpec
+    })
   }
   const next: ExplorationTimeValue = { ...spec.time, field: key, grain }
   const sort = previousTime && previousTime.field.trim() !== key && previousTimeKeys
     ? spec.sort.filter((entry) => !previousTimeKeys.has(entry.field))
     : spec.sort
-  return { ...spec, time: next, sort }
+  return reconcileExplorationPresentation({ ...spec, time: next, sort })
 }
 
 export function setExplorationTimeRange(

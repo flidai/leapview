@@ -990,6 +990,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       metrics: [],
       filters: [],
       sort: [],
+      time: undefined,
       columnWidths: {},
     }
     const key = field.kind === 'metric' ? 'metrics' : 'dimensions'
@@ -1003,7 +1004,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private resetExplore(command: DataExploreCommand) {
     this.closeFilter()
     const spec = explorationSpecFor(command)
-    this.emitExploreSpec({ ...spec, dimensions: [], metrics: [], filters: [], sort: [], time: undefined }, { ...command, columnWidths: {} }, true)
+    this.emitExploreSpec({ ...spec, dimensions: [], metrics: [], filters: [], sort: [], time: undefined, pivot: undefined, table: undefined, visualization: undefined }, { ...command, columnWidths: {} }, true)
   }
 
   private openFilter(field: DataExploreFieldSignal) {

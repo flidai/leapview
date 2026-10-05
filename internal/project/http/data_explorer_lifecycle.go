@@ -185,6 +185,9 @@ func (l *dataExplorerLifecycle) acceptSemantic(key string, requestSeq int64) boo
 	}
 	if requestSeq > l.latest[key] {
 		l.latest[key] = requestSeq
+		// The previous run identity belongs to the superseded sequence. A new
+		// run may still be projecting when its named Stop reaches this lane.
+		delete(l.latestRun, key)
 		// A newer semantic command means the active result belongs to an older
 		// draft. Cancel that run immediately, even if the command is only a
 		// configure request; value suggestions use their separate lane below.
@@ -227,10 +230,12 @@ func (l *dataExplorerLifecycle) currentRun(key string, requestSeq int64, runID s
 }
 
 func (l *dataExplorerLifecycle) currentRunLocked(key string, requestSeq int64, runID string) bool {
-	// Stop records a tombstone instead of advancing the request sequence so
-	// that the stop response can still acquire the emission lease. A semantic
-	// response from that stopped run must nevertheless remain stale, including
-	// when its executor ignores context cancellation and returns later.
+	// Stop records a tombstone at its sequence so its acknowledgement can
+	// still acquire the response lease, while semantic responses at or before
+	// that sequence remain stale even if cancellation was ignored.
+	if stoppedSeq := l.stoppedRequestSeq[key]; requestSeq > 0 && stoppedSeq > 0 && requestSeq <= stoppedSeq {
+		return false
+	}
 	runID = strings.TrimSpace(runID)
 	if stoppedRunID := strings.TrimSpace(l.stoppedRun[key]); stoppedRunID != "" && runID != "" && runID == stoppedRunID {
 		return false
@@ -273,6 +278,25 @@ func (l *dataExplorerLifecycle) beginLane(key, runID string, requestSeq int64, p
 		runMap = &l.suggestionsRun
 	}
 	l.touchLocked(key)
+	// Acceptance happens before catalog projection, which may finish after a
+	// newer command has already started or stopped this lane. Recheck while
+	// holding the same lock that protects replacement of the active execution.
+	// A rejected begin must not cancel the newer run or clear its tombstone.
+	stale := requestSeq < (*latestMap)[key]
+	if !suggestions {
+		if stoppedSeq := l.stoppedRequestSeq[key]; requestSeq > 0 && stoppedSeq > 0 && requestSeq <= stoppedSeq {
+			stale = true
+		}
+		if stoppedRun := l.stoppedRun[key]; stoppedRun != "" && stoppedRun == runID {
+			stale = true
+		}
+	}
+	if stale {
+		cancel()
+		l.pruneLocked()
+		l.mu.Unlock()
+		return ctx, func() {}, runID
+	}
 	if *activeMap == nil {
 		*activeMap = make(map[string]*dataExplorerExecution)
 	}
@@ -317,12 +341,31 @@ func (l *dataExplorerLifecycle) stop(key, runID string, requestSeq int64) bool {
 	defer releaseResponseGate()
 	l.mu.Lock()
 	l.touchLocked(key)
+	runID = strings.TrimSpace(runID)
 	active := l.active[key]
 	if active == nil {
+		// A run may have passed acceptance but still be projecting its catalog.
+		// Acknowledge that nothing is executing, while preventing that delayed
+		// run from starting after this Stop. A newer sequence supersedes the
+		// completed run identity; at the same sequence, preserve its ID guard.
+		newer := requestSeq > l.latest[key]
+		if requestSeq > 0 && requestSeq >= l.latest[key] && (newer || runID == "" || l.latestRun[key] == "" || l.latestRun[key] == runID) {
+			if l.latest == nil {
+				l.latest = make(map[string]int64)
+			}
+			if l.stoppedRequestSeq == nil {
+				l.stoppedRequestSeq = make(map[string]int64)
+			}
+			if newer {
+				delete(l.latestRun, key)
+			}
+			l.latest[key] = requestSeq
+			l.stoppedRequestSeq[key] = requestSeq
+		}
+		l.pruneLocked()
 		l.mu.Unlock()
 		return false
 	}
-	runID = strings.TrimSpace(runID)
 	if runID != "" {
 		if active.runID != runID {
 			l.mu.Unlock()

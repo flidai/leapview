@@ -8,7 +8,7 @@ import type {
   DataExplorerSignal,
 } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
-import { explorationSpecFor, explorationSpecFromCommand } from './data-explorer-spec'
+import { explorationSpecFor, explorationSpecFromCommand, reconcileExplorationPresentation } from './data-explorer-spec'
 
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
 
@@ -218,7 +218,7 @@ export class DataExplorerQueryController {
       // Compatibility edits must not restore a time selection that the
       // canonical query just cleared or replaced.
       time: time ? { field: time.field, grain: time.grain, alias: time.alias } : undefined,
-      spec: {
+      spec: reconcileExplorationPresentation({
         ...currentSpec,
         ...next,
         schemaVersion: next.schemaVersion ?? currentSpec.schemaVersion ?? 1,
@@ -229,7 +229,7 @@ export class DataExplorerQueryController {
         filters: [...(next.filters ?? currentSpec.filters ?? [])],
         sort: [...(next.sort ?? currentSpec.sort ?? [])],
         limit: next.limit ?? currentSpec.limit ?? 100,
-      },
+      }),
       requestSeq: (current.requestSeq ?? 0) + 1,
       resetVersion: (current.resetVersion ?? 0) + 1,
       columnWidths: current.columnWidths ?? {},

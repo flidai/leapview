@@ -10,7 +10,7 @@ import {
   toggleVisibleColumns,
 } from './data-explorer-controller'
 import { DataExplorerClientState } from './data-explorer-client'
-import { emptyExplorationSpec } from './data-explorer-spec'
+import { emptyDataExploreCommand, emptyExplorationSpec, setExplorationTime } from './data-explorer-spec'
 import type { DataExploreCommand, DataExplorerCommand, DataExplorerSignal } from '../../generated/signals'
 
 test('agent suggestions retain the active dataset identity and require project context', () => {
@@ -62,6 +62,55 @@ test('query controller advances request and reset sequences', () => {
   expect(next.spec.modelId).toBe('sales')
   expect(next.spec.datasetId).toBe('orders')
   expect(next.spec.dimensions).toEqual([{ field: 'orders.status' }])
+})
+
+test('switching semantic models discards time and model-specific presentation', () => {
+  const query = new DataExplorerQueryController()
+  const current: DataExploreCommand = {
+    ...emptyDataExploreCommand,
+    semanticModelId: 'sales', datasetId: 'orders',
+    time: { field: 'orders.created_at', grain: 'month' },
+    spec: {
+      ...emptyExplorationSpec, modelId: 'sales', datasetId: 'orders',
+      dimensions: [{ field: 'status', alias: 'old_status' }],
+      time: { field: 'orders.created_at', grain: 'month', range: { kind: 'absolute' } },
+      table: { columns: [{ field: 'old_status' }] },
+      visualization: { kind: 'table', columns: [{ field: 'old_status' }] },
+      pivot: { rows: [{ field: 'status' }], columns: [{ field: 'category' }], metrics: [{ field: 'revenue' }] },
+    },
+  }
+  const next = query.explore(current, {
+    semanticModelId: 'inventory', datasetId: 'stock', dimensions: ['status'], metrics: [], filters: [], sort: [], time: undefined,
+  })
+  expect(next.spec).toEqual({ ...emptyExplorationSpec, modelId: 'inventory', datasetId: 'stock', dimensions: [{ field: 'status' }] })
+})
+
+test('canonical time clear survives command construction and subsequent compatibility edits', () => {
+  const query = new DataExplorerQueryController()
+  const current: DataExploreCommand = {
+    ...emptyDataExploreCommand,
+    spec: { ...emptyExplorationSpec, modelId: 'sales', time: { field: 'orders.created_at', grain: 'month' } },
+    time: { field: 'orders.created_at', grain: 'month' },
+  }
+  const cleared = query.exploreSpec(current, setExplorationTime(current.spec, ''))
+  expect(cleared.spec.time).toBeUndefined()
+  expect(cleared.time).toBeUndefined()
+  expect(query.explore(cleared, { limit: 250 }).spec.time).toBeUndefined()
+})
+
+test('canonical selection changes reconcile dependent presentation before commands are sent', () => {
+  const query = new DataExplorerQueryController()
+  const current: DataExploreCommand = {
+    ...emptyDataExploreCommand,
+    spec: {
+      ...emptyExplorationSpec, modelId: 'sales', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'revenue' }],
+      visualization: { kind: 'cartesian', mark: 'bar', x: { field: 'orders.status' }, y: [{ field: 'revenue' }] },
+      table: { columns: [{ field: 'orders.status' }, { field: 'revenue' }] },
+    },
+  }
+  const next = query.exploreSpec(current, { dimensions: [] })
+  expect(next.spec.visualization).toBeUndefined()
+  expect(next.spec.table?.columns).toEqual([{ field: 'revenue' }])
 })
 
 test('canonical query edits and explicit run lifecycle remain separate', () => {

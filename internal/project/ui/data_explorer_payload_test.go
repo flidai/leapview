@@ -107,3 +107,59 @@ func explorerWireValue(t *testing.T, root map[string]any, path string) any {
 	}
 	return value
 }
+
+func TestDataExplorerPayloadClearsExecutionErrorsOnRecovery(t *testing.T) {
+	for _, failed := range []bool{true, false} {
+		state := uisignals.DataExplorerSignal{}
+		state.Explore.Status.State = "success"
+		state.Explore.Result.RequestSeq = 2
+		state.Explore.Result.RowsReturned = 281
+		state.Explore.FilterSuggestions = &uisignals.DataExploreFilterSuggestionsSignal{}
+		if failed {
+			state.Explore.Status.State = "error"
+			state.Explore.Status.Error = uisignals.Pointer("query failed")
+			state.Explore.Result.Error = uisignals.Pointer("query failed")
+			state.Explore.FilterSuggestions.Error = uisignals.Pointer("query failed")
+		}
+		raw, err := json.Marshal(DataExplorerPayload(state))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{"explore.status.error", "explore.result.error", "explore.filterSuggestions.error"} {
+			var want any
+			if failed {
+				want = "query failed"
+			}
+			if got := explorerWireValue(t, wire, path); got != want {
+				t.Errorf("%s = %#v, want %#v (failed=%v)", path, got, want, failed)
+			}
+		}
+	}
+}
+
+func TestDataExplorerPayloadClearsRemovedPresentation(t *testing.T) {
+	command := uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "sales"}}
+	state := uisignals.DataExplorerSignal{
+		Command: uisignals.DataExplorerCommand{Explore: &command},
+		Explore: uisignals.DataExploreSignal{Command: command},
+	}
+	raw, err := json.Marshal(DataExplorerPayload(state))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"command.explore.spec", "explore.command.spec"} {
+		for _, member := range []string{"visualization", "table", "pivot"} {
+			if got := explorerWireValue(t, wire, prefix+"."+member); got != nil {
+				t.Errorf("%s.%s = %#v, want explicit null", prefix, member, got)
+			}
+		}
+	}
+}

@@ -8,8 +8,8 @@ import (
 )
 
 // Generated optional fields use omitempty, but recursive signal patches need
-// explicit nulls to remove time selections and bounds. These wire projections
-// leave the generated contracts and persisted exploration specs unchanged.
+// explicit nulls to remove errors, display settings, and time selections.
+// These wire projections leave generated contracts and persisted specs unchanged.
 type dataExplorerWire struct {
 	uisignals.DataExplorerSignal
 	Command dataExplorerCommandWire `json:"command"`
@@ -18,7 +18,29 @@ type dataExplorerWire struct {
 
 type dataExploreWire struct {
 	uisignals.DataExploreSignal
-	Command dataExploreCommandWire `json:"command"`
+	Command           dataExploreCommandWire      `json:"command"`
+	Result            dataExploreResultWire       `json:"result"`
+	Status            dataExploreStatusWire       `json:"status"`
+	FilterSuggestions *dataExploreSuggestionsWire `json:"filterSuggestions"`
+}
+
+type dataExploreResultWire struct {
+	uisignals.DataExploreResultSignal
+	Error *string `json:"error"`
+	SQL   *string `json:"sql"`
+	Plan  *string `json:"plan"`
+}
+
+type dataExploreStatusWire struct {
+	uisignals.DataExploreStatusSignal
+	Error           *string  `json:"error"`
+	Message         *string  `json:"message"`
+	ProgressPercent *float64 `json:"progressPercent"`
+}
+
+type dataExploreSuggestionsWire struct {
+	uisignals.DataExploreFilterSuggestionsSignal
+	Error *string `json:"error"`
 }
 
 type dataExplorerCommandWire struct {
@@ -34,7 +56,10 @@ type dataExploreCommandWire struct {
 
 type explorationSpecWire struct {
 	exploration.ExplorationSpec
-	Time *explorationTimeWire `json:"time"`
+	Time          *explorationTimeWire                        `json:"time"`
+	Table         *exploration.ExplorationTableDisplayConfig  `json:"table"`
+	Visualization *exploration.ExplorationVisualizationConfig `json:"visualization"`
+	Pivot         *exploration.ExplorationPivotConfig         `json:"pivot"`
 }
 
 type explorationTimeWire struct {
@@ -55,16 +80,22 @@ func (value explorationTimeRangeWire) MarshalJSON() ([]byte, error) {
 	return json.Marshal(exploration.ExplorationTimeRange(value))
 }
 
-// DataExplorerPayload projects both command mirrors with explicit time clears.
+// DataExplorerPayload explicitly clears removed state in recursive signal patches.
 func DataExplorerPayload(state uisignals.DataExplorerSignal) dataExplorerWire {
-	return dataExplorerWire{
+	wire := dataExplorerWire{
 		DataExplorerSignal: state,
 		Command:            DataExplorerCommandPayload(state.Command),
 		Explore: dataExploreWire{
 			DataExploreSignal: state.Explore,
 			Command:           dataExploreCommandPayload(state.Explore.Command),
+			Result:            dataExploreResultWire{state.Explore.Result, state.Explore.Result.Error, state.Explore.Result.SQL, state.Explore.Result.Plan},
+			Status:            dataExploreStatusWire{state.Explore.Status, state.Explore.Status.Error, state.Explore.Status.Message, state.Explore.Status.ProgressPercent},
 		},
 	}
+	if suggestions := state.Explore.FilterSuggestions; suggestions != nil {
+		wire.Explore.FilterSuggestions = &dataExploreSuggestionsWire{*suggestions, suggestions.Error}
+	}
+	return wire
 }
 
 // DataExplorerCommandPayload applies the same projection to the command signal.
@@ -86,7 +117,7 @@ func dataExploreCommandPayload(command uisignals.DataExploreCommand) dataExplore
 }
 
 func explorationSpecPayload(spec exploration.ExplorationSpec) explorationSpecWire {
-	wire := explorationSpecWire{ExplorationSpec: spec}
+	wire := explorationSpecWire{ExplorationSpec: spec, Table: spec.Table, Visualization: spec.Visualization, Pivot: spec.Pivot}
 	if spec.Time != nil {
 		wire.Time = &explorationTimeWire{
 			ExplorationTimeSelection: *spec.Time,

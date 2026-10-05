@@ -1,18 +1,98 @@
 import { expect, test } from 'bun:test'
-import type { ExplorationSpec } from '../../generated/exploration'
+import type { ExplorationSpec, ExplorationVisualizationConfig } from '../../generated/exploration'
+import type { DataExploreCommand } from '../../generated/signals'
 import { testVisualizationEnvelopes } from '../dashboard/dashboard-page-test-fixtures'
 import { explorerVisualization } from './data-explorer-visualization'
 import { DashboardAppendController } from './data-explorer-dashboard'
 import {
   boundedExplorationLimit,
+  emptyDataExploreCommand,
   explorationRunValidation,
   explorationSpecFromCommand,
   filterOperatorsForType,
   moveExplorationSort,
+  removeExplorationField,
   setExplorationTime,
   setExplorationTimeRange,
+  toggleExplorationField,
   upsertExplorationSort,
 } from './data-explorer-spec'
+
+function presentationSpec(): ExplorationSpec {
+  return {
+    schemaVersion: 1, modelId: 'sales', datasetId: 'orders',
+    dimensions: [{ field: 'orders.status', alias: 'status' }, { field: 'orders.category', alias: 'category' }],
+    metrics: [{ field: 'revenue', alias: 'total' }], filters: [],
+    sort: [{ field: 'status', direction: 'asc' }, { field: 'total', direction: 'desc' }], limit: 100,
+    table: { density: 'compact', columns: [{ field: 'status', width: 200 }, { field: 'total', width: 120 }] },
+    visualization: { kind: 'cartesian', mark: 'bar', x: { field: 'status' }, y: [{ field: 'total' }] },
+  }
+}
+
+test('field removal clears dependent chart bindings and preserves remaining table formatting', () => {
+  for (const remove of [removeExplorationField, toggleExplorationField]) {
+    const spec = presentationSpec()
+    const original = structuredClone(spec)
+    const next = remove(spec, 'orders.status', 'dimension')
+    expect(next.dimensions).toEqual([{ field: 'orders.category', alias: 'category' }])
+    expect(next.sort).toEqual([{ field: 'total', direction: 'desc' }])
+    expect(next.visualization).toBeUndefined()
+    expect(next.table).toEqual({ density: 'compact', columns: [{ field: 'total', width: 120 }] })
+    expect(spec).toEqual(original)
+  }
+})
+
+test('unrelated selection changes preserve valid authored charts and aliases', () => {
+  const spec = presentationSpec()
+  expect(removeExplorationField(spec, 'orders.category', 'dimension').visualization).toEqual(spec.visualization)
+  expect(toggleExplorationField(spec, 'orders.region', 'dimension').visualization).toEqual(spec.visualization)
+  const timed = { ...spec, time: { field: 'orders.status', grain: 'day' as const, alias: 'status' } }
+  expect(removeExplorationField(timed, 'orders.status', 'dimension').visualization).toEqual(spec.visualization)
+})
+
+test('all chart kinds clear bindings to removed metrics, including nested KPI trend bindings', () => {
+  const dimension = { field: 'status' }
+  const metric = { field: 'total' }
+  const visualizations: ExplorationVisualizationConfig[] = [
+    { kind: 'cartesian', mark: 'bar', x: dimension, y: [metric] },
+    { kind: 'point', mark: 'point', x: dimension, y: metric },
+    { kind: 'proportional', mark: 'pie', category: dimension, value: metric },
+    { kind: 'hierarchy', mark: 'treemap', node: dimension, value: metric },
+    { kind: 'polar', mark: 'gauge', value: metric },
+    { kind: 'table', columns: [dimension, metric] },
+    { kind: 'matrix', rows: [dimension], columns: [], metrics: [metric] },
+    { kind: 'pivot', rows: [dimension], columns: [], metrics: [metric] },
+    { kind: 'kpi', value: dimension, trend: { category: dimension, value: metric } },
+    { kind: 'geographic', layer: 'point', latitude: dimension, longitude: dimension, size: metric },
+  ]
+  for (const visualization of visualizations) {
+    const next = removeExplorationField({ ...presentationSpec(), visualization }, 'revenue', 'metric')
+    expect(next.visualization).toBeUndefined()
+    expect(next.table?.columns).toEqual([{ field: 'status', width: 200 }])
+  }
+})
+
+test('compatibility hydration preserves time while an explicit clear removes it', () => {
+  const spec: ExplorationSpec = { ...presentationSpec(), time: { field: 'orders.created_at', grain: 'month', range: { kind: 'absolute' } } }
+  const command = { ...emptyDataExploreCommand, spec, dimensions: spec.dimensions.map((ref) => ref.field), metrics: ['revenue'] }
+  expect(explorationSpecFromCommand(command).time).toEqual(spec.time)
+  expect(explorationSpecFromCommand({ ...command, time: undefined }).time).toBeUndefined()
+  // Before compatibility mirrors hydrate, the canonical spec is complete.
+  expect(explorationSpecFromCommand({ spec } as DataExploreCommand)).toEqual(spec)
+})
+
+test('time removal reconciles chart and table bindings to a standalone time alias', () => {
+  const spec: ExplorationSpec = {
+    ...presentationSpec(), time: { field: 'orders.created_at', grain: 'month', alias: 'month' },
+    table: { columns: [{ field: 'month' }, { field: 'total' }] },
+    visualization: { kind: 'cartesian', mark: 'line', x: { field: 'month' }, y: [{ field: 'total' }] },
+  }
+  const next = setExplorationTime(spec, '')
+  expect(Object.hasOwn(next, 'time')).toBe(true)
+  expect(next.time).toBeUndefined()
+  expect(next.visualization).toBeUndefined()
+  expect(next.table?.columns).toEqual([{ field: 'total' }])
+})
 
 test('canonical exploration specs omit absent optional signal members', () => {
   const spec = explorationSpecFromCommand({
