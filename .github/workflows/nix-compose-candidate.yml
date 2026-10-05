@@ -758,12 +758,24 @@ jobs:
           cp -R original-controller-evidence retained-controller-evidence
           nix develop --no-update-lock-file .#runtime-security -c \
             go build -o "$RUNNER_TEMP/host-controller-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Build the protected first-publication verifier
+        env:
+          PROTECTED_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PROTECTED_REVISION"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          nix develop --no-update-lock-file .#runtime-security -c \
+            env CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/host-first-publication-verifier" ./cmd/leapviewctl
+          chmod 700 "$RUNNER_TEMP/host-first-publication-verifier"
+          sha256sum -- "$RUNNER_TEMP/host-first-publication-verifier"
       - name: Verify pinned vendor image and qualify a fresh disposable guest
         env:
           ARCH: ${{ matrix.arch }}
           GUEST_OS: ${{ matrix.guest-os }}
           INSTALL_MODE: ${{ matrix.install-mode }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          PROTECTED_REVISION: ${{ github.sha }}
           IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
           PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
         run: |
@@ -785,8 +797,8 @@ jobs:
                   vendor.update(chunk); sha256.update(chunk); output.write(chunk)
           if not size or vendor.hexdigest() != pin['checksum']['hex']: raise SystemExit('vendor cloud image checksum mismatch')
           pathlib.Path('host-evidence/vendor-image.json').write_text(json.dumps(pin | {'sha256': sha256.hexdigest(), 'sizeBytes': size}, indent=2) + '\n')
-          config = {'schemaVersion': 1, 'domain': 'leapview-qualification.invalid', 'adminEmail': 'qualification@example.test',
-              'environment': 'prod', 'https': False, 'image': os.environ['IMAGE_REFERENCE'], 'targetId': 'nix-host-qualification'}
+          config = {'schemaVersion': 1, 'domain': 'localhost', 'adminEmail': 'qualification@example.test',
+              'environment': 'prod', 'https': True, 'image': os.environ['IMAGE_REFERENCE'], 'targetId': 'nix-host-qualification'}
           path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'host-config.json'
           path.write_text(json.dumps(config) + '\n'); path.chmod(0o600)
           DOWNLOAD
@@ -814,6 +826,8 @@ jobs:
               --original-controller-evidence original-controller-evidence \
               --retained-controller-evidence retained-controller-evidence \
               --controller-binary-verifier "$RUNNER_TEMP/host-controller-binary-verifier" \
+              --protected-root . --protected-revision "$PROTECTED_REVISION" \
+              --first-publication-verifier "$RUNNER_TEMP/host-first-publication-verifier" \
               --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE"
           '
           python3 scripts/nix_compose_host_guest.py verify-receipt \

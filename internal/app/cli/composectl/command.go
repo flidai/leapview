@@ -56,6 +56,14 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 			return controller.Start(ctx)
 		},
 	}
+	activateFirstInstall := &cobra.Command{
+		Use:   "activate-first-install",
+		Short: "Enable the public first-install proxy after application readiness",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return controller.ActivateFirstInstall(ctx)
+		},
+	}
 	status := &cobra.Command{
 		Use:   "status",
 		Short: "Show Compose and application health",
@@ -120,6 +128,18 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyInstalled.Flags().Int64Var(&installedQualification.MinFreeBytes, "minimum-free-bytes", 0, "local-only managed-data free-space override")
 	qualifyInstalled.Flags().BoolVar(&installedQualification.MultiNodeProcess, "multi-node-process", false, "qualify two independent application processes against one native PostgreSQL authority")
 
+	firstPublicationQualification := QualificationFirstPublicationOptions{}
+	qualifyFirstPublication := &cobra.Command{
+		Use:   "first-publication",
+		Short: "Qualify the first protected publication on this fresh installed host",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return controller.QualifyFirstPublication(ctx, firstPublicationQualification)
+		},
+	}
+	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.EvidenceDir, "evidence-dir", "", "new private directory for first-publication evidence")
+	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.AssetsRoot, "assets-root", "", "protected qualification asset directory transferred by the verifier")
+
 	qualify := &cobra.Command{
 		Use:   "qualify",
 		Short: "Run typed production release qualification",
@@ -143,8 +163,8 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.ProjectID, "project-id", "", "target-bound Project identity")
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.SourceRevision, "source-revision", "", "staged source revision")
 
-	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyClientWorker)
+	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyFirstPublication, qualifyClientWorker)
 
-	root.AddCommand(version, initialize, start, status, logs, firstLogin, qualify)
+	root.AddCommand(version, initialize, start, activateFirstInstall, status, logs, firstLogin, qualify)
 	return root
 }

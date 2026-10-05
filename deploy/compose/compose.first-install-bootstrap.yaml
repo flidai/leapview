@@ -1,0 +1,6 @@
+services:
+  caddy:
+    depends_on:
+      leapview: {condition: service_started}
+    volumes:
+      - ./Caddyfile.first-install-bootstrap:/etc/caddy/Caddyfile:ro

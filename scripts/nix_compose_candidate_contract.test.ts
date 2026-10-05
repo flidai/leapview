@@ -219,6 +219,35 @@ test('Compose evidence verifier tests run in core and hosted Nix CI when helper 
   expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
 })
 
+test('fresh-host first publication uses a protected verifier and protected authoring assets', () => {
+  const host = composeCandidateWorkflow.jobs['host-qualification']
+  const buildVerifier = host.steps.find((step: any) => step.name?.includes('Build the protected first-publication verifier'))
+  const qualifyGuest = host.steps.find((step: any) => step.name?.includes('qualify a fresh disposable guest'))
+  expect(buildVerifier).toBeDefined()
+  expect(buildVerifier.run).toContain('git rev-parse HEAD')
+  expect(buildVerifier.run).toContain('$PROTECTED_REVISION')
+  expect(buildVerifier.run).toContain('CGO_ENABLED=0')
+  expect(buildVerifier.run).toContain('./cmd/leapviewctl')
+  expect(host.steps.indexOf(buildVerifier)).toBeLessThan(host.steps.indexOf(qualifyGuest))
+  expect(qualifyGuest.env.PROTECTED_REVISION).toBe(ghExpr('github.sha'))
+  expect(qualifyGuest.run).toContain('--protected-root . --protected-revision "$PROTECTED_REVISION"')
+  expect(qualifyGuest.run).toContain('--first-publication-verifier "$RUNNER_TEMP/host-first-publication-verifier"')
+  expect(qualifyGuest.run).toContain("'domain': 'localhost'")
+  expect(qualifyGuest.run).toContain("'environment': 'prod'")
+  expect(qualifyGuest.run).toContain("'https': True")
+
+  const hostGuest = readFileSync('scripts/nix_compose_host_guest.py', 'utf8')
+  expect(hostGuest).toContain('qualify first-publication --evidence-dir')
+  expect(hostGuest).toContain('--assets-root')
+  expect(hostGuest).toContain('https://localhost/readyz')
+  expect(hostGuest).toContain('/opt/leapview/current/leapviewctl activate-first-install')
+  expect(hostGuest).toContain('HostConfig.PortBindings')
+  expect(hostGuest).toContain('private-bootstrap')
+  expect(hostGuest).toContain('publicCaddy')
+  expect(hostGuest).toContain('_validate_first_install_lifecycle')
+  expect(hostGuest).not.toContain('public-proxy-gating')
+})
+
 test('Compose signer anchors every qualified copy to original build and pre-execution artifacts', () => {
   const { sign, 'verify-attestations': verify } = composeCandidateWorkflow.jobs
   expect(sign.needs).toEqual(['authorize', 'build-bundles', 'preflight', 'controller-evidence', 'qualify'])
