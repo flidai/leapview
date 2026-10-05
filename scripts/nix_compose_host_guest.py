@@ -792,7 +792,6 @@ def _capture_caddy_observation(guest: SSHGuest, evidence: Path, *, docker_env: s
     observation = _parse_caddy_observation(
         raw_inspection, private=private, image=expected_image, public_config=public_config,
     )
-    _record(evidence, prefix + "-docker-inspect.txt", raw_inspection)
     active_config = guest.run(_active_caddyfile_command(docker_env, observation["inspection"]["id"]))
     _validate_active_caddyfile(active_config, private=private)
     domain = _one_line(guest.run(
@@ -800,6 +799,8 @@ def _capture_caddy_observation(guest: SSHGuest, evidence: Path, *, docker_env: s
     ), "active Caddy domain")
     if domain != "localhost":
         raise HostGuestError("active first-install Caddy service is not configured for localhost")
+    # Retryable probes must finish before immutable evidence is retained.
+    _record(evidence, prefix + "-docker-inspect.txt", raw_inspection)
     _record(evidence, prefix + "-active-caddyfile.txt", active_config)
     _record(evidence, prefix + "-active-domain.txt", (domain + "\n").encode("ascii"))
     observation["caddyfileSHA256"] = _digest(active_config)

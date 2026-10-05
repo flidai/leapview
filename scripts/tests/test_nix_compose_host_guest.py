@@ -4,6 +4,7 @@ import sys
 import urllib.parse
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -842,6 +843,36 @@ class HostGuestReceiptTests(unittest.TestCase):
         self.assertEqual(host_guest._validate_application_port_bindings({
             "8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}],
         }), {"8080/tcp": {"hostIP": "127.0.0.1", "hostPort": "8080"}})
+
+    def test_caddy_observation_retry_does_not_retain_partial_evidence(self):
+        bindings = {key: [{"HostIp": "0.0.0.0", "HostPort": port}]
+                    for key, port in (("80/tcp", "80"), ("443/tcp", "443"), ("443/udp", "443"))}
+        inspection = ("|".join(("4" * 64, "caddy:pinned", "running", "leapview", "caddy",
+                               "2026-10-05T12:00:00Z", json.dumps(bindings))) + "\n").encode()
+        config = b"{$CADDY_DOMAIN} {\n  reverse_proxy leapview:8080\n}\n"
+
+        class Guest:
+            fail_domain = True
+
+            def run(self, command, **kwargs):
+                if "docker inspect" in command:
+                    return inspection
+                if "cat /etc/caddy/Caddyfile" in command:
+                    return config
+                if "printenv CADDY_DOMAIN" in command:
+                    if self.fail_domain:
+                        self.fail_domain = False
+                        raise host_guest.HostGuestError("container temporarily unavailable")
+                    return b"localhost\n"
+                raise AssertionError(command)
+
+        with patch.object(host_guest.time, "sleep"):
+            observation = host_guest._wait_for_caddy_observation(
+                Guest(), self.evidence, docker_env="", prefix="retry-caddy",
+                private=False, timeout=5,
+            )
+        self.assertEqual(observation["domain"], "localhost")
+        self.assertEqual((self.evidence / "retry-caddy-docker-inspect.txt").read_bytes(), inspection)
 
     def test_active_caddyfile_records_private_internal_tls_transition(self):
         private = b"{$CADDY_DOMAIN} {\n  tls internal\n  reverse_proxy leapview:8080\n}\n"
