@@ -151,6 +151,7 @@ loopback registry and existing PostgreSQL/browser fixtures.
 | `leapview-compose`, `leapview-linux-compose`, `leapview-image-compose` | Native application, portable binaries and image with canonical `VERSION`, exact clean source revision and `release=true`; candidate metadata grants no release admission |
 | `leapview-site` | Native Linux public-site binary with embedded CSS/JavaScript and map assets materialized on disk |
 | `leapview-site-image` | Minimal native Linux public-site image with canonical `VERSION`, exact revision labels, UID 65532, and read-only files; candidate metadata grants no release admission |
+| `leapview-desktop-linux-x64` | Linux x64 Debian package candidate assembled by the existing Electron Forge `MakerDeb` path with the preview distribution marker; no release admission |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets` | Pinned runtime map assets |
 | `extension-supply` | Signed runtime extension assets pinned independently for both Linux ISAs |
@@ -170,6 +171,18 @@ runtime-asset fetches use the network. Their complete outputs are pinned in
 `build-hashes.json`, in addition to the existing module/package locks and asset
 integrity checks. The final image assembly also runs without network access.
 Use a Nix installation with `sandbox = true`; the image CI job sets it explicitly.
+
+### Linux desktop package candidate
+
+`nix build .#leapview-desktop-linux-x64` builds only the Linux x64 Debian
+package. It uses the locked desktop Bun dependency tree, the official Electron
+and Node archives matching versions declared by `desktop/release-policy.json`,
+and the existing `desktop/scripts/run-electron.mjs make` Forge packaging path. The
+package carries the preview distribution marker and is a build candidate only.
+The declared Ubuntu 22.04 LTS floor still needs native qualification; this output
+does not establish desktop support, production adoption, signing, publication,
+or release admission. macOS and Windows outputs remain on their existing
+toolchains.
 
 ### Runtime compatibility
 
