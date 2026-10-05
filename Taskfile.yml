@@ -573,6 +573,8 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_go_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts

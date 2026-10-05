@@ -1,0 +1,1640 @@
+#!/usr/bin/env python3
+"""Collect bounded evidence from a fresh, loopback-only Linux Compose guest."""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import ExitStack
+import fcntl
+import hashlib
+import ipaddress
+import json
+import os
+from pathlib import Path
+import platform as host_platform
+import re
+import selectors
+import secrets
+import shlex
+import stat
+import subprocess
+import tempfile
+import time
+import urllib.parse
+
+import nix_compose_controller_evidence as controller_evidence
+import nix_compose_qualification as qualification
+
+
+SCHEMA_VERSION = 1
+SCOPE = "nix-compose-host-guest"
+MAX_RECEIPT_BYTES = 2 * 1024**2
+MAX_GUEST_OUTPUT_BYTES = 2 * 1024**2
+SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+NONCE_RE = re.compile(r"^[0-9a-f]{32,128}$")
+ARCHITECTURES = {"amd64": "x86_64", "arm64": "aarch64"}
+GUEST_OS = {"ubuntu2404": ("ubuntu", "24.04"), "debian13": ("debian", "13")}
+ASSERTIONS = (
+    "launcherManifestMatched",
+    "freshInstallTarget",
+    "supportedGuestOS",
+    "hostAndGuestArchitectureMatch",
+    "composeArchiveControllerIdentityMatched",
+    "selectedInstallDriverMatched",
+    "automaticRestartChangedBootID",
+    "dockerEnabledAndActive",
+    "containerRestartedWithoutManualStart",
+    "containerHealthyOnExpectedImage",
+    "installMarkerAndGenerationMatched",
+    "payloadLinksMatched",
+    "installedControllerMatchesOCIPayload",
+    "pinnedPostgresFixtureMatched",
+    "tlsPostgresRolesAuthenticated",
+    "canonicalPoolArtifactsPreparedBeforeInstall",
+    "migratorURLsExcludedFromServingEnvironment",
+    "privateOperatorInputRemoved",
+    "postgresAutomaticallyRestarted",
+)
+CONTAINER_RE = re.compile(r"^[0-9a-f]{64}$")
+BOOT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+class HostGuestError(ValueError):
+    """Guest qualification input, execution or retained evidence is invalid."""
+
+
+_read = qualification._read_regular
+_json = qualification._json_bytes
+_canonical = qualification._canonical_bytes
+_write_new = qualification._write_new
+
+
+def _digest(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _one_line(data: bytes, label: str) -> str:
+    try:
+        value = data.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise HostGuestError(f"{label} is not UTF-8") from exc
+    if not value or "\n" in value or "\r" in value:
+        raise HostGuestError(f"{label} must contain exactly one non-empty line")
+    return value
+
+
+def _os_release(data: bytes) -> tuple[str, str]:
+    values = {}
+    for line in data.decode("utf-8", errors="strict").splitlines():
+        if "=" not in line or line.startswith("#"):
+            continue
+        key, value = line.split("=", 1)
+        if key in {"ID", "VERSION_ID"}:
+            values[key] = value.strip().strip('"').strip("'")
+    if set(values) != {"ID", "VERSION_ID"}:
+        raise HostGuestError("guest /etc/os-release lacks ID or VERSION_ID")
+    return values["ID"], values["VERSION_ID"]
+
+
+def _runtime_identity(data: bytes, expected: dict, product: str, label: str) -> dict:
+    value = _json(data, label, 1024**2)
+    if not isinstance(value, dict) or set(value) != {
+        "product", "version", "revision", "buildTime", "dirty", "development",
+    }:
+        raise HostGuestError(f"{label} has an unsupported runtime identity schema")
+    if value != {
+        "product": product,
+        "version": expected["version"],
+        "revision": expected["revision"],
+        "buildTime": expected["buildTime"],
+        "dirty": False,
+        "development": False,
+    }:
+        raise HostGuestError(f"{label} differs from the exact release identity")
+    return value
+
+
+def _local_architecture() -> str:
+    machine = host_platform.machine().lower()
+    aliases = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
+    try:
+        return aliases[machine]
+    except KeyError as exc:
+        raise HostGuestError(f"unsupported qualification runner architecture {machine!r}") from exc
+
+
+def _kvm_probe() -> dict:
+    available = False
+    api_version = None
+    try:
+        descriptor = os.open("/dev/kvm", os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        pass
+    else:
+        try:
+            api_version = fcntl.ioctl(descriptor, 0xAE00, 0)
+            available = api_version == 12
+        except OSError:
+            api_version = None
+        finally:
+            os.close(descriptor)
+    return {"available": available, "apiVersion": api_version}
+
+
+def _validate_manifest(data: bytes, *, nonce: str, guest_os: str, platform: str, mode: str) -> dict:
+    manifest = _json(data, "launcher guest manifest", 64 * 1024)
+    expected_keys = {
+        "schemaVersion", "nonce", "sourceCloudImageSHA256", "guestOS", "architecture", "virtualizationMode",
+    }
+    if (not isinstance(manifest, dict) or set(manifest) != expected_keys
+            or type(manifest.get("schemaVersion")) is not int or manifest["schemaVersion"] != 1):
+        raise HostGuestError("launcher guest manifest has an unsupported schema")
+    if NONCE_RE.fullmatch(nonce) is None or not isinstance(manifest["sourceCloudImageSHA256"], str) or SHA256_RE.fullmatch(manifest["sourceCloudImageSHA256"]) is None:
+        raise HostGuestError("launcher manifest must bind a SHA-256 cloud image digest")
+    expected_arch = platform.removeprefix("linux/")
+    if manifest != {
+        "schemaVersion": 1,
+        "nonce": nonce,
+        "sourceCloudImageSHA256": manifest["sourceCloudImageSHA256"],
+        "guestOS": guest_os,
+        "architecture": expected_arch,
+        "virtualizationMode": mode,
+    }:
+        raise HostGuestError("launcher manifest differs from the independently selected guest inputs")
+    return manifest
+
+
+def _validate_launcher_receipt(data: bytes, *, manifest: dict, manifest_bytes: bytes, known_hosts_sha256: str) -> dict:
+    receipt = _json(data, "immutable launcher receipt", 64 * 1024)
+    keys = {
+        "schemaVersion", "scope", "result", "nonce", "sourceCloudImageSHA256", "guestOS", "architecture",
+        "virtualizationMode", "manifestSHA256", "inputs", "runner",
+    }
+    if (not isinstance(receipt, dict) or set(receipt) != keys or type(receipt.get("schemaVersion")) is not int
+            or receipt["schemaVersion"] != 1 or receipt["scope"] != "nix-compose-guest-launcher"
+            or receipt["result"] != "ready"):
+        raise HostGuestError("immutable launcher receipt has an unsupported schema or lifecycle state")
+    if any(receipt[key] != manifest[field] for key, field in (
+        ("nonce", "nonce"), ("sourceCloudImageSHA256", "sourceCloudImageSHA256"),
+        ("guestOS", "guestOS"), ("architecture", "architecture"), ("virtualizationMode", "virtualizationMode"),
+    )) or receipt["manifestSHA256"] != _digest(manifest_bytes):
+        raise HostGuestError("immutable launcher receipt differs from its exact manifest")
+    input_keys = {
+        "cloudImageSHA256", "firmwareSHA256", "userDataSHA256", "metaDataSHA256", "seedISOSHA256",
+        "sshClientPublicKeySHA256", "sshHostPublicKeySHA256", "knownHostsSHA256",
+    }
+    inputs = receipt["inputs"]
+    if not isinstance(inputs, dict) or set(inputs) != input_keys:
+        raise HostGuestError("immutable launcher receipt has incomplete input hashes")
+    for name, digest in inputs.items():
+        if name == "firmwareSHA256" and digest is None and manifest["architecture"] == "amd64":
+            continue
+        if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+            raise HostGuestError(f"immutable launcher receipt has an invalid {name}")
+    if (manifest["architecture"] == "amd64" and inputs["firmwareSHA256"] is not None
+            or manifest["architecture"] == "arm64" and inputs["firmwareSHA256"] is None):
+        raise HostGuestError("launcher firmware hash does not match the guest architecture")
+    if inputs["cloudImageSHA256"] != manifest["sourceCloudImageSHA256"] or inputs["knownHostsSHA256"] != known_hosts_sha256:
+        raise HostGuestError("launcher cloud image or SSH host key hash differs from independently supplied inputs")
+    runner = receipt["runner"]
+    if not isinstance(runner, dict) or set(runner) != {
+        "hostArchitecture", "qemuSystemBinarySHA256", "qemuVersionSHA256", "accelerator",
+    }:
+        raise HostGuestError("immutable launcher receipt has incomplete QEMU identity")
+    if runner["hostArchitecture"] != ARCHITECTURES[manifest["architecture"]] or runner["accelerator"] != manifest["virtualizationMode"]:
+        raise HostGuestError("launcher receipt QEMU architecture or accelerator differs from the selected guest")
+    for name in ("qemuSystemBinarySHA256", "qemuVersionSHA256"):
+        if not isinstance(runner[name], str) or SHA256_RE.fullmatch(runner[name]) is None:
+            raise HostGuestError(f"immutable launcher receipt has an invalid {name}")
+    return receipt
+
+
+def _validate_config(data: bytes, image: str) -> dict:
+    config = _json(data, "private host configuration", 64 * 1024)
+    required = {"schemaVersion", "domain", "adminEmail", "environment", "image", "https"}
+    allowed = required | {"targetId"}
+    if not isinstance(config, dict) or not required.issubset(config) or set(config) - allowed:
+        raise HostGuestError("host configuration has unsupported or missing fields")
+    if (type(config["schemaVersion"]) is not int or config["schemaVersion"] != 1
+            or config["image"] != image or not isinstance(config["https"], bool)
+            or any(not isinstance(config[key], str) or not config[key].strip()
+                   for key in ("domain", "adminEmail", "environment"))
+            or ("targetId" in config and (not isinstance(config["targetId"], str) or not config["targetId"].strip()))):
+        raise HostGuestError("host configuration is invalid or selects a different image")
+    return config
+
+
+class SSHGuest:
+    def __init__(self, *, port: int, identity: Path, known_hosts: Path, timeout: int):
+        self.destination = "root@127.0.0.1"
+        self.port = port
+        self.timeout = timeout
+        self.base = [
+            "ssh", "-F", "/dev/null", "-p", str(port), "-i", str(identity),
+            "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+            "-o", "UserKnownHostsFile=" + str(known_hosts), "-o", "GlobalKnownHostsFile=/dev/null",
+            "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "PermitLocalCommand=no",
+            "-o", "ConnectTimeout=10", self.destination,
+        ]
+
+    def run(self, command: str, *, input_bytes: bytes | None = None, input_file: Path | None = None,
+            timeout: int | None = None, allow_disconnect: bool = False) -> bytes:
+        if input_bytes is not None and input_file is not None:
+            raise HostGuestError("SSH command accepts one input source")
+        limit = timeout or self.timeout
+        with ExitStack() as stack:
+            if input_file is not None:
+                stdin = stack.enter_context(input_file.open("rb"))
+            elif input_bytes is not None:
+                stdin = stack.enter_context(tempfile.TemporaryFile())
+                stdin.write(input_bytes)
+                stdin.seek(0)
+            else:
+                stdin = subprocess.DEVNULL
+            process = subprocess.Popen(
+                [*self.base, command], stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ)
+            deadline = time.monotonic() + limit
+            output = bytearray()
+            try:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not selector.select(remaining):
+                        process.kill()
+                        process.wait()
+                        if allow_disconnect:
+                            return b""
+                        raise HostGuestError("SSH command timed out")
+                    chunk = os.read(process.stdout.fileno(), min(64 * 1024, MAX_GUEST_OUTPUT_BYTES + 1 - len(output)))
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    if len(output) > MAX_GUEST_OUTPUT_BYTES:
+                        process.kill()
+                        process.wait()
+                        raise HostGuestError("SSH guest command exceeded its output limit")
+                return_code = process.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                process.wait()
+                if allow_disconnect:
+                    return b""
+                raise HostGuestError("SSH command timed out") from exc
+            finally:
+                selector.close()
+                process.stdout.close()
+        if return_code != 0 and not (allow_disconnect and return_code == 255):
+            raise HostGuestError(f"SSH guest command failed ({return_code})")
+        return bytes(output)
+
+
+def _record(evidence: Path, name: str, data: bytes) -> bytes:
+    if len(data) > MAX_GUEST_OUTPUT_BYTES:
+        raise HostGuestError(f"guest evidence {name} exceeded its byte limit")
+    _write_new(evidence / name, data, 0o600)
+    return data
+
+
+def _remote_path(directory: str, name: str) -> str:
+    return directory + "/" + name
+
+
+def _guest_package_setup(guest: SSHGuest, guest_os: str) -> None:
+    compose_package, extra_packages = {
+        "ubuntu2404": ("docker-compose-v2", []),
+        "debian13": ("docker-compose", ["docker-cli"]),
+    }[guest_os]
+    packages = ["ca-certificates", "docker.io", compose_package, *extra_packages, "openssl", "unattended-upgrades"]
+    package_list = " ".join(shlex.quote(package) for package in packages)
+    command = (
+        "set +e; DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && "
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends " + package_list +
+        " >/dev/null 2>&1 && systemctl enable --now docker >/dev/null 2>&1 && "
+        "docker version >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; "
+        "result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+    )
+    if _one_line(guest.run(command, timeout=600), "guest package setup result") != "0":
+        raise HostGuestError("Nix-controller guest Docker and Compose fixture setup failed")
+
+
+POSTGRES_PASSWORD_KEYS = {
+    "bootstrap": "POSTGRES_PASSWORD",
+    "controlRuntime": "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD",
+    "controlReadonly": "LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD",
+    "duckLakeRuntime": "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD",
+    "controlMigrator": "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD",
+    "controlUpgrade": "LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD",
+    "controlMaintenance": "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD",
+    "duckLakeMigrator": "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD",
+    "duckLakeMaintenance": "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD",
+}
+POSTGRES_URLS = (
+    ("controlUrl", "controlRuntime", "leapview_control", "leapview_control_runtime"),
+    ("controlMigratorUrl", "controlMigrator", "leapview_control", "leapview_control_migrator"),
+    ("controlMaintenanceUrl", "controlMaintenance", "leapview_control", "leapview_control_maintenance"),
+    ("duckLakeUrl", "duckLakeRuntime", "leapview_ducklake", "leapview_ducklake_runtime"),
+    ("duckLakeMaintenanceUrl", "duckLakeMaintenance", "leapview_ducklake", "leapview_ducklake_maintenance"),
+    ("duckLakeMigratorUrl", "duckLakeMigrator", "leapview_ducklake", "leapview_ducklake_migrator"),
+)
+TLS_ROLE_EXPECTATIONS = {
+    "controlRuntime": "leapview_control_runtime|leapview_control|true",
+    "duckLakeRuntime": "leapview_ducklake_runtime|leapview_ducklake|true",
+}
+
+
+def _locked_postgres_image(source_root: Path) -> str:
+    source = source_root / "internal/app/cli/composectl/qualification_native_postgres.go"
+    data = _read(source, "locked PostgreSQL qualification image source", 2 * 1024**2)
+    match = re.search(rb'const\s+qualificationPostgreSQL18Image\s*=\s*"([^"\r\n]+)"', data)
+    if match is None:
+        raise HostGuestError("source tree lacks the locked PostgreSQL qualification image")
+    image = match.group(1).decode("ascii")
+    if re.fullmatch(r"docker\.io/library/postgres:18-alpine@sha256:[0-9a-f]{64}", image) is None:
+        raise HostGuestError("source tree PostgreSQL qualification image is not the locked PostgreSQL 18 Alpine digest")
+    return image
+
+
+def _postgres_repo_digest(image: str) -> str:
+    match = re.fullmatch(r"(docker\.io/library/postgres):18-alpine@(sha256:[0-9a-f]{64})", image)
+    if match is None:
+        raise HostGuestError("source-locked PostgreSQL image reference is invalid")
+    # Docker normalizes the default registry and library namespace in
+    # RepoDigests for the canonical Hub `postgres` image.
+    return "postgres@" + match.group(2)
+
+
+def _postgres_fixture_credentials() -> dict[str, str]:
+    values = {name: secrets.token_hex(24) for name in POSTGRES_PASSWORD_KEYS}
+    if len(set(values.values())) != len(values):
+        raise HostGuestError("generated PostgreSQL fixture credentials are not unique")
+    return values
+
+
+def _postgres_fixture_environment(credentials: dict[str, str]) -> bytes:
+    if set(credentials) != set(POSTGRES_PASSWORD_KEYS) or len(set(credentials.values())) != len(credentials):
+        raise HostGuestError("PostgreSQL fixture credentials have an unsupported schema")
+    lines = ["POSTGRES_DB=postgres", "POSTGRES_USER=leapview_bootstrap"]
+    for name, key in POSTGRES_PASSWORD_KEYS.items():
+        value = credentials[name]
+        if re.fullmatch(r"[0-9a-f]{48}", value) is None:
+            raise HostGuestError("PostgreSQL fixture credential is not canonical hexadecimal")
+        lines.append(f"{key}={value}")
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def _postgres_connection_urls(credentials: dict[str, str]) -> dict[str, str]:
+    urls = {}
+    for field, credential, database, role in POSTGRES_URLS:
+        userinfo = urllib.parse.quote(role, safe="") + ":" + urllib.parse.quote(credentials[credential], safe="")
+        query = urllib.parse.urlencode({
+            "sslmode": "verify-full",
+            "sslrootcert": "/var/lib/leapview/home/postgres-root.crt",
+        })
+        urls[field] = f"postgres://{userinfo}@postgres:5432/{database}?{query}"
+    return urls
+
+
+def _replace_env_values(data: bytes, replacements: dict[str, str]) -> bytes:
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise HostGuestError("private pool-probe environment template is not UTF-8") from exc
+    found: dict[str, int] = {}
+    output = []
+    for line in lines:
+        key, separator, _ = line.partition("=")
+        if separator and key in replacements:
+            found[key] = found.get(key, 0) + 1
+            value = replacements[key]
+            if "\n" in value or "\r" in value or "\x00" in value:
+                raise HostGuestError("pool-probe environment value contains a line break or NUL")
+            output.append(key + "=" + value)
+        else:
+            output.append(line)
+    if set(found) != set(replacements) or any(count != 1 for count in found.values()):
+        raise HostGuestError("pool-probe environment template has missing or duplicate required keys")
+    return ("\n".join(output) + "\n").encode("utf-8")
+
+
+def _pool_probe_environment(template: bytes, urls: dict[str, str], config: dict) -> bytes:
+    replacements = {
+        "LEAPVIEW_ENVIRONMENT": "prod",
+        "LEAPVIEW_PUBLIC_URL": "https://leapview-qualification.invalid",
+        "LEAPVIEW_ALLOWED_HOSTS": "leapview-qualification.invalid",
+        "LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL": config["adminEmail"],
+        "LEAPVIEW_CSRF_KEY": secrets.token_hex(32),
+        "LEAPVIEW_METRICS_BEARER_TOKEN": secrets.token_hex(32),
+        "LEAPVIEW_AGENT_CREDENTIAL_KEY": secrets.token_hex(32),
+        "LEAPVIEW_POSTGRES_CONTROL_URL": urls["controlUrl"],
+        # The pool probe performs no migration. Migrator credentials remain
+        # outside every Compose serving environment, including this one.
+        "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL": "",
+        "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL": urls["controlMaintenanceUrl"],
+        "LEAPVIEW_POSTGRES_DUCKLAKE_URL": urls["duckLakeUrl"],
+        "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL": urls["duckLakeMaintenanceUrl"],
+        "LEAPVIEW_POSTGRES_REQUIRE_TLS": "true",
+    }
+    return _replace_env_values(template, replacements)
+
+
+def _qualification_operator_config(pool_output: bytes, urls: dict[str, str]) -> bytes:
+    if len(pool_output) > 1024**2:
+        raise HostGuestError("canonical pool qualification output exceeds the operator-input size limit")
+    try:
+        artifacts = _json(pool_output, "image-generated physical-pool qualification artifacts", 1024**2)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(f"image-generated physical-pool qualification output is invalid: {exc}") from exc
+    if (not isinstance(artifacts, dict) or set(artifacts) != {"schema_version", "pool", "evidence"}
+            or type(artifacts["schema_version"]) is not int or artifacts["schema_version"] != 1
+            or not isinstance(artifacts["pool"], dict) or not isinstance(artifacts["evidence"], dict)
+            or set(urls) != {field for field, _, _, _ in POSTGRES_URLS}):
+        raise HostGuestError("image-generated physical-pool qualification output has an unsupported schema")
+    operator = {
+        "schemaVersion": 1,
+        "postgres": urls,
+        "physicalPool": {"pool": artifacts["pool"], "evidence": artifacts["evidence"]},
+    }
+    encoded = _canonical(operator) + b"\n"
+    if len(encoded) > 1024**2:
+        raise HostGuestError("private operator bootstrap input exceeds the host installer size limit")
+    return encoded
+
+
+def _postgres_tls_entrypoint_script() -> str:
+    return "\n".join((
+        "set -eu",
+        "mkdir -p /tmp/leapview-postgres-tls /var/lib/leapview/home",
+        "cp /run/secrets/leapview-postgres-ca.pem /tmp/leapview-postgres-tls/ca.pem",
+        "cp /run/secrets/leapview-postgres-ca.pem /var/lib/leapview/home/postgres-root.crt",
+        "chmod 0644 /var/lib/leapview/home/postgres-root.crt",
+        "cp /run/secrets/leapview-postgres-server.pem /tmp/leapview-postgres-tls/server.pem",
+        "cp /run/secrets/leapview-postgres-server.key /tmp/leapview-postgres-tls/server.key",
+        "chown -R postgres:postgres /tmp/leapview-postgres-tls",
+        "chmod 0644 /tmp/leapview-postgres-tls/ca.pem /tmp/leapview-postgres-tls/server.pem",
+        "chmod 0600 /tmp/leapview-postgres-tls/server.key",
+        "exec /usr/local/bin/docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/leapview-postgres-tls/ca.pem -c ssl_cert_file=/tmp/leapview-postgres-tls/server.pem -c ssl_key_file=/tmp/leapview-postgres-tls/server.key",
+    ))
+
+
+def _postgres_readiness_command(container_name: str) -> str:
+    sql = "SELECT current_user::text || '|' || current_database()::text || '|' || (SELECT ssl::text FROM pg_stat_ssl WHERE pid=pg_backend_pid())"
+    checks = []
+    for name, expected in TLS_ROLE_EXPECTATIONS.items():
+        database = "leapview_control" if name == "controlRuntime" else "leapview_ducklake"
+        role = "leapview_control_runtime" if name == "controlRuntime" else "leapview_ducklake_runtime"
+        checks.append(
+            "actual=$(docker exec " + shlex.quote(container_name) + " sh -ec " + shlex.quote(
+                "export PGPASSWORD=\"$" + POSTGRES_PASSWORD_KEYS[name] + "\" PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem; "
+                "psql --host=postgres --username=" + role + " --dbname=" + database + " --tuples-only --no-align --command=" + shlex.quote(sql)
+            ) + "); test \"$actual\" = " + shlex.quote(expected) + "; printf '%s\\n' \"$actual\""
+        )
+    return "set -eu; " + "; ".join(checks)
+
+
+def _compose_command(project_dir: str, docker_env: str) -> str:
+    return (
+        "env " + docker_env + " docker compose --project-name leapview --project-directory " + shlex.quote(project_dir) +
+        " --env-file " + shlex.quote(project_dir + "/deployment.env") +
+        " --file " + shlex.quote(project_dir + "/compose.yaml")
+    )
+
+
+def _pool_qualification_command(project_dir: str, docker_env: str) -> str:
+    command = "test \"$(id -u)\" = 999; test -w /var/lib/leapview/home; exec /usr/local/bin/leapview admin delivery pool qualify"
+    return (
+        _compose_command(project_dir, docker_env) +
+        " run --rm --no-deps --no-TTY --entrypoint sh leapview -ec " + shlex.quote(command)
+    )
+
+
+def _pool_probe_state_command(project_dir: str, docker_env: str) -> str:
+    command = "printf '%s\\n' \"$(id -u):$(id -g):$(stat -c '%u:%g:%a' /var/lib/leapview/home)\"; test \"$(id -u)\" = 999; test -w /var/lib/leapview/home"
+    return (
+        _compose_command(project_dir, docker_env) +
+        " run --rm --no-deps --no-TTY --entrypoint sh leapview -ec " + shlex.quote(command)
+    )
+
+
+def _host_install_command(*, mode: str, docker_env: str, controller_path: str, config_path: str,
+                          payload_path: str, image: str) -> str:
+    if mode == "bootstrap":
+        return (
+            "set -eu; test -s /run/leapview/operator-bootstrap.json; test ! -e /opt/leapview; set +e; "
+            "env " + docker_env + " bash " + shlex.quote(controller_path) + " install >/dev/null 2>&1; "
+            "result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+        )
+    if mode == "nix-controller":
+        return (
+            "set +e; env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview " + shlex.quote(controller_path) +
+            " host install --config " + shlex.quote(config_path) + " --payload " + shlex.quote(payload_path) +
+            " --source-image " + shlex.quote(image) + " --operator-config /run/leapview/operator-bootstrap.json"
+            " >/dev/null 2>&1; result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+        )
+    raise HostGuestError("host install mode is unsupported")
+
+
+def _bootstrap_prepare_command(bootstrap_path: str, docker_env: str) -> str:
+    return (
+        "set +e; env " + docker_env + " bash " + shlex.quote(bootstrap_path) +
+        " prepare-host >/dev/null 2>&1; result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+    )
+
+
+def _assert_no_secrets_in_evidence(evidence: Path, secrets_to_check: list[str]) -> None:
+    encoded = [value.encode("utf-8") for value in secrets_to_check if value]
+    for path in evidence.iterdir():
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise HostGuestError("host guest evidence contains a non-regular file")
+        contents = _read(path, "host guest evidence " + path.name, MAX_GUEST_OUTPUT_BYTES)
+        if any(secret in contents for secret in encoded):
+            raise HostGuestError("private PostgreSQL fixture credential appeared in retained guest evidence")
+
+
+def _readiness_after_reboot_command(container_name: str, expected: str) -> str:
+    return (
+        "set -eu; actual=$(docker exec " + shlex.quote(container_name) + " sh -ec " + shlex.quote(
+            "export PGPASSWORD=\"$" + POSTGRES_PASSWORD_KEYS["controlRuntime"] + "\" PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem; "
+            "psql --host=postgres --username=leapview_control_runtime --dbname=leapview_control --tuples-only --no-align --command="
+            + shlex.quote("SELECT current_user::text || '|' || current_database()::text || '|' || (SELECT ssl::text FROM pg_stat_ssl WHERE pid=pg_backend_pid())")
+        ) + "); test \"$actual\" = " + shlex.quote(expected) + "; printf '%s\\n' \"$actual\""
+    )
+
+
+def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict, docker_env: str,
+                          host_config: dict, nonce: str, candidate_image_id: str) -> tuple[dict, dict, list[str]]:
+    postgres_image = _locked_postgres_image(Path(args.source_root))
+    credentials = _postgres_fixture_credentials()
+    urls = _postgres_connection_urls(credentials)
+    project_dir = _remote_path(paths["root"], "pool-probe")
+    fixture_dir = _remote_path(paths["root"], "postgres-fixture")
+    tls_dir = _remote_path(fixture_dir, "tls")
+    data_volume = "leapview-qualification-pg-" + nonce[:16]
+    postgres_name = "leapview-qualification-pg-" + nonce[:16]
+    network_name = "leapview_default"
+    state_volume = "leapview_leapview-state"
+    compose = _compose_command(project_dir, docker_env)
+
+    guest.run("install -d -m 700 -- " + " ".join(shlex.quote(path) for path in (project_dir, fixture_dir, tls_dir)))
+    guest.run("cp -- " + shlex.quote(paths["payload"] + "/compose.yaml") + " " + shlex.quote(project_dir + "/compose.yaml"))
+    guest.run("cp -- " + shlex.quote(paths["payload"] + "/qualification/postgres-init.sh") + " " + shlex.quote(fixture_dir + "/postgres-init.sh"))
+    guest.run("chmod 600 " + shlex.quote(project_dir + "/compose.yaml") + " && chmod 644 " + shlex.quote(fixture_dir + "/postgres-init.sh"))
+    env_template = guest.run("cat " + shlex.quote(paths["payload"] + "/leapview.env.example"))
+    probe_env = _pool_probe_environment(env_template, urls, host_config)
+    deployment_env = (
+        "COMPOSE_PROJECT_NAME=leapview\nLEAPVIEW_IMAGE=" + args.image + "\nCOMPOSE_APP_BIND=127.0.0.1:8080\n"
+    ).encode("ascii")
+    postgres_env = _postgres_fixture_environment(credentials)
+    guest.run("umask 077; cat > " + shlex.quote(project_dir + "/leapview.env"), input_bytes=probe_env)
+    guest.run("chmod 600 " + shlex.quote(project_dir + "/leapview.env"))
+    guest.run("umask 077; cat > " + shlex.quote(project_dir + "/deployment.env"), input_bytes=deployment_env)
+    guest.run("chmod 600 " + shlex.quote(project_dir + "/deployment.env"))
+    guest.run("umask 077; cat > " + shlex.quote(fixture_dir + "/postgres.env"), input_bytes=postgres_env)
+    guest.run("chmod 600 " + shlex.quote(fixture_dir + "/postgres.env"))
+
+    ca_key = tls_dir + "/ca.key"
+    ca_cert = tls_dir + "/ca.pem"
+    server_key = tls_dir + "/server.key"
+    server_csr = tls_dir + "/server.csr"
+    server_cert = tls_dir + "/server.pem"
+    guest.run(
+        "set -eu; openssl req -x509 -newkey rsa:2048 -nodes -keyout " + shlex.quote(ca_key) +
+        " -out " + shlex.quote(ca_cert) + " -subj /CN=leapview-qualification-ca -days 30 "
+        "-addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign'; "
+        "openssl req -newkey rsa:2048 -nodes -keyout " + shlex.quote(server_key) + " -out " + shlex.quote(server_csr) +
+        " -subj /CN=postgres -addext 'subjectAltName=DNS:postgres'; "
+        "printf 'subjectAltName=DNS:postgres\\nextendedKeyUsage=serverAuth\\n' > " + shlex.quote(tls_dir + "/server.ext") + "; "
+        "openssl x509 -req -in " + shlex.quote(server_csr) + " -CA " + shlex.quote(ca_cert) + " -CAkey " +
+        shlex.quote(ca_key) + " -CAcreateserial -out " + shlex.quote(server_cert) + " -days 30 -extfile " +
+        shlex.quote(tls_dir + "/server.ext") + " >/dev/null 2>&1; "
+        "rm -f -- " + shlex.quote(ca_key) + " " + shlex.quote(server_csr) + " " + shlex.quote(tls_dir + "/ca.srl") + "; "
+        "chmod 600 " + shlex.quote(server_key) + "; chmod 644 " + shlex.quote(ca_cert) + " " +
+        shlex.quote(server_cert) + " " + shlex.quote(tls_dir + "/server.ext"), timeout=120,
+    )
+
+    guest.run("env " + docker_env + " docker pull " + shlex.quote(postgres_image), timeout=300)
+    postgres_repo_digest = _postgres_repo_digest(postgres_image)
+    pg_repo_digests = _json(_record(evidence, "postgres-image-repo-digests.json", guest.run(
+        "env " + docker_env + " docker image inspect --format '{{json .RepoDigests}}' " + shlex.quote(postgres_image),
+    )), "pinned PostgreSQL RepoDigests")
+    if not isinstance(pg_repo_digests, list) or postgres_repo_digest not in pg_repo_digests:
+        raise HostGuestError("PostgreSQL fixture pull did not resolve to the source-locked immutable digest")
+    pg_image_id = _one_line(_record(evidence, "postgres-image-id.txt", guest.run(
+        "env " + docker_env + " docker image inspect --format '{{.Id}}' " + shlex.quote(postgres_image),
+    )), "PostgreSQL image ID")
+    pg_platform = _one_line(_record(evidence, "postgres-image-platform.txt", guest.run(
+        "env " + docker_env + " docker image inspect --format '{{.Os}}/{{.Architecture}}' " + shlex.quote(postgres_image),
+    )), "PostgreSQL image platform")
+    if (re.fullmatch(r"sha256:[0-9a-f]{64}", pg_image_id) is None
+            or pg_platform != args.platform):
+        raise HostGuestError("pinned PostgreSQL image identity or native platform differs from the guest")
+
+    # Compose materializes the canonical project network and state volume but
+    # does not start the serving service. The one-shot qualification command
+    # below is the first app binary invocation in this guest.
+    guest.run(compose + " create --no-build leapview", timeout=300)
+    guest.run(compose + " rm --force --stop leapview", timeout=120)
+    network_labels = _one_line(_record(evidence, "postgres-compose-network-labels.txt", guest.run(
+        "env " + docker_env + " docker network inspect --format '{{index .Labels \"com.docker.compose.project\"}} {{index .Labels \"com.docker.compose.network\"}}' " +
+        shlex.quote(network_name),
+    )), "Compose qualification network labels")
+    volume_labels = _one_line(_record(evidence, "postgres-compose-state-volume-labels.txt", guest.run(
+        "env " + docker_env + " docker volume inspect --format '{{index .Labels \"com.docker.compose.project\"}} {{index .Labels \"com.docker.compose.volume\"}}' " +
+        shlex.quote(state_volume),
+    )), "Compose qualification volume labels")
+    if network_labels != "leapview default" or volume_labels != "leapview leapview-state":
+        raise HostGuestError("pool fixture is not attached to the canonical Compose project network and state volume")
+
+    guest.run("env " + docker_env + " docker volume create " + shlex.quote(data_volume) + " >/dev/null")
+    postgres_start = " ".join((
+        "env", docker_env, "docker run --detach --name", shlex.quote(postgres_name),
+        "--restart unless-stopped --network", shlex.quote(network_name), "--network-alias postgres",
+        "--env-file", shlex.quote(fixture_dir + "/postgres.env"),
+        "--volume", shlex.quote(fixture_dir + "/postgres-init.sh:/docker-entrypoint-initdb.d/10-leapview-roles.sh:ro"),
+        "--volume", shlex.quote(ca_cert + ":/run/secrets/leapview-postgres-ca.pem:ro"),
+        "--volume", shlex.quote(server_cert + ":/run/secrets/leapview-postgres-server.pem:ro"),
+        "--volume", shlex.quote(server_key + ":/run/secrets/leapview-postgres-server.key:ro"),
+        "--volume", shlex.quote(state_volume + ":/var/lib/leapview"),
+        "--volume", shlex.quote(data_volume + ":/var/lib/postgresql"),
+        "--tmpfs /tmp:rw,nosuid,nodev,mode=1777,size=64m --entrypoint sh", shlex.quote(postgres_image),
+        "-ec", shlex.quote(_postgres_tls_entrypoint_script()),
+    ))
+    guest.run(postgres_start, timeout=120)
+    guest.run("rm -f -- " + shlex.quote(fixture_dir + "/postgres.env"))
+    readiness = (
+        "set -eu; i=0; while [ \"$i\" -lt 60 ]; do i=$((i+1)); "
+        "if env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(postgres_name) +
+        " 2>/dev/null | grep -qx running; then if " + _postgres_readiness_command(postgres_name) +
+        " >/dev/null 2>&1; then " + _postgres_readiness_command(postgres_name) + "; exit 0; fi; fi; sleep 2; done; exit 1"
+    )
+    role_probe = _record(evidence, "postgres-tls-role-probes-before-install.txt", guest.run(readiness, timeout=150))
+    expected_probe = "\n".join(TLS_ROLE_EXPECTATIONS.values())
+    if role_probe.decode("utf-8").strip() != expected_probe:
+        raise HostGuestError("PostgreSQL fixture did not authenticate both native runtime roles over verified TLS")
+
+    volume_owner = _one_line(_record(evidence, "pool-probe-state-volume-owner.txt", guest.run(
+        _pool_probe_state_command(project_dir, docker_env), timeout=120,
+    )), "pool-probe application volume ownership")
+    if re.fullmatch(r"999:999:999:999:[0-7]{3}", volume_owner) is None:
+        raise HostGuestError("fresh Compose state volume is not writable by the candidate's non-root runtime user")
+
+    # `run` overrides ENTRYPOINT's default serve command with the exact pool
+    # qualification CLI; no service container is started. Its output is the
+    # canonical pool identity and conformance evidence consumed by host install.
+    preconditions = guest.run(
+        "set -eu; test ! -e /opt/leapview; test ! -e /opt/leapview/leapview.env; "
+        "test -z \"$(" + compose + " ps --status running --quiet)\"; printf 'fresh-root-absent\\nserving-service-not-running\\n'",
+    )
+    _record(evidence, "pool-probe-preconditions.txt", preconditions)
+    if preconditions.decode("utf-8").strip().splitlines() != ["fresh-root-absent", "serving-service-not-running"]:
+        raise HostGuestError("pool qualification did not start from a fresh, stopped serving target")
+    pool_command = _pool_qualification_command(project_dir, docker_env)
+    pool_output = guest.run(pool_command, timeout=900)
+    pool_artifacts = _qualification_operator_config(pool_output, urls)
+    _record(evidence, "physical-pool-qualification-artifacts.json", pool_output)
+    _record(evidence, "physical-pool-qualification-sha256.txt", (_digest(pool_output) + "\n").encode())
+    operator_config_path = "/run/leapview/operator-bootstrap.json"
+    guest.run("install -d -m 700 /run/leapview")
+    guest.run("umask 077; cat > " + shlex.quote(operator_config_path), input_bytes=pool_artifacts)
+    guest.run("chmod 600 " + shlex.quote(operator_config_path))
+    guest.run("test -f " + shlex.quote(operator_config_path) + " && test \"$(stat -c '%a' " +
+              shlex.quote(operator_config_path) + ")\" = 600")
+
+    # Compose writes the command container's stdout only. Require no persistent
+    # service container to be running before handing control to the installer.
+    guest.run("test -z \"$(" + compose + " ps --status running --quiet)\"")
+    guest.run("test ! -e /opt/leapview && test ! -e /opt/leapview/leapview.env")
+    guest.run("rm -rf -- " + shlex.quote(project_dir))
+    _record(evidence, "pool-probe-completed-before-install.txt", b"completed-before-install\n")
+    _record(evidence, "pool-probe-order.json", (json.dumps({
+        "schemaVersion": 1,
+        "freshInstallRootAbsentBeforeProbe": True,
+        "servingComposeServiceStartedBeforeInstall": False,
+        "tlsRuntimeRolesProbedBeforeInstall": True,
+        "canonicalPoolCommand": "admin delivery pool qualify",
+        "candidateImage": args.image,
+        "candidateImageID": candidate_image_id,
+        "candidatePlatform": args.platform,
+        "sourceRevision": args.source_revision,
+        "operatorBootstrapWrittenAfterPoolProbe": True,
+    }, sort_keys=True) + "\n").encode())
+    fixture = {
+        "image": postgres_image,
+        "repoDigest": postgres_repo_digest,
+        "imageID": pg_image_id,
+        "repoDigests": pg_repo_digests,
+        "platform": pg_platform,
+        "containerName": postgres_name,
+        "network": network_name,
+        "stateVolume": state_volume,
+        "dataVolume": data_volume,
+        "restartPolicy": "unless-stopped",
+        "initScriptSHA256": "sha256:" + _one_line(guest.run("sha256sum " + shlex.quote(fixture_dir + "/postgres-init.sh")), "qualification PostgreSQL init script hash").split()[0],
+        "tlsRoleProbesBeforeInstall": TLS_ROLE_EXPECTATIONS,
+    }
+    _record(evidence, "postgres-fixture.json", (json.dumps(fixture, sort_keys=True) + "\n").encode())
+    return fixture, {"urls": urls, "poolArtifactsSHA256": _digest(pool_output)}, list(credentials.values()) + list(urls.values())
+
+
+def _pull_payload(guest: SSHGuest, evidence: Path, *, image_reference: str, docker_env: str,
+                 payload_path: str, nonce: str) -> tuple[list, str, str]:
+    image = shlex.quote(image_reference)
+    guest.run("env " + docker_env + " docker pull " + image, timeout=300)
+    repo_digest_bytes = _record(evidence, "oci-repo-digests.json", guest.run(
+        "env " + docker_env + " docker image inspect --format '{{json .RepoDigests}}' " + image,
+    ))
+    repo_digests = _json(repo_digest_bytes, "pulled OCI RepoDigests", 64 * 1024)
+    if not isinstance(repo_digests, list) or image_reference not in repo_digests:
+        raise HostGuestError("anonymous OCI pull did not resolve to the selected immutable image digest")
+    pulled_image_id = _one_line(_record(evidence, "oci-image-id.txt", guest.run(
+        "env " + docker_env + " docker image inspect --format '{{.Id}}' " + image,
+    )), "pulled OCI image ID")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", pulled_image_id) is None:
+        raise HostGuestError("anonymous OCI pull returned an invalid image ID")
+    container = "leapview-qual-" + nonce[:16]
+    extraction = (
+        "set -eu; " + docker_env + " docker create --name " + shlex.quote(container) + " " + image +
+        " >/dev/null; c=" + shlex.quote(container) + "; " + docker_env +
+        " docker cp \"$c:/usr/local/share/leapview/deployment/.\" " + shlex.quote(payload_path) +
+        "; " + docker_env + " docker rm \"$c\" >/dev/null; test -x " +
+        shlex.quote(payload_path + "/leapviewctl")
+    )
+    guest.run(extraction, timeout=120)
+    payload_sha_line = _one_line(guest.run(
+        "sha256sum " + shlex.quote(payload_path + "/leapviewctl"),
+    ), "OCI payload controller hash")
+    payload_sha = "sha256:" + payload_sha_line.split()[0]
+    _record(evidence, "oci-payload-controller-sha256.txt", (payload_sha + "\n").encode())
+    return repo_digests, pulled_image_id, payload_sha
+
+
+def _install_and_collect(args) -> dict:
+    if ipaddress.ip_address(args.host).is_loopback is False or args.host != "127.0.0.1":
+        raise HostGuestError("guest SSH must target the IPv4 loopback address 127.0.0.1")
+    if not 1024 <= args.port <= 65535:
+        raise HostGuestError("guest SSH port must be an unprivileged ephemeral port")
+    expected_arch = ARCHITECTURES[args.platform.removeprefix("linux/")]
+    host_arch = _local_architecture()
+    if host_arch != expected_arch:
+        raise HostGuestError("qualification runner ISA must match the guest ISA")
+    kvm = _kvm_probe()
+    if args.virtualization_mode == "kvm" and not kvm["available"]:
+        raise HostGuestError("KVM mode selected but /dev/kvm did not pass the API-version probe")
+    _read(args.ssh_identity, "SSH identity", 1024 * 1024)
+    known_hosts_bytes = _read(args.known_hosts, "SSH known-hosts input", 1024 * 1024)
+    identity_info = args.ssh_identity.lstat()
+    known_hosts_info = args.known_hosts.lstat()
+    if not stat.S_ISREG(identity_info.st_mode) or stat.S_IMODE(identity_info.st_mode) & 0o077:
+        raise HostGuestError("SSH identity must be a private regular file with mode 0600 or stricter")
+    if not stat.S_ISREG(known_hosts_info.st_mode) or known_hosts_info.st_size == 0:
+        raise HostGuestError("SSH known-hosts input must be a non-empty regular file")
+
+    manifest_bytes = _read(args.guest_manifest, "launcher guest manifest", 64 * 1024)
+    manifest = _validate_manifest(
+        manifest_bytes, nonce=args.nonce, guest_os=args.guest_os, platform=args.platform,
+        mode=args.virtualization_mode,
+    )
+    launcher_receipt_bytes = _read(args.launcher_receipt, "immutable launcher receipt", 64 * 1024)
+    launcher_receipt = _validate_launcher_receipt(
+        launcher_receipt_bytes, manifest=manifest, manifest_bytes=manifest_bytes,
+        known_hosts_sha256=_digest(known_hosts_bytes),
+    )
+    config_bytes = _read(args.config, "private host configuration", 64 * 1024)
+    host_config = _validate_config(config_bytes, args.image)
+
+    source_root = Path(args.source_root)
+    with tempfile.TemporaryDirectory(prefix="nix-compose-host-guest-") as temporary:
+        binding = qualification.verify_bundle(
+            args.archive, args.sidecar, args.controller_build_identity, source_root, args.release_identity,
+            platform=args.platform, source_revision=args.source_revision, image=args.image,
+            extract_dir=Path(temporary) / "bundle",
+        )
+        controller_evidence.compare_controller_evidence(
+            args.archive, args.sidecar, args.controller_build_identity, source_root, args.release_identity,
+            platform=args.platform, source_revision=args.source_revision, image=args.image,
+            binary_verifier=args.controller_binary_verifier,
+            left_evidence_dir=args.original_controller_evidence,
+            right_evidence_dir=args.retained_controller_evidence,
+        )
+        nix_controller = Path(binding["extractedController"])
+        nix_controller_sha = binding["controllerSHA256"]
+        identity_data = _read(args.release_identity, "release identity", qualification.compose_bundle.MAX_IDENTITY_BYTES)
+        release_identity = _json(identity_data, "release identity", qualification.compose_bundle.MAX_IDENTITY_BYTES)
+
+        output = args.output_dir
+        if output.exists() or output.is_symlink():
+            raise HostGuestError("guest qualification output directory must be new")
+        output.mkdir(mode=0o700, parents=True)
+        os.chmod(output, 0o700)
+        evidence = output / "evidence"
+        evidence.mkdir(mode=0o700)
+        _record(evidence, "launcher-receipt.json", launcher_receipt_bytes)
+        _record(evidence, "host-kvm-probe.json", (json.dumps(kvm, sort_keys=True) + "\n").encode())
+        _record(evidence, "host-runner-architecture.txt", (host_arch + "\n").encode())
+        guest = SSHGuest(port=args.port, identity=args.ssh_identity, known_hosts=args.known_hosts, timeout=30)
+        root_check = guest.run("test \"$(id -u)\" = 0 && printf 'root\\n'")
+        _record(evidence, "ssh-root.txt", root_check)
+        actual_manifest = guest.run("cat /etc/leapview-qualification-guest.json")
+        if _digest(actual_manifest) != _digest(manifest_bytes) or actual_manifest != manifest_bytes:
+            raise HostGuestError("guest launcher manifest differs from the externally supplied manifest")
+        _record(evidence, "launcher-manifest.json", actual_manifest)
+
+        nonce = args.nonce
+        remote_root = "/var/tmp/leapview-qualification-" + nonce
+        guest.run("umask 077; mkdir -- " + shlex.quote(remote_root))
+        _record(evidence, "fresh-install-state.txt", guest.run(
+            "test ! -e /opt/leapview && test ! -e /etc/leapview && test ! -e /run/leapview && printf 'absent\\n'",
+        ))
+        os_before = _record(evidence, "preinstall-os-release.txt", guest.run("cat /etc/os-release"))
+        arch_before = _one_line(_record(evidence, "preinstall-architecture.txt", guest.run("uname -m")), "guest architecture")
+        boot_before = _one_line(_record(evidence, "preinstall-boot-id.txt", guest.run("cat /proc/sys/kernel/random/boot_id")), "preinstall boot ID")
+        kernel_before = _one_line(_record(evidence, "preinstall-kernel.txt", guest.run("uname -r")), "preinstall kernel")
+        os_id, os_version = _os_release(os_before)
+        if (os_id, os_version) != GUEST_OS[args.guest_os]:
+            raise HostGuestError("fresh guest OS does not match the selected supported guest image")
+        if arch_before != expected_arch or BOOT_ID_RE.fullmatch(boot_before) is None:
+            raise HostGuestError("fresh guest architecture or boot ID is invalid")
+
+        paths = {
+            "root": remote_root,
+            "controller": _remote_path(remote_root, "leapviewctl-nix"),
+            "config": _remote_path(remote_root, "host-config.json"),
+            "bootstrap": _remote_path(remote_root, "bootstrap-linux.sh"),
+            "payload": _remote_path(remote_root, "deployment"),
+            "docker": _remote_path(remote_root, "docker-config"),
+        }
+        guest.run("install -d -m 700 -- " + shlex.quote(paths["docker"]))
+        guest.run("printf '{}\\n' > " + shlex.quote(paths["docker"] + "/config.json") +
+                  " && chmod 600 " + shlex.quote(paths["docker"] + "/config.json"))
+        guest.run("cat > " + shlex.quote(paths["controller"]), input_file=nix_controller)
+        guest.run("chmod 700 " + shlex.quote(paths["controller"]))
+        if args.install_mode == "nix-controller":
+            guest.run("cat > " + shlex.quote(paths["config"]), input_bytes=config_bytes)
+            guest.run("chmod 600 " + shlex.quote(paths["config"]))
+        remote_controller_sha = _one_line(guest.run("sha256sum " + shlex.quote(paths["controller"])), "transferred Nix controller hash").split()[0]
+        if "sha256:" + remote_controller_sha != nix_controller_sha:
+            raise HostGuestError("transferred Nix controller differs from the verified Compose archive")
+        _record(evidence, "nix-controller-sha256.txt", (nix_controller_sha + "\n").encode())
+        nix_runtime_data = _record(evidence, "nix-controller-runtime.json", guest.run(
+            shlex.quote(paths["controller"]) + " version --json",
+        ))
+        nix_runtime = _runtime_identity(nix_runtime_data, release_identity, "leapviewctl", "Nix controller runtime identity")
+        _record(evidence, "nix-controller-help.txt", guest.run(shlex.quote(paths["controller"]) + " host --help"))
+
+        docker_env = "DOCKER_CONFIG=" + shlex.quote(paths["docker"])
+        image = shlex.quote(args.image)
+        driver = "nix-archive" if args.install_mode == "nix-controller" else "source-bootstrap-linux.sh"
+        bootstrap_sha = None
+        if args.install_mode == "nix-controller":
+            _guest_package_setup(guest, args.guest_os)
+        else:
+            bootstrap_path = source_root / "deploy/host/bootstrap-linux.sh"
+            bootstrap_info = bootstrap_path.lstat()
+            if not stat.S_ISREG(bootstrap_info.st_mode) or not bootstrap_info.st_mode & 0o111:
+                raise HostGuestError("source host bootstrap must be a regular executable file")
+            bootstrap_bytes = _read(bootstrap_path, "source host bootstrap script", 4 * 1024**2)
+            bootstrap_sha = _digest(bootstrap_bytes)
+            _record(evidence, "source-bootstrap-sha256.txt", (bootstrap_sha + "\n").encode())
+            guest.run("cat > " + shlex.quote(paths["bootstrap"]), input_bytes=bootstrap_bytes)
+            guest.run("chmod 700 " + shlex.quote(paths["bootstrap"]))
+            transferred_bootstrap_sha = _one_line(guest.run(
+                "sha256sum " + shlex.quote(paths["bootstrap"]),
+            ), "transferred source bootstrap hash").split()[0]
+            if "sha256:" + transferred_bootstrap_sha != bootstrap_sha:
+                raise HostGuestError("transferred bootstrap differs from the exact source-tree script")
+            _record(evidence, "guest-bootstrap-sha256.txt", (bootstrap_sha + "\n").encode())
+            guest.run("install -d -m 700 /run/leapview")
+            guest.run("cat > /run/leapview/bootstrap.json", input_bytes=config_bytes)
+            guest.run("chmod 600 /run/leapview/bootstrap.json")
+            guest.run("cat > /run/leapview/image-reference", input_bytes=(args.image + "\n").encode())
+            guest.run("chmod 600 /run/leapview/image-reference")
+            prepare_result = guest.run(
+                _bootstrap_prepare_command(paths["bootstrap"], docker_env),
+                timeout=900,
+            )
+            if _one_line(prepare_result, "source bootstrap prepare-host result") != "0":
+                raise HostGuestError("source bootstrap prepare-host phase failed")
+            guest.run("set -eu; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl >/dev/null 2>&1")
+        guest.run("mkdir -m 700 -- " + shlex.quote(paths["payload"]))
+        repo_digests, pulled_image_id, payload_sha = _pull_payload(
+            guest, evidence, image_reference=args.image, docker_env=docker_env,
+            payload_path=paths["payload"], nonce=nonce,
+        )
+        postgres_fixture, pool_info, fixture_secrets = _prepare_pool_fixture(
+            guest, evidence, args=args, paths=paths, docker_env=docker_env,
+            host_config=host_config, nonce=nonce, candidate_image_id=pulled_image_id,
+        )
+
+        install = _host_install_command(
+            mode=args.install_mode, docker_env=docker_env,
+            controller_path=paths["bootstrap"] if args.install_mode == "bootstrap" else paths["controller"],
+            config_path=paths["config"], payload_path=paths["payload"], image=args.image,
+        )
+        install_result = guest.run(install, timeout=1800 if args.install_mode == "bootstrap" else 900)
+        if _one_line(install_result, "selected installer result") != "0":
+            raise HostGuestError("selected fresh-host installer failed")
+        _record(evidence, "installer-driver.txt", (driver + "\n").encode())
+        boundary_result = guest.run(
+            "set -eu; file=/opt/leapview/current/leapview.env; test -s \"$file\"; "
+            "if grep -Eq '^LEAPVIEW_POSTGRES_(CONTROL|DUCKLAKE)_MIGRATOR_URL=' \"$file\"; then exit 1; fi; "
+            "printf '{\"controlMigratorURLAbsentFromServingEnvironment\":true,\"duckLakeMigratorURLAbsentFromServingEnvironment\":true}\\n'",
+        )
+        boundary = _json(_record(evidence, "serving-credential-boundary.json", boundary_result), "serving credential boundary")
+        if boundary != {
+            "controlMigratorURLAbsentFromServingEnvironment": True,
+            "duckLakeMigratorURLAbsentFromServingEnvironment": True,
+        }:
+            raise HostGuestError("first-install operation-only migrator URLs were persisted to serving environment")
+        operator_cleanup = guest.run(
+            "rm -f -- /run/leapview/operator-bootstrap.json; test ! -e /run/leapview/operator-bootstrap.json && printf 'absent\\n'",
+        )
+        _record(evidence, "operator-bootstrap-cleanup.txt", operator_cleanup)
+        if _one_line(operator_cleanup, "operator bootstrap cleanup") != "absent":
+            raise HostGuestError("guest-owned private operator bootstrap input was not removed after install")
+
+        _record(evidence, "host-install-exit-code.txt", b"0\n")
+        marker_data = guest.run("cat /opt/leapview/.host-install.json")
+        marker = _json(marker_data, "installed host configuration marker", 64 * 1024)
+        if (not isinstance(marker, dict) or marker.get("schemaVersion") != 1 or marker.get("image") != args.image
+                or marker.get("domain") != host_config["domain"].strip().lower().removesuffix(".")
+                or marker.get("adminEmail") != host_config["adminEmail"].strip()
+                or marker.get("environment") != host_config["environment"].strip()
+                or marker.get("https") is not host_config["https"]
+                or marker.get("targetId", "") != host_config.get("targetId", "")):
+            raise HostGuestError("host install marker does not bind the selected image")
+        marker_sha = _digest(marker_data)
+        _record(evidence, "host-marker-sha256.txt", (marker_sha + "\n").encode())
+        _record(evidence, "host-marker-projection.json", (json.dumps({
+            "schemaVersion": marker["schemaVersion"], "image": marker["image"],
+            "https": marker["https"], "markerSHA256": marker_sha,
+        }, sort_keys=True) + "\n").encode())
+        cleanup = (
+            "rm -f -- " + " ".join(shlex.quote(paths[key]) for key in ("controller", "config", "bootstrap")) +
+            " && rm -rf -- " + shlex.quote(paths["payload"])
+        )
+        if args.install_mode == "bootstrap":
+            cleanup += " && rm -f -- /run/leapview/bootstrap.json /run/leapview/image-reference && rmdir /run/leapview"
+        else:
+            cleanup += " && rmdir /run/leapview"
+        guest.run(cleanup)
+        boot_after_install = _one_line(guest.run("cat /proc/sys/kernel/random/boot_id"), "post-install boot ID")
+        if boot_after_install != boot_before:
+            raise HostGuestError("guest rebooted unexpectedly during installation")
+        inspect_command = (
+            "id=$(env " + docker_env + " docker ps -q --no-trunc --filter label=com.docker.compose.service=leapview); "
+            "test -n \"$id\"; test \"$(printf '%s\\n' \"$id\" | wc -l)\" -eq 1; "
+            "env " + docker_env + " docker inspect --format '{{.Id}} {{.Config.Image}} {{.Image}} {{.State.Status}} "
+            "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} "
+            "{{index .Config.Labels \"com.docker.compose.project\"}} "
+            "{{index .Config.Labels \"com.docker.compose.service\"}} {{.State.StartedAt}}' \"$id\""
+        )
+        pre_inspect = _one_line(_record(evidence, "prereboot-container-inspect.txt", guest.run(inspect_command)), "pre-reboot container inspection")
+        pre_parts = pre_inspect.split()
+        if len(pre_parts) != 8:
+            raise HostGuestError("pre-reboot container inspection returned an unsupported field set")
+        pre_container_id, pre_configured_image, pre_image_id, pre_state, pre_health, pre_project, pre_service, pre_started_at = pre_parts
+        if (CONTAINER_RE.fullmatch(pre_container_id) is None or pre_configured_image != args.image
+                or pre_image_id != pulled_image_id or pre_state != "running" or pre_health != "healthy"
+                or not pre_project or pre_service != "leapview" or not pre_started_at):
+            raise HostGuestError("initial host install did not produce a healthy container on the selected image")
+        postgres_name = postgres_fixture["containerName"]
+        postgres_inspect_command = (
+            "env " + docker_env + " docker inspect --format '{{.Id}} {{.Image}} {{.State.Status}} "
+            "{{.HostConfig.RestartPolicy.Name}} {{.State.StartedAt}}' " + shlex.quote(postgres_name)
+        )
+        postgres_before_line = _one_line(_record(evidence, "postgres-container-before-reboot.txt", guest.run(
+            postgres_inspect_command,
+        )), "pre-reboot PostgreSQL container inspection")
+        postgres_before_parts = postgres_before_line.split()
+        if (len(postgres_before_parts) != 5 or postgres_before_parts[1] != postgres_fixture["imageID"]
+                or postgres_before_parts[2:4] != ["running", "unless-stopped"]
+                or not postgres_before_parts[4]):
+            raise HostGuestError("pinned PostgreSQL fixture is not running with persistent automatic restart")
+        guest.run("systemctl reboot", timeout=15, allow_disconnect=True)
+
+        boot_after = None
+        deadline = time.monotonic() + args.reboot_timeout
+        while time.monotonic() < deadline:
+            try:
+                candidate = _one_line(guest.run("cat /proc/sys/kernel/random/boot_id", timeout=12), "post-reboot boot ID")
+            except HostGuestError:
+                candidate = None
+            if candidate and candidate != boot_before:
+                boot_after = candidate
+                break
+            time.sleep(5)
+        if boot_after is None or BOOT_ID_RE.fullmatch(boot_after) is None:
+            raise HostGuestError("fresh guest did not return with a new boot ID")
+        _record(evidence, "postreboot-boot-id.txt", (boot_after + "\n").encode())
+        os_after = _record(evidence, "postreboot-os-release.txt", guest.run("cat /etc/os-release"))
+        arch_after = _one_line(_record(evidence, "postreboot-architecture.txt", guest.run("uname -m")), "post-reboot guest architecture")
+        kernel_after = _one_line(_record(evidence, "postreboot-kernel.txt", guest.run("uname -r")), "post-reboot kernel")
+        if _os_release(os_after) != GUEST_OS[args.guest_os] or arch_after != expected_arch:
+            raise HostGuestError("guest OS or architecture changed across reboot")
+
+        pid1 = _one_line(_record(evidence, "postreboot-pid1.txt", guest.run("readlink /proc/1/exe")), "PID 1")
+        docker_enabled = _one_line(_record(evidence, "docker-enabled.txt", guest.run("systemctl is-enabled docker")), "Docker enabled state")
+        docker_active = _one_line(_record(evidence, "docker-active.txt", guest.run("systemctl is-active docker")), "Docker active state")
+        if docker_enabled != "enabled" or docker_active != "active" or "systemd" not in pid1:
+            raise HostGuestError("systemd or Docker did not remain enabled and active after reboot")
+
+        postgres_after_line = None
+        postgres_deadline = time.monotonic() + args.startup_timeout
+        while time.monotonic() < postgres_deadline:
+            try:
+                candidate = _one_line(guest.run(postgres_inspect_command, timeout=20), "post-reboot PostgreSQL inspection")
+                fields = candidate.split()
+                if (len(fields) == 5 and fields[0] == postgres_before_parts[0]
+                        and fields[1:4] == [postgres_fixture["imageID"], "running", "unless-stopped"]
+                        and fields[4] != postgres_before_parts[4]):
+                    probe = guest.run(_readiness_after_reboot_command(postgres_name, TLS_ROLE_EXPECTATIONS["controlRuntime"]), timeout=20)
+                    if _one_line(probe, "post-reboot PostgreSQL TLS role probe") == TLS_ROLE_EXPECTATIONS["controlRuntime"]:
+                        postgres_after_line = candidate
+                        _record(evidence, "postgres-tls-role-probe-after-reboot.txt", probe)
+                        break
+            except HostGuestError:
+                pass
+            time.sleep(5)
+        if postgres_after_line is None:
+            raise HostGuestError("pinned TLS PostgreSQL fixture did not automatically restart with persisted role data")
+        _record(evidence, "postgres-container-after-reboot.txt", (postgres_after_line + "\n").encode())
+
+        inspect_line = None
+        probe_history = []
+        startup_deadline = time.monotonic() + args.startup_timeout
+        while time.monotonic() < startup_deadline:
+            try:
+                candidate = _one_line(guest.run(inspect_command, timeout=20), "post-reboot container inspection")
+                fields = candidate.split()
+                probe_history.append({"elapsedSeconds": round(args.startup_timeout - max(0, startup_deadline - time.monotonic()), 3),
+                                      "inspection": candidate})
+                if (len(fields) == 8 and fields[0] == pre_container_id and fields[1] == args.image
+                        and fields[2] == pulled_image_id and fields[3] == "running" and fields[4] == "healthy"
+                        and fields[5] == pre_project and fields[6] == "leapview" and fields[7] != pre_started_at):
+                    inspect_line = candidate
+                    break
+            except HostGuestError:
+                probe_history.append({"elapsedSeconds": round(args.startup_timeout - max(0, startup_deadline - time.monotonic()), 3),
+                                      "inspection": "unavailable"})
+            time.sleep(5)
+        if inspect_line is None:
+            raise HostGuestError("application container did not automatically restart and become healthy")
+        _record(evidence, "automatic-restart-probes.json", (json.dumps(probe_history, sort_keys=True) + "\n").encode())
+        _record(evidence, "container-inspect.txt", (inspect_line + "\n").encode())
+        parts = inspect_line.split()
+        container_id, configured_image, image_id, state, health, project, service, started_at = parts
+        status_result = guest.run(
+            "set +e; env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview "
+            "/opt/leapview/current/leapviewctl status >/dev/null 2>&1; "
+            "result=$?; printf '%s\\n' \"$result\"; exit \"$result\"",
+            timeout=120,
+        )
+        if _one_line(status_result, "installed controller status result") != "0":
+            raise HostGuestError("installed controller status failed after automatic restart")
+        _record(evidence, "controller-status.txt", b"0\n")
+        current_target = _one_line(_record(evidence, "current-generation-link.txt", guest.run("readlink /opt/leapview/current")), "active generation link")
+        wrapper_target = _one_line(_record(evidence, "controller-wrapper-link.txt", guest.run("readlink /usr/local/sbin/leapviewctl")), "host controller wrapper link")
+        expected_generation = "sha256-" + args.image.rsplit("sha256:", 1)[1]
+        if current_target != "releases/" + expected_generation or wrapper_target != "../../../opt/leapview/current/leapviewctl":
+            raise HostGuestError("installed generation or controller wrapper link differs from the image")
+        payload_installed_line = _one_line(_record(evidence, "installed-controller-sha256.txt", guest.run(
+            "sha256sum /opt/leapview/current/leapviewctl",
+        )), "installed OCI controller hash")
+        installed_sha = "sha256:" + payload_installed_line.split()[0]
+        if installed_sha != payload_sha:
+            raise HostGuestError("installed controller bytes differ from the OCI deployment payload")
+        app_runtime_data = _record(evidence, "installed-controller-runtime.json", guest.run(
+            "LEAPVIEWCTL_ROOT=/opt/leapview /opt/leapview/current/leapviewctl version --json",
+        ))
+        app_runtime = _runtime_identity(app_runtime_data, release_identity, "leapviewctl", "installed OCI controller runtime identity")
+        _record(evidence, "database-secret-boundary.json", (json.dumps({
+            "poolProbeUsedSeparatePrivateEnvironment": True,
+            "operationOnlyMigratorURLsAbsentFromServingEnvironment": True,
+            "operatorBootstrapRemovedAfterSuccessfulInstall": True,
+            "candidateSecretsExcludedFromRetainedEvidence": True,
+        }, sort_keys=True) + "\n").encode())
+        _assert_no_secrets_in_evidence(evidence, fixture_secrets)
+    evidence_report = {
+        "schemaVersion": SCHEMA_VERSION,
+        "scope": SCOPE,
+        "result": "passed",
+        "guestOS": args.guest_os,
+        "platform": args.platform,
+        "installMode": args.install_mode,
+        "installerDriver": driver,
+        "image": args.image,
+        "sourceRevision": args.source_revision,
+        "releaseAdmission": False,
+        "postgresFixtureImage": postgres_fixture["image"],
+        "postgresFixturePlatform": postgres_fixture["platform"],
+        "physicalPoolArtifactsSHA256": pool_info["poolArtifactsSHA256"],
+    }
+    _write_new(evidence / "qualification-report.json", (json.dumps(evidence_report, indent=2) + "\n").encode(), 0o600)
+    try:
+        inventory = qualification._qualification_evidence_inventory(evidence)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(f"cannot inventory fresh-guest evidence: {exc}") from exc
+
+    receipt = {
+        "schemaVersion": SCHEMA_VERSION,
+        "scope": SCOPE,
+        "result": "passed",
+        "releaseAdmission": False,
+        "identity": {
+            "archiveSHA256": binding["archiveSHA256"],
+            "controllerSHA256": nix_controller_sha,
+            "controllerBuildIdentitySHA256": binding["controllerBuildIdentitySHA256"],
+            "image": args.image,
+            "sourceRevision": args.source_revision,
+            "platform": args.platform,
+            "installMode": args.install_mode,
+            "installerDriver": driver,
+            "sourceBootstrapSHA256": bootstrap_sha,
+            "releaseIdentitySHA256": binding["releaseIdentitySHA256"],
+        },
+        "runner": {
+            "hostArchitecture": host_arch,
+            "guestArchitecture": arch_after,
+            "sshEndpoint": f"127.0.0.1:{args.port}",
+            "virtualizationMode": args.virtualization_mode,
+            "tcgEnabled": args.virtualization_mode == "tcg",
+            "kvm": kvm,
+            "sshKnownHostsSHA256": _digest(known_hosts_bytes),
+            "launcherReceiptSHA256": _digest(launcher_receipt_bytes),
+            "launcherInputs": launcher_receipt["inputs"],
+            "qemuSystemBinarySHA256": launcher_receipt["runner"]["qemuSystemBinarySHA256"],
+            "qemuVersionSHA256": launcher_receipt["runner"]["qemuVersionSHA256"],
+        },
+        "guest": {
+            "nonceSHA256": _digest(args.nonce.encode("ascii")),
+            "manifestSHA256": _digest(manifest_bytes),
+            "sourceCloudImageSHA256": manifest["sourceCloudImageSHA256"],
+            "os": {"id": os_id, "versionID": os_version},
+            "architecture": arch_after,
+            "kernelBefore": kernel_before,
+            "kernelAfter": kernel_after,
+            "bootIDBefore": boot_before,
+            "bootIDAfter": boot_after,
+            "systemdPID1": pid1,
+            "docker": {"enabled": docker_enabled, "active": docker_active},
+            "container": {
+                "id": container_id,
+                "configuredImage": configured_image,
+                "imageID": image_id,
+                "state": state,
+                "health": health,
+                "project": project,
+                "service": service,
+                "repoDigests": repo_digests,
+                "startedAtBeforeReboot": pre_started_at,
+                "startedAtAfterReboot": started_at,
+            },
+            "markerSHA256": marker_sha,
+            "generation": expected_generation,
+            "links": {"current": current_target, "controllerWrapper": wrapper_target},
+            "controllers": {
+                "nixArchiveSHA256": nix_controller_sha,
+                "ociPayloadSHA256": payload_sha,
+                "installedSHA256": installed_sha,
+                "nixRuntimeIdentity": nix_runtime,
+                "installedRuntimeIdentity": app_runtime,
+            },
+            "postgresFixture": postgres_fixture,
+            "physicalPoolArtifactsSHA256": pool_info["poolArtifactsSHA256"],
+        },
+        "assertions": {assertion: True for assertion in ASSERTIONS},
+        "excludedGates": ["two-image-upgrade-and-rollback", "full-enterprise-publication-journey"],
+        "evidenceInventory": inventory,
+    }
+    _validate_receipt(receipt, evidence, expected_image=args.image, expected_platform=args.platform)
+    _write_new(output / "host-guest-receipt.json", (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(), 0o600)
+    return receipt
+
+
+def _evidence_bytes(root: Path, name: str) -> bytes:
+    try:
+        return qualification._read_regular(root / name, "host guest evidence " + name, MAX_GUEST_OUTPUT_BYTES)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(str(exc)) from exc
+
+
+def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | None = None,
+                      expected_platform: str | None = None) -> dict:
+    required = {
+        "schemaVersion", "scope", "result", "releaseAdmission", "identity", "runner", "guest",
+        "assertions", "excludedGates", "evidenceInventory",
+    }
+    if not isinstance(receipt, dict) or set(receipt) != required:
+        raise HostGuestError("host guest receipt has an unsupported schema")
+    if (receipt["schemaVersion"] != SCHEMA_VERSION or receipt["scope"] != SCOPE
+            or receipt["result"] != "passed" or receipt["releaseAdmission"] is not False):
+        raise HostGuestError("host guest receipt is not a non-admitting successful record")
+    identity = receipt["identity"]
+    identity_keys = {
+        "archiveSHA256", "controllerSHA256", "controllerBuildIdentitySHA256", "image", "sourceRevision",
+        "platform", "installMode", "installerDriver", "sourceBootstrapSHA256", "releaseIdentitySHA256",
+    }
+    if not isinstance(identity, dict) or set(identity) != identity_keys:
+        raise HostGuestError("host guest receipt has incomplete Compose identity")
+    for key in ("archiveSHA256", "controllerSHA256", "controllerBuildIdentitySHA256", "releaseIdentitySHA256"):
+        if not isinstance(identity[key], str) or SHA256_RE.fullmatch(identity[key]) is None:
+            raise HostGuestError(f"host guest receipt {key} is not a SHA-256 digest")
+    if (not isinstance(identity["sourceRevision"], str) or REVISION_RE.fullmatch(identity["sourceRevision"]) is None
+            or identity["platform"] not in qualification.PLATFORMS
+            or not isinstance(identity["image"], str) or qualification.IMAGE_RE.fullmatch(identity["image"]) is None):
+        raise HostGuestError("host guest receipt image, revision or platform identity is invalid")
+    install_mode = identity["installMode"]
+    if not isinstance(install_mode, str):
+        raise HostGuestError("host guest receipt has an invalid install mode")
+    expected_driver = {"bootstrap": "source-bootstrap-linux.sh", "nix-controller": "nix-archive"}.get(install_mode)
+    bootstrap_sha = identity["sourceBootstrapSHA256"]
+    if (expected_driver is None or identity["installerDriver"] != expected_driver
+            or (install_mode == "bootstrap"
+                and (not isinstance(bootstrap_sha, str) or SHA256_RE.fullmatch(bootstrap_sha) is None))
+            or (install_mode == "nix-controller" and bootstrap_sha is not None)):
+        raise HostGuestError("host guest receipt does not bind an exact supported install mode and driver")
+    if expected_image is not None and identity["image"] != expected_image:
+        raise HostGuestError("host guest receipt selects a different OCI image")
+    if expected_platform is not None and identity["platform"] != expected_platform:
+        raise HostGuestError("host guest receipt selects a different architecture")
+
+    runner, guest = receipt["runner"], receipt["guest"]
+    if not isinstance(runner, dict) or set(runner) != {
+        "hostArchitecture", "guestArchitecture", "sshEndpoint", "virtualizationMode", "tcgEnabled", "kvm",
+        "sshKnownHostsSHA256", "launcherReceiptSHA256", "launcherInputs", "qemuSystemBinarySHA256", "qemuVersionSHA256",
+    }:
+        raise HostGuestError("host guest receipt has incomplete execution-mode evidence")
+    expected_arch = ARCHITECTURES[identity["platform"].removeprefix("linux/")]
+    endpoint_match = re.fullmatch(r"127\.0\.0\.1:([0-9]{4,5})", runner["sshEndpoint"] or "")
+    if (runner["hostArchitecture"] != expected_arch or runner["guestArchitecture"] != expected_arch
+            or endpoint_match is None or not 1024 <= int(endpoint_match.group(1)) <= 65535
+            or runner["virtualizationMode"] not in {"kvm", "tcg"}
+            or runner["tcgEnabled"] is not (runner["virtualizationMode"] == "tcg")):
+        raise HostGuestError("host guest receipt claims a cross-ISA or ambiguous execution mode")
+    if _one_line(_evidence_bytes(evidence, "host-runner-architecture.txt"), "host runner architecture") != runner["hostArchitecture"]:
+        raise HostGuestError("host guest receipt differs from the local runner architecture evidence")
+    kvm = runner["kvm"]
+    if not isinstance(kvm, dict) or set(kvm) != {"available", "apiVersion"} or type(kvm["available"]) is not bool:
+        raise HostGuestError("host guest receipt has an invalid KVM probe")
+    if runner["virtualizationMode"] == "kvm" and (kvm["available"] is not True or kvm["apiVersion"] != 12):
+        raise HostGuestError("host guest receipt selects KVM without a successful API-version probe")
+    if _json(_evidence_bytes(evidence, "host-kvm-probe.json"), "KVM probe evidence") != kvm:
+        raise HostGuestError("KVM probe receipt differs from locally retained probe evidence")
+    if not isinstance(runner["sshKnownHostsSHA256"], str) or SHA256_RE.fullmatch(runner["sshKnownHostsSHA256"]) is None:
+        raise HostGuestError("host guest receipt has no pinned SSH host key inventory hash")
+    for key in ("launcherReceiptSHA256", "qemuSystemBinarySHA256", "qemuVersionSHA256"):
+        if not isinstance(runner[key], str) or SHA256_RE.fullmatch(runner[key]) is None:
+            raise HostGuestError(f"host guest receipt lacks launcher identity {key}")
+    launcher_data = _evidence_bytes(evidence, "launcher-receipt.json")
+    launcher = _validate_launcher_receipt(
+        launcher_data, manifest=_json(_evidence_bytes(evidence, "launcher-manifest.json"), "launcher manifest"),
+        manifest_bytes=_evidence_bytes(evidence, "launcher-manifest.json"),
+        known_hosts_sha256=runner["sshKnownHostsSHA256"],
+    )
+    if (_digest(launcher_data) != runner["launcherReceiptSHA256"] or launcher["inputs"] != runner["launcherInputs"]
+            or launcher["runner"]["qemuSystemBinarySHA256"] != runner["qemuSystemBinarySHA256"]
+            or launcher["runner"]["qemuVersionSHA256"] != runner["qemuVersionSHA256"]):
+        raise HostGuestError("host guest runner identity differs from the immutable launcher receipt")
+    if not isinstance(guest, dict) or set(guest) != {
+        "nonceSHA256", "manifestSHA256", "sourceCloudImageSHA256", "os", "architecture", "kernelBefore",
+        "kernelAfter", "bootIDBefore", "bootIDAfter", "systemdPID1", "docker", "container", "markerSHA256",
+        "generation", "links", "controllers", "postgresFixture", "physicalPoolArtifactsSHA256",
+    }:
+        raise HostGuestError("host guest receipt has incomplete guest measurements")
+
+    os_record = guest.get("os")
+    if not isinstance(os_record, dict) or set(os_record) != {"id", "versionID"}:
+        raise HostGuestError("host guest receipt has invalid OS identity")
+    expected_os = {value: key for key, value in GUEST_OS.items()}.get((os_record["id"], os_record["versionID"]))
+    if expected_os is None:
+        raise HostGuestError("host guest receipt uses an unsupported host OS")
+    if (guest.get("architecture") != expected_arch or not isinstance(guest.get("kernelBefore"), str)
+            or not guest["kernelBefore"] or not isinstance(guest.get("kernelAfter"), str) or not guest["kernelAfter"]
+            or BOOT_ID_RE.fullmatch(guest.get("bootIDBefore", "")) is None
+            or BOOT_ID_RE.fullmatch(guest.get("bootIDAfter", "")) is None
+            or guest["bootIDBefore"] == guest["bootIDAfter"]):
+        raise HostGuestError("host guest receipt lacks a valid automatic reboot identity")
+    for key in ("nonceSHA256", "manifestSHA256", "sourceCloudImageSHA256", "markerSHA256"):
+        if not isinstance(guest.get(key), str) or SHA256_RE.fullmatch(guest[key]) is None:
+            raise HostGuestError(f"host guest receipt lacks {key}")
+    docker = guest.get("docker")
+    if docker != {"enabled": "enabled", "active": "active"} or "systemd" not in guest.get("systemdPID1", ""):
+        raise HostGuestError("host guest receipt does not prove systemd and Docker are active and enabled")
+    container = guest.get("container")
+    if not isinstance(container, dict) or set(container) != {
+        "id", "configuredImage", "imageID", "state", "health", "project", "service", "repoDigests",
+        "startedAtBeforeReboot", "startedAtAfterReboot",
+    }:
+        raise HostGuestError("host guest receipt has incomplete container identity")
+    if (CONTAINER_RE.fullmatch(container["id"]) is None or container["configuredImage"] != identity["image"]
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", container["imageID"]) is None
+            or container["state"] != "running" or container["health"] != "healthy"
+            or not container["project"] or container["service"] != "leapview"
+            or not container["startedAtBeforeReboot"] or not container["startedAtAfterReboot"]
+            or container["startedAtBeforeReboot"] == container["startedAtAfterReboot"]
+            or not isinstance(container["repoDigests"], list) or identity["image"] not in container["repoDigests"]):
+        raise HostGuestError("host guest receipt container does not match the healthy immutable image")
+    expected_generation = "sha256-" + identity["image"].rsplit("sha256:", 1)[1]
+    if guest.get("generation") != expected_generation or guest.get("links") != {
+        "current": "releases/" + expected_generation,
+        "controllerWrapper": "../../../opt/leapview/current/leapviewctl",
+    }:
+        raise HostGuestError("host guest receipt generation or wrapper links do not match the image")
+    controllers = guest.get("controllers")
+    if not isinstance(controllers, dict) or set(controllers) != {
+        "nixArchiveSHA256", "ociPayloadSHA256", "installedSHA256", "nixRuntimeIdentity", "installedRuntimeIdentity",
+    }:
+        raise HostGuestError("host guest receipt has incomplete controller measurements")
+    for key in ("nixArchiveSHA256", "ociPayloadSHA256", "installedSHA256"):
+        if not isinstance(controllers[key], str) or SHA256_RE.fullmatch(controllers[key]) is None:
+            raise HostGuestError("host guest receipt has an invalid controller digest")
+    if controllers["nixArchiveSHA256"] != identity["controllerSHA256"] or controllers["ociPayloadSHA256"] != controllers["installedSHA256"]:
+        raise HostGuestError("host guest receipt conflates the Nix archive with the OCI-installed controller")
+    postgres_fixture = guest["postgresFixture"]
+    if not isinstance(postgres_fixture, dict) or set(postgres_fixture) != {
+        "image", "repoDigest", "imageID", "repoDigests", "platform", "containerName", "network", "stateVolume", "dataVolume",
+        "restartPolicy", "initScriptSHA256", "tlsRoleProbesBeforeInstall",
+    }:
+        raise HostGuestError("host guest receipt has incomplete PostgreSQL fixture identity")
+    if (not isinstance(postgres_fixture["image"], str)
+            or re.fullmatch(r"docker\.io/library/postgres:18-alpine@sha256:[0-9a-f]{64}", postgres_fixture["image"]) is None
+            or not isinstance(postgres_fixture["repoDigest"], str)
+            or postgres_fixture["repoDigest"] != _postgres_repo_digest(postgres_fixture["image"])
+            or not isinstance(postgres_fixture["imageID"], str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", postgres_fixture["imageID"]) is None
+            or not isinstance(postgres_fixture["repoDigests"], list)
+            or any(not isinstance(item, str) for item in postgres_fixture["repoDigests"])
+            or postgres_fixture["platform"] != identity["platform"]
+            or postgres_fixture["network"] != "leapview_default"
+            or postgres_fixture["stateVolume"] != "leapview_leapview-state"
+            or postgres_fixture["restartPolicy"] != "unless-stopped"
+            or not re.fullmatch(r"leapview-qualification-pg-[0-9a-f]{16}", postgres_fixture["containerName"])
+            or postgres_fixture["dataVolume"] != postgres_fixture["containerName"]
+            or postgres_fixture["repoDigest"] not in postgres_fixture["repoDigests"]
+            or postgres_fixture["tlsRoleProbesBeforeInstall"] != TLS_ROLE_EXPECTATIONS
+            or not isinstance(postgres_fixture["initScriptSHA256"], str)
+            or SHA256_RE.fullmatch(postgres_fixture["initScriptSHA256"]) is None):
+        raise HostGuestError("host guest PostgreSQL fixture identity is not locked, native, and TLS-enabled")
+    pool_artifacts_sha = guest["physicalPoolArtifactsSHA256"]
+    if not isinstance(pool_artifacts_sha, str) or SHA256_RE.fullmatch(pool_artifacts_sha) is None:
+        raise HostGuestError("host guest receipt lacks canonical physical-pool artifact identity")
+    nix_runtime, installed_runtime = controllers["nixRuntimeIdentity"], controllers["installedRuntimeIdentity"]
+    runtime_keys = {"product", "version", "revision", "buildTime", "dirty", "development"}
+    if (not isinstance(nix_runtime, dict) or set(nix_runtime) != runtime_keys
+            or not isinstance(installed_runtime, dict) or set(installed_runtime) != runtime_keys
+            or nix_runtime["product"] != "leapviewctl" or installed_runtime["product"] != "leapviewctl"
+            or nix_runtime["revision"] != identity["sourceRevision"]
+            or installed_runtime["revision"] != identity["sourceRevision"]
+            or nix_runtime["version"] != installed_runtime["version"]
+            or nix_runtime["buildTime"] != installed_runtime["buildTime"]
+            or nix_runtime["dirty"] is not False or installed_runtime["dirty"] is not False
+            or nix_runtime["development"] is not False or installed_runtime["development"] is not False):
+        raise HostGuestError("host guest receipt lacks Nix and OCI controller runtime identities")
+    if receipt["assertions"] != {assertion: True for assertion in ASSERTIONS}:
+        raise HostGuestError("host guest receipt does not pass every scoped assertion")
+    if receipt["excludedGates"] != ["two-image-upgrade-and-rollback", "full-enterprise-publication-journey"]:
+        raise HostGuestError("host guest receipt has an unexpected release-gate scope")
+
+    report = _json(_evidence_bytes(evidence, "qualification-report.json"), "host guest qualification report")
+    if (not isinstance(report, dict) or set(report) != {
+        "schemaVersion", "scope", "result", "guestOS", "platform", "installMode", "installerDriver",
+        "image", "sourceRevision", "releaseAdmission", "postgresFixtureImage", "postgresFixturePlatform",
+        "physicalPoolArtifactsSHA256",
+    } or report.get("schemaVersion") != SCHEMA_VERSION or report.get("scope") != SCOPE or report.get("result") != "passed"
+            or report.get("releaseAdmission") is not False or report.get("image") != identity["image"]
+            or report.get("sourceRevision") != identity["sourceRevision"] or report.get("platform") != identity["platform"]
+            or report.get("installMode") != identity["installMode"]
+            or report.get("installerDriver") != identity["installerDriver"]
+            or report.get("postgresFixtureImage") != postgres_fixture["image"]
+            or report.get("postgresFixturePlatform") != postgres_fixture["platform"]
+            or report.get("physicalPoolArtifactsSHA256") != pool_artifacts_sha):
+        raise HostGuestError("host guest evidence report differs from the bound release identity")
+    if report["guestOS"] != expected_os:
+        raise HostGuestError("launcher guest OS differs from raw /etc/os-release evidence")
+    manifest_data = _evidence_bytes(evidence, "launcher-manifest.json")
+    manifest = _json(manifest_data, "launcher guest manifest")
+    if (not isinstance(manifest, dict) or set(manifest) != {
+        "schemaVersion", "nonce", "sourceCloudImageSHA256", "guestOS", "architecture", "virtualizationMode",
+    }):
+        raise HostGuestError("raw launcher manifest has an unsupported schema")
+    _validate_manifest(
+        manifest_data, nonce=manifest["nonce"], guest_os=report["guestOS"],
+        platform=identity["platform"], mode=runner["virtualizationMode"],
+    )
+    if (_digest(manifest_data) != guest["manifestSHA256"]
+            or _digest(manifest["nonce"].encode("ascii")) != guest["nonceSHA256"]
+            or manifest["sourceCloudImageSHA256"] != guest["sourceCloudImageSHA256"]):
+        raise HostGuestError("host guest receipt differs from the launcher-bound manifest")
+    if (_os_release(_evidence_bytes(evidence, "preinstall-os-release.txt")) != (os_record["id"], os_record["versionID"])
+            or _os_release(_evidence_bytes(evidence, "postreboot-os-release.txt")) != (os_record["id"], os_record["versionID"])):
+        raise HostGuestError("host guest OS receipt differs from raw /etc/os-release evidence")
+    evidence_records = {
+        "ssh-root.txt": "root",
+        "fresh-install-state.txt": "absent",
+        "preinstall-architecture.txt": expected_arch,
+        "preinstall-boot-id.txt": guest["bootIDBefore"],
+        "preinstall-kernel.txt": guest["kernelBefore"],
+        "postreboot-boot-id.txt": guest["bootIDAfter"],
+        "postreboot-architecture.txt": expected_arch,
+        "postreboot-kernel.txt": guest["kernelAfter"],
+        "postreboot-pid1.txt": guest["systemdPID1"],
+        "docker-enabled.txt": docker["enabled"],
+        "docker-active.txt": docker["active"],
+        "oci-image-id.txt": container["imageID"],
+        "current-generation-link.txt": guest["links"]["current"],
+        "controller-wrapper-link.txt": guest["links"]["controllerWrapper"],
+        "host-marker-sha256.txt": guest["markerSHA256"],
+        "nix-controller-sha256.txt": controllers["nixArchiveSHA256"],
+        "installer-driver.txt": identity["installerDriver"],
+        "oci-payload-controller-sha256.txt": controllers["ociPayloadSHA256"],
+        "installed-controller-sha256.txt": controllers["installedSHA256"],
+        "postgres-image-id.txt": postgres_fixture["imageID"],
+        "postgres-image-platform.txt": postgres_fixture["platform"],
+        "postgres-container-before-reboot.txt": None,
+        "postgres-container-after-reboot.txt": None,
+        "physical-pool-qualification-sha256.txt": pool_artifacts_sha,
+        "operator-bootstrap-cleanup.txt": "absent",
+        "pool-probe-completed-before-install.txt": "completed-before-install",
+    }
+    for filename, expected in evidence_records.items():
+        if expected is None:
+            continue
+        if _one_line(_evidence_bytes(evidence, filename), filename) != expected:
+            raise HostGuestError(f"host guest evidence {filename} differs from its receipt")
+    if _one_line(_evidence_bytes(evidence, "host-install-exit-code.txt"), "host install exit") != "0":
+        raise HostGuestError("host guest evidence does not show a successful fresh install")
+    if identity["installMode"] == "bootstrap":
+        for filename in ("source-bootstrap-sha256.txt", "guest-bootstrap-sha256.txt"):
+            if _one_line(_evidence_bytes(evidence, filename), filename) != bootstrap_sha:
+                raise HostGuestError("bootstrap execution differs from the exact source-tree installer")
+    elif any((evidence / filename).exists() for filename in ("source-bootstrap-sha256.txt", "guest-bootstrap-sha256.txt")):
+        raise HostGuestError("Nix-controller mode unexpectedly retains bootstrap evidence")
+    marker_projection = _json(_evidence_bytes(evidence, "host-marker-projection.json"), "host marker projection")
+    if (not isinstance(marker_projection, dict) or set(marker_projection) != {"schemaVersion", "image", "https", "markerSHA256"}
+            or marker_projection["schemaVersion"] != 1 or marker_projection["image"] != identity["image"]
+            or type(marker_projection["https"]) is not bool or marker_projection["markerSHA256"] != guest["markerSHA256"]):
+        raise HostGuestError("host marker projection differs from the installed image or marker hash")
+    repo_digests = _json(_evidence_bytes(evidence, "oci-repo-digests.json"), "OCI RepoDigests")
+    if repo_digests != container["repoDigests"]:
+        raise HostGuestError("container image digest inventory differs from raw OCI evidence")
+    inspect_parts = _one_line(_evidence_bytes(evidence, "container-inspect.txt"), "container inspection").split()
+    expected_inspect = [container[key] for key in ("id", "configuredImage", "imageID", "state", "health", "project", "service")]
+    if inspect_parts != expected_inspect + [container["startedAtAfterReboot"]]:
+        raise HostGuestError("container identity differs from raw Docker inspection evidence")
+    pre_inspect = _one_line(_evidence_bytes(evidence, "prereboot-container-inspect.txt"), "pre-reboot inspection").split()
+    if (len(pre_inspect) != 8 or pre_inspect[0] != container["id"] or pre_inspect[1] != identity["image"]
+            or pre_inspect[2] != container["imageID"] or pre_inspect[3:7] != ["running", "healthy", container["project"], "leapview"]
+            or pre_inspect[7] != container["startedAtBeforeReboot"]
+            or container["startedAtBeforeReboot"] == container["startedAtAfterReboot"]):
+        raise HostGuestError("container did not restart from the same running container after reboot")
+    probes = _json(_evidence_bytes(evidence, "automatic-restart-probes.json"), "automatic restart probes")
+    if not isinstance(probes, list) or not probes or probes[-1].get("inspection") != " ".join(inspect_parts):
+        raise HostGuestError("automatic restart probe history does not end at the retained healthy inspection")
+    if _json(_evidence_bytes(evidence, "nix-controller-runtime.json"), "Nix controller runtime") != nix_runtime:
+        raise HostGuestError("Nix controller identity differs from raw runtime evidence")
+    if _json(_evidence_bytes(evidence, "installed-controller-runtime.json"), "installed controller runtime") != installed_runtime:
+        raise HostGuestError("installed controller identity differs from raw runtime evidence")
+    if _one_line(_evidence_bytes(evidence, "controller-status.txt"), "installed controller status") != "0":
+        raise HostGuestError("host controller status evidence is not a successful exit code")
+    if _json(_evidence_bytes(evidence, "postgres-image-repo-digests.json"), "PostgreSQL RepoDigests") != postgres_fixture["repoDigests"]:
+        raise HostGuestError("PostgreSQL fixture digest inventory differs from its receipt")
+    if (postgres_fixture["repoDigest"] not in postgres_fixture["repoDigests"]
+            or _one_line(_evidence_bytes(evidence, "postgres-compose-network-labels.txt"), "Compose network labels") != "leapview default"
+            or _one_line(_evidence_bytes(evidence, "postgres-compose-state-volume-labels.txt"), "Compose state-volume labels") != "leapview leapview-state"):
+        raise HostGuestError("PostgreSQL fixture is not bound to the exact Compose network and state volume")
+    postgres_before = _one_line(_evidence_bytes(evidence, "postgres-container-before-reboot.txt"), "pre-reboot PostgreSQL inspection").split()
+    postgres_after = _one_line(_evidence_bytes(evidence, "postgres-container-after-reboot.txt"), "post-reboot PostgreSQL inspection").split()
+    if (len(postgres_before) != 5 or len(postgres_after) != 5
+            or CONTAINER_RE.fullmatch(postgres_before[0]) is None or postgres_after[0] != postgres_before[0]
+            or postgres_before[1:4] != [postgres_fixture["imageID"], "running", "unless-stopped"]
+            or postgres_after[1:4] != [postgres_fixture["imageID"], "running", "unless-stopped"]
+            or not postgres_before[4] or not postgres_after[4] or postgres_before[4] == postgres_after[4]):
+        raise HostGuestError("PostgreSQL fixture did not automatically restart from the same persistent container")
+    before_roles = _evidence_bytes(evidence, "postgres-tls-role-probes-before-install.txt").decode("utf-8").strip().splitlines()
+    after_control = _one_line(_evidence_bytes(evidence, "postgres-tls-role-probe-after-reboot.txt"), "post-reboot TLS role probe")
+    if before_roles != list(TLS_ROLE_EXPECTATIONS.values()) or after_control != TLS_ROLE_EXPECTATIONS["controlRuntime"]:
+        raise HostGuestError("PostgreSQL fixture lacks authenticated TLS role probes before install and after reboot")
+    pool_order = _json(_evidence_bytes(evidence, "pool-probe-order.json"), "pool probe sequencing evidence")
+    if pool_order != {
+        "schemaVersion": 1,
+        "freshInstallRootAbsentBeforeProbe": True,
+        "servingComposeServiceStartedBeforeInstall": False,
+        "tlsRuntimeRolesProbedBeforeInstall": True,
+        "canonicalPoolCommand": "admin delivery pool qualify",
+        "candidateImage": identity["image"],
+        "candidateImageID": container["imageID"],
+        "candidatePlatform": identity["platform"],
+        "sourceRevision": identity["sourceRevision"],
+        "operatorBootstrapWrittenAfterPoolProbe": True,
+    }:
+        raise HostGuestError("pool probe was not completed against a fresh, non-serving install target before host install")
+    if _evidence_bytes(evidence, "pool-probe-preconditions.txt").decode("utf-8").strip().splitlines() != [
+        "fresh-root-absent", "serving-service-not-running",
+    ]:
+        raise HostGuestError("pool probe evidence does not prove the fresh target and stopped service preconditions")
+    raw_pool = _evidence_bytes(evidence, "physical-pool-qualification-artifacts.json")
+    try:
+        pool_artifacts = _json(raw_pool, "canonical physical-pool qualification artifacts", 1024**2)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(f"canonical physical-pool qualification artifacts are invalid: {exc}") from exc
+    if (_digest(raw_pool) != pool_artifacts_sha or not isinstance(pool_artifacts, dict)
+            or set(pool_artifacts) != {"schema_version", "pool", "evidence"}
+            or type(pool_artifacts["schema_version"]) is not int or pool_artifacts["schema_version"] != 1
+            or not isinstance(pool_artifacts["pool"], dict) or not isinstance(pool_artifacts["evidence"], dict)):
+        raise HostGuestError("physical-pool qualification artifact digest or schema differs from the receipt")
+    boundary = _json(_evidence_bytes(evidence, "serving-credential-boundary.json"), "serving credential boundary")
+    if boundary != {
+        "controlMigratorURLAbsentFromServingEnvironment": True,
+        "duckLakeMigratorURLAbsentFromServingEnvironment": True,
+    }:
+        raise HostGuestError("operation-only migrator URLs were not excluded from the installed serving environment")
+    secret_boundary = _json(_evidence_bytes(evidence, "database-secret-boundary.json"), "private credential boundary")
+    if secret_boundary != {
+        "poolProbeUsedSeparatePrivateEnvironment": True,
+        "operationOnlyMigratorURLsAbsentFromServingEnvironment": True,
+        "operatorBootstrapRemovedAfterSuccessfulInstall": True,
+        "candidateSecretsExcludedFromRetainedEvidence": True,
+    }:
+        raise HostGuestError("guest first-install private input or credential boundary did not pass")
+    try:
+        inventory = qualification._qualification_evidence_inventory(evidence)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(f"cannot validate host guest evidence inventory: {exc}") from exc
+    if _canonical(inventory) != _canonical(receipt["evidenceInventory"]):
+        raise HostGuestError("host guest raw evidence differs from its retained inventory")
+    return receipt
+
+
+def verify_receipt(receipt_path: Path, evidence_path: Path) -> dict:
+    receipt = _json(_read(receipt_path, "host guest receipt", MAX_RECEIPT_BYTES), "host guest receipt")
+    return _validate_receipt(receipt, evidence_path)
+
+
+def _add_identity_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--sidecar", type=Path, required=True)
+    parser.add_argument("--controller-build-identity", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--release-identity", type=Path, required=True)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--platform", choices=sorted(qualification.PLATFORMS), required=True)
+    parser.add_argument("--original-controller-evidence", type=Path, required=True)
+    parser.add_argument("--retained-controller-evidence", type=Path, required=True)
+    parser.add_argument("--controller-binary-verifier", type=Path, required=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    operations = parser.add_subparsers(dest="operation", required=True)
+    qualify = operations.add_parser("qualify-guest")
+    _add_identity_arguments(qualify)
+    qualify.add_argument("--host", default="127.0.0.1")
+    qualify.add_argument("--port", type=int, required=True)
+    qualify.add_argument("--ssh-identity", type=Path, required=True)
+    qualify.add_argument("--known-hosts", type=Path, required=True)
+    qualify.add_argument("--nonce", required=True)
+    qualify.add_argument("--guest-manifest", type=Path, required=True)
+    qualify.add_argument("--launcher-receipt", type=Path, required=True)
+    qualify.add_argument("--guest-os", choices=sorted(GUEST_OS), required=True)
+    qualify.add_argument("--install-mode", choices=("bootstrap", "nix-controller"), required=True)
+    qualify.add_argument("--virtualization-mode", choices=("kvm", "tcg"), required=True)
+    qualify.add_argument("--config", type=Path, required=True)
+    qualify.add_argument("--output-dir", type=Path, required=True)
+    qualify.add_argument("--reboot-timeout", type=int, default=300)
+    qualify.add_argument("--startup-timeout", type=int, default=300)
+
+    verify = operations.add_parser("verify-receipt")
+    verify.add_argument("--receipt", type=Path, required=True)
+    verify.add_argument("--evidence-dir", type=Path, required=True)
+
+    args = parser.parse_args()
+    try:
+        if args.operation == "verify-receipt":
+            receipt = verify_receipt(args.receipt, args.evidence_dir)
+        else:
+            if NONCE_RE.fullmatch(args.nonce) is None:
+                raise HostGuestError("launcher invocation nonce must be 32–128 lowercase hexadecimal characters")
+            if REVISION_RE.fullmatch(args.source_revision) is None:
+                raise HostGuestError("source revision must be a full lowercase commit SHA")
+            if not 60 <= args.reboot_timeout <= 900:
+                raise HostGuestError("reboot timeout must be between 60 and 900 seconds")
+            if not 60 <= args.startup_timeout <= 900:
+                raise HostGuestError("application restart timeout must be between 60 and 900 seconds")
+            receipt = _install_and_collect(args)
+        print(json.dumps({
+            "scope": receipt["scope"],
+            "result": receipt["result"],
+            "releaseAdmission": False,
+            "receiptSHA256": _digest(_canonical(receipt)),
+        }, sort_keys=True))
+    except (HostGuestError, qualification.QualificationError, controller_evidence.ControllerEvidenceError,
+            OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit("Nix Compose host guest qualification rejected: " + str(exc)) from exc
+
+
+if __name__ == "__main__":
+    main()
