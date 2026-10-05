@@ -301,7 +301,8 @@ class StagingTests(unittest.TestCase):
         self.release.mkdir(parents=True)
         self.payload = {name: b'packaged content' for name in
                         ['compose.yaml', 'compose.https.yaml', 'Caddyfile',
-                         'deployment.env.example', 'leapviewctl', 'leapviewctl-wrapper']}
+                         'deployment.env.example', 'leapview.env.example',
+                         'leapviewctl', 'leapviewctl-wrapper']}
         for name, data in self.payload.items():
             (self.release/name).write_bytes(data)
             (self.root/name).symlink_to('current/'+name)

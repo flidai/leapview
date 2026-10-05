@@ -76,6 +76,8 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=placeholder",
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE=placeholder",
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE=placeholder",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE=placeholder",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=",
@@ -98,6 +100,7 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 		require.Equal(t, want, values[key], key)
 	}
 	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
 	} {
@@ -110,8 +113,10 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 
 	operation, err := qualificationNativePostgresOperationEnvironment(topology)
 	require.NoError(t, err)
-	require.Len(t, operation, 2)
+	require.Len(t, operation, 4)
+	require.Equal(t, topology.ControlMigratorURL, operation["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL"])
 	require.Equal(t, topology.DuckLakeMigratorURL, operation["LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL"])
+	require.Equal(t, qualificationNativePostgresControlMigratorRole, operation["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"])
 	require.Equal(t, qualificationNativePostgresDuckLakeMigratorRole, operation["LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE"])
 }
 

@@ -125,7 +125,7 @@ func composeArguments(root string, args ...string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if project == "" || project != strings.TrimSpace(project) || normalizedQualificationName(project) != project {
+	if !validComposeProjectName(project) {
 		return nil, errors.New("Compose project name must be a normalized identifier")
 	}
 	result := []string{
@@ -141,33 +141,24 @@ func composeArguments(root string, args ...string) ([]string, error) {
 	return append(result, args...), nil
 }
 
-func (c *Controller) qualificationCompose(
-	ctx context.Context,
-	root string,
-	args ...string,
-) ([]byte, error) {
-	if err := c.verifyDockerEndpoint(ctx); err != nil {
-		return nil, err
+func validComposeProjectName(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
 	}
-	commandArgs, err := composeArguments(root, args...)
-	if err != nil {
-		return nil, err
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '-' {
+			continue
+		}
+		return false
 	}
-	processEnvironment, err := composeProcessEnvironment(root, nil)
-	if err != nil {
-		return nil, err
-	}
-	return qualificationProcess{
-		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
-		stdoutOnly: len(args) > 0 && args[0] == "run",
-	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
+	return true
 }
 
-// qualificationComposeEnvironment supplies operation-only credentials to the
-// Compose process without persisting them in leapview.env or rendering their
-// values in command arguments. Callers pass `run --env NAME` so Compose copies
-// only the named value into the one-shot container.
-func (c *Controller) qualificationComposeEnvironment(
+func (c *Controller) composeCapture(ctx context.Context, root string, args ...string) ([]byte, error) {
+	return c.composeCaptureWithEnvironment(ctx, root, nil, args...)
+}
+
+func (c *Controller) composeCaptureWithEnvironment(
 	ctx context.Context,
 	root string,
 	environment map[string]string,
@@ -180,14 +171,11 @@ func (c *Controller) qualificationComposeEnvironment(
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(environment))
 	for name := range environment {
 		if strings.TrimSpace(name) == "" || strings.Contains(name, "=") {
-			return nil, fmt.Errorf("qualification operation environment name %q is invalid", name)
+			return nil, fmt.Errorf("Compose operation environment name %q is invalid", name)
 		}
-		names = append(names, name)
 	}
-	sort.Strings(names)
 	processEnvironment, err := composeProcessEnvironment(root, environment)
 	if err != nil {
 		return nil, err
@@ -196,6 +184,27 @@ func (c *Controller) qualificationComposeEnvironment(
 		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
 		stdoutOnly: len(args) > 0 && args[0] == "run",
 	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
+}
+
+func (c *Controller) qualificationCompose(
+	ctx context.Context,
+	root string,
+	args ...string,
+) ([]byte, error) {
+	return c.composeCapture(ctx, root, args...)
+}
+
+// qualificationComposeEnvironment supplies operation-only credentials to the
+// Compose process without persisting them in leapview.env or rendering their
+// values in command arguments. Callers pass `run --env NAME` so Compose copies
+// only the named value into the one-shot container.
+func (c *Controller) qualificationComposeEnvironment(
+	ctx context.Context,
+	root string,
+	environment map[string]string,
+	args ...string,
+) ([]byte, error) {
+	return c.composeCaptureWithEnvironment(ctx, root, environment, args...)
 }
 
 // composeProcessEnvironment prevents host shell variables from
@@ -552,30 +561,7 @@ func readQualificationJSON(path string, value any) error {
 }
 
 func appendOrReplaceQualificationEnv(path, key, value string) error {
-	if err := validateEnvLineValue(key, value); err != nil {
-		return err
-	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(contents), "\n")
-	found := false
-	for index, line := range lines {
-		name, _, present := strings.Cut(line, "=")
-		if present && name == key {
-			lines[index] = key + "=" + value
-			found = true
-		}
-	}
-	if !found {
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		lines = append(lines, key+"=", "")
-		lines[len(lines)-2] = key + "=" + value
-	}
-	return securefs.WritePrivateFileAtomic(path, []byte(strings.Join(lines, "\n")))
+	return appendOrReplaceEnvFile(path, key, value)
 }
 
 func qualificationWait(

@@ -75,7 +75,22 @@ func newQualificationNativePoolController(
 	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), []byte("COMPOSE_PROJECT_NAME=qualification-project\nCOMPOSE_HTTPS=0\n"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, appEnvName), []byte("LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=\nLEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=\nLEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=stale\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, appEnvName), []byte(
+		"LEAPVIEW_POSTGRES_CONTROL_URL=\n"+
+			"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=stale\n"+
+			"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE=leapview_control_migrator\n"+
+			"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=leapview_control_runtime\n"+
+			"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=\n"+
+			"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE=leapview_control_maintenance\n"+
+			"LEAPVIEW_POSTGRES_DUCKLAKE_URL=\n"+
+			"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE=leapview_ducklake_runtime\n"+
+			"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=\n"+
+			"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE=leapview_ducklake_maintenance\n"+
+			"LEAPVIEW_POSTGRES_REQUIRE_TLS=false\n"+
+			"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=\n"+
+			"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=\n"+
+			"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=stale\n",
+	), 0o600))
 	executor := &recordingQualificationExecutor{}
 	index := 0
 	controller, err := New(Options{
@@ -101,8 +116,8 @@ func TestPrepareQualificationNativePhysicalPoolWritesArtifactsAndExactComposeCom
 	evidenceDir := filepath.Join(t.TempDir(), "evidence")
 	artifacts, err := controller.prepareQualificationNativePhysicalPool(t.Context(), evidenceDir)
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(evidenceDir, qualificationNativePhysicalPoolIdentityFile), artifacts.PoolPath)
-	require.Equal(t, filepath.Join(evidenceDir, qualificationNativePhysicalPoolEvidenceFile), artifacts.EvidencePath)
+	require.Equal(t, filepath.Join(evidenceDir, physicalPoolIdentityFile), artifacts.PoolPath)
+	require.Equal(t, filepath.Join(evidenceDir, physicalPoolEvidenceFile), artifacts.EvidencePath)
 	require.Equal(t, artifacts.PoolID, environmentValues(string(mustRead(t, filepath.Join(controller.root, appEnvName))))["LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID"])
 
 	poolBytes := mustRead(t, artifacts.PoolPath)
@@ -122,7 +137,7 @@ func TestPrepareQualificationNativePhysicalPoolWritesArtifactsAndExactComposeCom
 	compatibilityDigest, _ := fixture.evidence.Compatibility.Digest()
 	common := []string{"compose", "--project-name", "qualification-project", "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml")}
 	wantGenerator := append(append([]string(nil), common...), "run", "--rm", "--no-deps", "leapview", "admin", "delivery", "pool", "qualify")
-	wantDry := append(append([]string(nil), common...), qualificationNativePhysicalPoolBootstrapArguments(artifacts, false, nil)...)
+	wantDry := append(append([]string(nil), common...), physicalPoolBootstrapArguments(artifacts, false, nil)...)
 	require.Len(t, executor.requests, 2)
 	require.True(t, slices.Equal(wantGenerator, executor.requests[0].Arguments), executor.requests[0].Arguments)
 	require.True(t, slices.Equal(wantDry, executor.requests[1].Arguments), executor.requests[1].Arguments)

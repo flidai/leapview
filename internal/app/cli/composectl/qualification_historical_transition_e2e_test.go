@@ -346,9 +346,9 @@ func startQualificationHistoricalPredecessorFixture(t *testing.T, ctx context.Co
 	require.NoError(t, err)
 	poolDir := filepath.Join(t.TempDir(), "physical-pool")
 	require.NoError(t, os.MkdirAll(poolDir, 0o700))
-	poolArtifacts, err := qualificationNativePhysicalPoolArtifactsFromEnvelope(poolDir, poolEnvelope)
+	poolArtifacts, err := physicalPoolBootstrapArtifactsFromEnvelope(poolDir, poolEnvelope)
 	require.NoError(t, err)
-	require.NoError(t, writeQualificationNativePhysicalPoolArtifacts(poolArtifacts))
+	require.NoError(t, writePhysicalPoolBootstrapArtifacts(poolArtifacts))
 	_, err = poolUtility.Remove(ctx)
 	require.NoError(t, err)
 
@@ -358,14 +358,14 @@ func startQualificationHistoricalPredecessorFixture(t *testing.T, ctx context.Co
 	utility := startQualificationHistoricalUtility(t, ctx, runtime, network.Name, stateVolume, oldImage, applicationEnvironment, composeProject+"-predecessor-setup")
 	copyQualificationHistoricalPoolFiles(t, ctx, utility, poolArtifacts)
 	bootstrapDryRun := runQualificationHistoricalPoolBootstrap(t, ctx, utility, poolArtifacts, false, nil)
-	require.NoError(t, verifyQualificationNativePhysicalPoolBootstrapResult(bootstrapDryRun, poolArtifacts, false))
+	require.NoError(t, verifyPhysicalPoolBootstrapResult(bootstrapDryRun, poolArtifacts, false))
 
 	initial, err := initializeQualificationHistoricalRuntime(ctx, t, utility)
 	require.NoError(t, err)
 	operationEnvironment, err := qualificationNativePostgresOperationEnvironment(topology)
 	require.NoError(t, err)
 	bootstrapResult := runQualificationHistoricalPoolBootstrap(t, ctx, utility, poolArtifacts, true, operationEnvironment)
-	require.NoError(t, verifyQualificationNativePhysicalPoolBootstrapResult(bootstrapResult, poolArtifacts, true))
+	require.NoError(t, verifyPhysicalPoolBootstrapResult(bootstrapResult, poolArtifacts, true))
 	// The utility owns the shared home and captured initialization credentials;
 	// acknowledge them before starting the app, which holds the same native
 	// home lock for its lifetime.
@@ -574,7 +574,7 @@ func startQualificationHistoricalUtility(
 	return container
 }
 
-func copyQualificationHistoricalPoolFiles(t *testing.T, ctx context.Context, container qualificationContainer, artifacts qualificationNativePhysicalPoolArtifacts) {
+func copyQualificationHistoricalPoolFiles(t *testing.T, ctx context.Context, container qualificationContainer, artifacts physicalPoolBootstrapArtifacts) {
 	t.Helper()
 	const target = "/tmp/leapview-historical-transition-pool"
 	_, err := container.Exec(ctx, nil, "mkdir", "-p", target)
@@ -589,10 +589,10 @@ func runQualificationHistoricalPoolBootstrap(
 	t *testing.T,
 	ctx context.Context,
 	container qualificationContainer,
-	artifacts qualificationNativePhysicalPoolArtifacts,
+	artifacts physicalPoolBootstrapArtifacts,
 	apply bool,
 	operationEnvironment map[string]string,
-) qualificationNativePhysicalPoolBootstrapResult {
+) physicalPoolBootstrapResult {
 	t.Helper()
 	args := []string{"leapview", "admin", "delivery", "pool", "bootstrap",
 		"--pool", "/tmp/leapview-historical-transition-pool/pool-identity.json",
@@ -609,7 +609,7 @@ func runQualificationHistoricalPoolBootstrap(
 	}
 	output, err := container.Exec(ctx, nil, args...)
 	require.NoError(t, err)
-	result, err := parseQualificationNativePhysicalPoolBootstrapResult(output)
+	result, err := parsePhysicalPoolBootstrapResult(output)
 	require.NoError(t, err)
 	return result
 }

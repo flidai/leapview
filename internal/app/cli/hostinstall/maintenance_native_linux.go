@@ -432,7 +432,7 @@ func (e *NativeEffects) stage(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
+	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example", "leapview.env.example"} {
 		installed, err := os.ReadFile(filepath.Join(e.root, name))
 		if err != nil || !bytes.Equal(installed, payload[name]) {
 			return fmt.Errorf("deployment topology changed: %s", name)

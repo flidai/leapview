@@ -35,6 +35,7 @@ RUNTIME_PAYLOAD_MODES = {
     'compose.https.yaml': 0o600,
     'Caddyfile': 0o600,
     'deployment.env.example': 0o600,
+    'leapview.env.example': 0o600,
 }
 
 def run(*args, **kwargs):
@@ -407,7 +408,7 @@ def stage_release(image):
         if any(not complete.get(name) for name in RUNTIME_PAYLOAD_MODES):
             raise RuntimeError('Required runtime payload file is missing or empty')
         runtime = {name: complete[name] for name in RUNTIME_PAYLOAD_MODES}
-        for name in ['compose.yaml', 'compose.https.yaml', 'Caddyfile', 'deployment.env.example']:
+        for name in ['compose.yaml', 'compose.https.yaml', 'Caddyfile', 'deployment.env.example', 'leapview.env.example']:
             if runtime[name] != (ROOT/name).read_bytes():
                 raise RuntimeError('Deployment payload changed; reviewed host upgrade required: '+name)
         if release.exists() or release.is_symlink():
