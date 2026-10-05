@@ -11,7 +11,6 @@ let
     entry: entry.platform == "linux"
   ) null releasePolicy.supportMatrix;
   electronVersion = releasePolicy.runtime.electron;
-  electronCacheDirectory = builtins.hashString "sha256" "https://github.com/electron/electron/releases/download/v${electronVersion}";
   electronZipFile = "electron-v${electronVersion}-linux-x64.zip";
   nodeVersion = releasePolicy.runtime.node;
   electronArchive = pkgs.fetchurl {
@@ -105,9 +104,11 @@ pkgs.stdenvNoCC.mkDerivation {
     unzip -q ${electronArchive} -d desktop/node_modules/electron/dist
     printf '%s\n' '${electronVersion}' > desktop/node_modules/electron/dist/version
     printf '%s' 'electron' > desktop/node_modules/electron/path.txt
-    export XDG_CACHE_HOME="$TMPDIR/xdg-cache"
-    mkdir -p "$XDG_CACHE_HOME/electron/${electronCacheDirectory}"
-    ln -s ${electronArchive} "$XDG_CACHE_HOME/electron/${electronCacheDirectory}/${electronZipFile}"
+    # A download-cache hit still fetches SHASUMS256.txt with current @electron/get.
+    # Give Packager the exact Nix-verified archive as an explicit build input.
+    export LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR="$TMPDIR/electron-archives"
+    mkdir -p "$LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR"
+    ln -s ${electronArchive} "$LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR/${electronZipFile}"
 
     (
       cd desktop

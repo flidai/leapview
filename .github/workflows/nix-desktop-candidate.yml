@@ -62,6 +62,7 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
             sandbox = true
+            sandbox-fallback = false
       - name: Build the Linux x64 Desktop Debian candidate without publication credentials
         env:
           SOURCE_REVISION: ${{ inputs.source_revision }}

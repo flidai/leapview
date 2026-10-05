@@ -493,6 +493,8 @@ test('native and protected Desktop qualification bind the exact Ubuntu 22.04 Deb
   const native = development.jobs['native-desktop']
   expect(native['runs-on']).toBe('ubuntu-22.04')
   expect(native.if).toContain("inputs.checks == 'native-desktop'")
+  expect(native.steps.find((step: any) => step.uses?.startsWith('cachix/install-nix-action@')).with.extra_nix_config)
+    .toContain('sandbox-fallback = false')
   expect(native.steps.some((step: any) => step.run?.includes('nix_desktop_qualification.py qualify'))).toBe(true)
   const python = native.steps.find((step: any) => step.uses?.startsWith('actions/setup-python@'))
   expect(python.with['python-version']).toBe('3.13.14')
@@ -517,6 +519,8 @@ test('native and protected Desktop qualification bind the exact Ubuntu 22.04 Deb
   const protectedWorkflow = parse(readFileSync('.github/workflows/nix-desktop-candidate.yml', 'utf8'))
   expect(protectedWorkflow.permissions).toEqual({ contents: 'read' })
   expect(protectedWorkflow.jobs.publish).toBeUndefined()
+  expect(protectedWorkflow.jobs.build.steps.find((step: any) => step.uses?.startsWith('cachix/install-nix-action@')).with.extra_nix_config)
+    .toContain('sandbox-fallback = false')
   const qualify = protectedWorkflow.jobs.qualify
   expect(qualify['runs-on']).toBe('ubuntu-22.04')
   expect(qualify.permissions).toEqual({ actions: 'read', contents: 'read' })

@@ -178,6 +178,11 @@ Use a Nix installation with `sandbox = true`; the image CI job sets it explicitl
 package. It uses the locked desktop Bun dependency tree, the official Electron
 and Node archives matching versions declared by `desktop/release-policy.json`,
 and the existing `desktop/scripts/run-electron.mjs make` Forge packaging path.
+The recipe passes the hash-verified Electron ZIP through
+`LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR` to Packager's explicit archive input; a download
+cache alone still triggers checksum network requests. Desktop CI requires
+`sandbox = true` and `sandbox-fallback = false` so a host without the required
+kernel namespaces cannot silently supply an online build.
 The package carries the preview distribution marker. The manual `Protected Nix
 desktop candidate` workflow qualifies the exact Debian bytes on native Ubuntu
 22.04 x86_64 using protected verifier code, then retains the package and a
