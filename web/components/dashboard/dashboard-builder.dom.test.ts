@@ -3897,3 +3897,42 @@ test('embedded preview page tabs select in place instead of reloading the builde
     expect(result.pageId).toBe('details')
   } finally {await page.close()}
 })
+
+test('Add filter stays inside its pane with light searchable rows and keyboard selection', async () => {
+  const page = await browser.newPage({viewport:{width:1440,height:900}})
+  try {
+    await page.goto(baseURL)
+    const editor=page.locator('lv-dashboard-builder')
+    await editor.locator('.filter-add-trigger').waitFor()
+    await editor.evaluate(async(element: any)=>{
+      element.shadowRoot.querySelector('.filters-pane').style.width='170px'
+      const builder=JSON.parse(JSON.stringify(element.builder))
+      builder.filters=[]
+      builder.semanticModel.datasets=[{id:'sales',title:'Sales',fields:[
+        {id:'country',label:'Country',kind:'dimension',dataType:'string',roles:['dimension'],canFilter:true},
+        {id:'long',label:'Customer region with a very long field name',kind:'dimension',dataType:'string',roles:['dimension'],canFilter:true},
+      ]}]
+      builder.pages[0].visuals[0].datasetId='sales'
+      const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({builder});await element.updateComplete
+      ;(window as any).filterCommands=[]
+      element.addEventListener('lv-builder-command',(event: CustomEvent)=>(window as any).filterCommands.push(event.detail))
+    })
+    await page.getByRole('button',{name:'Add filter',exact:true}).click()
+    const pane=(await editor.locator('.filters-pane').boundingBox())!, menu=(await editor.locator('.filter-add-menu').boundingBox())!
+    expect(menu.x).toBeGreaterThanOrEqual(pane.x)
+    expect(menu.x+menu.width).toBeLessThanOrEqual(pane.x+pane.width)
+    const search=page.getByRole('searchbox',{name:'Search filter fields',exact:true})
+    await search.fill('region')
+    expect(await editor.getByRole('menuitem').count()).toBe(1)
+    expect(await editor.getByRole('menuitem').evaluate(e=>getComputedStyle(e).borderTopWidth)).toBe('0px')
+    await search.fill('no such field')
+    await page.getByText('No matching fields',{exact:true}).waitFor()
+    await search.press('Escape')
+    expect(await page.getByRole('button',{name:'Add filter',exact:true}).getAttribute('aria-expanded')).toBe('false')
+    await page.getByRole('button',{name:'Add filter',exact:true}).click()
+    await search.fill('Country');await search.press('ArrowDown');await page.keyboard.press('Enter')
+    expect(await page.evaluate(()=>(window as any).filterCommands.at(-1))).toMatchObject({action:'add_filter',fieldId:'country'})
+    expect(await page.getByRole('button',{name:'Add filter',exact:true}).getAttribute('aria-expanded')).toBe('false')
+  } finally {await page.close()}
+})

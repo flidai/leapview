@@ -41,7 +41,6 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { uuidv7 } from '../shared/command'
-import { toggleAnchoredPopover } from '../shared/anchored-popover'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
@@ -200,6 +199,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private selectedFilterID = ''
   @state() private addFilterMenuOpen = false
+  @state() private addFilterQuery = ''
   @state() private selectedFilterComponentID = ''
   @state() private selectedHeaderID = ''
   @state() private addingSlicer = false
@@ -730,14 +730,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .filter-add-trigger { width: 100%; text-align: left; }
     .filter-add-menu {
-      position: fixed; inset: auto; margin: 0; padding: 4px;
-      box-sizing: border-box; overflow-y: auto;
-      border: var(--lv-border-default); border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-overlay, var(--lv-bg-panel)); color: var(--lv-fg-default);
-      box-shadow: var(--shadow-floating-small);
+      display: grid; gap: 6px; width: 100%; min-width: 0; max-width: 100%; padding: 6px;
+      box-sizing: border-box; border: var(--lv-border-muted); border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel); color: var(--lv-fg-default);
     }
-    .filter-add-menu:popover-open { display: grid; gap: 2px; }
-    .filter-add-option { text-align: left; white-space: normal; height: auto; min-height: 28px; }
+    .filter-add-menu[hidden] { display: none; }
+    .filter-add-search { width: 100%; min-width: 0; box-sizing: border-box; min-height: 30px; padding: 4px 6px; font-size: 12px; border: var(--lv-border-default); border-radius: 4px; background: var(--lv-bg-control); color: var(--lv-fg-default); }
+    .filter-add-options { min-width: 0; max-height: min(240px, 35vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+    .filter-add-menu .filter-add-option {
+      display: block; width: 100%; min-width: 0; height: auto; min-height: 30px; padding: 5px 6px;
+      text-align: left; white-space: normal; overflow-wrap: anywhere; border: 0; box-shadow: none;
+      background: transparent; border-radius: 4px; font-size: 12px; line-height: 18px; font-weight: 400;
+    }
+    .filter-add-menu .filter-add-option:hover:not(:disabled), .filter-add-menu .filter-add-option:focus-visible { background: var(--lv-bg-control-hover); }
+    .filter-add-menu .filter-add-option:focus-visible { outline-offset: -2px; }
+    .filter-add-empty { margin: 0; padding: 6px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .filter-settings {
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-small, var(--lv-radius-default));
@@ -3858,7 +3865,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const grouped = this.groupFiltersByScope(filters, page, visual)
-    const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field))
+    const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field) && (!this.addFilterQuery.trim() || item.field.label.toLocaleLowerCase().includes(this.addFilterQuery.trim().toLocaleLowerCase())))
     const filterError = this.builderFilterErrorMessage()
     const collapsed = this.collapsedPanes.filters
     return html`
@@ -3878,12 +3885,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         </div>
         <div id="builder-filters-content" class="filter-pane-body pane-content" ?hidden=${collapsed}>
           ${this.draggedFieldID ? html`<div class="filter-drop-zone" data-field-dragging="true" @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnFilters}>Drop to add filter</div>` : nothing}
-          <button class="filter-add-trigger" type="button" aria-label="Add filter" aria-haspopup="menu" aria-expanded=${this.addFilterMenuOpen} ?disabled=${!builder.capabilities.canEdit || this.commandPending} @click=${this.toggleAddFilterMenu}>+ Add filter</button>
-          <div class="filter-add-menu" popover="auto" role="menu" aria-label="Choose filter field" @toggle=${(event: Event) => { this.addFilterMenuOpen = (event as Event & { newState: string }).newState === 'open' }} @keydown=${this.handleAddFilterMenuKey}>
+          <button class="filter-add-trigger" type="button" aria-label="Add filter" aria-haspopup="menu" aria-controls="builder-filter-field-options" aria-expanded=${this.addFilterMenuOpen} ?disabled=${!builder.capabilities.canEdit || this.commandPending} @click=${this.toggleAddFilterMenu}>+ Add filter</button>
+          <div class="filter-add-menu" ?hidden=${!this.addFilterMenuOpen} @keydown=${this.handleAddFilterMenuKey}>
+            <input class="filter-add-search" type="search" aria-label="Search filter fields" placeholder="Search fields" .value=${this.addFilterQuery} @input=${(event: Event) => { this.addFilterQuery = (event.target as HTMLInputElement).value }} />
+            <div id="builder-filter-field-options" class="filter-add-options" role="menu" aria-label="Choose filter field">
             ${dimensions.map((item) => html`<button type="button" role="menuitem" class="filter-add-option" data-field-id=${item.field.id}
               ?disabled=${filters.some((candidate) => candidate.dimension === item.field.id) || !this.filterHasCompatibleVisual(item.field)}
-              title=${this.filterHasCompatibleVisual(item.field) ? '' : 'This field does not apply to any dashboard visual'}
+              title=${filters.some(candidate => candidate.dimension === item.field.id) ? 'Already added' : this.filterHasCompatibleVisual(item.field) ? item.field.label : 'This field does not apply to any dashboard visual'}
               @click=${() => this.chooseFilterField(item.field)}>${item.field.label}</button>`)}
+            </div>
+            ${dimensions.length === 0 ? html`<p class="filter-add-empty" role="status">No matching fields</p>` : nothing}
           </div>
           ${this.renderBuilderFilterResetControls(page)}
           ${this.renderBuilderFilterApplicationActions()}
@@ -5863,17 +5874,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectedFilterComponentID = ''
   }
 
-  private readonly toggleAddFilterMenu = (event: MouseEvent): void => {
-    const trigger = event.currentTarget as HTMLElement
-    const menu = this.renderRoot.querySelector<HTMLElement>('.filter-add-menu')
-    if (!menu) return
-    if (toggleAnchoredPopover(trigger, menu, { minWidth: 200, maxHeight: 300 }) && event.detail === 0) {
-      menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
-    }
+  private readonly toggleAddFilterMenu = async (): Promise<void> => {
+    this.addFilterMenuOpen = !this.addFilterMenuOpen
+    this.addFilterQuery = ''
+    await this.updateComplete
+    if (this.addFilterMenuOpen) this.renderRoot.querySelector<HTMLInputElement>('.filter-add-search')?.focus({ preventScroll: true })
   }
 
   private chooseFilterField(field: DashboardBuilderFieldSignal): void {
-    this.renderRoot.querySelector<HTMLElement>('.filter-add-menu')?.hidePopover()
+    this.addFilterMenuOpen = false
     this.addFilterForField(field)
     this.renderRoot.querySelector<HTMLElement>('.filter-add-trigger')?.focus({ preventScroll: true })
   }
@@ -5885,11 +5894,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
-      menu.hidePopover()
+      this.addFilterMenuOpen = false
       this.renderRoot.querySelector<HTMLElement>('.filter-add-trigger')?.focus({ preventScroll: true })
     } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && buttons.length > 0) {
+      if (event.target instanceof HTMLInputElement && ['Home', 'End'].includes(event.key)) return
       event.preventDefault()
-      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : index < 0 ? (event.key === 'ArrowUp' ? buttons.length - 1 : 0) : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
       buttons[next].focus()
     }
   }
