@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser-fixture.test'
+import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser.test-fixture'
 import { governedBarPreviewEnvelope } from './dashboard-builder-test-fixtures'
 
 const fixture = dashboardBuilderBrowserFixture()

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
@@ -234,9 +235,10 @@ func (c *Controller) initialize(ctx context.Context, options InitOptions, operat
 		httpsValue = "0"
 	}
 	if err := updateEnvFile(c.path(deploymentEnvName), map[string]string{
-		"LEAPVIEW_IMAGE": options.Image,
-		"CADDY_DOMAIN":   options.Domain,
-		"COMPOSE_HTTPS":  httpsValue,
+		"LEAPVIEW_IMAGE":   options.Image,
+		"CADDY_DOMAIN":     options.Domain,
+		"COMPOSE_HTTPS":    httpsValue,
+		"COMPOSE_APP_BIND": privateBootstrapEnvironment["COMPOSE_APP_BIND"],
 	}); err != nil {
 		return err
 	}
@@ -449,6 +451,28 @@ func (c *Controller) acknowledgeCredentials(ctx context.Context) error {
 }
 
 func (c *Controller) startUnlocked(ctx context.Context) error {
+	image, err := c.ConfiguredImage()
+	if err != nil {
+		return err
+	}
+	marker, err := installationstate.RequireForActiveHost(c.root, image)
+	if err != nil {
+		return err
+	}
+	if marker.BootstrapPhase == installationstate.PhasePrivate {
+		if err := validateMarkerHTTPS(c.root, marker); err != nil {
+			return err
+		}
+		return c.startFirstInstallBootstrapAt(ctx, firstInstallAppURL)
+	}
+	if marker.BootstrapPhase == installationstate.PhasePublic {
+		if err := validateMarkerHTTPS(c.root, marker); err != nil {
+			return err
+		}
+		if err := requireLoopbackApplicationBind(c.root); err != nil {
+			return err
+		}
+	}
 	if c.startOverride != nil {
 		return c.startOverride(ctx)
 	}
@@ -530,6 +554,37 @@ func (c *Controller) composeWithEnvironment(ctx context.Context, environment map
 		return err
 	}
 	processEnvironment, err := composeProcessEnvironment(c.root, environment)
+	if err != nil {
+		return err
+	}
+	return c.dockerWithEnvironment(ctx, stdin, stdout, stderr, processEnvironment, commandArgs...)
+}
+
+func (c *Controller) composeForPhase(
+	ctx context.Context,
+	phase string,
+	environment map[string]string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	args ...string,
+) error {
+	if c.composeOverride != nil {
+		return c.composeOverride(ctx, stdin, stdout, stderr, args...)
+	}
+	commandArgs, err := composeArgumentsForPhase(c.root, phase, args...)
+	if err != nil {
+		return err
+	}
+	effectiveEnvironment := make(map[string]string, len(environment)+4)
+	for name, value := range environment {
+		effectiveEnvironment[name] = value
+	}
+	if phase == installationstate.PhasePrivate {
+		for name, value := range privateBootstrapEnvironment {
+			effectiveEnvironment[name] = value
+		}
+	}
+	processEnvironment, err := composeProcessEnvironment(c.root, effectiveEnvironment)
 	if err != nil {
 		return err
 	}

@@ -167,8 +167,20 @@ func writeQualificationBundleFixture(t *testing.T) string {
 			contents: "services:\n  caddy:\n    image: example/caddy\n",
 			mode:     0o600,
 		},
+		"compose.first-install-bootstrap.yaml": {
+			contents: "services:\n  caddy:\n    depends_on:\n      leapview: {condition: service_started}\n",
+			mode:     0o644,
+		},
 		"Caddyfile": {
 			contents: "{$CADDY_DOMAIN} {\n  reverse_proxy leapview:8080\n}\n",
+			mode:     0o644,
+		},
+		"Caddyfile.first-install-bootstrap": {
+			contents: "{$CADDY_DOMAIN} {\n  tls internal\n  reverse_proxy leapview:8080\n}\n",
+			mode:     0o644,
+		},
+		"first-install.env": {
+			contents: "COMPOSE_APP_BIND=127.0.0.1:8080\nCADDY_HTTP_BIND=127.0.0.1:80\nCADDY_HTTPS_BIND=127.0.0.1:443\nCADDY_HTTPS_UDP_BIND=127.0.0.1:443\n",
 			mode:     0o644,
 		},
 		"leapview.env.example": {

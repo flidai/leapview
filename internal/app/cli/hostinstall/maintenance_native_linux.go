@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
@@ -169,6 +170,18 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if id != e.id {
 		return ErrIdentity
 	}
+	installed, err := readNativeInstallation(e.root)
+	if err != nil {
+		return err
+	}
+	if installed.Config.Image != id.Predecessor {
+		return errors.New("installation marker differs from predecessor")
+	}
+	if installed.Marker != nil {
+		if err := installationstate.VerifyCurrent(e.root, *installed.Marker, id.Predecessor); err != nil {
+			return err
+		}
+	}
 	appName, err := e.service(ctx, e.request.Profile.AppService)
 	if err != nil {
 		return err
@@ -270,16 +283,8 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 			}
 		}
 	}
-	markerRaw, err := securefs.ReadPrivateFile(filepath.Join(e.root, ".host-install.json"))
-	if err != nil {
-		return err
-	}
-	var marker Config
-	if json.Unmarshal(markerRaw, &marker) != nil || marker.Image != id.Predecessor {
-		return errors.New("installation marker differs from predecessor")
-	}
 	origin, _ := url.Parse(e.request.Profile.Origin)
-	if marker.Domain != origin.Hostname() || containerEnv(app)["LEAPVIEW_PUBLIC_URL"] != e.request.Profile.Origin {
+	if installed.Config.Domain != origin.Hostname() || containerEnv(app)["LEAPVIEW_PUBLIC_URL"] != e.request.Profile.Origin {
 		return errors.New("installation public origin mismatch")
 	}
 	deployment, err := securefs.ReadPrivateFile(filepath.Join(e.root, "deployment.env"))
@@ -382,6 +387,11 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 			return err
 		}
 		if err = securefs.WritePrivateFileAtomic(filepath.Join(configDir, name), data); err != nil {
+			return err
+		}
+	}
+	if installed.Marker == nil {
+		if err = securefs.WritePrivateFileAtomic(filepath.Join(configDir, revision019BindingName), installed.LegacyBinding); err != nil {
 			return err
 		}
 	}

@@ -37,12 +37,30 @@ their limits visible is part of the delivery contract.
 3. **The README prescribed stop-first replacement.** That historical workaround
    conflicts with Stage 4's required normal Kamal sequence. The README now records
    the overlap ownership gate and keeps stop-first results as historical evidence.
-4. **First-reviewer token issuance remains blocked.** Current main already has
-   independent reviewer nomination under the unpublished-target lock. Personal
-   project-token issuance still obtains project permissions from an active
-   serving snapshot, which does not exist at first publication. Nomination alone
-   does not supply a pre-activation credential. Widening the general resolver to
-   current database policy would change runtime authority and is not a safe fix.
+4. **First publication has a bounded installed-host slice, not full Stage 4
+   acceptance.** The existing authoring path nominates a distinct reviewer
+   before planning and uses a separate reviewer credential for approval. The
+   installed-host path now records a private-bootstrap phase before starting
+   persistent services. The app and internal-CA Caddy proxy stay loopback-bound
+   while publication is pending. `activate-first-install` requires direct
+   `/readyz` 200, applies the public Caddy configuration, rechecks readiness,
+   and only then records the public phase; a failed activation restores private
+   configuration. Compose and marker replacement are sequential: an abrupt
+   interruption after public Caddy activation but before the public marker is
+   durable can leave Docker restarting the public configuration until a pending
+   `start` reconciles it. This window follows direct `/readyz` success. The
+   protected fresh-host qualification is scoped to exercise
+   the authoring path against its installed external-PostgreSQL target, check
+   committed candidate bindings, and observe `/readyz` 503→200.
+   The new activation path still needs a rebuilt candidate and hosted guest run
+   before it counts as acceptance evidence. This is a bounded first-publication
+   slice, not full Stage 4 acceptance. With external HTTPS, the app remains
+   loopback-bound and the operator-owned proxy must withhold its route until
+   activation. A normal overlapping candidate cannot become ready on the shared
+   home: `serve` takes the exclusive home lock before app build, and `/readyz`
+   requires an active runtime lease. The owner-selected bounded-maintenance
+   direction remains pending ADR review and qualification; it is not an accepted
+   lifecycle contract.
 5. **The native fixture did not verify mount isolation.** Its invocation supplied
    a mount namespace, but its guard checked only PID 1 and an empty network. The
    reviewed fixture now creates its own namespaces and checks mount/network/PID
@@ -76,7 +94,7 @@ it does not download an application or exercise application release compatibilit
 | Stage 1: Linux tool adoption (separate track) | Merged Nix candidates exist; prove fresh-environment contracts with the locked tools as defaults, migrate callers, preserve generation/browser ordering and supported non-Linux paths before removing duplicate installers. This PR does not complete that adoption. |
 | Stage 2: release adoption (separate track) | Unchanged supported-host compatibility matrix, artifact/architecture qualification, exact-digest protected security admission including native dependencies, inventory/provenance and immutable promotion. Candidate availability does not establish production admission. |
 | Stage 3: host updates/recovery | Private reviewed inventory and state ownership; disposable fresh install; deploy-rs failed activation/connectivity recovery; retained known-good boot generations; rescue access; separate host-role reboot; mount/secret ownership; external port checks; disk pressure, GC and cache-outage exercises. Updates must never execute installation formatting. |
-| Stage 4: first publication | Extend the fenced, audited bootstrap contract to issue a bounded independent reviewer credential before activation. Bind exact target/project/environment and policy revision. Nominate before planning. Test publisher self-approval, foreign scope, expired authority, widening, concurrent activation and rollback of failed issuance. Qualify roles/schema/pool → private bootstrap → publisher/reviewer credentials → plan/approve/publish → `/readyz` → public traffic without development credentials or SQL bypasses. |
+| Stage 4: first publication | The protected external-PostgreSQL guest qualification is scoped to exercise private first-user bootstrap → pre-planning reviewer nomination → distinct approval → exact committed candidate → loopback `/readyz` 503→200. Product code now withholds managed Caddy's public configuration until explicit readiness-gated activation; a rebuilt candidate and hosted guest run must verify that path. External HTTPS remains operator-gated. Complete managed acceptance still needs exact target/project/environment and policy binding; publisher self-approval, foreign scope, expired authority, permission widening, concurrent activation and failed-issuance rollback cases; and public traffic qualification without development credentials or SQL bypasses. |
 | Stage 4: shared lifecycle | Extract reusable lifecycle admission from Compose without adding a second container owner. Enforce compatible release pairs, preflight/migration boundaries, serialized mutations and exact approved artifact identity. Resolve shared-home ownership and worker/publication fencing before ordinary Kamal overlap. Exercise candidate failure, interrupted switch, drain, SSE/uploads/jobs and rollback after writes with retained configuration/secrets and offline images. |
 | Credential prerequisite | Review the focused credential-lifecycle ADR before implementing customer credential formats, activation or rotation. Host provisioning remains independent. |
 | Stage 5: complete managed qualification | Two real hosts; protected keys; pgBackRest PITR and file-consistent recovery; replacement/fencing of each host; fresh-pool analytical rebuild; private metrics collection/exposure and actionable off-host monitoring; operator revocation; measured downtime, recovery, write-loss and manual work. Record exact images, configuration and host generations. |

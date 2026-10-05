@@ -29,17 +29,19 @@ const (
 )
 
 type qualificationAuthoringOptions struct {
-	BundleRoot      string
-	Image           string
-	ClientBaseImage string
-	CredentialsFile string
-	ComposeProject  string
-	EvidenceDir     string
-	SourceRevision  string
-	Target          string
-	SourceRoot      string
-	ProjectID       string
-	Environment     string
+	BundleRoot           string
+	Image                string
+	ClientBaseImage      string
+	CredentialsFile      string
+	ComposeProject       string
+	EvidenceDir          string
+	SourceRevision       string
+	Target               string
+	SourceRoot           string
+	ProjectID            string
+	Environment          string
+	AssetsRoot           string
+	FirstPublicationOnly bool
 }
 
 func qualificationWorkloadActions() []access.Action {
@@ -78,21 +80,39 @@ func qualificationActionNames(actions []access.Action) []string {
 }
 
 type qualificationAuthoringReport struct {
-	SchemaVersion               int                          `json:"schemaVersion"`
-	Result                      string                       `json:"result"`
-	Target                      string                       `json:"target"`
-	Candidate                   string                       `json:"candidate"`
-	Revision                    int64                        `json:"revision"`
-	SourceArtifact              string                       `json:"sourceArtifact"`
-	Artifact                    string                       `json:"artifact"`
-	ReleaseDigest               string                       `json:"releaseDigest"`
-	Principal                   string                       `json:"principal"`
-	SourceRevision              string                       `json:"sourceRevision"`
-	GenerationID                string                       `json:"generationId"`
-	SnapshotSealID              string                       `json:"snapshotSealId"`
-	AuthorizationPolicyRevision int64                        `json:"authorizationPolicyRevision"`
-	AuthorizationPolicyDigest   string                       `json:"authorizationPolicyDigest"`
-	Phases                      []qualificationPhaseEvidence `json:"phases"`
+	SchemaVersion               int                           `json:"schemaVersion"`
+	Result                      string                        `json:"result"`
+	Target                      string                        `json:"target"`
+	Candidate                   string                        `json:"candidate"`
+	Revision                    int64                         `json:"revision"`
+	SourceArtifact              string                        `json:"sourceArtifact"`
+	Artifact                    string                        `json:"artifact"`
+	ReleaseDigest               string                        `json:"releaseDigest"`
+	PublicationID               string                        `json:"publicationId"`
+	PublicationStatus           string                        `json:"publicationStatus"`
+	PublishedCandidateID        string                        `json:"publishedCandidateId"`
+	PublishedCandidateRevision  int64                         `json:"publishedCandidateRevision"`
+	PublishedTargetID           string                        `json:"publishedTargetId"`
+	PublishedPrincipalID        string                        `json:"publishedPrincipalId"`
+	PublishedSourceArtifact     string                        `json:"publishedSourceArtifact"`
+	PublishedArtifact           string                        `json:"publishedArtifact"`
+	PublishedReleaseDigest      string                        `json:"publishedReleaseDigest"`
+	PublishedSourceRevision     string                        `json:"publishedSourceRevision"`
+	PublishedGenerationID       string                        `json:"publishedGenerationId"`
+	PublishedPlanID             string                        `json:"publishedPlanId"`
+	PublishedPlanDigest         string                        `json:"publishedPlanDigest"`
+	PlanID                      string                        `json:"planId"`
+	PlanDigest                  string                        `json:"planDigest"`
+	AuthorPrincipalID           string                        `json:"authorPrincipalId"`
+	ReviewerPrincipalID         string                        `json:"reviewerPrincipalId"`
+	Approval                    qualificationApprovalEvidence `json:"approval,omitempty"`
+	Principal                   string                        `json:"principal"`
+	SourceRevision              string                        `json:"sourceRevision"`
+	GenerationID                string                        `json:"generationId"`
+	SnapshotSealID              string                        `json:"snapshotSealId"`
+	AuthorizationPolicyRevision int64                         `json:"authorizationPolicyRevision"`
+	AuthorizationPolicyDigest   string                        `json:"authorizationPolicyDigest"`
+	Phases                      []qualificationPhaseEvidence  `json:"phases"`
 	Assertions                  struct {
 		BrowserApprovedLogin    bool `json:"browserApprovedLogin"`
 		NativeKeyring           bool `json:"nativeKeyring"`
@@ -112,6 +132,9 @@ func (c *Controller) runQualificationAuthoring(
 	rootContext := ctx
 	options = normalizeQualificationAuthoringOptions(options)
 	if err := validateQualificationAuthoringOptions(options); err != nil {
+		return report, err
+	}
+	if err := validateQualificationAuthoringAssets(options.AssetsRoot); err != nil {
 		return report, err
 	}
 	var credentials qualificationCredentials
@@ -200,7 +223,10 @@ func (c *Controller) runQualificationAuthoring(
 		return report, err
 	}
 
-	qualificationRoot := filepath.Join(options.BundleRoot, "qualification")
+	qualificationRoot := strings.TrimSpace(options.AssetsRoot)
+	if qualificationRoot == "" {
+		return report, errors.New("qualification authoring assets root is required")
+	}
 	if _, err := c.qualificationDocker(
 		ctx,
 		nil,
@@ -296,6 +322,7 @@ func (c *Controller) runQualificationAuthoring(
 	if err := validateQualificationNativeUUID(administrator.Principal.Id, "administrator principal"); err != nil {
 		return report, err
 	}
+	report.AuthorPrincipalID = administrator.Principal.Id
 	var authenticated struct {
 		Authenticated bool `json:"authenticated"`
 	}
@@ -317,6 +344,10 @@ func (c *Controller) runQualificationAuthoring(
 	if err := validateQualificationNativeUUID(reviewer.Principal.Id, "reviewer principal"); err != nil {
 		return report, err
 	}
+	if reviewer.Principal.Id == administrator.Principal.Id {
+		return report, errors.New("qualification reviewer must be distinct from the publisher")
+	}
+	report.ReviewerPrincipalID = reviewer.Principal.Id
 	var administratorToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueAdministratorToken", map[string]any{
 		"actions": qualificationActionNames(qualificationAdministratorActions()),
@@ -354,16 +385,18 @@ func (c *Controller) runQualificationAuthoring(
 	if err != nil {
 		return report, err
 	}
-	policyRevision, policyDigest, err = c.stageQualificationPipelineGrant(ctx, options, apiClient, administratorToken.AccessToken, administrator.Principal.Id, policyRevision)
-	if err != nil {
-		return report, err
-	}
-	policyRevision, policyDigest, err = c.stageQualificationRecoveryUploadGrant(
-		ctx, options, apiClient, administratorToken.AccessToken,
-		administrator.Principal.Id, policyRevision, policyDigest,
-	)
-	if err != nil {
-		return report, err
+	if !options.FirstPublicationOnly {
+		policyRevision, policyDigest, err = c.stageQualificationPipelineGrant(ctx, options, apiClient, administratorToken.AccessToken, administrator.Principal.Id, policyRevision)
+		if err != nil {
+			return report, err
+		}
+		policyRevision, policyDigest, err = c.stageQualificationRecoveryUploadGrant(
+			ctx, options, apiClient, administratorToken.AccessToken,
+			administrator.Principal.Id, policyRevision, policyDigest,
+		)
+		if err != nil {
+			return report, err
+		}
 	}
 	report.AuthorizationPolicyRevision = policyRevision
 	report.AuthorizationPolicyDigest = policyDigest
@@ -455,6 +488,15 @@ func (c *Controller) runQualificationAuthoring(
 	if strings.TrimSpace(candidate.PreviewURL) == "" {
 		return report, fmt.Errorf("native delivery candidate %s has no private preview URL; preview authority is not available", candidate.ID)
 	}
+	report.Target = candidate.TargetID
+	report.Candidate = candidate.ID
+	report.Revision = candidate.Revision
+	report.SourceArtifact = candidate.ArtifactDigest
+	report.ReleaseDigest = candidate.ProvenanceDigest
+	report.Principal = candidate.PrincipalID
+	report.SourceRevision = candidate.SourceRevision
+	report.PlanID = candidate.PlanID
+	report.PlanDigest = candidate.PlanDigest
 	var preview struct {
 		CandidateID       string `json:"candidateId"`
 		GovernedOrderRows int    `json:"governedOrderRows"`
@@ -476,17 +518,20 @@ func (c *Controller) runQualificationAuthoring(
 	if err := clientWorker.CallContext(ctx, "publish", nil, &publication, nil); err != nil {
 		return report, err
 	}
-	if err := approveQualificationPublication(
+	approvalEvidence, err := approveQualificationPublication(
 		ctx,
 		apiClient,
 		options,
 		administratorToken.AccessToken,
 		reviewerToken.AccessToken,
 		publication,
+		reviewer.Principal.Id,
 		runSuffix,
-	); err != nil {
+	)
+	if err != nil {
 		return report, err
 	}
+	report.Approval = approvalEvidence
 	activated, err := waitQualificationNativePublication(
 		ctx, apiClient, options, administratorToken.AccessToken, publication,
 	)
@@ -507,6 +552,34 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	if err := verifyExactAuthoringCandidate(candidate, publication, deployment); err != nil {
 		return report, err
+	}
+	report.PublicationID = publication.DeploymentID
+	report.PublicationStatus = publication.Status
+	report.PublishedCandidateID = publication.CandidateID
+	report.PublishedCandidateRevision = publication.CandidateRevision
+	report.PublishedTargetID = publication.TargetID
+	report.PublishedPrincipalID = publication.PrincipalID
+	report.PublishedSourceArtifact = candidate.ArtifactDigest
+	report.PublishedArtifact = publication.ArtifactDigest
+	report.PublishedReleaseDigest = publication.ReleaseDigest
+	report.PublishedSourceRevision = publication.SourceRevision
+	report.PublishedGenerationID = deployment.GenerationID
+	report.PublishedPlanID = publication.PlanID
+	report.PublishedPlanDigest = publication.PlanDigest
+	report.Artifact = publication.ArtifactDigest
+	report.GenerationID = deployment.GenerationID
+	report.SnapshotSealID = deployment.SnapshotSealID
+	if options.FirstPublicationOnly {
+		if err := phases.Finish(nil); err != nil {
+			return report, err
+		}
+		report.Result = "success"
+		report.Assertions.BrowserApprovedLogin = true
+		report.Assertions.NativeKeyring = true
+		report.Assertions.PrivatePreview = true
+		report.Assertions.ExactCandidateActivated = true
+		report.Phases = phases.Evidence()
+		return report, nil
 	}
 	runPermission, err := qualificationPipelineRunPermission(options.ProjectID)
 	if err != nil {
@@ -554,16 +627,6 @@ func (c *Controller) runQualificationAuthoring(
 	}
 
 	report.Result = "success"
-	report.Target = candidate.TargetID
-	report.Candidate = candidate.ID
-	report.Revision = candidate.Revision
-	report.SourceArtifact = candidate.ArtifactDigest
-	report.Artifact = publication.ArtifactDigest
-	report.ReleaseDigest = candidate.ProvenanceDigest
-	report.Principal = candidate.PrincipalID
-	report.SourceRevision = publication.SourceRevision
-	report.GenerationID = deployment.GenerationID
-	report.SnapshotSealID = deployment.SnapshotSealID
 	report.Assertions.BrowserApprovedLogin = true
 	report.Assertions.NativeKeyring = true
 	report.Assertions.PrivatePreview = true
@@ -584,6 +647,24 @@ func (c *Controller) runQualificationAuthoring(
 		return report, err
 	}
 	return report, nil
+}
+
+func validateQualificationAuthoringAssets(root string) error {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return errors.New("qualification authoring assets root is required")
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("qualification authoring assets root must be a real directory")
+	}
+	for _, name := range []string{"Dockerfile.authoring-client", "package.json", "authoring-worker.mjs"} {
+		asset, err := os.Lstat(filepath.Join(root, name))
+		if err != nil || !asset.Mode().IsRegular() {
+			return fmt.Errorf("qualification authoring asset %s must be a regular file", name)
+		}
+	}
+	return nil
 }
 
 // waitQualificationNativePublication observes the publication created by the
@@ -674,6 +755,7 @@ func validateQualificationAuthoringOptions(options qualificationAuthoringOptions
 		"source root":        options.SourceRoot,
 		"project ID":         options.ProjectID,
 		"environment":        options.Environment,
+		"assets root":        options.AssetsRoot,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("qualification authoring %s is required", label)
@@ -876,63 +958,6 @@ func qualificationTransientDeploymentError(err error) bool {
 	}
 	message := strings.TrimSpace(err.Error())
 	return strings.HasSuffix(message, ": "+http.StatusText(http.StatusServiceUnavailable)) || strings.HasSuffix(message, ": "+http.StatusText(http.StatusTooManyRequests))
-}
-
-func approveQualificationPublication(
-	ctx context.Context,
-	client *http.Client,
-	options qualificationAuthoringOptions,
-	authorToken string,
-	reviewerToken string,
-	publication QualificationPublication,
-	runSuffix string,
-) error {
-	author := deploymentgen.NewGenClient(qualificationGeneratedTransport(
-		options.Target,
-		authorToken,
-		client,
-	))
-	requested, err := author.RequestDeliveryPublicationApproval(
-		ctx,
-		deploymentgen.GenRequestDeliveryPublicationApprovalClientRequest{
-			Project: options.ProjectID, Publication: publication.DeploymentID,
-			Headers: deploymentgen.GenRequestDeliveryPublicationApprovalClientHeaders{
-				IdempotencyKey: "authoring-request-approval-" + runSuffix,
-			},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("read canonical publication approval: %w", err)
-	}
-	if requested.Body.Id == "" || requested.Body.Status != "pending" ||
-		publication.PrincipalID == "" || requested.Body.RequestedBy != publication.PrincipalID {
-		return fmt.Errorf("canonical publication approval is not pending")
-	}
-	reviewer := deploymentgen.NewGenClient(qualificationGeneratedTransport(
-		options.Target,
-		reviewerToken,
-		client,
-	))
-	approval, err := reviewer.ApproveDeliveryPublicationApproval(
-		ctx,
-		deploymentgen.GenApproveDeliveryPublicationApprovalClientRequest{
-			Project: options.ProjectID, Publication: publication.DeploymentID,
-			Approval: requested.Body.Id,
-			Headers: deploymentgen.GenApproveDeliveryPublicationApprovalClientHeaders{
-				IdempotencyKey: "authoring-approve-" + runSuffix,
-			},
-			Body: deploymentgen.GenSchemaDeploymentApprovalDecisionRequest{
-				ExpectedRevision: requested.Body.Revision,
-			},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("approve canonical publication: %w", err)
-	}
-	if approval.Body.Status != "approved" {
-		return fmt.Errorf("publication approval transitioned to %q", approval.Body.Status)
-	}
-	return nil
 }
 
 func qualificationArchitecture() string {

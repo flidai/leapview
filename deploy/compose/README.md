@@ -57,6 +57,57 @@ from the validated `--domain` hostname. Use `--no-https` only when a trusted
 external HTTPS proxy fronts the localhost-bound application port; it disables
 the Caddy overlay but preserves the HTTPS public URL and secure cookies.
 
+## Private first publication on an installed host
+
+`leapviewctl host install` records `private-bootstrap` before it starts the
+application. With managed HTTPS, the app and Caddy ports bind only to host
+loopback, and the bootstrap Caddyfile uses Caddy's internal CA for the canonical
+domain. The host keeps the public URL and secure-cookie origin unchanged. For a
+private browser session, resolve the configured domain to `127.0.0.1` on the
+operator machine, trust the Caddy root CA obtained from
+`/data/caddy/pki/authorities/local/root.crt` in the Caddy container, and open an
+SSH tunnel to the host's loopback HTTPS port:
+
+```sh
+ssh -N -L 127.0.0.1:443:127.0.0.1:443 root@HOST
+```
+
+This binds local port 443, which may require elevated permission and must be
+unused. Copy the private bootstrap root certificate from the Caddy container
+through the protected SSH connection, then add it to the operator's browser
+trust store:
+
+```sh
+ssh root@HOST 'docker exec "$(docker ps --filter label=com.docker.compose.project=leapview --filter label=com.docker.compose.service=caddy -q | head -n 1)" cat /data/caddy/pki/authorities/local/root.crt' > ./leapview-bootstrap-ca.crt
+```
+
+Retrieve the one-time administrator credentials on the host with
+`ssh root@HOST 'leapviewctl first-login'` and deliver them through the protected
+operator channel. Complete project setup and the first publication through
+LeapView's normal authoring flow, with a distinct reviewer nominated before
+planning and approving the candidate. `/readyz` remains 503 until the first
+publication is active. Once it returns 200 on the host's loopback listener, run:
+
+```sh
+ssh root@HOST 'curl --fail --silent --show-error http://127.0.0.1:8080/readyz'
+ssh root@HOST 'leapviewctl activate-first-install'
+```
+
+The command verifies readiness itself, applies the normal public Caddy
+configuration, waits for the application's Docker health check and `/readyz`,
+then records the public phase. A command failure attempts to restore the private
+proxy configuration and reports a restore error if that fails. The Compose and
+marker updates are sequential; an abrupt stop
+after the public Caddy switch but before the marker becomes durable can leave
+Docker restarting the public configuration until a later `leapviewctl start`
+reapplies the pending private phase. This interruption can happen only after
+`/readyz` has returned 200. Remove the temporary domain override and internal CA
+trust after public TLS is verified.
+
+With `--no-https`, the application stays loopback-bound and Caddy is not
+managed by LeapView. The external proxy operator must keep its public route
+disabled until publication is ready and `activate-first-install` succeeds.
+
 Pulling and running the public image does not require this package or the
 controller; see the installation guide for the localhost evaluation path. For
 production, `leapviewctl` provides the supported initialization and health

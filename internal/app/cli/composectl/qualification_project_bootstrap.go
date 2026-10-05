@@ -35,6 +35,7 @@ func bootstrapQualificationProject(
 	container qualificationContainer,
 	target string,
 	token string,
+	expectedEnvironment string,
 ) (qualificationProjectBootstrapResult, error) {
 	var result qualificationProjectBootstrapResult
 	if container == nil {
@@ -72,7 +73,7 @@ func bootstrapQualificationProject(
 	if result.ProjectUID != explicitQualificationUID {
 		return qualificationProjectBootstrapResult{}, errors.New("qualification ProjectUID bootstrap identity does not match")
 	}
-	if strings.TrimSpace(result.Environment) != explicitQualificationEnvironment {
+	if strings.TrimSpace(expectedEnvironment) == "" || strings.TrimSpace(result.Environment) != strings.TrimSpace(expectedEnvironment) {
 		return qualificationProjectBootstrapResult{}, errors.New("qualification ProjectUID bootstrap environment does not match")
 	}
 	if strings.TrimSpace(result.ClaimCredentialID) == "" || strings.TrimSpace(result.ClaimCredentialID) != result.ClaimCredentialID ||

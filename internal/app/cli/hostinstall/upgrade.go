@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/flidai/leapview/internal/platform/ociref"
@@ -388,11 +388,14 @@ func (u *Upgrader) upgrade(ctx context.Context, request UpgradeRequest, mutated 
 			}
 			installed.Image = request.CandidateImage
 			markHostEffect(mutated)
-			marker, err := json.MarshalIndent(installed, "", "  ")
+			marker, err := installationstate.NewMarker(installed, installationstate.PhasePublic)
 			if err != nil {
 				return transitionrunner.EffectResult{}, err
 			}
-			if err := securefs.WritePrivateFileAtomic(filepath.Join(paths.Root, installMarkerName), append(marker, '\n')); err != nil {
+			if marker.Generation != candidateRef.Generation {
+				return transitionrunner.EffectResult{}, errors.New("candidate installation marker generation differs from staged generation")
+			}
+			if err := installationstate.WriteMarker(paths.Root, marker); err != nil {
 				return transitionrunner.EffectResult{}, fmt.Errorf("candidate generation activated but installation marker is uncertain: %w", err)
 			}
 		} else if active != candidateRef.Generation {
