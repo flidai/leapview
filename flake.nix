@@ -163,7 +163,6 @@
                 leapviewctl-linux-arm64 = developmentCLI.arm64;
                 leapviewctl-compose-linux-amd64 = composeCLI;
                 leapviewctl-compose-linux-arm64 = composeCLI.arm64;
-                extension-supply = assets.extensions;
               }
             else
               { };
@@ -180,6 +179,7 @@
           leapview-site-image = siteImage;
           leapview-tools = developmentBuild.tools;
           map-assets = assets.maps;
+          extension-supply = assets.extensions;
           glibc-runtime = developmentRuntime.glibc;
           go-dependencies = developmentBuild.dependencies.go;
           javascript-dependencies = developmentBuild.dependencies.javascript;

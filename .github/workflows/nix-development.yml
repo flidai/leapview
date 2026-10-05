@@ -119,7 +119,7 @@ jobs:
           tools=$(python3 -c 'import json; print(json.load(open(".tmp/native-application/build.json"))[0]["outputs"]["tools"])')
           # Discovery executes native LOAD/signature verification, not a cross
           # build or an unverified download. It grants no release admission.
-          "$tools/bin/extensionsupply" --out .tmp/native-application/extensions
+          "$tools/bin/extensionsupply" --out "$PWD/.tmp/native-application/extensions"
           find .tmp/native-application/extensions -type d -exec chmod 0755 {} +
           find .tmp/native-application/extensions -type f -exec chmod 0644 {} +
           nix hash path --type sha256 --sri .tmp/native-application/extensions \

@@ -203,7 +203,9 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'byte limit'):
             m.read_json_file(path, limit=8)
 
-    def runtime_evidence(self):
+    def runtime_evidence(self, platform='linux/amd64'):
+        self.config['architecture'] = {'linux/amd64': 'amd64', 'linux/arm64': 'arm64'}[platform]
+        self.write_archive()
         directory = self.root / 'runtime'
         directory.mkdir()
         names = ['sbom.syft.json', 'sbom.spdx.json', 'runtime.syft.json', 'runtime.grype.json',
@@ -213,10 +215,11 @@ class CandidateTests(unittest.TestCase):
             data = {'spdxVersion': 'SPDX-2.3', 'SPDXID': 'SPDXRef-DOCUMENT',
                     'documentNamespace': 'https://example.test/inventory', 'packages': [{'name': 'glibc'}]}
             (directory / name).write_text(json.dumps(data))
-        (directory / 'assessments.vex.json').write_bytes((ROOT / 'nix/runtime-assessments.vex.json').read_bytes())
+        (directory / 'assessments.vex.json').write_bytes(m.runtime_assessment_path(platform).read_bytes())
         policy = ROOT / 'nix/runtime-security-policy.json'
         self.summary = {'schemaVersion': 1, 'enforcementMode': 'enforce',
                         'coverageQualified': True, 'runtimeVulnerabilityGatePassed': True,
+                        'platform': platform,
                         'archiveSHA256': sha(self.archive.read_bytes()).removeprefix('sha256:'),
                         'policySHA256': sha(policy.read_bytes()).removeprefix('sha256:'),
                         'assessmentsSHA256': sha((directory / 'assessments.vex.json').read_bytes()).removeprefix('sha256:'),
@@ -232,6 +235,7 @@ class CandidateTests(unittest.TestCase):
         manifest = self.collect(runtime_dir=directory)
         self.assertEqual(manifest['evidence']['nix-runtime']['summarySHA256'], sha((directory / 'summary.json').read_bytes()))
         self.assertEqual(len(manifest['evidence']['nix-runtime']['reports']), 10)
+        self.assertEqual(manifest['evidence']['nix-runtime']['assessmentSource'], 'nix/runtime-assessments.vex.json')
         self.assertFalse(manifest['releaseAdmission'])
         self.assertIn('go-and-embedded-native-coverage', manifest['requiredReleaseEvidence'])
         m.verify(manifest, self.archive, self.source, runtime_dir=directory)
@@ -239,9 +243,33 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'report'):
             m.verify(manifest, self.archive, self.source, runtime_dir=directory)
 
+    def test_arm64_runtime_evidence_binds_only_the_arm_vex_bytes(self):
+        directory = self.runtime_evidence('linux/arm64')
+        manifest = self.collect(runtime_dir=directory)
+        self.assertEqual(manifest['artifact']['platform'], 'linux/arm64')
+        self.assertEqual(manifest['evidence']['nix-runtime']['assessmentSource'],
+                         'nix/runtime-assessments.arm64.vex.json')
+        m.verify(manifest, self.archive, self.source, runtime_dir=directory)
+
+        wrong_bytes = (ROOT / 'nix/runtime-assessments.vex.json').read_bytes()
+        (directory / 'assessments.vex.json').write_bytes(wrong_bytes)
+        self.summary['assessmentsSHA256'] = sha(wrong_bytes).removeprefix('sha256:')
+        self.summary['reportSHA256']['assessments.vex.json'] = sha(wrong_bytes).removeprefix('sha256:')
+        (directory / 'summary.json').write_text(json.dumps(self.summary))
+        with self.assertRaisesRegex(ValueError, 'do not match the platform review'):
+            self.collect(runtime_dir=directory)
+
+    def test_missing_platform_assessment_fails_without_fallback(self):
+        directory = self.runtime_evidence('linux/arm64')
+        missing = ROOT / 'nix/runtime-assessments.missing-arm64.vex.json'
+        with patch.object(m, 'runtime_assessment_path', return_value=missing):
+            with self.assertRaises(FileNotFoundError):
+                self.collect(runtime_dir=directory)
+
     def test_replayed_coverage_only_or_incomplete_runtime_reports_fail(self):
         directory = self.runtime_evidence()
-        changes = [('archiveSHA256', 'b' * 64), ('enforcementMode', 'coverage-only'),
+        changes = [('archiveSHA256', 'b' * 64), ('platform', 'linux/arm64'),
+                   ('enforcementMode', 'coverage-only'),
                    ('schemaVersion', True),
                    ('coverageQualified', False), ('runtimeVulnerabilityGatePassed', False),
                    ('policySHA256', 'c' * 64), ('reportSHA256', {}), ('error', 'scan failed')]

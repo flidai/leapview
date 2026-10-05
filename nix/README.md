@@ -3,7 +3,8 @@
 The flake defines native Linux application and tool outputs for **x86_64 and
 aarch64**. The default development shell and adopted Nix CI contract remain
 **x86_64-only**; ARM64 output discovery is not runtime or host
-qualification. ARM64 image assembly also awaits an authentic extension-supply hash.
+qualification. ARM64 extension-supply bytes are pinned from native discovery;
+final image qualification remains separate.
 Nix runs on an existing distribution or NixOS. Entering the shell does not install
 an operating system or start services. The existing release pipeline remains in
 place while Nix outputs are qualified.
@@ -152,14 +153,16 @@ loopback registry and existing PostgreSQL/browser fixtures.
 | `leapview-site-image` | Minimal native Linux public-site image with canonical `VERSION`, exact revision labels, UID 65532, and read-only files; candidate metadata grants no release admission |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets` | Pinned runtime map assets |
-| `extension-supply` | Pinned runtime extension assets; currently only the x86_64 hash is recorded |
+| `extension-supply` | Signed runtime extension assets pinned independently for both Linux ISAs |
 
-The application and tool package sets are declared for both Linux ISAs. ARM64
-extension discovery must run natively to establish its authentic NAR hash before
-the ARM64 image input is complete; no ARM64 runtime or host qualification is
-claimed here. The existing dependency output includes the JavaScript packages for
-both Linux CPU variants. Each native build keeps its own TypeScript dependency
-tree and prunes mismatched CPU, OS, and libc packages before patching the helpers.
+The application and tool package sets are declared for both Linux ISAs. Native
+[discovery run 37264692296](https://github.com/flidai/leapview/actions/runs/37264692296)
+built both application/tool outputs and verified native signed extension LOADs.
+The retained ARM64 ZIP digest and recomputed NAR hash agree with the receipt;
+`build-hashes.json` pins that exact tree. This does not establish final image or
+host qualification. The shared dependency output includes JavaScript packages for
+both Linux CPU variants. Each native build selects its TypeScript dependency tree
+and prunes mismatched CPU, OS and libc packages before patching executable helpers.
 
 The application derivation runs source generation, TypeSpec and frontend builds,
 and Go/CGO compilation inside the Nix sandbox. Only fixed-output dependency and
@@ -258,9 +261,9 @@ release qualification. On a branch with this workflow, run
 to build `leapview-tools` on native AMD64 and ARM64 runners, execute the signed
 extension-supply publisher, and retain the exact output bytes, NAR hash, and
 run-bound discovery receipt for 14 days. The receipt records
-`releaseAdmission: false`; until a successful run supplies a reviewed ARM64 hash,
-the checked-in ARM64 extension-supply pin remains pending. This lane does not
-claim ARM64 application runtime or host qualification.
+`releaseAdmission: false`. The checked-in ARM64 pin comes from successful native
+discovery; any refresh must repeat that evidence. This lane does not claim final
+application-image or host qualification.
 
 These are Nix Compose candidates only. Their receipts explicitly keep
 `releaseAdmission: false`. Full systemd/NixOS installation, upgrade, rollback and
