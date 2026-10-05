@@ -1,0 +1,152 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/flidai/leapview/security/vex/nix-glibc-2026-10-05-arm64",
+  "author": "LeapView Nix candidate assessments",
+  "timestamp": "2026-10-05T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-0861"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`b0ec8fb689df862171f0f78994a3bdeb51313545`: restores the alignment overflow check in `malloc/malloc.c`. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-0915"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`453e6b8dbab935257eb0802b0c97bca6b67ba30e`: handles the zero network address in the NSS DNS backend. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-15281"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`cbf39c26b25801e9bc88499b4fd361ac172d4125`: resets reused `wordexp_t` fields; subsequent test scheduling correction is also present. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-4437"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`8e863fb1c92360520704a69dc948be6bb4a17cb3`: counts DNS answer records correctly. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-4046"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`f13c1bb0f97fbc12a6ba1ab5669ce561ea32b80a`: fixes pending character handling for IBM1390/IBM1399 conversions. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5928"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`b4bca35ab9e76890504c4dbdd5eaf15a93514580`: uses the wide-stream read pointer for `ungetwc`. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5450"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`4ebd33dd77eabe8d4c45232bed4b42a31d2f9edc`: fixes the allocated buffer size for `scanf` `%mc`/`%mC`. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5435"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "`299e1d25c32c5f9ef78ddd6cbfd0c6a09a1f4227`: removes the problematic TSIG printer handling. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010022"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "not_affected",
+      "impact_statement": "[Debian's security assessment](https://security-tracker.debian.org/tracker/CVE-2019-1010022) marks this unimportant and records upstream's non-security position. It is not a patched-version claim. This is a disputed non-security classification, not a claim that a patch exists. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010023"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "not_affected",
+      "impact_statement": "[Debian's security assessment](https://security-tracker.debian.org/tracker/CVE-2019-1010023) records the same position. The scenario involves running `ldd` on an attacker-supplied executable; do not turn this into permission to inspect arbitrary executables. This is a disputed non-security classification, not a claim that a patch exists. Derivation and source evidence: https://github.com/flidai/leapview/blob/5cd24a1b448c92688f4719d5957d55dacd65d90a/nix/GLIBC-TRIAGE.md",
+      "timestamp": "2026-10-05T00:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-19499"
+      },
+      "products": [
+        {
+          "@id": "pkg:nix/glibc@2.42-84?outputhash=f4b8yxq1bn6y0n38km6bcahpm6vdgsh2"
+        }
+      ],
+      "status": "fixed",
+      "impact_statement": "Source/patch evidence: the evaluated ARM64 glibc derivation uses the same glibc 2.42 source and common Nixpkgs patch bundle as AMD64, plus upstream stable commit `6ad255db1dad9f2761935d3125b5bc7fa0e6128f` (patch SHA-256 `21b4138b0c7cdbda4405d776592bab40d92fee4a50e9a73484feef598d797fcd`). The exact native ARM64 boundary probe against this installed output is still required; this assessment does not claim that the probe passed. See `nix/GLIBC-TRIAGE.md` for the evaluated derivation identity and scope.",
+      "timestamp": "2026-10-05T00:00:00Z"
+    }
+  ]
+}

@@ -3,7 +3,8 @@
 The flake defines native Linux application and tool outputs for **x86_64 and
 aarch64**. The default development shell and adopted Nix CI contract remain
 **x86_64-only**; ARM64 output discovery is not runtime or host
-qualification. ARM64 image assembly also awaits an authentic extension-supply hash.
+qualification. ARM64 extension-supply bytes are pinned from native discovery;
+final image qualification remains separate.
 Nix runs on an existing distribution or NixOS. Entering the shell does not install
 an operating system or start services. The existing release pipeline remains in
 place while Nix outputs are qualified.
@@ -128,6 +129,9 @@ nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop -c docker load --input "$(readlink -f result-image)"
 # Full production-image qualification using disposable Docker fixtures:
 task nix:qualify
+nix build --no-update-lock-file .#leapview-site
+nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image
+nix develop -c docker load --input "$(readlink -f result-site-image)"
 ```
 
 `task nix:build`, `task nix:image`, and `task nix:qualify` expose the same paths.
@@ -145,16 +149,21 @@ loopback registry and existing PostgreSQL/browser fixtures.
 | `leapviewctl-compose-linux-amd64`, `leapviewctl-compose-linux-arm64` | Clean-source controller candidates with canonical release metadata for Compose bundle assembly; requires a matching immutable image and separate qualification |
 | `leapview-image` | Container archive with the existing entrypoint, UID/GID 999, health check, writable volume paths and deployment bundle |
 | `leapview-compose`, `leapview-linux-compose`, `leapview-image-compose` | Native application, portable binaries and image with canonical `VERSION`, exact clean source revision and `release=true`; candidate metadata grants no release admission |
+| `leapview-site` | Native Linux public-site binary with embedded CSS/JavaScript and map assets materialized on disk |
+| `leapview-site-image` | Minimal native Linux public-site image with canonical `VERSION`, exact revision labels, UID 65532, and read-only files; candidate metadata grants no release admission |
+| `leapview-desktop-linux-x64` | Linux x64 Debian package candidate assembled by the existing Electron Forge `MakerDeb` path with the preview distribution marker; no release admission |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets` | Pinned runtime map assets |
-| `extension-supply` | Pinned runtime extension assets; currently only the x86_64 hash is recorded |
+| `extension-supply` | Signed runtime extension assets pinned independently for both Linux ISAs |
 
-The application and tool package sets are declared for both Linux ISAs. ARM64
-extension discovery must run natively to establish its authentic NAR hash before
-the ARM64 image input is complete; no ARM64 runtime or host qualification is
-claimed here. The existing dependency output includes the JavaScript packages for
-both Linux CPU variants. Each native build keeps its own TypeScript dependency
-tree and prunes mismatched CPU, OS, and libc packages before patching the helpers.
+The application and tool package sets are declared for both Linux ISAs. Native
+[discovery run 37264692296](https://github.com/flidai/leapview/actions/runs/37264692296)
+built both application/tool outputs and verified native signed extension LOADs.
+The retained ARM64 ZIP digest and recomputed NAR hash agree with the receipt;
+`build-hashes.json` pins that exact tree. This does not establish final image or
+host qualification. The shared dependency output includes JavaScript packages for
+both Linux CPU variants. Each native build selects its TypeScript dependency tree
+and prunes mismatched CPU, OS and libc packages before patching executable helpers.
 
 The application derivation runs source generation, TypeSpec and frontend builds,
 and Go/CGO compilation inside the Nix sandbox. Only fixed-output dependency and
@@ -162,6 +171,54 @@ runtime-asset fetches use the network. Their complete outputs are pinned in
 `build-hashes.json`, in addition to the existing module/package locks and asset
 integrity checks. The final image assembly also runs without network access.
 Use a Nix installation with `sandbox = true`; the image CI job sets it explicitly.
+
+### Linux desktop package candidate
+
+`nix build .#leapview-desktop-linux-x64` builds only the Linux x64 Debian
+package. It uses the locked desktop Bun dependency tree, the official Electron
+and Node archives matching versions declared by `desktop/release-policy.json`,
+and the existing `desktop/scripts/run-electron.mjs make` Forge packaging path.
+The recipe passes the hash-verified Electron ZIP through
+`LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR` to Packager's explicit archive input; a download
+cache alone still triggers checksum network requests. Desktop CI requires
+`sandbox = true` and `sandbox-fallback = false` so a host without the required
+kernel namespaces cannot silently supply an online build.
+The package carries the preview distribution marker. The manual `Protected Nix
+desktop candidate` workflow qualifies the exact Debian bytes on native Ubuntu
+22.04 x86_64 using protected verifier code, then retains the package and a
+hash-bound receipt with `releaseAdmission: false`. It checks the protected
+control-field and dependency contract, package contents, the embedded Electron
+sandbox helper's root-owned setuid mode, installed-payload identity, startup,
+installer metadata, release evidence and the hostile-instance boundary. The
+`native-desktop` development lane exercises this host floor
+without publication credentials.
+
+That candidate qualification records install, reinstall, protocol registration
+and removal. Upgrade, rollback, recovery and profile observation remain pending;
+it does not establish production adoption, signing, publication or release
+admission. Conventional desktop release workflows remain authoritative.
+macOS and Windows outputs remain on their existing toolchains.
+
+### Standalone public-site candidates
+
+From a clean committed checkout, `nix build .#leapview-site-image` produces the
+native AMD64 or ARM64 site image. Its final Go binary is CGO-disabled and has no
+dynamic interpreter or Nix store references. Documentation generation uses the
+pinned signed extension supply during the build; those extensions and the
+application runtime are not included in the site image. The shared portable Go
+SDK preparation also serves the standalone controller build.
+
+The image contains the site executable, map assets and a CA bundle, with UID/GID
+65532 and port 8081. Run it with `--read-only`. The `native-site` manual lane in
+`nix-development.yml` builds both native architectures and checks health,
+readiness, exact served release/build metadata and installation documentation.
+It retains the exact archive and a runtime receipt with `releaseAdmission: false`.
+
+The protected site candidate workflow adds independent site inventory, Go and
+vulnerability evidence, then binds publication and native runtime checks to the
+same immutable image. Site adoption is independent of application or desktop
+adoption, and still requires its affected deployment-profile installation,
+recovery and observation evidence. See [candidate evidence](CANDIDATE-EVIDENCE.md).
 
 ### Runtime compatibility
 
@@ -253,9 +310,9 @@ release qualification. On a branch with this workflow, run
 to build `leapview-tools` on native AMD64 and ARM64 runners, execute the signed
 extension-supply publisher, and retain the exact output bytes, NAR hash, and
 run-bound discovery receipt for 14 days. The receipt records
-`releaseAdmission: false`; until a successful run supplies a reviewed ARM64 hash,
-the checked-in ARM64 extension-supply pin remains pending. This lane does not
-claim ARM64 application runtime or host qualification.
+`releaseAdmission: false`. The checked-in ARM64 pin comes from successful native
+discovery; any refresh must repeat that evidence. This lane does not claim final
+application-image or host qualification.
 
 These are Nix Compose candidates only. Their receipts explicitly keep
 `releaseAdmission: false`. Full systemd/NixOS installation, upgrade, rollback and

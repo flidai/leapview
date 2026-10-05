@@ -19,7 +19,7 @@ WORKFLOWS = {
     'application-image': {'flidai/leapview/.github/workflows/artifacts.yml',
                           'flidai/leapview/.github/workflows/release.yml',
                           'flidai/leapview/.github/workflows/nix-candidate.yml'},
-    'site-image': {'flidai/leapview/.github/workflows/site-image.yml'},
+    'site-image': {'flidai/leapview/.github/workflows/nix-site-candidate.yml'},
 }
 
 

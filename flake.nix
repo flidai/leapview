@@ -73,6 +73,21 @@
             purpose = "compose";
             src = source;
           };
+          site = import ./nix/site.nix {
+            pkgs = targetPkgs;
+            toolchain = targetToolchain;
+            src = source;
+            inherit revision dirty;
+          };
+          siteImage = import ./nix/site-image.nix {
+            pkgs = targetPkgs;
+            inherit
+              site
+              revision
+              dirty
+              buildTime
+              ;
+          };
           developmentRuntime = import ./nix/patched-runtime.nix {
             pkgs = targetPkgs;
             application = developmentBuild;
@@ -142,13 +157,18 @@
                   src = source;
                   purpose = "compose";
                 };
+                desktop = import ./nix/desktop.nix {
+                  pkgs = targetPkgs;
+                  toolchain = targetToolchain;
+                  src = source;
+                };
               in
               {
                 leapviewctl-linux-amd64 = developmentCLI;
                 leapviewctl-linux-arm64 = developmentCLI.arm64;
                 leapviewctl-compose-linux-amd64 = composeCLI;
                 leapviewctl-compose-linux-arm64 = composeCLI.arm64;
-                extension-supply = assets.extensions;
+                leapview-desktop-linux-x64 = desktop;
               }
             else
               { };
@@ -161,8 +181,11 @@
           leapview-compose = composeApplication;
           leapview-image-compose = composeImage;
           leapview-linux-compose = composePortable;
+          leapview-site = site.package;
+          leapview-site-image = siteImage;
           leapview-tools = developmentBuild.tools;
           map-assets = assets.maps;
+          extension-supply = assets.extensions;
           glibc-runtime = developmentRuntime.glibc;
           go-dependencies = developmentBuild.dependencies.go;
           javascript-dependencies = developmentBuild.dependencies.javascript;

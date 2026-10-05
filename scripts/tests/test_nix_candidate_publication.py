@@ -22,6 +22,9 @@ import nix_candidate_manifest as candidate
 import nix_registry_content as registry
 import test_nix_registry_content as fixtures
 
+APP_KIND = 'application-image'
+APP_WORKFLOW = 'flidai/leapview/.github/workflows/nix-candidate.yml'
+
 
 class PublicationTests(unittest.TestCase):
     blob = fixtures.RegistryContentTests.blob
@@ -42,7 +45,7 @@ class PublicationTests(unittest.TestCase):
         self.source = {'repository': 'flidai/leapview', 'revision': 'a' * 40,
                        'inputs': [{'path': 'flake.nix', 'sha256': candidate.digest_bytes(b'locked flake')}]}
 
-    def docker_archive(self, platform='linux/arm64', kind=publication.KIND):
+    def docker_archive(self, platform='linux/arm64', kind=APP_KIND):
         architecture = platform.split('/', 1)[1]
         layer = ('native-' + platform).encode()
         config = {'os': 'linux', 'architecture': architecture,
@@ -67,7 +70,7 @@ class PublicationTests(unittest.TestCase):
                 output.addfile(entry, io.BytesIO(data))
         return archive
 
-    def native_candidate(self, platform='linux/arm64', kind=publication.KIND):
+    def native_candidate(self, platform='linux/arm64', kind=APP_KIND):
         architecture = platform.split('/', 1)[1]
         archive = self.docker_archive(platform, kind)
         record = candidate.collect(archive, kind, self.source)
@@ -102,7 +105,7 @@ class PublicationTests(unittest.TestCase):
         return patch.object(publication, 'verified_record', side_effect=[self.record, after or self.record])
 
     def publish(self):
-        return publication.publish(self.source_root, self.paths, self.root, 123, 1, self.verifier)
+        return publication.publish(self.source_root, self.paths, self.root, 123, 1, self.verifier, APP_KIND)
 
     def test_publishes_preserved_digest_then_rechecks_actual_registry_and_candidate(self):
         with self.context(), patch.object(publication.subprocess, 'run', side_effect=self.push), \
@@ -159,7 +162,7 @@ class PublicationTests(unittest.TestCase):
     def test_unique_run_identity_and_actual_oci_platform_binding_are_required(self):
         for run_id, attempt in [(0, 1), (1, 0), (True, 1), ('123', 1), (1, -1)]:
             with patch.object(publication.subprocess, 'run') as run, self.assertRaises(ValueError):
-                publication.publish(self.source_root, self.paths, self.root, run_id, attempt, self.verifier)
+                publication.publish(self.source_root, self.paths, self.root, run_id, attempt, self.verifier, APP_KIND)
             run.assert_not_called()
         self.record['artifact']['platform'] = 'linux/arm64'
         with self.context(), patch.object(publication.subprocess, 'run') as run, self.assertRaises(ValueError):
@@ -169,7 +172,7 @@ class PublicationTests(unittest.TestCase):
     def test_native_arm_candidate_exports_and_publishes_the_matching_arm_oci_content(self):
         record = self.install_native_layout('linux/arm64')
         with self.context(), patch.object(publication.oci, 'export_layout', wraps=publication.oci.export_layout):
-            prepared = publication.prepare(self.source_root, self.paths, self.root.parent / 'arm-prepared-layout', self.verifier)
+            prepared = publication.prepare(self.source_root, self.paths, self.root.parent / 'arm-prepared-layout', self.verifier, APP_KIND)
         self.assertEqual([entry['platform'] for entry in prepared['platforms']], ['linux/arm64'])
         self.assertFalse(prepared['releaseAdmission'])
         self.digest = prepared['oci']['digest']
@@ -190,7 +193,7 @@ class PublicationTests(unittest.TestCase):
         live = {'source': record['source'], 'image': self.image,
                 'signedEvidenceBindingDigest': 'sha256:' + 'd' * 64, 'spdx': [spdx]}
         with self.context(), patch.object(publication.signed, 'collect', return_value=live) as collect:
-            result = publication.verify_signed(self.source_root, self.paths, self.image, 'c' * 40, self.verifier)
+            result = publication.verify_signed(self.source_root, self.paths, self.image, 'c' * 40, self.verifier, APP_KIND)
         self.assertEqual(result, live)
         self.assertEqual(collect.call_args.args[4], ['linux/arm64'])
 
@@ -208,11 +211,11 @@ class PublicationTests(unittest.TestCase):
         wrong_platform = {**live, 'spdx': [{**spdx, 'platform': 'linux/amd64'}]}
         with self.context(), patch.object(publication.signed, 'collect', return_value=wrong_platform), \
                 self.assertRaisesRegex(ValueError, 'does not bind the verified candidate platform'):
-            publication.verify_signed(self.source_root, self.paths, self.image, 'c' * 40, self.verifier)
+            publication.verify_signed(self.source_root, self.paths, self.image, 'c' * 40, self.verifier, APP_KIND)
 
     def test_wrong_unsupported_platform_kind_and_cross_platform_runtime_report_fail_before_push(self):
         invalid = [
-            ('linux/386', publication.KIND, 'unsupported Nix candidate platform'),
+            ('linux/386', APP_KIND, 'unsupported Nix candidate platform'),
             ('linux/arm64', 'site-image', 'image belongs to a different output kind'),
         ]
         invalid_manifest = self.root.parent / 'invalid-manifest.json'
@@ -223,7 +226,7 @@ class PublicationTests(unittest.TestCase):
                     patch.object(candidate, 'checkout_source', return_value=self.source), \
                     patch.object(publication.subprocess, 'run') as run, self.assertRaisesRegex(ValueError, message):
                 publication.publish(self.source_root, (str(archive), str(invalid_manifest),
-                                                       str(self.runtime)), self.root, 123, 1, self.verifier)
+                                                       str(self.runtime)), self.root, 123, 1, self.verifier, APP_KIND)
             run.assert_not_called()
 
         arm_archive, arm_manifest, _ = self.native_candidate('linux/arm64')
@@ -234,9 +237,9 @@ class PublicationTests(unittest.TestCase):
         (self.runtime / 'summary.json').write_text(json.dumps(summary))
         with patch.object(candidate, 'checkout_source', return_value=self.source), \
                 patch.object(publication.subprocess, 'run') as run, \
-                self.assertRaisesRegex(ValueError, 'runtime scan belongs to another archive'):
+                self.assertRaisesRegex(ValueError, 'runtime scan belongs to another candidate identity'):
             publication.publish(self.source_root, (str(arm_archive), str(arm_manifest), str(self.runtime)),
-                                self.root, 123, 1, self.verifier)
+                                self.root, 123, 1, self.verifier, APP_KIND)
         run.assert_not_called()
 
     def test_publisher_reads_candidate_identity_but_keeps_protected_policy_root(self):
@@ -244,7 +247,7 @@ class PublicationTests(unittest.TestCase):
         with patch.object(candidate, 'checkout_source', return_value=self.record['source']) as checkout, \
                 patch.object(candidate, 'read_json_file', return_value={'manifest': 'data'}), \
                 patch.object(candidate, 'verify', return_value=self.record) as verify:
-            publication.verified_record(self.source_root, self.paths, self.verifier)
+            publication.verified_record(self.source_root, self.paths, self.verifier, APP_KIND)
         checkout.assert_called_once_with(self.source_root)
         self.assertEqual(candidate.ROOT, original)
         self.assertEqual(verify.call_args.kwargs['runtime_dir'], self.runtime)
@@ -254,20 +257,20 @@ class PublicationTests(unittest.TestCase):
     def test_preparation_binds_content_without_registry_access_and_rechecks_inputs(self):
         with self.context(), patch.object(publication.oci, 'export_layout', return_value=self.digest), \
                 patch.object(publication.subprocess, 'run') as run:
-            result = publication.prepare(self.source_root, self.paths, self.root, self.verifier)
+            result = publication.prepare(self.source_root, self.paths, self.root, self.verifier, APP_KIND)
         self.assertEqual(result['oci']['digest'], self.digest)
         self.assertFalse(result['releaseAdmission'])
         run.assert_not_called()
         with self.context(ValueError('expired')), \
                 patch.object(publication.oci, 'export_layout', return_value=self.digest), self.assertRaises(ValueError):
-            publication.prepare(self.source_root, self.paths, self.root, self.verifier)
+            publication.prepare(self.source_root, self.paths, self.root, self.verifier, APP_KIND)
 
     def test_record_uses_protected_collector_and_candidate_source_identity(self):
         with patch.object(candidate, 'checkout_source', return_value=self.record['source']) as checkout, \
                 patch.object(candidate, 'collect', return_value=self.record) as collect:
-            result = publication.record(self.source_root, self.paths, self.verifier)
+            result = publication.record(self.source_root, self.paths, self.verifier, APP_KIND)
         checkout.assert_called_once_with(self.source_root)
-        self.assertEqual(collect.call_args.args, (Path('archive'), publication.KIND, self.record['source']))
+        self.assertEqual(collect.call_args.args, (Path('archive'), APP_KIND, self.record['source']))
         self.assertEqual(collect.call_args.kwargs['runtime_dir'], self.runtime)
         self.assertEqual(collect.call_args.kwargs['go_dir'], self.runtime / 'go')
         self.assertEqual(collect.call_args.kwargs['binary_verifier'], self.verifier)
@@ -275,22 +278,172 @@ class PublicationTests(unittest.TestCase):
 
     def test_signatures_use_protected_event_revision_and_recheck_expiry(self):
         signer_revision = 'c' * 40
-        publication.signed.validate_signer(publication.KIND, publication.WORKFLOW, signer_revision)
+        publication.signed.validate_signer(APP_KIND, APP_WORKFLOW, signer_revision)
         with self.assertRaises(ValueError):
-            publication.signed.validate_signer('site-image', publication.WORKFLOW, signer_revision)
+            publication.signed.validate_signer('site-image', APP_WORKFLOW, signer_revision)
         result = {'spdx': [{'platform': 'linux/amd64', 'candidateDigest': self.record['candidateDigest'],
                             'predicateSHA256': candidate.digest_bytes(candidate.canonical_bytes(self.document))}]}
         with self.context(), patch.object(publication.signed, 'collect', return_value=result) as collect:
-            self.assertEqual(publication.verify_signed(self.source_root, self.paths, self.image, signer_revision, self.verifier), result)
-        self.assertEqual(collect.call_args.args[-2:], (publication.WORKFLOW, signer_revision))
+            self.assertEqual(publication.verify_signed(self.source_root, self.paths, self.image, signer_revision,
+                                                       self.verifier, APP_KIND), result)
+        self.assertEqual(collect.call_args.args[-2:], (APP_WORKFLOW, signer_revision))
         self.assertEqual(collect.call_args.args[4], ['linux/amd64'])
         with self.context(ValueError('expired')), \
                 patch.object(publication.signed, 'collect', return_value=result), self.assertRaises(ValueError):
-            publication.verify_signed(self.source_root, self.paths, self.image, signer_revision, self.verifier)
+            publication.verify_signed(self.source_root, self.paths, self.image, signer_revision, self.verifier, APP_KIND)
+
+    def test_site_publish_uses_the_site_repository_and_disjoint_candidate_tag(self):
+        archive, manifest, record = self.native_candidate(kind='site-image')
+        self.paths = (str(archive), str(manifest), str(self.runtime))
+        self.record = record
+        layout = self.root.parent / 'site-layout'
+        report_path, _ = self.local_site_report_fixture(record)
+        with self.context(), patch.object(candidate, 'current_time', return_value=self.now):
+            prepared = publication.prepare(self.source_root, self.paths, layout, self.verifier, 'site-image')
+        self.assertEqual(prepared['siteQualification']['path'], 'site-qualification-report.json')
+        self.assertEqual(prepared['siteQualification']['sha256'], candidate.digest_file(report_path))
+        prepared_unsigned = {key: value for key, value in prepared.items() if key != 'preparationDigest'}
+        self.assertEqual(prepared['preparationDigest'], candidate.digest_bytes(
+            b'leapview/nix-site-preparation/v1\n' + candidate.canonical_bytes(prepared_unsigned)))
+        self.digest = prepared['contentBinding']['oci']['digest']
+        publication.oci.verify(prepared['contentBinding'], publication.oci.bind(layout, self.digest, [record], ['linux/arm64']))
+        self.root = layout
+        image = 'ghcr.io/flidai/leapview-site@' + self.digest
+        with self.context(), patch.object(publication.subprocess, 'run', side_effect=self.push), \
+                patch.object(registry, 'bind_registry', return_value={'registryBindingDigest': 'site-bound'}) as bind, \
+                patch.object(candidate, 'current_time', return_value=self.now):
+            result = publication.publish(self.source_root, self.paths, layout, 123, 2,
+                                         self.verifier, 'site-image')
+        self.assertEqual(result['image'], image)
+        self.assertEqual(self.commands[0][0][-1],
+                         'docker://ghcr.io/flidai/leapview-site:nix-site-candidate-123-2-arm64')
+        bind.assert_called_once_with(image, 'site-image', [record], ['linux/arm64'])
+        self.assertEqual(result['siteQualification']['sha256'], candidate.digest_file(report_path))
+        published_unsigned = {key: value for key, value in result.items() if key != 'publicationDigest'}
+        self.assertEqual(result['publicationDigest'], candidate.digest_bytes(
+            b'leapview/nix-candidate-publication/v1\n' + candidate.canonical_bytes(published_unsigned)))
+
+    def local_site_report_fixture(self, record):
+        self.now = datetime(2026, 10, 3, 9, tzinfo=timezone.utc)
+        report = {'schemaVersion': 1, 'result': 'success',
+                  'sourceRevision': record['source']['revision'],
+                  'platform': record['artifact']['platform'], 'image': 'sha256:' + 'e' * 64,
+                  'archiveSHA256': record['artifact']['sha256'], 'releaseAdmission': False,
+                  'startedAt': (self.now - timedelta(minutes=4)).isoformat(),
+                  'completedAt': (self.now - timedelta(minutes=1)).isoformat(),
+                  'checks': {name: True for name in publication.SITE_CHECKS}}
+        path = self.runtime / 'site-qualification-report.json'
+        path.write_text(json.dumps(report))
+        return path, report
+
+    def test_site_record_requires_prepublication_smoke_report_and_apps_stay_unchanged(self):
+        _, _, record = self.native_candidate(kind='site-image')
+        self.paths = (str(self.root.parent / 'site.tar'), str(self.root.parent / 'site-manifest.json'),
+                      str(self.runtime))
+        report_path, _ = self.local_site_report_fixture(record)
+        with patch.object(candidate, 'checkout_source', return_value=self.source), \
+                patch.object(candidate, 'collect', return_value=record), \
+                patch.object(candidate, 'current_time', return_value=self.now):
+            self.assertEqual(publication.record(self.source_root, self.paths, self.verifier, 'site-image'), record)
+        report_path.unlink()
+        with patch.object(candidate, 'checkout_source', return_value=self.source), \
+                patch.object(candidate, 'collect', return_value=record), \
+                self.assertRaisesRegex(ValueError, 'qualification evidence must be a regular file'):
+            publication.record(self.source_root, self.paths, self.verifier, 'site-image')
+
+    def test_site_preparation_rejects_a_report_changed_after_qualification(self):
+        archive, manifest, record = self.native_candidate(kind='site-image')
+        self.paths = (str(archive), str(manifest), str(self.runtime))
+        self.local_site_report_fixture(record)
+        self.now = datetime(2026, 10, 3, 9, tzinfo=timezone.utc)
+        before = {'path': 'site-qualification-report.json', 'sha256': 'sha256:' + 'a' * 64}
+        after = {'path': 'site-qualification-report.json', 'sha256': 'sha256:' + 'b' * 64}
+        with patch.object(publication, 'verified_record', side_effect=[record, record]), \
+                patch.object(publication, 'local_site_qualification', side_effect=[before, after]), \
+                patch.object(candidate, 'current_time', return_value=self.now), \
+                self.assertRaisesRegex(ValueError, 'changed during candidate preparation'):
+            publication.prepare(self.source_root, self.paths, self.root.parent / 'changed-site-layout',
+                                self.verifier, 'site-image')
+
+    def test_site_reverification_rejects_missing_symlink_or_replayed_local_report(self):
+        _, manifest, record = self.native_candidate(kind='site-image')
+        self.paths = (str(self.root.parent / 'site.tar'), str(manifest), str(self.runtime))
+        report_path, valid = self.local_site_report_fixture(record)
+        with patch.object(candidate, 'checkout_source', return_value=self.source), \
+                patch.object(candidate, 'verify', return_value=record), \
+                patch.object(candidate, 'current_time', return_value=self.now):
+            self.assertEqual(publication.verified_record(self.source_root, self.paths,
+                                                         self.verifier, 'site-image'), record)
+
+        mutations = [
+            lambda value: value.update(sourceRevision='f' * 40),
+            lambda value: value.update(platform='linux/amd64'),
+            lambda value: value.update(archiveSHA256='sha256:' + 'f' * 64),
+            lambda value: value.update(image='ghcr.io/flidai/leapview-site@sha256:' + 'e' * 64),
+            lambda value: value.update(image='sha256:' + 'G' * 64),
+            lambda value: value['checks'].update(health=False),
+            lambda value: value.update(startedAt=(self.now - timedelta(hours=121)).isoformat()),
+        ]
+        for mutate in mutations:
+            changed = copy.deepcopy(valid)
+            mutate(changed)
+            report_path.write_text(json.dumps(changed))
+            with self.subTest(report=changed), patch.object(candidate, 'checkout_source', return_value=self.source), \
+                    patch.object(candidate, 'verify', return_value=record), \
+                    patch.object(candidate, 'current_time', return_value=self.now), \
+                    self.assertRaises(ValueError):
+                publication.verified_record(self.source_root, self.paths, self.verifier, 'site-image')
+
+        report_path.unlink()
+        report_path.write_bytes(b' ' * (candidate.MAX_JSON_BYTES + 1))
+        with patch.object(candidate, 'checkout_source', return_value=self.source), \
+                patch.object(candidate, 'verify', return_value=record), \
+                self.assertRaises(ValueError):
+            publication.verified_record(self.source_root, self.paths, self.verifier, 'site-image')
+
+        target = self.root.parent / 'replayed-site-report.json'
+        target.write_text(json.dumps(valid))
+        report_path.unlink()
+        report_path.symlink_to(target)
+        with patch.object(candidate, 'checkout_source', return_value=self.source), \
+                patch.object(candidate, 'verify', return_value=record), \
+                self.assertRaisesRegex(ValueError, 'qualification evidence must be a regular file'):
+            publication.verified_record(self.source_root, self.paths, self.verifier, 'site-image')
+
+    def test_site_qualified_binding_requires_fresh_site_checks_for_exact_source_archive_and_image(self):
+        archive, manifest, record = self.native_candidate(kind='site-image')
+        self.paths = (str(archive), str(manifest), str(self.runtime))
+        self.record = record
+        image = 'ghcr.io/flidai/leapview-site@sha256:' + 'b' * 64
+        self.now = datetime(2026, 10, 3, 9, tzinfo=timezone.utc)
+        self.qualification = self.root.parent / 'site-qualification-report.json'
+        self.signed_receipt = self.root.parent / 'site-signed.json'
+        report = {'schemaVersion': 1, 'result': 'success', 'sourceRevision': self.source['revision'],
+                  'platform': record['artifact']['platform'], 'image': image,
+                  'archiveSHA256': record['artifact']['sha256'], 'releaseAdmission': False,
+                  'startedAt': (self.now - timedelta(minutes=4)).isoformat(),
+                  'completedAt': (self.now - timedelta(minutes=1)).isoformat(),
+                  'checks': {name: True for name in publication.SITE_CHECKS}}
+        self.qualification.write_text(json.dumps(report))
+        live = {'source': record['source'], 'image': image,
+                'signedEvidenceBindingDigest': 'sha256:' + 'd' * 64,
+                'spdx': [{'platform': 'linux/arm64', 'candidateDigest': record['candidateDigest'],
+                          'predicateSHA256': candidate.digest_bytes(candidate.canonical_bytes(self.document))}]}
+        self.signed_receipt.write_text(json.dumps(live))
+        with self.context(), patch.object(publication.signed, 'collect', return_value=live), \
+                patch.object(registry, 'image_digest', return_value='sha256:' + 'b' * 64), \
+                patch.object(candidate, 'current_time', return_value=self.now):
+            result = publication.bind_qualified(self.source_root, self.paths, image, 'c' * 40,
+                                                self.verifier, self.signed_receipt,
+                                                self.qualification, 'site-image')
+        self.assertEqual(result['image'], image)
+        self.assertEqual(result['qualification']['path'], 'site-qualification-report.json')
+        self.assertEqual(result['candidateDigest'], record['candidateDigest'])
+        self.assertFalse(result['releaseAdmission'])
 
     def test_cli_rejects_wrong_source_or_existing_receipt_without_publishing(self):
         output = self.root.parent / 'receipt.json'
-        args = ['publish', '--source-root', str(self.source_root), '--source-revision', 'a' * 40,
+        args = ['publish', '--kind', APP_KIND, '--source-root', str(self.source_root), '--source-revision', 'a' * 40,
                 '--binary-verifier', str(self.verifier), '--candidate', *self.paths, '--layout', str(self.root), '--run-id', '123', '--run-attempt', '1',
                 '--output', str(output)]
         for source in [{'revision': 'f' * 40}, self.record['source']]:
@@ -322,7 +475,7 @@ class PublicationTests(unittest.TestCase):
 
     def qualified(self):
         return publication.bind_qualified(self.source_root, self.paths, self.image, 'c' * 40,
-                                          self.verifier, self.signed_receipt, self.qualification)
+                                          self.verifier, self.signed_receipt, self.qualification, APP_KIND)
 
     def test_qualified_receipt_binds_live_signature_candidate_and_exact_report(self):
         self.qualification_fixture()
@@ -374,7 +527,7 @@ class PublicationTests(unittest.TestCase):
     def test_cli_qualified_binding_writes_only_successful_complete_evidence(self):
         self.qualification_fixture()
         output = self.root.parent / 'qualified.json'
-        args = ['publication', 'bind-qualified', '--source-root', str(self.source_root),
+        args = ['publication', 'bind-qualified', '--kind', APP_KIND, '--source-root', str(self.source_root),
                 '--source-revision', 'a' * 40, '--binary-verifier', str(self.verifier),
                 '--candidate', *self.paths, '--image', self.image, '--signer-revision', 'c' * 40,
                 '--signed-evidence', str(self.signed_receipt), '--qualification-report', str(self.qualification),
@@ -410,6 +563,42 @@ class PublicationTests(unittest.TestCase):
                     patch.object(publication.signed, 'collect', side_effect=verify), \
                     patch.object(candidate, 'current_time', return_value=self.now), self.assertRaises(ValueError):
                 self.qualified()
+
+    def test_site_report_binds_native_candidate_metadata_and_fresh_bounded_checks(self):
+        _, _, record = self.native_candidate(kind='site-image')
+        image = 'ghcr.io/flidai/leapview-site@sha256:' + 'b' * 64
+        self.now = datetime(2026, 10, 3, 9, tzinfo=timezone.utc)
+        report_path = self.root.parent / 'site-qualification-report.json'
+        report = {'schemaVersion': 1, 'result': 'success', 'sourceRevision': self.source['revision'],
+                  'platform': record['artifact']['platform'], 'image': image,
+                  'archiveSHA256': record['artifact']['sha256'], 'releaseAdmission': False,
+                  'startedAt': (self.now - timedelta(minutes=4)).isoformat(),
+                  'completedAt': (self.now - timedelta(minutes=1)).isoformat(),
+                  'checks': {name: True for name in publication.SITE_CHECKS}}
+        report_path.write_text(json.dumps(report))
+        with patch.object(candidate, 'current_time', return_value=self.now):
+            publication.site_qualification_report(report_path, image, record)
+
+        mutations = [
+            lambda value: value.update(sourceRevision='f' * 40),
+            lambda value: value.update(platform='linux/amd64'),
+            lambda value: value.update(image=image + 'x'),
+            lambda value: value.update(archiveSHA256='sha256:' + 'c' * 64),
+            lambda value: value.update(releaseAdmission=True),
+            lambda value: value['checks'].update(readiness=False),
+            lambda value: value['checks'].pop('installation-docs'),
+            lambda value: value.update(startedAt=(self.now - timedelta(hours=121)).isoformat()),
+            lambda value: value.update(completedAt=(self.now + timedelta(seconds=1)).isoformat()),
+            lambda value: value.update(startedAt=(self.now - timedelta(minutes=17)).isoformat(),
+                                       completedAt=(self.now - timedelta(minutes=1)).isoformat()),
+        ]
+        for mutate in mutations:
+            changed = copy.deepcopy(report)
+            mutate(changed)
+            report_path.write_text(json.dumps(changed))
+            with self.subTest(report=changed), patch.object(candidate, 'current_time', return_value=self.now), \
+                    self.assertRaises(ValueError):
+                publication.site_qualification_report(report_path, image, record)
 
     def test_symlink_duplicate_json_and_oversized_qualification_reports_fail(self):
         self.qualification_fixture()
@@ -531,7 +720,7 @@ class PublicationTests(unittest.TestCase):
         thread.start()
         repository = f'127.0.0.1:{server.server_port}/fixture'
         try:
-            with self.context(), patch.dict(registry.REPOSITORIES, {publication.KIND: repository}), \
+            with self.context(), patch.dict(registry.REPOSITORIES, {APP_KIND: repository}), \
                     patch.dict(os.environ, {'SSL_CERT_FILE': str(certificate)}):
                 result = self.publish()
             self.assertEqual(result['image'], repository + '@' + self.digest)

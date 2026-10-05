@@ -49,6 +49,64 @@ func TestBinaryEvidenceRejectsIncompleteOrSubstitutedScans(t *testing.T) {
 	}
 }
 
+func TestSiteBinaryRequiresExactStaticCGOFreeELF(t *testing.T) {
+	module := t.TempDir()
+	if err := os.WriteFile(filepath.Join(module, "go.mod"), []byte("module github.com/flidai/leapview\n\ngo 1.26.8\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	siteDir := filepath.Join(module, "cmd", "leapview-site")
+	if err := os.MkdirAll(siteDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(siteDir, "main.go")
+	writeMain := func(source string) {
+		t.Helper()
+		if err := os.WriteFile(main, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	build := func(output, cgo string) []byte {
+		t.Helper()
+		command := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", output, "./cmd/leapview-site")
+		command.Dir = module
+		command.Env = make([]string, 0, len(os.Environ())+4)
+		for _, value := range os.Environ() {
+			if !strings.HasPrefix(value, "CGO_ENABLED=") && !strings.HasPrefix(value, "GOOS=") &&
+				!strings.HasPrefix(value, "GOARCH=") && !strings.HasPrefix(value, "GOTOOLCHAIN=") {
+				command.Env = append(command.Env, value)
+			}
+		}
+		command.Env = append(command.Env, "CGO_ENABLED="+cgo, "GOOS=linux", "GOARCH=amd64", "GOTOOLCHAIN=local")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("build site fixture with CGO_ENABLED=%s: %v: %s", cgo, err, output)
+		}
+		data, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	writeMain("package main\nfunc main() {}\n")
+	static := build(filepath.Join(module, "site-static"), "0")
+	if _, _, err := inspectExactBinary(static, siteMainPackage, "linux/amd64"); err != nil {
+		t.Fatalf("static site binary rejected: %v", err)
+	}
+	if _, _, err := inspectExactBinary(static, "github.com/flidai/leapview/cmd/leapviewctl", "linux/amd64"); err == nil {
+		t.Fatal("wrong main package accepted for site binary")
+	}
+	if _, _, err := inspectExactBinary(build(filepath.Join(module, "site-cgo-enabled"), "1"), siteMainPackage, "linux/amd64"); err == nil {
+		t.Fatal("CGO_ENABLED=1 site binary accepted")
+	}
+	if _, err := exec.LookPath("cc"); err != nil {
+		t.Skip("C compiler unavailable for dynamic ELF fixture")
+	}
+	writeMain("package main\n/* int site_value(void) { return 1; } */\nimport \"C\"\nfunc main() { _ = C.site_value() }\n")
+	dynamic := build(filepath.Join(module, "site-dynamic"), "1")
+	if _, _, err := inspectExactBinary(dynamic, siteMainPackage, "linux/amd64"); err == nil {
+		t.Fatal("dynamically linked site binary accepted")
+	}
+}
+
 func TestExactBinaryEvidenceRoundTripAndFailurePaths(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n"), 0600); err != nil {

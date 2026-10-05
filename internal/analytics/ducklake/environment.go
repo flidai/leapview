@@ -463,7 +463,11 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	}
 	connector, err := duckdb.NewConnector(":memory:", func(execer driver.ExecerContext) error {
 		initializeOnce.Do(func() {
-			statements := []string{"SET allow_persistent_secrets = false", "SET ducklake_default_data_inlining_row_limit = 0"}
+			statements := []string{
+				"SET allow_persistent_secrets = false",
+				"SET autoinstall_known_extensions = false",
+				"SET autoload_known_extensions = false",
+			}
 			if egressProxy != nil {
 				user, password := egressProxy.Credentials()
 				statements = append(statements,
@@ -493,11 +497,12 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 			if strings.TrimSpace(config.TempDir) != "" {
 				statements = append(statements, "SET temp_directory = '"+sqlLiteral(config.TempDir)+"'")
 			}
+			// Extension-owned settings can trigger autoload before the exact
+			// admitted artifact is loaded, including in an offline build.
 			statements = append(statements,
-				"SET autoinstall_known_extensions = false",
-				"SET autoload_known_extensions = false",
+				"LOAD '"+sqlLiteral(admitted.Path)+"'",
+				"SET ducklake_default_data_inlining_row_limit = 0",
 			)
-			statements = append(statements, "LOAD '"+sqlLiteral(admitted.Path)+"'")
 			for _, statement := range statements {
 				if _, err := execer.ExecContext(context.Background(), statement, nil); err != nil {
 					initializeErr = err

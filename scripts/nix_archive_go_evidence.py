@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind Go reports to exact application-image and CLI-archive entrypoints without execution."""
+"""Bind Go reports to exact image and CLI-archive entrypoints without execution."""
 
 import argparse
 import hashlib
@@ -11,7 +11,7 @@ import tempfile
 
 import nix_candidate_manifest as candidate
 
-ENTRYPOINTS = [
+APPLICATION_ENTRYPOINTS = [
     {'id': 'leapview', 'path': 'usr/local/bin/leapview',
      'package': 'github.com/flidai/leapview/cmd/leapview'},
     {'id': 'leapviewctl', 'path': 'usr/local/libexec/leapviewctl',
@@ -19,13 +19,17 @@ ENTRYPOINTS = [
     {'id': 'deployment-leapviewctl', 'path': 'usr/local/share/leapview/deployment/leapviewctl',
      'package': 'github.com/flidai/leapview/cmd/leapviewctl'},
 ]
+SITE_ENTRYPOINTS = [{'id': 'leapview-site', 'path': 'leapview-site',
+                     'package': 'github.com/flidai/leapview/cmd/leapview-site'}]
 CLI_ENTRYPOINTS = [{'id': 'leapviewctl', 'path': 'leapviewctl',
                     'package': 'github.com/flidai/leapview/cmd/leapviewctl'}]
+IMAGE_ENTRYPOINTS = {'application-image': APPLICATION_ENTRYPOINTS,
+                     'site-image': SITE_ENTRYPOINTS}
 
 
 def entrypoints(artifact):
-    if artifact['kind'] == 'application-image':
-        return ENTRYPOINTS
+    if artifact['kind'] in IMAGE_ENTRYPOINTS:
+        return IMAGE_ENTRYPOINTS[artifact['kind']]
     if artifact['kind'] == 'cli-archive':
         return CLI_ENTRYPOINTS
     raise ValueError('unsupported Go archive kind')
@@ -101,8 +105,8 @@ def member_path(member):
     return candidate.safe_path(name)
 
 
-def affects_entrypoint(name):
-    return any(entry['path'] == name or entry['path'].startswith(name + '/') for entry in ENTRYPOINTS)
+def affects_entrypoint(name, entries):
+    return any(entry['path'] == name or entry['path'].startswith(name + '/') for entry in entries)
 
 
 def layer_names(archive, artifact):
@@ -125,7 +129,7 @@ def layer_names(archive, artifact):
     raise ValueError('missing Docker archive manifest')
 
 
-def check_entrypoint_config(archive, artifact):
+def check_entrypoint_config(archive, artifact, entries):
     expected = artifact['configDigest'][7:] + '.json'
     with tarfile.open(archive, 'r|*') as outer:
         for member in outer:
@@ -139,17 +143,32 @@ def check_entrypoint_config(archive, artifact):
             config = candidate.read_json(data)['config']
             if not isinstance(config, dict):
                 raise ValueError('image entrypoint configuration is malformed')
-            environment = config.get('Env')
-            if not isinstance(environment, list) or not all(isinstance(value, str) for value in environment):
-                raise ValueError('image environment is missing or malformed')
-            paths = [value[5:] for value in environment if value.startswith('PATH=')]
-            healthcheck = config.get('Healthcheck')
-            executable = '/' + ENTRYPOINTS[0]['path']
-            if (config.get('Entrypoint') != [executable]
-                    or len(paths) != 1 or paths[0].split(':')[0] != '/usr/local/bin'
-                    or not isinstance(healthcheck, dict)
-                    or healthcheck.get('Test') != ['CMD', executable, 'healthcheck']):
-                raise ValueError('image redirects a declared Go entrypoint')
+            executable = '/' + entries[0]['path']
+            if artifact['kind'] == 'application-image':
+                environment = config.get('Env')
+                if not isinstance(environment, list) or not all(isinstance(value, str) for value in environment):
+                    raise ValueError('image environment is missing or malformed')
+                paths = [value[5:] for value in environment if value.startswith('PATH=')]
+                healthcheck = config.get('Healthcheck')
+                if (config.get('Entrypoint') != [executable]
+                        or len(paths) != 1 or paths[0].split(':')[0] != '/usr/local/bin'
+                        or not isinstance(healthcheck, dict)
+                        or healthcheck.get('Test') != ['CMD', executable, 'healthcheck']):
+                    raise ValueError('image redirects a declared Go entrypoint')
+            else:
+                environment = config.get('Env')
+                site_environment = {'LEAPVIEW_SITE_BASE_URL=', 'LEAPVIEW_SITE_SHOWCASE_EMBED_URL='}
+                if (config.get('Entrypoint') != [executable]
+                        or config.get('Cmd') != ['-addr=:8081']
+                        or config.get('User') != '65532:65532'
+                        or config.get('WorkingDir') != '/'
+                        or config.get('ExposedPorts') != {'8081/tcp': {}}
+                        or config.get('Healthcheck') is not None
+                        or not isinstance(environment, list)
+                        or not all(isinstance(value, str) for value in environment)
+                        or set(environment) != site_environment
+                        or len(environment) != len(site_environment)):
+                    raise ValueError('site image configuration differs from its declared runtime')
             return
     raise ValueError('missing image entrypoint configuration')
 
@@ -162,12 +181,13 @@ def extract_image(archive, artifact, destination):
     including one superseded by a later layer. Unrelated Nix store links are allowed.
     """
     archive, destination = Path(archive), Path(destination)
-    if (archive.is_symlink() or not archive.is_file() or artifact['kind'] != 'application-image'
+    if (archive.is_symlink() or not archive.is_file() or artifact['kind'] not in IMAGE_ENTRYPOINTS
             or candidate.digest_file(archive) != artifact['sha256']):
-        raise ValueError('Go extraction requires the exact regular application archive')
+        raise ValueError('Go extraction requires the exact regular image archive')
     names = layer_names(archive, artifact)
-    check_entrypoint_config(archive, artifact)
-    wanted = {entry['path']: entry for entry in ENTRYPOINTS}
+    entries = entrypoints(artifact)
+    check_entrypoint_config(archive, artifact, entries)
+    wanted = {entry['path']: entry for entry in entries}
     indexes = {name: index for index, name in enumerate(names)}
     selected, seen_layers, count, total = {}, set(), 0, 0
     with tarfile.open(archive, 'r|*') as outer:
@@ -198,9 +218,9 @@ def extract_image(archive, artifact, destination):
                         parent = str(PurePosixPath(path).parent)
                         deleted = parent if leaf == '.wh..wh..opq' else str(
                             PurePosixPath(path).with_name(leaf[4:]))
-                        if deleted == '.' or affects_entrypoint(deleted):
+                        if deleted == '.' or affects_entrypoint(deleted, entries):
                             raise ValueError('whiteout affects a declared Go entrypoint')
-                    if affects_entrypoint(path) and path not in wanted and not entry.isdir():
+                    if affects_entrypoint(path, entries) and path not in wanted and not entry.isdir():
                         raise ValueError('entrypoint ancestor is not a directory: ' + path)
                     if path not in wanted:
                         continue
@@ -222,8 +242,9 @@ def extract_image(archive, artifact, destination):
                 raise ValueError('extracted layer differs from candidate content')
     if seen_layers != set(names) or set(selected) != set(wanted):
         raise ValueError('declared Go entrypoint or image layer is missing')
-    result = {entry['id']: destination / entry['id'] for entry in ENTRYPOINTS}
-    if candidate.digest_file(result['leapviewctl']) != candidate.digest_file(result['deployment-leapviewctl']):
+    result = {entry['id']: destination / entry['id'] for entry in entries}
+    if artifact['kind'] == 'application-image' and (
+            candidate.digest_file(result['leapviewctl']) != candidate.digest_file(result['deployment-leapviewctl'])):
         raise ValueError('shipped controller copies differ')
     if candidate.digest_file(archive) != artifact['sha256']:
         raise ValueError('archive changed during extraction')
@@ -232,8 +253,10 @@ def extract_image(archive, artifact, destination):
 
 def extract(archive, artifact, destination):
     entries = entrypoints(artifact)
-    if artifact['kind'] == 'application-image':
+    if artifact['kind'] in IMAGE_ENTRYPOINTS:
         return extract_image(archive, artifact, destination)
+    if artifact['kind'] != 'cli-archive':
+        raise ValueError('unsupported Go archive kind')
     archive, destination = Path(archive), Path(destination)
     if (archive.is_symlink() or not archive.is_file()
             or candidate.digest_file(archive) != artifact['sha256']):
@@ -340,7 +363,7 @@ def main():
     parser.add_argument('--source-revision', required=True)
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--binary-verifier', type=Path, required=True)
-    parser.add_argument('--kind', choices=['application-image', 'cli-archive'], required=True)
+    parser.add_argument('--kind', choices=['application-image', 'site-image', 'cli-archive'], required=True)
     parser.add_argument('--archive-identity', type=Path)
     args = parser.parse_args()
     os.umask(0o077)
