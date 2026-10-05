@@ -216,6 +216,35 @@ func TestOperatorBootstrapRejectsDuplicateOrUnboundedInputWithoutEchoingSecrets(
 	require.ErrorContains(t, err, "size limit")
 }
 
+func TestOperatorBootstrapRejectsCaseFoldedDuplicateKeys(t *testing.T) {
+	for name, duplicate := range map[string]struct {
+		canonical string
+		alias     string
+	}{
+		"ASCII case alias": {
+			canonical: `"controlMigratorUrl":"postgres://leapview_control_migrator:control-migrator-secret@db.example/leapview_control?sslmode=verify-full",`,
+			alias:     `"ControlMigratorUrl":"postgres://leapview_control_migrator:control-migrator-secret@db.example/leapview_control?sslmode=verify-full",`,
+		},
+		"Unicode simple-fold alias": {
+			canonical: `"schemaVersion":1,`,
+			alias:     `"ſchemaVersion":1,`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "operator-bootstrap.json")
+			writeOperatorConfig(t, path)
+			contents, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Contains(t, string(contents), duplicate.canonical)
+			contents = []byte(strings.Replace(string(contents), duplicate.canonical, duplicate.canonical+duplicate.alias, 1))
+			require.NoError(t, os.WriteFile(path, contents, 0o600))
+
+			_, _, err = readAndValidateOperatorBootstrap(path)
+			require.ErrorContains(t, err, "not strict JSON")
+		})
+	}
+}
+
 func TestInstallRejectsInvalidConfigurationBeforeMutation(t *testing.T) {
 	paths := testPaths(t)
 	writeTestPayload(t, paths.Payload)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"unicode"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
@@ -88,10 +90,11 @@ func rejectDuplicateJSONKeys(contents []byte) error {
 				if !ok {
 					return fmt.Errorf("JSON object key is not a string")
 				}
-				if _, duplicate := seen[key]; duplicate {
+				foldedKey := foldJSONKey(key)
+				if _, duplicate := seen[foldedKey]; duplicate {
 					return fmt.Errorf("JSON object contains a duplicate key")
 				}
-				seen[key] = struct{}{}
+				seen[foldedKey] = struct{}{}
 				if err := readValue(); err != nil {
 					return err
 				}
@@ -122,4 +125,23 @@ func rejectDuplicateJSONKeys(contents []byte) error {
 		return fmt.Errorf("JSON has trailing content")
 	}
 	return nil
+}
+
+// foldJSONKey mirrors encoding/json's case-insensitive field-name matching so
+// differently cased or Unicode simple-folded aliases cannot overwrite one
+// another during struct decoding.
+func foldJSONKey(value string) string {
+	var folded strings.Builder
+	folded.Grow(len(value))
+	for _, character := range value {
+		for {
+			next := unicode.SimpleFold(character)
+			if next <= character {
+				break
+			}
+			character = next
+		}
+		folded.WriteRune(character)
+	}
+	return folded.String()
 }
