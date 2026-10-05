@@ -369,6 +369,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		c.qualificationContainers.Existing(containerID),
 		"http://localhost:8080",
 		credentials.ProjectClaimToken,
+		explicitQualificationEnvironment,
 	)
 	if err != nil {
 		return err
@@ -413,6 +414,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	ctx = phases.Begin(rootContext, "enterprise authoring", 30*time.Minute)
 	authoringReport, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      c.root,
+		AssetsRoot:      filepath.Join(c.root, "qualification"),
 		Image:           imageReference,
 		CredentialsFile: credentialsPath,
 		ComposeProject:  primaryProject,

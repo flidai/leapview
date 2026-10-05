@@ -226,7 +226,7 @@ COPY --from=build /out/leapview /usr/local/bin/leapview
 COPY --from=build /out/leapviewctl /usr/local/libexec/leapviewctl
 COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapviewctl
 COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions
-COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example deploy/compose/leapview.env.example deploy/compose/README.md deploy/compose/QUALIFICATION.md /usr/local/share/leapview/deployment/
+COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/compose.first-install-bootstrap.yaml deploy/compose/Caddyfile deploy/compose/Caddyfile.first-install-bootstrap deploy/compose/first-install.env deploy/compose/deployment.env.example deploy/compose/leapview.env.example deploy/compose/README.md deploy/compose/QUALIFICATION.md /usr/local/share/leapview/deployment/
 COPY deploy/compose/qualification /usr/local/share/leapview/deployment/qualification
 COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
@@ -241,6 +241,9 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
     find /usr/local/share/leapview/extensions -type f -exec chmod 0444 {} + && \
     chmod 0400 /usr/local/share/leapview/deployment/compose.yaml \
       /usr/local/share/leapview/deployment/compose.https.yaml \
+      /usr/local/share/leapview/deployment/compose.first-install-bootstrap.yaml \
+      /usr/local/share/leapview/deployment/Caddyfile.first-install-bootstrap \
+      /usr/local/share/leapview/deployment/first-install.env \
       /usr/local/share/leapview/deployment/Caddyfile \
       /usr/local/share/leapview/deployment/deployment.env.example \
       /usr/local/share/leapview/deployment/leapview.env.example \

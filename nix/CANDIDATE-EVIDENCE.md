@@ -372,7 +372,8 @@ record incomplete evidence; the protected publisher always requires the Go set.
 
 This completes the archive/report composition implementation only. Live positive
 protected producer qualification must run after the workflow/helper changes land
-on main, against an eligible exact open PR head. Existing stripped candidates can
+on main, against either the exact dispatched-main snapshot or an eligible exact
+open PR head. Existing stripped candidates can
 fail conservative module-level binary analysis; those findings remain blocking,
 with no exception based on a source scan. The Nix application recipe retains Go
 function symbols (`-w`, without `-s`, and `dontStrip`) for precise binary coverage.
@@ -405,9 +406,15 @@ They must then promote the admitted immutable artifact without
 rebuilding. Each output's adoption is gated separately in D05–D08. A successful
 application image scan grants no clearance to the site, CLI or desktop.
 
-Protected candidate qualification continues to require one exact open PR head
-with a direct base of `main`. Stacked children must land their prerequisites,
-retarget and revalidate before using that protected path. This collector supplies
+Protected Nix app, site, controller and Desktop workflows authorize an exact
+`source_revision` from either the current `workflow_dispatch` snapshot on `main`
+(`source_revision == GITHUB_SHA`) or one exact open PR head based on `main`.
+The shared verifier runs from a checkout at the protected workflow SHA and checks
+both the protected and candidate checkout revisions. Main-dispatched runs remain
+bound to their immutable event SHA if `main` advances during a long native build;
+PR-backed candidates must still be the one exact open PR head immediately before
+publication or signing. Stacked children still need their prerequisites to land,
+then must retarget and revalidate before using the PR path. This collector supplies
 reusable identity and evidence binding while those release gates remain pending.
 
 ### Standalone static controller archive reports
@@ -435,10 +442,11 @@ stays false.
 
 The manual `Protected Nix controller candidate` workflow owns qualification and
 signing of development controller archives independently of application images.
-Dispatch it on `main` with the full `source_revision` of one open PR directly
-based on main. That exact source must still be eligible immediately before
-signing. Both Linux AMD64 and ARM64 qualifiers must succeed; the selected archive
-is never rebuilt between qualification and attestation.
+Dispatch it on `main` with either the exact dispatched-main SHA or the full
+`source_revision` of one open PR directly based on main. PR source must still be
+eligible immediately before signing; main source remains pinned to the event SHA
+and its protected checkout. Both Linux AMD64 and ARM64 qualifiers must succeed;
+the selected archive is never rebuilt between qualification and attestation.
 
 The candidate build has no signing authority. Separate native runners download
 its immutable artifact ID, then use the protected workflow revision's extractor,
@@ -572,10 +580,11 @@ recording live evidence in [FAI-1074](https://linear.app/flid/issue/FAI-1074).
 
 ## Standalone public-site candidates
 
-`nix-site-candidate.yml` runs protected code from `main` against one exact open
-PR head directly based on `main`. It builds the site's two native Linux images
-without signing credentials, checks the exact archive with the site inventory
-policy and Go binary verifier, and exercises the image on its native runner.
+`nix-site-candidate.yml` runs protected code from `main` against either its exact
+dispatched-main SHA or one exact open PR head directly based on `main`. It builds
+the site's two native Linux images without signing credentials, checks the exact
+archive with the site inventory policy and Go binary verifier, and exercises the
+image on its native runner.
 The final site executable must be static and CGO-disabled. The site payload
 contains only that executable, map assets and the CA bundle; application glibc
 assessments cannot satisfy the site policy.
@@ -607,8 +616,9 @@ requirements in [FAI-1024](https://linear.app/flid/issue/FAI-1024).
 ### Linux Desktop Debian candidate
 
 The manual protected Desktop workflow selects one exact .deb artifact from its
-own build attempt, then qualifies those unchanged bytes on native Ubuntu 22.04
-x86_64 with protected verifier code. It compares candidate and protected Desktop
+own build attempt. Its source must be the exact dispatched-main SHA or one exact
+open PR head based on main. It then qualifies those unchanged bytes on native
+Ubuntu 22.04 x86_64 with protected verifier code. It compares candidate and protected Desktop
 package, lockfile and release-policy bytes; checks the package control identity,
 exact dependency fields, payload inventory, launcher, `chrome-sandbox`
 root-owned setuid mode and absence of maintainer scripts; then installs the exact

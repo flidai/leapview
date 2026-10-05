@@ -11,19 +11,21 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/cli/composectl"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	"github.com/stretchr/testify/require"
 )
 
 type recordingLifecycle struct {
-	initialize    []composectl.InitOptions
-	operator      []composectl.FirstInstallOptions
-	events        []string
-	controlURL    string
-	prepareErr    error
-	initializeErr error
-	applyErr      error
-	startErr      error
-	starts        int
+	initialize         []composectl.InitOptions
+	operator           []composectl.FirstInstallOptions
+	events             []string
+	controlURL         string
+	prepareErr         error
+	initializeErr      error
+	applyErr           error
+	startErr           error
+	starts             int
+	beforePrivateStart func()
 }
 
 func (l *recordingLifecycle) PrepareFirstInstall(_ context.Context, options composectl.FirstInstallOptions) error {
@@ -43,6 +45,15 @@ func (l *recordingLifecycle) ApplyFirstInstall(_ context.Context, options compos
 	l.events = append(l.events, "apply")
 	l.operator = append(l.operator, options)
 	return l.applyErr
+}
+
+func (l *recordingLifecycle) StartFirstInstallBootstrap(context.Context) error {
+	if l.beforePrivateStart != nil {
+		l.beforePrivateStart()
+	}
+	l.events = append(l.events, "start-private")
+	l.starts++
+	return l.startErr
 }
 
 func (l *recordingLifecycle) Start(context.Context) error {
@@ -65,7 +76,13 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 	}
 	writeConfig(t, paths.Config, config)
 	writeOperatorConfig(t, paths.OperatorConfig)
-	lifecycle := &recordingLifecycle{}
+	lifecycle := &recordingLifecycle{beforePrivateStart: func() {
+		marker, present, err := installationstate.ReadMarker(paths.Root)
+		require.NoError(t, err)
+		require.True(t, present, "private phase must be durable before any service starts")
+		require.Equal(t, installationstate.PhasePrivate, marker.BootstrapPhase)
+		require.NoError(t, installationstate.VerifyCurrent(paths.Root, marker, config.Image))
+	}}
 	var commands [][]string
 	installer, err := New(Options{
 		Paths: paths,
@@ -88,7 +105,7 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		Image:       config.Image,
 	}, lifecycle.initialize[0])
 	require.Equal(t, 1, lifecycle.starts)
-	require.Equal(t, []string{"dry-run", "initialize", "apply", "start"}, lifecycle.events)
+	require.Equal(t, []string{"dry-run", "initialize", "apply", "start-private"}, lifecycle.events)
 	require.Empty(t, commands)
 
 	for _, target := range []string{
@@ -105,9 +122,12 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		require.NoError(t, statErr, target)
 		require.False(t, info.IsDir(), target)
 	}
-	marker, _, err := readAndValidateConfig(filepath.Join(paths.Root, installMarkerName))
+	marker, err := readMarker(filepath.Join(paths.Root, installMarkerName))
 	require.NoError(t, err)
+	require.NotNil(t, marker)
 	require.Equal(t, config.TargetID, marker.TargetID)
+	require.Equal(t, installationstate.PhasePrivate, marker.BootstrapPhase)
+	require.Equal(t, "sha256-"+strings.Repeat("a", 64), marker.Generation)
 	markerBytes, err := os.ReadFile(filepath.Join(paths.Root, installMarkerName))
 	require.NoError(t, err)
 	operatorContents, err := os.ReadFile(paths.OperatorConfig)
@@ -132,7 +152,7 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 	require.NoError(t, installer.Install(t.Context()))
 	require.Len(t, lifecycle.initialize, 1)
 	require.Equal(t, 2, lifecycle.starts)
-	require.Equal(t, []string{"dry-run", "initialize", "apply", "start", "start"}, lifecycle.events)
+	require.Equal(t, []string{"dry-run", "initialize", "apply", "start-private", "start"}, lifecycle.events)
 }
 
 func TestInstallStopsAtEachBootstrapFailureAndKeepsOperatorInputForRetry(t *testing.T) {
@@ -152,7 +172,7 @@ func TestInstallStopsAtEachBootstrapFailureAndKeepsOperatorInputForRetry(t *test
 				"dry-run":    {"dry-run"},
 				"initialize": {"dry-run", "initialize"},
 				"apply":      {"dry-run", "initialize", "apply"},
-				"start":      {"dry-run", "initialize", "apply", "start"},
+				"start":      {"dry-run", "initialize", "apply", "start-private"},
 			}
 			switch failure {
 			case "dry-run":
@@ -175,7 +195,23 @@ func TestInstallStopsAtEachBootstrapFailureAndKeepsOperatorInputForRetry(t *test
 			_, err = os.Stat(paths.OperatorConfig)
 			require.NoError(t, err, "operator input must remain available for a retry")
 			_, err = os.Stat(filepath.Join(paths.Root, installMarkerName))
-			require.True(t, os.IsNotExist(err), "failed bootstrap must not write the install marker")
+			if failure == "start" {
+				require.NoError(t, err, "initialized host must persist its private phase before service startup")
+				marker, markerErr := readMarker(filepath.Join(paths.Root, installMarkerName))
+				require.NoError(t, markerErr)
+				require.Equal(t, installationstate.PhasePrivate, marker.BootstrapPhase)
+			} else {
+				require.True(t, os.IsNotExist(err), "failed database initialization must not write the install marker")
+			}
+			lifecycle.prepareErr, lifecycle.initializeErr, lifecycle.applyErr, lifecycle.startErr = nil, nil, nil, nil
+			require.NoError(t, installer.Install(t.Context()), "retry must recover the failed step without exposing the app")
+			marker, markerErr := readMarker(filepath.Join(paths.Root, installMarkerName))
+			require.NoError(t, markerErr)
+			require.Equal(t, installationstate.PhasePrivate, marker.BootstrapPhase)
+			if failure == "start" {
+				require.Len(t, lifecycle.initialize, 1, "service retry must not mint bootstrap credentials again")
+			}
+
 		})
 	}
 }
@@ -445,3 +481,10 @@ func writeConfig(t *testing.T, path string, config Config) {
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+func writeInstallationMarker(t *testing.T, root string, config Config, phase string) {
+	t.Helper()
+	marker, err := installationstate.NewMarker(config, phase)
+	require.NoError(t, err)
+	require.NoError(t, installationstate.WriteMarker(root, marker))
+}

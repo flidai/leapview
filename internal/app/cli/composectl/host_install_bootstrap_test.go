@@ -98,7 +98,7 @@ func TestInitializeFirstInstallPassesControlMigratorOnlyToInitializer(t *testing
 	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
 	caddy := "ghcr.io/library/caddy@sha256:" + strings.Repeat("b", 64)
 	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), []byte(
-		"COMPOSE_PROJECT_NAME=host-install-test\nCOMPOSE_HTTPS=1\nLEAPVIEW_IMAGE="+image+"\nCADDY_IMAGE="+caddy+"\nCADDY_DOMAIN=dash.example.com\n",
+		"COMPOSE_PROJECT_NAME=host-install-test\nCOMPOSE_HTTPS=1\nCOMPOSE_APP_BIND=127.0.0.1:8080\nLEAPVIEW_IMAGE="+image+"\nCADDY_IMAGE="+caddy+"\nCADDY_DOMAIN=dash.example.com\n",
 	), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, appEnvName), []byte(
 		"LEAPVIEW_POSTGRES_CONTROL_URL=postgres://leapview_control_runtime:runtime@db.example/leapview_control?sslmode=verify-full\n"+

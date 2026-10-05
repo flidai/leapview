@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/mail"
-	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
 
@@ -27,6 +28,10 @@ func readAndValidateConfig(path string) (Config, composectl.InitOptions, error) 
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return Config{}, composectl.InitOptions{}, fmt.Errorf("configuration must contain exactly one JSON object")
 	}
+	return normalizeConfig(config)
+}
+
+func normalizeConfig(config Config) (Config, composectl.InitOptions, error) {
 	if config.SchemaVersion != 1 {
 		return Config{}, composectl.InitOptions{}, fmt.Errorf("unsupported schemaVersion %d", config.SchemaVersion)
 	}
@@ -54,19 +59,15 @@ func readAndValidateConfig(path string) (Config, composectl.InitOptions, error) 
 	return config, normalized, nil
 }
 
-func readMarker(path string) (*Config, error) {
-	contents, err := securefs.ReadPrivateFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+func readMarker(path string) (*installationstate.Marker, error) {
+	marker, present, err := installationstate.ReadMarker(filepath.Dir(path))
 	if err != nil {
 		return nil, fmt.Errorf("read host installation marker: %w", err)
 	}
-	var config Config
-	if err := json.Unmarshal(contents, &config); err != nil {
-		return nil, fmt.Errorf("parse host installation marker: %w", err)
+	if !present {
+		return nil, nil
 	}
-	return &config, nil
+	return &marker, nil
 }
 
 func configsEqual(first, second Config) bool {

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_revision:
-        description: Exact open pull-request head directly based on main
+        description: Exact dispatch-main commit or open pull-request head based on main
         required: true
         type: string
 
@@ -25,21 +25,34 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out protected authorization tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+      - name: Check out exact candidate source identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.source_revision }}
+          path: source
           persist-credentials: false
-      - name: Require one exact open PR head directly based on main
+      - name: Authorize the exact dispatched-main snapshot or open PR head
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REVISION/pulls" \
-            | jq -e --arg revision "$SOURCE_REVISION" \
-              'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' >/dev/null
+          pull_requests="$RUNNER_TEMP/candidate-pulls.json"
+          if [[ "$SOURCE_REVISION" == "$GITHUB_SHA" ]]; then
+            printf '[]\n' > "$pull_requests"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REVISION/pulls" > "$pull_requests"
+          fi
+          python3 protected/scripts/nix_candidate_authorization.py \
+            --repository "$GITHUB_REPOSITORY" --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" \
+            --source-revision "$SOURCE_REVISION" --protected-revision "$GITHUB_SHA" \
+            --source-root source --protected-root protected --pull-requests "$pull_requests"
 
   build:
     needs: authorize
@@ -266,18 +279,22 @@ jobs:
             --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
             --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
             --layout "$RUNNER_TEMP/nix-site-oci" --output "$RUNNER_TEMP/nix-site-prepared.json"
-      - name: Reauthorize the still-current candidate before publication
+      - name: Reauthorize the dispatched snapshot or still-open PR before publication
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_REVISION: ${{ inputs.source_revision }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git -C protected rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REVISION/pulls" \
-            | jq -e --arg revision "$SOURCE_REVISION" \
-              'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' >/dev/null
+          pull_requests="$RUNNER_TEMP/candidate-pulls.json"
+          if [[ "$SOURCE_REVISION" == "$GITHUB_SHA" ]]; then
+            printf '[]\n' > "$pull_requests"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REVISION/pulls" > "$pull_requests"
+          fi
+          python3 protected/scripts/nix_candidate_authorization.py \
+            --repository "$GITHUB_REPOSITORY" --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" \
+            --source-revision "$SOURCE_REVISION" --protected-revision "$GITHUB_SHA" \
+            --source-root source --protected-root protected --pull-requests "$pull_requests"
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:

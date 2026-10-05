@@ -20,6 +20,7 @@ import (
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
 
@@ -139,6 +140,29 @@ func composeArguments(root string, args ...string) ([]string, error) {
 		result = append(result, "--file", filepath.Join(root, "compose.https.yaml"))
 	}
 	return append(result, args...), nil
+}
+
+func composeArgumentsForPhase(root, phase string, args ...string) ([]string, error) {
+	if phase != installationstate.PhasePrivate && phase != installationstate.PhasePublic {
+		return nil, fmt.Errorf("unsupported host installation phase %q", phase)
+	}
+	base, err := composeArguments(root)
+	if err != nil {
+		return nil, err
+	}
+	if phase == installationstate.PhasePrivate {
+		base = append(base, "--env-file", filepath.Join(root, "first-install.env"))
+		https, err := envFileValue(filepath.Join(root, deploymentEnvName), "COMPOSE_HTTPS")
+		if err != nil {
+			return nil, err
+		}
+		if https == "1" {
+			base = append(base, "--file", filepath.Join(root, "compose.first-install-bootstrap.yaml"))
+		} else if https != "0" {
+			return nil, fmt.Errorf("COMPOSE_HTTPS must be 0 or 1 during host bootstrap")
+		}
+	}
+	return append(base, args...), nil
 }
 
 func validComposeProjectName(value string) bool {

@@ -453,6 +453,7 @@ func (c *Controller) QualifyImage(
 		c.qualificationContainers.Existing(containerID),
 		"http://localhost:8080",
 		credentials.ProjectClaimToken,
+		explicitQualificationEnvironment,
 	)
 	if err != nil {
 		return err
@@ -497,6 +498,7 @@ func (c *Controller) QualifyImage(
 
 	authoringReport, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      bundleRoot,
+		AssetsRoot:      filepath.Join(bundleRoot, "qualification"),
 		Image:           imageReference,
 		ClientBaseImage: options.Image,
 		CredentialsFile: credentialsPath,

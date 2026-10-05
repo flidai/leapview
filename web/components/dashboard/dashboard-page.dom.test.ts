@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
-import { verifyDashboardOptionRequests } from './dashboard-option-requests.test'
+import { verifyDashboardOptionRequests } from './dashboard-option-requests.test-fixture'
 import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
