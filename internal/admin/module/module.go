@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"net/http"
 	"strings"
 
@@ -91,7 +92,7 @@ type Config struct {
 	AccessConfigured                    bool
 	Storage                             StorageConfig
 	Layout                              func(*http.Request) webpage.Provider
-	EnsureClientID                      func(http.ResponseWriter, *http.Request) bool
+	ClientIDs                           webtransport.ClientIDCookies
 	Broker                              *pagestream.Broker
 	Product                             *product.Service
 	ProductCommands                     product.CommandExecutor
@@ -176,7 +177,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	m.handler = adminhttp.Handler{
 		ReadModel: readModel, Layout: config.Layout,
-		EnsureClientID: config.EnsureClientID, Broker: config.Broker,
+		ClientIDs: config.ClientIDs, Broker: config.Broker,
 		PublicationMutation:                 m.mutatePublication,
 		SettingsRepository:                  config.SettingsAccess,
 		AuthorizationProjection:             config.AuthorizationProjection,

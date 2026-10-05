@@ -18,7 +18,8 @@ export async function openExample(page: Page, route: string, options: ExampleOpt
   // A hash-only goto is same-document navigation and can leave the old fixture mounted.
   await page.goto('about:blank')
   await page.goto(`/?${parameters}#${route}`)
-  const example = page.locator('playground-app .workspace > main > .viewport > *')
+  // The lazy-load status is visible before the example module is ready.
+  const example = page.locator('playground-app .workspace > main > .viewport > :not([role="status"])')
   await example.waitFor({ state: 'visible' })
   await example.evaluate(async (element) => {
     await (element as HTMLElement & { updateComplete?: Promise<unknown> }).updateComplete

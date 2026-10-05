@@ -15,13 +15,7 @@ import '../web/components/data/preview-table'
 import '../web/components/data/explore-table'
 import { answerWindow, entityColumns, entityFixtures, exploreCommand, exploreFixture, previewCommand, previewFixture, recordFixture, tableRows, windowedFixture, type TableState } from './table-fixtures'
 
-export const tableExamples = [
-  { id: 'record', label: 'Record table' },
-  { id: 'windowed', label: 'Windowed table' },
-  { id: 'entity-list', label: 'Entity list' },
-  { id: 'data-preview', label: 'Data preview table' },
-  { id: 'data-explore', label: 'Data exploration table' },
-]
+export { tableExamples } from './catalog'
 
 const docs: Record<string, { tag: string; source: string; properties: string; events: string; note: string }> = {
   record: { tag: 'lv-record-table', source: 'web/components/shared/record-table.ts', properties: 'table { columns, rows, columnSelector, density, rowAction } · variant: minimal | primary | compact', events: 'lv-record-table-action { action, row }', note: 'Sort columns, show or hide columns, expand and copy SQL, or inspect and refresh a record. Column visibility persists under a playground-specific key.' },

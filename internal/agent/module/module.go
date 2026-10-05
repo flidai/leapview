@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -163,6 +164,7 @@ type Settings interface {
 }
 
 type HTTPConfig struct {
+	ClientIDs          webtransport.ClientIDCookies
 	Settings           Settings
 	PlatformAdmin      func(context.Context, string) (bool, error)
 	CurrentPrincipal   func(*http.Request) (Principal, bool)
@@ -313,6 +315,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return agenthttp.Principal{ID: principal.ID, DevAuthBypass: principal.DevAuthBypass}, ok
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
+		ClientIDs:              config.HTTP.ClientIDs,
 		DashboardAuthoring:     config.DashboardAuthoring,
 		AuthorizeSemanticModel: m.authorizeChatVisualModel,
 		Service:                service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,

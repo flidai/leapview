@@ -68,3 +68,13 @@ func TestDecodeRejectsMalformedOptionalSecurityMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestOptionalInt64OverflowRetainsMalformedClassification(t *testing.T) {
+	for _, value := range []string{"9223372036854775808", "-9223372036854775809", "1.5", "broken"} {
+		_, err := optionalInt64(json.RawMessage(value))
+		var parseErr *ParseError
+		if !errors.As(err, &parseErr) || parseErr.Kind != ErrorMalformed {
+			t.Errorf("%q: %v", value, err)
+		}
+	}
+}

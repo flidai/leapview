@@ -12,16 +12,25 @@ const ClientIDCookieName = "pagestream_client_id"
 
 var readClientIDRandom = rand.Read
 
-// EnsureClientID returns the valid page-stream client ID from the request or
-// creates a new session-scoped ID. Cookie policy belongs to the product HTTP
-// transport rather than the Pagestream framework.
-func EnsureClientID(w http.ResponseWriter, r *http.Request) (string, error) {
+// ClientIDCookies is the product-owned page-stream cookie policy. Secure is
+// derived from serving configuration, never from untrusted forwarding headers.
+// Direct TLS also requires Secure cookies. The zero value supports local HTTP.
+type ClientIDCookies struct {
+	Secure bool
+}
+
+// Ensure preserves an existing valid identity and refreshes its attributes before
+// the response starts. Request cookies do not reveal their original attributes.
+func (policy ClientIDCookies) Ensure(w http.ResponseWriter, r *http.Request) (string, error) {
+	var clientID string
 	if cookie, err := r.Cookie(ClientIDCookieName); err == nil && validClientID(cookie.Value) {
-		return cookie.Value, nil
-	}
-	clientID, err := newClientID()
-	if err != nil {
-		return "", err
+		clientID = cookie.Value
+	} else {
+		var err error
+		clientID, err = newClientID()
+		if err != nil {
+			return "", err
+		}
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     ClientIDCookieName,
@@ -29,25 +38,14 @@ func EnsureClientID(w http.ResponseWriter, r *http.Request) (string, error) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   requestUsesHTTPS(r),
+		Secure:   policy.Secure || r.TLS != nil,
 	})
 	return clientID, nil
 }
 
-func requestUsesHTTPS(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	if r.TLS != nil {
-		return true
-	}
-	forwardedProto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
-	return strings.EqualFold(strings.TrimSpace(forwardedProto), "https")
-}
-
-// RequireClientID ensures a client ID or writes a service-unavailable response.
-func RequireClientID(w http.ResponseWriter, r *http.Request) (string, bool) {
-	clientID, err := EnsureClientID(w, r)
+// Require ensures a client ID or writes a service-unavailable response.
+func (policy ClientIDCookies) Require(w http.ResponseWriter, r *http.Request) (string, bool) {
+	clientID, err := policy.Ensure(w, r)
 	if err != nil {
 		http.Error(w, "page-stream client identity is unavailable", http.StatusServiceUnavailable)
 		return "", false

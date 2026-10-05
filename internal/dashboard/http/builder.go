@@ -460,7 +460,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, authoring.ErrStaleRevision)
 		return
 	}
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
