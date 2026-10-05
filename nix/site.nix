@@ -121,8 +121,9 @@ let
       bun scripts/generate_visualization_validator.ts
       bun run build:site
       ${portableGoSDK}
+      # Preserve Go function symbols for exact binary vulnerability analysis.
       go build -trimpath -buildvcs=false \
-        -ldflags="-s -w -X main.buildRevision=${revision}" \
+        -ldflags="-w -X main.buildRevision=${revision}" \
         -o "$TMPDIR/leapview-site" ./cmd/leapview-site
       runHook postBuild
     '';
