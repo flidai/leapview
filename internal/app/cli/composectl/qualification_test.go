@@ -208,6 +208,59 @@ func TestQualificationTransientDeploymentErrorRecognizesStructuredAndPlainErrors
 	}
 }
 
+func TestWaitQualificationCanonicalEvidenceRetriesOnlyBoundedTransientReads(t *testing.T) {
+	wantPublication := QualificationPublication{DeploymentID: "publication-1", GenerationID: "generation-1", Status: "committed"}
+	wantDeployment := QualificationDeployment{GenerationID: "generation-1", Status: "active"}
+	t.Run("transient read then success", func(t *testing.T) {
+		attempts := 0
+		publication, deployment, err := waitQualificationCanonicalEvidence(
+			t.Context(), time.Millisecond,
+			func(context.Context) (QualificationPublication, QualificationDeployment, error) {
+				attempts++
+				if attempts < 3 {
+					return QualificationPublication{}, QualificationDeployment{}, errors.New("GET /delivery/generations/generation-1: Service Unavailable")
+				}
+				return wantPublication, wantDeployment, nil
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, 3, attempts)
+		require.Equal(t, wantPublication, publication)
+		require.Equal(t, wantDeployment, deployment)
+	})
+	t.Run("persistent transient response is deadline bounded", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
+		defer cancel()
+		attempts := 0
+		_, _, err := waitQualificationCanonicalEvidence(
+			ctx, time.Millisecond,
+			func(context.Context) (QualificationPublication, QualificationDeployment, error) {
+				attempts++
+				return QualificationPublication{}, QualificationDeployment{}, errors.New("GET /delivery/generations/generation-1: Service Unavailable")
+			},
+		)
+		require.ErrorContains(t, err, "temporarily unavailable until its deadline")
+		require.ErrorContains(t, err, "Service Unavailable")
+		require.Greater(t, attempts, 1)
+	})
+	t.Run("nontransient response fails immediately", func(t *testing.T) {
+		attempts := 0
+		wantErr := &apigenclient.ProblemError{
+			Response: apigenclient.Response{StatusCode: http.StatusForbidden},
+			Problem:  apigenclient.ProblemDetails{Status: http.StatusForbidden},
+		}
+		_, _, err := waitQualificationCanonicalEvidence(
+			t.Context(), time.Millisecond,
+			func(context.Context) (QualificationPublication, QualificationDeployment, error) {
+				attempts++
+				return QualificationPublication{}, QualificationDeployment{}, wantErr
+			},
+		)
+		require.ErrorIs(t, err, wantErr)
+		require.Equal(t, 1, attempts)
+	})
+}
+
 func TestVerifyExactAuthoringCandidate(t *testing.T) {
 	candidate := QualificationCandidate{
 		ID:               "cand_1",
