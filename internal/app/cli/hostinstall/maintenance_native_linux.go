@@ -432,7 +432,9 @@ func (e *NativeEffects) stage(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example", "leapview.env.example"} {
+	// First-install defaults are candidate-owned seed data, not installed topology.
+	// Stage the new template without comparing or rewriting operator configuration.
+	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
 		installed, err := os.ReadFile(filepath.Join(e.root, name))
 		if err != nil || !bytes.Equal(installed, payload[name]) {
 			return fmt.Errorf("deployment topology changed: %s", name)
