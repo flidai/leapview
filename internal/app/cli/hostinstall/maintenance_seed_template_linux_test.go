@@ -18,6 +18,9 @@ func TestNativeUpgradeStagesSeedTemplateWithoutChangingInstalledConfiguration(t 
 			effects.log = os.Stderr
 			fixture := filepath.Join(t.TempDir(), "payload")
 			writeTestPayload(t, fixture)
+			compose, err := os.ReadFile("../../../../deploy/compose/compose.yaml")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(fixture, "compose.yaml"), compose, 0o600))
 			for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
 				contents, err := os.ReadFile(filepath.Join(fixture, name))
 				require.NoError(t, err)
@@ -45,7 +48,7 @@ esac
 `), 0o700))
 			err = effects.stage(t.Context())
 			if scenario == "changed topology" {
-				require.ErrorContains(t, err, "deployment topology changed: compose.yaml")
+				require.ErrorContains(t, err, "installed deployment differs from predecessor payload: compose.yaml")
 				return
 			}
 			require.NoError(t, err)

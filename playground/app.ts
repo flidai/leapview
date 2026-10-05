@@ -5,16 +5,7 @@ import { ChevronDown, Maximize2, Minimize2, Moon, PanelLeft, Star, Sun } from 'l
 import { lucideIcon } from '../web/components/shared/lucide-icons'
 import '../web/components/shared/brand-mark'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
-import { chartExamples } from './charts'
-import { controlExamples } from './controls'
-import { tokenExamples } from './tokens'
-import { graphExamples } from './graphs'
-import { contentExamples } from './content'
-import { tableExamples } from './tables'
-import { surfaceExamples } from './surfaces'
-import { filterExamples } from './filters'
-import './linked-visuals'
-import './overlay-recipe'
+import { chartExamples, controlExamples, tokenExamples, graphExamples, contentExamples, tableExamples, surfaceExamples, filterExamples } from './catalog'
 import './reload-client'
 import { decodeSnapshot, snapshotKey, type ExampleSnapshot, type StatefulExample } from './example-state'
 import { copyText, snapshotURL } from './review-tools'
@@ -63,6 +54,21 @@ const groups = [
 ]
 const shortcutExamples = new Map(groups.flatMap(group => group.examples.map(example => [`${group.id}/${example.id}`, { label: example.label, groupLabel: group.label }] as const)))
 
+const exampleModules = new Map<string, { tag: string; load: () => Promise<unknown> }>([
+  ['tokens', { tag: 'playground-tokens', load: () => import('./tokens') }],
+  ['controls', { tag: 'playground-controls', load: () => import('./controls') }],
+  ['charts', { tag: 'playground-charts', load: () => import('./charts') }],
+  ['graphs', { tag: 'playground-graphs', load: () => import('./graphs') }],
+  ['tables', { tag: 'playground-tables', load: () => import('./tables') }],
+  ['content', { tag: 'playground-content', load: () => import('./content') }],
+  ['surfaces', { tag: 'playground-surfaces', load: () => import('./surfaces') }],
+  ['filters', { tag: 'playground-filters', load: () => import('./filters') }],
+  ['recipes/linked-visuals', { tag: 'playground-linked-visuals', load: () => import('./linked-visuals') }],
+  ['recipes/overlay-form', { tag: 'playground-overlay-recipe', load: () => import('./overlay-recipe') }],
+])
+const moduleLoads = new Map<string, Promise<unknown>>()
+const moduleID = (route: string) => route.startsWith('recipes/') ? route : route.split('/')[0]
+
 class PlaygroundApp extends LitElement {
   @state() private route = location.hash.slice(1) || 'charts/bar'
   @state() private search = ''
@@ -76,11 +82,37 @@ class PlaygroundApp extends LitElement {
   @state() private previewOnly = embedded || initialSnapshot?.preview || parameters.get('preview') === '1'
   @state() private shareMessage = ''
   @state() private shareFallback = ''
+  @state() private loadError = ''
+  @state() private exampleReady = false
+  private navigationRevision = 0
+  private examplePreparation: Promise<void> = Promise.resolve()
   private readonly beforeReload = () => {
     if (embedded) return
     try { sessionStorage.setItem(snapshotKey, JSON.stringify({ href: location.href, state: JSON.stringify(this.snapshot()) })) } catch { /* Storage unavailable. */ }
   }
-  protected async firstUpdated() { if (initialSnapshot) await this.restore(initialSnapshot) }
+  protected firstUpdated() {
+    this.examplePreparation = this.prepareCurrentExample(initialSnapshot)
+  }
+
+  private async loadCurrentExample() {
+    const route = this.route
+    const revision = this.navigationRevision
+    const id = moduleID(route)
+    const exampleModule = exampleModules.get(id)
+    if (!exampleModule) return
+    let load = moduleLoads.get(id)
+    if (!load) {
+      load = exampleModule.load()
+      moduleLoads.set(id, load)
+    }
+    try {
+      await load
+      if (revision === this.navigationRevision) { this.loadError = ''; this.requestUpdate() }
+    } catch (error) {
+      moduleLoads.delete(id)
+      if (revision === this.navigationRevision) this.loadError = error instanceof Error ? error.message : String(error)
+    }
+  }
 
   private exampleElement() { return this.renderRoot.querySelector<StatefulExample>('.viewport > *') }
 
@@ -96,15 +128,24 @@ class PlaygroundApp extends LitElement {
     preview: this.previewOnly, example: this.exampleElement()?.getExampleState?.() || {},
   })
 
-  private async restore(snapshot: ExampleSnapshot) {
-    this.width = snapshot.width; this.height = snapshot.height; this.previewOnly = embedded || snapshot.preview
-    applyTheme(snapshot.theme, snapshot.themeAttributes)
+  private async prepareCurrentExample(snapshot?: ExampleSnapshot) {
+    const revision = this.navigationRevision
+    this.exampleReady = false
+    await this.loadCurrentExample()
+    if (revision !== this.navigationRevision || this.loadError) return
     await this.updateComplete
+    if (revision !== this.navigationRevision) return
     const example = this.exampleElement()
-    if (example) { await example.updateComplete; await example.restoreExampleState?.(snapshot.example) }
+    if (!example?.getExampleState) return
+    await example.updateComplete
+    if (revision !== this.navigationRevision) return
+    if (snapshot?.route === this.route) await example.restoreExampleState?.(snapshot.example)
+    await example.updateComplete
+    if (revision === this.navigationRevision) this.exampleReady = true
   }
 
   private readonly share = async () => {
+    if (!this.exampleReady) return
     const url = snapshotURL(this.snapshot()).href
     if (url.length > 8000) {
       this.shareMessage = 'This example is too large for a link. Use Copy component code instead.'
@@ -130,12 +171,22 @@ class PlaygroundApp extends LitElement {
     const fromMobileNavigation = this.navigationOpen
     this.navigationOpen = false
     this.route = location.hash.slice(1) || 'charts/bar'
+    if (previousRoute !== this.route) this.navigationRevision++
+    const revision = this.navigationRevision
     this.rememberExample()
     this.shareMessage = ''; this.shareFallback = ''
     const incoming = decodeSnapshot(new URLSearchParams(location.search).get('state'))
     this.expandedGroups = new Set([this.route.split('/')[0]])
-    await this.updateComplete
-    if (previousRoute !== this.route && incoming?.route === this.route) await this.restore(incoming)
+    if (previousRoute !== this.route || this.loadError) {
+      this.loadError = ''
+      if (previousRoute !== this.route && incoming?.route === this.route) {
+        this.width = incoming.width; this.height = incoming.height; this.previewOnly = embedded || incoming.preview
+        applyTheme(incoming.theme, incoming.themeAttributes)
+      }
+      this.examplePreparation = this.prepareCurrentExample(incoming)
+    }
+    await this.examplePreparation
+    if (revision !== this.navigationRevision) return
     const main = this.renderRoot.querySelector<HTMLElement>('main')
     if (main) main.scrollTop = 0
     if (fromMobileNavigation) main?.focus({ preventScroll: true })
@@ -231,7 +282,10 @@ class PlaygroundApp extends LitElement {
     const [groupID, exampleID] = this.route.split('/')
     const group = groups.find(item => item.id === groupID)
     const example = group?.examples.find(item => item.id === exampleID)
-    const preview = example ? keyed(this.route, groupID === 'charts'
+    const exampleModule = exampleModules.get(moduleID(this.route))
+    const preview = example && !customElements.get(exampleModule?.tag || '')
+      ? html`<p role="status">${this.loadError || 'Loading example…'}</p>`
+      : example ? keyed(this.route, groupID === 'charts'
       ? html`<playground-charts .example=${exampleID} ?preview-only=${this.previewOnly}></playground-charts>`
       : groupID === 'graphs' ? html`<playground-graphs .example=${exampleID} ?preview-only=${this.previewOnly}></playground-graphs>`
       : groupID === 'tables' ? html`<playground-tables .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tables>`
@@ -276,14 +330,14 @@ class PlaygroundApp extends LitElement {
               ${(['charts', 'graphs', 'tables'].includes(groupID) || this.route === 'recipes/linked-visuals') ? html`<label>Height<select aria-label="Preview height" title=${this.route === 'recipes/linked-visuals' ? 'Minimum chart height; wide layouts also fit the KPI and table.' : 'Preview height'} class="settings-input" .value=${this.height} @change=${(event: Event) => { this.height = (event.target as HTMLSelectElement).value }}>
                 <option value="260">260 px</option><option value="420">420 px</option><option value="640">640 px</option>
               </select></label>` : nothing}
-              <button type="button" class="settings-button" title="Share fixture, options, theme, and size" @click=${this.share}>Copy link</button>
+              <button type="button" class="settings-button" title="Share fixture, options, theme, and size" ?disabled=${!this.exampleReady} @click=${this.share}>Copy link</button>
               <button type="button" class="settings-button preview-toggle" aria-label="Preview" title="Hide controls and details" @click=${this.enterPreview}>${lucideIcon(Maximize2, { size: 16 })} Preview</button>
             </div>
           </div>
           <span class="share-message" role="status" ?hidden=${this.previewOnly}>${this.shareMessage}</span>
           ${this.shareFallback && !this.previewOnly ? html`<input class="settings-input share-fallback" readonly aria-label="Example link" .value=${this.shareFallback} @focus=${(event: Event) => (event.target as HTMLInputElement).select()}>` : nothing}
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
-          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
+          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${this.exampleReady} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
         </main>
       </div>`
   }

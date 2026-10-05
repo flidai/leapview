@@ -4,7 +4,6 @@ package hostinstall
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -434,11 +433,19 @@ func (e *NativeEffects) stage(ctx context.Context) error {
 	}
 	// First-install defaults are candidate-owned seed data, not installed topology.
 	// Stage the new template without comparing or rewriting operator configuration.
+	predecessor, err := extractCandidatePayload(ctx, "docker", e.id.Predecessor, e.log)
+	if err != nil {
+		return err
+	}
+	installed := map[string][]byte{}
 	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
-		installed, err := os.ReadFile(filepath.Join(e.root, name))
-		if err != nil || !bytes.Equal(installed, payload[name]) {
-			return fmt.Errorf("deployment topology changed: %s", name)
+		installed[name], err = os.ReadFile(filepath.Join(e.root, name))
+		if err != nil {
+			return err
 		}
+	}
+	if err := validateMaintenancePayloadTransition(installed, predecessor, payload); err != nil {
+		return err
 	}
 	_, err = stageGeneration(InstalledPaths(e.root), e.id.Candidate, payload)
 	return err

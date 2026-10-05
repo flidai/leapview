@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"io"
 	"log/slog"
 	stdhttp "net/http"
@@ -45,7 +46,8 @@ type Settings interface {
 }
 
 type Options struct {
-	Service *agent.Service
+	ClientIDs webtransport.ClientIDCookies
+	Service   *agent.Service
 	// ActiveProjectID is retained for statically bound compositions. When
 	// ResolveProjectID is configured, it is authoritative and evaluated for
 	// each request; it is never read from request paths or signal payloads.

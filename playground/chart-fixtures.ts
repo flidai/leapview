@@ -1,12 +1,11 @@
 import type { VisualizationEnvelope, VisualizationField, VisualizationFieldRef, VisualizationGeographicLayer, VisualizationGeometryAsset, VisualizationSpec, VisualizationWindowRequest } from '../web/generated/visualization'
 import { currentVisualizationSchemaVersion } from '../web/generated/visualization/schema-version'
 import { defaultRendererContext } from '../web/components/dashboard/visualization/host-controller'
-import catalog from '../docs/visuals/catalog.json'
+import { chartExamples } from './catalog'
 import { blockStartsForAll } from '../web/components/dashboard/table/block-source'
 import { decimalSignedInteger } from '../web/components/dashboard/visualization/decimal'
 
-/** Production catalog order from docs/visuals/catalog.json; no service data. */
-export const chartExamples = catalog.documents.map(({ source, title }) => ({ id: source, label: title }))
+export { chartExamples }
 
 export type ChartScenario = 'standard' | 'dense' | 'long-labels' | 'missing' | 'single' | 'zero' | 'negative' | 'precision'
 export interface ChartOptions {

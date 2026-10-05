@@ -13,7 +13,6 @@ import (
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
@@ -40,7 +39,7 @@ type queryHistoryCommandSignals struct {
 }
 
 func (h Handler) queryHistoryUpdates(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
@@ -62,7 +61,7 @@ func (h Handler) queryHistoryUpdates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
