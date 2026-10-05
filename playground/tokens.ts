@@ -5,14 +5,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
 import { exampleChromeStyles, exampleDetails } from './example-chrome'
 
-export const tokenExamples = [
-  { id: 'colors', label: 'Colors' },
-  { id: 'typography', label: 'Typography' },
-  { id: 'spacing', label: 'Spacing & sizing' },
-  { id: 'borders', label: 'Borders & shadows' },
-  { id: 'motion', label: 'Motion' },
-  { id: 'other', label: 'Other tokens' },
-]
+export { tokenExamples } from './catalog'
 
 type Token = { name: string; value: string; group: string }
 

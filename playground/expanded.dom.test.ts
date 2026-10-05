@@ -258,6 +258,8 @@ test('drawer cycles keyboard focus, saves locally, and restores trigger focus', 
 })
 
 test('drawer preserves native Tab traversal into nested production controls and skips disabled fields', async () => {
+  await open('controls/select')
+  await browserExpect(page.locator('playground-controls lv-select-menu')).toBeVisible()
   await open('surfaces/drawer')
   await page.getByRole('button', { name: 'Open drawer', exact: true }).click()
   const drawer = page.locator('lv-drawer')

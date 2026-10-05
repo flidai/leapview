@@ -3,6 +3,8 @@ import { chromium, expect as browserExpect, type Browser, type Page } from '@pla
 import { chartExamples } from './chart-fixtures'
 import { playgroundResponse } from './server'
 import { startTestPlayground } from './test-server'
+import { tokenExamples } from './catalog'
+import { openExample } from './browser-review/helpers'
 
 let browser: Browser
 let server: Awaited<ReturnType<typeof startTestPlayground>>
@@ -18,7 +20,7 @@ afterAll(async () => { await browser?.close(); await server?.stop(true) })
 beforeEach(async () => {
   errors = []
   unexpectedRequests = []
-  page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
+  page = await browser.newPage({ baseURL: server.url.href, viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   page.setDefaultTimeout(7000)
   page.on('pageerror', error => errors.push(error.message))
   page.on('request', request => {
@@ -39,6 +41,191 @@ async function open(route: string) {
   await browserExpect(page.locator('playground-app')).toBeVisible()
 }
 
+async function delayControlsModule() {
+  let release!: () => void
+  let requested!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { requested = resolve })
+  await page.route('**/assets/chunks/controls-*.js', async route => {
+    requested()
+    await pending
+    await route.continue()
+  })
+  return { started, release }
+}
+
+test('review actions wait for saved state and preserve toolbar changes during a delayed module load', async () => {
+  const gate = await delayControlsModule()
+  try {
+    const url = new URL(server.url)
+    url.searchParams.set('state', JSON.stringify({ version: 1, route: 'controls/select', width: 'responsive', height: '420', theme: 'light', preview: false, example: { disabled: true } }))
+    url.hash = 'controls/select'
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' })
+    await gate.started
+    await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Loading example…')
+    await page.getByLabel('Preview width', { exact: true }).selectOption('360')
+    await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click()
+    const review = page.locator('playground-review-tools')
+    await review.locator('summary').first().click()
+    await review.locator('details.coverage > summary').click()
+    const copyLink = page.getByRole('button', { name: 'Copy link', exact: true })
+    const actions = ['Copy component code', 'Pin comparison', 'Check accessibility', 'Refresh fixture summary']
+    for (const name of actions) {
+      const button = review.getByRole('button', { name, exact: true })
+      await browserExpect(button).toBeDisabled()
+      await button.dispatchEvent('click')
+    }
+    await browserExpect(copyLink).toBeDisabled()
+    await copyLink.dispatchEvent('click')
+    await browserExpect(review.getByLabel('Current component code', { exact: true })).toHaveCount(0)
+    await browserExpect(review.locator('iframe')).toHaveCount(0)
+    await browserExpect(review.getByRole('button', { name: 'Check accessibility', exact: true })).toBeDisabled()
+    await browserExpect(review.locator('details.coverage dl')).toHaveCount(0)
+    await browserExpect(page.getByLabel('Example link', { exact: true })).toHaveCount(0)
+    gate.release()
+    await browserExpect(copyLink).toBeEnabled()
+    await browserExpect(page.getByLabel('Preview width', { exact: true })).toHaveValue('360')
+    await browserExpect(page.locator('html')).toHaveAttribute('data-theme-preference', 'dark')
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeDisabled()
+    expect(await page.locator('playground-controls').evaluate((element: any) => element.getExampleState().disabled)).toBe(true)
+    for (const name of actions) await browserExpect(review.getByRole('button', { name, exact: true })).toBeEnabled()
+    await review.getByRole('button', { name: 'Copy component code', exact: true }).click()
+    await browserExpect(review.getByLabel('Current component code', { exact: true })).toContainText('<lv-select-menu')
+    await review.getByRole('button', { name: 'Pin comparison', exact: true }).click()
+    const pinned = new URL((await review.locator('iframe').getAttribute('src'))!)
+    expect(JSON.parse(pinned.searchParams.get('state')!)).toMatchObject({ route: 'controls/select', width: '360', theme: 'dark', example: { disabled: true } })
+  } finally { gate.release() }
+})
+
+test('review actions wait for public state restoration after the component mounts', async () => {
+  await page.addInitScript(() => {
+    const testWindow = window as any
+    const pending = new Promise<void>(resolve => { testWindow.__releaseControlsRestore = resolve })
+    void customElements.whenDefined('playground-controls').then(() => {
+      const prototype = customElements.get('playground-controls')!.prototype
+      const restore = prototype.restoreExampleState
+      prototype.restoreExampleState = async function(this: any, state: Record<string, unknown>) {
+        testWindow.__controlsRestoreStarted = true
+        await pending
+        return restore.call(this, state)
+      }
+    })
+  })
+  try {
+    const url = new URL(server.url)
+    url.searchParams.set('state', JSON.stringify({ version: 1, route: 'controls/select', width: 'responsive', height: '420', theme: 'light', preview: false, example: { disabled: true } }))
+    url.hash = 'controls/select'
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => (window as any).__controlsRestoreStarted === true)
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+    expect(await page.locator('playground-controls').evaluate((element: any) => element.getExampleState().disabled)).toBe(false)
+    const review = page.locator('playground-review-tools')
+    await review.locator('summary').first().click()
+    await review.locator('details.coverage > summary').click()
+    const copyLink = page.getByRole('button', { name: 'Copy link', exact: true })
+    const actions = ['Copy component code', 'Pin comparison', 'Check accessibility', 'Refresh fixture summary']
+    await browserExpect(copyLink).toBeDisabled()
+    for (const name of actions) await browserExpect(review.getByRole('button', { name, exact: true })).toBeDisabled()
+    await page.evaluate(() => (window as any).__releaseControlsRestore())
+    await browserExpect(copyLink).toBeEnabled()
+    for (const name of actions) await browserExpect(review.getByRole('button', { name, exact: true })).toBeEnabled()
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeDisabled()
+    expect(await page.locator('playground-controls').evaluate((element: any) => element.getExampleState().disabled)).toBe(true)
+  } finally { await page.evaluate(() => (window as any).__releaseControlsRestore?.()) }
+})
+
+for (const [label, disabled] of [['Select menu', true], ['Buttons', false]] as const) {
+  test(`delayed saved Select menu state ${disabled ? 'survives clicking its active link' : 'does not leak into Buttons'}`, async () => {
+    const gate = await delayControlsModule()
+    try {
+      const url = new URL(server.url)
+      url.searchParams.set('state', JSON.stringify({ version: 1, route: 'controls/select', width: 'responsive', height: '420', theme: 'light', preview: false, example: { disabled: true } }))
+      url.hash = 'controls/select'
+      await page.goto(url.href, { waitUntil: 'domcontentloaded' })
+      await gate.started
+      await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Loading example…')
+      await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('link', { name: label, exact: true }).click()
+      await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText(label)
+      gate.release()
+      await browserExpect(page.locator('playground-controls')).toBeVisible()
+      await browserExpect(page.getByLabel('Disabled', { exact: true })).toBeChecked({ checked: disabled })
+    } finally { gate.release() }
+  })
+}
+
+test('delayed mobile navigation cannot steal focus after choosing another example', async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await open('tokens/colors')
+  await browserExpect(page.locator('playground-tokens')).toBeVisible()
+  const gate = await delayControlsModule()
+  try {
+    const browse = page.getByRole('button', { name: 'Browse', exact: true })
+    const catalog = page.getByRole('navigation', { name: 'Examples', exact: true })
+    await browse.click()
+    await catalog.getByRole('button', { name: 'UI components', exact: true }).click()
+    await catalog.getByRole('link', { name: 'Select menu', exact: true }).click()
+    await gate.started
+    await browse.click()
+    await catalog.getByRole('button', { name: 'Design tokens', exact: true }).click()
+    await catalog.getByRole('link', { name: 'Colors', exact: true }).click()
+    await browserExpect(page.locator('main')).toBeFocused()
+    await browse.click()
+    const search = page.getByLabel('Find an example', { exact: true })
+    await search.focus()
+    gate.release()
+    await page.evaluate(async () => {
+      await customElements.whenDefined('playground-controls')
+      await new Promise(requestAnimationFrame)
+    })
+    await browserExpect(search).toBeFocused()
+    await browserExpect(page.getByRole('heading', { level: 1 })).toHaveText('Colors')
+  } finally { gate.release() }
+})
+
+test('unknown prototype-named routes show the fallback and remain navigable', async () => {
+  for (const route of ['constructor/bar', '__proto__/bar', 'toString/bar']) {
+    await open(route)
+    await browserExpect(page.locator('.viewport')).toHaveText('Choose an example from the navigation.')
+    await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('button', { name: 'UI components', exact: true }).click()
+    await page.getByRole('link', { name: 'Select menu', exact: true }).click()
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+  }
+})
+
+test('a failed example module leaves navigation usable and reload can recover', async () => {
+  const moduleURL = '**/assets/chunks/controls-*.js'
+  await page.route(moduleURL, route => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'throw new Error("Fixture module unavailable")' }))
+  await open('controls/select')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Fixture module unavailable')
+  await page.getByRole('navigation', { name: 'Examples', exact: true }).getByRole('button', { name: 'Design tokens', exact: true }).click()
+  await page.getByRole('link', { name: 'Colors', exact: true }).click()
+  await browserExpect(page.locator('playground-tokens')).toBeVisible()
+  await page.unroute(moduleURL)
+  await open('controls/select')
+  await page.reload()
+  await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+})
+
+test('browser review waits for the actual preview while its module is delayed', async () => {
+  const gate = await delayControlsModule()
+  const opening = openExample(page, 'controls/select', { theme: 'light' })
+  try {
+    await gate.started
+    await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Loading example…')
+    await page.evaluate(async () => { await document.fonts.ready })
+    expect(await Promise.race([
+      opening.then(() => 'ready'),
+      new Promise<string>(resolve => setTimeout(() => resolve('pending'), 100)),
+    ])).toBe('pending')
+    gate.release()
+    await opening
+    await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+  } finally {
+    gate.release()
+    await opening
+  }
+})
+
 for (const example of chartExamples) {
   test(`standalone ${example.id} renders the production adapter without backend requests`, async () => {
     await open(`charts/${example.id}`)
@@ -51,6 +238,14 @@ for (const example of chartExamples) {
   }, 20_000)
 }
 
+for (const { id } of tokenExamples) {
+  test(`token ${id} discovers production values standalone`, async () => {
+    await open(`tokens/${id}`)
+    await browserExpect.poll(() => page.locator('playground-tokens .token').count()).toBeGreaterThan(0)
+    await browserExpect(page.locator('playground-tokens .count')).toContainText(/\d+ tokens/)
+  })
+}
+
 for (const id of ['buttons', 'fields', 'select', 'multiselect', 'date-picker', 'filter-menu', 'toast', 'loading']) {
   test(`control ${id} renders standalone`, async () => {
     await open(`controls/${id}`)
@@ -58,6 +253,69 @@ for (const id of ['buttons', 'fields', 'select', 'multiselect', 'date-picker', '
     await browserExpect(page.locator('.documentation')).toContainText('Source')
   })
 }
+
+test('each lazy module loads its preview through mobile navigation', async () => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await open('tokens/colors')
+  const navigation = page.getByRole('navigation', { name: 'Examples', exact: true })
+  const examples = await page.getByRole('navigation', { name: 'Examples', exact: true, includeHidden: true }).locator('a[href^="#"]').evaluateAll(links =>
+    [...new Map(links.map(link => [link.getAttribute('href')!, link.textContent!.trim()])).entries()],
+  )
+  expect(examples.length).toBeGreaterThan(0)
+  const visitedModules = new Set<string>()
+  for (const [href, label] of examples) {
+    const route = href.slice(1)
+    const module = route.startsWith('recipes/') ? route : route.split('/')[0]
+    if (visitedModules.has(module)) continue
+    visitedModules.add(module)
+    await page.getByRole('button', { name: 'Browse', exact: true }).click()
+    await page.getByLabel('Find an example', { exact: true }).fill(label)
+    await navigation.getByRole('link', { name: label, exact: true }).click()
+    await browserExpect(page).toHaveURL(`${server.url}${href}`)
+    await browserExpect(page.getByRole('heading', { level: 1, name: label, exact: true })).toBeVisible()
+    await browserExpect(page.locator('.viewport [part~="preview"]').first()).toBeVisible()
+    for (const host of await page.locator('.viewport lv-visualization-host').all()) {
+      await host.evaluate(async (element: any) => { await element.ensureMounted() })
+      await browserExpect(host.locator('.error')).toHaveCount(0)
+      expect(await host.locator('.renderer').evaluate(element => element.childElementCount)).toBeGreaterThan(0)
+    }
+  }
+}, 120_000)
+
+test('linked dashboard reloads and propagates table selection into its chart', async () => {
+  await open('recipes/linked-visuals')
+  for (const reload of [false, true]) {
+    if (reload) await page.reload()
+    await browserExpect(page.locator('playground-linked-visuals .dashboard')).toBeVisible()
+    await browserExpect(page.locator('lv-visualization-host')).toHaveCount(3)
+    for (const host of await page.locator('lv-visualization-host').all()) {
+      await host.evaluate(async (element: any) => { await element.ensureMounted() })
+      await browserExpect(host.locator('.error')).toHaveCount(0)
+      expect(await host.locator('.renderer').evaluate(element => element.childElementCount)).toBeGreaterThan(0)
+    }
+  }
+  await page.locator('lv-report-table').getByRole('button', { name: 'Region: West', exact: true }).press('Enter')
+  await browserExpect(page.locator('playground-linked-visuals .filter-bar > .summary')).toContainText('West')
+  await browserExpect.poll(() => page.locator('playground-linked-visuals .chart lv-visualization-host').evaluate((element: any) => element.envelope.highlights.length)).toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
+  await browserExpect(page.locator('playground-linked-visuals .filter-bar > .summary')).toContainText('select a region')
+}, 20_000)
+
+test('drawer recipe reloads and saves through its real nested controls', async () => {
+  await open('recipes/overlay-form')
+  for (const reload of [false, true]) {
+    if (reload) await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Edit schedule', exact: true })).toBeVisible()
+  }
+  await page.getByRole('button', { name: 'Edit schedule', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Report name', exact: true }).fill('Weekly review')
+  await page.getByRole('button', { name: 'Delivery frequency', exact: true }).click()
+  await page.getByRole('option', { name: 'Every month', exact: true }).click()
+  await page.getByRole('button', { name: 'Save schedule', exact: true }).click()
+  await browserExpect(page.locator('playground-overlay-recipe .summary')).toContainText('Weekly review')
+  await browserExpect(page.locator('playground-overlay-recipe .summary')).toContainText('Every month')
+  await browserExpect(page.getByRole('button', { name: 'Edit schedule', exact: true })).toBeFocused()
+})
 
 test('select keyboard interactions update the public value and respect disabled state', async () => {
   await open('controls/select')

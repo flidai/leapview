@@ -1,17 +1,4 @@
-export const surfaceExamples = [
-  { id: 'drawer', label: 'Drawer' },
-  { id: 'identity', label: 'Avatars, brand & icons' },
-  { id: 'toast-region', label: 'Notification stack' },
-  { id: 'one-time-secret', label: 'One-time secret' },
-  { id: 'empty-state', label: 'Empty states' },
-  { id: 'page-header', label: 'Page header' },
-  { id: 'breadcrumb', label: 'Breadcrumbs' },
-  { id: 'settings', label: 'Settings sections' },
-  { id: 'entity-detail', label: 'Entity detail' },
-  { id: 'icon-picker', label: 'Dashboard icon picker' },
-  { id: 'appearance', label: 'Dashboard appearance' },
-  { id: 'report-footer', label: 'Report footer & zoom' },
-]
+export { surfaceExamples } from './catalog'
 
 export const surfaceDocs: Record<string, { component: string; source: string; inputs: string; events: string; note: string }> = {
   drawer: { component: '<lv-drawer>', source: 'web/components/shared/drawer.ts', inputs: 'open · modal · closeOnOutside · size · label · title/subtitle/body slots', events: 'lv-drawer-close', note: 'The real drawer owns Escape, outside clicks, its modal backdrop and keyboard focus cycle. This fixture owns open state and restores focus to the trigger.' },
