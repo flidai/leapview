@@ -78,22 +78,32 @@ export function resolveDisplayUnit(policy: VisualizationDisplayUnits, values: re
   if (policy === 'none') return { scale: 1, suffix: '', exact: true }
   const fixed = displayUnit(policy)
   if (fixed) return { ...fixed, exact: false }
-  const magnitudes = values.flatMap((value) => {
+  let maximumOrder = -Infinity
+  let maximum = 0
+  let hasExactDecimal = false
+  for (const value of values) {
+    let order: number
+    let magnitude = 0
     if (typeof value === 'number' && Number.isFinite(value)) {
       const absolute = Math.abs(value)
-      return absolute === 0 ? [] : [{ order: Math.floor(Math.log10(absolute)), approximate: true, value: absolute }]
-    }
-    if (typeof value === 'string') {
+      if (absolute === 0) continue
+      order = Math.floor(Math.log10(absolute))
+      magnitude = absolute
+    } else if (typeof value === 'string') {
       const parsed = parseDecimal(value)
-      if (!parsed || parsed.integer === '0' && !/[1-9]/.test(parsed.fraction)) return []
-      const first = parsed.integer !== '0' ? parsed.integer.length - 1 : -(parsed.fraction.search(/[1-9]/) + 1)
-      return [{ order: first, approximate: false, value: 0 }]
+      if (!parsed || parsed.integer === '0' && !/[1-9]/.test(parsed.fraction)) continue
+      order = parsed.integer !== '0' ? parsed.integer.length - 1 : -(parsed.fraction.search(/[1-9]/) + 1)
+      hasExactDecimal = true
+    } else {
+      continue
     }
-    return []
-  })
-  const maximumOrder = magnitudes.length === 0 ? -Infinity : Math.max(...magnitudes.map((magnitude) => magnitude.order))
-  const maximum = magnitudes.filter((magnitude) => magnitude.order === maximumOrder).reduce((max, magnitude) => Math.max(max, magnitude.value), 0)
-  const hasExactDecimal = magnitudes.some((magnitude) => !magnitude.approximate)
+    if (order > maximumOrder) {
+      maximumOrder = order
+      maximum = magnitude
+    } else if (order === maximumOrder) {
+      maximum = Math.max(maximum, magnitude)
+    }
+  }
   let resolved = maximumOrder >= 12 ? displayUnit('trillions')!
     : maximumOrder >= 9 ? displayUnit('billions')!
       : maximumOrder >= 6 ? displayUnit('millions')!

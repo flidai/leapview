@@ -4,6 +4,8 @@ import { Change, defaultRendererContext, normalizeRendererLocale, type RendererA
 import { clearInteractionCommand, interactionCommandForRow } from '../interaction-command'
 import { projectVisualizationHighlights } from '../highlight'
 import { baseOption } from './echarts/common'
+import { waitForEChartsFrame } from './echarts/readiness'
+export { EChartsReadinessError, waitForEChartsFrame } from './echarts/readiness'
 import { CategoryColorRegistry, categoryColorRegistryFor, categoryIdentity } from './echarts/category-colors'
 import { cartesianOption } from './echarts/cartesian'
 import { hierarchyOption } from './echarts/hierarchy'
@@ -36,6 +38,8 @@ export function echartsOption(envelope: VisualizationEnvelope, context: Renderer
     default: throw new Error(`ECharts cannot render visualization kind ${JSON.stringify(envelope.spec.kind)}`)
   }
   const option = { ...base, ...translated } as Record<string, any>
+  // Tooltip transitions have their own defaults, independent of animation:false.
+  option.tooltip = { ...option.tooltip, transitionDuration: 0, displayTransition: false }
   if (base.aria || translated.aria) option.aria = { ...(base.aria ?? {}), ...(translated.aria ?? {}) }
   if (base.graphic && translated.graphic) option.graphic = [...base.graphic, ...translated.graphic]
   applyCrossHighlight(option, envelope)
@@ -202,7 +206,8 @@ export class EChartsHandle implements RendererHandle {
   update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
     if (this.disposed) return
     const previous = this.envelope
-    const viewState = previous && preservesEChartsViewState(previous, envelope) ? this.captureViewState() : undefined
+    const preserveViewState = previous !== undefined && preservesEChartsViewState(previous, envelope)
+    const viewState = preserveViewState ? this.captureViewState() : undefined
     this.envelope = envelope
     this.context = context
     const option = echartsOption(envelope, context, this.categoryColors)
@@ -210,9 +215,8 @@ export class EChartsHandle implements RendererHandle {
     const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
     const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
-    const preserveHeatmapFocus = previous !== undefined && preservesEChartsViewState(previous, envelope)
     const resetHeatmapFocus = isHeatmapWithDataZoom(envelope)
-      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveHeatmapFocus))
+      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveViewState))
     const plan = echartsUpdatePlan(change, option, initializeDataZoom, refreshHeatmapDataZoom)
     if ((change & Change.Spec) !== 0 || initializeDataZoom || resetDataZoom) this.dataZoomInitialized = hasEChartsDataZoom(option)
     if (resetHeatmapFocus) {
@@ -227,6 +231,11 @@ export class EChartsHandle implements RendererHandle {
 
   resize(width: number, height: number): void {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    if (width === this.lastWidth && height === this.lastHeight) {
+      this.applyResponsiveLayout(false)
+      this.syncHeatmapFocusZoom()
+      return
+    }
     // Deferred hosts can report their initial 0×0 layout before the renderer
     // frame has entered the document. ECharts' hierarchy layouts assume a
     // positive viewport and can dereference a missing layout slot during that
@@ -646,51 +655,4 @@ function hasEChartsDataZoom(option: EChartsOption): boolean {
 function hasEmptyEChartsDataZoom(option: EChartsOption): boolean {
   const dataZoom = (option as Record<string, any>).dataZoom
   return Array.isArray(dataZoom) && dataZoom.length === 0
-}
-
-type EChartsFrameChart = Pick<ECharts, 'on' | 'off' | 'getWidth' | 'getHeight'>
-
-export class EChartsReadinessError extends Error {
-  constructor(readonly reason: 'timeout' | 'invalid_layout', readonly width: number, readonly height: number) {
-    super(reason === 'invalid_layout'
-      ? `ECharts cannot render its first frame with invalid layout ${width}x${height}`
-      : 'ECharts did not complete its first frame')
-    this.name = 'EChartsReadinessError'
-  }
-}
-
-export function waitForEChartsFrame(chart: EChartsFrameChart, timeoutMs = 5_000, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let settled = false
-    const cleanup = () => {
-      if (timer !== undefined) clearTimeout(timer)
-      chart.off('rendered', rendered)
-      signal?.removeEventListener('abort', aborted)
-    }
-    const complete = (action: () => void) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      action()
-    }
-    const rendered = () => {
-      const width = chart.getWidth()
-      const height = chart.getHeight()
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
-      complete(resolve)
-    }
-    const aborted = () => { complete(resolve) }
-    chart.on('rendered', rendered)
-    if (signal?.aborted) {
-      aborted()
-      return
-    }
-    signal?.addEventListener('abort', aborted, { once: true })
-    timer = setTimeout(() => {
-      const width = chart.getWidth()
-      const height = chart.getHeight()
-      complete(() => reject(new EChartsReadinessError(width > 0 && height > 0 ? 'timeout' : 'invalid_layout', width, height)))
-    }, timeoutMs)
-  })
 }

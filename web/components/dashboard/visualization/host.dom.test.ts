@@ -137,6 +137,8 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       canvas.append(deferred)
       document.body.append(canvas)
       await deferred.updateComplete
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
+      await deferred.updateComplete
 
       const observers = (window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }>
       const record = observers.find((candidate) => candidate.target === (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')) as any
@@ -569,19 +571,29 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       transient.deferMount = true
       transient.envelope = JSON.parse(JSON.stringify(source.envelope))
       document.body.append(transient)
-      await transient.updateComplete
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
+      while (transient.pendingEnvelopeValidation) await transient.pendingEnvelopeValidation
+      await Promise.all([deferred.updateComplete, transient.updateComplete])
       const transientMount = transient.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
-      await Promise.resolve()
-      const transientController = transient.controller
-      const transientHolder = document.createElement('section')
-      document.body.append(transientHolder)
-      transientHolder.append(transient)
-      await transient.updateComplete
       const stale = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
-      const race = { stale, staleSettled: false, transientMount, transientController, transient, fresh: Promise.resolve('pending'), reattached: false }
+      const race = { stale, staleSettled: false, transientMount, transientController: transient.controller, transient, fresh: Promise.resolve('pending'), reattached: false }
       stale.then(() => { race.staleSettled = true })
       ;(window as any).__lvMountRace = { deferred, race }
-      await Promise.resolve()
+    })
+    await rendererRequest
+    // Establish that both hosts reached the blocked renderer load, rather than
+    // detaching a host that is still validating its envelope.
+    await page.waitForFunction(() => {
+      const { deferred, race } = (window as any).__lvMountRace
+      return Boolean(deferred.controller && deferred.pendingApply && race.transient.controller && race.transient.pendingApply)
+    })
+    await page.evaluate(async () => {
+      const { deferred, race } = (window as any).__lvMountRace
+      race.transientController = race.transient.controller
+      const transientHolder = document.createElement('section')
+      document.body.append(transientHolder)
+      transientHolder.append(race.transient)
+      await race.transient.updateComplete
       deferred.remove()
       await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
       document.body.append(deferred)
@@ -589,7 +601,6 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       race.fresh = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       race.reattached = true
     })
-    await rendererRequest
     const beforeRelease = await page.evaluate(() => (window as any).__lvMountRace.race.staleSettled)
     expect(beforeRelease).toBe(false)
     releaseRenderer()
@@ -641,7 +652,8 @@ test('existing and authoring hosts stay eager by default, including with no inte
       authoring.envelope = JSON.parse(JSON.stringify(source.envelope))
       document.body.append(authoring)
       await authoring.updateComplete
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      await Promise.all([source.pendingApply, authoring.pendingApply])
+      await Promise.all([source.updateComplete, authoring.updateComplete])
       return {
         defaultMounted: ((source.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         authoringMounted: ((authoring.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
@@ -723,8 +735,12 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
       canvas.append(deferred)
       document.body.append(canvas)
+      // Await the fallback's own validation and renderer apply; explicitly
+      // mounting here would hide a broken unsupported-observer fallback.
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
       await deferred.updateComplete
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      while (deferred.pendingApply) await deferred.pendingApply
+      await deferred.updateComplete
       return {
         mounted: ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         disconnected: (window as any).__lvIntersectionObservers[0]?.disconnected,
@@ -850,4 +866,54 @@ test('narrow chart cards keep long titles and renderer geometry within the card'
     })
     expect(widths.renderer).toBeLessThanOrEqual(widths.card)
   } finally { await page.close() }
+})
+
+test('lazy validation leaves empty hosts unloaded and retains the last valid queued envelope', async () => {
+  const page = await browser.newPage()
+  const requests: string[] = []
+  let release!: () => void
+  const blocked = new Promise<void>((resolve) => { release = resolve })
+  try {
+    await page.route(baseURL + '/', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><body><lv-visualization-host></lv-visualization-host><script type="module">import '/visualization-host-under-test.js'; window.__envelopes = ${JSON.stringify(testVisualizationEnvelopes())};</script>` }))
+    await page.route('**/chunks/validate-*.js', async (route) => {
+      requests.push(route.request().url())
+      await blocked
+      await route.continue()
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__envelopes)
+    expect(requests).toHaveLength(0)
+    const pending = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      host.style.cssText = 'display:block;width:320px;height:160px'
+      const first = structuredClone((window as any).__envelopes.orders_kpi)
+      const newer = structuredClone(first)
+      newer.dataRevision = 2
+      newer.dataState.dataRevision = 2
+      for (const dataset of newer.dataState.datasets) dataset.dataRevision = 2
+      const invalid = structuredClone(newer)
+      invalid.spec.kind = 'invalid-kind'
+      host.envelope = first
+      host.envelope = newer
+      host.envelope = invalid
+      host.envelope = first
+      document.body.append(host)
+      ;(window as any).__queuedHost = host
+      ;(window as any).__queuedMount = host.ensureMounted()
+      await host.updateComplete
+      return { envelope: host.envelope ?? null, children: host.shadowRoot.querySelector('.renderer').childElementCount }
+    })
+    expect(pending).toEqual({ envelope: null, children: 0 })
+    release()
+    const accepted = await page.evaluate(async () => {
+      await (window as any).__queuedMount
+      const host = (window as any).__queuedHost
+      return { revision: host.envelope.dataRevision, kind: host.envelope.spec.kind, snapshot: await (await host.snapshot()).text() }
+    })
+    expect(requests).toHaveLength(1)
+    expect(accepted.revision).toBe(2)
+    expect(accepted.kind).toBe('kpi')
+    expect(accepted.snapshot).toContain('Orders')
+  } finally { release(); await page.close() }
 })

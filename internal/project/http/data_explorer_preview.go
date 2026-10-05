@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -109,15 +110,54 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 		return preview
 	}
 
-	starts, blockIDs := dataExplorerRequestedBlocks(command)
-	totalKnown := false
-	for index := 0; index < len(starts); index++ {
-		start := starts[index]
-		query, err := dataExplorerPreviewQuery(projectID, object, command, columns, start, command.Count, index == 0)
-		if err != nil {
-			preview.Error = projectsignals.Pointer(err.Error())
-			return preview
+	start, count := command.Start, command.Count
+	blockIDs := []string{projectsignals.ValueOrZero(command.Block)}
+	if blockIDs[0] == "all" {
+		start = dataExplorerFirstBlockStart(command)
+		blockIDs = dataExplorerBlockIDs
+		// The preceding, current, and following blocks form one contiguous
+		// window. Read it once so planning, admission, and scanning happen once,
+		// then split the rows into the table's existing block protocol.
+		count *= int64(len(blockIDs))
+	}
+	query, err := dataExplorerPreviewQuery(projectID, object, command, columns, start, count, true)
+	if err != nil {
+		preview.Error = projectsignals.Pointer(err.Error())
+		return preview
+	}
+	result, err := executor.ExecuteDataQuery(ctx, query)
+	if err != nil {
+		var limit *dataquery.ResultLimitError
+		if len(blockIDs) > 1 && ctx.Err() == nil && errors.As(err, &limit) {
+			// A configured budget can admit each block while rejecting their
+			// combined window. Keep that existing path available without changing
+			// the context, executor, or row/byte limits for any query.
+			return dataExplorerPreviewBlocks(ctx, executor, query, command, preview)
 		}
+		preview.Error = projectsignals.Pointer(err.Error())
+		return preview
+	}
+	if strings.TrimSpace(result.Error) != "" {
+		preview.Error = projectsignals.Pointer(result.Error)
+		return preview
+	}
+	dataExplorerApplyPreviewResult(&preview, command, start, blockIDs, result, false)
+	if !result.TotalRowsKnown && preview.TotalRowLabel == nil {
+		preview.TotalRowLabel = projectsignals.Pointer("Unknown")
+	}
+	return preview
+}
+
+func dataExplorerPreviewBlocks(ctx context.Context, executor DataQueryExecutor, query dataquery.Query, command projectsignals.DataExplorerCommand, preview projectsignals.DataPreviewSignal) projectsignals.DataPreviewSignal {
+	firstStart := dataExplorerFirstBlockStart(command)
+	totalKnown := false
+	firstRows := int64(0)
+	for index, blockID := range dataExplorerBlockIDs {
+		start := firstStart + int64(index)*command.Count
+		if index > 0 && (firstRows < command.Count || (totalKnown && start >= preview.AvailableRows)) {
+			break
+		}
+		query.Offset, query.Limit, query.IncludeTotal = int(start), int(command.Count), index == 0
 		result, err := executor.ExecuteDataQuery(ctx, query)
 		if err != nil {
 			preview.Error = projectsignals.Pointer(err.Error())
@@ -127,40 +167,43 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 			preview.Error = projectsignals.Pointer(result.Error)
 			return preview
 		}
-		if result.SQL != "" {
-			preview.SQL = projectsignals.Pointer(result.SQL)
+		if index == 0 {
+			firstRows = int64(len(result.Rows))
 		}
-		if result.TotalRowsKnown {
-			totalKnown = true
-			preview.TotalRows = int64(result.TotalRows)
-			preview.AvailableRows = preview.TotalRows
-			preview.TotalRowLabel = projectsignals.Pointer(fmt.Sprintf("%d", result.TotalRows))
-		}
-		rows := dataExplorerRows(result.Rows)
-		preview.Blocks[blockIDs[index]] = projectsignals.DataPreviewBlockSignal{
-			Start: start, RequestSeq: command.RequestSeq, ResetVersion: command.ResetVersion, Sort: command.Sort, Rows: rows,
-		}
-		if !totalKnown {
-			loaded := start + int64(len(rows))
-			if loaded > preview.AvailableRows {
-				preview.AvailableRows = loaded
-				preview.TotalRows = loaded
-			}
-			if int64(len(rows)) == command.Count {
-				// Keep one more window reachable when the executor cannot provide a
-				// total. A short following block closes the provisional range.
-				preview.AvailableRows = loaded + command.Count
-				preview.TotalRows = preview.AvailableRows
-			}
-		}
-		if index == 0 && projectsignals.ValueOrZero(command.Block) == "all" {
-			starts, blockIDs = dataExplorerRemainingBlocks(command, preview, int64(len(rows)), totalKnown)
-		}
+		totalKnown = dataExplorerApplyPreviewResult(&preview, command, start, []string{blockID}, result, totalKnown)
 	}
 	if !totalKnown && preview.TotalRowLabel == nil {
 		preview.TotalRowLabel = projectsignals.Pointer("Unknown")
 	}
 	return preview
+}
+
+func dataExplorerApplyPreviewResult(preview *projectsignals.DataPreviewSignal, command projectsignals.DataExplorerCommand, start int64, blockIDs []string, result dataquery.Result, totalKnown bool) bool {
+	if result.SQL != "" {
+		preview.SQL = projectsignals.Pointer(result.SQL)
+	}
+	for index, blockID := range blockIDs {
+		first := min(int64(index)*command.Count, int64(len(result.Rows)))
+		last := min(first+command.Count, int64(len(result.Rows)))
+		preview.Blocks[blockID] = projectsignals.DataPreviewBlockSignal{
+			Start: start + int64(index)*command.Count, RequestSeq: command.RequestSeq,
+			ResetVersion: command.ResetVersion, Sort: command.Sort, Rows: dataExplorerRows(result.Rows[first:last]),
+		}
+	}
+	if result.TotalRowsKnown {
+		totalKnown = true
+		preview.TotalRows = int64(result.TotalRows)
+		preview.AvailableRows = preview.TotalRows
+		preview.TotalRowLabel = projectsignals.Pointer(fmt.Sprintf("%d", result.TotalRows))
+	} else if !totalKnown {
+		preview.AvailableRows = start + int64(len(result.Rows))
+		if int64(len(result.Rows)) == command.Count*int64(len(blockIDs)) {
+			// Keep one more block reachable until a short window confirms the end.
+			preview.AvailableRows += command.Count
+		}
+		preview.TotalRows = preview.AvailableRows
+	}
+	return totalKnown
 }
 
 func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, columns []projectsignals.DataPreviewColumnSignal, start, count int64, includeTotal bool) (dataquery.Query, error) {
@@ -248,32 +291,6 @@ func dataExplorerFirstBlockStart(command projectsignals.DataExplorerCommand) int
 	count := max(int64(1), command.Count)
 	current := max(int64(0), command.Start) / count * count
 	return max(int64(0), current-count)
-}
-
-func dataExplorerRequestedBlocks(command projectsignals.DataExplorerCommand) ([]int64, []string) {
-	block := projectsignals.ValueOrZero(command.Block)
-	if block == "all" {
-		return []int64{dataExplorerFirstBlockStart(command)}, []string{"a"}
-	}
-	return []int64{command.Start}, []string{block}
-}
-
-func dataExplorerRemainingBlocks(command projectsignals.DataExplorerCommand, preview projectsignals.DataPreviewSignal, firstRows int64, totalKnown bool) ([]int64, []string) {
-	firstStart := dataExplorerFirstBlockStart(command)
-	starts := []int64{firstStart}
-	blocks := []string{"a"}
-	if firstRows < command.Count {
-		return starts, blocks
-	}
-	for index := int64(1); index < int64(len(dataExplorerBlockIDs)); index++ {
-		start := firstStart + index*command.Count
-		if totalKnown && start >= preview.AvailableRows {
-			break
-		}
-		starts = append(starts, start)
-		blocks = append(blocks, dataExplorerBlockIDs[index])
-	}
-	return starts, blocks
 }
 
 func dataExplorerRows(rows []dataquery.Row) []map[string]any {

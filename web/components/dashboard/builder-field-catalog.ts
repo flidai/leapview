@@ -59,3 +59,27 @@ function businessGroupTitle(dataset: DashboardBuilderDatasetSignal): string {
   const normalized = source.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
   return normalized ? normalized.charAt(0).toLocaleUpperCase() + normalized.slice(1) : 'Semantic model'
 }
+
+export type BuilderCatalogEntity = {
+  id: string
+  title: string
+  fields: BuilderCatalogField[]
+}
+
+export function builderCatalogEntities(fields: BuilderCatalogField[], datasets: DashboardBuilderDatasetSignal[], semanticModelTitle?: string): BuilderCatalogEntity[] {
+  const datasetOrder = new Map(datasets.map((dataset, index) => [dataset.id, index]))
+  const entities = new Map<string, BuilderCatalogEntity>()
+  for (const item of fields) {
+    const dataset = item.datasets.find((candidate) => candidate.id === item.field.datasetId) ?? item.datasets[0]
+    const id = dataset?.id ?? 'semantic-model'
+    const title = dataset?.title ?? semanticModelTitle ?? 'Semantic model'
+    const entity = entities.get(id)
+    if (entity) entity.fields.push(item)
+    else entities.set(id, { id, title, fields: [item] })
+  }
+  return Array.from(entities.values()).sort((left, right) => {
+    const leftOrder = datasetOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = datasetOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER
+    return leftOrder - rightOrder || left.title.localeCompare(right.title)
+  })
+}

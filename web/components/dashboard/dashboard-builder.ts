@@ -9,9 +9,10 @@ import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-style
 import { dashboardBuilderFilterStyles } from './dashboard-builder-filter-styles'
 import { dashboardBuilderFieldStyles } from './dashboard-builder-field-styles'
 import { hasCompiledBuilderPreview, isBuilderVisualTypeSwitchPending } from './builder-preview-readiness'
-import { buildSemanticCatalog, builderFieldCatalogGroup, type BuilderCatalogField } from './builder-field-catalog'
+import { builderCatalogEntities, builderFieldCatalogGroup, type BuilderCatalogField } from './builder-field-catalog'
+import { BuilderRenderCache } from './builder-render-cache'
 import { canRequireFilter, filterControlChoices, filterControlLabel } from './builder-filter-settings'
-import { applyCanonicalGridAttributes, builderGridOccupiedRows, setBuilderPreviewResizeSuspended, syncGridStackNodesToCanonical } from './builder-grid-sync'
+import { applyCanonicalGridAttributes, builderGridOccupiedRows, refreshBuilderGridDragHandles, setBuilderPreviewResizeSuspended, syncGridStackNodesToCanonical } from './builder-grid-sync'
 import { createBuilderGridDragHelper, styleBuilderGridPlaceholder } from './builder-grid-drag-preview'
 import { DashboardBuilderAgentMutationTracker } from './dashboard-builder-agent-refresh'
 import type {
@@ -71,12 +72,6 @@ const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, vi
 const builderCanvasDesktopWidth = 1366
 const builderCanvasMinimumHeight = 768
 const builderCanvasRunwayRows = 3
-
-type BuilderCatalogEntity = {
-  id: string
-  title: string
-  fields: BuilderCatalogField[]
-}
 
 type DashboardBuilderVisualWithPreview = DashboardBuilderVisualSignal & { visualId?: string }
 
@@ -176,6 +171,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private updatingBuilder = false
   private builderUpdateSnapshot: DashboardBuilderSignal | null | undefined
   private builderVisualUpdateSnapshot?: Record<string, VisualizationEnvelope>
+  private builderRenderCache?: BuilderRenderCache
   private builderFilterStateFingerprint = ''
   private builderFilterValidationMutationID = ''
   private readonly filterOptionGenerations = new Map<string, number>()
@@ -196,6 +192,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private gridLayoutKey = ''
   private gridIsMobile = false
   private gridCommitQueued = false
+  private gridEditingEnabled?: boolean
+  private readonly gridDragHandles = new Map<GridItemHTMLElement, Element[]>()
   private viewportMediaQuery: MediaQueryList | null = null
   private canvasResizeObserver: ResizeObserver | null = null
   private canvasViewportElement: HTMLElement | null = null
@@ -2610,12 +2608,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.updatingBuilder = true
     this.builderUpdateSnapshot = undefined
     this.builderVisualUpdateSnapshot = undefined
+    this.builderRenderCache = new BuilderRenderCache()
     try {
       super.performUpdate()
     } finally {
       this.updatingBuilder = false
       this.builderUpdateSnapshot = undefined
       this.builderVisualUpdateSnapshot = undefined
+      this.builderRenderCache = undefined
     }
   }
 
@@ -2666,7 +2666,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private syncGridStack(builder: DashboardBuilderSignal | null, page: DashboardBuilderPageSignal | undefined): void {
     const canvas = this.shadowRoot?.querySelector('.canvas.grid-stack') as HTMLElement | null
     const mobile = this.isMobileViewport()
-    const layoutKey = builder && page ? `${page.id}:${this.pagePlacedComponents(page).map((component) => component.id).join(',')}:${page.grid.columns}:${page.grid.rowHeight}:${page.grid.gap}` : ''
+    const layoutKey = page ? JSON.stringify([page.id, page.grid.columns, page.grid.rowHeight, page.grid.gap,
+      [page.visuals.length, page.filterComponents?.length ?? 0, page.headers?.length ?? 0, page.placeholders?.length ?? 0],
+      this.pagePlacedComponents(page).map((component) => component.id),
+    ]) : ''
     const placementKey = page ? JSON.stringify(this.pagePlacedComponents(page).map(({ id, placement }) => [id, placement.col, placement.row, placement.colSpan, placement.rowSpan])) : ''
     if (!canvas || !page || mobile) {
       this.destroyGridStack()
@@ -2698,11 +2701,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           this.gridInteracting = true
           if (event.type === 'resizestart') this.setPreviewResizeSuspended(true)
           if (event.type === 'dragstart') queueMicrotask(() => styleBuilderGridPlaceholder(this.shadowRoot))
-          this.syncCanvasViewport(page)
+          this.syncCanvasViewport(this.canvasPage)
         })
         this.gridStack.on('dragstop resizestop', (event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element, event.type === 'resizestop'))
-        this.gridStack.on('drag', () => this.syncCanvasViewport(page))
-        this.gridStack.on('resize', () => this.syncCanvasViewport(page))
+        this.gridStack.on('drag', () => this.syncCanvasViewport(this.canvasPage))
+        this.gridStack.on('resize', () => this.syncCanvasViewport(this.canvasPage))
         this.gridStack.on('change', (event: Event, nodes: GridStackNode[]) => this.onGridChange(event, nodes))
       }
     } else if (this.gridStack && !this.gridInteracting && (this.revisionKey(builder!) !== canvas.dataset.builderRevisionKey || placementKey !== canvas.dataset.builderPlacementKey)) {
@@ -2710,6 +2713,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       Object.assign(canvas.dataset, { builderRevisionKey: this.revisionKey(builder!), builderPlacementKey: placementKey })
     }
     this.setGridEditingEnabled(Boolean(builder?.capabilities.canEdit && !this.commandPending))
+    this.syncGridDragHandles()
+  }
+
+  private syncGridDragHandles(): void {
+    if (this.gridStack && !this.gridInteracting) refreshBuilderGridDragHandles(this.gridStack, this.gridDragHandles)
   }
 
   private destroyGridStack(): void {
@@ -2721,16 +2729,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.gridElement = null
     this.gridLayoutKey = ''
     this.gridCommitQueued = false
+    this.gridEditingEnabled = undefined
+    this.gridDragHandles.clear()
   }
 
   private setGridEditingEnabled(enabled: boolean): void {
-    if (!this.gridStack) return
+    if (!this.gridStack || enabled === this.gridEditingEnabled) return
     this.gridStack.enableMove(enabled)
     this.gridStack.enableResize(enabled)
+    this.gridEditingEnabled = enabled
   }
 
   private onGridInteractionStop(_element: GridItemHTMLElement, resized: boolean): void {
     this.gridInteracting = false
+    this.syncGridDragHandles()
     this.syncCanvasViewport(this.canvasPage)
     // The server may adjust neighboring placements before acknowledging the
     // save. Keep the charts paused until that final geometry is in the DOM so
@@ -3374,16 +3386,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderFieldBrowser(builder: DashboardBuilderSignal, visual: DashboardBuilderVisualSignal | undefined) {
     const datasets = builder.semanticModel.datasets ?? []
-    const catalog = this.filteredCatalog(buildSemanticCatalog(datasets))
+    const catalog = this.filteredCatalog(this.renderCache.semanticCatalog(datasets))
     const visibleCatalog = this.fieldFilter === 'all' ? catalog : catalog.filter((item) => item.group === this.fieldFilter)
-    const supported = visibleCatalog.filter((item) => this.addingSlicer
-      ? this.fieldSupportsFilter(item.field)
-      : visual
-        ? Boolean(this.fieldUsedIn(item.field, visual) || this.fieldCompatibleWithVisual(item.field, visual))
-        : this.fieldDataTypeSupported(item.field))
-    const unsupported = visibleCatalog.filter((item) => !supported.includes(item))
-    const recordColumns = unsupported.filter((item) => item.field.roles?.includes('detail'))
-    const unavailable = unsupported.filter((item) => !recordColumns.includes(item))
+    const supported: BuilderCatalogField[] = []
+    const recordColumns: BuilderCatalogField[] = []
+    const unavailable: BuilderCatalogField[] = []
+    for (const item of visibleCatalog) {
+      const compatible = this.addingSlicer
+        ? this.fieldSupportsFilter(item.field)
+        : visual
+          ? Boolean(this.fieldUsedIn(item.field, visual) || this.fieldCompatibleWithVisual(item.field, visual))
+          : this.fieldDataTypeSupported(item.field)
+      if (compatible) supported.push(item)
+      else if (item.field.roles?.includes('detail')) recordColumns.push(item)
+      else unavailable.push(item)
+    }
     const groups: Array<Exclude<BuilderFieldFilter, 'all'>> = ['metric', 'dimension', 'time']
     const collapsed = this.collapsedPanes.data
     return html`
@@ -3460,7 +3477,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const grouped = this.groupFiltersByScope(filters, page, visual)
-    const dimensions = buildSemanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field))
+    const dimensions = this.renderCache.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field))
     const filterError = this.builderFilterErrorMessage()
     const collapsed = this.collapsedPanes.filters
     return html`
@@ -3662,7 +3679,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderCatalogEntities(fields: BuilderCatalogField[], datasets: DashboardBuilderDatasetSignal[], visual: DashboardBuilderVisualSignal | undefined) {
-    return this.catalogEntities(fields, datasets).map((entity) => html`
+    return builderCatalogEntities(fields, datasets, this.builder?.semanticModel.title).map((entity) => html`
       <details class="field-entity" data-dataset-id=${entity.id} open>
         <summary>
           <span class="field-entity-title">${entity.title}</span>
@@ -3679,7 +3696,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <details class="catalog-disclosure ${className}" ?open=${Boolean(this.fieldQuery)}>
         <summary><span class="catalog-disclosure-title">${title}</span><span class="catalog-disclosure-count">${fields.length}</span></summary>
         <div class="catalog-disclosure-body">
-          ${this.catalogEntities(fields, datasets).map((entity) => html`
+          ${builderCatalogEntities(fields, datasets, this.builder?.semanticModel.title).map((entity) => html`
             <section class="catalog-entity" data-dataset-id=${entity.id} aria-label=${entity.title}>
               <h3 class="catalog-entity-title">${entity.title}</h3>
               ${this.renderCatalogRoleLists(entity.fields, visual, false, showCompatibilityContext)}
@@ -3784,7 +3801,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const visualType = this.visualTypeForRender(visual)
     const previewCandidate = previews[this.visualSignalID(visual)]
     const visualTypeSwitchPending = isBuilderVisualTypeSwitchPending(this.commandPending, this.activeCommandAction, this.pendingVisualTypeSwitch, page.id, visual, visualType)
-    const mobileOrder = this.mobileVisualOrder(visual, page)
+    const mobileOrder = this.renderCache.mobileComponentOrder(visual.id, page)
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithVisual(draggedField, visual) ? 'compatible' : 'incompatible') : ''
     const requirementMessages = visualTypeSwitchPending ? [] : this.visualRequirementMessages(visual)
@@ -3811,7 +3828,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderFilterComponent(component: DashboardBuilderFilterComponentSignal, page: DashboardBuilderPageSignal) {
     const selected = component.id === this.selectedFilterComponentID
-    const mobileOrder = this.mobileComponentOrder(component.id, component.placement, page)
+    const mobileOrder = this.renderCache.mobileComponentOrder(component.id, page)
     const bindings = Object.values(this.builderFilterContract.bindings)
     const binding = bindings.find((candidate) => candidate.filter === component.filterId && candidate.scope === 'report')
       ?? bindings.find((candidate) => candidate.filter === component.filterId && candidate.scope === 'page' && candidate.pageID === page.id)
@@ -3992,7 +4009,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private visualCatalogEntry(type: string, builder = this.builder): DashboardBuilderVisualTypeSignal | undefined {
-    return builder?.visualCatalog?.find((entry) => entry.type === type)
+    return this.renderCache.visualCatalogEntry(type, builder)
   }
 
   private visualLabel(type: string, builder = this.builder): string {
@@ -4510,22 +4527,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return `${evidence.projectId}/${evidence.dashboardId} · ${evidence.generationId}${evidence.path ? ` · ${evidence.path}` : ''}`
   }
 
-  private catalogEntities(fields: BuilderCatalogField[], datasets: DashboardBuilderDatasetSignal[]): BuilderCatalogEntity[] {
-    const datasetOrder = new Map(datasets.map((dataset, index) => [dataset.id, index]))
-    const entities = new Map<string, BuilderCatalogEntity>()
-    for (const item of fields) {
-      const dataset = item.datasets.find((candidate) => candidate.id === item.field.datasetId) ?? item.datasets[0]
-      const id = dataset?.id ?? 'semantic-model'
-      const title = dataset?.title ?? this.builder?.semanticModel.title ?? 'Semantic model'
-      const entity = entities.get(id)
-      if (entity) entity.fields.push(item)
-      else entities.set(id, { id, title, fields: [item] })
-    }
-    return Array.from(entities.values()).sort((left, right) => {
-      const leftOrder = datasetOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER
-      const rightOrder = datasetOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER
-      return leftOrder - rightOrder || left.title.localeCompare(right.title)
-    })
+  private get renderCache(): BuilderRenderCache {
+    return this.builderRenderCache ?? new BuilderRenderCache()
   }
 
   private filteredCatalog(catalog: BuilderCatalogField[]): BuilderCatalogField[] {
@@ -4977,7 +4980,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private defaultGaugeMeasure(builder: DashboardBuilderSignal): DashboardBuilderFieldSignal | undefined {
-    return buildSemanticCatalog(builder.semanticModel.datasets ?? []).find((item) =>
+    return this.renderCache.semanticCatalog(builder.semanticModel.datasets ?? []).find((item) =>
       item.group === 'metric' && this.fieldCompatibleWithRole(item.field, 'metric'))?.field
   }
 
@@ -5785,16 +5788,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private visualSignalID(visual: DashboardBuilderVisualSignal): string {
     return (visual as DashboardBuilderVisualWithPreview).visualId || visual.id
-  }
-
-  private mobileVisualOrder(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal): number {
-    return this.mobileComponentOrder(visual.id, visual.placement, page)
-  }
-
-  private mobileComponentOrder(componentID: string, _placement: DashboardBuilderVisualSignal['placement'], page: DashboardBuilderPageSignal): number {
-    return [...page.visuals, ...(page.filterComponents ?? [])]
-      .sort((left, right) => left.placement.row - right.placement.row || left.placement.col - right.placement.col || left.id.localeCompare(right.id))
-      .findIndex((item) => item.id === componentID)
   }
 
   private commandDetail(): Record<string, string> {
