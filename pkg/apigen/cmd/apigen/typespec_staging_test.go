@@ -57,9 +57,16 @@ func TestCopyTypeSpecProject_ResolvesSourceRootSymlink(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "project")
 
 	require.NoError(t, copyTypeSpecProject(linkedSource, destination, t.TempDir()))
+	stagedRoot, err := os.Lstat(destination)
+	require.NoError(t, err)
+	require.True(t, stagedRoot.IsDir(), "staged source root must be a copied directory, not a symlink")
 	content, err := os.ReadFile(filepath.Join(destination, "main.tsp"))
 	require.NoError(t, err)
 	require.Equal(t, "model Example {}", string(content))
+	require.NoError(t, os.WriteFile(filepath.Join(destination, "main.tsp"), []byte("model Staged {}"), 0o600))
+	original, err := os.ReadFile(filepath.Join(actualSource, "main.tsp"))
+	require.NoError(t, err)
+	require.Equal(t, "model Example {}", string(original), "editing the staged source must not change the original")
 }
 
 func TestStageTypeSpecProject_ExcludesWorkspaceNestedInsideSource(t *testing.T) {
