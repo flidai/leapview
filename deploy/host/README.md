@@ -273,3 +273,27 @@ docker compose version
 python3 --version
 openssl version
 ```
+
+## Disposable first-install qualification
+
+The protected `nix-compose-candidate.yml` workflow includes an eight-cell
+Ubuntu 24.04 / Debian 13, AMD64 / ARM64, bootstrap / Nix-controller guest
+matrix. Each cell uses a checksum-pinned cloud image from
+`nix/guest-images.json`, a fresh QEMU guest, the exact controller archive,
+and an admitted immutable application image. Software virtualization is
+recorded as `tcg`; these runs do not claim hardware-virtualization coverage.
+
+The verifier creates a disposable TLS PostgreSQL fixture, checks the runtime
+roles with `sslmode=verify-full`, and invokes the candidate's pool qualification
+command before installation. Probe inputs live separately from the fresh
+installation target. Only canonical pool artifacts and private operator input
+are passed into installation; migration credentials must be absent from the
+resulting serving environment. The guest then reboots and proves automatic
+startup of the same image and installation generation. Retained evidence must
+not contain fixture credentials.
+
+A passing guest receipt covers only its named first-install and reboot checks.
+It does not qualify NixOS, upgrades, rollback, recovery, or production
+observation. Until a successful exact-image matrix is retained, this path is
+implemented but runtime qualification remains pending. The separate Hetzner
+preparation workflow is not a substitute for that evidence.
