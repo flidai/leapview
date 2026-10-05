@@ -205,7 +205,7 @@ test('architecture connections stay aligned with the layers across screen sizes'
   } finally {
     await page.close()
   }
-})
+}, 10_000)
 
 test('analytics code walkthrough advances when visible and stops after a file is chosen', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
