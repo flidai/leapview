@@ -164,6 +164,38 @@ test('opening another focused source restores the previous element first', async
   }
 })
 
+test('focused tables fit a few rows and cap tall tables at the viewport', async () => {
+  const page = await setupPage()
+  try {
+    await dispatchVisualAction(page, 'second', 'focus')
+    const compactHeight = await page.locator('lv-visual-modal').evaluate((modal: any) => (
+      (modal.shadowRoot as ShadowRoot).querySelector('.focus-dialog')!.getBoundingClientRect().height
+    ))
+    expect(compactHeight).toBeLessThan(500)
+
+    await page.locator('lv-visual-modal').evaluate((modal: any) => (modal.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.focus-close')!.click())
+    await page.evaluate(() => {
+      document.getElementById('second')!.dispatchEvent(new CustomEvent('lv-visual-action', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          action: 'focus', visualType: 'table', visualId: 'second', title: 'Large table',
+          columns: [{ key: 'label', label: 'Label' }], rows: [], selection: [],
+          table: { availableRows: 100, rowHeight: 34 },
+        },
+      }))
+    })
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.updateComplete)
+    const tallHeight = await page.locator('lv-visual-modal').evaluate((modal: any) => (
+      (modal.shadowRoot as ShadowRoot).querySelector('.focus-dialog')!.getBoundingClientRect().height
+    ))
+    expect(tallHeight).toBeGreaterThan(compactHeight)
+    expect(tallHeight).toBeLessThanOrEqual(920)
+  } finally {
+    await page.close()
+  }
+})
+
 test('non-focus visual actions do not move the source element', async () => {
   const page = await setupPage()
   try {

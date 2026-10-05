@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
@@ -94,7 +98,22 @@ func TestSavedExplorationRuntimeCompositionMountsWithPersistence(t *testing.T) {
 	db, repository := savedPostgresFixture(t)
 	ctx := t.Context()
 	principal := testPlatformPrincipal(t, ctx, store, "saved-composition@example.com", "Saved Composition")
-	token := testAPIToken(t, ctx, store, principal.ID, "saved-composition")
+	model, err := access.NewResourceRef("test", projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var permissions []access.PermissionPair
+	for _, action := range []access.Action{access.ActionSemanticRead, access.ActionSemanticQuery, access.ActionSemanticConsume} {
+		pair, err := access.NewExactPermissionPair(action, testProjectID, model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		permissions = append(permissions, pair)
+	}
+	token, _, err := store.fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "saved-composition", Permissions: permissions, ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server, err := assembleRuntimeChecked(ctx, fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, AnalyticsModule: analyticsmodule.NewSurface(nil, nil), SavedExplorationRepository: repository}))
 	if err != nil {
@@ -120,6 +139,35 @@ func TestSavedExplorationRuntimeCompositionMountsWithPersistence(t *testing.T) {
 	}
 
 	body := []byte(`{"title":"Orders","slug":"orders","visibility":"private","spec":{"schemaVersion":1,"modelId":"test","datasetId":"orders","dimensions":[{"field":"orders.status"}],"metrics":[{"field":"order_count"}],"filters":[],"sort":[],"limit":100}}`)
+	// Authentication and platform administration do not authorize a semantic
+	// save. Exercise the full production route before issuing the scoped one.
+	platformToken := testAPIToken(t, ctx, store, principal.ID, "saved-platform-only")
+	for _, denied := range []struct {
+		name, project, token string
+		status               int
+	}{
+		{name: "platform-only", project: "project:test", token: platformToken, status: http.StatusNotFound},
+		{name: "anonymous", project: "project:test", status: http.StatusUnauthorized},
+		{name: "wrong-project", project: "project:other", token: token, status: http.StatusNotFound},
+	} {
+		deniedRequest := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+denied.project+"/saved-explorations", bytes.NewReader(body))
+		deniedRequest.Header.Set("Accept", "application/json")
+		deniedRequest.Header.Set("Content-Type", "application/json")
+		if denied.token != "" {
+			deniedRequest.Header.Set("Authorization", "Bearer "+denied.token)
+		}
+		deniedRequest.Header.Set("Idempotency-Key", "composition-denied-"+denied.name)
+		deniedRequest.Header.Set("X-Request-ID", "composition-denied-request-"+denied.name)
+		deniedResponse := httptest.NewRecorder()
+		server.Routes().ServeHTTP(deniedResponse, deniedRequest)
+		if deniedResponse.Code != denied.status {
+			t.Fatalf("%s saved create status = %d, want %d (%s)", denied.name, deniedResponse.Code, denied.status, deniedResponse.Body.String())
+		}
+	}
+	var deniedRows int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM saved_exploration.saved_explorations").Scan(&deniedRows); err != nil || deniedRows != 0 {
+		t.Fatalf("denied create persisted %d rows: %v", deniedRows, err)
+	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:test/saved-explorations", bytes.NewReader(body))
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")

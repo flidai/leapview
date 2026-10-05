@@ -173,6 +173,41 @@ export const chatThreadStyles = css`
       gap: var(--lv-chat-agent-item-gap);
     }
 
+    .run-steps {
+      min-width: 0;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-secondary);
+    }
+
+    .run-steps summary {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--lv-space-xs);
+      width: fit-content;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .run-steps summary::-webkit-details-marker { display: none; }
+    .run-steps summary svg { transition: transform 160ms ease; }
+    .run-steps[open] summary svg { transform: rotate(90deg); }
+    .run-steps summary:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
+
+    .run-step-list {
+      display: grid;
+      gap: var(--lv-space-xs);
+      margin: var(--lv-space-sm) 0 0;
+    }
+
+    .run-step {
+      overflow-wrap: anywhere;
+    }
+
+    .run-steps .agent-markdown {
+      margin-top: var(--lv-space-sm);
+      color: var(--lv-fg-default);
+    }
+
     .agent-markdown {
       display: block;
     }
@@ -250,152 +285,28 @@ export const chatThreadStyles = css`
       background: var(--lv-bg-danger-muted);
     }
 
-    .tool-call {
-      display: grid;
-      width: fit-content;
-      max-width: 100%;
-      margin-block: var(--lv-chat-agent-tool-gap);
-      gap: var(--lv-space-sm);
-    }
-
-    .tool-call.has-artifact {
-      width: min(100%, 48rem);
-    }
-
-    .tool-trigger {
-      display: inline-flex;
-      width: fit-content;
-      max-width: 100%;
+    .artifact-card {
+      display: flex;
+      width: min(100%, 34rem);
+      min-height: 4.5rem;
       align-items: center;
-      gap: var(--lv-chat-activity-gap, var(--lv-space-sm));
-      border: 0;
-      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
-      background: transparent;
-      padding: var(--lv-chat-activity-padding-block) 0;
-      color: var(--lv-fg-muted);
-      cursor: pointer;
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-      line-height: var(--base-text-lineHeight-snug);
-      text-align: left;
-      transition: color var(--lv-transition-fast);
-    }
-
-    .tool-icon {
-      display: inline-flex;
-      width: var(--lv-chat-activity-icon-size);
-      height: var(--lv-chat-activity-icon-size);
-      flex: 0 0 var(--lv-chat-activity-icon-size);
-      color: currentColor;
-    }
-
-    .tool-icon svg,
-    .tool-chevron svg {
-      display: block;
-      width: 100%;
-      height: 100%;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 1.8;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .tool-call.running .tool-trigger {
-      color: var(--lv-fg-warning);
-    }
-
-    .tool-call.running .tool-icon {
-      animation: pulse 1.1s ease-in-out infinite;
-    }
-
-    .tool-call.error .tool-trigger {
-      color: var(--lv-fg-danger);
-    }
-
-    .tool-trigger:hover,
-    .tool-trigger:focus-visible {
+      gap: var(--lv-space-sm);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-large);
+      background: var(--lv-bg-panel);
+      padding: var(--lv-space-sm) var(--lv-space-md);
       color: var(--lv-fg-default);
+      text-align: left;
+      cursor: pointer;
     }
 
-    .tool-call.error .tool-trigger:hover,
-    .tool-call.error .tool-trigger:focus-visible {
-      color: var(--lv-fg-danger);
-    }
-
-    .tool-trigger:focus-visible {
-      outline: var(--lv-border-width-focus) solid var(--lv-line-emphasis, var(--lv-line-accent));
-      outline-offset: var(--lv-space-xs);
-    }
-
-    .activity-text {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .tool-status {
-      color: var(--lv-fg-muted);
-      font-weight: var(--base-text-weight-normal);
-      white-space: nowrap;
-    }
-
-    .tool-chevron {
-      display: inline-flex;
-      width: var(--lv-chat-activity-icon-size);
-      height: var(--lv-chat-activity-icon-size);
-      flex: 0 0 var(--lv-chat-activity-icon-size);
-      opacity: 0;
-      transform: translateX(calc(-1 * var(--lv-space-xs)));
-      transition: opacity var(--lv-transition-fast), transform var(--lv-transition-fast);
-    }
-
-    .tool-trigger:hover .tool-chevron,
-    .tool-trigger:focus-visible .tool-chevron,
-    .tool-trigger[aria-expanded='true'] .tool-chevron {
-      opacity: 1;
-      transform: translateX(0);
-    }
-
-    .tool-trigger[aria-expanded='true'] .tool-chevron {
-      transform: rotate(90deg);
-    }
-
-    .tool-details {
-      display: grid;
-      max-width: min(42rem, 100%);
-      gap: var(--lv-space-md);
-      border-left: var(--lv-border-width-focus) solid var(--lv-line-muted);
-      padding-left: var(--lv-space-lg);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-secondary);
-      animation: tool-details-open var(--lv-transition-normal);
-      transform-origin: top left;
-    }
-
-    .tool-detail-block {
-      display: grid;
-      gap: var(--lv-space-xs);
-    }
-
-    .tool-detail-label {
-      color: var(--lv-fg-muted);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .tool-detail-block lv-code-block {
-      max-width: 100%;
-    }
-
-    .tool-error {
-      color: var(--lv-fg-danger);
-      white-space: pre-wrap;
-    }
-
-    .tool-empty {
-      color: var(--lv-fg-muted);
-    }
+    .artifact-card:hover { border-color: var(--lv-line-accent); background: var(--lv-bg-control-hover); }
+    .artifact-card:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--lv-space-2xs); }
+    .artifact-card-icon { display: grid; width: 2.5rem; height: 2.5rem; flex: 0 0 2.5rem; place-items: center; border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-accent); }
+    .artifact-card-copy { display: grid; min-width: 0; flex: 1; gap: var(--lv-space-2xs); }
+    .artifact-card-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--lv-type-body-compact); }
+    .artifact-card-copy > span { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .artifact-card-chevron { color: var(--lv-fg-muted); }
 
     lv-visual-artifact {
       display: block;
@@ -415,22 +326,6 @@ export const chatThreadStyles = css`
     @keyframes working-pulse {
       0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
       30% { opacity: 1; transform: translateY(-2px); }
-    }
-
-    @keyframes tool-details-open {
-      from {
-        opacity: 0;
-        transform: translateY(calc(-1 * var(--lv-chat-tool-disclosure-offset)));
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 0.45; }
-      50% { opacity: 1; }
     }
 
     @media (max-width: 720px) {

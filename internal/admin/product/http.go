@@ -86,6 +86,7 @@ type Status struct {
 type HTTPConfig struct {
 	Service          *Service
 	Status           Status
+	AgentStatus      func(context.Context) (AgentStatus, error)
 	CurrentPrincipal func(*http.Request) (Principal, bool)
 	CommandFailure   CommandFailureWriter
 	Logger           *slog.Logger
@@ -218,6 +219,14 @@ func (h *Handler) GetAuthentication(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) GetSystem(w http.ResponseWriter, r *http.Request) {
 	status := h.config.Status.System
+	if h.config.AgentStatus != nil {
+		agent, err := h.config.AgentStatus(r.Context())
+		if err != nil {
+			h.problem(w, r, err)
+			return
+		}
+		status.Agent = agent
+	}
 	status.ControlPlane = "available"
 	if err := h.config.Service.Ping(r.Context()); err != nil {
 		status.ControlPlane = "unavailable"

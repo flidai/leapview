@@ -111,6 +111,11 @@ func (s *Service) StartDurablePrompt(ctx context.Context, input PromptInput, dis
 }
 
 func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *PromptDispatch) (*StartedPrompt, error) {
+	if s.configuration != nil {
+		if err := s.configuration.Refresh(ctx); err != nil {
+			return nil, err
+		}
+	}
 	runtime := s.runtimeSnapshot()
 	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
 		return nil, ErrDisabled
@@ -166,7 +171,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		ConversationID: input.ConversationID,
 		RunID:          runID,
 		Model:          input.runtimeModel,
-		MetadataJSON:   metadataJSON(map[string]any{"base_url": input.runtimeBaseURL, "model": input.runtimeModel, "request_id": input.RequestID, "request_digest": promptDigest(input), "edit_message_id": input.EditMessageID}),
+		MetadataJSON:   metadataJSON(map[string]any{"configuration_revision": runtime.config.Revision, "base_url": input.runtimeBaseURL, "model": input.runtimeModel, "request_id": input.RequestID, "request_digest": promptDigest(input), "edit_message_id": input.EditMessageID}),
 		Status:         runStatus,
 	})
 	if err != nil {
@@ -398,13 +403,6 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	if err != nil {
 		return nil, err
 	}
-	if runtime == nil {
-		runtime = s.runtimeSnapshot()
-	}
-	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
-		s.release(conversationID)
-		return nil, ErrDisabled
-	}
 	release := true
 	defer func() {
 		if release {
@@ -414,6 +412,31 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	run, err := s.repo.GetRun(ctx, scope.PrincipalID, conversationID, runID)
 	if err != nil {
 		return nil, err
+	}
+	if runtime == nil {
+		var saved struct {
+			Revision int64 `json:"configuration_revision"`
+		}
+		if err := json.Unmarshal([]byte(firstNonemptyRunMetadata(run.MetadataJSON)), &saved); err != nil {
+			return nil, err
+		}
+		if saved.Revision > 0 {
+			if s.configuration == nil {
+				return nil, fmt.Errorf("saved agent configuration is unavailable")
+			}
+			runtime, err = s.configuration.runtimeForRevision(ctx, saved.Revision)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			runtime = s.runtimeSnapshot()
+			if runtime != nil && runtime.config.Revision > 0 {
+				return nil, fmt.Errorf("legacy queued run cannot resume with an administrator-selected provider")
+			}
+		}
+	}
+	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
+		return nil, ErrDisabled
 	}
 	if run.Status != RunStatusRunning {
 		return nil, fmt.Errorf("run %q is not resumable from status %q", runID, run.Status)
@@ -936,4 +959,11 @@ func decodeTranscript(raw string) ([]agentcore.Message, error) {
 		return nil, err
 	}
 	return messages, nil
+}
+
+func firstNonemptyRunMetadata(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "{}"
+	}
+	return raw
 }

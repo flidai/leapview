@@ -109,7 +109,7 @@ func TestSharedPoolConformanceMinIOLane(t *testing.T) {
 		_ = base.Close()
 		t.Fatalf("DuckLake extension=%q, want d318a545", ducklakeExtension)
 	}
-	t.Logf("MinIO conformance runtime: duckdb=%q ducklake=%q minio_image=%q", duckdbRuntime, ducklakeExtension, conformanceMinIOImage)
+	t.Logf("MinIO conformance runtime: duckdb=%q ducklake=%q minio_image=%q", duckdbRuntime, ducklakeExtension, testminio.Image)
 	if _, err := base.Commit(ctx, "minio-base", nil, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS model;
 CREATE TABLE model.orders(id BIGINT, value VARCHAR);
@@ -633,7 +633,6 @@ func minioSecretEndpoint(raw string) (string, bool, error) {
 }
 
 const (
-	conformanceMinIOImage  = testminio.Image
 	conformanceMinIOUser   = "leapview"
 	conformanceMinIOSecret = "leapview-conformance-secret"
 )

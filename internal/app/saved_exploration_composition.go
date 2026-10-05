@@ -14,6 +14,7 @@ import (
 // use the same runtime provider and workload admission controller as the rest
 // of the application, while persistence and audit remain platform-owned.
 type SavedExplorationServiceOptions struct {
+	InstanceID    string
 	Repository    analyticsmodule.SavedExplorationRepository
 	AccessModule  SavedExplorationAccessModule
 	Runtime       runtimehostmodule.Provider
@@ -25,6 +26,7 @@ type SavedExplorationServiceOptions struct {
 // and delegates durable service construction to analytics/module.
 func NewSavedExplorationService(options SavedExplorationServiceOptions) (analyticsmodule.SavedExplorationService, error) {
 	adapters, err := NewSavedExplorationAdapters(SavedExplorationExecutorOptions{
+		InstanceID:    options.InstanceID,
 		AccessModule:  options.AccessModule,
 		Admitter:      options.Admitter,
 		AuditRecorder: options.AuditRecorder,

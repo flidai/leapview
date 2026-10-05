@@ -43,7 +43,30 @@ For a person, `leapview login <target>` uses browser/device authorization and th
 
 ## User API tokens
 
-An authenticated user can list, create, and revoke their tokens through `/api/v1/me/api-tokens`. Token access is the intersection of the principal's effective privileges, any token project scope, and token privilege allowlist. A token can narrow the principal; it cannot elevate it.
+An authenticated user can list, create, edit, rotate, and revoke their tokens through `/api/v1/me/api-tokens`. New typed credentials carry a versioned permission profile and an explicit list of action-target pairs. The pair is the unit of authority: do not submit independent action and resource arrays, because combining them would create an unintended Cartesian product.
+
+Editing a token updates its name, description, expiry, or exact permission pairs in place without changing its bearer secret. Edits are restricted to the token owner and the owner's current authority. Submit the latest `modifiedAt` as `expectedModifiedAt` and in `If-Match`; a stale edit fails instead of overwriting another change. The token's ID and secret identity cannot be edited.
+
+Rotating a token creates a replacement with the same metadata, expiry, and currently authorized permission pairs, then revokes the old credential in the same transaction. The new secret is shown only once, and the old secret stops working immediately. Use the explicit rotation action only when every consumer can be updated at once; otherwise create a second token, migrate consumers, and revoke the first after verification.
+
+An empty `permissions: []` list creates an authentication-only token with no Project or resource authority. Omitting `permissions`, or sending it as `null`, is invalid; it never means “inherit everything.” The token can narrow the principal's effective authority, but it cannot elevate it. The response includes the catalog profile and the exact persisted pair list, including an explicit empty array for an identity-only token.
+
+Targets make the audience visible:
+
+- An exact resource pair names `scope: "resource"`, the bound `projectId`, `resourceKind`, and `resourceId`. It applies only to that resource.
+- A Project-scoped operation names `scope: "project"` and `projectId`. This is used for actions such as Project administration, delivery operations, and creation, where the resource does not yet exist.
+- A future-resource selection is explicit: use `scope: "project"`, `projectId`, `resourceKind`, and `includeFuture: true`. It applies to that resource kind in that Project as resources are created. A current-only selection is expanded into exact pairs when the credential is issued, so it does not silently widen later.
+- An instance-scoped platform action names `scope: "instance"` and `instanceId` only. Instance authority is separate from Project authority.
+
+`PROJECT_ADMIN` covers Project administration only. Platform actions such as `platform.access.manage` require the principal's current durable platform-admin role and a separate instance-scoped token pair. Project administration never implies platform administration, and a token pair never creates the durable platform role. In the legacy capability vocabulary, `PLATFORM_ADMIN` is likewise a separate option; it must not be inferred from `PROJECT_ADMIN`.
+
+The permission catalog's role names describe explicit permission expansions, not hidden grants. Before issuing a credential, review the action list, target scope, and expiry. No selection bypasses pair, prerequisite, policy, or principal checks. See the generated [typed permission catalog](/docs/reference/permissions) for the profile, action descriptions, and role expansions.
+
+The personal-token form opens directly with an action-and-scope picker. Choose only the actions and resource scopes needed, then review the selected permissions and expiry before issuing the token.
+
+The personal-settings picker receives only already-authorized action-target options from the active authorization snapshot. It groups those options into action-and-scope policy blocks: specific resources persist exact pairs, “all current” expands to the current exact pairs, and “all current and future” is available only when the snapshot contains that matching typed future-resource selector. The browser never invents or upgrades a wildcard. Capability-only authority is not projected into typed permissions; an unavailable or unproven typed option set fails closed. Existing legacy capability rows remain a bounded migration and bootstrap concern, not a public issuance input.
+
+The PostgreSQL typed-permission migration revokes active legacy API tokens because a capability-only list has no safe resource identity to convert without widening authority. It records that revocation in the security audit stream. Reissue a typed credential with explicit pairs and update each workload; do not expect an old legacy token to survive the migration. Legacy capability rows remain readable for audit and bounded bootstrap compatibility, but public token-creation APIs accept only typed permission pairs.
 
 The same user can inspect browser sessions, API tokens, and authoring sessions through the Current User API. Revoke unused CLI sessions during credential or device incidents. Reuse of a rotated refresh credential revokes the entire CLI session family.
 

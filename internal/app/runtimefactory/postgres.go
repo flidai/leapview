@@ -71,6 +71,7 @@ func NewPostgresDashboardRuntimeBuilder(config PostgresDashboardRuntimeConfig) S
 // durable delivery state; it is not allowed to infer identity from process
 // configuration.
 type PostgresSealedFactoryConfig struct {
+	GuardOutbound              bool
 	Base                       FactoryConfig
 	ServingArtifacts           ServingArtifactReader
 	Resolve                    SealedRootResolver
@@ -86,6 +87,7 @@ type PostgresSealedFactoryConfig struct {
 }
 
 type postgresSealedFactory struct {
+	guardOutbound              bool
 	base                       servingStateRuntimeFactory
 	resolve                    SealedRootResolver
 	buildRuntime               SealedDashboardRuntimeBuilder
@@ -114,8 +116,9 @@ type PostgresServingAuthorizationInput struct {
 // intentionally outside this production-facing package.
 func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.RuntimeFactory {
 	return postgresSealedFactory{
-		base:    servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence, servingArtifacts: config.ServingArtifacts},
-		resolve: config.Resolve, buildRuntime: config.BuildRuntime,
+		guardOutbound: config.GuardOutbound,
+		base:          servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence, servingArtifacts: config.ServingArtifacts},
+		resolve:       config.Resolve, buildRuntime: config.BuildRuntime,
 		credentialBootstrapFactory: config.CredentialBootstrapFactory, extensionAdmission: config.ExtensionAdmission,
 		duckLakeSecret: config.DuckLakeSecret, postgresSecret: config.PostgresSecret,
 		snapshotLeases: config.SnapshotLeases, authorize: config.Authorize,
@@ -369,7 +372,8 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 		return nil, fmt.Errorf("%w: PostgreSQL runtime directory is unavailable", ErrSealedRootUnavailable)
 	}
 	env, err := ducklake.Open(ctx, ducklake.Config{
-		RootDir: runtimeDir, PhysicalPoolID: root.PhysicalPoolID, PoolContract: poolContract,
+		GuardOutbound: f.guardOutbound,
+		RootDir:       runtimeDir, PhysicalPoolID: root.PhysicalPoolID, PoolContract: poolContract,
 		Compatibility: root.Compatibility, PostgresCatalog: &catalog,
 		CredentialBootstrap: credentialBootstrap, ExtensionAdmission: f.extensionAdmission,
 	})

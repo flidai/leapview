@@ -737,7 +737,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const savedVisible = savedExplorations.enabled && !this.embedded && (
       canSaveCurrent
       || Boolean(savedExplorations.current)
-      || Boolean(savedExplorations.list?.items?.length)
+      || Boolean(savedExplorations.list?.items?.length || savedExplorations.list?.legacyItems?.length)
       || savedExplorations.save?.state === 'error'
     )
     const savedViewOptions: SavedExplorationViewOptions = this.savedViewController.options(

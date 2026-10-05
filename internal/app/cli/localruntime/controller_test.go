@@ -93,7 +93,7 @@ func (runner *fakeRunner) Run(_ context.Context, environment []string, arguments
 	case strings.HasSuffix(joined, "compose version --short"):
 		return []byte("2.17.0\n"), nil
 	case strings.Contains(joined, "admin initialize --format json"):
-		return json.Marshal(adminoffline.InitialCredentials{Email: "admin@localhost", TemporaryPassword: "temporary", PublisherToken: "publisher", PublisherTokenExpiresAt: "2099-01-01T00:00:00Z"})
+		return json.Marshal(adminoffline.InitialCredentials{Email: "admin@localhost", TemporaryPassword: "temporary", ProjectClaimToken: "project-claim-token", ProjectClaimTokenExpiresAt: "2099-01-01T00:00:00Z"})
 	case strings.Contains(joined, "admin delivery pool qualify"):
 		return adminoffline.MarshalQualificationPoolArtifacts(runner.artifacts)
 	case strings.Contains(joined, "admin delivery pool bootstrap"):
@@ -131,6 +131,44 @@ func (transport *localHTTPTransport) RoundTrip(request *http.Request) (*http.Res
 		status = http.StatusNotFound
 	}
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+}
+
+type restartingHTTPTransport struct {
+	localHTTPTransport
+	restarted bool
+	checks    int
+}
+
+func (transport *restartingHTTPTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if transport.restarted && request.URL.Path == "/readyz" {
+		transport.checks++
+		if transport.checks == 1 {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("starting")), Request: request}, nil
+		}
+	}
+	return transport.localHTTPTransport.RoundTrip(request)
+}
+
+func TestRetainedStartWaitsForApplicationBeforeEstablishingSessions(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	transport := &restartingHTTPTransport{}
+	options := testControllerOptions(checkout, packageRoot, stateRoot, endpoint, &fakeRunner{artifacts: testQualificationArtifacts(t)})
+	options.HTTPClient = &http.Client{Transport: transport}
+	options.EstablishSessions = func(_ context.Context, request SessionRequest) (SessionResult, error) {
+		if transport.restarted && transport.checks < 2 {
+			return SessionResult{}, errors.New("login raced application startup")
+		}
+		return SessionResult{TargetName: request.TargetName, SessionID: "session-local"}, nil
+	}
+	controller, err := New(options)
+	require.NoError(t, err)
+	_, err = controller.Start(t.Context())
+	require.NoError(t, err)
+	transport.restarted = true
+	_, err = controller.Start(t.Context())
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, transport.checks, 2)
 }
 
 func TestStartPersistsExactIntentAndCompletesThroughExistingAuthorities(t *testing.T) {
@@ -609,6 +647,21 @@ func TestDiscoverCheckoutRootCollapsesSubdirectoriesAndSymlinks(t *testing.T) {
 	canonical, err := canonicalDirectory(checkout)
 	require.NoError(t, err)
 	require.Equal(t, canonical, resolved)
+}
+
+func TestDiscoverCheckoutRootPrefersInitializedProjectWithinGitCheckout(t *testing.T) {
+	outer := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(outer, ".git"), 0o755))
+	project := filepath.Join(outer, "my-analytics")
+	require.NoError(t, os.MkdirAll(filepath.Join(project, ".leapview"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(project, ".leapview", "development-inputs.yaml"), []byte("version: 1\n"), 0o644))
+	nested := filepath.Join(project, "dashboards")
+	require.NoError(t, os.Mkdir(nested, 0o755))
+	resolved, err := discoverCheckoutRoot(nested)
+	require.NoError(t, err)
+	want, err := canonicalDirectory(project)
+	require.NoError(t, err)
+	require.Equal(t, want, resolved)
 }
 
 func TestSameNamedWorktreesHaveDifferentRuntimeNamespaces(t *testing.T) {

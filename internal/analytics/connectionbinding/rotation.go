@@ -388,8 +388,6 @@ func (manager *PoolManager) withAudit(
 
 func rotationOperationID(operation RefreshOperation) (string, bool) {
 	switch operation {
-	case RefreshTest:
-		return string(analyticsgen.GenOperationTestTargetConnectionBinding), true
 	case RefreshRequested:
 		return string(analyticsgen.GenOperationRefreshTargetConnectionBinding), true
 	default:

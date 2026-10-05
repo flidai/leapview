@@ -125,6 +125,34 @@ export function finiteFieldExtent(envelope: VisualizationEnvelope, ref: Visualiz
   return { minimum: 0, maximum: 1 }
 }
 
+export function needsVisibleLinePoints(
+  envelope: VisualizationEnvelope,
+  categoryRef: VisualizationFieldRef,
+  valueRef: VisualizationFieldRef,
+  rowIndexes?: readonly number[],
+): boolean {
+  const dataset = inlineDataset(envelope, valueRef.dataset)
+  const valueIndex = dataset?.columns.indexOf(valueRef.field) ?? -1
+  const categoryIndex = dataset?.columns.indexOf(categoryRef.field) ?? -1
+  if (!dataset || valueIndex < 0 || categoryIndex < 0) return false
+  const categories = new Map<string, number>()
+  for (const row of dataset.rows) {
+    const key = categoryIdentity(row[categoryIndex])
+    if (!categories.has(key)) categories.set(key, categories.size)
+  }
+  const rows = rowIndexes?.map((index) => dataset.rows[index]).filter((row): row is unknown[] => row !== undefined) ?? dataset.rows
+  const positions = new Set<number>()
+  for (const row of rows) {
+    const value = row[valueIndex]
+    if (value === null || value === undefined || typeof value === 'boolean' || (typeof value === 'string' && value.trim() === '')) continue
+    const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
+    if (!Number.isFinite(number)) continue
+    const position = categories.get(categoryIdentity(row[categoryIndex]))
+    if (position !== undefined) positions.add(position)
+  }
+  return positions.size > 0 && ![...positions].some((position) => positions.has(position + 1))
+}
+
 function finiteNumericValue(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
   if (typeof value !== 'string' || !parseDecimal(value)) return undefined

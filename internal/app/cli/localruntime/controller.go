@@ -371,6 +371,8 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 		}
 	} else if err = controller.compose(ctx, envPath, nil, "up", "-d", "leapview"); err != nil {
 		return state, fmt.Errorf("reconcile local LeapView: %w", err)
+	} else if err = controller.waitReady(ctx, state.Network.URL+"/readyz"); err != nil {
+		return state, err
 	}
 
 	phase = phaseSession

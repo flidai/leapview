@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -30,7 +30,8 @@ type SavedExplorationAccessModule interface {
 // resources; only their target semantic model is evaluated as a canonical
 // resource capability.
 type SavedExplorationAuthorizer struct {
-	access SavedExplorationAccessModule
+	access     SavedExplorationAccessModule
+	instanceID string
 }
 
 var _ analyticsmodule.SavedExplorationAuthorizer = (*SavedExplorationAuthorizer)(nil)
@@ -38,11 +39,11 @@ var _ analyticsmodule.SavedExplorationAuthorizer = (*SavedExplorationAuthorizer)
 // NewSavedExplorationAuthorizer builds a fail-closed authorizer. A subject
 // resolver is mandatory because principal-only authorization would silently
 // drop group grants.
-func NewSavedExplorationAuthorizer(accessModule SavedExplorationAccessModule) (*SavedExplorationAuthorizer, error) {
+func NewSavedExplorationAuthorizer(accessModule SavedExplorationAccessModule, instanceID string) (*SavedExplorationAuthorizer, error) {
 	if savedExplorationNil(accessModule) {
 		return nil, errors.New("saved exploration access module is required")
 	}
-	return &SavedExplorationAuthorizer{access: accessModule}, nil
+	return &SavedExplorationAuthorizer{access: accessModule, instanceID: strings.TrimSpace(instanceID)}, nil
 }
 
 // Authorize uses only the lease and immutable snapshot passed by the saved
@@ -87,47 +88,46 @@ func (a *SavedExplorationAuthorizer) Authorize(ctx context.Context, lease runtim
 		return accessmodule.ErrForbidden
 	}
 
-	// The explicit development bypass is an existing access policy. It is
-	// still bounded by the exact authenticated actor and the validated active
-	// snapshot; it cannot be used to spoof another principal.
-	if principal.DevBypass {
+	// Saved explorations are personal application objects. A role label or a
+	// generic project capability never grants another actor mutation access.
+	if request.Action == analyticsmodule.SavedExplorationAuthorizationActionCreate {
+		if request.OwnerPrincipalID != "" && request.OwnerPrincipalID != actorID {
+			return accessmodule.ErrForbidden
+		}
+	} else {
+		owner := savedExplorationOwner(request)
+		switch request.Action {
+		case analyticsmodule.SavedExplorationAuthorizationActionView, analyticsmodule.SavedExplorationAuthorizationActionExecute:
+			if owner != actorID && request.Visibility != analyticsmodule.SavedExplorationVisibilityOrganization {
+				return accessmodule.ErrForbidden
+			}
+		case analyticsmodule.SavedExplorationAuthorizationActionEdit, analyticsmodule.SavedExplorationAuthorizationActionArchive:
+			if owner != actorID {
+				return accessmodule.ErrForbidden
+			}
+		}
+	}
+	if principal.DevBypass && !credentialPresent {
 		return nil
+	}
+	required, err := savedExplorationRequiredPermissions(request)
+	if err != nil {
+		return err
+	}
+	granted, err := snapshot.EffectiveTypedPermissions(subjects)
+	if err != nil {
+		return savedExplorationUnavailable("typed semantic authorization", err)
+	}
+	for _, pair := range required {
+		resource, exists := snapshot.Project().Resource(pair.Target.ResourceID)
+		if !exists || resource.Kind != projectgraph.KindSemanticModel || !access.PermissionSetAllows(granted, pair) {
+			return accessmodule.ErrForbidden
+		}
 	}
 	if credentialPresent {
-		if err := authorizeSavedExplorationCredential(snapshot, subjects, credential, request); err != nil {
-			return err
-		}
+		return authorizeSavedExplorationCredential(a.instanceID, actorID, request.ProjectID, credential, required)
 	}
-
-	switch request.Action {
-	case analyticsmodule.SavedExplorationAuthorizationActionView:
-		if err := authorizeSavedExplorationRead(snapshot, subjects, actorID, request); err != nil {
-			return err
-		}
-		return authorizeSavedExplorationModel(snapshot, subjects, request.SemanticModelID, accessmodule.CapabilityResourceRead)
-	case analyticsmodule.SavedExplorationAuthorizationActionExecute:
-		if err := authorizeSavedExplorationRead(snapshot, subjects, actorID, request); err != nil {
-			return err
-		}
-		return authorizeSavedExplorationModel(snapshot, subjects, request.SemanticModelID, accessmodule.CapabilityResourceUse)
-	case analyticsmodule.SavedExplorationAuthorizationActionCreate:
-		if !savedExplorationProjectMutationAllowed(snapshot, subjects, false) {
-			return accessmodule.ErrForbidden
-		}
-		return authorizeSavedExplorationModel(snapshot, subjects, request.SemanticModelID, accessmodule.CapabilityResourceUse)
-	case analyticsmodule.SavedExplorationAuthorizationActionEdit:
-		if !savedExplorationExistingMutationAllowed(snapshot, subjects, actorID, request, false) {
-			return accessmodule.ErrForbidden
-		}
-		return authorizeSavedExplorationModel(snapshot, subjects, request.SemanticModelID, accessmodule.CapabilityResourceUse)
-	case analyticsmodule.SavedExplorationAuthorizationActionArchive:
-		if !savedExplorationExistingMutationAllowed(snapshot, subjects, actorID, request, true) {
-			return accessmodule.ErrForbidden
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported saved exploration authorization action %q", request.Action)
-	}
+	return nil
 }
 
 func savedExplorationActor(ctx context.Context, actorID string) (string, accessmodule.Principal, error) {
@@ -240,135 +240,81 @@ func validateSavedExplorationSubjects(subjects []accessmodule.SubjectRef, actorI
 	return nil
 }
 
-func authorizeSavedExplorationCredential(snapshot accessmodule.AuthorizationSnapshot, subjects []accessmodule.SubjectRef, credential accessmodule.APICredential, request analyticsmodule.SavedExplorationAuthorizationRequest) error {
-	// Authoring sessions and API tokens are independent attenuation layers.
-	// The former is project-scoped; the latter may be a dynamic nil allowlist.
-	// When authentication represents an authoring session as a bearer token,
-	// both constraints are therefore applied in sequence.
-	tokenPresent := credential.Token.ID != "" || credential.Token.PrincipalID != "" || credential.Token.Capabilities != nil
-	if credential.Authoring == nil && !tokenPresent {
-		return nil
+// savedExplorationRequiredPermissions keeps metadata discovery separate from
+// query construction. Rebinding an existing working copy additionally requires
+// read access to its persisted model, so a replacement cannot launder access.
+func savedExplorationRequiredPermissions(request analyticsmodule.SavedExplorationAuthorizationRequest) ([]access.PermissionPair, error) {
+	models := []projectgraph.ResourceID{request.SemanticModelID}
+	if request.Action == analyticsmodule.SavedExplorationAuthorizationActionEdit && request.Lifecycle.ID != "" && request.Lifecycle.SemanticModelID != request.SemanticModelID {
+		models = append(models, request.Lifecycle.SemanticModelID)
 	}
-	effective, err := snapshot.EffectiveCapabilities(subjects)
-	if err != nil {
-		return savedExplorationUnavailable("effective token capabilities", err)
+	var required []access.PermissionPair
+	for index, modelID := range models {
+		resource, err := access.NewResourceRef(modelID, projectgraph.KindSemanticModel)
+		if err != nil {
+			return nil, err
+		}
+		read, err := access.NewExactPermissionPair(access.ActionSemanticRead, request.ProjectID, resource)
+		if err != nil {
+			return nil, err
+		}
+		required = append(required, read)
+		if index == 0 && request.Action != analyticsmodule.SavedExplorationAuthorizationActionView {
+			query, err := access.NewExactPermissionPair(access.ActionSemanticQuery, request.ProjectID, resource)
+			if err != nil {
+				return nil, err
+			}
+			pairs, err := access.RequiredPermissionPairs(query)
+			if err != nil {
+				return nil, err
+			}
+			required = append(required, pairs...)
+		}
 	}
-	allowed := effective
+	return required, nil
+}
+
+func authorizeSavedExplorationCredential(instanceID, actorID string, projectID projectgraph.ResourceID, credential accessmodule.APICredential, required []access.PermissionPair) error {
+	if credential.Token.ID == "" || credential.Token.PrincipalID != actorID {
+		return accessmodule.ErrForbidden
+	}
 	if credential.Authoring != nil {
-		if credential.Authoring.Scope.ProjectID != request.ProjectID {
+		session := credential.Authoring
+		if instanceID == "" || session.PrincipalID != actorID || session.ID == "" ||
+			session.Scope.AuthorizePairs(instanceID, projectID.String(), required) != nil {
 			return accessmodule.ErrForbidden
 		}
-		allowed = accessmodule.IntersectTokenCapabilities(credential.Authoring.Scope.Capabilities, allowed)
+		// Authoring authentication synthesizes token identity without a REST
+		// token ceiling. If one is supplied, it must attenuate the scope too.
+		if credential.Token.PermissionProfile == "" && credential.Token.Permissions == nil && credential.Token.Capabilities == nil {
+			return nil
+		}
 	}
-	if tokenPresent {
-		allowed = accessmodule.IntersectTokenCapabilities(credential.Token.Capabilities, allowed)
+	if credential.Token.PermissionProfile != access.PermissionCatalogProfile || credential.Token.Permissions == nil ||
+		access.ValidatePermissionPairs(credential.Token.Permissions) != nil {
+		return accessmodule.ErrForbidden
 	}
-	for _, required := range savedExplorationActionCapabilities(request.Action) {
-		if !savedExplorationHasCapability(allowed, required) {
+	for _, pair := range required {
+		if !access.PermissionSetAllows(credential.Token.Permissions, pair) {
 			return accessmodule.ErrForbidden
 		}
 	}
+
 	return nil
 }
 
-func savedExplorationActionCapabilities(action analyticsmodule.SavedExplorationAuthorizationAction) []accessmodule.Capability {
-	switch action {
-	case analyticsmodule.SavedExplorationAuthorizationActionView:
-		return []accessmodule.Capability{accessmodule.CapabilityResourceRead}
-	case analyticsmodule.SavedExplorationAuthorizationActionExecute:
-		return []accessmodule.Capability{accessmodule.CapabilityResourceUse}
-	case analyticsmodule.SavedExplorationAuthorizationActionCreate, analyticsmodule.SavedExplorationAuthorizationActionEdit:
-		return []accessmodule.Capability{accessmodule.CapabilityResourceEdit, accessmodule.CapabilityResourceUse}
-	case analyticsmodule.SavedExplorationAuthorizationActionArchive:
-		return []accessmodule.Capability{accessmodule.CapabilityResourceManage}
-	default:
-		return nil
-	}
-}
-
-func savedExplorationHasCapability(capabilities []accessmodule.Capability, required accessmodule.Capability) bool {
-	for _, capability := range capabilities {
-		if capability == required {
-			return true
-		}
-	}
-	return false
-}
-
-func authorizeSavedExplorationRead(snapshot accessmodule.AuthorizationSnapshot, subjects []accessmodule.SubjectRef, actorID string, request analyticsmodule.SavedExplorationAuthorizationRequest) error {
-	owner := savedExplorationOwner(request)
-	if actorID == owner {
-		return nil
-	}
-	switch request.Visibility {
-	case analyticsmodule.SavedExplorationVisibilityPrivate:
-		if accesssnapshot.RoleAllowsCapability(snapshot, subjects, accessmodule.CapabilityProjectAdmin) {
-			return nil
-		}
-	case analyticsmodule.SavedExplorationVisibilityOrganization:
-		if accesssnapshot.RoleAllowsCapability(snapshot, subjects, accessmodule.CapabilityResourceRead) {
-			return nil
-		}
-	default:
-		return fmt.Errorf("unsupported saved exploration visibility %q", request.Visibility)
-	}
-	return accessmodule.ErrForbidden
-}
-
 func savedExplorationOwner(request analyticsmodule.SavedExplorationAuthorizationRequest) string {
-	// For an existing object, lifecycle metadata is the authoritative owner.
-	// The owner field is only a compatibility fallback for direct callers that
-	// provide object metadata without a lifecycle; create requests otherwise
-	// make the authenticated actor the owner.
 	if request.Lifecycle.ID != "" {
 		return strings.TrimSpace(request.Lifecycle.OwnerPrincipalID)
 	}
-	if owner := strings.TrimSpace(request.OwnerPrincipalID); owner != "" {
-		return owner
-	}
-	return strings.TrimSpace(request.ActorID)
-}
-
-func savedExplorationExistingMutationAllowed(snapshot accessmodule.AuthorizationSnapshot, subjects []accessmodule.SubjectRef, actorID string, request analyticsmodule.SavedExplorationAuthorizationRequest, archive bool) bool {
-	if request.Lifecycle.ID != "" && actorID == savedExplorationOwner(request) {
-		return true
-	}
-	return savedExplorationProjectMutationAllowed(snapshot, subjects, archive)
-}
-
-func savedExplorationProjectMutationAllowed(snapshot accessmodule.AuthorizationSnapshot, subjects []accessmodule.SubjectRef, archive bool) bool {
-	if archive {
-		return accesssnapshot.RoleAllowsCapability(snapshot, subjects, accessmodule.CapabilityResourceManage) || accesssnapshot.RoleAllowsCapability(snapshot, subjects, accessmodule.CapabilityProjectAdmin)
-	}
-	return accesssnapshot.RoleAllowsCapability(snapshot, subjects, accessmodule.CapabilityResourceEdit) ||
-		accesssnapshot.RoleAllowsCapability(snapshot, subjects, accessmodule.CapabilityResourceManage) ||
-		accesssnapshot.RoleAllowsCapability(snapshot, subjects, accessmodule.CapabilityProjectAdmin)
-}
-
-func authorizeSavedExplorationModel(snapshot accessmodule.AuthorizationSnapshot, subjects []accessmodule.SubjectRef, modelID projectgraph.ResourceID, capability accessmodule.Capability) error {
-	if err := modelID.Validate(); err != nil {
-		return fmt.Errorf("saved exploration semantic model: %w", err)
-	}
-	resource, err := accessmodule.NewResourceRef(modelID, projectgraph.KindSemanticModel)
-	if err != nil {
-		return err
-	}
-	for _, subject := range subjects {
-		allowed, err := snapshot.Allows(subject, resource, capability)
-		if err != nil {
-			return savedExplorationUnavailable("semantic model authorization", err)
-		}
-		if allowed {
-			return nil
-		}
-	}
-	return accessmodule.ErrForbidden
+	return strings.TrimSpace(request.OwnerPrincipalID)
 }
 
 // SavedExplorationExecutor is the lease-bound governed query adapter. It
 // wraps the exact runtime metrics value carried by lease.Runtime; it never
 // opens or resolves another runtime generation.
 type SavedExplorationExecutor struct {
+	instanceID    string
 	access        SavedExplorationAccessModule
 	admitter      workloadmodule.Admitter
 	auditRecorder accessmodule.CanonicalAuditRecorder
@@ -377,6 +323,7 @@ type SavedExplorationExecutor struct {
 var _ analyticsmodule.SavedExplorationLeaseBoundExecutor = (*SavedExplorationExecutor)(nil)
 
 type SavedExplorationExecutorOptions struct {
+	InstanceID    string
 	AccessModule  SavedExplorationAccessModule
 	Admitter      workloadmodule.Admitter
 	AuditRecorder accessmodule.CanonicalAuditRecorder
@@ -395,7 +342,7 @@ func NewSavedExplorationExecutor(options SavedExplorationExecutorOptions) (*Save
 	if savedExplorationNil(options.AuditRecorder) {
 		return nil, errors.New("saved exploration canonical audit recorder is required")
 	}
-	return &SavedExplorationExecutor{access: options.AccessModule, admitter: options.Admitter, auditRecorder: options.AuditRecorder}, nil
+	return &SavedExplorationExecutor{instanceID: options.InstanceID, access: options.AccessModule, admitter: options.Admitter, auditRecorder: options.AuditRecorder}, nil
 }
 
 // Execute governs and executes through the exact lease-bound runtime. Context
@@ -431,6 +378,7 @@ func (e *SavedExplorationExecutor) Execute(ctx context.Context, lease runtimehos
 	}
 
 	governed := dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
+		InstanceID: e.instanceID,
 		SnapshotFromContext: func(context.Context) (accessmodule.AuthorizationSnapshot, error) {
 			return snapshot, nil
 		},
@@ -536,7 +484,7 @@ type SavedExplorationAdapters struct {
 // audit dependencies. It is useful to keep composition in internal/app while
 // leaving the saved-exploration application service dashboard-independent.
 func NewSavedExplorationAdapters(options SavedExplorationExecutorOptions) (SavedExplorationAdapters, error) {
-	authorizer, err := NewSavedExplorationAuthorizer(options.AccessModule)
+	authorizer, err := NewSavedExplorationAuthorizer(options.AccessModule, options.InstanceID)
 	if err != nil {
 		return SavedExplorationAdapters{}, err
 	}

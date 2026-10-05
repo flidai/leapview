@@ -516,6 +516,61 @@ CREATE TABLE access.principal (
 );
 CREATE UNIQUE INDEX principal_email_active_key ON access.principal (lower(email)) WHERE email <> '' AND revoked_at IS NULL;
 
+-- FAI-969: facts are recorded in the source transaction. A restored copy of
+-- this table is not an authority for actions after its recovery frontier.
+CREATE TABLE access.lifecycle_authority (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    authority_id uuid NOT NULL
+);
+INSERT INTO access.lifecycle_authority(singleton, authority_id) VALUES (true, uuidv7());
+CREATE TABLE access.lifecycle_action (
+    sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    occurrence_id uuid NOT NULL UNIQUE,
+    customer_id text NOT NULL CHECK (customer_id = btrim(customer_id) AND length(customer_id) BETWEEN 1 AND 255),
+    deployment_id text NOT NULL CHECK (deployment_id = btrim(deployment_id) AND length(deployment_id) BETWEEN 1 AND 255),
+    resource_id uuid NOT NULL,
+    store text NOT NULL CHECK (store = btrim(store) AND length(store) BETWEEN 1 AND 128),
+    action text NOT NULL CHECK (action IN ('delete','restrict','revoke','disable','supersede')),
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    source_revision text NOT NULL DEFAULT '' CHECK (source_revision = '' OR source_revision ~ '^sha256:[0-9a-f]{64}$'),
+    completed boolean NOT NULL,
+    CHECK (sequence > 0)
+);
+CREATE INDEX lifecycle_action_deployment_sequence_idx ON access.lifecycle_action(deployment_id, sequence);
+CREATE FUNCTION access.append_lifecycle_action(
+    p_occurrence_id uuid, p_customer_id text, p_deployment_id text,
+    p_resource_id uuid, p_store text, p_action text,
+    p_source_revision text, p_completed boolean
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, access AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(77246215304761);
+    INSERT INTO access.lifecycle_action(
+        occurrence_id, customer_id, deployment_id, resource_id,
+        store, action, source_revision, completed
+    ) VALUES (
+        p_occurrence_id, p_customer_id, p_deployment_id, p_resource_id,
+        p_store, p_action, p_source_revision, p_completed
+    ) ON CONFLICT (occurrence_id) DO NOTHING;
+END;
+$$;
+REVOKE ALL ON access.lifecycle_action FROM PUBLIC;
+REVOKE ALL ON access.lifecycle_authority FROM PUBLIC;
+REVOKE ALL ON FUNCTION access.append_lifecycle_action(uuid,text,text,uuid,text,text,text,boolean) FROM PUBLIC;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        GRANT SELECT ON access.lifecycle_authority TO leapview_control_runtime;
+        GRANT SELECT ON access.lifecycle_action TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION access.append_lifecycle_action(uuid,text,text,uuid,text,text,text,boolean) TO leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+        GRANT SELECT ON access.lifecycle_authority, access.lifecycle_action TO leapview_control_readonly;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        GRANT SELECT ON access.lifecycle_authority, access.lifecycle_action TO leapview_control_backup;
+    END IF;
+END $$;
+
 CREATE TABLE access.external_identity (
     id uuid PRIMARY KEY,
     principal_id uuid NOT NULL REFERENCES access.principal(id),
@@ -577,6 +632,7 @@ CREATE TABLE access.session (
     instance_id text NOT NULL DEFAULT '' CHECK (length(instance_id) <= 128),
     profile_id text NOT NULL DEFAULT '' CHECK (length(profile_id) <= 128),
     client_id text NOT NULL DEFAULT '' CHECK (length(client_id) <= 255),
+    client_label text NOT NULL DEFAULT '' CHECK (client_label = btrim(client_label) AND length(client_label) <= 255),
     absolute_expires_at timestamptz,
     CHECK (expires_at > created_at),
     CHECK (absolute_expires_at IS NULL OR absolute_expires_at >= expires_at),
@@ -604,12 +660,16 @@ BEGIN
     IF value IS NULL THEN RETURN TRUE; END IF;
     IF jsonb_typeof(value) <> 'array' THEN RETURN FALSE; END IF;
     FOR item IN SELECT jsonb_array_elements_text(value) LOOP
-        IF item NOT IN ('PROJECT_ADMIN','RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH') THEN RETURN FALSE; END IF;
+        IF item NOT IN ('PLATFORM_ADMIN','PROJECT_ADMIN','RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH') THEN RETURN FALSE; END IF;
         IF seen_items ? item THEN RETURN FALSE; END IF;
         seen_items := seen_items || to_jsonb(item);
     END LOOP;
     RETURN TRUE;
 END $$;
+
+-- The generated permission contract is expanded by repository.go before this
+-- schema is executed. Keep the expansion point before api_token's CHECK.
+-- LEAPVIEW_PERMISSION_CONTRACT_SQL
 
 CREATE TABLE access.api_token (
     id uuid PRIMARY KEY,
@@ -619,12 +679,19 @@ CREATE TABLE access.api_token (
     token_fingerprint bytea NOT NULL UNIQUE,
     verifier bytea NOT NULL,
     capabilities jsonb CHECK (access.valid_capabilities(capabilities)),
+    permission_profile text,
+    permissions jsonb,
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    modified_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_used_at timestamptz,
     revoked_at timestamptz,
     CHECK (octet_length(token_fingerprint)=32),
     CHECK (octet_length(verifier) BETWEEN 32 AND 512),
+    CHECK (access.valid_permission_pairs(permission_profile, permissions)),
+    CONSTRAINT access_api_token_typed_scope_check
+        CHECK ((permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND capabilities IS NULL)
+            OR (permission_profile IS NULL AND permissions IS NULL AND revoked_at IS NOT NULL)),
     CHECK (expires_at > created_at AND expires_at <= created_at + interval '365 days')
 );
 CREATE INDEX access_api_token_principal_idx ON access.api_token(principal_id, created_at DESC);
@@ -680,9 +747,9 @@ BEGIN IF OLD.membership_id<>NEW.membership_id OR OLD.principal_id<>NEW.principal
 CREATE OR REPLACE FUNCTION access.reject_external_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.provider<>NEW.provider OR OLD.tenant_id<>NEW.tenant_id OR OLD.subject<>NEW.subject OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'external identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_session_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.kind<>NEW.kind OR OLD.instance_id<>NEW.instance_id OR OLD.profile_id<>NEW.profile_id OR OLD.client_id<>NEW.client_id OR OLD.created_at<>NEW.created_at OR OLD.absolute_expires_at IS DISTINCT FROM NEW.absolute_expires_at THEN RAISE EXCEPTION 'session identity is immutable'; END IF; RETURN NEW; END; $$;
+BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.kind<>NEW.kind OR OLD.instance_id<>NEW.instance_id OR OLD.profile_id<>NEW.profile_id OR OLD.client_id<>NEW.client_id OR OLD.client_label<>NEW.client_label OR OLD.created_at<>NEW.created_at OR OLD.absolute_expires_at IS DISTINCT FROM NEW.absolute_expires_at THEN RAISE EXCEPTION 'session identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_token_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.name<>NEW.name OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'API token identity is immutable'; END IF; RETURN NEW; END; $$;
+BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.permission_profile IS DISTINCT FROM NEW.permission_profile OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'API token identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_service_secret_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.id<>NEW.id OR OLD.service_principal_id<>NEW.service_principal_id OR OLD.name<>NEW.name OR OLD.secret_fingerprint<>NEW.secret_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'service secret identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_credential_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -714,7 +781,7 @@ BEGIN
 END; $$;
 CREATE OR REPLACE FUNCTION access.reject_device_authorization_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF OLD.id<>NEW.id OR OLD.client_id<>NEW.client_id OR OLD.device_code_hash<>NEW.device_code_hash OR OLD.user_code_hash<>NEW.user_code_hash OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.created_at<>NEW.created_at OR OLD.expires_at<>NEW.expires_at THEN
+    IF OLD.id<>NEW.id OR OLD.client_id<>NEW.client_id OR OLD.device_code_hash<>NEW.device_code_hash OR OLD.user_code_hash<>NEW.user_code_hash OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.permission_profile<>NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.created_at<>NEW.created_at OR OLD.expires_at<>NEW.expires_at THEN
         RAISE EXCEPTION 'device authorization identity is immutable';
     END IF;
     IF OLD.status='pending' AND NEW.status NOT IN ('pending','approved','denied') THEN
@@ -783,6 +850,7 @@ CREATE TABLE access.authorization_snapshot (
     environment text NOT NULL CHECK (environment = btrim(environment) AND length(environment) BETWEEN 1 AND 128),
     generation_id text NOT NULL CHECK (generation_id = btrim(generation_id) AND length(generation_id) BETWEEN 1 AND 255),
     digest text NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    permission_profile text CHECK (permission_profile IS NULL OR permission_profile = 'leapview.permissions/v1'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (project_id, environment, generation_id)
 );
@@ -794,15 +862,26 @@ CREATE TABLE access.authorization_role_binding (
     generation_id text NOT NULL,
     subject_kind text NOT NULL CHECK (subject_kind IN ('principal','group')),
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
-    role text NOT NULL CHECK (role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    role text CHECK (role IS NULL OR role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
+    capabilities jsonb CHECK (capabilities IS NULL OR (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048)),
+    permission_profile text,
+    permissions jsonb,
+    permission_role text,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     revoked_at timestamptz,
     PRIMARY KEY (project_id, environment, generation_id, id),
-    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id)
+    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id),
+    CHECK (
+        access.valid_permission_pairs(permission_profile, permissions)
+        AND ((permission_profile IS NULL AND permissions IS NULL AND permission_role IS NULL AND role IS NOT NULL AND capabilities IS NOT NULL)
+             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND permission_role IN ('viewer','explorer','editor','project_admin','publisher','release_approver','release_operator','auditor') AND role IS NULL AND capabilities IS NULL))
+    )
 );
 CREATE UNIQUE INDEX authorization_role_binding_active_key ON access.authorization_role_binding(project_id, environment, generation_id, subject_kind, subject_id, role) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX authorization_role_binding_typed_role_key
+    ON access.authorization_role_binding(project_id, environment, generation_id, subject_kind, subject_id, permission_role)
+    WHERE revoked_at IS NULL AND permission_profile IS NOT NULL;
 CREATE INDEX authorization_role_binding_subject_idx ON access.authorization_role_binding(project_id, environment, generation_id, subject_kind, subject_id);
 
 CREATE TABLE access.authorization_grant (
@@ -812,18 +891,36 @@ CREATE TABLE access.authorization_grant (
     generation_id text NOT NULL,
     subject_kind text NOT NULL CHECK (subject_kind IN ('principal','group')),
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
-    resource_id text NOT NULL CHECK (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 255),
-    resource_kind text NOT NULL CHECK (resource_kind = btrim(resource_kind) AND length(resource_kind) BETWEEN 1 AND 128),
-    capability text NOT NULL CHECK (capability IN ('PROJECT_ADMIN','RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH')),
+    resource_id text CHECK (resource_id IS NULL OR (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 255)),
+    resource_kind text CHECK (resource_kind IS NULL OR (resource_kind = btrim(resource_kind) AND length(resource_kind) BETWEEN 1 AND 128)),
+    capability text CHECK (capability IS NULL OR capability IN ('PROJECT_ADMIN','RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH')),
+    permission_profile text,
+    permissions jsonb,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     revoked_at timestamptz,
     PRIMARY KEY (project_id, environment, generation_id, id),
-    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id)
+    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id),
+    CHECK (
+        access.valid_permission_pairs(permission_profile, permissions)
+        AND ((permission_profile IS NULL AND permissions IS NULL AND resource_id IS NOT NULL AND resource_kind IS NOT NULL AND capability IS NOT NULL)
+             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND jsonb_array_length(permissions) = 1 AND resource_id IS NULL AND resource_kind IS NULL AND capability IS NULL))
+    )
 );
 CREATE UNIQUE INDEX authorization_grant_active_key ON access.authorization_grant(project_id, environment, generation_id, subject_kind, subject_id, resource_id, resource_kind, capability) WHERE revoked_at IS NULL;
 CREATE INDEX authorization_grant_subject_idx ON access.authorization_grant(project_id, environment, generation_id, subject_kind, subject_id);
 CREATE INDEX authorization_grant_resource_idx ON access.authorization_grant(project_id, environment, generation_id, resource_id, capability);
+CREATE UNIQUE INDEX authorization_grant_typed_pair_key
+    ON access.authorization_grant (
+        project_id, environment, generation_id, subject_kind, subject_id,
+        (permissions->0->>'action'),
+        (permissions->0->'target'->>'scope'),
+        (permissions->0->'target'->>'instanceId'),
+        (permissions->0->'target'->>'projectId'),
+        (permissions->0->'target'->>'resourceKind'),
+        (permissions->0->'target'->>'resourceId'),
+        (permissions->0->'target'->>'includeFuture')
+    ) NULLS NOT DISTINCT WHERE revoked_at IS NULL AND permission_profile IS NOT NULL;
 
 CREATE TABLE access.authorization_data_policy (
     id text NOT NULL CHECK (id = btrim(id) AND length(id) BETWEEN 1 AND 255),
@@ -881,18 +978,29 @@ CREATE TABLE access.authorization_policy_role_binding (
     id text NOT NULL CHECK (id = btrim(id) AND length(id) BETWEEN 1 AND 255),
     subject_kind text NOT NULL CHECK (subject_kind IN ('principal','group')),
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
-    role text NOT NULL CHECK (role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    role text CHECK (role IS NULL OR role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
+    capabilities jsonb CHECK (capabilities IS NULL OR (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048)),
+    permission_profile text,
+    permissions jsonb,
+    permission_role text,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (target_id, project_id, environment, revision, id),
     UNIQUE (target_id, project_id, environment, revision, subject_kind, subject_id, role),
     FOREIGN KEY (target_id, project_id, environment, revision)
         REFERENCES access.authorization_policy_revision(target_id, project_id, environment, revision)
-        ON DELETE RESTRICT
+        ON DELETE RESTRICT,
+    CHECK (
+        access.valid_permission_pairs(permission_profile, permissions)
+        AND ((permission_profile IS NULL AND permissions IS NULL AND permission_role IS NULL AND role IS NOT NULL AND capabilities IS NOT NULL)
+             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND permission_role IN ('viewer','explorer','editor','project_admin','publisher','release_approver','release_operator','auditor') AND role IS NULL AND capabilities IS NULL))
+    )
 );
 CREATE INDEX authorization_policy_role_binding_subject_idx
     ON access.authorization_policy_role_binding(target_id, project_id, environment, revision, subject_kind, subject_id);
+CREATE UNIQUE INDEX authorization_policy_role_binding_typed_role_key
+    ON access.authorization_policy_role_binding(target_id, project_id, environment, revision, subject_kind, subject_id, permission_role)
+    WHERE permission_profile IS NOT NULL;
 
 -- An idempotency record binds a retry key to the complete canonical command,
 -- not merely to a binding ID. This rejects accidental key reuse while
@@ -1015,7 +1123,8 @@ CREATE TABLE access.device_authorization (
     user_code_hash text NOT NULL UNIQUE CHECK (user_code_hash ~ '^[0-9a-f]{64}$'),
     target_id text NOT NULL CHECK (target_id = btrim(target_id) AND length(target_id)<=255),
     project_id text NOT NULL CHECK (project_id = btrim(project_id) AND length(project_id)<=255),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    permission_profile text NOT NULL CHECK (permission_profile='leapview.permissions/v1'),
+    permissions jsonb NOT NULL CHECK (access.valid_permission_pairs(permission_profile, permissions) AND octet_length(permissions::text)<=16384),
     status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied','consumed')),
     principal_id uuid REFERENCES access.principal(id),
     expires_at timestamptz NOT NULL,
@@ -1039,7 +1148,8 @@ CREATE TABLE access.authoring_session (
     principal_id uuid NOT NULL REFERENCES access.principal(id),
     target_id text NOT NULL CHECK (length(target_id)<=255),
     project_id text NOT NULL CHECK (length(project_id)<=255),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    permission_profile text NOT NULL CHECK (permission_profile='leapview.permissions/v1'),
+    permissions jsonb NOT NULL CHECK (access.valid_permission_pairs(permission_profile, permissions) AND octet_length(permissions::text)<=16384),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_used_at timestamptz,
     expires_at timestamptz NOT NULL,
@@ -1101,14 +1211,52 @@ CREATE TABLE access.oauth_client_assertion (
 );
 CREATE INDEX oauth_client_assertion_expiry_idx ON access.oauth_client_assertion(expires_at);
 
+-- A reviewed privacy action is an execution instruction, not a request case.
+-- The caller owns intake/legal decisions. These rows contain only opaque
+-- identities and a bounded per-record execution cursor, never subject data.
+CREATE TABLE access.privacy_action_run (
+    run_id uuid PRIMARY KEY,
+    customer_id text NOT NULL CHECK (customer_id = btrim(customer_id) AND length(customer_id) BETWEEN 1 AND 255),
+    deployment_id text NOT NULL CHECK (deployment_id = btrim(deployment_id) AND length(deployment_id) BETWEEN 1 AND 255),
+    case_id text NOT NULL CHECK (case_id = btrim(case_id) AND length(case_id) BETWEEN 1 AND 256),
+    correlation_id text NOT NULL CHECK (correlation_id = btrim(correlation_id) AND length(correlation_id) BETWEEN 1 AND 256),
+    actor_id uuid NOT NULL,
+    principal_id uuid NOT NULL REFERENCES access.principal(id),
+    principal_type text NOT NULL CHECK (principal_type IN ('user','service')),
+    action text NOT NULL CHECK (action = 'restrict_access'),
+    graph_digest text NOT NULL CHECK (graph_digest ~ '^sha256:[0-9a-f]{64}$'),
+    manifest_digest text NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','completed')),
+    cursor bigint NOT NULL DEFAULT 0 CHECK (cursor >= 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    completed_at timestamptz,
+    UNIQUE (customer_id, deployment_id, case_id, action),
+    CHECK ((status = 'pending' AND completed_at IS NULL) OR (status = 'completed' AND completed_at IS NOT NULL))
+);
+CREATE TABLE access.privacy_action_item (
+    run_id uuid NOT NULL REFERENCES access.privacy_action_run(run_id),
+    ordinal bigint NOT NULL CHECK (ordinal > 0),
+    store text NOT NULL CHECK (length(store) BETWEEN 1 AND 128),
+    record_id text NOT NULL CHECK (length(record_id) BETWEEN 1 AND 255),
+    actionable boolean NOT NULL,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','completed','excluded')),
+    outcome text NOT NULL DEFAULT '' CHECK (length(outcome) <= 64),
+    completed_at timestamptz,
+    PRIMARY KEY (run_id, ordinal),
+    UNIQUE (run_id, store, record_id),
+    CHECK ((status = 'completed') = (completed_at IS NOT NULL))
+);
+CREATE INDEX privacy_action_item_pending_idx ON access.privacy_action_item(run_id, ordinal) WHERE status = 'pending';
+
 CREATE OR REPLACE FUNCTION access.reject_authorization_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_TABLE_NAME = 'authorization_snapshot' THEN
         IF OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.digest<>NEW.digest OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization snapshot identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME = 'authorization_role_binding' THEN
-        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.role<>NEW.role OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization role binding identity is immutable'; END IF;
+        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.role IS DISTINCT FROM NEW.role OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.permission_profile IS DISTINCT FROM NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.permission_role IS DISTINCT FROM NEW.permission_role OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization role binding identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME = 'authorization_grant' THEN
-        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.resource_id<>NEW.resource_id OR OLD.resource_kind<>NEW.resource_kind OR OLD.capability<>NEW.capability OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization grant identity is immutable'; END IF;
+        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.resource_id IS DISTINCT FROM NEW.resource_id OR OLD.resource_kind IS DISTINCT FROM NEW.resource_kind OR OLD.capability IS DISTINCT FROM NEW.capability OR OLD.permission_profile IS DISTINCT FROM NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization grant identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME = 'authorization_data_policy' THEN
         IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.resource_id<>NEW.resource_id OR OLD.resource_kind<>NEW.resource_kind OR OLD.subject_kind IS DISTINCT FROM NEW.subject_kind OR OLD.subject_id IS DISTINCT FROM NEW.subject_id OR OLD.policy_type<>NEW.policy_type OR OLD.expression IS DISTINCT FROM NEW.expression OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization policy identity is immutable'; END IF;
     END IF;
@@ -1142,7 +1290,7 @@ BEGIN
     IF TG_TABLE_NAME='desktop_authorization_code' THEN
         IF OLD.code_hash<>NEW.code_hash OR OLD.principal_id<>NEW.principal_id OR OLD.client_id<>NEW.client_id OR OLD.instance_id<>NEW.instance_id OR OLD.profile_id<>NEW.profile_id OR OLD.redirect_uri<>NEW.redirect_uri OR OLD.code_challenge<>NEW.code_challenge OR OLD.return_path<>NEW.return_path OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'desktop authorization identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME='authoring_session' THEN
-        IF OLD.id<>NEW.id OR OLD.kind<>NEW.kind OR OLD.client_id<>NEW.client_id OR OLD.principal_id<>NEW.principal_id OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authoring session identity is immutable'; END IF;
+        IF OLD.id<>NEW.id OR OLD.kind<>NEW.kind OR OLD.client_id<>NEW.client_id OR OLD.principal_id<>NEW.principal_id OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.permission_profile<>NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authoring session identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME='authoring_credential' THEN
         IF OLD.id<>NEW.id OR OLD.session_id<>NEW.session_id OR OLD.access_token_hash<>NEW.access_token_hash OR OLD.refresh_token_hash IS DISTINCT FROM NEW.refresh_token_hash OR OLD.access_expires_at<>NEW.access_expires_at OR OLD.refresh_expires_at IS DISTINCT FROM NEW.refresh_expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authoring credential identity is immutable'; END IF;
     END IF;
@@ -1170,9 +1318,16 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
+        -- Lifecycle facts may only be appended through the ordering function;
+        -- the authority identity is read-only for the runtime role.
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.lifecycle_action, access.lifecycle_authority FROM leapview_control_runtime';
+        EXECUTE 'REVOKE UPDATE ON access.privacy_action_run, access.privacy_action_item FROM leapview_control_runtime';
+        EXECUTE 'GRANT UPDATE (status, cursor, updated_at, completed_at) ON access.privacy_action_run TO leapview_control_runtime';
+        EXECUTE 'GRANT UPDATE (status, outcome, completed_at) ON access.privacy_action_item TO leapview_control_runtime';
         EXECUTE 'REVOKE UPDATE ON access.authorization_policy_revision, access.authorization_policy_role_binding, access.authorization_policy_operation FROM leapview_control_runtime';
         EXECUTE 'GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_permission_pairs(text, jsonb) TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON audit.audit_event TO leapview_control_runtime';
         EXECUTE 'REVOKE DELETE ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_runtime';
@@ -1191,6 +1346,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA access TO leapview_control_readonly';
+        EXECUTE 'REVOKE SELECT ON access.privacy_action_run, access.privacy_action_item FROM leapview_control_readonly';
         EXECUTE 'REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential, access.oauth_client, access.oauth_session, access.oauth_client_assertion FROM leapview_control_readonly';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON audit.audit_event, audit.audit_retention_floor TO leapview_control_readonly';
@@ -1635,11 +1791,19 @@ CREATE TABLE IF NOT EXISTS access.authorization_policy_grant (
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
     resource_id text NOT NULL CHECK (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 255),
     resource_kind text NOT NULL CHECK (resource_kind IN ('project','connection','source','model','semantic_model','pipeline','dashboard')),
-    capability text NOT NULL CHECK (capability IN ('RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH','PROJECT_ADMIN')),
+    capability text CHECK (capability IN ('RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH','PROJECT_ADMIN')),
+    permission_profile text,
+    permissions jsonb,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (target_id, project_id, environment, revision, id),
     UNIQUE (target_id, project_id, environment, revision, subject_kind, subject_id, resource_kind, resource_id, capability),
+    CHECK (
+        (permission_profile IS NULL AND permissions IS NULL AND capability IS NOT NULL)
+        OR
+        (permission_profile IS NOT NULL AND permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL
+         AND jsonb_typeof(permissions) = 'array' AND permissions <> '[]'::jsonb AND capability IS NULL)
+    ),
     FOREIGN KEY (target_id, project_id, environment, revision)
         REFERENCES access.authorization_policy_revision(target_id, project_id, environment, revision)
         ON DELETE RESTRICT
@@ -1650,6 +1814,10 @@ FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutatio
 CREATE TRIGGER authorization_policy_grant_no_delete BEFORE DELETE ON access.authorization_policy_grant
 FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 REVOKE ALL ON access.authorization_policy_grant FROM PUBLIC;
+CREATE TRIGGER lifecycle_action_immutable BEFORE UPDATE ON access.lifecycle_action
+FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutation();
+CREATE TRIGGER lifecycle_action_no_delete BEFORE DELETE ON access.lifecycle_action
+FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
@@ -1662,6 +1830,56 @@ DO $$ BEGIN
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_backup') THEN
   GRANT SELECT ON access.authorization_policy_grant TO leapview_control_backup;
+ END IF;
+END $$;
+-- +goose StatementEnd
+
+-- Provenance is private access authority, never inferred from token names.
+CREATE TABLE access.initial_password_setup (
+    -- The spent claim can be pruned while its publisher remains active.
+    -- This initialization record permanently retains the original binding.
+    claim_credential_id uuid PRIMARY KEY,
+    principal_id uuid NOT NULL REFERENCES access.principal(id),
+    instance_id text NOT NULL CHECK (instance_id = btrim(instance_id) AND length(instance_id) BETWEEN 1 AND 255),
+    closed_at timestamptz,
+    UNIQUE (principal_id, instance_id)
+);
+CREATE TABLE access.initial_publisher_origin (
+    publisher_credential_id uuid PRIMARY KEY REFERENCES access.api_token(id) ON DELETE CASCADE,
+    claim_credential_id uuid NOT NULL REFERENCES access.initial_password_setup(claim_credential_id),
+    project_id text NOT NULL CHECK (project_id = btrim(project_id) AND length(project_id) BETWEEN 1 AND 255)
+);
+
+-- +goose StatementBegin
+CREATE FUNCTION access.reject_initial_setup_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.claim_credential_id <> NEW.claim_credential_id OR OLD.principal_id <> NEW.principal_id
+       OR OLD.instance_id <> NEW.instance_id
+       OR (OLD.closed_at IS NOT NULL AND NEW.closed_at IS DISTINCT FROM OLD.closed_at) THEN
+        RAISE EXCEPTION 'initial password setup closure is permanent';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+REVOKE ALL ON FUNCTION access.reject_initial_setup_rewrite() FROM PUBLIC;
+CREATE TRIGGER initial_password_setup_monotonic BEFORE UPDATE ON access.initial_password_setup
+FOR EACH ROW EXECUTE FUNCTION access.reject_initial_setup_rewrite();
+CREATE TRIGGER initial_password_setup_no_delete BEFORE DELETE ON access.initial_password_setup
+FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER initial_publisher_origin_immutable BEFORE UPDATE ON access.initial_publisher_origin
+FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutation();
+CREATE TRIGGER initial_publisher_origin_no_delete BEFORE DELETE ON access.initial_publisher_origin
+FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
+REVOKE ALL ON access.initial_password_setup, access.initial_publisher_origin FROM PUBLIC;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
+  GRANT SELECT, INSERT ON access.initial_password_setup, access.initial_publisher_origin TO leapview_control_runtime;
+  GRANT UPDATE (closed_at) ON access.initial_password_setup TO leapview_control_runtime;
+ END IF;
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_backup') THEN
+  GRANT SELECT ON access.initial_password_setup, access.initial_publisher_origin TO leapview_control_backup;
  END IF;
 END $$;
 -- +goose StatementEnd

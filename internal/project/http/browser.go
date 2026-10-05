@@ -41,6 +41,7 @@ import (
 	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -49,6 +50,12 @@ import (
 
 type GraphReader interface {
 	ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error)
+}
+
+// HistoricalGraphReader loads immutable resource dependencies for the exact
+// serving generation recorded by a run; it must never resolve the active graph.
+type HistoricalGraphReader interface {
+	ServingStateGraph(context.Context, projectgraph.ResourceID, string, servingstate.ID) (servingstate.AssetGraph, bool, error)
 }
 
 // PrincipalDisplayReader resolves actor identity fields for history read
@@ -83,6 +90,19 @@ type AssetRefreshStateReader interface {
 
 type RunMonitorReader interface {
 	MonitorRuns(context.Context, projectgraph.ResourceID, string, refreshrun.MonitorFilter) (refreshrun.MonitorPage, error)
+}
+
+type RunDetailReader interface {
+	GetRun(context.Context, refreshrun.ReadScope, string) (refreshrun.RunRecord, error)
+	ListChildRuns(context.Context, refreshrun.ReadScope, string) ([]refreshrun.RunRecord, error)
+}
+
+type RunPublicationReader interface {
+	RunPublication(context.Context, refreshrun.ReadScope, string) (refreshpresentation.RunPublicationEvidence, bool, error)
+}
+
+type RunEventReader interface {
+	ListEvents(context.Context, string, string, int64, int) ([]jobs.Event, error)
 }
 
 // ModelPhysicalMetadata is the credential-free DuckLake table rollup shown on
@@ -175,23 +195,28 @@ type CreatorCommandInvocation struct {
 }
 
 type BrowserHandler struct {
-	Graph                          GraphReader
-	AssetVersions                  AssetVersionsReader
-	ActiveServingState             ActiveServingStateReader
-	RefreshState                   AssetRefreshStateReader
-	RunMonitor                     RunMonitorReader
+	Graph              GraphReader
+	HistoricalGraph    HistoricalGraphReader
+	AssetVersions      AssetVersionsReader
+	ActiveServingState ActiveServingStateReader
+	RefreshState       AssetRefreshStateReader
+	RunMonitor         RunMonitorReader
+	// ReadPipelineIntents supplies request-stage queue entries. They are never
+	// projected as immutable execution runs.
+	ReadPipelineIntents            func(context.Context, refreshrun.ReadScope) ([]PipelineWaitingIntent, error)
+	RunDetailReader                RunDetailReader
+	RunPublicationReader           RunPublicationReader
+	RunEventReader                 RunEventReader
 	PipelineChanges                *pagestream.Broker
 	PipelineChangesStreamID        string
 	PhysicalCatalog                PhysicalCatalogReader
 	SourceSchemas                  SourceSchemaReader
 	ProjectDefinitionReader        ProjectDefinitionReader
 	DashboardAppearances           DashboardAppearanceStore
+	LegacySavedExplorations        projectview.SavedExplorationStore
 	DashboardCatalog               DashboardCatalogReader
-	DashboardAuthoring             *dashboardauthoring.Application
-	DashboardAppendCommand         uicommand.Binding
 	DashboardPopularity            func(context.Context, int) (map[string]string, error)
 	QueryExecutor                  DataQueryExecutor
-	ExplorationQueryLowerer        exploration.QueryLowerer
 	Catalog                        CatalogAuthorizer
 	SearchCatalog                  ProductSearchCatalog
 	PrincipalDisplayReader         PrincipalDisplayReader
@@ -200,19 +225,25 @@ type BrowserHandler struct {
 	TargetID                       string
 	ConnectionAdministration       connectionadmin.Administration
 	ConnectionCommands             projectui.ConnectionCommandBindings
+	PipelineRunCommand             uicommand.Binding
+	PipelineCancelCommand          uicommand.Binding
+	RunPipeline                    func(context.Context, string, string, string, string) error
 	SavedExplorations              SavedExplorationService
+	DashboardAuthoring             *dashboardauthoring.Application
+	DashboardAppendCommand         uicommand.Binding
+	ExplorationQueryLowerer        exploration.QueryLowerer
 	ExplorationExportAuditRecorder queryaudit.Recorder
 	ExplorationExportEncoder       func(context.Context, dataquery.Result, savedexploration.ExportFormat, savedexploration.ExportLimits) ([]byte, error)
 	SavedExplorationCommands       SavedExplorationCommandBindings
-	PipelineRunCommand             uicommand.Binding
-	PipelineCancelCommand          uicommand.Binding
-	RunPipeline                    func(context.Context, string, string, string) error
 	// CancelPipeline receives both the pipeline and run identifiers from the
 	// command. Implementations must verify that the run belongs to that
 	// pipeline before mutating it; keeping the pipeline ID in this callback
 	// prevents an opaque run ID from becoming a cross-pipeline capability.
-	CancelPipeline    func(context.Context, string, string, string) error
-	AuthorizePipeline func(*stdhttp.Request, string, access.Capability) (bool, error)
+	CancelPipeline func(context.Context, string, string, string) error
+	// CancelPipelineIntent cancels a waiting request before it is admitted as
+	// an immutable run. The pipeline ID remains part of the authorization scope.
+	CancelPipelineIntent func(context.Context, string, string, string, string) error
+	AuthorizePipeline    func(*stdhttp.Request, string, access.Capability) (bool, error)
 	// AuthorizeConnectionCreate checks the project-root capability required by
 	// the generated createTargetConnectionBinding command. Updates remain
 	// resource-scoped in the administration service.
@@ -233,6 +264,7 @@ type BrowserHandler struct {
 	CurrentUser                    func(*stdhttp.Request) (Principal, bool)
 	Authenticate                   func(stdhttp.Handler) stdhttp.Handler
 	dataExplorerLifecycle          dataExplorerLifecycle
+	CurrentCredential              func(*stdhttp.Request) (access.APICredential, bool)
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -268,6 +300,8 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/explore/dashboard-targets/{dashboard}", wrap(h.ExplorationDashboardTarget))
 	r.Post("/explore/add-to-dashboard", wrapMutation(h.AppendExplorationToDashboard))
 	r.Get("/explore/export", wrap(h.ExplorationExport))
+	r.Get("/explore/saved", wrap(h.ListSavedExplorations))
+	r.Post("/explore/saved", wrapMutation(h.CreateSavedExploration))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
 	r.Get("/explore/saved/{exploration}", wrap(h.SavedExplorationReopen))
 	r.Post("/explore/saved/command", wrapMutation(h.SavedExplorationCommand))
@@ -288,7 +322,11 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/dashboards/{asset}/lineage", wrap(h.DashboardAsset))
 	r.Post("/dashboards/{asset}/appearance", wrapMutation(h.DashboardAppearanceCommand))
 	r.Get("/pipelines", wrap(h.Pipelines))
+	r.Get("/pipelines/runs", wrap(h.PipelineRuns))
 	r.Get("/runs", wrap(h.Runs))
+	r.Get("/pipelines/{asset}", wrap(h.PipelineDetail))
+	r.Get("/pipelines/{asset}/runs/{run}", wrap(h.pipelineRunDocument))
+	r.Get("/pipelines/{asset}/runs/{run}/{section}", wrap(h.pipelineRunDocument))
 	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
 	r.Post("/pipelines/command", wrapMutation(h.PipelineCommand))
 	r.Get("/connections", wrap(h.Connections))
@@ -313,12 +351,23 @@ func (h *BrowserHandler) ProductSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		stdhttp.Error(w, "search is temporarily unavailable", stdhttp.StatusServiceUnavailable)
 		return
 	}
+	credential := h.currentCredential(r)
+	projectID := projectgraph.ResourceID("")
+	if !principal.DevBypass || typedBrowserCredential(credential) {
+		var err error
+		projectID, err = h.boundProject(r.Context())
+		if err != nil {
+			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+			return
+		}
+	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	limit := 24
-	page, err := h.SearchCatalog.Search(r.Context(), projectcatalog.SearchRequest{
+	request := projectcatalog.SearchRequest{
 		PrincipalID: principal.ID, DevAuthBypass: principal.DevBypass, Query: query,
 		Kinds: append([]projectgraph.Kind(nil), productSearchKinds...), Limit: limit,
-	})
+	}
+	page, err := searchCatalogAuthorized(r.Context(), h.SearchCatalog, request, credential, projectID)
 	if err != nil {
 		status := stdhttp.StatusServiceUnavailable
 		if errors.Is(err, projectcatalog.ErrInvalidRequest) || errors.Is(err, projectcatalog.ErrInvalidCursor) {
@@ -607,7 +656,44 @@ func (h *BrowserHandler) DashboardAsset(w stdhttp.ResponseWriter, r *stdhttp.Req
 }
 
 func (h *BrowserHandler) PipelineAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.assetDocument(w, r, projectgraph.KindPipeline)
+	section := requestedAssetSection(r)
+	canonical := section
+	switch section {
+	case "details":
+		canonical = "overview"
+	case "refreshes":
+		canonical = "runs"
+	case "lineage":
+		canonical = "overview"
+	case "versions":
+		canonical = "definition"
+	}
+	if canonical != section {
+		if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindPipeline}) {
+			return
+		}
+		_, assets, _, ok := h.assets(w, r)
+		if !ok {
+			return
+		}
+		assetID, err := url.PathUnescape(chi.URLParam(r, "asset"))
+		if err != nil {
+			stdhttp.NotFound(w, r)
+			return
+		}
+		asset, found := projectview.AssetByID(assets, assetID)
+		if !found || !assetMatchesCatalogKinds(asset, []projectgraph.Kind{projectgraph.KindPipeline}) {
+			stdhttp.NotFound(w, r)
+			return
+		}
+		target := "/pipelines/" + url.PathEscape(assetID) + "/" + canonical
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		stdhttp.Redirect(w, r, target, stdhttp.StatusPermanentRedirect)
+		return
+	}
+	h.PipelineDetail(w, r)
 }
 
 func (h *BrowserHandler) ConnectionAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -689,13 +775,27 @@ func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Requ
 
 func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if r.URL.Query().Get("view") == "runs" {
-		stdhttp.Redirect(w, r, "/runs", stdhttp.StatusFound)
+		query := r.URL.Query()
+		query.Del("view")
+		target := "/pipelines/runs"
+		if encoded := query.Encode(); encoded != "" {
+			target += "?" + encoded
+		}
+		stdhttp.Redirect(w, r, target, stdhttp.StatusPermanentRedirect)
 		return
 	}
 	h.pipelinePage(w, r, "pipelines")
 }
 
 func (h *BrowserHandler) Runs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	target := "/pipelines/runs"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	stdhttp.Redirect(w, r, target, stdhttp.StatusPermanentRedirect)
+}
+
+func (h *BrowserHandler) PipelineRuns(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	h.pipelinePage(w, r, "runs")
 }
 
@@ -882,6 +982,18 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		} else {
 			return
 		}
+	case "pipeline_detail":
+		if pipelinePatch, ok := h.pipelineDetailBootstrap(w, r); ok {
+			patch = pipelinePatch
+		} else {
+			return
+		}
+	case "pipeline_run_detail":
+		if runPatch, ok := h.pipelineRunBootstrap(w, r); ok {
+			patch = runPatch
+		} else {
+			return
+		}
 	case "asset", "connection_asset":
 		if assetPatch, ok := h.assetBootstrap(w, r); ok {
 			patch = assetPatch
@@ -918,7 +1030,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func livePipelineRoute(route, assetID string) bool {
-	if route == "pipelines" {
+	if route == "pipelines" || route == "pipeline_detail" || route == "pipeline_run_detail" {
 		return true
 	}
 	if route != "asset" && route != "data" {
@@ -928,6 +1040,28 @@ func livePipelineRoute(route, assetID string) bool {
 }
 
 func (h *BrowserHandler) livePipelinePage(r *stdhttp.Request) (pagestream.SignalPatch, error) {
+	switch uitransport.Route(r) {
+	case "pipeline_detail":
+		section := strings.TrimSpace(r.URL.Query().Get("section"))
+		if section == "" {
+			section = projectui.PipelineDetailOverview
+		}
+		if !pipelineDetailSectionValid(section) {
+			return nil, fmt.Errorf("invalid pipeline detail section %q", section)
+		}
+		nav, state, err := h.pipelineDetailPageState(r, strings.TrimSpace(r.URL.Query().Get("asset")), section)
+		if err != nil {
+			return nil, err
+		}
+		bootstrap := projectui.PipelineDetailBootstrapSignals(nav, state, "", h.layout(r))
+		return pagestream.SignalPatch{"page": bootstrap["page"]}, nil
+	case "pipeline_run_detail":
+		data, err := h.pipelineRunDocumentData(r)
+		if err != nil {
+			return nil, err
+		}
+		return pagestream.SignalPatch{"page": data.Page}, nil
+	}
 	projectID, assets, edges, err := h.loadAssets(r)
 	if err != nil {
 		return nil, err
@@ -937,7 +1071,7 @@ func (h *BrowserHandler) livePipelinePage(r *stdhttp.Request) (pagestream.Signal
 		if err != nil {
 			return nil, err
 		}
-		return pagestream.SignalPatch(projectui.PipelinesPagePatch(state, r.URL.Query().Get("view"))), nil
+		return pagestream.SignalPatch(projectui.PipelinesPagePatch(state, pipelineCollectionView(r))), nil
 	}
 	assetID := strings.TrimSpace(r.URL.Query().Get("asset"))
 	section := strings.TrimSpace(r.URL.Query().Get("section"))
@@ -994,7 +1128,11 @@ func (h *BrowserHandler) pipelinesBootstrap(w stdhttp.ResponseWriter, r *stdhttp
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return nil, false
 	}
-	return projectui.PipelinesBootstrapSignals(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)), true
+	patch := projectui.PipelinesBootstrapSignals(h.navigationCatalog(r), state, pipelineCollectionView(r), "", h.layout(r))
+	runtime := patch["runtime"].(projectsignals.RouteRuntimeSignal)
+	runtime.StreamInstanceID = projectsignals.Optional(uuid.NewString())
+	patch["runtime"] = runtime
+	return patch, true
 }
 
 func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {
@@ -1169,6 +1307,7 @@ func refreshStateToProjectUI(state refreshpresentation.AssetRefreshState, err er
 		DataVersion: projectui.AssetDataVersion{
 			SnapshotID: state.DataVersion.SnapshotID, ServingStateID: state.DataVersion.ServingStateID,
 			RefreshedAt: state.DataVersion.RefreshedAt, Source: state.DataVersion.Source,
+			PipelineID: state.DataVersion.PipelineID, RunID: state.DataVersion.RunID,
 		},
 		NextRun: state.NextRun,
 	}, err
@@ -1228,7 +1367,7 @@ func (h *BrowserHandler) principalDisplayNames(ctx context.Context, ids []string
 
 func projectRefreshRun(run refreshpresentation.AssetRefreshRun) projectui.AssetRefreshRun {
 	return projectui.AssetRefreshRun{
-		ID: run.ID, Environment: run.Environment, ModelID: run.ModelID, ServingStateID: run.ServingStateID,
+		ID: run.ID, Environment: run.Environment, PipelineID: run.PipelineID, ModelID: run.ModelID, ServingStateID: run.ServingStateID,
 		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName,
 		TriggerType: run.TriggerType, ParentRunID: run.ParentRunID,
 		TargetGeneration: run.TargetGeneration, Status: run.Status, CreatedAt: run.CreatedAt,
@@ -1523,7 +1662,7 @@ func (h *BrowserHandler) loadAssets(r *stdhttp.Request) (projectgraph.ResourceID
 		if h.Catalog == nil {
 			return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: errors.New("project catalog is unavailable")}
 		}
-		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline})
+		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline}, h.currentCredential(r), projectID)
 		if err != nil {
 			return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: err}
 		}
@@ -1594,7 +1733,8 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if principal.DevBypass {
 		return true
 	}
-	if _, err := h.boundProject(r.Context()); err != nil || h.Catalog == nil {
+	projectID, err := h.boundProject(r.Context())
+	if err != nil || h.Catalog == nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return false
 	}
@@ -1607,14 +1747,18 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	}
 	if selector != "" {
 		for _, kind := range kinds {
-			if _, err := h.Catalog.Resolve(r.Context(), principal.ID, projectcatalog.Ref{ID: projectgraph.ResourceID(selector), Kind: kind}, access.CapabilityResourceRead, principal.DevBypass); err == nil {
+			ref := projectcatalog.Ref{ID: projectgraph.ResourceID(selector), Kind: kind}
+			if typed, allowed := typedCatalogRefDecision(h.currentCredential(r), projectID, ref); typed && !allowed {
+				continue
+			}
+			if _, err := h.Catalog.Resolve(r.Context(), principal.ID, ref, access.CapabilityResourceRead, principal.DevBypass); err == nil {
 				return true
 			}
 		}
 		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return false
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, kinds)
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, kinds, h.currentCredential(r), projectID)
 	if err != nil {
 		if errors.Is(err, projectcatalog.ErrNotFound) {
 			uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
@@ -1652,11 +1796,11 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	if !ok {
 		return projectnavigation.Catalog{}
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
+	projectID, err := h.boundProject(r.Context())
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
-	projectID, err := h.boundProject(r.Context())
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard}, h.currentCredential(r), projectID)
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
@@ -1691,9 +1835,19 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 	if err != nil {
 		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
 	}
-	result, err := h.DashboardCatalog.List(r.Context(), dashboardauthoringcatalog.ListRequest{ProjectID: projectID, ActorID: principal.ID})
+	result, err := h.DashboardCatalog.List(r.Context(), dashboardauthoringcatalog.ListRequest{ProjectID: projectID, ActorID: principal.ID, IncludeEditableDrafts: true})
 	if err != nil {
 		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
+	}
+	result.Items = filterDashboardCatalogForCredential(result.Items, h.currentCredential(r), projectID)
+	result.Count = len(result.Items)
+	result.InstanceCount, result.ProjectCount = 0, 0
+	for _, item := range result.Items {
+		if item.Source == dashboardauthoringcatalog.SourceProject {
+			result.ProjectCount++
+		} else {
+			result.InstanceCount++
+		}
 	}
 	popularity := map[string]string{}
 	if h.DashboardPopularity != nil {
@@ -1809,33 +1963,6 @@ func (h *BrowserHandler) enrichDashboardAppearances(ctx context.Context, project
 		}
 		dashboard.Appearance = dashboardappearance.Resolve(record.Value)
 		dashboard.AppearanceRevision = record.Revision
-	}
-}
-
-func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, devAuthBypass bool, kinds []projectgraph.Kind) (projectcatalog.Page, error) {
-	if catalog == nil {
-		return projectcatalog.Page{}, projectcatalog.ErrUnavailable
-	}
-	items := make([]projectcatalog.Result, 0)
-	cursor := ""
-	seenCursors := map[string]struct{}{}
-	for pages := 0; ; pages++ {
-		if pages >= 10000 {
-			return projectcatalog.Page{}, fmt.Errorf("catalog pagination exceeded safety bound")
-		}
-		page, err := catalog.List(ctx, projectcatalog.ListRequest{PrincipalID: principalID, DevAuthBypass: devAuthBypass, Kinds: kinds, Limit: projectcatalog.MaxLimit, Cursor: cursor})
-		if err != nil {
-			return projectcatalog.Page{}, err
-		}
-		items = append(items, page.Items...)
-		if page.NextCursor == "" {
-			return projectcatalog.Page{Items: items}, nil
-		}
-		if _, seen := seenCursors[page.NextCursor]; seen {
-			return projectcatalog.Page{}, fmt.Errorf("catalog pagination cursor repeated")
-		}
-		seenCursors[page.NextCursor] = struct{}{}
-		cursor = page.NextCursor
 	}
 }
 

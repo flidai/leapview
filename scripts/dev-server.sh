@@ -5,7 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$ROOT/.tmp"
 PID_FILE="$TMP_DIR/dev-server.pid"
 PORT_FILE="$TMP_DIR/dev-server.port"
+PREFERRED_PORT_FILE="$TMP_DIR/dev-server.preferred-port"
 LOG_FILE="$TMP_DIR/dev-server.log"
+AUTH_MODE_FILE="$TMP_DIR/dev-server.auth-mode"
+CREDENTIAL_FILE="$TMP_DIR/dev-auth/credentials.json"
 PORT_START="${LEAPVIEW_DEV_PORT_START:-8100}"
 PORT_COUNT="${LEAPVIEW_DEV_PORT_COUNT:-100}"
 POSTGRES_ENV_FILE="${LEAPVIEW_POSTGRES_DEV_ENV_FILE:-$TMP_DIR/postgres-dev.env}"
@@ -27,8 +30,33 @@ load_postgres_dev_env() {
   done < "$POSTGRES_ENV_FILE"
 }
 
+auth_mode() {
+  if [[ "${LEAPVIEW_DEV_AUTH_BYPASS:-false}" == "true" ]]; then
+    echo bypass
+  else
+    echo local
+  fi
+}
+
+prepare_dev_auth() {
+  [[ "$(auth_mode)" == "local" ]] || return 0
+  local credential_args=(--out "$CREDENTIAL_FILE")
+  if [[ "${LEAPVIEW_DEV_ROTATE_PUBLISHER:-}" == "1" ]]; then
+    credential_args+=(--rotate-publisher)
+  fi
+  if [[ "${LEAPVIEW_DEV_RESET_LOGIN:-}" == "1" ]]; then
+    credential_args+=(--reset-login)
+  fi
+  go run ./internal/app/tools/devcredentials "${credential_args[@]}" || return 1
+  local token bootstrap_token
+  token="$(jq -er '.publisherToken | strings | select(startswith("lv_pat_"))' "$CREDENTIAL_FILE")" || return 1
+  bootstrap_token="$(jq -er '.bootstrapToken | strings | select(startswith("lv_pat_"))' "$CREDENTIAL_FILE")" || return 1
+  export LEAPVIEW_DEV_API_TOKEN="$token"
+  export LEAPVIEW_DEV_BOOTSTRAP_TOKEN="$bootstrap_token"
+}
+
 usage() {
-	echo "Usage: $0 start [source-root [connection data-root]]|once [source-root [connection data-root]]|publish [source-root [connection data-root]]|stop|status|logs"
+	echo "Usage: $0 start [source-root [connection data-root]]|once [source-root [connection data-root]]|publish [source-root [connection data-root]]|auth-smoke|credentials|stop|status|logs"
 }
 
 is_alive() {
@@ -116,13 +144,19 @@ worktree_port() {
     return 0
   fi
 
-  if [[ -f "$PORT_FILE" ]]; then
+  if [[ -f "$PREFERRED_PORT_FILE" || -f "$PORT_FILE" ]]; then
     local saved
-    saved="$(cat "$PORT_FILE" 2>/dev/null || true)"
-    if [[ "$saved" =~ ^[0-9]+$ ]]; then
-      echo "$saved"
-      return 0
+    if [[ -f "$PREFERRED_PORT_FILE" ]]; then
+      saved="$(cat "$PREFERRED_PORT_FILE" 2>/dev/null || true)"
+    else
+      saved="$(cat "$PORT_FILE" 2>/dev/null || true)"
     fi
+    if [[ ! "$saved" =~ ^[0-9]+$ ]] || (( saved < 1 || saved > 65535 )); then
+      echo "Invalid saved development port; choose an explicit PORT to replace it" >&2
+      return 1
+    fi
+    echo "$saved"
+    return 0
   fi
 
   local checksum
@@ -170,79 +204,16 @@ running_server_pid() {
 
 ensure_port() {
   local candidate="$1"
-
-  if [[ -n "${PORT:-}" ]]; then
-    if [[ ! "$candidate" =~ ^[0-9]+$ ]] || (( candidate < 1 || candidate > 65535 )); then
-      echo "Explicit PORT must be an integer between 1 and 65535 (got ${PORT@Q})" >&2
-      exit 1
-    fi
-
-    local pids
-    pids="$(port_pids "$candidate")"
-    if [[ -z "$pids" ]]; then
-      echo "$candidate"
-      return 0
-    fi
-
-    local stopped=false
-    local blocked=false
-    while read -r pid; do
-      [[ -z "$pid" ]] && continue
-      if same_worktree_pid "$pid"; then
-        stop_pid "$pid" "LeapView dev server on port $candidate"
-        stopped=true
-      else
-        blocked=true
-      fi
-    done <<< "$pids"
-
-    if [[ "$stopped" == true && "$blocked" == false ]] && port_is_free "$candidate"; then
-      echo "$candidate"
-      return 0
-    fi
-
-    echo "Explicit PORT $candidate is already in use; choose a free port" >&2
-    exit 1
+  if [[ ! "$candidate" =~ ^[0-9]+$ ]] || (( candidate < 1 || candidate > 65535 )); then
+    echo "Development PORT must be an integer between 1 and 65535 (got ${candidate@Q})" >&2
+    return 1
   fi
-
-  local end=$((PORT_START + PORT_COUNT - 1))
-  local offset=0
-
-  while (( offset < PORT_COUNT )); do
-    local port=$((candidate + offset))
-    if (( port > end )); then
-      port=$((PORT_START + port - end - 1))
-    fi
-
-    local pids
-    pids="$(port_pids "$port")"
-    if [[ -z "$pids" ]]; then
-      echo "$port"
-      return 0
-    fi
-
-    local stopped=false
-    local blocked=false
-    while read -r pid; do
-      [[ -z "$pid" ]] && continue
-      if same_worktree_pid "$pid"; then
-        stop_pid "$pid" "LeapView dev server on port $port"
-        stopped=true
-      else
-        blocked=true
-      fi
-    done <<< "$pids"
-
-    if [[ "$stopped" == true && "$blocked" == false ]] && port_is_free "$port"; then
-      echo "$port"
-      return 0
-    fi
-
-    offset=$((offset + 1))
-  done
-
-  echo "No free port found in ${PORT_START}-$end" >&2
-  exit 1
+  if port_is_free "$candidate"; then
+    echo "$candidate"
+    return 0
+  fi
+  echo "Development port $candidate is occupied; stop its owner or set PORT to a free port to pin a new URL" >&2
+  return 1
 }
 
 runner_name() {
@@ -453,6 +424,69 @@ bootstrap_local_physical_pool() {
   export LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST="$compatibility_digest"
 }
 
+persist_development_claim_publisher() {
+  local bootstrap_output="$1"
+  local updated="${CREDENTIAL_FILE}.tmp.$$"
+  umask 077
+  if ! printf '%s\n' "$bootstrap_output" | jq -s -e '
+    if length == 2 and
+       (.[1].projectUid | type == "string" and length > 0) and
+       (.[1].claimCredentialId | type == "string" and length > 0) and
+       (.[1].publisherToken | type == "string" and startswith("lv_pat_")) and
+       (.[1].publisherTokenExpiresAt | type == "string" and length > 0)
+    then .[0] + {
+      publisherToken: .[1].publisherToken,
+      publisherTokenExpiresAt: .[1].publisherTokenExpiresAt,
+      claimedProjectUid: .[1].projectUid,
+      claimCredentialId: .[1].claimCredentialId,
+      claimAcknowledged: false
+    }
+    else error("incomplete development Project-claim publisher handoff") end
+  ' "$CREDENTIAL_FILE" - >"$updated"; then
+    rm -f -- "$updated"
+    return 1
+  fi
+  chmod 600 "$updated"
+  mv -- "$updated" "$CREDENTIAL_FILE"
+}
+
+acknowledge_development_claim_publisher() {
+  local target="$1"
+  local project_id claim_id publisher_token updated
+  project_id="$(jq -er '.claimedProjectUid | strings | select(length > 0)' "$CREDENTIAL_FILE")" || return 1
+  claim_id="$(jq -er '.claimCredentialId | strings | select(length > 0)' "$CREDENTIAL_FILE")" || return 1
+  publisher_token="$(jq -er '.publisherToken | strings | select(startswith("lv_pat_"))' "$CREDENTIAL_FILE")" || return 1
+  go run ./cmd/leapview acknowledge-project-claim-publisher "$target" "$project_id" \
+    --claim-credential-id "$claim_id" --token "$publisher_token" || return 1
+  updated="${CREDENTIAL_FILE}.tmp.$$"
+  umask 077
+  if ! jq -e '.claimAcknowledged = true' "$CREDENTIAL_FILE" >"$updated"; then
+    rm -f -- "$updated"
+    return 1
+  fi
+  chmod 600 "$updated"
+  mv -- "$updated" "$CREDENTIAL_FILE"
+}
+
+active_project_ready() {
+  local port="$1"
+  curl -fsS "http://localhost:${port}/readyz" 2>/dev/null | jq -e '.checks.runtime == "ok"' >/dev/null 2>&1
+}
+
+wait_active_project() {
+  local port="$1"
+  local attempts=600
+  local interval=0.5
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if active_project_ready "$port"; then
+      return 0
+    fi
+    sleep "$interval"
+  done
+  echo "Published Project did not become active on http://localhost:${port}" >&2
+  return 1
+}
+
 publish_project() {
 	local port="$1"
 	local source_root="${2:-${LEAPVIEW_DEV_SOURCE_ROOT:-dashboards}}"
@@ -466,18 +500,33 @@ publish_project() {
   fi
 	# Issuance belongs to the CLI's durable local state, not to source files or
 	# the target. Bootstrap must succeed before data staging or source planning.
-	local bootstrap_output
-	local bootstrap_args=(bootstrap-project "http://localhost:${port}" --token "$token" --format json)
-	if [[ -n "$project_id" ]]; then
-		bootstrap_args+=(--project-uid "$project_id")
+	local claimed_project_id bootstrap_output
+	claimed_project_id="$(jq -r '.claimedProjectUid // empty' "$CREDENTIAL_FILE")" || return 1
+	if [[ -n "$claimed_project_id" ]]; then
+		if [[ -n "$project_id" && "$project_id" != "$claimed_project_id" ]]; then
+			echo "Development Project selector conflicts with the acknowledged Project claim" >&2
+			return 1
+		fi
+		project_id="$claimed_project_id"
+	else
+		local bootstrap_args=(bootstrap-project "http://localhost:${port}" --token "${LEAPVIEW_DEV_BOOTSTRAP_TOKEN:-$token}" --format json)
+		if [[ -n "$project_id" ]]; then
+			bootstrap_args+=(--project-uid "$project_id")
+		fi
+		bootstrap_output="$(go run ./cmd/leapview "${bootstrap_args[@]}")" || return 1
+		persist_development_claim_publisher "$bootstrap_output" || return 1
+		project_id="$(jq -er '.claimedProjectUid | strings | select(length > 0)' "$CREDENTIAL_FILE")" || return 1
 	fi
-	bootstrap_output="$(go run ./cmd/leapview "${bootstrap_args[@]}")" || return 1
-	project_id="$(jq -er '.projectUid | strings | select(length > 0)' <<<"$bootstrap_output")" || return 1
+	if [[ "$(jq -r '.claimAcknowledged // false' "$CREDENTIAL_FILE")" != "true" ]]; then
+		acknowledge_development_claim_publisher "http://localhost:${port}" || return 1
+	fi
+	token="$(jq -er '.publisherToken | strings | select(startswith("lv_pat_"))' "$CREDENTIAL_FILE")" || return 1
+	export LEAPVIEW_DEV_API_TOKEN="$token"
 	if [[ "$source_root" == "dashboards" ]]; then
 		connection="${connection:-olist}"
 		from="${from:-.data/olist}"
 	fi
-	if [[ -n "$connection" ]]; then
+	if [[ -n "$connection" && "${LEAPVIEW_DEV_SKIP_DATA_SYNC:-}" != "1" ]] && ! active_project_ready "$port"; then
 		[[ -n "$from" ]] || {
 			echo "source-root is required when a managed data connection is provided." >&2
 			return 1
@@ -493,7 +542,11 @@ publish_project() {
     }
 	fi
 	local dev_output candidate_id
-	dev_output="$(go run ./cmd/leapview dev --once --no-browser --source-root "$source_root" --target "http://localhost:${port}" --project-id "$project_id" --token "$token")" || return 1
+	local dev_args=(dev --once --no-browser --source-root "$source_root" --target "http://localhost:${port}" --project-id "$project_id" --token "$token")
+	if [[ -n "${LEAPVIEW_DEV_CANDIDATE_KEY:-}" ]]; then
+		dev_args+=(--candidate-key "$LEAPVIEW_DEV_CANDIDATE_KEY")
+	fi
+	dev_output="$(go run ./cmd/leapview "${dev_args[@]}")" || return 1
 	printf '%s\n' "$dev_output"
 	candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"
 	[[ "$candidate_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
@@ -501,10 +554,16 @@ publish_project() {
 		return 1
 	}
 	go run ./cmd/leapview publish "$candidate_id" --token "$token" || return 1
-	mcp_smoke "$port"
+	wait_active_project "$port" || return 1
+	if [[ "$(auth_mode)" == "bypass" ]]; then
+		mcp_smoke "$port"
+	else
+		echo "MCP OAuth smoke check is separate from browser and publisher credential checks"
+	fi
 }
 
 publish_running() {
+  load_postgres_dev_env
 	local source_root="${1:-${LEAPVIEW_DEV_SOURCE_ROOT:-dashboards}}"
 	local connection="${2:-}"
 	local from="${3:-}"
@@ -520,9 +579,22 @@ publish_running() {
   curl -fsS "http://localhost:${port}/healthz" >/dev/null || {
 		echo "Dev server is not running on http://localhost:${port}. Run task dev first." >&2
 		return 1
-	}
-	cd "$ROOT"
-	publish_project "$port" "$source_root" "$connection" "$from"
+  }
+  if [[ "$(cat "$AUTH_MODE_FILE" 2>/dev/null || true)" != "$(auth_mode)" ]]; then
+    echo "The running server uses a different development authentication mode; restart it with task dev or task dev:bypass." >&2
+    return 1
+  fi
+  cd "$ROOT"
+  prepare_dev_auth
+  if [[ "$(auth_mode)" == "local" && -z "${LEAPVIEW_DEV_CANDIDATE_KEY:-}" ]]; then
+    if command -v uuidgen >/dev/null 2>&1; then
+      LEAPVIEW_DEV_CANDIDATE_KEY="dev-release-$(uuidgen)"
+    else
+      LEAPVIEW_DEV_CANDIDATE_KEY="dev-release-$(date +%s)-$$-$RANDOM"
+    fi
+    export LEAPVIEW_DEV_CANDIDATE_KEY
+  fi
+  publish_project "$port" "$source_root" "$connection" "$from"
 }
 
 attach_server() {
@@ -560,16 +632,26 @@ start() {
     local existing_pid
     existing_pid="$(running_server_pid || true)"
     if [[ -n "$existing_pid" ]]; then
+      if [[ "$(cat "$AUTH_MODE_FILE" 2>/dev/null || true)" != "$(auth_mode)" || ( -n "${PORT:-}" && "${PORT:-}" != "$(recorded_port)" ) ]]; then
+        echo "Development authentication mode or pinned port changed; restarting the worktree server."
+        stop_recorded
+        existing_pid=""
+      fi
+    fi
+    if [[ -n "$existing_pid" ]]; then
       local existing_port
       existing_port="$(recorded_port)"
       echo "LeapView dev server already running"
       echo "PID: $existing_pid"
       echo "URL: http://localhost:$existing_port"
       echo "Logs: $LOG_FILE"
-      echo "Publishing project candidate to existing target..."
+		if [[ "${LEAPVIEW_DEV_SKIP_PUBLISH:-}" != "1" ]]; then
+			echo "Publishing project candidate to existing target..."
+		fi
+			prepare_dev_auth
 			publish_project "$existing_port" "$source_root" "$connection" "$from"
       if [[ "${LEAPVIEW_DEV_ONCE:-}" == "1" ]]; then
-        echo "One-shot candidate publication completed on the existing target"
+        echo "One-shot development command completed on the existing target"
         return 0
       fi
       echo "Attached to LeapView logs. Press Ctrl-C to stop."
@@ -609,6 +691,13 @@ start() {
   export PORT="$port"
   export LEAPVIEW_ADDR="127.0.0.1:$port"
   export LEAPVIEW_DEV_WORKTREE="$ROOT"
+  if [[ "$(auth_mode)" == "local" ]]; then
+    export LEAPVIEW_DEV_BROWSER_SESSION_TTL="${LEAPVIEW_DEV_BROWSER_SESSION_TTL:-720h}"
+    export LEAPVIEW_DEV_QUICK_LOGIN="${LEAPVIEW_DEV_QUICK_LOGIN:-true}"
+    local cookie_namespace
+    cookie_namespace="$(printf '%s' "$ROOT" | cksum | awk '{print $1}')"
+    export LEAPVIEW_DEV_COOKIE_NAMESPACE="${LEAPVIEW_DEV_COOKIE_NAMESPACE:-$cookie_namespace}"
+  fi
   # `task dev` is the source-contributor workflow. Released local authoring
   # runs the same development policy with this diagnostic surface disabled.
   export LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS=true
@@ -658,11 +747,17 @@ start() {
     fi
   fi
 
-  # Publish the readiness contract only after the final server (with its
-  # admitted physical-pool identity) has passed health checks.
-  echo "$port" > "$PORT_FILE"
-  echo "$pid" > "$PID_FILE"
-
+	if ! prepare_dev_auth; then
+		stop_pid "$pid" "LeapView dev server (credential preparation failed)"
+		exit 1
+	fi
+	# Publish the readiness contract only after the final server and its
+	# credentials are ready. QA may start publishing as soon as it sees the
+	# port file, so exposing it earlier races credential provisioning.
+	echo "$port" > "$PORT_FILE"
+	echo "$pid" > "$PID_FILE"
+	echo "$port" > "$PREFERRED_PORT_FILE"
+	auth_mode > "$AUTH_MODE_FILE"
 	if ! publish_project "$port" "$source_root" "$connection" "$from"; then
     stop_pid "$pid" "LeapView dev server"
     exit 1
@@ -700,6 +795,7 @@ status() {
     echo "LeapView dev server running"
     echo "PID: $pid"
     [[ -n "$port" ]] && echo "URL: http://localhost:$port"
+    [[ -f "$AUTH_MODE_FILE" ]] && echo "Authentication: $(<"$AUTH_MODE_FILE")"
     echo "Command: $(pid_command "$pid")"
     echo "Logs: $LOG_FILE"
     return 0
@@ -709,6 +805,7 @@ status() {
     echo "LeapView dev server running"
     echo "PID: $port_pid"
     [[ -n "$port" ]] && echo "URL: http://localhost:$port"
+    [[ -f "$AUTH_MODE_FILE" ]] && echo "Authentication: $(<"$AUTH_MODE_FILE")"
     echo "Command: $(pid_command "$port_pid")"
     echo "Logs: $LOG_FILE"
     return 0
@@ -724,12 +821,34 @@ logs() {
   tail -n "${LEAPVIEW_DEV_LOG_LINES:-120}" -f "$LOG_FILE"
 }
 
+show_credentials() {
+  if [[ ! -f "$CREDENTIAL_FILE" ]]; then
+    echo "No credentialed development login exists yet. Run task dev first." >&2
+    return 1
+  fi
+  jq -er '"Email: \(.email)\nPassword: \(.password)"' "$CREDENTIAL_FILE"
+}
+
+auth_smoke() {
+  load_postgres_dev_env
+  local port
+  port="$(recorded_port)"
+  [[ -n "$port" && "$(cat "$AUTH_MODE_FILE" 2>/dev/null || true)" == "local" ]] || {
+    echo "A credentialed development server is required. Run task dev first." >&2
+    return 1
+  }
+  cd "$ROOT"
+  go run ./internal/app/tools/devauthsmoke --url "http://localhost:$port" --credentials "$CREDENTIAL_FILE"
+}
+
 action="${1:-}"
 shift || true
 case "$action" in
   start) start "$@" ;;
   once) LEAPVIEW_DEV_ONCE=1 start "$@" ;;
   publish) publish_running "$@" ;;
+  credentials) show_credentials ;;
+  auth-smoke) auth_smoke ;;
   stop) stop ;;
   status) status ;;
   logs) logs ;;

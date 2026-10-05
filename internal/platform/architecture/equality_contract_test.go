@@ -28,7 +28,6 @@ var fai907EqualityInventory = map[string][]string{
 	"internal/analytics/model/ossie/adapter.go":            {"sameFields"},
 	"internal/analytics/duckdb/read_planner.go":            {"sameStringSet"},
 	"internal/analytics/ducklake/postgres/repository.go":   {"sameMarkerQuarantine"},
-	"internal/project/catalog/catalog.go":                  {"sameKinds"},
 	"internal/app/securitypolicy/policy.go":                {"compareStrings"},
 	"internal/app/tools/securitydependencies/evidence.go":  {"equalStringSlices"},
 	"internal/app/tools/securitydependencies/main_test.go": {"equalStrings"},

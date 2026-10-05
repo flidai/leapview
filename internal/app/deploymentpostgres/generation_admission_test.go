@@ -202,6 +202,52 @@ func TestNormalizeGenerationAdmissionAcceptsExactEvidence(t *testing.T) {
 	}
 }
 
+func TestValidateGenerationAuthorizationSnapshotPreservesTypedAuthority(t *testing.T) {
+	input := validGenerationAdmissionInput(t)
+	projectID := input.Bundle.ProjectID
+	binding, err := access.NewTypedRoleBinding(
+		"binding-admission-viewer",
+		"Admission viewer",
+		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: admissionPolicySubjectID},
+		access.PermissionRoleViewer,
+		projectID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := access.AuthorizationPolicy{
+		Scope: access.AuthorizationPolicyScope{
+			TargetID: input.Generation.TargetID, ProjectID: projectID.String(), Environment: string(input.Bundle.Environment),
+		},
+		RoleBindings: []access.RoleBinding{binding},
+	}
+	manifestPolicy, err := projectmanifest.AccessPolicyFromAuthorizationPolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(manifestPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Bundle.AccessPolicyJSON = string(encoded)
+	snapshot, err := projectmanifest.CompileAuthorizationSnapshot(
+		projectgraph.ServingIdentity{ProjectID: projectID, Environment: string(input.Bundle.Environment), GenerationID: release.CandidatePolicyGenerationID},
+		input.Graph,
+		manifestPolicy,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Generation.SecurityDomainFingerprint, err = snapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateGenerationAuthorizationSnapshot(policy, input); err != nil {
+		t.Fatalf("validate typed generation authorization snapshot: %v", err)
+	}
+}
+
 func TestNormalizeGenerationAdmissionRejectsResourceInventoryAuthorityDrift(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -453,12 +499,10 @@ func seedGenerationAdmissionWithPlan(t *testing.T, repo *deploymentnative.Reposi
 	ctx := t.Context()
 	leaseExpiresAt := timeNowPlusHour().Truncate(time.Microsecond)
 	const sessionIdentity = "duckdb-session-admission"
-	targetCreated := false
 	if _, err := repo.Target(ctx, input.Generation.TargetID); errors.Is(err, deploymentnative.ErrNotFound) {
 		if _, err := repo.CreateTarget(ctx, deploymentnative.TargetInput{TargetID: input.Generation.TargetID, ProjectID: input.Bundle.ProjectID.String(), Environment: string(input.Bundle.Environment)}); err != nil {
 			t.Fatal(err)
 		}
-		targetCreated = true
 	} else if err != nil {
 		t.Fatal(err)
 	}
@@ -472,9 +516,20 @@ func seedGenerationAdmissionWithPlan(t *testing.T, repo *deploymentnative.Reposi
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	candidateRevision := int64(2)
-	if targetCreated {
-		candidateRevision = 1
+	revisionTx, err := repo.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var candidateRevision int64
+	if err := revisionTx.QueryRow(ctx, `SELECT next_candidate_revision FROM delivery.delivery_target_revision WHERE target_id=$1`, input.Generation.TargetID).Scan(&candidateRevision); err != nil {
+		_ = revisionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := revisionTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if candidateRevision <= 0 {
+		t.Fatalf("next candidate revision = %d", candidateRevision)
 	}
 	if _, err := repo.CreateCandidate(ctx, deploymentnative.CandidateInput{CandidateID: input.Generation.CandidateID, TargetID: input.Generation.TargetID, PlanID: input.Generation.PlanID, CandidateRevision: candidateRevision, ArtifactDigest: input.Generation.ServingArtifactDigest}); err != nil {
 		t.Fatal(err)

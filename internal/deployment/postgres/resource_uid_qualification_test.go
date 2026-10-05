@@ -63,8 +63,8 @@ func TestPostgresResourceUIDMultiSourceProjectClosure(t *testing.T) {
 		GenerationID: first.generationID, CompiledGraphDigest: graph.Digest(),
 	}}
 	repository := NewWithOptions(db, Options{
-		ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
-		Lineage:         lineage,
+		ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
+		Lineage: lineage,
 	})
 
 	var registryRows int
@@ -245,8 +245,8 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 		GenerationID: first.generationID, CompiledGraphDigest: first.graph.Digest(),
 	}}
 	repository := NewWithOptions(db, Options{
-		ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
-		Lineage:         lineage,
+		ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
+		Lineage: lineage,
 	})
 
 	t.Run("admission stages inventory without allocating UIDs", func(t *testing.T) {
@@ -270,8 +270,8 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 
 	t.Run("failed activation rolls back binder writes", func(t *testing.T) {
 		failing := NewWithOptions(db, Options{
-			ActivationAudit: failingResourceUIDActivationAudit{err: errors.New("qualification audit interruption")},
-			Lineage:         lineage,
+			ActivationAdmission: allowTestActivation, ActivationAudit: failingResourceUIDActivationAudit{err: errors.New("qualification audit interruption")},
+			Lineage: lineage,
 		})
 		if _, err := failing.Activate(t.Context(), first.activation); err == nil {
 			t.Fatal("failed activation unexpectedly succeeded")
@@ -740,8 +740,8 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 			GenerationID: isolatedFirst.generationID, CompiledGraphDigest: isolatedFirst.graph.Digest(),
 		}}
 		isolatedRepository := NewWithOptions(isolatedDB, Options{
-			ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
-			Lineage:         isolatedLineage,
+			ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
+			Lineage: isolatedLineage,
 		})
 		if _, err := isolatedRepository.Activate(t.Context(), isolatedFirst.activation); err != nil {
 			t.Fatalf("activate isolated instance: %v", err)

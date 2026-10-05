@@ -17,6 +17,11 @@ leapview login https://dash.example.com \
 
 LeapView discovers the target's canonical origin, immutable instance identity, and environment; validates the explicit target-bound Project identity; opens the target's browser approval screen; and requests only `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, and `RESOURCE_PUBLISH` for that Project. It does not request connection-secret, approval, or production-activation access. The credential lasts 15 minutes and rotates through a revocable CLI session.
 
+Those generic capabilities describe the current authoring-session compatibility
+profile, not the typed personal-token contract. Personal API tokens use explicit
+`leapview.permissions/v1` action-target pairs; omitted permissions are rejected,
+and an explicit empty list creates an authentication-only credential.
+
 Access and refresh credentials are stored only in the operating-system credential store. The versioned CLI profile contains the canonical origin, instance ID, environment, project ID, and a credential-store account reference. It never contains a token. LeapView CLI and LeapView Desktop use separate credential namespaces and cannot reuse each other's sessions.
 
 Use the same target URL or a stable profile name supplied with `--name`:

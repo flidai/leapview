@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agentapp "github.com/flidai/leapview/internal/agent"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -25,6 +26,18 @@ func TestNewModelUsesBoundedDefaultHTTPClient(t *testing.T) {
 	}
 	if model.client.Timeout != DefaultHTTPTimeout {
 		t.Fatalf("default HTTP timeout = %s, want %s", model.client.Timeout, DefaultHTTPTimeout)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://api.example.com/redirect", nil)
+	if model.client.CheckRedirect == nil || !errors.Is(model.client.CheckRedirect(request, []*http.Request{request}), http.ErrUseLastResponse) {
+		t.Fatal("default model client must preserve the no-redirect policy")
+	}
+}
+
+func TestDefaultModelClientRejectsPrivateDestination(t *testing.T) {
+	model := NewModel(agentapp.Config{APIKey: "test-key", BaseURL: "http://127.0.0.1:1", Model: "test-model"}, nil)
+	_, err := model.Complete(t.Context(), agentcore.ModelRequest{}, nil)
+	if !errors.Is(err, outbound.ErrDestinationDenied) {
+		t.Fatalf("Complete() error = %v, want outbound destination denial", err)
 	}
 }
 
@@ -481,4 +494,47 @@ type modelStreamFunc func(context.Context, string) error
 
 func (f modelStreamFunc) Delta(ctx context.Context, text string) error {
 	return f(ctx, text)
+}
+
+func TestExplicitResponsesModeOmitsUnsetReasoning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Errorf("explicit mode routed to %s", r.URL.Path)
+		}
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if _, ok := body["reasoning"]; ok {
+			t.Error("unset reasoning was sent to provider")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"r","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	defer server.Close()
+	model := NewModel(agentapp.Config{APIKey: "test", Model: "custom-model-alias", APIMode: "responses", BaseURL: server.URL}, server.Client())
+	if _, err := model.Complete(t.Context(), agentcore.ModelRequest{}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderStateCannotCrossProviderOrCredential(t *testing.T) {
+	config := agentapp.Config{APIKey: "key-a", BaseURL: "https://provider-a.example", Model: "model-a", APIMode: "responses"}
+	model := NewModel(config, nil)
+	scoped := model.scopeResponse(agentcore.ModelResponse{ProviderState: json.RawMessage(`[{"type":"reasoning","encrypted_content":"opaque"}]`)})
+	messages := []agentcore.Message{{Role: agentcore.RoleAssistant, Content: "answer", ProviderState: scoped.ProviderState}}
+	if len(model.compatibleMessages(messages)[0].ProviderState) == 0 {
+		t.Fatal("same provider lost its reasoning state")
+	}
+	for _, change := range []func(*agentapp.Config){func(c *agentapp.Config) { c.Model = "model-b" }, func(c *agentapp.Config) { c.BaseURL = "https://provider-b.example" }, func(c *agentapp.Config) { c.APIKey = "key-b" }} {
+		other := config
+		change(&other)
+		got := NewModel(other, nil).compatibleMessages(messages)[0]
+		if len(got.ProviderState) != 0 || got.Content != "answer" {
+			t.Fatal("provider transition did not retain only portable content")
+		}
+	}
+	if len(messages[0].ProviderState) == 0 {
+		t.Fatal("filter mutated saved history")
+	}
 }

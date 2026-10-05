@@ -83,4 +83,5 @@ visuals:
       limit: 8
     presentation:
       type: proportional
+      labelPosition: inside
 ```

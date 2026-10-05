@@ -88,6 +88,8 @@ func (service *fakeAuthoringOAuth) RevokeAccessToken(_ context.Context, token st
 }
 
 func fakeAuthoringTokenSet() access.AuthoringTokenSet {
+	projectID := projectgraph.ResourceID("analytics")
+	permissions, _ := access.ProjectPermissionPairsForActions(projectID, []access.Action{access.ActionDashboardPublish})
 	return access.AuthoringTokenSet{
 		AccessToken:  "access-secret",
 		RefreshToken: "refresh-secret",
@@ -98,9 +100,7 @@ func fakeAuthoringTokenSet() access.AuthoringTokenSet {
 			Kind:     access.AuthoringSessionHumanCLI,
 			ClientID: access.AuthoringCLIClientID,
 			Scope: access.AuthoringScope{
-				TargetID:     "lvinst_prod",
-				ProjectID:    "analytics",
-				Capabilities: []access.Capability{access.CapabilityResourcePublish},
+				TargetID: "lvinst_prod", ProjectID: projectID, Permissions: permissions,
 			},
 		},
 	}
@@ -112,7 +112,7 @@ func TestAuthoringDeviceAuthorizationUsesRFC8628WireFormat(t *testing.T) {
 	form := url.Values{
 		"client_id":  {access.AuthoringCLIClientID},
 		"project_id": {"analytics"},
-		"scope":      {string(access.CapabilityResourcePublish)},
+		"scope":      {string(access.ActionDashboardPublish)},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/oauth/device/code", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -140,8 +140,8 @@ func TestAuthoringDeviceAuthorizationUsesRFC8628WireFormat(t *testing.T) {
 	}
 	if service.beganScope.TargetID != "lvinst_prod" ||
 		service.beganScope.ProjectID != "analytics" ||
-		len(service.beganScope.Capabilities) != 1 ||
-		service.beganScope.Capabilities[0] != access.CapabilityResourcePublish {
+		len(service.beganScope.Permissions) != 1 ||
+		service.beganScope.Permissions[0].Action != access.ActionDashboardPublish {
 		t.Fatalf("scope=%+v", service.beganScope)
 	}
 }
@@ -154,7 +154,7 @@ func TestAuthoringDeviceAuthorizationBindsToActiveProjectBeforePersistence(t *te
 			form := url.Values{
 				"client_id":  {access.AuthoringCLIClientID},
 				"project_id": {projectID},
-				"scope":      {string(access.CapabilityResourcePublish)},
+				"scope":      {string(access.ActionDashboardPublish)},
 			}
 			request := httptest.NewRequest(http.MethodPost, "/oauth/device/code", strings.NewReader(form.Encode()))
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -201,7 +201,7 @@ func TestAuthoringDeviceAuthorizationUsesDurableResolverForFreshAndBoundTargets(
 			form := url.Values{
 				"client_id":  {access.AuthoringCLIClientID},
 				"project_id": {"analytics"},
-				"scope":      {string(access.CapabilityResourcePublish)},
+				"scope":      {string(access.ActionDashboardPublish)},
 			}
 			request := httptest.NewRequest(http.MethodPost, "/oauth/device/code", strings.NewReader(form.Encode()))
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -398,7 +398,7 @@ func TestAuthoringOAuthClientCredentialsIssuesExactScopeWorkloadToken(t *testing
 		"client_id":        {"sp-ci"},
 		"client_secret":    {"service-secret"},
 		"project_id":       {"analytics"},
-		"scope":            {"RESOURCE_PUBLISH RESOURCE_USE"},
+		"scope":            {"dashboard.publish connection.use"},
 		"lifetime_seconds": {"600"},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
@@ -439,7 +439,7 @@ func TestAuthoringOAuthWorkloadBindsToActiveProjectBeforePersistence(t *testing.
 				"client_id":        {"sp-ci"},
 				"client_secret":    {"service-secret"},
 				"project_id":       {projectID},
-				"scope":            {"RESOURCE_PUBLISH"},
+				"scope":            {"dashboard.publish"},
 				"lifetime_seconds": {"600"},
 			}
 			request := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))

@@ -30,10 +30,11 @@ its local physical pool before publishing the sample candidate:
 
 ```sh
 task bootstrap
+LEAPVIEW_DEV_ONCE=1 task dev:bypass # one-time fixture staging on a new database
 task dev
 ```
 
-The server writes worktree-local process state and logs beneath `.tmp/`. Open the URL printed by `task dev`, open the project resource browser, and choose **Executive Sales**. Confirm that the KPI cards, revenue trend, category chart, filters, and orders table load before editing files.
+The one-time fixture stage stops before the credentialed server starts; skip it if this worktree already has an active bundled dataset. The server writes worktree-local process state and logs beneath `.tmp/`. Open the URL printed by `task dev`, choose **Continue as Local Developer**, open the project resource browser, and choose **Executive Sales**. The shortcut creates an ordinary durable browser session; use `task dev:credentials` only when explicitly testing password login. Confirm that the KPI cards, revenue trend, category chart, filters, and orders table load before editing files.
 
 ## Trace the resources
 

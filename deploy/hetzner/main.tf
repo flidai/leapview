@@ -86,8 +86,9 @@ resource "hcloud_server" "leapview" {
   }
 
   user_data = templatefile("${path.module}/../host/cloud-init.yaml.tftpl", {
-    bootstrap_b64 = base64encode(file("${path.module}/../host/bootstrap-linux.sh"))
-    config_b64    = base64encode(jsonencode(local.bootstrap_config))
-    image_b64     = base64encode("${var.leapview_image}\n")
+    bootstrap_b64          = base64encode(file("${path.module}/../host/bootstrap-linux.sh"))
+    revision019_compat_b64 = var.leapview_image == "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368" ? base64encode(file("${path.module}/../host/revision019-config-compat.py")) : ""
+    config_b64             = base64encode(jsonencode(local.bootstrap_config))
+    image_b64              = base64encode("${var.leapview_image}\n")
   })
 }

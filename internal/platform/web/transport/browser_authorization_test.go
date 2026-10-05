@@ -15,9 +15,14 @@ func TestWriteBrowserAuthorizationErrorRendersRouteAwareNavigationRecovery(t *te
 	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("response = %d %q", recorder.Code, recorder.Header().Get("Content-Type"))
 	}
-	for _, want := range []string{"LeapView", "data page", "Return to Insights", "No changes were made"} {
+	for _, want := range []string{"LeapView", "data page", "Open your profile", `href="/admin/profile"`, "No changes were made"} {
 		if !strings.Contains(recorder.Body.String(), want) {
 			t.Fatalf("body does not contain %q: %s", want, recorder.Body.String())
+		}
+	}
+	for _, want := range []string{`data-color-mode="auto"`, `data-light-theme="light"`, `data-dark-theme="dark"`, `src="/static/theme.js"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("themed authorization page does not contain %q: %s", want, recorder.Body.String())
 		}
 	}
 }

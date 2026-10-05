@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	nethttp "net/http"
-	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -57,6 +56,10 @@ func (h Handler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	dashboardID := chi.URLParam(r, "dashboard")
+	if err := h.authorizeDashboardRead(r, dashboardID); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	resolved, err := resolveDashboard(metrics, dashboardID)
 	if err != nil {
 		writeJSONError(w, fmt.Errorf("dashboard %q not found", dashboardID), nethttp.StatusNotFound)
@@ -71,6 +74,10 @@ func (h Handler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) GetDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -89,6 +96,10 @@ func (h Handler) GetDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) 
 }
 
 func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -152,6 +163,10 @@ func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request
 	if !metricsOK {
 		return
 	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -177,6 +192,10 @@ func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request
 func (h Handler) QueryDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.biMetrics(w, r)
 	if !ok {
+		return
+	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
 		return
 	}
 	var input api.DashboardPageQueryRequest
@@ -214,6 +233,10 @@ func (h Handler) QueryDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request
 func (h Handler) QueryDashboardVisualData(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.biMetrics(w, r)
 	if !ok {
+		return
+	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
 		return
 	}
 	var input api.DashboardVisualQueryRequest
@@ -386,6 +409,10 @@ func (h Handler) queryDashboardTabularVisual(w nethttp.ResponseWriter, r *nethtt
 func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.biMetrics(w, r)
 	if !ok {
+		return
+	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
 		return
 	}
 	var input api.DashboardPageQueryRequest
@@ -565,66 +592,6 @@ func requestQueryOperation(operation, objectType string) string {
 	default:
 		return operation
 	}
-}
-
-func dashboardQueryFilters(
-	definition dashboarddefinition.Definition,
-	pageID string,
-	rawState map[string]any,
-	rawSelections []map[string]any,
-	rawSpatialSelections []map[string]any,
-) (dashboard.Filters, error) {
-	filters := definition.DefaultFiltersForPage(pageID)
-	if len(rawState) > 0 {
-		var input struct {
-			Version  string                     `json:"version"`
-			Controls map[string]json.RawMessage `json:"controls"`
-		}
-		encoded, err := json.Marshal(rawState)
-		if err != nil {
-			return dashboard.Filters{}, fmt.Errorf("encode filterState: %w", err)
-		}
-		if err := json.Unmarshal(encoded, &input); err != nil {
-			return dashboard.Filters{}, fmt.Errorf("decode filterState: %w", err)
-		}
-		if input.Version != "typed_v1" {
-			return dashboard.Filters{}, fmt.Errorf("filterState version must be typed_v1")
-		}
-		machine := dashboardfilter.NewMachine(dashboardfilter.ApplicationImmediate, definition.FilterBindingSpecs())
-		bindings := definition.CompiledFilterBindings()
-		keys := make([]string, 0, len(input.Controls))
-		for key := range input.Controls {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			binding, ok := bindings[key]
-			if !ok || binding.Scope == dashboardfilter.ScopePage && binding.PageID != pageID {
-				return dashboard.Filters{}, fmt.Errorf("unknown filter binding %q for page %q", key, pageID)
-			}
-			var expression dashboardfilter.Expression
-			if err := json.Unmarshal(input.Controls[key], &expression); err != nil {
-				return dashboard.Filters{}, fmt.Errorf("filter binding %q: %w", key, err)
-			}
-			state := machine.State()
-			if _, err := machine.Execute(dashboardfilter.Command{
-				Kind: dashboardfilter.CommandMutate, BaseRevision: state.Revision,
-				ClientMutationID: "api:" + key, BindingKey: key,
-				Operation: dashboardfilter.MutationSet, Expression: &expression,
-			}); err != nil {
-				return dashboard.Filters{}, fmt.Errorf("filter binding %q: %w", key, err)
-			}
-		}
-		state := machine.State()
-		filters.CompiledState = &state
-	}
-	if err := decodeDashboardSelectionState(rawSelections, &filters.Selections); err != nil {
-		return dashboard.Filters{}, fmt.Errorf("interactionSelections: %w", err)
-	}
-	if err := decodeDashboardSelectionState(rawSpatialSelections, &filters.SpatialSelections); err != nil {
-		return dashboard.Filters{}, fmt.Errorf("spatialSelections: %w", err)
-	}
-	return filters, nil
 }
 
 func decodeDashboardSelectionState[T any](raw []map[string]any, target *[]T) error {

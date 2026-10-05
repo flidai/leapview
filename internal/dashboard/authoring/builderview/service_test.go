@@ -30,6 +30,31 @@ type builderFixture struct {
 	revision   authoring.Revision
 }
 
+func TestVisualReferencesUseThePublicDocumentationSite(t *testing.T) {
+	for _, entry := range projectVisualCatalog() {
+		want := "https://leapview.dev/docs/visuals/" + string(entry.Type)
+		if entry.ReferenceHref != want {
+			t.Errorf("reference for %s = %q, want %q", entry.Type, entry.ReferenceHref, want)
+		}
+	}
+}
+
+func TestUnboundSingleMetricVisualsDoNotOccupyTheFieldWell(t *testing.T) {
+	pending := "pending_metric"
+	for _, query := range []document.DashboardQuery{
+		{Value: &document.HistogramDashboardQuery{Field: document.DashboardMetricSelection{String: &pending}}},
+		{Value: &document.DistributionDashboardQuery{Field: document.DashboardMetricSelection{String: &pending}}},
+	} {
+		slots, err := canonicalSlots(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(slots) != 0 {
+			t.Fatalf("unbound %T slots = %#v, want none", query.Value, slots)
+		}
+	}
+}
+
 func newBuilderFixture(t *testing.T) *builderFixture {
 	t.Helper()
 	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}
@@ -99,7 +124,7 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if !signal.Capabilities.CanArchive {
 		t.Fatalf("archive capability = %#v, want manage-authorized archive", signal.Capabilities)
 	}
-	if len(signal.VisualCatalog) != 26 || signal.VisualCatalog[0].Type != "line" || signal.VisualCatalog[0].ReferenceHref != "/docs/visuals/line" {
+	if len(signal.VisualCatalog) != 26 || signal.VisualCatalog[0].Type != "line" || signal.VisualCatalog[0].ReferenceHref != "https://leapview.dev/docs/visuals/line" {
 		t.Fatalf("visual catalog = %#v", signal.VisualCatalog)
 	}
 	if len(signal.Pages) != 1 || len(signal.Pages[0].Visuals) != 1 || len(signal.Pages[0].Visuals[0].FormatOptions) == 0 {

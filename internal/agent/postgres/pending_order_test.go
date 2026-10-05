@@ -111,3 +111,57 @@ func TestPendingUndoPreservesHistoryOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestPinThenUnpinRestoresHistoryOrder(t *testing.T) {
+	ctx := t.Context()
+	pool, repo := agentPostgresTestRepo(t, "pin_order")
+	owner := "owner"
+	for i := range 3 {
+		conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner, Title: fmt.Sprintf("Chat %d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stamp := fmt.Sprintf("2025-01-0%d 12:00:00", i+1)
+		if _, err := pool.Exec(ctx, `UPDATE agent.conversations SET updated_at = $1::text::timestamptz WHERE id = $2`, stamp, conversation.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := repo.ListConversations(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 3 {
+		t.Fatalf("history length = %d, want 3", len(before))
+	}
+	middle := before[1]
+	pinned, err := repo.SetConversationPinned(ctx, owner, middle.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pinned.Pinned || pinned.UpdatedAt != middle.UpdatedAt {
+		t.Fatalf("pin changed activity ordering fields: before=%#v after=%#v", middle, pinned)
+	}
+	pinnedHistory, err := repo.ListConversations(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinnedHistory[0].ID != middle.ID {
+		t.Fatalf("pinned chat was not first: %#v", pinnedHistory)
+	}
+	unpinned, err := repo.SetConversationPinned(ctx, owner, middle.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unpinned.Pinned || unpinned.UpdatedAt != middle.UpdatedAt {
+		t.Fatalf("unpin changed activity ordering fields: before=%#v after=%#v", middle, unpinned)
+	}
+	restored, err := repo.ListConversations(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.EqualFunc(before, restored, func(a, b agent.Conversation) bool {
+		return a.ID == b.ID && a.UpdatedAt == b.UpdatedAt && a.Pinned == b.Pinned
+	}) {
+		t.Fatalf("unpin did not restore history order: before=%#v after=%#v", before, restored)
+	}
+}

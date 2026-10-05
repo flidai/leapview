@@ -32,6 +32,7 @@ import (
 	manageds3 "github.com/flidai/leapview/internal/manageddata/storage/s3"
 	managedtus "github.com/flidai/leapview/internal/manageddata/storage/tus"
 	"github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -140,7 +141,7 @@ type Principal struct {
 // ConnectionAuthorizer is the module-owned authorization port. The HTTP
 // adapter receives a converted copy at construction time, keeping transport
 // types out of the module configuration contract.
-type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
+type ConnectionAuthorizer func(context.Context, string, string, string, access.Action) (bool, error)
 
 // PostgreSQLCleanupAuthority is the capability marker for the separately
 // authenticated managed-data maintenance facade. Production composition may
@@ -459,6 +460,18 @@ func (m *Module) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
 	}
 }
 
+// AuthorizeConnection evaluates an exact connection action through the
+// instance-bound authorizer installed by application composition. TUS
+// transport requests use this port after resolving their persisted upload
+// target, so they share the same workload-credential handling as the upload
+// session APIs.
+func (m *Module) AuthorizeConnection(ctx context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
+	if m == nil || m.authorizeConnection == nil {
+		return false, manageddatahttp.ErrUnavailable
+	}
+	return m.authorizeConnection(ctx, principalID, projectID, connectionID, action)
+}
+
 func newManagedDataStorage(ctx context.Context, cfg ProductConfig, recorders ...storage.ProviderVersionObservationRecorder) (managedDataStorage, error) {
 	root, err := filepath.Abs(strings.TrimSpace(cfg.Dir))
 	if err != nil || strings.TrimSpace(cfg.Dir) == "" {
@@ -596,10 +609,23 @@ func newS3BlobStoreWithObservation(ctx context.Context, cfg ProductConfig, prefi
 		)
 		loadOptions = append(loadOptions, awsconfig.WithCredentialsProvider(provider))
 	}
+	mode := outbound.PublicOnly
+	if strings.TrimSpace(cfg.S3Endpoint) != "" {
+		mode = outbound.ExplicitPrivate
+	}
+	guardedHTTP := outbound.New(mode, outbound.Options{}).HTTPClient(
+		&http.Client{}, outbound.HTTPConfig{
+			AllowedSchemes: []string{"http", "https"}, MaxRedirects: 5,
+			SameOriginRedirects: strings.TrimSpace(cfg.S3Endpoint) != "",
+		},
+	)
+	// Preserve the SDK's credential-discovery client, including EC2 IMDS.
+	// Only S3 data-plane traffic receives the destination guard below.
 	awsConfig, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("initialize managed-data S3 client: %w", err)
 	}
+	awsConfig.HTTPClient = guardedHTTP
 	client := awss3.NewFromConfig(awsConfig, func(options *awss3.Options) {
 		options.UsePathStyle = cfg.S3PathStyle
 		if endpoint := strings.TrimSpace(cfg.S3Endpoint); endpoint != "" {

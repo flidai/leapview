@@ -34,7 +34,7 @@ func TestProfileApplicationServicePersistsIntentBeforeMutationAndAppliesComplete
 
 func TestProfileApplicationServiceRecoversWholeIntentAfterPartialFailure(t *testing.T) {
 	service, store, bindings, request := profileApplicationServiceFixture(t)
-	bindings.failTestOnce = "connection-b"
+	bindings.failRefreshOnce = "connection-b"
 	first, err := service.Apply(t.Context(), request)
 	if err == nil || first.Status != ProfileApplicationIncomplete || len(first.AppliedConnections) != 1 {
 		t.Fatalf("partial application = %#v, err=%v", first, err)
@@ -55,7 +55,7 @@ func TestProfileApplicationServiceRecoversWholeIntentAfterPartialFailure(t *test
 
 func TestProfileApplicationServiceRejectsDifferentCredentialOnResumeBeforeMutation(t *testing.T) {
 	service, _, bindings, request := profileApplicationServiceFixture(t)
-	bindings.failTestOnce = "connection-b"
+	bindings.failRefreshOnce = "connection-b"
 	if _, err := service.Apply(t.Context(), request); err == nil {
 		t.Fatal("initial partial application unexpectedly succeeded")
 	}
@@ -194,7 +194,7 @@ type profileBindingAdministration struct {
 	mutations             int
 	beforeMutation        func()
 	checkedBeforeMutation bool
-	failTestOnce          projectgraph.ResourceID
+	failRefreshOnce       projectgraph.ResourceID
 }
 
 func (admin *profileBindingAdministration) checkMutation() {
@@ -250,11 +250,11 @@ func (admin *profileBindingAdministration) UpdateConfiguration(_ context.Context
 	return updated, err
 }
 
-func (admin *profileBindingAdministration) Test(_ context.Context, _ string, key BindingKey) (BindingHealthStatus, error) {
+func (admin *profileBindingAdministration) RefreshNow(_ context.Context, _ string, key BindingKey) (BindingHealthStatus, error) {
 	admin.checkMutation()
-	if admin.failTestOnce == key.ConnectionID {
-		admin.failTestOnce = ""
-		return BindingHealthStatus{}, errors.New("test connection failed")
+	if admin.failRefreshOnce == key.ConnectionID {
+		admin.failRefreshOnce = ""
+		return BindingHealthStatus{}, errors.New("credential refresh failed")
 	}
 	binding, err := admin.Get(context.Background(), "", key)
 	if err != nil {

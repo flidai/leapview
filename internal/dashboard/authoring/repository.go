@@ -42,7 +42,9 @@ func (o CreateOperation) Enabled() bool {
 	return strings.TrimSpace(o.IdempotencyKey) != ""
 }
 
-func (o CreateOperation) Validate() error {
+// ValidateKey validates the lookup identity without requiring a payload digest.
+// Read-side replays authorize the retained target before validating their intent.
+func (o CreateOperation) ValidateKey() error {
 	if !o.Enabled() {
 		return fmt.Errorf("%w: create operation idempotency key is required", ErrInvalidAuthoring)
 	}
@@ -57,6 +59,13 @@ func (o CreateOperation) Validate() error {
 	}
 	if o.ConversationID != strings.TrimSpace(o.ConversationID) || o.ToolCallID != strings.TrimSpace(o.ToolCallID) {
 		return fmt.Errorf("%w: create operation provenance cannot have surrounding whitespace", ErrInvalidAuthoring)
+	}
+	return nil
+}
+
+func (o CreateOperation) Validate() error {
+	if err := o.ValidateKey(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(o.Fingerprint) == "" || o.Fingerprint != strings.TrimSpace(o.Fingerprint) {
 		return fmt.Errorf("%w: create operation fingerprint is required", ErrInvalidAuthoring)
@@ -76,7 +85,8 @@ type CreateOperationResult struct {
 // CreateOperationRepository is the mutation capability required by any
 // repository that accepts CreateInput. It is kept separate from the
 // read-only Repository port so catalog and preview consumers do not gain
-// mutation authority.
+// mutation authority. Lookup accepts a key without a fingerprint; callers must
+// authorize the retained target and validate the original request before replay.
 type CreateOperationRepository interface {
 	LookupCreateOperation(context.Context, CreateOperation) (CreateOperationResult, bool, error)
 }
@@ -97,6 +107,14 @@ type AppendDraftInput struct {
 // prior result without loading or reducing the old document.
 type CommandResult struct {
 	Revision RevisionToken
+}
+
+// CommandReplayRepository is an optional read port for transports that need
+// to validate a durable operation retry against the command's immutable
+// result document. Ordinary authoring commands should continue to use
+// LookupCommandResult, which checks the complete fingerprint.
+type CommandReplayRepository interface {
+	LookupCommandReplay(context.Context, graph.ResourceID, DashboardID, CommandID) (CommandResult, bool, error)
 }
 
 type PublishInput struct {

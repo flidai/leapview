@@ -153,12 +153,13 @@ func (l *catalogLease) Release()                        { l.releases++ }
 
 type catalogAuthorizer struct {
 	deny     map[string]bool
+	denyView bool
 	requests []authoringservice.AuthorizationRequest
 }
 
 func (a *catalogAuthorizer) Authorize(_ context.Context, request authoringservice.AuthorizationRequest) error {
 	a.requests = append(a.requests, request)
-	if a.deny[request.DashboardID.String()] {
+	if a.deny[request.DashboardID.String()] || (a.denyView && request.Action == authoring.AuthorizationActionView) {
 		return access.ErrForbidden
 	}
 	return nil
@@ -239,3 +240,39 @@ func catalogRevision(id, revisionID, description string) authoring.Revision {
 
 var _ projectruntime.Provider = (*catalogProvider)(nil)
 var _ authoring.Repository = (*catalogRepository)(nil)
+
+func TestDiscoveryIncludesOnlyEditAuthorizedDrafts(t *testing.T) {
+	repo := &catalogRepository{lifecycles: []authoring.DashboardLifecycle{
+		catalogLifecycle("mine", authoring.LifecycleStatusDraft, "rev-mine"),
+		catalogLifecycle("denied", authoring.LifecycleStatusDraft, "rev-denied"),
+		catalogLifecycle("archived", authoring.LifecycleStatusArchived, "rev-archived"),
+	}, revisions: map[string]authoring.Revision{"mine": catalogRevision("mine", "rev-mine", "Saved chat visual")}}
+	auth := &catalogAuthorizer{denyView: true, deny: map[string]bool{"denied": true}}
+	svc := newCatalogService(t, repo, auth, []dashboardcatalog.Dashboard{{ID: "managed", Title: "Managed", SemanticModel: "sales"}})
+	result, err := svc.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor", IncludeEditableDrafts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 1 || result.InstanceCount != 1 || result.Items[0].ID != "mine" || result.Items[0].FirstPageID != "overview" {
+		t.Fatalf("discovery = %#v", result)
+	}
+	if len(repo.revisionReads) != 1 || repo.revisionReads[0] != "mine" {
+		t.Fatalf("revision reads = %v", repo.revisionReads)
+	}
+	for _, request := range auth.requests {
+		want := authoring.AuthorizationActionEdit
+		if request.DashboardID == "managed" {
+			want = authoring.AuthorizationActionView
+		}
+		if request.Action != want {
+			t.Fatalf("authorization = %#v, want %s", request, want)
+		}
+	}
+	result, err = svc.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"})
+	if err != nil || result.Count != 0 {
+		t.Fatalf("VIEW-only list = %#v, %v", result, err)
+	}
+	if _, err := svc.Get(t.Context(), GetRequest{ProjectID: "sales", ActorID: "actor", DashboardID: "mine"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("VIEW-only get = %v", err)
+	}
+}

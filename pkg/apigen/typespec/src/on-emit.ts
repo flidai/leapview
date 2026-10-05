@@ -1,6 +1,7 @@
 import {
   getAllTags,
   getDoc,
+  getExamples,
   getDiscriminatedUnion,
   getDiscriminatedUnionFromInheritance,
   getDiscriminator,
@@ -10,6 +11,7 @@ import {
   getSummary,
   isArrayModelType,
   isRecordModelType,
+  serializeValueAsJson,
   type EmitContext,
   type Enum,
   type Model,
@@ -70,6 +72,7 @@ import { emitDocumentFile } from "./phase-emission.js";
 import { normalizeDocument } from "./phase-normalization.js";
 import { qualifiedNamespaceName, readPackageMetadata } from "./phase-naming.js";
 import { withSchemaConstraints } from "./schema-constraints.js";
+import { commandTransportPolicies } from "./command-idempotency.js";
 import {
   hasErrorDiagnostics,
   validateOutputFile,
@@ -164,10 +167,17 @@ interface Command {
   additional_exposures?: string[];
   ui?: { action_id: string };
   target?: { parameter: string; type: string };
-  idempotency?: "required";
+  idempotency?: "required" | "forbidden";
   concurrency?: "if-match";
   authz_mode?: string;
   privilege?: string;
+}
+
+interface AuthzMetadata {
+  mode?: string;
+  privilege?: string;
+  action?: string;
+  resolver?: string;
 }
 
 interface Contract {
@@ -275,6 +285,7 @@ interface Schema {
   discriminator?: { property_name: string; mapping: Record<string, string> };
   enum?: string[];
   exact_numbers?: boolean;
+  example?: unknown;
   extensions?: Record<string, unknown>;
 }
 
@@ -521,6 +532,10 @@ class IRBuilder {
     const doc = getDoc(this.program, model);
     if (doc) {
       schema.description = doc;
+    }
+    const examples = getExamples(this.program, model);
+    if (examples.length > 0) {
+      schema.example = serializeValueAsJson(this.program, examples[0].value, model);
     }
     const extensions = validatedMetadata(this.program, this, model);
     if (extensions) {
@@ -990,7 +1005,7 @@ function endpoint(
   for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
     extensions[key] = value;
   }
-  const authz = getAuthz({ program }, operation.operation);
+  const authz = getAuthz({ program }, operation.operation) as AuthzMetadata | undefined;
   if (authz !== undefined) {
     extensions["x-authz"] = authz;
   }
@@ -1348,23 +1363,22 @@ function commandMetadata(
     }
   }
 
-  const hasRequiredHeader = (name: string) =>
-    emittedParameters.some(
-      (parameter) => parameter.in === "header" && parameter.required && parameter.name.toLowerCase() === name.toLowerCase(),
-    );
   const method = operation.verb.toLowerCase();
-  const idempotency = hasRequiredHeader("Idempotency-Key") ? "required" as const : undefined;
-  const concurrency = hasRequiredHeader("If-Match") ? "if-match" as const : undefined;
-  if (method === "post" && idempotency === undefined) {
-    builder.invalidCommand("POST commands require a required Idempotency-Key header", operation.operation);
-  }
-  if (method === "patch" && concurrency === undefined) {
-    builder.invalidCommand("PATCH commands require a required If-Match header", operation.operation);
-  }
-
-  const authz = getAuthz({ program }, operation.operation) as Record<string, unknown> | undefined;
+  const authz = getAuthz({ program }, operation.operation) as AuthzMetadata | undefined;
   const authzMode = typeof authz?.mode === "string" ? authz.mode : undefined;
   const privilege = typeof authz?.privilege === "string" ? authz.privilege : undefined;
+  const { idempotency, concurrency } = commandTransportPolicies({
+    method,
+    nonReplayable: options.nonReplayable,
+    parameters: emittedParameters,
+    requestBody: operation.parameters.body,
+    asyncExecution: executionOptions !== undefined,
+    auditRequired: options.audit.required,
+    auditGuarantee: guarantee,
+    authzMode,
+    invalidCommand: (reason) => builder.invalidCommand(reason, operation.operation),
+  });
+
   return prune({
     owner: namespaceName(operation.operation.namespace) ?? "",
     audit: prune({ required: options.audit.required, success_action: successAction, guarantee, payload: auditPayload }),

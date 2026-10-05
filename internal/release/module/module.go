@@ -331,7 +331,7 @@ func (m *Module) ProvenanceForServingState(
 
 // SetAuthorizeConnection installs the active-snapshot connection authorizer
 // once runtime composition has established the serving lease provider.
-func (m *Module) SetAuthorizeConnection(authorizer func(context.Context, string, string, string, access.Capability) (bool, error)) {
+func (m *Module) SetAuthorizeConnection(authorizer func(context.Context, string, string, string, access.Action) (bool, error)) {
 	if m != nil {
 		m.api.AuthorizeConnection = authorizer
 	}

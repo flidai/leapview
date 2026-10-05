@@ -93,7 +93,7 @@ func TestAuthoringPackageSchemaAndNativeArchive(t *testing.T) {
 		t.Fatalf("generated authoring manifest: %v", err)
 	}
 	invalidHost := manifest.(map[string]any)
-	invalidHost["host"].(map[string]any)["supportProfile"] = "macos-15-docker-desktop"
+	invalidHost["host"].(map[string]any)["supportProfile"] = "macos-15-docker-engine"
 	if runtime.GOOS == "darwin" {
 		invalidHost["host"].(map[string]any)["supportProfile"] = "ubuntu-24.04-docker-engine"
 	}

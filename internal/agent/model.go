@@ -7,6 +7,8 @@ import (
 )
 
 type Config struct {
+	APIMode         string
+	Revision        int64
 	APIKey          string
 	BaseURL         string
 	Model           string
@@ -28,10 +30,16 @@ func (c Config) NormalizedReasoningEffort() string {
 	if effort := strings.ToLower(strings.TrimSpace(c.ReasoningEffort)); effort != "" {
 		return effort
 	}
-	return "high"
+	return ""
 }
 
 func (c Config) Validate(enabled bool) error {
+	if len(c.Model) > 256 || len(c.BaseURL) > 2048 || len(c.APIKey) > 16384 {
+		return fmt.Errorf("agent provider configuration exceeds supported field limits")
+	}
+	if c.APIMode != "" && c.APIMode != "responses" && c.APIMode != "chat-completions" {
+		return fmt.Errorf("apiMode must be responses or chat-completions")
+	}
 	if enabled && !c.Enabled() {
 		return fmt.Errorf("enabled agent configuration requires apiKey and model")
 	}
@@ -42,7 +50,7 @@ func (c Config) Validate(enabled bool) error {
 		}
 	}
 	switch c.NormalizedReasoningEffort() {
-	case "none", "low", "medium", "high", "xhigh", "max":
+	case "", "none", "low", "medium", "high", "xhigh", "max":
 		return nil
 	default:
 		return fmt.Errorf("agent reasoningEffort must be none, low, medium, high, xhigh, or max")

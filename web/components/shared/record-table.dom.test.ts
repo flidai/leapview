@@ -37,8 +37,10 @@ beforeAll(async () => {
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
   baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
-})
+  // Cold CI browser startup can exceed Bun's default five-second hook limit.
+  // Let Playwright report launch failures before the outer hook deadline.
+  browser = await chromium.launch({ timeout: 20_000 })
+}, 30_000)
 
 afterAll(async () => {
   await browser?.close()

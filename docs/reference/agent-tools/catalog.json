@@ -24,12 +24,12 @@
     {
       "slug": "catalog_list",
       "title": "catalog_list",
-      "summary": "Browse one authorized project-resource hierarchy level when a parent ref is known."
+      "summary": "Browse authorized project resources from the project ref, or one dependency level from a resource ref."
     },
     {
       "slug": "catalog_search",
       "title": "catalog_search",
-      "summary": "Search authorized project resources by stable ID, name, description, or domain metadata."
+      "summary": "Search authorized project resources by stable ID, name, description, semantic metric or dimension names and labels, or domain metadata."
     },
     {
       "slug": "create_dashboard_draft",
@@ -59,7 +59,7 @@
     {
       "slug": "export_dashboard_yaml",
       "title": "export_dashboard_yaml",
-      "summary": "Export an authorized authored dashboard source as canonical project YAML."
+      "summary": "Export an authorized dashboard source as canonical project YAML."
     },
     {
       "slug": "fork_dashboard",

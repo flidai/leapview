@@ -118,7 +118,7 @@ func (l savedAdapterAdmissionLease) Context() context.Context { return l.ctx }
 func (savedAdapterAdmissionLease) QueueWait() time.Duration   { return 0 }
 func (l savedAdapterAdmissionLease) Release()                 { l.owner.released++ }
 
-func TestSavedExplorationAuthorizerUsesOwnerVisibilityAndProjectRoles(t *testing.T) {
+func TestSavedExplorationAuthorizerUsesOwnerVisibilityAndTypedSemanticPermissions(t *testing.T) {
 	graph, identity := savedAdapterGraph(t)
 	owner := mustSavedAdapterSubject(t, access.SubjectKindPrincipal, "owner")
 	ownerRead := mustSavedAdapterGrant(t, graph, "owner-read", owner, access.CapabilityResourceRead)
@@ -128,7 +128,7 @@ func TestSavedExplorationAuthorizerUsesOwnerVisibilityAndProjectRoles(t *testing
 
 	newAuthorizer := func(t *testing.T, snapshot accesssnapshot.AuthorizationSnapshot, groups map[string][]string) *SavedExplorationAuthorizer {
 		t.Helper()
-		authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{groups: groups})
+		authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{groups: groups}, "target:saved")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,8 +143,8 @@ func TestSavedExplorationAuthorizerUsesOwnerVisibilityAndProjectRoles(t *testing
 
 	privateAdmin := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{admin}, nil)
 	request.ActorID = "admin"
-	if err := newAuthorizer(t, privateAdmin, nil).Authorize(savedAdapterContext("admin"), &savedAdapterLease{identity: identity, snapshot: privateAdmin}, request); err != nil {
-		t.Fatalf("private project admin view: %v", err)
+	if err := newAuthorizer(t, privateAdmin, nil).Authorize(savedAdapterContext("admin"), &savedAdapterLease{identity: identity, snapshot: privateAdmin}, request); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("private non-owner view = %v, want forbidden", err)
 	}
 
 	request.ActorID = "stranger"
@@ -171,8 +171,8 @@ func TestSavedExplorationAuthorizerUsesOwnerVisibilityAndProjectRoles(t *testing
 	}
 
 	request = savedapplication.AuthorizationRequest{ActorID: "admin", ProjectID: savedAdapterProject, ExplorationID: "exploration-1", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Action: savedapplication.AuthorizationActionArchive, Lifecycle: savedAdapterLifecycle(identity, savedAdapterProject, "exploration-1", "other", saved.VisibilityPrivate, saved.StatusActive, "semantic:sales")}
-	if err := newAuthorizer(t, privateAdmin, nil).Authorize(savedAdapterContext("admin"), &savedAdapterLease{identity: identity, snapshot: privateAdmin}, request); err != nil {
-		t.Fatalf("admin archive: %v", err)
+	if err := newAuthorizer(t, privateAdmin, nil).Authorize(savedAdapterContext("admin"), &savedAdapterLease{identity: identity, snapshot: privateAdmin}, request); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("non-owner archive = %v, want forbidden", err)
 	}
 }
 
@@ -180,8 +180,8 @@ func TestSavedExplorationAuthorizerRequiresModelCapabilityAndExpandedSubjects(t 
 	graph, identity := savedAdapterGraph(t)
 	group := mustSavedAdapterSubject(t, access.SubjectKindGroup, "group-readers")
 	grant := mustSavedAdapterGrant(t, graph, "group-read", group, access.CapabilityResourceRead)
-	snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{{ID: "group-reader-role", Subject: group, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}}, []accesssnapshot.Grant{grant})
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{groups: map[string][]string{"member": {"group-readers"}}})
+	snapshot := newSavedAdapterSnapshot(t, graph, identity, nil, []accesssnapshot.Grant{grant})
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{groups: map[string][]string{"member": {"group-readers"}}}, "target:saved")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestSavedExplorationAuthorizerLifecycleVisibilityIsAuthoritative(t *testing
 	graph, identity := savedAdapterGraph(t)
 	reader := savedAdapterRole(t, "reader", "reader", access.ProjectRoleViewer)
 	snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{reader}, nil)
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{})
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestSavedExplorationAuthorizerLifecycleModelIsAuthoritativeForReadAndExecut
 	marketingRead := mustSavedAdapterGrantForResource(t, graph, "marketing-read", modelReader, "semantic:marketing", access.CapabilityResourceRead)
 	marketingUse := mustSavedAdapterGrantForResource(t, graph, "marketing-use", modelReader, "semantic:marketing", access.CapabilityResourceUse)
 	snapshot := newSavedAdapterSnapshot(t, graph, identity, nil, []accesssnapshot.Grant{marketingRead, marketingUse})
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{})
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestSavedExplorationAuthorizerEditFailsClosedForUnauthorizedProposedModel(t
 	owner := mustSavedAdapterSubject(t, access.SubjectKindPrincipal, "owner")
 	salesUse := mustSavedAdapterGrantForResource(t, graph, "sales-use", owner, "semantic:sales", access.CapabilityResourceUse)
 	snapshot := newSavedAdapterSnapshot(t, graph, identity, nil, []accesssnapshot.Grant{salesUse})
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{})
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestSavedExplorationAuthorizerEditFailsClosedForUnauthorizedProposedModel(t
 func TestSavedExplorationAuthorizerValidatesExplorationIDWithoutLifecycle(t *testing.T) {
 	graph, identity := savedAdapterGraph(t)
 	snapshot := newSavedAdapterSnapshot(t, graph, identity, nil, nil)
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{})
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,113 +295,116 @@ func TestSavedExplorationAuthorizerValidatesExplorationIDWithoutLifecycle(t *tes
 	}
 }
 
-func TestSavedExplorationAuthorizerAttenuatesEveryAPITokenAction(t *testing.T) {
-	graph, identity := savedAdapterGraph(t)
-	admin := savedAdapterRole(t, "admin", "admin", access.ProjectRoleAdmin)
-	snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{admin}, nil)
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{})
+func savedAdapterPairs(t *testing.T, modelID projectgraph.ResourceID, actions ...access.Action) []access.PermissionPair {
+	t.Helper()
+	resource, err := access.NewResourceRef(modelID, projectgraph.KindSemanticModel)
 	if err != nil {
 		t.Fatal(err)
 	}
+	pairs := make([]access.PermissionPair, 0, len(actions))
+	for _, action := range actions {
+		pair, err := access.NewExactPermissionPair(action, savedAdapterProject, resource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pairs = append(pairs, pair)
+	}
+	return pairs
+}
 
-	for _, test := range []struct {
-		name         string
-		action       savedapplication.AuthorizationAction
-		capabilities []access.Capability
-		wantAllowed  bool
-	}{
-		{name: "view read", action: savedapplication.AuthorizationActionView, capabilities: []access.Capability{access.CapabilityResourceRead}, wantAllowed: true},
-		{name: "view use only", action: savedapplication.AuthorizationActionView, capabilities: []access.Capability{access.CapabilityResourceUse}},
-		{name: "execute use", action: savedapplication.AuthorizationActionExecute, capabilities: []access.Capability{access.CapabilityResourceUse}, wantAllowed: true},
-		{name: "execute read only", action: savedapplication.AuthorizationActionExecute, capabilities: []access.Capability{access.CapabilityResourceRead}},
-		{name: "create edit and use", action: savedapplication.AuthorizationActionCreate, capabilities: []access.Capability{access.CapabilityResourceEdit, access.CapabilityResourceUse}, wantAllowed: true},
-		{name: "create edit only", action: savedapplication.AuthorizationActionCreate, capabilities: []access.Capability{access.CapabilityResourceEdit}},
-		{name: "create use only", action: savedapplication.AuthorizationActionCreate, capabilities: []access.Capability{access.CapabilityResourceUse}},
-		{name: "edit edit and use", action: savedapplication.AuthorizationActionEdit, capabilities: []access.Capability{access.CapabilityResourceEdit, access.CapabilityResourceUse}, wantAllowed: true},
-		{name: "edit empty", action: savedapplication.AuthorizationActionEdit, capabilities: []access.Capability{}},
-		{name: "archive manage", action: savedapplication.AuthorizationActionArchive, capabilities: []access.Capability{access.CapabilityResourceManage}, wantAllowed: true},
-		{name: "archive edit only", action: savedapplication.AuthorizationActionArchive, capabilities: []access.Capability{access.CapabilityResourceEdit}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := savedapplication.AuthorizationRequest{
-				ActorID: "admin", ProjectID: savedAdapterProject, ExplorationID: "exploration-1",
-				OwnerPrincipalID: "owner", Visibility: saved.VisibilityPrivate,
-				SemanticModelID: "semantic:sales", Action: test.action,
-			}
-			if test.action != savedapplication.AuthorizationActionCreate {
-				request.Lifecycle = savedAdapterLifecycle(identity, savedAdapterProject, request.ExplorationID, "owner", saved.VisibilityPrivate, saved.StatusActive, request.SemanticModelID)
-			}
-			credential := access.APICredential{
-				Principal: access.Principal{ID: "admin"},
-				Token:     access.APIToken{ID: "token-" + strings.ReplaceAll(test.name, " ", "-"), PrincipalID: "admin", Capabilities: test.capabilities},
-			}
-			ctx := accessmodule.WithAPICredential(savedAdapterContext("admin"), credential)
-			err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request)
-			if test.wantAllowed {
-				if err != nil {
+func TestSavedExplorationAuthorizerAttenuatesEveryAPITokenAction(t *testing.T) {
+	graph, identity := savedAdapterGraph(t)
+	snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{savedAdapterRole(t, "owner", "owner", access.ProjectRoleEditor)}, nil)
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []savedapplication.AuthorizationAction{savedapplication.AuthorizationActionView, savedapplication.AuthorizationActionExecute, savedapplication.AuthorizationActionCreate, savedapplication.AuthorizationActionEdit, savedapplication.AuthorizationActionArchive} {
+		for _, ceiling := range []string{"complete", "read-only", "missing-consume", "wrong-model", "empty", "legacy", "wrong-actor"} {
+			t.Run(string(action)+"/"+ceiling, func(t *testing.T) {
+				request := savedapplication.AuthorizationRequest{ActorID: "owner", ProjectID: savedAdapterProject, ExplorationID: "exploration-1", OwnerPrincipalID: "owner", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Action: action}
+				if action != savedapplication.AuthorizationActionCreate {
+					request.Lifecycle = savedAdapterLifecycle(identity, savedAdapterProject, request.ExplorationID, "owner", saved.VisibilityPrivate, saved.StatusActive, request.SemanticModelID)
+				}
+				token := access.APIToken{ID: "token", PrincipalID: "owner", PermissionProfile: access.PermissionCatalogProfile, Permissions: savedAdapterPairs(t, "semantic:sales", access.ActionSemanticRead, access.ActionSemanticQuery, access.ActionSemanticConsume)}
+				switch ceiling {
+				case "read-only":
+					token.Permissions = savedAdapterPairs(t, "semantic:sales", access.ActionSemanticRead)
+				case "missing-consume":
+					token.Permissions = savedAdapterPairs(t, "semantic:sales", access.ActionSemanticRead, access.ActionSemanticQuery)
+				case "wrong-model":
+					token.Permissions = savedAdapterPairs(t, "semantic:marketing", access.ActionSemanticRead, access.ActionSemanticQuery, access.ActionSemanticConsume)
+				case "empty":
+					token.Permissions = []access.PermissionPair{}
+				case "legacy":
+					token.PermissionProfile = ""
+					token.Permissions = nil
+					token.Capabilities = []access.Capability{access.CapabilityProjectAdmin}
+				case "wrong-actor":
+					token.PrincipalID = "other"
+				}
+				ctx := accessmodule.WithAPICredential(savedAdapterContext("owner"), access.APICredential{Principal: access.Principal{ID: "owner"}, Token: token})
+				err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request)
+				allowed := ceiling == "complete" || action == savedapplication.AuthorizationActionView && (ceiling == "read-only" || ceiling == "missing-consume")
+				if allowed && err != nil {
 					t.Fatalf("error = %v, want success", err)
 				}
-			} else if !errors.Is(err, access.ErrForbidden) {
-				t.Fatalf("error = %v, want forbidden", err)
-			}
-		})
-	}
-
-	request := savedapplication.AuthorizationRequest{
-		ActorID: "admin", ProjectID: savedAdapterProject, ExplorationID: "exploration-1",
-		OwnerPrincipalID: "owner", Visibility: saved.VisibilityPrivate,
-		SemanticModelID: "semantic:sales", Action: savedapplication.AuthorizationActionView,
-		Lifecycle: savedAdapterLifecycle(identity, savedAdapterProject, "exploration-1", "owner", saved.VisibilityPrivate, saved.StatusActive, "semantic:sales"),
-	}
-	mismatched := access.APICredential{Principal: access.Principal{ID: "creator"}, Token: access.APIToken{ID: "creator-token", PrincipalID: "creator", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
-	ctx := accessmodule.WithAPICredential(savedAdapterContext("admin"), mismatched)
-	if err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("mismatched credential error = %v, want forbidden", err)
+				if !allowed && !errors.Is(err, access.ErrForbidden) {
+					t.Fatalf("error = %v, want forbidden", err)
+				}
+			})
+		}
 	}
 }
 
 func TestSavedExplorationAuthorizerAttenuatesAuthoringCredentialScope(t *testing.T) {
 	graph, identity := savedAdapterGraph(t)
-	admin := savedAdapterRole(t, "admin", "admin", access.ProjectRoleAdmin)
-	snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{admin}, nil)
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{})
+	snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{savedAdapterRole(t, "owner", "owner", access.ProjectRoleEditor)}, nil)
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := savedAdapterLifecycle(identity, savedAdapterProject, "exploration-1", "owner", saved.VisibilityPrivate, saved.StatusActive, "semantic:sales")
-	request := savedapplication.AuthorizationRequest{
-		ActorID: "admin", ProjectID: savedAdapterProject, ExplorationID: lifecycle.ID,
-		OwnerPrincipalID: lifecycle.OwnerPrincipalID, Visibility: lifecycle.Visibility,
-		SemanticModelID: lifecycle.SemanticModelID, Action: savedapplication.AuthorizationActionView, Lifecycle: lifecycle,
-	}
-
-	readScope, err := access.NewAuthoringScope("target:saved", savedAdapterProject, []access.Capability{access.CapabilityResourceRead})
-	if err != nil {
-		t.Fatal(err)
-	}
-	credential := access.APICredential{
-		Principal: access.Principal{ID: "admin"},
-		Token:     access.APIToken{ID: "authoring-read", PrincipalID: "admin"},
-		Authoring: &access.AuthoringSession{ID: "session-read", PrincipalID: "admin", Scope: readScope},
-	}
-	ctx := accessmodule.WithAPICredential(savedAdapterContext("admin"), credential)
-	if err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request); err != nil {
-		t.Fatalf("read-scoped authoring view: %v", err)
-	}
-	request.Action = savedapplication.AuthorizationActionArchive
-	if err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("read-scoped authoring archive error = %v, want forbidden", err)
-	}
-
-	foreignScope, err := access.NewAuthoringScope("target:saved", "project:foreign", []access.Capability{access.CapabilityResourceManage})
-	if err != nil {
-		t.Fatal(err)
-	}
-	credential.Token.ID = "authoring-foreign"
-	credential.Authoring = &access.AuthoringSession{ID: "session-foreign", PrincipalID: "admin", Scope: foreignScope}
-	ctx = accessmodule.WithAPICredential(savedAdapterContext("admin"), credential)
-	if err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("foreign-project authoring error = %v, want forbidden", err)
+	for _, test := range []struct {
+		name, target, project, actor string
+		actions                      []access.Action
+		tokenCeiling                 bool
+		allowed                      bool
+	}{
+		{name: "exact read", target: "target:saved", project: string(savedAdapterProject), actor: "owner", actions: []access.Action{access.ActionSemanticRead}, allowed: true},
+		{name: "wrong target", target: "target:other", project: string(savedAdapterProject), actor: "owner", actions: []access.Action{access.ActionSemanticRead}},
+		{name: "wrong project", target: "target:saved", project: "project:other", actor: "owner", actions: []access.Action{access.ActionSemanticRead}},
+		{name: "wrong actor", target: "target:saved", project: string(savedAdapterProject), actor: "other", actions: []access.Action{access.ActionSemanticRead}},
+		{name: "query cannot read", target: "target:saved", project: string(savedAdapterProject), actor: "owner", actions: []access.Action{access.ActionSemanticQuery, access.ActionSemanticConsume}},
+		{name: "independent token ceiling", target: "target:saved", project: string(savedAdapterProject), actor: "owner", actions: []access.Action{access.ActionSemanticRead}, tokenCeiling: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pairs := savedAdapterPairs(t, "semantic:sales", test.actions...)
+			for i := range pairs {
+				pairs[i].Target.ProjectID = projectgraph.ResourceID(test.project)
+			}
+			scope, err := access.NewAuthoringScope(test.target, projectgraph.ResourceID(test.project), pairs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential := access.APICredential{Principal: access.Principal{ID: "owner"}, Token: access.APIToken{ID: "authoring-token", PrincipalID: "owner"}, Authoring: &access.AuthoringSession{ID: "session", PrincipalID: test.actor, Scope: scope}}
+			if test.tokenCeiling {
+				credential.Token.PermissionProfile = access.PermissionCatalogProfile
+				credential.Token.Permissions = []access.PermissionPair{}
+			}
+			ctx := accessmodule.WithAPICredential(savedAdapterContext("owner"), credential)
+			request := savedapplication.AuthorizationRequest{ActorID: "owner", ProjectID: savedAdapterProject, ExplorationID: "exploration-1", OwnerPrincipalID: "owner", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Action: savedapplication.AuthorizationActionView}
+			err = authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request)
+			if test.allowed && err != nil {
+				t.Fatal(err)
+			}
+			if !test.allowed && !errors.Is(err, access.ErrForbidden) {
+				t.Fatalf("error = %v, want forbidden", err)
+			}
+			request.Action = savedapplication.AuthorizationActionArchive
+			if err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
+				t.Fatalf("read-only authoring archive = %v, want forbidden", err)
+			}
+		})
 	}
 }
 
@@ -409,7 +412,7 @@ func TestSavedExplorationAdaptersRejectSnapshotActorAndRuntimeMismatches(t *test
 	graph, identity := savedAdapterGraph(t)
 	grant := mustSavedAdapterGrant(t, graph, "owner-read", mustSavedAdapterSubject(t, access.SubjectKindPrincipal, "owner"), access.CapabilityResourceRead)
 	snapshot := newSavedAdapterSnapshot(t, graph, identity, nil, []accesssnapshot.Grant{grant})
-	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{})
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,6 +455,7 @@ func TestSavedExplorationExecutorUsesExactRuntimeGovernanceAndAdmission(t *testi
 		t.Fatal(err)
 	}
 	query := dataquery.SemanticAggregate("semantic:sales", "orders", nil, []dataquery.Field{{Field: "order_count"}}, nil, nil, 0, 10)
+	query.Surface = dataquery.SurfaceSavedExploration
 	query.ProjectID = savedAdapterProject
 	query.PrincipalID = "owner"
 	query.Operation = "saved_exploration_execute"
@@ -533,6 +537,7 @@ func TestSavedExplorationExecutorAppliesGovernedRLSAndMasking(t *testing.T) {
 		t.Fatal(err)
 	}
 	query := dataquery.SemanticAggregate("semantic:sales", "orders", []dataquery.Field{{Field: "orders.order_id"}}, nil, nil, nil, 0, 10)
+	query.Surface = dataquery.SurfaceSavedExploration
 	query.ProjectID = savedAdapterProject
 	query.PrincipalID = "owner"
 	if _, err := executor.Execute(savedAdapterContext("owner"), lease, "owner", query); err != nil {
@@ -620,7 +625,15 @@ func newSavedAdapterSnapshotWithPolicies(t *testing.T, graph projectgraph.Projec
 func savedAdapterRole(t *testing.T, id, principal string, role access.ProjectRole) accesssnapshot.RoleBinding {
 	t.Helper()
 	subject := mustSavedAdapterSubject(t, access.SubjectKindPrincipal, principal)
-	return accesssnapshot.RoleBinding{ID: id, Subject: subject, Role: role, Capabilities: access.ProjectRoleCapabilities(role)}
+	typedRole := access.PermissionRoleExplorer
+	if role == access.ProjectRoleEditor || role == access.ProjectRoleAdmin {
+		typedRole = access.PermissionRoleEditor
+	}
+	binding, err := access.NewTypedRoleBinding(id, "", subject, typedRole, savedAdapterProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return binding
 }
 
 func mustSavedAdapterSubject(t *testing.T, kind access.SubjectKind, id string) access.SubjectRef {
@@ -647,9 +660,90 @@ func mustSavedAdapterGrantForResource(t *testing.T, graph projectgraph.ProjectGr
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := access.NewCanonicalGrant(graph, subject, resource, capability)
+	var actions []access.Action
+	switch capability {
+	case access.CapabilityResourceRead:
+		actions = []access.Action{access.ActionSemanticRead}
+	case access.CapabilityResourceUse:
+		actions = []access.Action{access.ActionSemanticQuery, access.ActionSemanticConsume}
+	default:
+		t.Fatalf("unsupported test capability %q", capability)
+	}
+	var pairs []access.PermissionPair
+	for _, action := range actions {
+		pair, err := access.NewExactPermissionPair(action, savedAdapterProject, resource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pairs = append(pairs, pair)
+	}
+	grant, err := accesssnapshot.NewTypedGrant(id, "", subject, pairs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return accesssnapshot.Grant{ID: id, Canonical: grant}
+	return grant
+}
+
+func TestSavedExplorationAuthorizerRejectsCrossOwnerMutationAndRequiresBothReboundModels(t *testing.T) {
+	graph, identity := savedAdapterGraph(t)
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := savedAdapterLifecycle(identity, savedAdapterProject, "exploration-1", "owner", saved.VisibilityPrivate, saved.StatusActive, "semantic:sales")
+	for _, action := range []savedapplication.AuthorizationAction{savedapplication.AuthorizationActionEdit, savedapplication.AuthorizationActionArchive} {
+		for _, visibility := range []saved.Visibility{saved.VisibilityPrivate, saved.VisibilityOrganization} {
+			snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{savedAdapterRole(t, "other-editor", "other", access.ProjectRoleEditor)}, nil)
+			lifecycle.Visibility = visibility
+			request := savedapplication.AuthorizationRequest{ActorID: "other", ProjectID: savedAdapterProject, ExplorationID: lifecycle.ID, OwnerPrincipalID: "other", Visibility: saved.VisibilityOrganization, SemanticModelID: "semantic:marketing", Action: action, Lifecycle: lifecycle}
+			if err := authorizer.Authorize(savedAdapterContext("other"), &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
+				t.Fatalf("cross-owner %s %s = %v, want forbidden", action, visibility, err)
+			}
+		}
+	}
+	lifecycle.Visibility = saved.VisibilityPrivate
+	request := savedapplication.AuthorizationRequest{ActorID: "owner", ProjectID: savedAdapterProject, ExplorationID: lifecycle.ID, OwnerPrincipalID: "owner", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:marketing", Action: savedapplication.AuthorizationActionEdit, Lifecycle: lifecycle}
+	for _, haveOldRead := range []bool{false, true} {
+		pairs := savedAdapterPairs(t, "semantic:marketing", access.ActionSemanticRead, access.ActionSemanticQuery, access.ActionSemanticConsume)
+		if haveOldRead {
+			pairs = append(pairs, savedAdapterPairs(t, "semantic:sales", access.ActionSemanticRead)...)
+		}
+		grant, err := accesssnapshot.NewTypedGrant("owner-rebind", "", mustSavedAdapterSubject(t, access.SubjectKindPrincipal, "owner"), pairs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot := newSavedAdapterSnapshot(t, graph, identity, nil, []accesssnapshot.Grant{grant})
+		err = authorizer.Authorize(savedAdapterContext("owner"), &savedAdapterLease{identity: identity, snapshot: snapshot}, request)
+		if haveOldRead && err != nil {
+			t.Fatalf("authorized rebind = %v", err)
+		}
+		if !haveOldRead && !errors.Is(err, access.ErrForbidden) {
+			t.Fatalf("rebind without old read = %v, want forbidden", err)
+		}
+		if haveOldRead {
+			credential := access.APICredential{Principal: access.Principal{ID: "owner"}, Token: access.APIToken{ID: "new-only", PrincipalID: "owner", PermissionProfile: access.PermissionCatalogProfile, Permissions: savedAdapterPairs(t, "semantic:marketing", access.ActionSemanticRead, access.ActionSemanticQuery, access.ActionSemanticConsume)}}
+			ctx := accessmodule.WithAPICredential(savedAdapterContext("owner"), credential)
+			if err := authorizer.Authorize(ctx, &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
+				t.Fatalf("rebind token without old read = %v, want forbidden", err)
+			}
+		}
+	}
+}
+
+func TestSavedExplorationAuthorizerDoesNotTreatHistoricalRoleAsTypedAuthority(t *testing.T) {
+	graph, identity := savedAdapterGraph(t)
+	subject := mustSavedAdapterSubject(t, access.SubjectKindPrincipal, "owner")
+	role := accesssnapshot.RoleBinding{ID: "legacy-admin", Subject: subject, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)}
+	snapshot := newSavedAdapterSnapshot(t, graph, identity, []accesssnapshot.RoleBinding{role}, nil)
+	authorizer, err := NewSavedExplorationAuthorizer(savedAdapterAccessStub{}, "target:saved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := savedapplication.AuthorizationRequest{ActorID: "owner", ProjectID: savedAdapterProject, ExplorationID: "exploration-1", OwnerPrincipalID: "owner", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Action: savedapplication.AuthorizationActionCreate}
+	if err := authorizer.Authorize(savedAdapterContext("owner"), &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("historical admin create = %v, want forbidden", err)
+	}
+	if err := authorizer.Authorize(context.Background(), &savedAdapterLease{identity: identity, snapshot: snapshot}, request); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("anonymous create = %v, want forbidden", err)
+	}
 }

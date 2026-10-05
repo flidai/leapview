@@ -3,8 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/access"
 )
 
 type fakeAuthService struct {
@@ -80,8 +83,8 @@ func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {
 		request.InstanceID != "lvinst_prod" || request.ProjectID != "analytics" || !request.Headless {
 		t.Fatalf("login request = %+v", request)
 	}
-	if strings.Join(request.Capabilities, ",") != "RESOURCE_USE,RESOURCE_READ,RESOURCE_EDIT,RESOURCE_PUBLISH" {
-		t.Fatalf("capabilities = %v", request.Capabilities)
+	if !reflect.DeepEqual(request.Actions, access.DefaultAuthoringActions()) {
+		t.Fatalf("actions = %v, want typed CLI default %v", request.Actions, access.DefaultAuthoringActions())
 	}
 	if !strings.Contains(output.String(), "ABCD-EFGH") || !strings.Contains(output.String(), "session-1") {
 		t.Fatalf("output = %q", output.String())

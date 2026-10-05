@@ -23,6 +23,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/pagestream"
+	"github.com/gorilla/csrf"
 )
 
 type synchronizedResponseRecorder struct {
@@ -32,6 +33,53 @@ type synchronizedResponseRecorder struct {
 
 func newSynchronizedResponseRecorder() *synchronizedResponseRecorder {
 	return &synchronizedResponseRecorder{ResponseRecorder: httptest.NewRecorder()}
+}
+
+type adminBrowserSession struct {
+	auth          *accessmodule.Auth
+	sessionCookie *http.Cookie
+	csrfCookie    *http.Cookie
+	csrfToken     string
+}
+
+func testAdminBrowserSession(t *testing.T, ctx context.Context, store *testControlStore, principal access.Principal) adminBrowserSession {
+	t.Helper()
+	sessionToken, err := testAccessRepository(store).CreateSession(ctx, principal.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create admin browser session: %v", err)
+	}
+	auth := testAuth(store, accessmodule.AuthConfig{LocalAuth: true})
+	csrfToken := ""
+	csrfResponse := httptest.NewRecorder()
+	csrfRequest := httptest.NewRequest(http.MethodGet, "http://localhost/admin/profile", nil)
+	auth.CSRFMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		csrfToken = csrf.Token(request)
+	})).ServeHTTP(csrfResponse, csrfRequest)
+	if csrfToken == "" {
+		t.Fatal("admin browser session did not receive a CSRF token")
+	}
+	var csrfCookie *http.Cookie
+	for _, cookie := range csrfResponse.Result().Cookies() {
+		if cookie.Name == "lv_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("admin browser session did not receive a CSRF cookie")
+	}
+	return adminBrowserSession{
+		auth:          auth,
+		sessionCookie: &http.Cookie{Name: auth.SessionCookieName(), Value: sessionToken},
+		csrfCookie:    csrfCookie,
+		csrfToken:     csrfToken,
+	}
+}
+
+func (session adminBrowserSession) attach(request *http.Request) {
+	request.AddCookie(session.sessionCookie)
+	request.AddCookie(session.csrfCookie)
+	request.Header.Set("X-CSRF-Token", session.csrfToken)
 }
 
 func (r *synchronizedResponseRecorder) Write(body []byte) (int, error) {
@@ -77,6 +125,7 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 		{method: http.MethodGet, path: "/admin/security", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/api-tokens", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/api-tokens/new", status: http.StatusOK},
+		{method: http.MethodGet, path: "/admin/api-tokens/00000000-0000-7000-8000-000000000001/edit", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/agent", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage/tables/model/orders", status: http.StatusForbidden},
@@ -107,8 +156,12 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	if err := repo.AddGroupMember(ctx, group.ID, analyst.ID); err != nil {
 		t.Fatalf("seed group member: %v", err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	serviceAccount, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Build automation"})
+	if err != nil {
+		t.Fatalf("seed service account: %v", err)
+	}
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"})}))
 
 	cases := []struct {
@@ -123,6 +176,8 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
 		{path: "/admin/groups/" + group.ID, want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=` + group.ID + `&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
+		{path: "/admin/service-accounts/" + serviceAccount.ID, want: []string{"<lv-admin-page", `section="service-accounts-detail"`, `/updates?route=admin&amp;section=service-accounts-detail&amp;serviceAccount=` + serviceAccount.ID, "/admin/access/command"}},
+		{path: "/admin/service-accounts/00000000-0000-0000-0000-000000000000", status: http.StatusNotFound},
 		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
@@ -130,7 +185,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-		req.Header.Set("Authorization", "Bearer "+token)
+		browser.attach(req)
 		rec := httptest.NewRecorder()
 		server.Routes().ServeHTTP(rec, req)
 		wantStatus := tc.status
@@ -166,12 +221,12 @@ func TestAdminAccessCommandBlocksPrincipalAndReturnsSignalPatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"block_principal","principalId":"` + target.Principal.ID + `"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=principal-detail&principal="+target.Principal.ID, body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(uicommand.HeaderOperationID, "disablePrincipal")
 	rec := httptest.NewRecorder()
@@ -196,12 +251,12 @@ func TestAdminAccessCommandDeletesPrincipalAndReturnsClientRedirectSignal(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"delete_principal","principalId":"` + target.Principal.ID + `"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=principal-detail&principal="+target.Principal.ID, body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(uicommand.HeaderOperationID, "deletePrincipal")
 	rec := httptest.NewRecorder()
@@ -220,12 +275,12 @@ func TestAdminAccessCommandCreatesGroupAndReturnsDetailRedirectSignal(t *testing
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"create_group","projectId":"test","displayName":"Revenue analysts"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=groups", body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(uicommand.HeaderOperationID, "createGroup")
 	rec := httptest.NewRecorder()
@@ -258,12 +313,12 @@ func TestAdminAccessCommandAddsMultipleGroupMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"add_group_member","projectId":"test","groupId":"` + group.ID + `","principalIds":["` + first.Principal.ID + `","` + second.Principal.ID + `"]}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/access/command?section=group-detail&group="+group.ID, body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(uicommand.HeaderOperationID, "addGroupMember")
 	rec := httptest.NewRecorder()
@@ -283,8 +338,8 @@ func TestAdminQueryHistoryCommandPublishesLoadMorePatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
@@ -314,7 +369,7 @@ func TestAdminQueryHistoryCommandPublishesLoadMorePatch(t *testing.T) {
 
 	body := strings.NewReader(`{"adminQueryHistory":{"table":{"rows":[{"id":"existing","query":{"label":"select 1","expandedContent":"select 1"}}]}},"adminQueryHistoryCommand":{"action":"load_more","pageToken":"` + nextCursor + `","limit":2}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
 	rec := httptest.NewRecorder()
@@ -351,8 +406,8 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
@@ -372,7 +427,7 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 
 	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"reset","limit":50,"filters":{"projects":["project:test"],"surfaces":["api"],"statuses":["success"],"search":"orders"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
 	rec := httptest.NewRecorder()
@@ -413,8 +468,8 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
@@ -434,7 +489,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 
 	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"operations"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
 	rec := httptest.NewRecorder()
@@ -466,8 +521,8 @@ func TestAdminQueryHistoryCommandTogglesFilterAndResetsTable(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
@@ -487,7 +542,7 @@ func TestAdminQueryHistoryCommandTogglesFilterAndResetsTable(t *testing.T) {
 
 	body := strings.NewReader(`{"adminQueryHistory":{"table":{"rows":[{"id":"old"}]}},"adminQueryHistoryCommand":{"action":"filter_toggle","limit":50,"filterMenu":{"menuId":"surface","action":"toggle","value":"agent","selected":[]}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
 	rec := httptest.NewRecorder()
@@ -523,8 +578,8 @@ func TestAdminQueryHistoryCommandPublishesDetailPatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	if err := repo.RecordQueryEvent(ctx, queryaudit.EventInput{
@@ -560,7 +615,7 @@ func TestAdminQueryHistoryCommandPublishesDetailPatch(t *testing.T) {
 
 	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"select_detail","eventId":"` + events[0].ID + `","limit":50}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
 	rec := httptest.NewRecorder()
@@ -590,8 +645,8 @@ func TestAdminQueryHistoryCommandHidesForeignProjectDetail(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	if err := repo.RecordQueryEvent(ctx, queryaudit.EventInput{
@@ -608,7 +663,7 @@ func TestAdminQueryHistoryCommandHidesForeignProjectDetail(t *testing.T) {
 
 	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"select_detail","eventId":"foreign-event","limit":50}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
 	rec := httptest.NewRecorder()
@@ -694,14 +749,14 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	reqCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req := httptest.NewRequestWithContext(reqCtx, http.MethodGet, "/updates?route=admin&section=queries", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
 	rec := newSynchronizedResponseRecorder()
 	done := make(chan struct{})
@@ -727,21 +782,21 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	}
 }
 
-func TestAdminAccessRouteIsDropped(t *testing.T) {
+func TestAdminAccessRouteRendersCatalogue(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/access", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `section="access"`) {
+		t.Fatalf("status = %d, want roles and permissions body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -749,12 +804,12 @@ func TestAdminPrincipalDetailReturnsNotFoundForMissingPrincipal(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/principals/00000000-0000-0000-0000-000000000000", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 
@@ -767,12 +822,12 @@ func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	browser := testAdminBrowserSession(t, ctx, store, owner)
+	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/groups/00000000-0000-0000-0000-000000000000", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	browser.attach(req)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 

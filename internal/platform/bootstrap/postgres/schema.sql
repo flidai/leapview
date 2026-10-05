@@ -1,9 +1,10 @@
 -- Clean-slate platform bootstrap authority (ADR-0020).
 --
 -- This capability owns only instance bootstrap state: settings required by
--- startup, one immutable instance identity/environment binding, and the
--- singleton project claim. It deliberately does not inspect delivery,
--- serving-state, managed-data, or product tables owned by other capabilities.
+-- startup, one immutable instance identity/environment binding, the singleton
+-- customer-owner declaration, and the project claim. It deliberately does not
+-- inspect delivery, serving-state, managed-data, or product tables owned by
+-- other capabilities.
 
 CREATE SCHEMA IF NOT EXISTS platform;
 
@@ -23,6 +24,16 @@ CREATE TABLE IF NOT EXISTS platform.instance_identity (
     created_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK (instance_id = btrim(instance_id)),
     CHECK (instance_id ~ '^(lvinst_[A-Za-z0-9_-]{32}|instance_[0-9a-f]{32})$')
+);
+
+CREATE TABLE IF NOT EXISTS platform.instance_customer_owner (
+    singleton_id smallint PRIMARY KEY CHECK (singleton_id = 1),
+    instance_id  text NOT NULL UNIQUE REFERENCES platform.instance_identity(instance_id),
+    owner_id     text NOT NULL,
+    declared_at  timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (owner_id = btrim(owner_id)
+           AND octet_length(owner_id) BETWEEN 1 AND 255
+           AND owner_id !~ U&'[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000\0001-\001F\007F-\009F]')
 );
 
 CREATE TABLE IF NOT EXISTS platform.instance_environment (
@@ -69,6 +80,11 @@ CREATE TRIGGER instance_identity_immutable
     BEFORE UPDATE OR DELETE ON platform.instance_identity
     FOR EACH ROW EXECUTE FUNCTION platform.reject_bootstrap_immutable_mutation();
 
+DROP TRIGGER IF EXISTS instance_customer_owner_immutable ON platform.instance_customer_owner;
+CREATE TRIGGER instance_customer_owner_immutable
+    BEFORE UPDATE OR DELETE ON platform.instance_customer_owner
+    FOR EACH ROW EXECUTE FUNCTION platform.reject_bootstrap_immutable_mutation();
+
 DROP TRIGGER IF EXISTS instance_environment_immutable ON platform.instance_environment;
 CREATE TRIGGER instance_environment_immutable
     BEFORE UPDATE OR DELETE ON platform.instance_environment
@@ -96,7 +112,8 @@ CREATE TRIGGER setting_updated_at
 
 REVOKE ALL ON SCHEMA platform FROM PUBLIC;
 REVOKE ALL ON TABLE platform.setting, platform.instance_identity,
-    platform.instance_environment, platform.instance_project_claim FROM PUBLIC;
+    platform.instance_environment, platform.instance_project_claim,
+    platform.instance_customer_owner FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_bootstrap_immutable_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.touch_setting_updated_at() FROM PUBLIC;
 
@@ -106,19 +123,22 @@ BEGIN
         GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON platform.setting TO leapview_control_runtime;
         GRANT SELECT, INSERT ON platform.instance_identity,
-            platform.instance_environment, platform.instance_project_claim
+            platform.instance_environment, platform.instance_project_claim,
+            platform.instance_customer_owner
             TO leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
         GRANT SELECT ON platform.setting, platform.instance_identity,
-            platform.instance_environment, platform.instance_project_claim
+            platform.instance_environment, platform.instance_project_claim,
+            platform.instance_customer_owner
             TO leapview_control_readonly;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
         GRANT SELECT ON platform.setting, platform.instance_identity,
-            platform.instance_environment, platform.instance_project_claim
+            platform.instance_environment, platform.instance_project_claim,
+            platform.instance_customer_owner
             TO leapview_control_backup;
     END IF;
 END

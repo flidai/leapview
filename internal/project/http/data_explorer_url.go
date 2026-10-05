@@ -31,6 +31,9 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 		stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
+	if _, saved := values["saved"]; saved && len(values["state"]) == 0 {
+		return h.withSavedExplorationURL(w, r, executeQuery)
+	}
 	command := projectsignals.DataExplorerCommand{
 		ObjectKey: projectsignals.Optional(strings.TrimSpace(values.Get("object"))),
 		Mode:      projectsignals.Optional(strings.TrimSpace(values.Get("mode"))),

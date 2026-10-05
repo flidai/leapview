@@ -49,6 +49,10 @@ sql:
     queries: "internal/access/postgres/queries"
     schema:
       - "internal/access/postgres/schema.sql"
+      - "internal/project/postgres/schema.sql"
+      - "internal/project/postgres/resource_uid_schema.sql"
+      - "internal/platform/postgres/migrations/038_durable_authority_grants.sql"
+      - "internal/platform/bootstrap/postgres/schema.sql"
     gen:
       go:
         package: "db"
@@ -58,6 +62,21 @@ sql:
         emit_empty_slices: true
         emit_pointers_for_null_types: true
         omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/credential/postgres/queries"
+    schema: "internal/credential/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/credential/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
 
   - engine: "postgresql"
     queries: "internal/admin/product/postgres/queries"

@@ -12,11 +12,15 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
+// ErrNoActiveServingState indicates that no serving generation is available.
+// Instance administration can remain available before the first publication.
+var ErrNoActiveServingState = errors.New("no active LeapView serving state")
+
 func (m *Manager) Acquire(context.Context) (Lease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.current == nil || m.current.closing {
-		return nil, errors.New("no active LeapView serving state")
+		return nil, ErrNoActiveServingState
 	}
 	m.current.refs++
 	return &runtimeLease{manager: m, managed: m.current}, nil

@@ -15,7 +15,10 @@ import (
 type DeployOptions struct {
 	SourceRoot  string
 	Credentials cliapi.Credentials
-	Environment string
+	// TargetSelector retains the caller's named profile before credential
+	// resolution replaces it with a canonical origin.
+	TargetSelector string
+	Environment    string
 	// Intent is "new" or "resume" when explicitly selected. Empty permits
 	// the application adapter to enter the guided interactive flow.
 	Intent string
@@ -71,6 +74,7 @@ func DeployCommand(ctx context.Context, client cliapi.Client, operations DeployO
 			values.ConfirmationReader = command.InOrStdin()
 			values.ConfirmationWriter = command.OutOrStdout()
 			values.Interactive = values.Format != "json" && deployInputIsTerminal(values.ConfirmationReader) && (values.Intent == "" || (values.Intent == "resume" && values.OperationHandle == ""))
+			values.TargetSelector = values.Credentials.Target
 			credentials, err := client.Resolve(ctx, values.Credentials)
 			if err != nil {
 				return err

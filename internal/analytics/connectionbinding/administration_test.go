@@ -81,7 +81,7 @@ func TestAdministrationSeparatesMetadataAndRefreshAuthorization(t *testing.T) {
 	}
 }
 
-func TestAdministrationTestUsesCandidateRuntimePathAndDistinctAuditOperation(t *testing.T) {
+func TestAdministrationRefreshNowUsesCandidateRuntimePath(t *testing.T) {
 	binding := validTargetBinding(t)
 	repository := &administrationRepository{binding: binding}
 	pool := &administrationPool{}
@@ -98,15 +98,15 @@ func TestAdministrationTestUsesCandidateRuntimePathAndDistinctAuditOperation(t *
 		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	}
 
-	if _, err := service.Test(context.Background(), "operator-1", key); err != nil {
+	if _, err := service.RefreshNow(context.Background(), "operator-1", key); err != nil {
 		t.Fatal(err)
 	}
 	if len(pool.requests) != 1 {
-		t.Fatalf("test refresh requests = %#v", pool.requests)
+		t.Fatalf("refresh requests = %#v", pool.requests)
 	}
 	request := pool.requests[0]
-	if request.Actor != "principal:operator-1" || request.Operation != RefreshTest {
-		t.Fatalf("test refresh request = %#v", request)
+	if request.Actor != "principal:operator-1" || request.Operation != RefreshRequested {
+		t.Fatalf("refresh request = %#v", request)
 	}
 }
 

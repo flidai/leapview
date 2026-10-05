@@ -1,0 +1,104 @@
+{
+  "synthetic": false,
+  "production_changed": false,
+  "observations": [],
+  "cycles": [],
+  "harness_sha256": "975c106d1001f24f485f360f57e9a85c2a33689dee7270c055d6b042318b679b",
+  "docker": {
+    "ServerVersion": "29.1.3",
+    "Driver": "overlayfs",
+    "DriverStatus": [
+      [
+        "driver-type",
+        "io.containerd.snapshotter.v1"
+      ]
+    ]
+  },
+  "kamal": "2.12.0",
+  "private_remote_working_directory_verified": true,
+  "source_admission": {
+    "attestation": {
+      "repository": "flidai/leapview",
+      "sourceRevision": "b83767f8a5c6a2d158968e3458295ff50890e4c1",
+      "verified": true,
+      "workflow": "flidai/leapview/.github/workflows/site-kamal-trial.yml"
+    },
+    "digest": "sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339",
+    "image": "ghcr.io/flidai/leapview-site-kamal-trial@sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339",
+    "registryDigest": "sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339",
+    "sbom": {
+      "discoverable": true,
+      "predicateType": "https://spdx.dev/Document/v2.3"
+    },
+    "schemaVersion": 1,
+    "vulnerabilityPolicy": {
+      "passed": true,
+      "scanner": "trivy",
+      "sha256": "a203e922b5e962c675d8c7f87b687daf72ca65a09c9089763b212663a501bcba"
+    }
+  },
+  "expected_platform_digest": "sha256:82d1a56548c833e354d20dab916bb8ddf994caade8222cf5529b44809c606e72",
+  "expected_config_digest": "sha256:80da043f2296636d4996b7268ae62e7c99dbf2471d3b2353ae3bde8f3d3acc3f",
+  "before_real_pull": {
+    "containers": [],
+    "runtime_allocated_bytes": 333488128,
+    "filesystem_available_bytes": 32174538752,
+    "filesystem_available_inodes": 14224942,
+    "containerd_filesystem_available_bytes": 32174538752
+  },
+  "peak_allocated_bytes": 894849024,
+  "caddy_tls_www": true,
+  "after_real_acceptance": {
+    "containers": [
+      {
+        "Command": "\"/leapview-site -add\u2026\"",
+        "CreatedAt": "2026-09-26 08:26:06 +0000 UTC",
+        "ID": "8fdacc3aa0cf",
+        "Image": "127.0.0.1:5000/site:site-b83767f8a5c6",
+        "Labels": "destination=,dev.leapview.build.dirty=false,org.opencontainers.image.created=2026-09-26T08:02:43Z,org.opencontainers.image.description=LeapView public website and documentation portal,org.opencontainers.image.licenses=Apache-2.0,org.opencontainers.image.revision=b83767f8a5c6a2d158968e3458295ff50890e4c1,org.opencontainers.image.source=https://github.com/flidai/leapview,org.opencontainers.image.title=LeapView documentation site,org.opencontainers.image.version=0.3.0-alpha.1+site.b83767f8a5c6,role=web,service=leapview-site-trial",
+        "LocalVolumes": "0",
+        "Mounts": "",
+        "Names": "leapview-site-trial-web-site-b83767f8a5c6",
+        "Networks": "kamal",
+        "Platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "Ports": "8081/tcp",
+        "RunningFor": "3 seconds ago",
+        "Size": "4.1kB (virtual 295MB)",
+        "State": "running",
+        "Status": "Up 2 seconds"
+      }
+    ],
+    "runtime_allocated_bytes": 894853120,
+    "filesystem_available_bytes": 31591047168,
+    "filesystem_available_inodes": 14223109,
+    "containerd_filesystem_available_bytes": 31591047168
+  },
+  "real_site_proxy_qualified": true,
+  "actual_container_platform_digest": "sha256:82d1a56548c833e354d20dab916bb8ddf994caade8222cf5529b44809c606e72",
+  "build": {
+    "schemaVersion": 1,
+    "revision": "b83767f8a5c6a2d158968e3458295ff50890e4c1",
+    "image": "ghcr.io/flidai/leapview-site-kamal-trial@sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339"
+  },
+  "assets_checked": [
+    "/shared/app.css",
+    "/shared/theme.js",
+    "/static/home/enterprise.css",
+    "/static/home/home.js",
+    "/static/home/involved.css",
+    "/static/home/layers.css",
+    "/static/home/layers.js",
+    "/static/home/mission.css",
+    "/static/home/orbit.css",
+    "/static/home/orbit.js",
+    "/static/home/project-explorer.css",
+    "/static/home/project-explorer.js",
+    "/static/home/screenshot-hero.css",
+    "/static/site-page.js",
+    "/static/site.css",
+    "/static/vendor/datastar-1.0.2.js"
+  ]
+}

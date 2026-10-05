@@ -61,6 +61,7 @@ func configureSavedExploration(inputs savedExplorationWiringInputs) (savedExplor
 	if savedService == nil && inputs.repository != nil {
 		var err error
 		savedService, err = NewSavedExplorationService(SavedExplorationServiceOptions{
+			InstanceID:   inputs.instanceID,
 			Repository:   inputs.repository,
 			AccessModule: accessModule, Runtime: inputs.runtime,
 			Admitter: inputs.admitter, AuditRecorder: inputs.auditRecorder,

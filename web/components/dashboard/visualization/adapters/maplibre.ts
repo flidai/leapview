@@ -45,6 +45,16 @@ export function dataLabelLayerID(layerID: string, aggregateMembers = false): str
   return `${layerID}-data-label${aggregateMembers ? '-aggregate' : ''}`
 }
 
+export function mapCanvasOptions(context: Pick<RendererContext, 'authoringPreview' | 'devicePixelRatio'>) {
+  // Retained WebGL drawing buffers are needed for viewer snapshots, not for
+  // authoring tiles. Bound preview pixels so multiple open builder tabs do not
+  // multiply high-DPI GPU backing stores during visual changes and resizing.
+  return {
+    pixelRatio: context.authoringPreview ? Math.min(1, context.devicePixelRatio) : context.devicePixelRatio,
+    canvasContextAttributes: { preserveDrawingBuffer: !context.authoringPreview },
+  }
+}
+
 export function vectorTileTemplateURL(template: string, base: string): string {
   return new URL(template, base).toString()
     .replaceAll('%7Bz%7D', '{z}')
@@ -80,7 +90,7 @@ export const adapter: RendererAdapter = {
       container: surface,
       style,
       attributionControl: false,
-      canvasContextAttributes: { preserveDrawingBuffer: true },
+      ...mapCanvasOptions(context),
       ...pointerOptions,
     })
     await new Promise<void>((resolve) => { map.once('load', () => resolve()) })

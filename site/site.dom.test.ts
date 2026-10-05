@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
+import AxeBuilder from '@axe-core/playwright'
 import { chromium, type Browser } from '@playwright/test'
 import { startSiteTestServer, type SiteTestServer } from './test_server'
+import { collectVisualShowcaseMetrics } from './visual-showcase.test-helper'
 
 const sitePort = 20000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
@@ -27,6 +29,80 @@ afterAll(async () => {
     await browser?.close()
   } finally {
     await siteServer?.stop()
+  }
+})
+
+test('compliance page shows distinct, bounded assurance categories', async () => {
+  const page = await browser.newPage()
+  try {
+    const response = await page.goto(`${baseURL}/compliance`)
+    expect(response?.status()).toBe(200)
+    expect(await page.title()).toBe('Compliance & Security — LeapView')
+    expect(await page.getByRole('heading', { level: 1 }).allTextContents()).toEqual(['Compliance & Security'])
+    for (const heading of [
+      'Current assurance state',
+      'Implemented capabilities',
+      'Qualification-tested capabilities',
+      'Pending verification & approval',
+      'Certifications & regulatory status',
+      'Documentation & security reporting',
+    ]) {
+      expect(await page.getByRole('heading', { level: 2, name: heading }).count()).toBe(1)
+    }
+    expect(await page.getByText('Pending approval', { exact: true }).count()).toBeGreaterThan(0)
+    expect(await page.getByText('Not currently claimed', { exact: true }).count()).toBe(1)
+    expect(await page.getByText('ISO/IEC 27001 certification is not currently claimed.').count()).toBe(1)
+    expect(await page.locator('time[datetime="2026-09-24"]').count()).toBe(1)
+    expect(await page.getByRole('link', { name: 'Report a security issue privately' }).getAttribute('href'))
+      .toBe('https://github.com/flidai/leapview/security/advisories/new')
+    const copy = await page.locator('#main-content').innerText()
+    for (const unsupported of ['GDPR compliant', 'ISO certified', 'fully compliant', 'production-ready', '24/7 support', '99.9% availability']) {
+      expect(copy).not.toContain(unsupported)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('compliance page remains readable and navigable on desktop and mobile', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/compliance`)
+    for (const width of [320, 390, 768, 1280]) {
+      await page.setViewportSize({ width, height: 900 })
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+      expect(await page.locator('.site-header').count()).toBe(1)
+      expect(await page.locator('.site-footer').count()).toBe(1)
+      expect(await page.locator('#main-content').isVisible()).toBe(true)
+    }
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.keyboard.press('Tab')
+    expect(await page.locator('.skip-link').evaluate((link) => link === document.activeElement)).toBe(true)
+    await page.keyboard.press('Enter')
+    expect(new URL(page.url()).hash).toBe('#main-content')
+    await page.getByRole('navigation', { name: 'On this page' }).getByRole('link', { name: 'Pending' }).click()
+    expect(new URL(page.url()).hash).toBe('#pending')
+    await page.setViewportSize({ width: 390, height: 900 })
+    await page.getByRole('button', { name: 'Open site navigation' }).click()
+    expect(await page.getByRole('navigation', { name: 'Site navigation' }).getByRole('link', { name: 'Compliance' }).count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('compliance content passes the public-site accessibility audit', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 900 } })
+  const page = await context.newPage()
+  try {
+    await page.goto(`${baseURL}/compliance`)
+    // The shared PageSpec currently nests the existing site footer in <main>.
+    // Keep the page-wide scan, but do not expand this FAI-991 change into a
+    // cross-site landmark refactor.
+    const results = await new AxeBuilder({ page }).disableRules(['landmark-contentinfo-is-top-level']).analyze()
+    expect(results.violations).toEqual([])
+  } finally {
+    await page.close()
+    await context.close()
   }
 })
 
@@ -473,19 +549,20 @@ test('site brand pairs the LeapView wordmark with the Lucide Aperture ring mark'
   }
 })
 
-test('desktop download page presents the same manifest-backed early preview', async () => {
+test('desktop download page withdraws unavailable preview links', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
     await page.goto(`${baseURL}/download`)
 
     expect(await page.getByRole('heading', { level: 1, name: 'LeapView on your desktop.' }).isVisible()).toBe(true)
     expect(await page.locator('.site-download-hero > .site-eyebrow').count()).toBe(0)
-    expect(await page.getByText('Early preview', { exact: true }).isVisible()).toBe(true)
-    expect(await page.getByText('These installers are not code-signed.', { exact: false }).isVisible()).toBe(true)
+    expect(await page.getByRole('heading', { name: 'Desktop downloads are temporarily withdrawn.' }).isVisible()).toBe(true)
+    expect(await page.getByText('No installer is currently offered.', { exact: false }).isVisible()).toBe(true)
     expect(await page.getByRole('link', { name: 'Read the install guide' }).getAttribute('href')).toBe('/docs/desktop/install')
     expect(await page.getByRole('link', { name: 'Review desktop security' }).getAttribute('href')).toBe('/docs/desktop/security')
     expect(await page.locator('.site-download-platform').count()).toBe(3)
-    expect(await page.locator('.site-download-artifact .site-button-primary').count()).toBe(4)
+    expect(await page.locator('.site-download-artifact .site-button-primary').count()).toBe(0)
+    expect(await page.locator('a[download], a[href^="https://github.com/flidai/leapview/releases/"]').count()).toBe(0)
   } finally {
     await page.close()
   }
@@ -932,6 +1009,14 @@ test('KPI documentation automatically demonstrates every valid layout from one v
     await page.waitForFunction(() => {
       const examples = [...document.querySelectorAll('lv-site-visual-example[type="kpi"]')]
       return examples.length === 9 && examples.every((example) => example.shadowRoot?.querySelectorAll('[data-layout-preview]').length === 2)
+    })
+    await page.waitForFunction(() => {
+      const example = document.querySelector('lv-site-visual-example[example-id="revenue_kpi_favorable"]')
+      const previews = [...(example?.shadowRoot?.querySelectorAll('[data-layout-preview]') ?? [])]
+      return previews.length === 2 && previews.every((preview) => {
+        const renderer = preview.querySelector('lv-visualization-host')?.shadowRoot?.querySelector<HTMLElement>('.renderer')
+        return renderer?.dataset.layoutFit === 'fit' && renderer.querySelector('.lv-kpi-sparkline')
+      })
     })
     const favorable = page.locator('lv-site-visual-example[example-id="revenue_kpi_favorable"]')
     const previews = await favorable.evaluate((example) =>
@@ -2119,6 +2204,10 @@ test('visual showcase renders every supported visual type', async () => {
       return showcase?.shadowRoot?.querySelectorAll('.table-card lv-visualization-host').length === 3
     })
     await page.waitForFunction(() => Array.from(document.querySelector('lv-site-visual-showcase')?.shadowRoot?.querySelectorAll('.table-card lv-visualization-host') ?? []).every((host: any) => Boolean(host.envelope?.spec?.title) && !host.shadowRoot?.querySelector('[role="alert"]')))
+    await page.waitForFunction(() => {
+      const aggregates = Array.from(document.querySelector('lv-site-visual-showcase')?.shadowRoot?.querySelectorAll('.table-card lv-visualization-host') ?? []).filter((host: any) => host.envelope?.spec?.kind !== 'table') as any[]
+      return aggregates.length > 0 && aggregates.every((host) => host.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('[role="cell"]'))
+    })
     const tables = await page.locator('lv-site-visual-showcase').evaluate((element) => ({
       cards: element.shadowRoot?.querySelectorAll('.table-card').length,
       tables: element.shadowRoot?.querySelectorAll('.table-card lv-visualization-host').length,
@@ -2414,55 +2503,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
           && hosts.every((host: any) => host.shadowRoot?.querySelector('.renderer')?.getAttribute('aria-busy') === 'false')
       }, theme)
 
-      const metrics = await page.locator('lv-site-visual-showcase').evaluate((element) =>
-        Array.from(element.shadowRoot?.querySelectorAll('article') ?? []).map((card) => {
-          const host = card.querySelector('lv-visualization-host') as HTMLElement & {
-            envelope?: {
-              visualID?: string
-              spec?: { kind?: string; mark?: string; y?: Array<{ dataset: string; field: string }> }
-              dataState?: { kind?: string; datasets?: Array<{ id: string; columns: string[]; rows: unknown[][] }> }
-            }
-            shadowRoot: ShadowRoot
-          }
-          const renderer = host.shadowRoot?.querySelector<HTMLElement>('.renderer')
-          const canvases = Array.from(host.shadowRoot?.querySelectorAll<HTMLCanvasElement>('canvas') ?? [])
-          const table = renderer?.querySelector<HTMLElement>('lv-report-table')
-          const bounds = renderer?.getBoundingClientRect()
-          let sampledPixels = 0
-          let coloredPixels = 0
-          for (const canvas of canvases) {
-            if (sampledPixels > 10 && coloredPixels > 0) break
-            const context = canvas.getContext('2d', { willReadFrequently: true })
-            if (context && canvas.width > 0 && canvas.height > 0) {
-              const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-              for (let index = 0; index < pixels.length; index += 4) {
-                if (pixels[index + 3]! < 32) continue
-                sampledPixels++
-                const maximum = Math.max(pixels[index]!, pixels[index + 1]!, pixels[index + 2]!)
-                const minimum = Math.min(pixels[index]!, pixels[index + 1]!, pixels[index + 2]!)
-                if (maximum - minimum >= 24) {
-                  coloredPixels++
-                }
-                if (sampledPixels > 10 && coloredPixels > 0) break
-              }
-            }
-          }
-          return {
-            visualID: host.envelope?.visualID,
-            kind: host.envelope?.spec?.kind,
-            alert: host.shadowRoot?.querySelector('[role="alert"]')?.textContent?.trim() ?? '',
-            width: Math.round(bounds?.width ?? 0),
-            height: Math.round(bounds?.height ?? 0),
-            canvasWidth: Math.max(0, ...canvases.map((canvas) => canvas.width)),
-            canvasHeight: Math.max(0, ...canvases.map((canvas) => canvas.height)),
-            sampledPixels,
-            coloredPixels,
-            mapFrame: host.shadowRoot?.querySelectorAll('.maplibregl-map .maplibregl-canvas').length ?? 0,
-            tableText: table?.shadowRoot?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
-            rendererText: renderer?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
-          }
-        }),
-      )
+      const metrics = await page.locator('lv-site-visual-showcase').evaluate(collectVisualShowcaseMetrics)
 
       expect(metrics, `${theme} catalog inventory`).toHaveLength(26)
       for (const metric of metrics) {
@@ -2473,6 +2514,10 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
           expect(metric.tableText, `${theme}/${metric.visualID} visible table content`).toBeGreaterThan(40)
         } else if (metric.kind === 'kpi') {
           expect(metric.rendererText, `${theme}/${metric.visualID} visible KPI context`).toBeGreaterThan(30)
+        } else if (metric.kind === 'proportional' && metric.mark === 'funnel') {
+          expect(metric.svgWidth, `${theme}/${metric.visualID} visible SVG width`).toBeGreaterThan(100)
+          expect(metric.svgHeight, `${theme}/${metric.visualID} visible SVG height`).toBeGreaterThan(100)
+          expect(metric.svgMarks, `${theme}/${metric.visualID} visible SVG data marks`).toBeGreaterThan(0)
         } else {
           expect(metric.canvasWidth, `${theme}/${metric.visualID} canvas width`).toBeGreaterThan(100)
           expect(metric.canvasHeight, `${theme}/${metric.visualID} canvas height`).toBeGreaterThan(100)

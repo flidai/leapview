@@ -46,5 +46,5 @@ func authorizeSemanticModelResourceRead(
 	if requestLocalDevelopmentAuthorization(ctx, principalID) {
 		return true, nil
 	}
-	return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+	return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, access.ActionSemanticRead)
 }

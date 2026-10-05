@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	oidcauth "github.com/flidai/leapview/internal/access/oidc"
 )
@@ -38,6 +39,42 @@ func TestDevelopmentAuthCookiesKeepUnprefixedNames(t *testing.T) {
 	if auth.SessionCookieName() != sessionCookieName || auth.csrfCookie != csrfCookieName ||
 		auth.oidcCookie != oidcStateCookieName || auth.returnCookie != authReturnCookieName {
 		t.Fatalf("development cookie names = %q %q %q %q", auth.SessionCookieName(), auth.csrfCookie, auth.oidcCookie, auth.returnCookie)
+	}
+}
+
+func TestDevelopmentCookieNamespaceSeparatesWorktrees(t *testing.T) {
+	first := mustNewAuth(t, nil, AuthConfig{CSRFKey: strings.Repeat("k", 32), CookieNamespace: "12345"})
+	second := mustNewAuth(t, nil, AuthConfig{CSRFKey: strings.Repeat("k", 32), CookieNamespace: "67890"})
+	for _, names := range [][2]string{
+		{first.SessionCookieName(), second.SessionCookieName()},
+		{first.csrfCookie, second.csrfCookie},
+		{first.oidcCookie, second.oidcCookie},
+		{first.returnCookie, second.returnCookie},
+	} {
+		if names[0] == names[1] || names[0] == "" || names[1] == "" {
+			t.Fatalf("development cookie names overlap: %q and %q", names[0], names[1])
+		}
+	}
+	for _, namespace := range []string{"UPPER", "with-dash", strings.Repeat("a", 17)} {
+		if _, err := NewAuth(nil, AuthConfig{CSRFKey: strings.Repeat("k", 32), CookieNamespace: namespace}); err == nil {
+			t.Fatalf("accepted invalid cookie namespace %q", namespace)
+		}
+	}
+}
+
+func TestBrowserSessionTTLDefaultsAndHonorsBoundedDevelopmentOverride(t *testing.T) {
+	defaultAuth := mustNewAuth(t, nil, AuthConfig{CSRFKey: strings.Repeat("k", 32)})
+	if defaultAuth.sessionTTL != 8*time.Hour {
+		t.Fatalf("default session TTL = %s, want 8h", defaultAuth.sessionTTL)
+	}
+	devAuth := mustNewAuth(t, nil, AuthConfig{CSRFKey: strings.Repeat("k", 32), BrowserSessionTTL: 30 * 24 * time.Hour})
+	if devAuth.sessionTTL != 30*24*time.Hour {
+		t.Fatalf("development session TTL = %s, want 30d", devAuth.sessionTTL)
+	}
+	for _, ttl := range []time.Duration{-time.Second, 31 * 24 * time.Hour} {
+		if _, err := NewAuth(nil, AuthConfig{CSRFKey: strings.Repeat("k", 32), BrowserSessionTTL: ttl}); err == nil {
+			t.Fatalf("accepted invalid browser session TTL %s", ttl)
+		}
 	}
 }
 

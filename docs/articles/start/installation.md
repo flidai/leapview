@@ -1,18 +1,21 @@
 # Installation
 
-LeapView ships as a public multi-architecture container image. Pulling that image is the primary onboarding path; no source checkout, registry login, or installer is required. One running container with one persistent state volume is one LeapView instance.
+LeapView ships as a public multi-architecture container image. Pulling that image is the primary onboarding path; no source checkout, registry login, or installer is required. A production instance also requires external PostgreSQL control and DuckLake databases and configured managed-object storage; its local volume is not a complete recovery copy.
 
 ## Current controlled-testing release
 
-The supported candidate is
-[`v0.2.0-rc.1`](https://github.com/flidai/leapview/releases/tag/v0.2.0-rc.1),
+The current alpha for controlled evaluation is
+[`v0.3.0-alpha.1`](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1),
 built from revision
-[`dfb3086d59284c6597180e99a7d07f41e36a7f7e`](https://github.com/flidai/leapview/commit/dfb3086d59284c6597180e99a7d07f41e36a7f7e).
-It is a release candidate for controlled testing, not GA. Its immutable image
+[`bf792c45bd1bf346ab30d33c467ad43f802359b4`](https://github.com/flidai/leapview/commit/bf792c45bd1bf346ab30d33c467ad43f802359b4).
+It is an alpha for controlled testing, not GA or a production-readiness guarantee.
+Interfaces may change and workflows may be incomplete. Do not assume an in-place
+upgrade from the SQLite-era v0.2.0-rc.1 release; review the release compatibility
+notes and use a separately provisioned target for evaluation. Its immutable image
 is:
 
 ```text
-ghcr.io/flidai/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9
+ghcr.io/flidai/leapview@sha256:f435b922968975c295ae738e622805c4c738b9cdf6b7624a4cd5cd7af0557a86
 ```
 
 Download the version-matched operations bundle and checksum for the machine
@@ -20,10 +23,10 @@ that will run `leapviewctl`:
 
 | Operating system | Architecture | Archive | Checksum |
 | --- | --- | --- | --- |
-| Linux | amd64 | [leapview-compose-v0.2.0-rc.1-linux-amd64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-linux-amd64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-linux-amd64.tar.gz.sha256) |
-| Linux | arm64 | [leapview-compose-v0.2.0-rc.1-linux-arm64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-linux-arm64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-linux-arm64.tar.gz.sha256) |
-| macOS | amd64 | [leapview-compose-v0.2.0-rc.1-darwin-amd64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-darwin-amd64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-darwin-amd64.tar.gz.sha256) |
-| macOS | arm64 | [leapview-compose-v0.2.0-rc.1-darwin-arm64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-darwin-arm64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.2.0-rc.1/leapview-compose-v0.2.0-rc.1-darwin-arm64.tar.gz.sha256) |
+| Linux | amd64 | [leapview-compose-v0.3.0-alpha.1-linux-amd64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-linux-amd64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-linux-amd64.tar.gz.sha256) |
+| Linux | arm64 | [leapview-compose-v0.3.0-alpha.1-linux-arm64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-linux-arm64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-linux-arm64.tar.gz.sha256) |
+| macOS | amd64 | [leapview-compose-v0.3.0-alpha.1-darwin-amd64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-darwin-amd64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-darwin-amd64.tar.gz.sha256) |
+| macOS | arm64 | [leapview-compose-v0.3.0-alpha.1-darwin-arm64.tar.gz](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-darwin-arm64.tar.gz) | [SHA-256](https://github.com/flidai/leapview/releases/download/v0.3.0-alpha.1/leapview-compose-v0.3.0-alpha.1-darwin-arm64.tar.gz.sha256) |
 
 ## Before you begin
 
@@ -51,7 +54,7 @@ image-and-state upgrade or rollback.
 1. Select, download, verify, and extract the current platform archive:
 
 ```sh
-VERSION='v0.2.0-rc.1'
+VERSION='v0.3.0-alpha.1'
 case "$(uname -s)" in
   Linux) OS=linux ;;
   Darwin) OS=darwin ;;
@@ -198,9 +201,27 @@ task dev
 
 `task dev` provisions a loopback-only PostgreSQL 18 service scoped to the
 worktree, runs the local physical-pool qualification/bootstrap once, and
-starts one native PostgreSQL target with the private authoring watcher. The
-generated credentials remain in `.tmp/postgres-dev.env` (mode 0600); do not
-reuse them outside this worktree. For a durable rollout, use the canonical `plan`, `build`, and
+starts one native PostgreSQL target with the private authoring watcher. On a
+new database, first run `LEAPVIEW_DEV_ONCE=1 task dev:bypass` to stage the
+bundled managed-data fixture. Subsequent `task dev` starts a credentialed
+server without publishing, and `task dev:publish` creates a fresh release with
+scoped authority while reusing staged data. The generated credentials
+remain in `.tmp/postgres-dev.env` (mode 0600); do not
+reuse them outside this worktree. The browser uses a real local session by
+default. Open the login page and choose **Continue as Local Developer**; the
+loopback-only shortcut creates the same durable, audited browser session as
+password login. Use `task dev:credentials` only to reveal the worktree-private
+login stored under `.tmp/dev-auth/` when explicitly testing the password flow;
+its separate, expiring publisher token is not displayed. The development URL
+is pinned across restarts and localhost cookies are isolated per worktree.
+Managed development sessions
+last up to 30 days, while production retains its eight-hour lifetime. Sign-out,
+browser-data clearing, database reset, or expiry requires another click.
+`task dev:auth-smoke` checks browser login,
+group-role activation after a fresh release, revocation, and cleanup. Use
+`task dev:bypass` only for fixture seeding or when intentionally testing a
+flow that does not need credential-bound authority. For a durable rollout,
+use the canonical `plan`, `build`, and
 `publish CANDIDATE_ID` commands shown above. Use `task dev:status`,
 `task dev:logs`, and `task dev:stop` for lifecycle operations. Run `task ci`
 before handing off substantial changes.

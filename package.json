@@ -1,6 +1,6 @@
 {
   "name": "leapview",
-  "version": "0.2.0-rc.2",
+  "version": "0.3.0-alpha.1",
   "private": true,
   "packageManager": "bun@1.3.14",
   "type": "module",
@@ -32,22 +32,22 @@
     "test:viewport-qualification-harness": "bun test scripts/viewport_qualification.test.ts",
     "test:public-site-smoke": "bun test scripts/public_site_smoke.test.ts",
     "test:visual-modal": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts visual-modal && bun test web/components/dashboard/visual-modal-focus.test.ts web/components/dashboard/visual-modal.dom.test.ts",
-    "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts && bun test web/components/app/catalog-table.dom.test.ts && bun test web/components/app/catalog-copy.dom.test.ts && bun test web/components/app/dashboard-icon-picker.test.ts",
-    "test:dashboard-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-page && bun test web/components/dashboard/dashboard-page.dom.test.ts && bun test web/components/dashboard/dashboard-page.agent.dom.test.ts && bun test web/components/dashboard/dashboard-page.visuals.dom.test.ts && bun test web/components/dashboard/report-canvas.dom.test.ts && bun scripts/build_test_assets.ts visualization-host && bun test web/components/dashboard/visualization/host.dom.test.ts",
+    "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts && bun test web/components/app/catalog-page.pins.dom.test.ts && bun test web/components/app/catalog-pins.test.ts web/components/app/catalog-table.dom.test.ts && bun test web/components/app/catalog-copy.dom.test.ts && bun test web/components/app/dashboard-icon-picker.test.ts",
+    "test:dashboard-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-page && bun test web/components/dashboard/dashboard-page.dom.test.ts && bun test web/components/dashboard/dashboard-development-session-status.dom.test.ts && bun test web/components/dashboard/dashboard-page.agent.dom.test.ts && bun test web/components/dashboard/dashboard-page.visuals.dom.test.ts && bun test web/components/dashboard/report-canvas.dom.test.ts && bun scripts/build_test_assets.ts visualization-host && bun test web/components/dashboard/visualization/host.dom.test.ts",
     "test:date-picker": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts date-picker && bun test web/components/dashboard/filters/date-picker.dom.test.ts web/components/dashboard/filters/timestamp-date-range.test.ts",
-    "test:dashboard-builder": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-builder && bun test web/components/dashboard/dashboard-builder.dom.test.ts && bun test web/components/dashboard/dashboard-builder-preview.dom.test.ts web/components/dashboard/builder-visualization-state.test.ts",
+    "test:dashboard-builder": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts dashboard-builder && bun test web/components/dashboard/builder-pane-layout.dom.test.ts && bun test web/components/dashboard/builder-grid-sync.dom.test.ts && bun test web/components/dashboard/dashboard-builder.dom.test.ts && bun test web/components/dashboard/dashboard-builder-preview.dom.test.ts web/components/dashboard/builder-visualization-state.test.ts",
     "test:chat-composer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-composer && bun test web/components/chat/chat-composer.dom.test.ts",
     "test:chat-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-page && bun test web/components/chat/chat-page.dom.test.ts",
     "test:chat-thread": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-thread && bun test web/components/chat/chat-thread.dom.test.ts",
     "test:command-failure": "bun test web/components/shared/command-failure.test.ts web/components/shared/command.test.ts",
     "test:code-block": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts code-block && bun test web/components/shared/code-block.dom.test.ts",
-    "test:data-explorer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts data-explorer && bun test web/components/data/data-explorer.dom.test.ts && bun test web/components/data/data-explorer-saved.dom.test.ts && bun test web/components/data/data-explorer-retention.dom.test.ts && bun test web/components/data/data-explorer-url.test.ts web/components/data/data-explorer-controller.test.ts web/components/data/data-explorer-dashboard.test.ts web/components/data/data-explorer-spec.test.ts",
-    "test:project-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts project-page && bun test web/components/project/project-page.dom.test.ts && bun test web/components/project/project-page.reported-issues.dom.test.ts && bun test web/components/project/pipelines-page.dom.test.ts",
+    "test:data-explorer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts data-explorer && bun test web/components/data/data-explorer.dom.test.ts && bun test web/components/data/data-explorer-saved.dom.test.ts && bun test web/components/data/data-explorer-retention.dom.test.ts && bun test web/components/data/data-explorer-url.test.ts web/components/data/data-explorer-controller.test.ts web/components/data/data-explorer-dashboard.test.ts web/components/data/data-explorer-spec.test.ts web/components/data/saved-explorations.test.ts",
+    "test:project-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts project-page && bun test web/components/project/project-page.dom.test.ts && bun test web/components/project/project-page.reported-issues.dom.test.ts && bun test web/components/project/pipelines-page.dom.test.ts && bun test web/components/project/pipeline-run-page.dom.test.ts",
     "test:windowed-table": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts windowed-table && bun test web/components/shared/windowed-table.dom.test.ts",
     "test:filter-menu": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts filter-menu && bun test web/components/shared/filter-menu.dom.test.ts",
     "test:datastar-inspector": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts datastar-inspector && bun test web/components/inspector/datastar-inspector.dom.test.ts",
     "test:settings": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts settings-layout product-settings agent-settings && bun test --timeout 30000 web/components/shared/settings-layout.dom.test.ts && bun test --timeout 30000 web/components/admin/product-settings.dom.test.ts && bun test --timeout 30000 web/components/admin/agent-settings.dom.test.ts",
-    "test:admin-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts admin-page && bun test web/components/admin/admin-page.dom.test.ts && bun test web/components/admin/admin-page-query-empty.dom.test.ts && bun test web/components/admin/personal-settings-avatar.dom.test.ts && bun test web/components/admin/admin-page-service-accounts.dom.test.ts && bun test web/components/admin/admin-page-publications.dom.test.ts && bun test web/components/admin/archived-chats.dom.test.ts",
+    "test:admin-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts admin-page && bun test web/components/admin/admin-page.dom.test.ts && bun test web/components/admin/personal-settings-security.dom.test.ts && bun test web/components/admin/admin-page-query-empty.dom.test.ts && bun test web/components/admin/access-overview.dom.test.ts && bun test web/components/admin/personal-settings-tokens.dom.test.ts && bun test web/components/admin/personal-settings-avatar.dom.test.ts && bun test web/components/admin/admin-page-service-accounts.dom.test.ts && bun test web/components/admin/admin-page-publications.dom.test.ts && bun test web/components/admin/archived-chats.dom.test.ts",
     "test:code-editor": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts code-editor && bun test web/components/shared/code-editor.dom.test.ts",
     "test:markdown-view": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts markdown-view && bun test web/components/shared/markdown-view.dom.test.ts",
     "test:login-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts login-page && bun test web/components/login/login-page.dom.test.ts",
@@ -91,8 +91,8 @@
   },
   "dependencies": {
     "@shikijs/monaco": "^4.3.0",
-    "dompurify": "^3.4.13",
-    "gridstack": "13.3.0",
+    "dompurify": "^3.4.16",
+    "gridstack": "14.0.0",
     "lucide": "^1.21.0",
     "markdown-it": "^15.0.1",
     "mermaid": "^12.0.0",
@@ -103,10 +103,11 @@
     "yaml": "2.9.1"
   },
   "overrides": {
-    "dompurify": "3.4.13",
-    "fast-uri": "3.1.6",
+    "@parcel/watcher": "2.6.0",
+    "dompurify": "3.4.16",
+    "fast-uri": "3.1.8",
     "lodash-es": "4.18.1",
-    "undici": "7.29.0"
+    "undici": "7.29.1"
   },
   "trustedDependencies": [
     "@parcel/watcher"

@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
@@ -11,6 +12,8 @@ import (
 type bootstrapAuthorizationContextKey struct{}
 
 type publicationApprovalBootstrapAuthorizationContextKey struct{}
+
+type accessTransitionApprovalAuthorizationContextKey struct{}
 
 type managedDataStagingAuthorizationContextKey struct{}
 
@@ -120,4 +123,69 @@ func PublicationApprovalBootstrapAuthorizationFromContext(ctx context.Context) (
 		return PublicationApprovalBootstrapAuthorization{}, false
 	}
 	return marker, true
+}
+
+// AccessTransitionApprovalAuthorization is a one-invocation approval scope for
+// the admitted legacy-to-typed maintenance transition. It binds the operation
+// to the predecessor generation, the exact newly captured generation and its
+// immutable typed-policy snapshot, plus distinct publisher/reviewer identities.
+// It cannot authorize requests outside publication approval.
+type AccessTransitionApprovalAuthorization struct {
+	TargetID                   string
+	ProjectID                  projectgraph.ResourceID
+	Environment                string
+	ExpectedActiveGenerationID string
+	CandidateID                string
+	CandidateGenerationID      string
+	PublicationID              string
+	PublisherPrincipalID       string
+	ReviewerPrincipalID        string
+	IntentDigest               string
+	CandidateSnapshotDigest    string
+}
+
+// WithAccessTransitionApprovalAuthorization attaches the narrowly scoped
+// offline transition evidence. The app composition calls it only after the
+// host maintenance fence, typed policy CAS and native candidate plan have
+// each been revalidated. Normal HTTP authorization does not call this helper.
+func WithAccessTransitionApprovalAuthorization(ctx context.Context, marker AccessTransitionApprovalAuthorization) (context.Context, error) {
+	if ctx == nil || strings.TrimSpace(marker.TargetID) == "" || marker.ProjectID.Validate() != nil || strings.TrimSpace(marker.Environment) == "" ||
+		strings.TrimSpace(marker.ExpectedActiveGenerationID) == "" || strings.TrimSpace(marker.CandidateID) == "" || strings.TrimSpace(marker.CandidateGenerationID) == "" || strings.TrimSpace(marker.PublicationID) == "" || marker.ExpectedActiveGenerationID == marker.CandidateGenerationID ||
+		strings.TrimSpace(marker.PublisherPrincipalID) == "" || strings.TrimSpace(marker.ReviewerPrincipalID) == "" || marker.PublisherPrincipalID == marker.ReviewerPrincipalID ||
+		!isCanonicalSHA256Digest(marker.IntentDigest) || !isCanonicalSHA256Digest(marker.CandidateSnapshotDigest) {
+		return ctx, falseAccessTransitionApproval()
+	}
+	return context.WithValue(ctx, accessTransitionApprovalAuthorizationContextKey{}, marker), nil
+}
+
+// AccessTransitionApprovalAuthorizationFromContext returns a valid, exact
+// transition approval scope, if one was attached by offline composition.
+func AccessTransitionApprovalAuthorizationFromContext(ctx context.Context) (AccessTransitionApprovalAuthorization, bool) {
+	if ctx == nil {
+		return AccessTransitionApprovalAuthorization{}, false
+	}
+	marker, ok := ctx.Value(accessTransitionApprovalAuthorizationContextKey{}).(AccessTransitionApprovalAuthorization)
+	if !ok || strings.TrimSpace(marker.TargetID) == "" || marker.ProjectID.Validate() != nil || strings.TrimSpace(marker.Environment) == "" ||
+		strings.TrimSpace(marker.ExpectedActiveGenerationID) == "" || strings.TrimSpace(marker.CandidateID) == "" || strings.TrimSpace(marker.CandidateGenerationID) == "" || strings.TrimSpace(marker.PublicationID) == "" || marker.ExpectedActiveGenerationID == marker.CandidateGenerationID ||
+		strings.TrimSpace(marker.PublisherPrincipalID) == "" || strings.TrimSpace(marker.ReviewerPrincipalID) == "" || marker.PublisherPrincipalID == marker.ReviewerPrincipalID ||
+		!isCanonicalSHA256Digest(marker.IntentDigest) || !isCanonicalSHA256Digest(marker.CandidateSnapshotDigest) {
+		return AccessTransitionApprovalAuthorization{}, false
+	}
+	return marker, true
+}
+
+func falseAccessTransitionApproval() error {
+	return errors.New("invalid offline access-transition approval scope")
+}
+
+func isCanonicalSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, char := range value[len("sha256:"):] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
+	}
+	return true
 }

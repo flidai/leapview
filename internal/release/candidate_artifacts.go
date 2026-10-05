@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
@@ -165,7 +166,12 @@ type CandidateArtifactSet struct {
 	AuthorizationPolicyRevision int64
 	AuthorizationPolicyDigest   string
 	AuthorizationFingerprint    string
-	Generation                  CandidateGenerationArtifact
+	// AuthorizationSnapshot is the candidate-graph-bound typed policy snapshot
+	// used by delivery compound authorization. It is an in-process evidence
+	// carrier; native plans persist only the resulting execution projection and
+	// snapshot digest, never the grant/policy payload.
+	AuthorizationSnapshot accesssnapshot.AuthorizationSnapshot
+	Generation            CandidateGenerationArtifact
 	// Compiler is the exact immutable compiler evidence used to produce the
 	// serving artifact. Keeping the graph, manifest, and plan alongside the
 	// artifact prevents production delivery from reloading or recompiling a

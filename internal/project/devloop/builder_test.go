@@ -185,6 +185,8 @@ func TestFilesystemBuilderProducesDeterministicProjectArtifacts(t *testing.T) {
 	compiled, err := projectcompiler.Compile(projectPath)
 	require.NoError(t, err)
 	require.Equal(t, compiled.Graph().Digest(), first.GraphDigest)
+	require.NotEmpty(t, first.ConnectionCatalogDigest)
+	require.Equal(t, first.ConnectionCatalogDigest, second.ConnectionCatalogDigest)
 	if len(first.Artifacts) < 2 {
 		t.Fatalf("content artifacts = %d, want reachable project sources", len(first.Artifacts))
 	}

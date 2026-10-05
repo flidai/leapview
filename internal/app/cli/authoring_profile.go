@@ -11,6 +11,7 @@ import (
 	analyticsenvironment "github.com/flidai/leapview/internal/analytics/environment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	developmentinput "github.com/flidai/leapview/internal/project/developmentinput"
 	developmentprofile "github.com/flidai/leapview/internal/project/developmentprofile"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +21,8 @@ const stableProfileGraphAttempts = 3
 type localDevelopmentProfile struct {
 	CheckoutRoot string
 	SourceRoot   string
+	// GraphDigest is the legacy profile wire field for the logical connection
+	// catalog digest; the complete authored graph is free to change while dev runs.
 	GraphDigest  string
 	Profile      developmentprofile.Selected
 	Credentials  map[string]string
@@ -94,6 +97,10 @@ func prepareLocalDevelopmentProfile(command *cobra.Command, args []string) (loca
 	if err != nil {
 		return localDevelopmentProfile{}, err
 	}
+	connectionCatalogDigest, err := developmentprofile.CatalogDigest(catalog)
+	if err != nil {
+		return localDevelopmentProfile{}, err
+	}
 	profileFile, err := command.Flags().GetString("profile-file")
 	if err != nil {
 		return localDevelopmentProfile{}, err
@@ -127,7 +134,7 @@ func prepareLocalDevelopmentProfile(command *cobra.Command, args []string) (loca
 	return localDevelopmentProfile{
 		CheckoutRoot: checkout,
 		SourceRoot:   filepath.Clean(sourceRoot),
-		GraphDigest:  bundle.Graph().Digest(),
+		GraphDigest:  connectionCatalogDigest,
 		Profile:      selected,
 		Credentials:  credentials,
 	}, nil
@@ -159,6 +166,14 @@ func discoverLocalCheckout(start string) (string, error) {
 	}
 	start = current
 	for {
+		// An initialized project is its own checkout even when created inside
+		// another repository. Use its authored marker before an ancestor .git.
+		projectMarker := filepath.Join(current, filepath.FromSlash(developmentinput.DefaultRelativePath))
+		if info, statErr := os.Lstat(projectMarker); statErr == nil && info.Mode().IsRegular() {
+			return filepath.Clean(current), nil
+		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect initialized project marker: %w", statErr)
+		}
 		marker := filepath.Join(current, ".git")
 		if info, statErr := os.Lstat(marker); statErr == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			return filepath.Clean(current), nil

@@ -104,7 +104,9 @@ func TestMutateDashboardPublicationRejectsStaleIfMatchBeforeMutation(t *testing.
 	m := &Module{
 		publications: repository, publicationService: publication.NewService(repository, nil), publicationAuditConfigured: true,
 		currentActor: func(*http.Request) string { return "actor" },
-		handler:      dashboardhttp.Handler{CurrentPrincipalID: func(*http.Request) string { return "actor" }, AuthorizeListResource: func(context.Context, string, access.ResourceRef, access.Capability) (bool, error) { return true, nil }},
+		handler: dashboardhttp.Handler{CurrentPrincipalID: func(*http.Request) string { return "actor" }, AuthorizeTypedDashboardAction: func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, bool, error) {
+			return true, true, nil
+		}},
 	}
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.Header.Set("If-Match", `"1"`)
@@ -131,7 +133,9 @@ func TestMutateDashboardPublicationRejectsNonUUIDv7IdempotencyKey(t *testing.T) 
 	m := &Module{
 		publications: repository, publicationService: publication.NewService(repository, nil), publicationAuditConfigured: true,
 		currentActor: func(*http.Request) string { return "actor" },
-		handler:      dashboardhttp.Handler{CurrentPrincipalID: func(*http.Request) string { return "actor" }, AuthorizeListResource: func(context.Context, string, access.ResourceRef, access.Capability) (bool, error) { return true, nil }},
+		handler: dashboardhttp.Handler{CurrentPrincipalID: func(*http.Request) string { return "actor" }, AuthorizeTypedDashboardAction: func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, bool, error) {
+			return true, true, nil
+		}},
 	}
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.Header.Set("If-Match", `"1"`)

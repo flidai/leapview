@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { compileFixture, compileSource, expectCompileFails } from "./compile.js";
+import { compileFixture, compileSource, expectCompileFails } from "./compiler.js";
 
 describe("APIGen TypeSpec emitter", () => {
   it("emits JSON IR for the todo fixture", async () => {
@@ -131,6 +131,24 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.Widget.properties.status.schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[0].parameters[0].schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[1].request_body.contents[0].schema).toEqual({ ref: "WidgetStatus" });
+  });
+
+  it("preserves authored model examples in schema IR", async () => {
+    const doc = await compileSource(`
+      using Http;
+      @service(#{ title: "Example API" })
+      namespace ExampleAPI;
+      @example(#{scope: "resource", projectId: "project:analytics"})
+      model PermissionTarget {
+        scope: string;
+        projectId?: string;
+        instanceId?: string;
+      }
+      @route("/permission-target")
+      @get
+      op getPermissionTarget(): PermissionTarget;
+    `);
+    expect(doc.schemas.PermissionTarget.example).toEqual({ scope: "resource", projectId: "project:analytics" });
   });
 
   it("emits inherited scalar patterns and constrained map names", async () => {
@@ -270,7 +288,7 @@ describe("APIGen TypeSpec emitter", () => {
       interface RoleBindings {
         @post
         @operationId("createRoleBinding")
-        @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+        @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS", action: "dashboard.read", resolver: "dashboard" })
         @apigen.ui("workspace.access.role-binding.create")
         @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
         @apigen.command(#{
@@ -301,6 +319,9 @@ describe("APIGen TypeSpec emitter", () => {
         idempotency: "required",
         authz_mode: "privilege",
         privilege: "MANAGE_GRANTS",
+      },
+      extensions: {
+        "x-authz": { mode: "privilege", privilege: "MANAGE_GRANTS", action: "dashboard.read", resolver: "dashboard" },
       },
     });
   });

@@ -12,7 +12,6 @@ type RefreshOperation string
 const (
 	RefreshScheduled RefreshOperation = "credential.refresh.scheduled"
 	RefreshRequested RefreshOperation = "credential.refresh.requested"
-	RefreshTest      RefreshOperation = "credential.test.requested"
 	RefreshRuntime   RefreshOperation = "credential.runtime.acquire"
 )
 
@@ -36,7 +35,6 @@ func (request RefreshRequest) valid() bool {
 	}
 	return request.Operation == RefreshScheduled ||
 		request.Operation == RefreshRequested ||
-		request.Operation == RefreshTest ||
 		request.Operation == RefreshRuntime
 }
 

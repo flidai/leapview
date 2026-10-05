@@ -17,7 +17,19 @@ func main() {
 	rootFlag := flag.String("root", "", "repository root (defaults to the git top-level)")
 	timeoutFlag := flag.Duration("timeout", defaultTimeout, "maximum duration for each scanner command")
 	refreshFlag := flag.Bool("refresh-javascript-evidence", false, "run live JavaScript audits and atomically refresh vulnerability evidence")
+	binaryFlag := flag.String("binary", "", "inspect an exact Linux Go ELF binary without executing it")
+	programFlag := flag.String("binary-package", "", "expected main package of the exact binary")
+	platformFlag := flag.String("binary-platform", "", "expected binary platform: linux/amd64 or linux/arm64")
+	evidenceFlag := flag.String("binary-evidence", "", "binary report directory (must be new for a scan)")
+	verifyFlag := flag.Bool("verify-binary-evidence", false, "verify existing exact-binary evidence offline")
 	flag.Parse()
+	if flag.NArg() != 0 {
+		fail("dependency security", errors.New("unexpected positional arguments"))
+	}
+	binaryOperation := *binaryFlag != "" || *programFlag != "" || *platformFlag != "" || *evidenceFlag != "" || *verifyFlag
+	if binaryOperation && (*binaryFlag == "" || *programFlag == "" || *platformFlag == "" || *evidenceFlag == "" || *refreshFlag) {
+		fail("dependency security", errors.New("binary mode requires binary, package, platform and evidence directory; JavaScript refresh is a separate operation"))
+	}
 	root, err := resolveRoot(*rootFlag)
 	if err != nil {
 		fail("dependency security: resolve repository root", err)
@@ -26,6 +38,20 @@ func main() {
 		fail("dependency security: invalid timeout", errors.New("timeout must be positive"))
 	}
 	runner := &runner{root: root, timeout: *timeoutFlag, stdout: os.Stdout, stderr: os.Stderr}
+	if binaryOperation {
+		binary, err := filepath.Abs(*binaryFlag)
+		if err != nil {
+			fail("dependency security", err)
+		}
+		run := runner.scanBinaryEvidence
+		if *verifyFlag {
+			run = runner.verifyBinaryEvidence
+		}
+		if err := run(binary, *programFlag, *platformFlag, *evidenceFlag); err != nil {
+			fail("dependency security: exact binary", err)
+		}
+		return
+	}
 	run := runner.run
 	if *refreshFlag {
 		run = runner.runRefresh

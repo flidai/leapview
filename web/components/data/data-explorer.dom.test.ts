@@ -561,6 +561,49 @@ test('Rows field checkboxes only change visible preview columns', async () => {
   }
 })
 
+test('data explorer lists earlier and revisioned saves in one picker', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [], preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          explore: { command: { semanticModelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          warnings: [],
+        },
+        savedExplorations: { enabled: true, list: {
+          items: [], includeArchived: false,
+          legacyItems: [{ id: 'explore_1', name: 'Orders by month', openHref: '/explore?saved=explore_1' }],
+        }, command: { action: 'create' }, save: { state: 'idle' } },
+      })
+      document.body.append(document.createElement('lv-data-explorer'))
+    })
+    const picker = page.locator('.saved-exploration-picker')
+    await picker.locator('summary').click()
+    expect(await picker.locator('summary').textContent()).toContain('Saved explorations (1)')
+    const earlier = picker.getByRole('link', { name: 'Orders by month', exact: true })
+    expect(await earlier.isVisible()).toBe(true)
+    expect(await earlier.getAttribute('href')).toBe('/explore?saved=explore_1')
+    expect(await picker.locator('.saved-exploration-list').evaluate((node) => getComputedStyle(node).position)).toBe('absolute')
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ savedExplorations: { list: { items: [{ id: 'exploration:new', title: 'Orders by status', status: 'active' }] } } })
+    })
+    await picker.getByRole('link', { name: 'Orders by status', exact: true }).waitFor({ state: 'visible' })
+    expect(await picker.locator('summary').textContent()).toContain('Saved explorations (2)')
+    expect(await earlier.isVisible()).toBe(true)
+    expect(await picker.getByRole('link', { name: 'Orders by status', exact: true }).getAttribute('href')).toBe('/explore/saved/exploration%3Anew?navigation=true')
+    expect(await page.locator('.saved-exploration-picker').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer distinguishes same-title aliases with dataset subtitles', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
   try {

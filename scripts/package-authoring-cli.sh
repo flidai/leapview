@@ -40,7 +40,7 @@ case "$target_os/$target_arch" in
     support_profile="ubuntu-24.04-docker-engine"
     ;;
   darwin/amd64|darwin/arm64)
-    support_profile="macos-15-docker-desktop"
+    support_profile="macos-15-docker-engine"
     ;;
   *)
     echo "unsupported authoring CLI platform: $target_os/$target_arch; supported platforms are linux/amd64, linux/arm64, darwin/amd64, and darwin/arm64" >&2

@@ -721,7 +721,9 @@ func projectVisualCatalog() []uisignals.DashboardBuilderVisualTypeSignal {
 		for _, limit := range authoring.CanonicalVisualRoleLimits(entry.Type) {
 			limits = append(limits, uisignals.DashboardBuilderVisualRoleLimitSignal{Role: uisignals.DashboardBuilderFieldRoleSignal(limit.Role), Minimum: limit.Minimum, Maximum: limit.Maximum})
 		}
-		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: entry.ReferenceHref, Roles: roles, RoleLimits: limits})
+		// Documentation is served by the public site, not the dashboard app.
+		referenceHref := "https://leapview.dev" + entry.ReferenceHref
+		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: referenceHref, Roles: roles, RoleLimits: limits})
 	}
 	return result
 }
@@ -824,12 +826,16 @@ func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.Dashboa
 		}
 	case *dashboarddocument.HistogramDashboardQuery:
 		id, label := canonicalMetric(value.Field)
-		slots = append(slots, slot("metric-0", label, "metric", id, true))
-		projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		if id != "" && id != "pending_metric" {
+			slots = append(slots, slot("metric-0", label, "metric", id, true))
+			projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		}
 	case *dashboarddocument.DistributionDashboardQuery:
 		id, label := canonicalMetric(value.Field)
-		slots = append(slots, slot("metric-0", label, "metric", id, true))
-		projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		if id != "" && id != "pending_metric" {
+			slots = append(slots, slot("metric-0", label, "metric", id, true))
+			projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		}
 		if value.Group != nil {
 			id, label := canonicalDimension(*value.Group)
 			projected := slot("dimension-0", label, "dimension", id, false)

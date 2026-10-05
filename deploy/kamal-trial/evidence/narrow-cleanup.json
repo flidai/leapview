@@ -1,0 +1,89 @@
+{
+  "synthetic": true,
+  "production_changed": false,
+  "observations": [
+    {
+      "case": "native-prune-preserves-verified-prior",
+      "passed": true
+    }
+  ],
+  "docker": {
+    "ServerVersion": "29.1.3",
+    "Driver": "native",
+    "DriverStatus": [
+      [
+        "driver-type",
+        "io.containerd.snapshotter.v1"
+      ]
+    ]
+  },
+  "kamal": "2.12.0",
+  "peak_allocated_bytes": 1194950656,
+  "caddy_tls_host_forwarding_www": true,
+  "native_rollback_uses_candidate_settings": true,
+  "offline_rollback_with_prior_record": true,
+  "date": "2026-09-26",
+  "sampling_limit": "500 ms sampling; transient du errors during GC excluded",
+  "cycles": [
+    {
+      "version": "good-01",
+      "allocated_bytes": 973475840,
+      "containers": 1
+    },
+    {
+      "version": "good-02",
+      "allocated_bytes": 1008574464,
+      "containers": 2
+    },
+    {
+      "version": "good-03",
+      "allocated_bytes": 1008619520,
+      "containers": 2
+    },
+    {
+      "version": "good-04",
+      "allocated_bytes": 1008627712,
+      "containers": 2
+    },
+    {
+      "version": "good-05",
+      "allocated_bytes": 1008631808,
+      "containers": 2
+    },
+    {
+      "version": "good-06",
+      "allocated_bytes": 1008631808,
+      "containers": 2
+    },
+    {
+      "version": "good-07",
+      "allocated_bytes": 1008631808,
+      "containers": 2
+    },
+    {
+      "version": "good-08",
+      "allocated_bytes": 1008635904,
+      "containers": 2
+    },
+    {
+      "version": "good-09",
+      "allocated_bytes": 1008635904,
+      "containers": 2
+    },
+    {
+      "version": "good-10",
+      "allocated_bytes": 1008640000,
+      "containers": 2
+    }
+  ],
+  "retained_after_prune": [
+    {
+      "name": "leapview-site-trial-web-good-10",
+      "state": "running"
+    },
+    {
+      "name": "leapview-site-trial-web-good-09",
+      "state": "exited"
+    }
+  ]
+}

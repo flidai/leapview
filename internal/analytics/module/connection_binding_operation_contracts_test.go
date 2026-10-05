@@ -19,7 +19,6 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 	}{
 		"createTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingCreated), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.configure"},
 		"updateTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingUpdated), privilege: "RESOURCE_MANAGE", uiAction: "connection.binding.update"},
-		"testTargetConnectionBinding":    {auditAction: string(connectionbinding.RefreshTest), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.test"},
 		"refreshTargetConnectionBinding": {auditAction: string(connectionbinding.RefreshRequested), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.refresh"},
 		"enableTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingEnabled), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.enable"},
 		"disableTargetConnectionBinding": {auditAction: string(connectionbinding.AuditBindingDisabled), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.disable"},
@@ -50,8 +49,8 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 	}
 
 	// Planning is an explicit POST query because it computes a confirmation
-	// token without mutating durable state. Testing is deliberately absent from
-	// this list because it can persist validation state and promote a pool.
+	// token without mutating durable state. Refresh remains a command because it
+	// persists credential state and may replace the active pool.
 	for _, operationID := range []string{
 		"listTargetConnectionBindings",
 		"getTargetConnectionBinding",

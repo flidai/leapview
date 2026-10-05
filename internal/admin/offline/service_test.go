@@ -114,7 +114,7 @@ func TestInitializeOwnsValidationRecoveryAndAccessSequencing(t *testing.T) {
 	recovery := &memoryRecovery{}
 	initializer := &fakeInitializer{result: InitialCredentials{
 		Email: "owner@example.com", TemporaryPassword: "temporary",
-		PublisherToken: "publisher", PublisherTokenExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339),
+		ProjectClaimToken: "claim", ProjectClaimTokenExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339),
 	}}
 	service := New(Config{
 		HomeDir: "/instance", Production: true, BootstrapEmail: "owner@example.com", Environment: "prod",
@@ -145,7 +145,7 @@ func TestInitializeOwnsValidationRecoveryAndAccessSequencing(t *testing.T) {
 }
 
 func TestInitializeReplaysPreparedCredentialsWithoutMutatingAccess(t *testing.T) {
-	contents := []byte(`{"email":"owner@example.com","temporaryPassword":"temporary","publisherToken":"publisher","publisherTokenExpiresAt":"2026-07-30T07:00:00Z"}` + "\n")
+	contents := []byte(`{"email":"owner@example.com","temporaryPassword":"temporary","projectClaimToken":"claim","projectClaimTokenExpiresAt":"2026-07-30T07:00:00Z"}` + "\n")
 	locker := &fakeLocker{}
 	initializer := &fakeInitializer{}
 	service := New(Config{Production: true, BootstrapEmail: "owner@example.com"}, Dependencies{
@@ -172,8 +172,8 @@ func TestInitializeReportsCredentialCleanupFailureAfterMutationFailure(t *testin
 		State:    &fakeState{environment: "prod", existing: true},
 		Recovery: recovery,
 		Initializer: &fakeInitializer{result: InitialCredentials{
-			Email: "owner@example.com", TemporaryPassword: "temporary", PublisherToken: "publisher",
-			PublisherTokenExpiresAt: "2026-07-30T07:00:00Z",
+			Email: "owner@example.com", TemporaryPassword: "temporary", ProjectClaimToken: "claim",
+			ProjectClaimTokenExpiresAt: "2026-07-30T07:00:00Z",
 		}, err: mutationErr},
 	})
 

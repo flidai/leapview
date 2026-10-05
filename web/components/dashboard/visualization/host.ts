@@ -25,6 +25,7 @@ let openVisualOptionsHost: VisualizationHost | undefined
 
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
+  private resizeSuspendedValue = false
   @property({ attribute: false })
   get envelope(): VisualizationEnvelope | undefined { return this.envelopeValue }
   set envelope(value: VisualizationEnvelope | undefined) {
@@ -40,6 +41,14 @@ export class VisualizationHost extends LitElement {
     if (Object.is(previous, value)) return
     this.envelopeValue = value
     this.requestUpdate('envelope', previous)
+  }
+  /** Keep observing layout, but defer expensive renderer resizing until release. */
+  get resizeSuspended(): boolean { return this.resizeSuspendedValue }
+  set resizeSuspended(value: boolean) {
+    const suspended = value === true
+    if (this.resizeSuspendedValue === suspended) return
+    this.resizeSuspendedValue = suspended
+    this.controller?.setResizeSuspended(suspended)
   }
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
   @property({ attribute: false }) exploreHref?: string
@@ -128,6 +137,7 @@ export class VisualizationHost extends LitElement {
       (value): value is VisualizationEnvelope => validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value),
       (detail) => this.dispatchEvent(new CustomEvent('lv-visualization-observation', { bubbles: true, composed: true, detail })),
     )
+    this.controller.setResizeSuspended(this.resizeSuspendedValue)
     this.connectContextListeners()
     if (typeof ResizeObserver !== 'function') return
     try {
@@ -474,6 +484,8 @@ export class VisualizationHost extends LitElement {
   private rendererContext(): RendererContext {
     const target = this.rendererContainer
     if (!target) return defaultRendererContext
+    const root = this.getRootNode()
+    const builderPreview = root instanceof ShadowRoot && root.host.localName === 'lv-dashboard-builder'
     const styles = getComputedStyle(target)
     const color = (name: string, fallback: string): string => styles.getPropertyValue(name).trim() || fallback
     const colorScheme = document.documentElement.style.colorScheme.trim()
@@ -481,6 +493,8 @@ export class VisualizationHost extends LitElement {
     return {
       locale: normalizeRendererLocale(document.documentElement.lang || 'en'),
       theme,
+      echartsRenderer: builderPreview ? 'svg' : 'canvas',
+      authoringPreview: builderPreview,
       reducedMotion: this.reducedMotionMedia?.matches ?? true,
       devicePixelRatio: window.devicePixelRatio || 1,
       fontFamily: styles.fontFamily || defaultRendererContext.fontFamily,

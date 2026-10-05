@@ -39,7 +39,7 @@ func TestConnectionAdministrationComposesTargetOwnedValidatedPoolDirectory(t *te
 		MaxConcurrent:       1,
 	})
 	require.NoError(t, err)
-	health, err := administration.Test(context.Background(), "operator-1", connectionbinding.BindingKey{
+	health, err := administration.RefreshNow(context.Background(), "operator-1", connectionbinding.BindingKey{
 		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	})
 	require.NoError(t, err)
@@ -298,7 +298,7 @@ func TestConnectionAdministrationUsesExplicitEnvironmentResolverOnlyForDevelopme
 		MaxConcurrent:       1,
 	})
 	require.NoError(t, err)
-	_, err = administration.Test(context.Background(), "operator-1", connectionbinding.BindingKey{
+	_, err = administration.RefreshNow(context.Background(), "operator-1", connectionbinding.BindingKey{
 		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	})
 	require.NoError(t, err)

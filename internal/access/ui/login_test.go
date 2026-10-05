@@ -29,6 +29,13 @@ func TestLoginBootstrapUsesProductName(t *testing.T) {
 	}
 }
 
+func TestLoginBootstrapExposesExplicitDevelopmentLogin(t *testing.T) {
+	page := LoginBootstrapSignalsForOptions(LoginPageOptions{DevelopmentLogin: true})["page"].(LoginPageSignal)
+	if !page.DevelopmentLogin {
+		t.Fatalf("development login signal = %#v", page)
+	}
+}
+
 func TestLoginPageCarriesOnlyClosedErrorCodesIntoUpdates(t *testing.T) {
 	for _, test := range []struct {
 		name      string

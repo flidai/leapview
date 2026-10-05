@@ -163,15 +163,6 @@ func (d *analyticsAPIGenDispatcher) RefreshTargetConnectionBinding(
 	d.connections.Refresh(w, r, project, target, connection)
 }
 
-func (d *analyticsAPIGenDispatcher) TestTargetConnectionBinding(
-	w http.ResponseWriter,
-	r *http.Request,
-	project, target, connection string,
-	_ analyticsgen.GenTestTargetConnectionBindingHeaders,
-) {
-	d.connections.Test(w, r, project, target, connection)
-}
-
 type analyticsAPIGenTransportErrorResponder struct{ logger *slog.Logger }
 
 func (responder analyticsAPIGenTransportErrorResponder) RespondTransportError(

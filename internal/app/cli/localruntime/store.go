@@ -22,6 +22,7 @@ import (
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/ociref"
 	platformsecret "github.com/flidai/leapview/internal/platform/security/secret"
+	developmentinput "github.com/flidai/leapview/internal/project/developmentinput"
 	"golang.org/x/mod/semver"
 )
 
@@ -91,6 +92,12 @@ func discoverCheckoutRoot(start string) (string, error) {
 		return "", err
 	}
 	for {
+		projectMarker := filepath.Join(current, filepath.FromSlash(developmentinput.DefaultRelativePath))
+		if info, err := os.Lstat(projectMarker); err == nil && info.Mode().IsRegular() {
+			return current, nil
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect initialized project marker: %w", err)
+		}
 		if info, err := os.Lstat(filepath.Join(current, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			return current, nil
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {

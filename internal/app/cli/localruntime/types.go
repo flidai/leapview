@@ -60,6 +60,8 @@ type Options struct {
 
 type DevelopmentProfileIdentity struct {
 	Name          string
+	// GraphDigest is the retained wire name for the compiled logical
+	// connection catalog pinned by this local runtime.
 	GraphDigest   string
 	ProfileDigest string
 }

@@ -3,6 +3,7 @@ import { expect, type Browser, type Locator, type Page } from '@playwright/test'
 export type DataExplorerRouteQAContext = {
   browser: Browser
   baseURL: string
+  storageState?: string
   collectBlockingConsoleMessages: (page: Page) => string[]
   assertNoBlockingConsoleMessages: (label: string, messages: string[]) => void
   focusByTab: (page: Page, target: Locator, label: string, maximumTabs?: number) => Promise<void>
@@ -11,10 +12,11 @@ export type DataExplorerRouteQAContext = {
 export async function verifyDataExplorerRecoveryActions({
   browser,
   baseURL,
+  storageState,
   collectBlockingConsoleMessages,
   assertNoBlockingConsoleMessages,
 }: DataExplorerRouteQAContext): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, ...(storageState ? { storageState } : {}) })
   const messages = collectBlockingConsoleMessages(page)
 
   try {
@@ -134,11 +136,12 @@ async function enterDataExplorerAnalyzeMode(page: Page): Promise<{ explorer: Loc
 export async function verifyDataExplorerKeyboardJourney({
   browser,
   baseURL,
+  storageState,
   collectBlockingConsoleMessages,
   assertNoBlockingConsoleMessages,
   focusByTab,
 }: DataExplorerRouteQAContext): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, ...(storageState ? { storageState } : {}) })
   const messages = collectBlockingConsoleMessages(page)
   await page.addInitScript(() => {
     localStorage.removeItem('leapview-sidebar-collapsed')
@@ -213,10 +216,11 @@ export async function verifyDataExplorerKeyboardJourney({
 export async function verifyDataExplorerResponsiveLayout({
   browser,
   baseURL,
+  storageState,
   collectBlockingConsoleMessages,
   assertNoBlockingConsoleMessages,
 }: DataExplorerRouteQAContext): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 600, height: 900 } })
+  const page = await browser.newPage({ viewport: { width: 600, height: 900 }, ...(storageState ? { storageState } : {}) })
   const messages = collectBlockingConsoleMessages(page)
 
   try {

@@ -40,6 +40,27 @@ func TestPipelineRunResponseForExposesOnlyPipelineContract(t *testing.T) {
 	}
 }
 
+func TestPipelineRunResponseForDoesNotExposeTriggerOrOutputEvidence(t *testing.T) {
+	response, ok := PipelineRunResponseFor(refreshrun.RunRecord{
+		ID: "run_trigger_evidence", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh",
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: refreshrun.TriggerSchedule,
+		InvocationSource: refreshrun.TriggerSchedule, MatchingScheduleIDs: []string{"daily"}, TriggerID: "secret-trigger",
+		Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
+	})
+	if !ok {
+		t.Fatal("PipelineRunResponseFor() rejected a valid scheduled run")
+	}
+	payload, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"triggerId", "output", "result", "secret-trigger"} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("public response contains trigger/output evidence %q: %s", forbidden, payload)
+		}
+	}
+}
+
 func TestParseAPILimitRejectsOverLimit(t *testing.T) {
 	if got, err := parseAPILimit("100"); err != nil || got != 100 {
 		t.Fatalf("maximum limit = %d, %v", got, err)

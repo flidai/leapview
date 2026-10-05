@@ -35,6 +35,60 @@ func TestJobResultsPreservesHistoricalMatrixFailures(t *testing.T) {
 	}
 }
 
+func TestReusableHostQualificationChildrenAggregateIntoMandatoryLane(t *testing.T) {
+	results := jobResults([]githubJob{
+		{Name: "Isolated host recovery and migration boundary contracts / Isolated host recovery and migration boundary contracts", Conclusion: "success"},
+		{Name: "Isolated host recovery and migration boundary contracts / Schema-32 legacy access transition", Conclusion: "failure"},
+	})
+	if results["host-recovery-validation/recovery"] != "success" ||
+		results["host-recovery-validation/historical-transition"] != "failure" ||
+		results["host-recovery-validation"] != "failure" {
+		t.Fatalf("reusable qualification child results = %v, want both children and a failed mandatory lane", results)
+	}
+	for _, conclusion := range []string{"failure", "cancelled", "skipped"} {
+		got := jobResults([]githubJob{
+			{Name: "host-recovery-validation / recovery", Conclusion: "success"},
+			{Name: "host-recovery-validation / historical-transition", Conclusion: conclusion},
+		})
+		if got["host-recovery-validation"] != conclusion {
+			t.Errorf("child conclusion %q aggregated to %q", conclusion, got["host-recovery-validation"])
+		}
+	}
+
+	for _, expected := range platformci.ExpectedHealthJobs("merge-validation.yml") {
+		if _, present := results[expected]; !present {
+			results[expected] = "success"
+		}
+	}
+	report := platformci.AnalyzeHealth([]platformci.HealthRun{{
+		Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "failure", Results: results,
+	}})
+	run := report.Runs[0]
+	if run.ExpectedSource != "workflow_registry" || run.Results["host-recovery-validation"] != "failure" ||
+		!strings.Contains(strings.Join(run.Problems, "\n"), "expected host-recovery-validation: failure") {
+		t.Fatalf("failed reusable child did not fail the mandatory health lane: %+v", run)
+	}
+
+	missing := jobResults([]githubJob{{
+		Name: "Isolated host recovery and migration boundary contracts / Isolated host recovery and migration boundary contracts", Conclusion: "success",
+	}})
+	if _, present := missing["host-recovery-validation"]; present {
+		t.Fatalf("one observed child synthesized a complete parent result: %v", missing)
+	}
+	for _, expected := range platformci.ExpectedHealthJobs("merge-validation.yml") {
+		if _, present := missing[expected]; !present {
+			missing[expected] = "success"
+		}
+	}
+	delete(missing, "host-recovery-validation/historical-transition")
+	incomplete := platformci.AnalyzeHealth([]platformci.HealthRun{{
+		Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "success", Results: missing,
+	}})
+	if incomplete.Incomplete != 1 || !strings.Contains(strings.Join(incomplete.Runs[0].UnknownJobs, "\n"), "host-recovery-validation/historical-transition") {
+		t.Fatalf("missing reusable child was accepted as a complete success: %+v", incomplete.Runs[0])
+	}
+}
+
 func TestDeferredStackRunIsExcludedFromExecutionMetrics(t *testing.T) {
 	t.Parallel()
 
@@ -221,6 +275,7 @@ func TestDraftSkipWithoutPlanRemainsVisibleAndHealthy(t *testing.T) {
 		"Frontend tests (PR, ${{ matrix.shard }})", "PostgreSQL topology isolation (PR)",
 		"Spatial tile benchmarks (PR)", "dbt physical contract (PR)",
 		"Documentation and public site (PR)", "Cross-language quality (PR)",
+		"Isolated host recovery and migration boundary contracts",
 	} {
 		jobs = append(jobs, githubJob{Name: name, Conclusion: "skipped"})
 	}
@@ -360,7 +415,11 @@ func TestCurrentPRPlanProvenanceAndMatrixReporting(t *testing.T) {
 		t.Fatalf("valid current attempt rejected: %s", observed.PlanIssue)
 	}
 	observed.DurationSeconds = 10
-	observed.Results = map[string]string{"prepare": "success", "docs-validation": "success", "frontend-validation/site": "success", "quality-validation": "success"}
+	observed.Results = map[string]string{
+		"prepare": "success", "docs-validation": "success", "frontend-validation/site": "success", "quality-validation": "success",
+		"host-recovery-validation": "success", "host-recovery-validation/recovery": "success",
+		"host-recovery-validation/historical-transition": "success",
+	}
 	report := platformci.AnalyzeHealth([]platformci.HealthRun{observed})
 	if report.Selective.Count != 1 || report.Runs[0].SelectionConfidence != "verified" || report.Jobs["frontend-validation/site"].Expected != 1 {
 		t.Fatalf("current plan not reported correctly: %+v", report)

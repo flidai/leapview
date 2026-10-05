@@ -65,7 +65,7 @@ function setMode(mode, options = {}) {
   root.dataset.lightTheme = theme.lightTheme;
   root.dataset.darkTheme = theme.darkTheme;
   root.style.colorScheme = resolved;
-  localStorage.setItem(storageKey, next);
+  if (options.persist !== false) localStorage.setItem(storageKey, next);
   for (const button of document.querySelectorAll('[data-theme-value]')) {
     button.setAttribute('aria-pressed', String(button.dataset.themeValue === next));
   }
@@ -103,7 +103,8 @@ document.addEventListener('leapview-theme-change', (event) => {
 });
 
 media?.addEventListener?.('change', () => {
-  if (storedMode() === 'system') setMode('system');
+  if (storedMode() === 'system') setMode('system', { persist: false });
 });
 
-setMode(storedMode(), { notify: false });
+const initialPreference = root.dataset.themePreference;
+setMode(storedMode(), { notify: false, persist: Object.hasOwn(themes, initialPreference) });

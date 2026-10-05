@@ -20,6 +20,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/app/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
@@ -29,7 +30,6 @@ import (
 	"github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
-	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -53,6 +53,12 @@ type NativeReleaseArtifactInspector interface {
 // operation being planned. Protected code and policy changes may require an
 // approval even when an already-authorized restatement does not.
 type NativeDeliveryPolicyResolver func(deployment.DeliveryOperationKind) (runtimefactory.CandidateDeliveryPolicy, error)
+
+// NativeDeliveryAuthorization resolves current subject authority against a
+// complete delivery declaration and returns the exact execution projection.
+// The candidate-graph-bound snapshot is supplied explicitly so the resolver
+// cannot silently authorize a different graph than the one being planned.
+type NativeDeliveryAuthorization func(context.Context, string, deployment.DeliveryAuthorizationPlan, accesssnapshot.AuthorizationSnapshot) (deployment.DeliveryAuthorizationExecution, error)
 
 // SemanticActivationEvidenceResolver selects the exact protected contract and
 // control authority bound into an immutable delivery plan. A nil result is
@@ -84,12 +90,14 @@ type NativeCreatePlanConfig struct {
 
 	// ArtifactInspector is an expressive alias retained for composition code
 	// that names the read-only phase explicitly. Artifacts takes precedence.
-	ArtifactInspector  NativeReleaseArtifactInspector
-	RuntimeVersion     string
-	Policy             runtimefactory.CandidateDeliveryPolicy
-	PolicyResolver     NativeDeliveryPolicyResolver
-	SemanticActivation SemanticActivationEvidenceResolver
-	Clock              func() time.Time
+	ArtifactInspector            NativeReleaseArtifactInspector
+	RuntimeVersion               string
+	Policy                       runtimefactory.CandidateDeliveryPolicy
+	PolicyResolver               NativeDeliveryPolicyResolver
+	AuthorizeDelivery            NativeDeliveryAuthorization
+	RequireCompoundAuthorization bool
+	SemanticActivation           SemanticActivationEvidenceResolver
+	Clock                        func() time.Time
 
 	Events     deploymentmodule.NativeDeliveryEventAppender
 	Audit      deploymentmodule.NativeDeliveryAuditAppender
@@ -114,25 +122,27 @@ type NativePlanWorkflowInput struct {
 // BuildPlan is present so composition can install one bounded port today; it
 // fails closed until native physical build orchestration is wired.
 type NativeCreatePlanCoordinator struct {
-	repository         *deploymentnative.Repository
-	targetID           string
-	environment        string
-	sources            project.CandidateSourceAttestationReader
-	artifacts          NativeReleaseArtifactInspector
-	bindingEvidence    deployment.CandidateConnectionEvidenceResolver
-	runtimeVersion     string
-	policy             runtimefactory.CandidateDeliveryPolicy
-	policyResolver     NativeDeliveryPolicyResolver
-	semanticActivation SemanticActivationEvidenceResolver
-	clock              func() time.Time
-	events             deploymentmodule.NativeDeliveryEventAppender
-	eventReader        nativeDeliveryEventReader
-	audit              deploymentmodule.NativeDeliveryAuditAppender
-	auditReader        nativeDeliveryAuditReader
-	workflow           deploymentmodule.NativeDeliveryWorkflowRecorder
-	operations         deploymentmodule.NativeOperationAuthority
-	operationLookup    nativeOperationLookup
-	workflowFactory    func(NativePlanWorkflowInput) (jobs.WorkflowIntent, error)
+	repository                   *deploymentnative.Repository
+	targetID                     string
+	environment                  string
+	sources                      project.CandidateSourceAttestationReader
+	artifacts                    NativeReleaseArtifactInspector
+	bindingEvidence              deployment.CandidateConnectionEvidenceResolver
+	runtimeVersion               string
+	policy                       runtimefactory.CandidateDeliveryPolicy
+	policyResolver               NativeDeliveryPolicyResolver
+	authorizeDelivery            NativeDeliveryAuthorization
+	requireCompoundAuthorization bool
+	semanticActivation           SemanticActivationEvidenceResolver
+	clock                        func() time.Time
+	events                       deploymentmodule.NativeDeliveryEventAppender
+	eventReader                  nativeDeliveryEventReader
+	audit                        deploymentmodule.NativeDeliveryAuditAppender
+	auditReader                  nativeDeliveryAuditReader
+	workflow                     deploymentmodule.NativeDeliveryWorkflowRecorder
+	operations                   deploymentmodule.NativeOperationAuthority
+	operationLookup              nativeOperationLookup
+	workflowFactory              func(NativePlanWorkflowInput) (jobs.WorkflowIntent, error)
 }
 
 var _ deploymentmodule.NativeDeliveryMutationPort = (*NativeCreatePlanCoordinator)(nil)
@@ -161,6 +171,9 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 	}
 	if config.SemanticActivation == nil {
 		return nil, errors.New("native create-plan semantic activation evidence resolver is required")
+	}
+	if config.RequireCompoundAuthorization && config.AuthorizeDelivery == nil {
+		return nil, errors.New("native create-plan compound authorization resolver is required")
 	}
 	if strings.TrimSpace(config.RuntimeVersion) == "" {
 		return nil, errors.New("native create-plan runtime version is required")
@@ -191,6 +204,7 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 		repository: config.Repository, targetID: config.TargetID, environment: config.Environment,
 		sources: config.Sources, artifacts: inspector, bindingEvidence: config.BindingEvidence,
 		runtimeVersion: strings.TrimSpace(config.RuntimeVersion), policy: config.Policy, policyResolver: config.PolicyResolver, semanticActivation: config.SemanticActivation, clock: clock,
+		authorizeDelivery: config.AuthorizeDelivery, requireCompoundAuthorization: config.RequireCompoundAuthorization,
 		events: config.Events, eventReader: eventReader, audit: config.Audit, auditReader: auditReader, workflow: config.Workflow,
 		operations: config.Operations, operationLookup: operationLookup, workflowFactory: config.WorkflowFactory,
 	}, nil
@@ -304,9 +318,12 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	if err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("resolve semantic activation evidence: %w", err)
 	}
-	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, c.bindingEvidence, nativeCandidateConnectionRequest(
-		inspectID, request.PrincipalID, request.TargetID, inspected,
-	))
+	bindingRequest := nativeCandidateConnectionRequest(inspectID, request.PrincipalID, request.TargetID, inspected)
+	bindingEvidence, bindingDigest, err := resolveNativeCandidateBindingEvidence(ctx, c.bindingEvidence, bindingRequest)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	authorization, err := c.authorizeCompoundPlan(ctx, request, inspected, bindingEvidence)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
 	}
@@ -321,19 +338,47 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	acquired, err := c.operations.AcquireTx(ctx, tx, operationInput)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	replay, err := nativePlanOperationDisposition(acquired, operationInput)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+
+	// Keep delivery target before authorization policy in the row-lock order.
+	// First-reviewer grants use the same target fence before changing the policy
+	// head, so a plan waiting for that fence must not already hold the policy
+	// share lock. The operation row remains ahead of both locks, preserving
+	// same-key replay serialization.
+	if freshTarget {
+		if _, err := c.repository.CreateTargetTx(ctx, tx, deploymentnative.TargetInput{
+			TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment, TargetRevision: 1,
+		}); err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
+	}
+	target, err := c.repository.TargetForShareTx(ctx, tx, request.TargetID)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	if err := validateNativePlanTarget(target, request); err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	// An exact replay keeps the historical behavior of returning its stored
+	// outcome even if the target has advanced since the caller's preflight.
+	// New work must still reject a fence change during artifact inspection.
+	if !replay && !sameNativePlanTargetFence(preflightTarget, target) {
+		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("%w: target fence changed during source inspection", deployment.ErrDeliveryConflict)
+	}
 	if _, err := accesspostgres.ValidateAuthorizationPolicyRevisionTx(ctx, tx, access.AuthorizationPolicyScope{
 		TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment,
 	}, inspected.AuthorizationPolicyRevision, inspected.AuthorizationPolicyDigest); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("validate native plan authorization policy: %w", err)
 	}
 
-	acquired, err := c.operations.AcquireTx(ctx, tx, operationInput)
-	if err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	}
-	if replay, err := nativePlanOperationDisposition(acquired, operationInput); err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	} else if replay {
+	if replay {
 		outcome, err := decodeNativePlanOutcome(acquired.Operation.Outcome, operationInput)
 		if err != nil {
 			return deploymentmodule.NativeDeliveryPlan{}, err
@@ -364,24 +409,6 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 		}
 		committed = true
 		return projection, nil
-	}
-
-	if freshTarget {
-		if _, err := c.repository.CreateTargetTx(ctx, tx, deploymentnative.TargetInput{
-			TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment, TargetRevision: 1,
-		}); err != nil {
-			return deploymentmodule.NativeDeliveryPlan{}, err
-		}
-	}
-	target, err := c.repository.TargetForShareTx(ctx, tx, request.TargetID)
-	if err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	}
-	if err := validateNativePlanTarget(target, request); err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	}
-	if !sameNativePlanTargetFence(preflightTarget, target) {
-		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("%w: target fence changed during source inspection", deployment.ErrDeliveryConflict)
 	}
 	_, reuse, err := c.readBaseTx(ctx, tx, target, request.ProjectID)
 	if err != nil {
@@ -423,6 +450,7 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	planRequest.TargetID, planRequest.ProjectID, planRequest.Environment = request.TargetID, request.ProjectID.String(), request.Environment
 	planRequest.CreatedAt = now
 	planRequest.Evidence.SemanticActivation = semanticActivation
+	planRequest.Authorization = authorization
 	// BindingDigest is the exact validated provider/binding evidence selected
 	// during planning, not merely the authored connector requirement shape.
 	planRequest.Execution.BindingDigest = bindingDigest
@@ -900,77 +928,8 @@ func (c *NativeCreatePlanCoordinator) readBaseTx(ctx context.Context, tx deploym
 	return &basePlan, reuse, nil
 }
 
-func validateNativeCreatePlanRequest(request deploymentmodule.NativeDeliveryPlanRequest) error {
-	if err := request.ProjectID.Validate(); err != nil {
-		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
-	}
-	for label, value := range map[string]string{
-		"target": request.TargetID, "environment": request.Environment, "principal": request.PrincipalID,
-		"source digest": request.SourceDigest, "source attestation digest": request.SourceAttestationDigest,
-		"idempotency key": request.IdempotencyKey,
-	} {
-		if value == "" || value != strings.TrimSpace(value) {
-			return fmt.Errorf("%w: %s is required and canonical", deployment.ErrDeliveryInvalid, label)
-		}
-	}
-	if request.SourceOwnerID != strings.TrimSpace(request.SourceOwnerID) {
-		return fmt.Errorf("%w: source owner is not canonical", deployment.ErrDeliveryInvalid)
-	}
-	if err := platformdigest.ValidateSHA256Identity(request.SourceDigest); err != nil {
-		return fmt.Errorf("%w: source digest: %v", deployment.ErrDeliveryInvalid, err)
-	}
-	if err := platformdigest.ValidateSHA256Identity(request.SourceAttestationDigest); err != nil {
-		return fmt.Errorf("%w: source attestation digest: %v", deployment.ErrDeliveryInvalid, err)
-	}
-	if request.PipelinePlan != nil {
-		canonical := request.PipelinePlan.Canonical()
-		if err := canonical.Validate(); err != nil {
-			return fmt.Errorf("%w: pipeline plan: %v", deployment.ErrDeliveryInvalid, err)
-		}
-		if canonical.ProjectID != request.ProjectID.String() || canonical.Environment != request.Environment || canonical.ArtifactDigest != request.SourceDigest {
-			return fmt.Errorf("%w: pipeline plan identity differs from native delivery request", deployment.ErrDeliveryConflict)
-		}
-	}
-	switch deployment.DeliveryOperationKind(request.Operation) {
-	case deployment.DeliveryOperationCodeChange, deployment.DeliveryOperationRestatement, deployment.DeliveryOperationBindingChange, deployment.DeliveryOperationPolicyChange:
-	default:
-		return fmt.Errorf("%w: unsupported delivery operation %q", deployment.ErrDeliveryInvalid, request.Operation)
-	}
-	return nil
-}
-
-func richPlanFromRequest(request deployment.DeliveryPlanRequest, sourceOwner, planID, baseGeneration string, baseRevision int64) (deployment.DeliveryPlan, error) {
-	projectID, err := projectgraph.NewResourceID(request.ProjectID)
-	if err != nil {
-		return deployment.DeliveryPlan{}, fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
-	}
-	plan := deployment.DeliveryPlan{
-		ID: planID, ActorID: request.ActorID, SourceOwnerID: sourceOwner,
-		TargetID: request.TargetID, ProjectID: projectID, Environment: request.Environment,
-		Operation: request.Operation, SourceDigest: request.SourceDigest, ServingArtifactDigest: request.ServingArtifactDigest,
-		BaseGenerationID: baseGeneration, BaseTargetRevision: baseRevision,
-		Execution: request.Execution, Provenance: request.Provenance, Governance: request.Governance,
-		Evidence: request.Evidence, PipelinePlan: request.PipelinePlan, CreatedAt: request.CreatedAt,
-	}
-	return deployment.NewDeliveryPlan(plan)
-}
-
 func nativePlanRequestDigest(request deploymentmodule.NativeDeliveryPlanRequest) (string, error) {
-	var pipelinePlan *projectpipelineplan.Plan
-	if request.PipelinePlan != nil {
-		canonical := request.PipelinePlan.Canonical()
-		pipelinePlan = &canonical
-	}
-	canonical := struct {
-		ProjectID, TargetID, Environment, PrincipalID, SourceOwnerID, Operation, SourceDigest, SourceAttestationDigest, IdempotencyKey string
-		PipelinePlan                                                                                                                   *projectpipelineplan.Plan `json:"pipelinePlan,omitempty"`
-	}{request.ProjectID.String(), request.TargetID, request.Environment, request.PrincipalID, request.SourceOwnerID, request.Operation, request.SourceDigest, request.SourceAttestationDigest, request.IdempotencyKey, pipelinePlan}
-	encoded, err := json.Marshal(canonical)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return deploymentmodule.NativeDeliveryPlanRequestDigest(request)
 }
 
 func sameNativeJSON(left, right []byte) bool {

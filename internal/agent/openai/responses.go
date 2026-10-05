@@ -32,9 +32,12 @@ func (m *OpenAIModel) completeResponse(ctx context.Context, req agentcore.ModelR
 		Tools:           openAIResponseTools(req.Tools),
 		Include:         []string{"reasoning.encrypted_content"},
 		MaxOutputTokens: req.Limits.ReserveOutputTokens,
-		Reasoning:       openAIResponseReasoning{Effort: m.config.NormalizedReasoningEffort()},
-		Stream:          streaming,
-		Store:           false,
+
+		Stream: streaming,
+		Store:  false,
+	}
+	if effort := m.config.NormalizedReasoningEffort(); effort != "" {
+		body.Reasoning = &openAIResponseReasoning{Effort: effort}
 	}
 	if len(body.Tools) > 0 {
 		body.ToolChoice = "auto"
@@ -336,7 +339,7 @@ type openAIResponsesRequest struct {
 	Include         []string                  `json:"include,omitempty"`
 	ToolChoice      string                    `json:"tool_choice,omitempty"`
 	MaxOutputTokens int                       `json:"max_output_tokens,omitempty"`
-	Reasoning       openAIResponseReasoning   `json:"reasoning"`
+	Reasoning       *openAIResponseReasoning  `json:"reasoning,omitempty"`
 	Stream          bool                      `json:"stream,omitempty"`
 	Store           bool                      `json:"store"`
 }

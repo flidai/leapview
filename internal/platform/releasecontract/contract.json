@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "permissionProfile": "leapview.permissions/v1",
+  "publicationAPI": "delivery/v1",
+  "hostTransition": "compose-postgres-local/v1"
+}

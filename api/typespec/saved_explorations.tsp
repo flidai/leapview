@@ -167,20 +167,19 @@ alias UpdateSavedExplorationOK = SavedExplorationETagOK<SavedExplorationResponse
 alias DuplicateSavedExplorationCreated = SavedExplorationETagCreated<SavedExplorationResponse>;
 alias ArchiveSavedExplorationOK = SavedExplorationETagOK<SavedExplorationSummaryResponse>;
 
+/** Saved-object ownership and exact semantic/token authority are resolved by the domain service. */
 @route("/projects/{project}/saved-explorations")
 @tag("Saved Explorations")
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface SavedExplorations {
   @summary("List saved explorations")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "authenticated" })
   listSavedExplorations(@path project: ResourceId, @query includeArchived?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListSavedExplorationsOK | CommonErrors;
 
   @summary("Create a saved exploration")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.failsWith(InvalidSavedExplorationFailure)
   @apigen.failsWith(SavedExplorationNotFoundFailure)
   @apigen.failsWith(SavedExplorationConflictFailure)
@@ -193,15 +192,13 @@ interface SavedExplorations {
   @summary("Get a saved exploration working copy")
   @route("/{exploration}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "authenticated" })
   getSavedExploration(@path project: ResourceId, @path exploration: ResourceId): GetSavedExplorationOK | CommonErrors;
 
   @summary("Update a saved exploration")
   @route("/{exploration}")
   @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.failsWith(InvalidSavedExplorationFailure)
   @apigen.failsWith(SavedExplorationNotFoundFailure)
   @apigen.failsWith(SavedExplorationConflictFailure)
@@ -215,8 +212,7 @@ interface SavedExplorations {
   @summary("Duplicate a saved exploration")
   @route("/{exploration}/duplicate")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.failsWith(InvalidSavedExplorationFailure)
   @apigen.failsWith(SavedExplorationNotFoundFailure)
   @apigen.failsWith(SavedExplorationConflictFailure)
@@ -230,8 +226,7 @@ interface SavedExplorations {
   @summary("Archive a saved exploration")
   @route("/{exploration}/archive")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.failsWith(InvalidSavedExplorationFailure)
   @apigen.failsWith(SavedExplorationNotFoundFailure)
   @apigen.failsWith(SavedExplorationConflictFailure)

@@ -15,12 +15,12 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
   for (const required of [
     "merge_group:",
     "types: [checks_requested]",
-    "name: macOS Apple silicon",
-    "os: macos-15",
-    "artifact: macos-arm64",
-    "name: macOS Intel",
-    "os: macos-15-intel",
-    "artifact: macos-x64",
+    '"name":"macOS Apple silicon"',
+    '"os":"macos-15"',
+    '"artifact":"macos-arm64"',
+    '"name":"macOS Intel"',
+    '"os":"macos-15-intel"',
+    '"artifact":"macos-x64"',
     "name: Policy integration (macOS ${{ matrix.architecture }})",
     "architecture: Apple silicon",
     "architecture: Intel",
@@ -37,7 +37,7 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
   for (const required of [
     "paths:",
     '".github/actions/desktop-preview-candidate/**"',
-    "matrix.artifact == 'linux-x64'",
+    "fromJSON(github.event_name == 'pull_request'",
   ]) {
     assert.ok(workflow.includes(required), `workflow is missing ${required}`);
   }

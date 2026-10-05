@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
@@ -393,9 +394,21 @@ func (operations projectDeliveryRollbackOperations) Rollback(ctx context.Context
 	if err != nil {
 		return projectcli.DeliveryRollbackResult{}, err
 	}
-	response, err := deploymentgen.NewGenClient(transport).RollbackDeliveryGeneration(ctx, deploymentgen.GenRollbackDeliveryGenerationClientRequest{
+	client := deploymentgen.NewGenClient(transport)
+	snapshot, err := client.GetDeliveryOperatorSnapshot(ctx, deploymentgen.GenGetDeliveryOperatorSnapshotClientRequest{Project: options.ProjectID})
+	if err != nil {
+		return projectcli.DeliveryRollbackResult{}, mapDeliveryCLIError("read rollback target revision", err)
+	}
+	if snapshot.Body.ProjectId != options.ProjectID || strings.TrimSpace(snapshot.Body.TargetId) == "" || snapshot.Body.TargetRevision < 1 {
+		return projectcli.DeliveryRollbackResult{}, fmt.Errorf("rollback target snapshot identity is invalid")
+	}
+	// Replays against one target revision share an operation identity, but a
+	// later rollback to the same generation after another publication must be
+	// a new operation rather than replaying the old publication.
+	operationKey := deploymentIdempotencyKey("delivery-rollback", options.ProjectID, snapshot.Body.TargetId, options.GenerationID, strconv.FormatInt(snapshot.Body.TargetRevision, 10))
+	response, err := client.RollbackDeliveryGeneration(ctx, deploymentgen.GenRollbackDeliveryGenerationClientRequest{
 		Project: options.ProjectID, Generation: options.GenerationID,
-		Headers: deploymentgen.GenRollbackDeliveryGenerationClientHeaders{IdempotencyKey: deploymentIdempotencyKey("delivery-rollback", options.ProjectID, options.GenerationID)},
+		Headers: deploymentgen.GenRollbackDeliveryGenerationClientHeaders{IdempotencyKey: operationKey},
 	})
 	if err != nil {
 		return projectcli.DeliveryRollbackResult{}, mapDeliveryCLIError("rollback delivery generation", err)

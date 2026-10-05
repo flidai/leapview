@@ -145,6 +145,7 @@ func TestHealthRegistryMatchesCurrentWorkflows(t *testing.T) {
 			var config struct {
 				Jobs map[string]struct {
 					Name     string `yaml:"name"`
+					Uses     string `yaml:"uses"`
 					Strategy struct {
 						Matrix yaml.Node `yaml:"matrix"`
 					} `yaml:"strategy"`
@@ -184,6 +185,27 @@ func TestHealthRegistryMatchesCurrentWorkflows(t *testing.T) {
 						actual = append(actual, normalized)
 					}
 				}
+				if strings.HasPrefix(job.Uses, "./.github/workflows/") {
+					reusablePath := filepath.Join(root, ".github", "workflows", strings.TrimPrefix(job.Uses, "./.github/workflows/"))
+					reusableData, err := os.ReadFile(reusablePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var reusable struct {
+						Jobs map[string]struct {
+							Name string `yaml:"name"`
+						} `yaml:"jobs"`
+					}
+					if err := yaml.Unmarshal(reusableData, &reusable); err != nil {
+						t.Fatal(err)
+					}
+					for _, child := range reusable.Jobs {
+						if child.Name == "" {
+							continue
+						}
+						actual = append(actual, HealthJobName(job.Name+" / "+child.Name))
+					}
+				}
 			}
 			expected := platformci.ExpectedHealthJobs(workflow)
 			slices.Sort(actual)
@@ -206,6 +228,13 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 			If      string            `yaml:"if"`
 			Needs   []string          `yaml:"needs"`
 			Outputs map[string]string `yaml:"outputs"`
+			Steps   []struct {
+				ID   string            `yaml:"id"`
+				Uses string            `yaml:"uses"`
+				Run  string            `yaml:"run"`
+				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
@@ -230,6 +259,27 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 	if gate.If != "${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}" || !slices.Contains(gate.Needs, "prepare") {
 		t.Fatal("gate must skip drafts and require planning on every eligible outcome")
 	}
+	prepare := config.Jobs["prepare"]
+	if prepare.Outputs["plan_attempt"] != "${{ steps.plan.outputs.plan_attempt }}" || prepare.Outputs["plan_artifact_id"] != "${{ steps.plan-artifact.outputs.artifact-id }}" {
+		t.Error("gate evidence must identify the planning job's attempt and immutable artifact")
+	}
+	var uploadBound, downloadBound, attemptBound bool
+	for _, step := range prepare.Steps {
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.ID == "plan-artifact" && step.With["path"] == "ci-plan.json" {
+			uploadBound = true
+		}
+	}
+	for _, step := range gate.Steps {
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+			downloadBound = step.With["artifact-ids"] == "${{ needs.prepare.outputs.plan_artifact_id }}" && step.With["name"] == "" && step.With["merge-multiple"] == "true"
+		}
+		if strings.Contains(step.Run, "--expected-attempt \"$PLAN_ATTEMPT\"") {
+			attemptBound = step.Env["PLAN_ATTEMPT"] == "${{ needs.prepare.outputs.plan_attempt }}"
+		}
+	}
+	if !uploadBound || !downloadBound || !attemptBound {
+		t.Errorf("gate must consume producer evidence across retries: upload=%t download=%t attempt=%t", uploadBound, downloadBound, attemptBound)
+	}
 	for neutral := range platformci.FullPRJobs().Selected() {
 		workflow := WorkflowJobID(neutral)
 		job, ok := config.Jobs[workflow]
@@ -247,7 +297,7 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 			t.Errorf("gate omits %s", workflow)
 		}
 	}
-	for _, fragment := range []string{"fetch-depth: 0", "--stack-base \"$STACK_BASE\"", "--head \"$GITHUB_SHA\"", "--expected-attempt \"$GITHUB_RUN_ATTEMPT\"", "--expected-deferred=\"$DEFERRED\"", "--frontend-matrix \"$FRONTEND_MATRIX\""} {
+	for _, fragment := range []string{"fetch-depth: 0", "--stack-base \"$STACK_BASE\"", "--head \"$GITHUB_SHA\"", "--expected-attempt \"$PLAN_ATTEMPT\"", "--expected-deferred=\"$DEFERRED\"", "--frontend-matrix \"$FRONTEND_MATRIX\""} {
 		if !strings.Contains(string(data), fragment) {
 			t.Errorf("missing candidate/gate contract %s", fragment)
 		}
@@ -266,5 +316,33 @@ func TestPlanWireBindingHasNoUnintendedCoreJSONShape(t *testing.T) {
 	}
 	if _, ok := object["pr"].(map[string]any)["nominal"].(map[string]any)["warehouse"]; ok {
 		t.Fatal("neutral warehouse field leaked into the artifact")
+	}
+}
+
+func TestPRWorkflowConcurrencyPreservesOtherStackLayers(t *testing.T) {
+	for _, workflow := range []string{"ci", "security"} {
+		t.Run(workflow, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", ".github", "workflows", workflow+".yml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Concurrency struct {
+					Group  string `yaml:"group"`
+					Cancel bool   `yaml:"cancel-in-progress"`
+				} `yaml:"concurrency"`
+			}
+			if err := yaml.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			// Every PR owns required checks, even when its validation is
+			// deferred. A different layer must not cancel that feedback.
+			if strings.Contains(config.Concurrency.Group, "stack.id") || !strings.Contains(config.Concurrency.Group, "github.ref") {
+				t.Fatalf("concurrency can cancel another stack layer: %s", config.Concurrency.Group)
+			}
+			if !config.Concurrency.Cancel {
+				t.Fatal("new revisions must still cancel obsolete runs for the same PR")
+			}
+		})
 	}
 }

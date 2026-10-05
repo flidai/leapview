@@ -32,6 +32,11 @@ targets:
           package: gen
           import_path: github.com/flidai/leapview/internal/analytics/api/gen
           client_file: client.apigen.gen.go
+        LeapViewAPI.Credential:
+          dir: ../internal/credential/api/gen
+          package: gen
+          import_path: github.com/flidai/leapview/internal/credential/api/gen
+          client_file: client.apigen.gen.go
         LeapViewAPI.Dashboard:
           dir: ../internal/dashboard/api/gen
           package: gen

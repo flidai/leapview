@@ -22,6 +22,7 @@ func TestMountDevelopmentSessionRoutesRegistersStableNavigationSurface(t *testin
 	router := chi.NewRouter()
 	mountDevelopmentSessionRoutes(router, developmenthttp.New(developmenthttp.Config{Enabled: true}), candidateRouteDependencies{}, nil, nil)
 	want := map[string]bool{
+		"GET /development-session/events": false,
 		"GET /api/v1/projects/{project}/targets/{target}/development-session/candidate/preview/events":                                     false,
 		"GET /api/v1/projects/{project}/targets/{target}/development-session/candidate/preview":                                            false,
 		"GET /api/v1/projects/{project}/targets/{target}/development-session/candidate/preview/dashboards/{dashboard}":                     false,
@@ -79,10 +80,16 @@ func TestMountDevelopmentSessionRoutesAppliesProjectGuard(t *testing.T) {
 	}
 	mountDevelopmentSessionRoutes(router, developmenthttp.New(developmenthttp.Config{Enabled: true}), candidateRouteDependencies{}, nil, guard)
 
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview/events", nil))
-	if !guarded || response.Code != http.StatusForbidden {
-		t.Fatalf("stable route guard = %t, status = %d", guarded, response.Code)
+	for _, path := range []string{
+		"/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview/events",
+		"/development-session/events",
+	} {
+		guarded = false
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if !guarded || response.Code != http.StatusForbidden {
+			t.Fatalf("route %q guard = %t, status = %d", path, guarded, response.Code)
+		}
 	}
 }
 

@@ -248,7 +248,7 @@ func (r *runner) scanGo(moduleFile string, _ *exceptionContract) error {
 		r.emitFailure(result)
 		return commandError("govulncheck", dir, result)
 	}
-	stream, err := parseGovulnStream(result.stdout)
+	stream, err := parseGovulnStream(result.stdout, "source")
 	if err != nil {
 		r.emitFailure(result)
 		return fmt.Errorf("govulncheck %s output is malformed or incomplete: %w", dir, err)

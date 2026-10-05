@@ -4,8 +4,49 @@ env:
   GOFLAGS: -tags=duckdb_arrow
 
 tasks:
+  nix:build:
+    desc: Build the sandboxed native Nix application and deployment CLI
+    cmds:
+      - nix build --no-update-lock-file .#leapview --out-link result-app
+
+  nix:image:
+    desc: Build the Nix container archive for Docker, Compose and Kamal
+    cmds:
+      - nix build --no-update-lock-file .#leapview-image --out-link result-image
+
+  nix:cli:
+    desc: Build CGO-disabled Linux deployment controller candidates for AMD64 and ARM64
+    cmds:
+      - nix build --no-update-lock-file .#leapviewctl-linux-amd64 --out-link result-cli-amd64
+      # Nix adds the selected output's -arm64 suffix to this prefix.
+      - nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli
+
+  nix:qualify:
+    desc: Qualify the Nix image through the existing production deployment checks
+    cmds:
+      - task: nix:build
+      - task: nix:image
+      - nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh result-image result-app
+
+  nix:check:
+    desc: Check the locked Nix toolchain and real browser integration
+    cmds:
+      - nix flake check --no-update-lock-file
+      - nix develop --no-update-lock-file -c task nix:smoke
+
+  nix:smoke:
+    desc: Exercise the Go toolchains and pinned Chromium inside nix develop
+    deps: [node:deps]
+    cmds:
+      - node scripts/check_nix_development.mjs
+
+  nix:ci:
+    desc: Run the existing PR contract inside the locked Nix development environment
+    cmds:
+      - nix develop --no-update-lock-file -c task ci
+
   dev:
-    desc: Start the managed LeapView dev server for this worktree
+    desc: Start the managed LeapView dev server with real local authentication
     cmds:
       - task: postgres:dev:up
       - task: generate
@@ -14,24 +55,39 @@ tasks:
       - task: map-assets:install
       - ./scripts/dev-server.sh start
 
+  dev:reset-login:
+    desc: Explicitly restore the private local development login and restart the managed server
+    cmds:
+      - LEAPVIEW_DEV_RESET_LOGIN=1 LEAPVIEW_DEV_RESTART=1 task dev
+
+  dev:bypass:
+    desc: Start the managed dev server with explicit local authentication bypass
+    cmds:
+      - task: postgres:dev:up
+      - task: generate
+      - task: build
+      - task: bootstrap
+      - task: map-assets:install
+      - LEAPVIEW_DEV_AUTH_BYPASS=true LEAPVIEW_LOCAL_AUTH=false ./scripts/dev-server.sh start
+
   dev:movielens:
-    desc: Start the managed LeapView dev server with the MovieLens 32M experiment project
+    desc: Seed and run the MovieLens 32M fixture with explicit auth bypass
     cmds:
       - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap:movielens
-      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=movie_ratings LEAPVIEW_DEV_MCP_METRIC=rating_count ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
+      - LEAPVIEW_DEV_AUTH_BYPASS=true LEAPVIEW_LOCAL_AUTH=false LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=movie_ratings LEAPVIEW_DEV_MCP_METRIC=rating_count ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
 
   dev:cfo:
-    desc: Start the managed LeapView dev server with the CFO finance demo
+    desc: Seed and run the CFO finance fixture with explicit auth bypass
     cmds:
       - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap:cfo
       - task: map-assets:install
-      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=finance LEAPVIEW_DEV_MCP_METRIC=net_sales ./scripts/dev-server.sh start dashboards/experiments/cfo-demo finance_files .data/cfo-demo
+      - LEAPVIEW_DEV_AUTH_BYPASS=true LEAPVIEW_LOCAL_AUTH=false LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=finance LEAPVIEW_DEV_MCP_METRIC=net_sales ./scripts/dev-server.sh start dashboards/experiments/cfo-demo finance_files .data/cfo-demo
 
   dbt:warehouse:build:
     desc: Build and verify the pinned dbt-duckdb warehouse-boundary Parquet publication
@@ -142,10 +198,20 @@ tasks:
     cmds:
       - ./scripts/dev-server.sh status
 
-  dev:publish:
-    desc: Sync Olist data and publish the exact current development candidate
+  dev:credentials:
+    desc: Show the private local development login after task dev has initialized it
     cmds:
-      - ./scripts/dev-server.sh publish
+      - ./scripts/dev-server.sh credentials
+
+  dev:auth-smoke:
+    desc: Verify real login, group role activation after release, and revocation
+    cmds:
+      - ./scripts/dev-server.sh auth-smoke
+
+  dev:publish:
+    desc: Publish the current development candidate with real scoped authority
+    cmds:
+      - LEAPVIEW_DEV_SKIP_DATA_SYNC=1 ./scripts/dev-server.sh publish
 
   dev:logs:
     desc: Tail managed LeapView dev server logs
@@ -216,12 +282,127 @@ tasks:
 
   test:qualification:native-postgres:
     desc: Run the required container-backed native PostgreSQL 18 qualification contract
-    deps:
-      - api:generate
     env:
       LEAPVIEW_TEST_CONTAINERS: "1"
     cmds:
+      - task: generate
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
+
+  test:qualification:demo-host-recovery:
+    desc: Run isolated host recovery and migration-boundary qualification with synthetic disposable fixtures
+    cmds:
+      - task generate
+      - go run ./internal/app/tools/securitypolicy -root .
+      - go test -race ./internal/app/cli/hostinstall -count=1
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_demo*.py'
+      - |
+        set -eu
+        migration_tests="$(go test -list '^Test(DemoUpgrade|HostUpgrade|UpgradeBoundary)' ./internal/platform/postgres/migrations)"
+        for test_name in \
+          TestDemoUpgradePostgreSQL18 \
+          TestDemoUpgradePartialMigrationPostgreSQL18RequiresRecovery \
+          TestHostUpgradeFutureRevisionUsesSameExecutor \
+          TestUpgradeBoundaryRejectsUnknownTransitionsBeforeMigration \
+          TestUpgradeBoundaryRequiresCompleteHistoricalPrefix \
+          TestUpgradeBoundaryRejectsPartialAndPrematureCandidate \
+          TestUpgradeBoundaryAllowsCompleteFutureAndPolicyOnlyTransitions; do
+          if ! printf '%s\n' "$migration_tests" | grep -Fx "$test_name" >/dev/null; then
+            printf 'required migration qualification test missing: %s\n' "$test_name" >&2
+            exit 1
+          fi
+        done
+        LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=true \
+          go test ./internal/platform/postgres/migrations \
+            -run '^Test(DemoUpgrade|HostUpgrade|UpgradeBoundary)' -count=1 -timeout=5m -v
+      - |
+        set -eu
+        recovery_tests="$(go test -list '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' ./internal/app/cli/hostinstall)"
+        for test_name in TestColdPostgreSQLPairRecovery TestInternalNetworkRecoveryRelay TestVolumeTLSMountQualification; do
+          if ! printf '%s\n' "$recovery_tests" | grep -Fx "$test_name" >/dev/null; then
+            printf 'required physical recovery test missing: %s\n' "$test_name" >&2
+            exit 1
+          fi
+        done
+        LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
+          go test ./internal/app/cli/hostinstall \
+            -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' \
+            -count=1 -timeout=10m -v
+
+  test:qualification:historical-transition:
+    desc: Run the required schema-32 to typed-access transition against a pinned predecessor and exact candidate image
+    cmds:
+      - |
+        set -eu
+        test "${LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED:-}" = 1 || {
+          printf 'LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED=1 is required for the historical transition lane\n' >&2
+          exit 64
+        }
+        test -n "${LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_IMAGE:-}" || {
+          printf 'candidate image identity is required\n' >&2
+          exit 64
+        }
+        test -n "${LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_REVISION:-}" || {
+          printf 'candidate source revision is required\n' >&2
+          exit 64
+        }
+        test -n "${LEAPVIEW_HISTORICAL_TRANSITION_EVIDENCE:-}" || {
+          printf 'private transition receipt path is required\n' >&2
+          exit 64
+        }
+        if [ "${LEAPVIEW_HISTORICAL_TRANSITION_FINAL_ARTIFACT:-0}" = 1 ]; then
+          test -n "${LEAPVIEW_HISTORICAL_TRANSITION_ADMISSION:-}" || {
+            printf 'final-artifact qualification requires OCI admission evidence\n' >&2
+            exit 64
+          }
+        fi
+        task generate
+        go run ./internal/app/tools/securitypolicy -root .
+        go test ./internal/app/cli/composectl \
+          -run '^TestQualificationHistoricalTransitionInputsFailClosed$' \
+          -count=1
+        transition_tests="$(go test ./internal/app/cli/composectl -list '^TestQualificationHistoricalTransitionEndToEnd$' -count=1)"
+        printf '%s\n' "${transition_tests}" | grep -Fx 'TestQualificationHistoricalTransitionEndToEnd' >/dev/null || {
+          printf 'required historical transition end-to-end test is missing\n' >&2
+          exit 1
+        }
+        go test ./internal/app/cli/composectl \
+          -run '^TestQualificationHistoricalTransitionEndToEnd$' \
+          -count=1 -timeout=110m -v
+
+  test:qualification:historical-transition:local:
+    desc: Build a local candidate image and run the mandatory historical transition fixture
+    cmds:
+      - |
+        set -euo pipefail
+        if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+          printf 'local historical-transition image requires a clean Git source tree; commit or export an immutable snapshot first\n' >&2
+          exit 64
+        fi
+        task generate
+        revision="$(git rev-parse HEAD)"
+        [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
+        if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+          printf 'generation changed the source tree; refusing to label a mutable tree as the exact historical-transition candidate\n' >&2
+          exit 64
+        fi
+        build_time="$(git show -s --format=%cI "${revision}")"
+        tag="leapview:historical-transition-${revision:0:12}"
+        docker buildx build --load --platform linux/amd64 --file Dockerfile \
+          --tag "${tag}" \
+          --build-arg BUILD_VERSION=historical-transition \
+          --build-arg BUILD_REVISION="${revision}" \
+          --build-arg BUILD_TIME="${build_time}" \
+          --build-arg BUILD_DIRTY=false \
+          --build-arg BUILD_RELEASE=false .
+        image="$(docker image inspect "${tag}" --format '{{"{{"}}.Id{{"}}"}}')"
+        [[ "${image}" =~ ^sha256:[0-9a-f]{64}$ ]]
+        evidence_dir="$(mktemp -d "${TMPDIR:-/tmp}/leapview-historical-transition.XXXXXX")"
+        LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED=1 \
+          LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_IMAGE="${image}" \
+          LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_REVISION="${revision}" \
+          LEAPVIEW_HISTORICAL_TRANSITION_EVIDENCE="${evidence_dir}/transition.json" \
+          LEAPVIEW_HISTORICAL_TRANSITION_FINAL_ARTIFACT=0 \
+          task test:qualification:historical-transition
 
   test:qualification:authoring-package:
     desc: Verify the released authoring archive qualification contract without Docker
@@ -325,23 +506,53 @@ tasks:
       - task: build
 
   ci:test:docs-site:
-    desc: Validate authored documentation and the independently deployable public site
+    desc: Prepare and validate complete documentation and site coverage independently
     cmds:
-      - task: docs:generate
-      - task: docs:check
+      - task: ci:prepare
+      - task: ci:test:docs
+      - task: ci:test:frontend:site
+
+  ci:test:docs:
+    desc: Validate documentation generation, snapshots, observation and site Go contracts on prepared assets
+    cmds:
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
-        test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
-      - task: site:build
-      - bun run test:docs-diagrams
-      - bun run test:site
+        bash scripts/check_generated_snapshots.sh \
+          .env.example \
+          docs/api/openapi.yaml \
+          docs/llms.txt \
+          docs/reference/agent-tools \
+          docs/articles/reference/data-resource-connectors.md \
+          internal/agent/contracts \
+          internal/project/contracts \
+          api/gen/data-resources-ir.json \
+          web/generated/data-resources \
+          schemas/config \
+          schemas/desktop \
+          schemas/json \
+          -- task --force docs:generate
+      - task: site:observation:test
+      - task: docs:check
       - go test ./cmd/leapview-site ./docs ./site ./internal/app/site/...
 
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
+      - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
+      - bun test scripts/nix_ci_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_archive_go_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_go_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/agent_e2e_config.test.ts
@@ -352,6 +563,7 @@ tasks:
       - bun run test:datastar-lit
       - bun run test:ui-command-boundaries
       - bun run test:command-failure
+      - node scripts/ensure_playwright.mjs && bun test web/components/shared/command.dom.test.ts
       - bun run test:app-shell
       - bun run test:settings
       - bun run typecheck:app
@@ -600,10 +812,12 @@ tasks:
   generate:
     desc: Generate all checked-out derived code needed for local development
     cmds:
+      - task: go:deps
       - task: adr0016-conformance:generate
       - task: duckdbsql:generate
       - task: db:generate
       - task: config:generate
+      - task: permission-contracts:generate
       - task: api:generate
       - task: agent-contracts:generate
       - task: ui-signals:generate
@@ -619,6 +833,7 @@ tasks:
       - task: lucide-icons:generate
       - task: cli-docs:generate
       - task: agent-tool-docs:generate
+      - task: permission-docs:generate
       - task: node:deps
       - task: docs:render
 
@@ -689,6 +904,7 @@ tasks:
       - task: data-resource-contracts:generate
       - task: cli-docs:generate
       - task: agent-tool-docs:generate
+      - task: permission-docs:generate
       - task: node:deps
       - task: docs:render
 
@@ -734,6 +950,7 @@ tasks:
     cmds:
       - bun run docs:validate-diagrams
       - go run ./internal/app/tools/agenttooldocgen --check
+      - go run ./internal/app/tools/permissiondocgen --check
       - go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen --check
       - go run ./internal/app/tools/docsitegen --check
       - go test ./internal/app/site/http -run '^TestEveryRenderedDocumentationLinkResolves$' -count=1
@@ -774,6 +991,7 @@ tasks:
     sources:
       - Taskfile.yml
       - internal/app/cli/**/*.go
+      - internal/admin/cli/**/*.go
       - internal/app/tools/clidocgen/**/*.go
     generates:
       - docs/reference/cli/catalog.json
@@ -803,6 +1021,44 @@ tasks:
       - docs/reference/agent-tools/manifest.json
     cmds:
       - go run ./internal/app/tools/agenttooldocgen
+
+  permission-docs:generate:
+    desc: Generate the public typed permission and role reference from the canonical Go catalog
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - internal/access/permission_catalog.go
+      - internal/access/permission_roles.go
+      - internal/app/tools/permissiondocgen/**/*.go
+    generates:
+      - docs/articles/reference/permissions.md
+    cmds:
+      - go run ./internal/app/tools/permissiondocgen
+
+  permission-docs:check:
+    desc: Verify the public typed permission and role reference is current
+    cmds:
+      - go run ./internal/app/tools/permissiondocgen --check
+
+  permission-contracts:generate:
+    desc: Generate typed permission transport, catalog, and PostgreSQL contracts
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - internal/access/permission_catalog.go
+      - internal/access/permission_roles.go
+      - internal/app/tools/permissioncontractgen/**/*.go
+    generates:
+      - api/typespec/generated/permissions.tsp
+      - internal/access/generated/permission_catalog.json
+      - internal/access/postgres/permission_contract.sql
+    cmds:
+      - go run ./internal/app/tools/permissioncontractgen
+
+  permission-contracts:check:
+    desc: Verify generated typed permission contracts are current
+    cmds:
+      - go run ./internal/app/tools/permissioncontractgen --check
 
   db:generate:
     desc: Generate PostgreSQL adapter code from checked-in schemas and queries
@@ -966,16 +1222,42 @@ tasks:
 
   generated:check:
     desc: Verify intentional public contract snapshots are current
-    deps:
-      - generate
     cmds:
+      - |
+        bash scripts/check_generated_snapshots.sh \
+          .env.example \
+          adr/specifications/standards-conformance-matrix.md \
+          docs/api/openapi.yaml \
+          docs/llms.txt \
+          docs/reference/agent-tools \
+          docs/articles/reference/data-resource-connectors.md \
+          docs/articles/reference/permissions.md \
+          api/typespec/generated/permissions.tsp \
+          internal/access/generated/permission_catalog.json \
+          internal/access/postgres/permission_contract.sql \
+          internal/agent/contracts \
+          internal/project/contracts \
+          internal/project/ui/signals/models.gen.go \
+          api/gen/data-resources-ir.json \
+          api/gen/pipeline-ir.json \
+          web/generated/data-resources \
+          web/generated/pipeline \
+          schemas/config \
+          schemas/desktop \
+          schemas/json \
+          pkg/duckdbsql/metadata_generated.go \
+          pkg/duckdbsql/ast_schema_generated.go \
+          pkg/duckdbsql/function_docs_generated.go \
+          pkg/duckdbsql/upstream.lock.json \
+          pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json \
+          pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json \
+          pkg/duckdbsql/internal/upstream/function_docs.lock.json \
+          -- task --force generate
       - task: adr0016-conformance:check
       - task: duckdbsql:generated:check
       - task: generated:git-check
       - task: config:check
-      - |
-        changed="$(git status --porcelain -- .env.example adr/specifications/standards-conformance-matrix.md docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts internal/project/ui/signals/models.gen.go api/gen/data-resources-ir.json api/gen/pipeline-ir.json web/generated/data-resources web/generated/pipeline schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
-        test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
+      - task: permission-contracts:check
 
   generated:git-check:
     desc: Verify build-only generated code is not tracked by Git
@@ -997,6 +1279,7 @@ tasks:
     deps:
       - apigen:build
       - dashboard-contracts:generate
+      - permission-contracts:generate
     method: checksum
     run: once
     sources:
@@ -1020,6 +1303,9 @@ tasks:
       - internal/analytics/api/gen/request_models.gen.go
       - internal/analytics/api/gen/server.apigen.gen.go
       - internal/analytics/api/gen/client.apigen.gen.go
+      - internal/credential/api/gen/request_models.gen.go
+      - internal/credential/api/gen/server.apigen.gen.go
+      - internal/credential/api/gen/client.apigen.gen.go
       - internal/dashboard/api/gen/request_models.gen.go
       - internal/dashboard/api/gen/server.apigen.gen.go
       - internal/dashboard/api/gen/client.apigen.gen.go
@@ -1301,6 +1587,56 @@ tasks:
     cmds:
       - task: ci:pr
 
+  managed:check:
+    desc: Validate the managed scaffold without cloud credentials or live deployment
+    cmds:
+      - task: managed:infrastructure:check
+      - task: managed:hosts:check
+      - task: managed:kamal:check
+
+  managed:infrastructure:check:
+    desc: Validate OpenTofu and run mocked provider plans
+    dir: deploy/managed/hetzner
+    cmds:
+      - tofu init -backend=false -input=false -lockfile=readonly
+      - tofu fmt -check -recursive
+      - tofu validate
+      - tofu test
+
+  managed:hosts:check:
+    desc: Build both locked NixOS hosts, deploy-rs checks and host-role assertions
+    dir: deploy/managed/nixos
+    cmds:
+      - nix fmt -- --check flake.nix inventory.example.nix modules/*.nix tests/*.nix
+      - nix build .#nixosConfigurations.example-app.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - nix build .#nixosConfigurations.example-database.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+
+  managed:hosts:boot-test:
+    desc: Boot isolated NixOS guests and verify TLS, filtering and reboot persistence
+    cmds:
+      - nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+
+  managed:hosts:network-test:
+    desc: Exercise IPv4/IPv6 Docker ingress in fresh kernel namespaces (requires sudo)
+    cmds:
+      - sudo unshare --mount --net --fork python3 deploy/managed/nixos/tests/docker_firewall_test.py
+
+  managed:hosts:docker-test:
+    desc: Exercise real Docker forwarding and restart in isolated namespaces (requires sudo)
+    cmds:
+      - python3 deploy/managed/nixos/tests/namespace_test.py
+      - |
+        probe_image="$(nix build path:./deploy/managed/nixos#port-probe --no-link --no-update-lock-file --print-out-paths)"
+        docker_package="$(nix build path:./deploy/managed/nixos#nixosConfigurations.example-app.config.virtualisation.docker.package --no-link --no-update-lock-file --print-out-paths)"
+        sudo python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package"
+
+  managed:kamal:check:
+    desc: Parse the application template with locked Kamal dependencies (no SSH)
+    dir: deploy/managed/kamal
+    cmds:
+      - bundle exec ruby config_test.rb
+
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures
     cmds:
@@ -1326,6 +1662,7 @@ tasks:
     cmds:
       - task: db:generate
       - task: api:generate
+      - task: ui-signals:generate
       - mkdir -p {{.ROOT_DIR}}/.tmp/qualification/tmp
       - >-
         env TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp
@@ -1340,7 +1677,9 @@ tasks:
     requires:
       vars: [IMAGE]
     cmds:
+      - task: db:generate
       - task: api:generate
+      - task: ui-signals:generate
       - >-
         env LEAPVIEWCTL_ROOT={{.ROOT_DIR}}/deploy/compose
         go run ./cmd/leapviewctl qualify site-image
@@ -1498,10 +1837,20 @@ tasks:
   test:go:app:shards:
     desc: Run stable application shards with three-process parallelism
     cmds:
+      - task: go:deps
       - task --parallel --concurrency 3 test:go:app:0 test:go:app:1 test:go:app:2 test:go:app:3
+
+  go:deps:
+    desc: Prepare the locked module graph before parallel test compilation
+    run: once
+    cmds:
+      # Match sqlc's proxy transport setting only for module acquisition.
+      # Test processes retain the caller's GODEBUG and HTTP/2 behavior.
+      - GODEBUG=http2client=0 go mod download
 
   test:go:packages:
     cmds:
+      - task: go:deps
       # Container-backed PostgreSQL tests are run once, fail closed, by the
       # dedicated conformance lane. Derive the exclusion by source so a new
       # harness user cannot silently run in both lanes. App tests use the same
@@ -1705,7 +2054,8 @@ tasks:
     cmds:
       # Bound a single unit of work, not the cumulative runtime of all five.
       # Hosted CI gives each shard its own runner; local CI avoids CPU contention.
-      - node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}
+      # The reports shard includes the full viewer and builder browser suites.
+      - node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}
 
   ci:lane:frontend:local:
     desc: Run the frontend lane locally with the hosted-CI hang watchdog
@@ -1715,6 +2065,7 @@ tasks:
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
+      - task: go:deps
       - task: ci:extensions:prepare
       - task: generate
       - task: build
@@ -1734,6 +2085,7 @@ tasks:
   ci:pr:
     desc: Run the fast required contract for every pull-request update
     cmds:
+      - task: generated:check
       - task: ci:prepare
       # Hosted CI runs these lanes in parallel on separate runners. Keep local
       # execution sequential: concurrent Go builds can make Bun's bundler spin,
@@ -1756,6 +2108,8 @@ tasks:
       - task: ci:full:extras:runtime:multinode
       - task: qa:ui-framework
       - task: ci:full:extras:runtime:tail
+      - task: test:qualification:demo-host-recovery
+      - task: test:qualification:historical-transition:local
 
   ci:full:extras:static:
     internal: true
@@ -1856,29 +2210,44 @@ tasks:
       - api:generate
     cmds:
       - go test ./cmd/leapviewctl ./internal/app/cli/composectl ./internal/app/cli/hostinstall ./deploy/compose ./deploy/host
-      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualificationContainerRuntimeLifecycle$'
+      - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualification(ContainerRuntimeLifecycle|HistoricalDockerClientPortable)$'
       - go test ./deploy/hetzner
       - go test ./deploy/hetzner-site
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/kamal-site -p 'test_*.py'
       - terraform fmt -check -recursive deploy/hetzner
-      - terraform -chdir=deploy/hetzner init -backend=false -input=false
+      - terraform -chdir=deploy/hetzner init -backend=false -input=false -lockfile=readonly
       - terraform -chdir=deploy/hetzner validate
       - terraform -chdir=deploy/hetzner test
       - terraform fmt -check -recursive deploy/hetzner-site
-      - terraform -chdir=deploy/hetzner-site init -backend=false -input=false
+      - terraform -chdir=deploy/hetzner-site init -backend=false -input=false -lockfile=readonly
       - terraform -chdir=deploy/hetzner-site validate
       - terraform -chdir=deploy/hetzner-site test
 
   site:deploy:
-    desc: Bootstrap or recover pull-based deployment with an immutable public-site image
-    requires:
-      vars: [LEAPVIEW_SITE_IMAGE]
+    desc: Run the manual public-site operator (pass commands after --)
     cmds:
-      - >-
-        infisical run --silent
-        --env prod
-        --path /hetzner-site/operator
-        --projectId c52a0183-fc82-4614-b437-c237a889d79c
-        -- ./scripts/deploy_site.sh
+      - python3 -B deploy/kamal-site/deploy.py {{.CLI_ARGS}}
+
+  site:access-check:
+    desc: Inspect the public-site host over the operator's pinned SSH connection
+    cmds:
+      - python3 -B deploy/kamal-site/deploy.py status
+
+  site:observe:
+    desc: Run or inspect the read-only public-site observation
+    cmds:
+      - python3 -B deploy/kamal-site/observe.py {{.CLI_ARGS}}
+
+  site:acceptance:
+    desc: Freeze or verify observation and public adoption smoke evidence
+    cmds:
+      - python3 -B deploy/kamal-site/acceptance.py {{.CLI_ARGS}}
+
+  site:observation:test:
+    desc: Test the public-site observer and acceptance gates with local fixtures
+    cmds:
+      - python3 -B -m unittest discover -s deploy/kamal-site -p 'test_observe.py'
+      - python3 -B -m unittest discover -s deploy/kamal-site -p 'test_acceptance.py'
 
   node:audit:
     desc: Scan JavaScript dependencies for known vulnerabilities

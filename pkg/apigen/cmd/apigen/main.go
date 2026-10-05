@@ -836,6 +836,11 @@ func copyTypeSpecProject(src string, dst string) error {
 		if rel != "." && entry.IsDir() && entry.Name() == "node_modules" {
 			return filepath.SkipDir
 		}
+		// Generators write .<output>.<random>.tmp beside their final outputs.
+		// These are not compiler inputs and may be renamed during this walk.
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), ".") && strings.HasSuffix(entry.Name(), ".tmp") {
+			return nil
+		}
 		target := filepath.Join(dst, rel)
 		if entry.IsDir() {
 			if err := os.MkdirAll(target, 0o750); err != nil {

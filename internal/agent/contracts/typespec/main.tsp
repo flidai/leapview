@@ -112,7 +112,7 @@ model QueryVisualInput {
   @doc("Stable semantic_model resource ID returned by catalog_search/catalog_get.")
   @minLength(1)
   semanticModelId: string;
-  @doc("Canonical generated dashboard visual query and presentation contract.")
+  @doc("Canonical generated dashboard visual query and presentation contract. For records queries, fields must use explicit {field: \"column\"} references; bare-string field shorthand is not accepted.")
   visual: LeapViewDashboard.DashboardVisual;
   @doc("Governed semantic filters applied before visualization. Inline data and arbitrary expressions are not accepted.")
   @maxItems(100)
@@ -123,6 +123,8 @@ model QueryVisualFieldUsage {
   fieldId: string;
   role: "dimension" | "series" | "metric" | "table_field" | "table_row";
   `alias`?: string;
+  @doc("Data Explorer field ID for a direct binding to the query root dataset.")
+  explorerFieldId?: string;
   label: string;
   dataType?: string;
   unit?: string;
@@ -404,6 +406,13 @@ model DashboardAuthoringCreateInput {
   slug?: string;
 }
 
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "create"] })
+model DashboardAuthoringCreateReceipt {
+  @minLength(1)
+  id: string;
+  status: "draft" | "published" | "archived";
+}
+
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring"] })
 model DashboardAuthoringResult {
   revision: Record<unknown>;
@@ -514,7 +523,9 @@ model DashboardAuthoringPreviewResult {
 model DashboardAuthoringExportInput {
   sourceKind: "project" | "instance";
   @minLength(1)
-  dashboardId: string;
+  dashboardId?: string;
+  @minLength(1)
+  stableId?: string;
 }
 
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "export"] })

@@ -1,6 +1,6 @@
 # Verify a desktop release
 
-The official [download page](/download) publishes only artifacts declared by the checked-in desktop release manifest. It currently links the immutable unsigned GitHub prerelease for early evaluation. Pull-request artifacts are never linked; signed stable artifacts replace the preview only after the production release gate.
+The official [download page](/download) publishes only artifacts declared by the checked-in desktop release manifest. Desktop downloads are currently withdrawn because the advertised GitHub preview release is unavailable. Use the checks below when a verified release becomes available. Pull-request artifacts are never linked; signed stable artifacts replace the preview only after the production release gate.
 
 ## Match the release record
 

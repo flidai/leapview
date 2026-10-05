@@ -12,6 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 )
 
@@ -139,6 +140,9 @@ func (i *Installer) Install(ctx context.Context) error {
 		return err
 	}
 	defer lock.Release()
+	if err := hostmaintenance.Check(i.paths.Root); err != nil {
+		return err
+	}
 	installed, err := readMarker(filepath.Join(i.paths.Root, installMarkerName))
 	if err != nil {
 		return err

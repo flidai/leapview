@@ -23,6 +23,7 @@ internal/access/api/gen/
 internal/agent/contracts/gen/
 internal/agent/api/gen/
 internal/analytics/api/gen/
+internal/credential/api/gen/
 internal/dashboard/api/gen/
 internal/deployment/api/gen/
 internal/manageddata/api/gen/
@@ -75,3 +76,13 @@ static/semantic-model-graph.css
 .env.*
 !.env.example
 infisical-export.*
+
+# Python deployment-adapter bytecode caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local Nix result links and optional direnv cache
+/result
+/result-*
+/.direnv/

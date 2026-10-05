@@ -39,13 +39,41 @@ for the supported Compose deployment, database bootstrap, and first project.
 The repository also contains a release-oriented
 [Docker Compose package](deploy/compose/README.md) for self-hosted deployments.
 
+The public website uses the [manual Kamal operator](deploy/kamal-site/README.md).
+Its [2 October live acceptance evidence](deploy/kamal-site/evidence/final-acceptance-20261002.md)
+records the completed observation and recovery audit. Automatic VPS activation
+remains deferred.
+
 ## Development
+
+On x86_64 Linux, use `./scripts/develop.sh` to enter the default locked Nix
+environment, then run the Task commands below. For one command, use
+`./scripts/develop.sh task ci`. The launcher preserves the conventional tools on
+other supported platforms. `nix build .#leapview` builds the application; `nix build .#leapview-image`
+builds its container archive. See the [Nix guide](nix/README.md) for prerequisites,
+qualification and current scope. Docker must be running for database fixtures.
 
 Start the worktree-local development server:
 
 ```sh
 task dev
 ```
+
+The default uses real local authentication. Each worktree keeps the same URL
+across restarts, and its browser cookies are isolated from other localhost
+worktrees. Open the URL printed by `task dev` and choose **Continue as Local
+Developer**. This loopback-only shortcut creates the same durable, audited
+browser session as password login without exposing the private worktree
+password to the browser. `task dev:credentials` remains available when testing
+the password-login flow explicitly. The
+normal development session lasts up to 30 days and survives server restarts;
+production keeps its standard eight-hour session. `task dev:bypass` is an explicit convenience mode for
+fixture seeding or work that does not exercise credential-bound authorization.
+On a new database, run `LEAPVIEW_DEV_ONCE=1 task dev:bypass` once to stage the
+bundled dataset, then use `task dev` for real-auth testing. Server startup does
+not implicitly publish a release. `task dev:publish`
+publishes a fresh candidate with scoped authority and reuses staged data;
+`task dev:auth-smoke` tests login, role activation after a release, and revocation.
 
 Use `task dev:status`, `task dev:logs`, and `task dev:stop` to manage it. Run
 focused Go and browser tests locally during iteration. Before a meaningful push, `task ci`

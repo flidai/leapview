@@ -148,14 +148,25 @@ APIGen uses the TypeSpec operation name as the operation ID by default;
 `@operationId` remains available for intentional overrides. Inferred IDs must
 be unique. APIGen also requires stable dotted lower-snake-case audit actions, a
 required `Idempotency-Key` on POST commands, and a required
-`If-Match` on PATCH commands. It emits the normalized value in IR, generated Go
+`If-Match` on PATCH commands. A deliberately narrow exception is authored as
+`@apigen.command(#{ nonReplayable: true, ... })`; it emits
+`idempotency: "forbidden"` and is valid only for a synchronous POST with a
+required JSON body, authenticated or privilege authorization, required
+transactional audit, and no declared `Idempotency-Key` header. HTTP adapters
+must reject that header's presence, including an explicitly empty value; the
+APIGen runtime also rejects non-empty replay keys and does not require an
+idempotency-store dependency. Generated UI actions expose this policy through
+`ReplayForbidden()`. APIGen emits the normalized value in IR, generated Go
 operation registries, aggregate registries, and OpenAPI `x-apigen-command`.
+This policy does not guarantee at-most-once execution: a lost response after a
+commit followed by explicit resubmission can create another draft. Adapters
+must not automatically resend these commands.
 The generated runtime registry is the transport-neutral execution policy:
 API middleware selects commands by generated method/route metadata, while
 direct UI, CLI, agent, and automation adapters call `command.BeginInvocation`
 with the same command identity and invocation inputs. The runtime rejects an
 undeclared surface, missing authorization target, missing idempotency identity,
-or missing concurrency token before domain dispatch. Revisioned mutations call
+forbidden replay key, or missing concurrency token before domain dispatch. Revisioned mutations call
 `Executor.CheckConcurrency` with the canonical revision from inside their
 mutation transaction; a successful generated transport response is rejected
 unless both concurrency and command execution completed.

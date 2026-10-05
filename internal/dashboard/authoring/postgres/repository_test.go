@@ -589,6 +589,18 @@ func TestRepositoryPostgreSQL18ConcurrentCreateOperationReplay(t *testing.T) {
 			t.Fatalf("concurrent create results differ: first=%#v current=%#v", first, result.lifecycle)
 		}
 	}
+	// A transport recovering a copy can validate its original intent from the
+	// retained revision, without recomputing a digest from a moving source.
+	lookup := op
+	lookup.Fingerprint = ""
+	retained, found, err := f.repo.LookupCreateOperation(t.Context(), lookup)
+	if err != nil || !found || retained.DashboardID != first.ID || retained.Revision != f.revision.Token() || retained.Fingerprint != op.Fingerprint {
+		t.Fatalf("key-only lookup=%#v found=%v err=%v", retained, found, err)
+	}
+	lookup.ActorID = "different-actor"
+	if _, found, err := f.repo.LookupCreateOperation(t.Context(), lookup); err != nil || found {
+		t.Fatalf("lookup crossed actor scope: found=%v err=%v", found, err)
+	}
 	conflict := input
 	conflict.Operation.Fingerprint = "sha256:" + strings.Repeat("d", 64)
 	if _, err := f.repo.Create(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000001009"), "dashboard_authoring.draft_created"), conflict); !errors.Is(err, authoring.ErrCommandReuse) {

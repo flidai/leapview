@@ -1,17 +1,19 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4 AS node
+FROM node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6 AS node
 
 # A caller may override this empty stage with a named build context containing
 # basemap.pmtiles. The generator verifies the pinned digest before accepting it.
 FROM scratch AS mapassetseed
 
-FROM golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS go-deps
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go-deps
 WORKDIR /src
 
 COPY go.mod go.sum ./
 COPY pkg/apigen/go.mod pkg/apigen/go.sum ./pkg/apigen/
-RUN go mod download
+RUN go mod download || \
+    (sleep 5 && go mod download) || \
+    (sleep 5 && go mod download)
 
 FROM go-deps AS sourcegen
 
@@ -46,6 +48,7 @@ WORKDIR /src
 
 COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 COPY package.json bun.lock tsconfig.json ./
+RUN bun install --frozen-lockfile --no-cache
 COPY scripts ./scripts
 COPY static ./static
 COPY web ./web
@@ -53,7 +56,6 @@ COPY --from=sourcegen /src/api/gen ./api/gen
 COPY --from=sourcegen /src/api/visualization ./api/visualization
 COPY --from=sourcegen /src/web/generated ./web/generated
 
-RUN bun install --frozen-lockfile --no-cache
 RUN mkdir -p internal/dashboard/appearance && \
     bun scripts/generate_lucide_icon_catalog.ts && \
     bun scripts/generate_visualization_validator.ts && \
@@ -72,6 +74,7 @@ COPY --from=sourcegen /src/api/gen ./api/gen
 COPY --from=sourcegen /src/internal/access/api/gen ./internal/access/api/gen
 COPY --from=sourcegen /src/internal/agent/api/gen ./internal/agent/api/gen
 COPY --from=sourcegen /src/internal/analytics/api/gen ./internal/analytics/api/gen
+COPY --from=sourcegen /src/internal/credential/api/gen ./internal/credential/api/gen
 COPY --from=sourcegen /src/internal/dashboard/api/gen ./internal/dashboard/api/gen
 COPY --from=sourcegen /src/internal/deployment/api/gen ./internal/deployment/api/gen
 COPY --from=sourcegen /src/internal/manageddata/api/gen ./internal/manageddata/api/gen
@@ -89,6 +92,7 @@ COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/
 COPY --from=sourcegen /src/internal/project/postgres/internal/db ./internal/project/postgres/internal/db
 COPY --from=sourcegen /src/internal/project/developmentsession/postgres/internal/db ./internal/project/developmentsession/postgres/internal/db
 COPY --from=sourcegen /src/internal/access/postgres/internal/db ./internal/access/postgres/internal/db
+COPY --from=sourcegen /src/internal/credential/postgres/internal/db ./internal/credential/postgres/internal/db
 COPY --from=sourcegen /src/internal/admin/product/postgres/internal/db ./internal/admin/product/postgres/internal/db
 COPY --from=sourcegen /src/internal/agent/postgres/internal/db ./internal/agent/postgres/internal/db
 COPY --from=sourcegen /src/internal/dashboard/session/postgres/internal/db ./internal/dashboard/session/postgres/internal/db
@@ -145,7 +149,44 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     go run ./internal/app/tools/extensionsupply --out /out/extension-supply
 
-FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc AS runtime
+# Keep the pinned distroless runtime, but apply Debian's fixed OpenSSL packages
+# while the upstream image catches up. The package payload and control metadata
+# are both checksum-verified inputs; this stage is not part of the final image.
+FROM node AS runtime-security-update
+ARG TARGETARCH
+RUN set -eu; \
+    openssl_deb_version=3.5.7-1~deb13u3; \
+    case "$TARGETARCH" in \
+      amd64) \
+        libssl_sha256=ff16bc048bcd7d1b256094450b79c77947d8e76fe2a24bd99b91021d591fa074; \
+        provider_sha256=c12e0266c4780749a4702b8959ac979689f4182e18eed85a8a5eb90ed0e16eab ;; \
+      arm64) \
+        libssl_sha256=d0681293a160392186c6ef85a165e40603d1628a099936137d24d391bd591f97; \
+        provider_sha256=dae4ab96be3a1fc8fd490bbeb3938ecd102d360555d4af8ee2728b42ce9f1059 ;; \
+      *) printf 'unsupported runtime package architecture: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /out/runtime-security/var/lib/dpkg/status.d /tmp/runtime-security-control; \
+    for package in libssl3t64 openssl-provider-legacy; do \
+      case "$package" in \
+        libssl3t64) checksum="$libssl_sha256" ;; \
+        openssl-provider-legacy) checksum="$provider_sha256" ;; \
+      esac; \
+      archive="/tmp/${package}.deb"; \
+      url="https://security.debian.org/debian-security/pool/updates/main/o/openssl/${package}_${openssl_deb_version}_${TARGETARCH}.deb"; \
+      curl --fail --location --proto '=https' --proto-redir '=https' --retry 4 --retry-all-errors --silent --show-error --output "$archive" "$url"; \
+      printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status || { printf 'checksum verification failed for %s\n' "$package" >&2; exit 1; }; \
+      dpkg-deb --extract "$archive" /out/runtime-security; \
+      control_dir="/tmp/runtime-security-control/$package"; \
+      dpkg-deb --control "$archive" "$control_dir"; \
+      test -f "$control_dir/control" && test -f "$control_dir/md5sums"; \
+      install -m 0644 "$control_dir/control" "/out/runtime-security/var/lib/dpkg/status.d/$package"; \
+      install -m 0644 "$control_dir/md5sums" "/out/runtime-security/var/lib/dpkg/status.d/$package.md5sums"; \
+    done
+
+FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:f525a9a37aed3e8a848f46cfe055999782d66ed797e9e2886928c8caaaa4fc52 AS runtime-base
+COPY --from=runtime-security-update /out/runtime-security/ /
+
+FROM runtime-base AS runtime
 
 USER root
 SHELL ["/busybox/sh", "-c"]
@@ -156,7 +197,8 @@ ARG BUILD_TIME=unknown
 ARG BUILD_DIRTY=true
 ARG BUILD_RELEASE=false
 
-LABEL org.opencontainers.image.title="LeapView" \
+LABEL service="leapview" \
+      org.opencontainers.image.title="LeapView" \
       org.opencontainers.image.description="LeapView business intelligence server" \
       org.opencontainers.image.source="https://github.com/flidai/leapview" \
       org.opencontainers.image.licenses="Apache-2.0" \

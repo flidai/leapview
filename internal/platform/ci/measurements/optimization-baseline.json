@@ -1,0 +1,4451 @@
+{
+  "captured_at": "2026-10-02T11:28:56.524106+00:00",
+  "runs": [
+    {
+      "id": 36997034068,
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "event": "pull_request",
+      "head_sha": "0c784a9ef65d72d3e842517a36be7915b9b0b8ac",
+      "head_branch": "ganesh/site-observation-final-acceptance",
+      "run_attempt": 1,
+      "created_at": "2026-10-02T10:43:19Z",
+      "run_started_at": "2026-10-02T10:43:19Z",
+      "updated_at": "2026-10-02T11:13:59Z",
+      "conclusion": "success",
+      "html_url": "https://github.com/flidai/leapview/actions/runs/36997034068",
+      "referenced_workflows": [
+        {
+          "path": "flidai/leapview/.github/workflows/demo-upgrade-qualification.yml@fc6f2188ce1a5283787834717e99eae2265f97e2",
+          "sha": "fc6f2188ce1a5283787834717e99eae2265f97e2",
+          "ref": "refs/pull/803/merge"
+        }
+      ],
+      "completion_seconds": 1840.0,
+      "initial_queue_seconds": 0.0,
+      "jobs": [
+        {
+          "id": 110807562613,
+          "name": "Plan PR validation",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075293",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:48:43Z",
+          "completed_at": "2026-10-02T10:53:28Z",
+          "execution_seconds": 285.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:45Z",
+              "completed_at": "2026-10-02T10:48:45Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out the exact candidate and full history",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:45Z",
+              "completed_at": "2026-10-02T10:48:53Z",
+              "execution_seconds": 8.0
+            },
+            {
+              "name": "Set up planner locked toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:53Z",
+              "completed_at": "2026-10-02T10:53:23Z",
+              "execution_seconds": 270.0
+            },
+            {
+              "name": "Plan cumulative candidate validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:23Z",
+              "completed_at": "2026-10-02T10:53:23Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Publish versioned selection evidence",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:23Z",
+              "completed_at": "2026-10-02T10:53:25Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Post Set up planner locked toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:25Z",
+              "completed_at": "2026-10-02T10:53:25Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out the exact candidate and full history",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:25Z",
+              "completed_at": "2026-10-02T10:53:25Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:25Z",
+              "completed_at": "2026-10-02T10:53:25Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110807562899,
+          "name": "Isolated host recovery and migration boundary contracts / Isolated host recovery and migration boundary contracts",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075291",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:48:44Z",
+          "completed_at": "2026-10-02T10:55:08Z",
+          "execution_seconds": 384.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:44Z",
+              "completed_at": "2026-10-02T10:48:45Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out the candidate",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:45Z",
+              "completed_at": "2026-10-02T10:48:49Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:49Z",
+              "completed_at": "2026-10-02T10:52:41Z",
+              "execution_seconds": 232.0
+            },
+            {
+              "name": "Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:52:41Z",
+              "completed_at": "2026-10-02T10:52:42Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Run isolated host recovery qualification",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:52:42Z",
+              "completed_at": "2026-10-02T10:55:06Z",
+              "execution_seconds": 144.0
+            },
+            {
+              "name": "Post Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:06Z",
+              "completed_at": "2026-10-02T10:55:06Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:06Z",
+              "completed_at": "2026-10-02T10:55:06Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out the candidate",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:06Z",
+              "completed_at": "2026-10-02T10:55:07Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:07Z",
+              "completed_at": "2026-10-02T10:55:07Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110807563061,
+          "name": "Isolated host recovery and migration boundary contracts / Schema-32 legacy access transition",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075292",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:48:43Z",
+          "completed_at": "2026-10-02T11:09:16Z",
+          "execution_seconds": 1233.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:44Z",
+              "completed_at": "2026-10-02T10:48:46Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Check out the exact candidate source",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:46Z",
+              "completed_at": "2026-10-02T10:48:53Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:48:53Z",
+              "completed_at": "2026-10-02T10:53:21Z",
+              "execution_seconds": 268.0
+            },
+            {
+              "name": "Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:21Z",
+              "completed_at": "2026-10-02T10:53:22Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Build a local candidate image for pre-merge transition testing",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:22Z",
+              "completed_at": "2026-10-02T11:02:17Z",
+              "execution_seconds": 535.0
+            },
+            {
+              "name": "Admit the exact final candidate image",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T11:02:17Z",
+              "completed_at": "2026-10-02T11:02:17Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload OCI vulnerability diagnostic",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:17Z",
+              "completed_at": "2026-10-02T11:02:17Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Pull the admitted final candidate image",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T11:02:17Z",
+              "completed_at": "2026-10-02T11:02:17Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Resolve candidate image identity",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:17Z",
+              "completed_at": "2026-10-02T11:02:17Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Prepare the real publication browser validator",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:17Z",
+              "completed_at": "2026-10-02T11:02:17Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Run the required historical transition fixture",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:17Z",
+              "completed_at": "2026-10-02T11:09:11Z",
+              "execution_seconds": 414.0
+            },
+            {
+              "name": "Upload passed historical transition receipt",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:11Z",
+              "completed_at": "2026-10-02T11:09:12Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:12Z",
+              "completed_at": "2026-10-02T11:09:12Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:12Z",
+              "completed_at": "2026-10-02T11:09:13Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out the exact candidate source",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:13Z",
+              "completed_at": "2026-10-02T11:09:13Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:13Z",
+              "completed_at": "2026-10-02T11:09:13Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808948747,
+          "name": "Spatial tile benchmarks (PR)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075299",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:31Z",
+          "completed_at": "2026-10-02T10:58:56Z",
+          "execution_seconds": 325.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:32Z",
+              "completed_at": "2026-10-02T10:53:33Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:33Z",
+              "completed_at": "2026-10-02T10:53:41Z",
+              "execution_seconds": 8.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:41Z",
+              "completed_at": "2026-10-02T10:58:21Z",
+              "execution_seconds": 280.0
+            },
+            {
+              "name": "Record cold, pan, raw, and forced-fallback benchmarks",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:21Z",
+              "completed_at": "2026-10-02T10:58:50Z",
+              "execution_seconds": 29.0
+            },
+            {
+              "name": "Record warm child-tile byte-cache benchmark",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:50Z",
+              "completed_at": "2026-10-02T10:58:51Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Upload spatial benchmark evidence",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:51Z",
+              "completed_at": "2026-10-02T10:58:53Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:53Z",
+              "completed_at": "2026-10-02T10:58:53Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:53Z",
+              "completed_at": "2026-10-02T10:58:53Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:53Z",
+              "completed_at": "2026-10-02T10:58:53Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808948750,
+          "name": "Go package tests (PR)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075297",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:31Z",
+          "completed_at": "2026-10-02T11:03:20Z",
+          "execution_seconds": 589.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:31Z",
+              "completed_at": "2026-10-02T10:53:32Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:32Z",
+              "completed_at": "2026-10-02T10:53:38Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Check out pinned DuckDB metadata sources",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:38Z",
+              "completed_at": "2026-10-02T10:53:39Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:39Z",
+              "completed_at": "2026-10-02T10:57:25Z",
+              "execution_seconds": 226.0
+            },
+            {
+              "name": "Install pinned independent ODCS validator",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:57:25Z",
+              "completed_at": "2026-10-02T10:57:37Z",
+              "execution_seconds": 12.0
+            },
+            {
+              "name": "Validate ODCS exports independently",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:57:37Z",
+              "completed_at": "2026-10-02T10:57:41Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Validate Prometheus rules and fixtures",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:57:41Z",
+              "completed_at": "2026-10-02T10:58:04Z",
+              "execution_seconds": 23.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:04Z",
+              "completed_at": "2026-10-02T10:58:33Z",
+              "execution_seconds": 29.0
+            },
+            {
+              "name": "Run Go package validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:33Z",
+              "completed_at": "2026-10-02T11:02:41Z",
+              "execution_seconds": 248.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:41Z",
+              "completed_at": "2026-10-02T11:03:16Z",
+              "execution_seconds": 35.0
+            },
+            {
+              "name": "Verify DuckDB metadata against pinned source",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:16Z",
+              "completed_at": "2026-10-02T11:03:17Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:17Z",
+              "completed_at": "2026-10-02T11:03:17Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out pinned DuckDB metadata sources",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:17Z",
+              "completed_at": "2026-10-02T11:03:18Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:18Z",
+              "completed_at": "2026-10-02T11:03:18Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:18Z",
+              "completed_at": "2026-10-02T11:03:18Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808948780,
+          "name": "Frontend tests (PR, site)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075301",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:31Z",
+          "completed_at": "2026-10-02T11:00:32Z",
+          "execution_seconds": 421.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:32Z",
+              "completed_at": "2026-10-02T10:53:33Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:33Z",
+              "completed_at": "2026-10-02T10:53:42Z",
+              "execution_seconds": 9.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:42Z",
+              "completed_at": "2026-10-02T10:58:12Z",
+              "execution_seconds": 270.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:12Z",
+              "completed_at": "2026-10-02T10:58:47Z",
+              "execution_seconds": 35.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:47Z",
+              "completed_at": "2026-10-02T10:59:43Z",
+              "execution_seconds": 56.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:43Z",
+              "completed_at": "2026-10-02T11:00:28Z",
+              "execution_seconds": 45.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:00:28Z",
+              "completed_at": "2026-10-02T11:00:28Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:00:28Z",
+              "completed_at": "2026-10-02T11:00:29Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:00:29Z",
+              "completed_at": "2026-10-02T11:00:29Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808948782,
+          "name": "PostgreSQL topology isolation (PR)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075300",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:31Z",
+          "completed_at": "2026-10-02T10:59:33Z",
+          "execution_seconds": 362.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:32Z",
+              "completed_at": "2026-10-02T10:53:32Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:32Z",
+              "completed_at": "2026-10-02T10:53:40Z",
+              "execution_seconds": 8.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:40Z",
+              "completed_at": "2026-10-02T10:57:56Z",
+              "execution_seconds": 256.0
+            },
+            {
+              "name": "Provision PostgreSQL test topology",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:57:56Z",
+              "completed_at": "2026-10-02T10:58:19Z",
+              "execution_seconds": 23.0
+            },
+            {
+              "name": "Check PostgreSQL topology isolation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:19Z",
+              "completed_at": "2026-10-02T10:58:23Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Run native PostgreSQL qualification contract",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:23Z",
+              "completed_at": "2026-10-02T10:59:30Z",
+              "execution_seconds": 67.0
+            },
+            {
+              "name": "Tear down PostgreSQL test topology",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:30Z",
+              "completed_at": "2026-10-02T10:59:31Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:31Z",
+              "completed_at": "2026-10-02T10:59:31Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:31Z",
+              "completed_at": "2026-10-02T10:59:31Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:31Z",
+              "completed_at": "2026-10-02T10:59:32Z",
+              "execution_seconds": 1.0
+            }
+          ]
+        },
+        {
+          "id": 110808948839,
+          "name": "Documentation and public site (PR)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075296",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:31Z",
+          "completed_at": "2026-10-02T10:59:48Z",
+          "execution_seconds": 377.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:32Z",
+              "completed_at": "2026-10-02T10:53:33Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:33Z",
+              "completed_at": "2026-10-02T10:53:40Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:40Z",
+              "completed_at": "2026-10-02T10:57:33Z",
+              "execution_seconds": 233.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:57:33Z",
+              "completed_at": "2026-10-02T10:57:59Z",
+              "execution_seconds": 26.0
+            },
+            {
+              "name": "Validate documentation and embedded site contracts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:57:59Z",
+              "completed_at": "2026-10-02T10:59:11Z",
+              "execution_seconds": 72.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:11Z",
+              "completed_at": "2026-10-02T10:59:45Z",
+              "execution_seconds": 34.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:45Z",
+              "completed_at": "2026-10-02T10:59:46Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:46Z",
+              "completed_at": "2026-10-02T10:59:46Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:46Z",
+              "completed_at": "2026-10-02T10:59:46Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808948891,
+          "name": "Go application tests (PR)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075298",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:31Z",
+          "completed_at": "2026-10-02T11:09:32Z",
+          "execution_seconds": 961.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:32Z",
+              "completed_at": "2026-10-02T10:53:33Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:33Z",
+              "completed_at": "2026-10-02T10:53:40Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:53:40Z",
+              "completed_at": "2026-10-02T10:57:58Z",
+              "execution_seconds": 258.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:57:58Z",
+              "completed_at": "2026-10-02T10:58:32Z",
+              "execution_seconds": 34.0
+            },
+            {
+              "name": "Run Go application validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:32Z",
+              "completed_at": "2026-10-02T11:09:28Z",
+              "execution_seconds": 656.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:28Z",
+              "completed_at": "2026-10-02T11:09:29Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:29Z",
+              "completed_at": "2026-10-02T11:09:29Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:29Z",
+              "completed_at": "2026-10-02T11:09:29Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808948897,
+          "name": "dbt physical contract (PR)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075302",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:54:07Z",
+          "completed_at": "2026-10-02T11:02:03Z",
+          "execution_seconds": 476.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:08Z",
+              "completed_at": "2026-10-02T10:54:09Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:09Z",
+              "completed_at": "2026-10-02T10:54:15Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Set up pinned Python",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:15Z",
+              "completed_at": "2026-10-02T10:54:23Z",
+              "execution_seconds": 8.0
+            },
+            {
+              "name": "Install the pinned dbt toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:23Z",
+              "completed_at": "2026-10-02T10:54:31Z",
+              "execution_seconds": 8.0
+            },
+            {
+              "name": "Set up the cached LeapView CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:31Z",
+              "completed_at": "2026-10-02T10:58:47Z",
+              "execution_seconds": 256.0
+            },
+            {
+              "name": "Run real dbt Parquet through the headless LeapView lifecycle",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:58:47Z",
+              "completed_at": "2026-10-02T11:01:44Z",
+              "execution_seconds": 177.0
+            },
+            {
+              "name": "Prove upstream packages and independent producers share one Project",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:01:44Z",
+              "completed_at": "2026-10-02T11:02:00Z",
+              "execution_seconds": 16.0
+            },
+            {
+              "name": "Stop the isolated PostgreSQL development service",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:00Z",
+              "completed_at": "2026-10-02T11:02:01Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Set up the cached LeapView CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:01Z",
+              "completed_at": "2026-10-02T11:02:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up pinned Python",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:01Z",
+              "completed_at": "2026-10-02T11:02:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:01Z",
+              "completed_at": "2026-10-02T11:02:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:01Z",
+              "completed_at": "2026-10-02T11:02:01Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808949923,
+          "name": "Cross-language quality (PR)",
+          "conclusion": "skipped",
+          "runner_name": null,
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:28Z",
+          "completed_at": "2026-10-02T10:53:28Z",
+          "execution_seconds": 0.0,
+          "steps": []
+        },
+        {
+          "id": 110808951619,
+          "name": "APIGen tests (PR)",
+          "conclusion": "skipped",
+          "runner_name": null,
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:53:29Z",
+          "completed_at": "2026-10-02T10:53:28Z",
+          "execution_seconds": -1.0,
+          "steps": []
+        },
+        {
+          "id": 110813564113,
+          "name": "CI gate",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075304",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T11:09:35Z",
+          "completed_at": "2026-10-02T11:13:58Z",
+          "execution_seconds": 263.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:36Z",
+              "completed_at": "2026-10-02T11:09:37Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Require successful planning",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:37Z",
+              "completed_at": "2026-10-02T11:09:37Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out the gate contract",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:37Z",
+              "completed_at": "2026-10-02T11:09:40Z",
+              "execution_seconds": 3.0
+            },
+            {
+              "name": "Set up gate locked toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:09:40Z",
+              "completed_at": "2026-10-02T11:13:55Z",
+              "execution_seconds": 255.0
+            },
+            {
+              "name": "Read the exact plan artifact",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:13:55Z",
+              "completed_at": "2026-10-02T11:13:55Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Require every planned validation result",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:13:55Z",
+              "completed_at": "2026-10-02T11:13:56Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Require isolated host recovery qualification",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:13:56Z",
+              "completed_at": "2026-10-02T11:13:56Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up gate locked toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:13:56Z",
+              "completed_at": "2026-10-02T11:13:56Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out the gate contract",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:13:56Z",
+              "completed_at": "2026-10-02T11:13:56Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:13:56Z",
+              "completed_at": "2026-10-02T11:13:56Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        }
+      ],
+      "runner_minutes": 94.58333333333333,
+      "tested_revision": "fc6f2188ce1a5283787834717e99eae2265f97e2",
+      "tested_revision_source": "planner log ci-plan head",
+      "workflow_revision": "fc6f2188ce1a5283787834717e99eae2265f97e2",
+      "workflow_blob": "d8519ff381f1f3af6207e10d8f59c23a81525310",
+      "workflow_revision_source": "event checkout revision; workflow blob independently resolved via Contents API",
+      "population": "branch workflow"
+    },
+    {
+      "id": 36994619763,
+      "name": "Merge validation",
+      "path": ".github/workflows/merge-validation.yml",
+      "event": "merge_group",
+      "head_sha": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+      "head_branch": "gh-readonly-queue/main/pr-800-3f328ed34094008166758fe9e7ced3679d6ffbd0",
+      "run_attempt": 1,
+      "created_at": "2026-10-02T10:17:08Z",
+      "run_started_at": "2026-10-02T10:17:08Z",
+      "updated_at": "2026-10-02T10:34:32Z",
+      "conclusion": "success",
+      "html_url": "https://github.com/flidai/leapview/actions/runs/36994619763",
+      "referenced_workflows": [
+        {
+          "path": "flidai/leapview/.github/workflows/demo-upgrade-qualification.yml@d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+          "sha": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+          "ref": "refs/heads/gh-readonly-queue/main/pr-800-3f328ed34094008166758fe9e7ced3679d6ffbd0"
+        }
+      ],
+      "completion_seconds": 1044.0,
+      "initial_queue_seconds": 0.0,
+      "jobs": [
+        {
+          "id": 110798376356,
+          "name": "Go application tests (merge queue)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075214",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:13Z",
+          "completed_at": "2026-10-02T10:32:57Z",
+          "execution_seconds": 944.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:14Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:21Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:21Z",
+              "completed_at": "2026-10-02T10:21:29Z",
+              "execution_seconds": 248.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:29Z",
+              "completed_at": "2026-10-02T10:22:01Z",
+              "execution_seconds": 32.0
+            },
+            {
+              "name": "Run Go application validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:01Z",
+              "completed_at": "2026-10-02T10:32:53Z",
+              "execution_seconds": 652.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:32:53Z",
+              "completed_at": "2026-10-02T10:32:54Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:32:54Z",
+              "completed_at": "2026-10-02T10:32:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:32:54Z",
+              "completed_at": "2026-10-02T10:32:54Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376561,
+          "name": "Frontend tests (merge queue, site)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075216",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:14Z",
+          "completed_at": "2026-10-02T10:29:42Z",
+          "execution_seconds": 748.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:15Z",
+              "completed_at": "2026-10-02T10:17:15Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:15Z",
+              "completed_at": "2026-10-02T10:17:21Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:21Z",
+              "completed_at": "2026-10-02T10:21:29Z",
+              "execution_seconds": 248.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:29Z",
+              "completed_at": "2026-10-02T10:22:00Z",
+              "execution_seconds": 31.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:00Z",
+              "completed_at": "2026-10-02T10:22:53Z",
+              "execution_seconds": 53.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:53Z",
+              "completed_at": "2026-10-02T10:23:36Z",
+              "execution_seconds": 43.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:36Z",
+              "completed_at": "2026-10-02T10:29:40Z",
+              "execution_seconds": 364.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:29:40Z",
+              "completed_at": "2026-10-02T10:29:40Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:29:40Z",
+              "completed_at": "2026-10-02T10:29:41Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:29:41Z",
+              "completed_at": "2026-10-02T10:29:41Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:29:41Z",
+              "completed_at": "2026-10-02T10:29:41Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376585,
+          "name": "APIGen tests (merge queue)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075215",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:13Z",
+          "completed_at": "2026-10-02T10:24:04Z",
+          "execution_seconds": 411.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:14Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:21Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:21Z",
+              "completed_at": "2026-10-02T10:21:22Z",
+              "execution_seconds": 241.0
+            },
+            {
+              "name": "Run APIGen validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:22Z",
+              "completed_at": "2026-10-02T10:24:01Z",
+              "execution_seconds": 159.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:24:01Z",
+              "completed_at": "2026-10-02T10:24:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:24:01Z",
+              "completed_at": "2026-10-02T10:24:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:24:01Z",
+              "completed_at": "2026-10-02T10:24:01Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376598,
+          "name": "Full merge validation",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075217",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:12Z",
+          "completed_at": "2026-10-02T10:31:44Z",
+          "execution_seconds": 872.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:49Z",
+              "completed_at": "2026-10-02T10:17:49Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:49Z",
+              "completed_at": "2026-10-02T10:17:56Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:56Z",
+              "completed_at": "2026-10-02T10:22:22Z",
+              "execution_seconds": 266.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:22Z",
+              "completed_at": "2026-10-02T10:22:57Z",
+              "execution_seconds": 35.0
+            },
+            {
+              "name": "Run merge-only validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:57Z",
+              "completed_at": "2026-10-02T10:31:41Z",
+              "execution_seconds": 524.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:31:41Z",
+              "completed_at": "2026-10-02T10:31:42Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:31:42Z",
+              "completed_at": "2026-10-02T10:31:42Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:31:42Z",
+              "completed_at": "2026-10-02T10:31:42Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376601,
+          "name": "Isolated host recovery and migration boundary contracts / Isolated host recovery and migration boundary contracts",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075223",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:13Z",
+          "completed_at": "2026-10-02T10:23:57Z",
+          "execution_seconds": 404.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:15Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out the candidate",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:15Z",
+              "completed_at": "2026-10-02T10:17:20Z",
+              "execution_seconds": 5.0
+            },
+            {
+              "name": "Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:20Z",
+              "completed_at": "2026-10-02T10:21:24Z",
+              "execution_seconds": 244.0
+            },
+            {
+              "name": "Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:24Z",
+              "completed_at": "2026-10-02T10:21:25Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Run isolated host recovery qualification",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:25Z",
+              "completed_at": "2026-10-02T10:23:53Z",
+              "execution_seconds": 148.0
+            },
+            {
+              "name": "Post Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:53Z",
+              "completed_at": "2026-10-02T10:23:54Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:54Z",
+              "completed_at": "2026-10-02T10:23:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out the candidate",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:54Z",
+              "completed_at": "2026-10-02T10:23:55Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:55Z",
+              "completed_at": "2026-10-02T10:23:55Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376637,
+          "name": "Frontend tests (merge queue, chat)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075219",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:48Z",
+          "completed_at": "2026-10-02T10:23:57Z",
+          "execution_seconds": 369.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:49Z",
+              "completed_at": "2026-10-02T10:17:50Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:50Z",
+              "completed_at": "2026-10-02T10:17:57Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:57Z",
+              "completed_at": "2026-10-02T10:22:19Z",
+              "execution_seconds": 262.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:19Z",
+              "completed_at": "2026-10-02T10:22:51Z",
+              "execution_seconds": 32.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:51Z",
+              "completed_at": "2026-10-02T10:23:11Z",
+              "execution_seconds": 20.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:11Z",
+              "completed_at": "2026-10-02T10:23:53Z",
+              "execution_seconds": 42.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:23:53Z",
+              "completed_at": "2026-10-02T10:23:53Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:23:53Z",
+              "completed_at": "2026-10-02T10:23:53Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:53Z",
+              "completed_at": "2026-10-02T10:23:54Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:54Z",
+              "completed_at": "2026-10-02T10:23:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:54Z",
+              "completed_at": "2026-10-02T10:23:54Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376672,
+          "name": "Isolated host recovery and migration boundary contracts / Schema-32 legacy access transition",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075224",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:12Z",
+          "completed_at": "2026-10-02T10:34:23Z",
+          "execution_seconds": 1031.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:12Z",
+              "completed_at": "2026-10-02T10:17:14Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Check out the exact candidate source",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:20Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:20Z",
+              "completed_at": "2026-10-02T10:21:10Z",
+              "execution_seconds": 230.0
+            },
+            {
+              "name": "Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:10Z",
+              "completed_at": "2026-10-02T10:21:10Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Build a local candidate image for pre-merge transition testing",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:10Z",
+              "completed_at": "2026-10-02T10:28:33Z",
+              "execution_seconds": 443.0
+            },
+            {
+              "name": "Admit the exact final candidate image",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:28:33Z",
+              "completed_at": "2026-10-02T10:28:33Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload OCI vulnerability diagnostic",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:28:33Z",
+              "completed_at": "2026-10-02T10:28:34Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Pull the admitted final candidate image",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:28:34Z",
+              "completed_at": "2026-10-02T10:28:34Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Resolve candidate image identity",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:28:34Z",
+              "completed_at": "2026-10-02T10:28:34Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Prepare the real publication browser validator",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:28:34Z",
+              "completed_at": "2026-10-02T10:28:34Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Run the required historical transition fixture",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:28:34Z",
+              "completed_at": "2026-10-02T10:34:21Z",
+              "execution_seconds": 347.0
+            },
+            {
+              "name": "Upload passed historical transition receipt",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:21Z",
+              "completed_at": "2026-10-02T10:34:21Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:21Z",
+              "completed_at": "2026-10-02T10:34:21Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:21Z",
+              "completed_at": "2026-10-02T10:34:22Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Check out the exact candidate source",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:22Z",
+              "completed_at": "2026-10-02T10:34:22Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:22Z",
+              "completed_at": "2026-10-02T10:34:22Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376686,
+          "name": "Go package tests (merge queue)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075221",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:13Z",
+          "completed_at": "2026-10-02T10:28:22Z",
+          "execution_seconds": 669.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:14Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:14Z",
+              "completed_at": "2026-10-02T10:17:21Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:21Z",
+              "completed_at": "2026-10-02T10:21:44Z",
+              "execution_seconds": 263.0
+            },
+            {
+              "name": "Validate Prometheus rules and fixtures",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:44Z",
+              "completed_at": "2026-10-02T10:22:20Z",
+              "execution_seconds": 36.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:20Z",
+              "completed_at": "2026-10-02T10:22:54Z",
+              "execution_seconds": 34.0
+            },
+            {
+              "name": "Run Go package validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:54Z",
+              "completed_at": "2026-10-02T10:27:36Z",
+              "execution_seconds": 282.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:27:36Z",
+              "completed_at": "2026-10-02T10:28:19Z",
+              "execution_seconds": 43.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:28:19Z",
+              "completed_at": "2026-10-02T10:28:19Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:28:19Z",
+              "completed_at": "2026-10-02T10:28:19Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:28:19Z",
+              "completed_at": "2026-10-02T10:28:19Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376710,
+          "name": "Frontend tests (merge queue, reports)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075222",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:12Z",
+          "completed_at": "2026-10-02T10:22:53Z",
+          "execution_seconds": 341.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:13Z",
+              "completed_at": "2026-10-02T10:17:13Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:13Z",
+              "completed_at": "2026-10-02T10:17:18Z",
+              "execution_seconds": 5.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:18Z",
+              "completed_at": "2026-10-02T10:20:27Z",
+              "execution_seconds": 189.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:20:27Z",
+              "completed_at": "2026-10-02T10:20:46Z",
+              "execution_seconds": 19.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:20:46Z",
+              "completed_at": "2026-10-02T10:22:23Z",
+              "execution_seconds": 97.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:23Z",
+              "completed_at": "2026-10-02T10:22:51Z",
+              "execution_seconds": 28.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:22:51Z",
+              "completed_at": "2026-10-02T10:22:51Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:22:51Z",
+              "completed_at": "2026-10-02T10:22:51Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:51Z",
+              "completed_at": "2026-10-02T10:22:51Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:51Z",
+              "completed_at": "2026-10-02T10:22:51Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:51Z",
+              "completed_at": "2026-10-02T10:22:51Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376717,
+          "name": "Frontend tests (merge queue, core)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075218",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:12Z",
+          "completed_at": "2026-10-02T10:23:20Z",
+          "execution_seconds": 368.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:13Z",
+              "completed_at": "2026-10-02T10:17:13Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:13Z",
+              "completed_at": "2026-10-02T10:17:19Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:19Z",
+              "completed_at": "2026-10-02T10:21:21Z",
+              "execution_seconds": 242.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:21Z",
+              "completed_at": "2026-10-02T10:21:53Z",
+              "execution_seconds": 32.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:53Z",
+              "completed_at": "2026-10-02T10:22:36Z",
+              "execution_seconds": 43.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:36Z",
+              "completed_at": "2026-10-02T10:23:18Z",
+              "execution_seconds": 42.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:23:18Z",
+              "completed_at": "2026-10-02T10:23:18Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:23:18Z",
+              "completed_at": "2026-10-02T10:23:18Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:18Z",
+              "completed_at": "2026-10-02T10:23:18Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:18Z",
+              "completed_at": "2026-10-02T10:23:19Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:19Z",
+              "completed_at": "2026-10-02T10:23:19Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110798376735,
+          "name": "Frontend tests (merge queue, data)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075220",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:17:12Z",
+          "completed_at": "2026-10-02T10:24:34Z",
+          "execution_seconds": 442.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:13Z",
+              "completed_at": "2026-10-02T10:17:13Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:13Z",
+              "completed_at": "2026-10-02T10:17:19Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:17:19Z",
+              "completed_at": "2026-10-02T10:21:47Z",
+              "execution_seconds": 268.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:21:47Z",
+              "completed_at": "2026-10-02T10:22:22Z",
+              "execution_seconds": 35.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:22:22Z",
+              "completed_at": "2026-10-02T10:23:47Z",
+              "execution_seconds": 85.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:23:47Z",
+              "completed_at": "2026-10-02T10:24:33Z",
+              "execution_seconds": 46.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:24:33Z",
+              "completed_at": "2026-10-02T10:24:33Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:24:33Z",
+              "completed_at": "2026-10-02T10:24:33Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:24:33Z",
+              "completed_at": "2026-10-02T10:24:33Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out merge group",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:24:33Z",
+              "completed_at": "2026-10-02T10:24:33Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:24:33Z",
+              "completed_at": "2026-10-02T10:24:33Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110803391804,
+          "name": "CI gate",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075237",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:34:26Z",
+          "completed_at": "2026-10-02T10:34:31Z",
+          "execution_seconds": 5.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:27Z",
+              "completed_at": "2026-10-02T10:34:27Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Require full merge validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:27Z",
+              "completed_at": "2026-10-02T10:34:28Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Require native desktop merge proof",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:28Z",
+              "completed_at": "2026-10-02T10:34:28Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:34:28Z",
+              "completed_at": "2026-10-02T10:34:28Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        }
+      ],
+      "runner_minutes": 110.06666666666666,
+      "tested_revision": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+      "tested_revision_source": "event head_sha; default checkout",
+      "workflow_revision": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+      "workflow_blob": "d4243c7976e1077207a8dca9bb0ba5eb76af9677",
+      "workflow_revision_source": "event checkout revision; workflow blob independently resolved via Contents API",
+      "population": "current-main graph"
+    },
+    {
+      "id": 36984943767,
+      "name": "Nightly CI",
+      "path": ".github/workflows/nightly.yml",
+      "event": "schedule",
+      "head_sha": "aacccbbed9c7be4361eabdb686d266c030fabd2b",
+      "head_branch": "main",
+      "run_attempt": 1,
+      "created_at": "2026-10-02T08:35:54Z",
+      "run_started_at": "2026-10-02T08:35:54Z",
+      "updated_at": "2026-10-02T08:58:03Z",
+      "conclusion": "failure",
+      "html_url": "https://github.com/flidai/leapview/actions/runs/36984943767",
+      "referenced_workflows": [],
+      "completion_seconds": 1329.0,
+      "initial_queue_seconds": 0.0,
+      "jobs": [
+        {
+          "id": 110767718215,
+          "name": "Go package tests (nightly)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075014",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:57Z",
+          "completed_at": "2026-10-02T08:51:32Z",
+          "execution_seconds": 935.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:59Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:02Z",
+              "execution_seconds": 3.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:02Z",
+              "completed_at": "2026-10-02T08:39:07Z",
+              "execution_seconds": 185.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:07Z",
+              "completed_at": "2026-10-02T08:42:27Z",
+              "execution_seconds": 200.0
+            },
+            {
+              "name": "Run Go package validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:42:27Z",
+              "completed_at": "2026-10-02T08:48:30Z",
+              "execution_seconds": 363.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:48:30Z",
+              "completed_at": "2026-10-02T08:49:08Z",
+              "execution_seconds": 38.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:49:08Z",
+              "completed_at": "2026-10-02T08:51:29Z",
+              "execution_seconds": 141.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:51:29Z",
+              "completed_at": "2026-10-02T08:51:30Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:51:30Z",
+              "completed_at": "2026-10-02T08:51:30Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718455,
+          "name": "Go application tests (nightly)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075016",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:57Z",
+          "completed_at": "2026-10-02T08:57:56Z",
+          "execution_seconds": 1319.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:59Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:02Z",
+              "execution_seconds": 3.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:02Z",
+              "completed_at": "2026-10-02T08:39:56Z",
+              "execution_seconds": 234.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:56Z",
+              "completed_at": "2026-10-02T08:44:31Z",
+              "execution_seconds": 275.0
+            },
+            {
+              "name": "Run Go application validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:31Z",
+              "completed_at": "2026-10-02T08:57:03Z",
+              "execution_seconds": 752.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:57:03Z",
+              "completed_at": "2026-10-02T08:57:53Z",
+              "execution_seconds": 50.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:57:53Z",
+              "completed_at": "2026-10-02T08:57:54Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:57:54Z",
+              "completed_at": "2026-10-02T08:57:54Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718501,
+          "name": "Nightly dependency security",
+          "conclusion": "failure",
+          "runner_name": "GitHub Actions 1000075021",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:57Z",
+          "completed_at": "2026-10-02T08:44:57Z",
+          "execution_seconds": 540.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:59Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:05Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:05Z",
+              "completed_at": "2026-10-02T08:39:05Z",
+              "execution_seconds": 180.0
+            },
+            {
+              "name": "Run dependency security scans",
+              "conclusion": "failure",
+              "started_at": "2026-10-02T08:39:05Z",
+              "completed_at": "2026-10-02T08:43:59Z",
+              "execution_seconds": 294.0
+            },
+            {
+              "name": "Build dependency security clearance report",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:43:59Z",
+              "completed_at": "2026-10-02T08:44:52Z",
+              "execution_seconds": 53.0
+            },
+            {
+              "name": "Upload failed dependency security diagnostics",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:52Z",
+              "completed_at": "2026-10-02T08:44:54Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Validate dependency security clearance report",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:44:54Z",
+              "completed_at": "2026-10-02T08:44:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload validated dependency security clearance report",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:44:54Z",
+              "completed_at": "2026-10-02T08:44:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Require dependency security clearance",
+              "conclusion": "failure",
+              "started_at": "2026-10-02T08:44:54Z",
+              "completed_at": "2026-10-02T08:44:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:54Z",
+              "completed_at": "2026-10-02T08:44:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:54Z",
+              "completed_at": "2026-10-02T08:44:54Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:54Z",
+              "completed_at": "2026-10-02T08:44:54Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718509,
+          "name": "APIGen tests (nightly)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075015",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:57Z",
+          "completed_at": "2026-10-02T08:42:42Z",
+          "execution_seconds": 405.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:58Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:36:02Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:02Z",
+              "completed_at": "2026-10-02T08:39:39Z",
+              "execution_seconds": 217.0
+            },
+            {
+              "name": "Run APIGen validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:39Z",
+              "completed_at": "2026-10-02T08:42:35Z",
+              "execution_seconds": 176.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:42:35Z",
+              "completed_at": "2026-10-02T08:42:39Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:42:39Z",
+              "completed_at": "2026-10-02T08:42:40Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:42:40Z",
+              "completed_at": "2026-10-02T08:42:40Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718532,
+          "name": "Agent all-tools evaluation (diagnostic)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075017",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:57Z",
+          "completed_at": "2026-10-02T08:39:04Z",
+          "execution_seconds": 187.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:58Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:36:01Z",
+              "execution_seconds": 3.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:01Z",
+              "completed_at": "2026-10-02T08:39:01Z",
+              "execution_seconds": 180.0
+            },
+            {
+              "name": "Detect live-model credentials",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:01Z",
+              "completed_at": "2026-10-02T08:39:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Run all-tools headless evaluation",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:39:01Z",
+              "completed_at": "2026-10-02T08:39:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload agent evaluation report and transcript summary",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:39:01Z",
+              "completed_at": "2026-10-02T08:39:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:01Z",
+              "completed_at": "2026-10-02T08:39:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:01Z",
+              "completed_at": "2026-10-02T08:39:02Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:02Z",
+              "completed_at": "2026-10-02T08:39:02Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718558,
+          "name": "Frontend tests (nightly, core)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075018",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:58Z",
+          "completed_at": "2026-10-02T08:46:18Z",
+          "execution_seconds": 620.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:00Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:00Z",
+              "completed_at": "2026-10-02T08:36:02Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:02Z",
+              "completed_at": "2026-10-02T08:39:55Z",
+              "execution_seconds": 233.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:55Z",
+              "completed_at": "2026-10-02T08:44:22Z",
+              "execution_seconds": 267.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:22Z",
+              "completed_at": "2026-10-02T08:45:05Z",
+              "execution_seconds": 43.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:45:05Z",
+              "completed_at": "2026-10-02T08:45:57Z",
+              "execution_seconds": 52.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:45:57Z",
+              "completed_at": "2026-10-02T08:45:57Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:45:57Z",
+              "completed_at": "2026-10-02T08:45:57Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:45:57Z",
+              "completed_at": "2026-10-02T08:46:15Z",
+              "execution_seconds": 18.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:46:15Z",
+              "completed_at": "2026-10-02T08:46:16Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:46:16Z",
+              "completed_at": "2026-10-02T08:46:16Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718564,
+          "name": "Frontend tests (nightly, reports)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075020",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:57Z",
+          "completed_at": "2026-10-02T08:47:52Z",
+          "execution_seconds": 715.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:59Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:03Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:03Z",
+              "completed_at": "2026-10-02T08:39:59Z",
+              "execution_seconds": 236.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:59Z",
+              "completed_at": "2026-10-02T08:44:22Z",
+              "execution_seconds": 263.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:22Z",
+              "completed_at": "2026-10-02T08:46:39Z",
+              "execution_seconds": 137.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:46:39Z",
+              "completed_at": "2026-10-02T08:47:32Z",
+              "execution_seconds": 53.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:47:32Z",
+              "completed_at": "2026-10-02T08:47:32Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:47:32Z",
+              "completed_at": "2026-10-02T08:47:32Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:47:32Z",
+              "completed_at": "2026-10-02T08:47:50Z",
+              "execution_seconds": 18.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:47:50Z",
+              "completed_at": "2026-10-02T08:47:50Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:47:50Z",
+              "completed_at": "2026-10-02T08:47:50Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718577,
+          "name": "JavaScript dependency evidence refresh",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075024",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:58Z",
+          "completed_at": "2026-10-02T08:46:17Z",
+          "execution_seconds": 619.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:00Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:00Z",
+              "completed_at": "2026-10-02T08:36:04Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Set up the cached security toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:04Z",
+              "completed_at": "2026-10-02T08:40:01Z",
+              "execution_seconds": 237.0
+            },
+            {
+              "name": "Refresh checked-in JavaScript vulnerability evidence",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:40:01Z",
+              "completed_at": "2026-10-02T08:44:39Z",
+              "execution_seconds": 278.0
+            },
+            {
+              "name": "Validate refreshed JavaScript vulnerability evidence",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:39Z",
+              "completed_at": "2026-10-02T08:45:27Z",
+              "execution_seconds": 48.0
+            },
+            {
+              "name": "Upload refreshed JavaScript vulnerability evidence",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:45:27Z",
+              "completed_at": "2026-10-02T08:45:28Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Set up the cached security toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:45:28Z",
+              "completed_at": "2026-10-02T08:46:15Z",
+              "execution_seconds": 47.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:46:15Z",
+              "completed_at": "2026-10-02T08:46:15Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:46:15Z",
+              "completed_at": "2026-10-02T08:46:15Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718611,
+          "name": "Frontend tests (nightly, chat)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075019",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:57Z",
+          "completed_at": "2026-10-02T08:45:49Z",
+          "execution_seconds": 592.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:58Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:36:02Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:02Z",
+              "completed_at": "2026-10-02T08:39:50Z",
+              "execution_seconds": 228.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:50Z",
+              "completed_at": "2026-10-02T08:44:17Z",
+              "execution_seconds": 267.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:17Z",
+              "completed_at": "2026-10-02T08:44:36Z",
+              "execution_seconds": 19.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:36Z",
+              "completed_at": "2026-10-02T08:45:29Z",
+              "execution_seconds": 53.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:45:29Z",
+              "completed_at": "2026-10-02T08:45:29Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:45:29Z",
+              "completed_at": "2026-10-02T08:45:29Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:45:29Z",
+              "completed_at": "2026-10-02T08:45:47Z",
+              "execution_seconds": 18.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:45:47Z",
+              "completed_at": "2026-10-02T08:45:48Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:45:48Z",
+              "completed_at": "2026-10-02T08:45:48Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718618,
+          "name": "Full nightly validation",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075023",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:59Z",
+          "completed_at": "2026-10-02T08:57:38Z",
+          "execution_seconds": 1299.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:00Z",
+              "completed_at": "2026-10-02T08:36:01Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:01Z",
+              "completed_at": "2026-10-02T08:36:05Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:05Z",
+              "completed_at": "2026-10-02T08:40:05Z",
+              "execution_seconds": 240.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:40:05Z",
+              "completed_at": "2026-10-02T08:44:31Z",
+              "execution_seconds": 266.0
+            },
+            {
+              "name": "Run merge-only validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:31Z",
+              "completed_at": "2026-10-02T08:55:49Z",
+              "execution_seconds": 678.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:55:49Z",
+              "completed_at": "2026-10-02T08:57:35Z",
+              "execution_seconds": 106.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:57:35Z",
+              "completed_at": "2026-10-02T08:57:35Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:57:35Z",
+              "completed_at": "2026-10-02T08:57:36Z",
+              "execution_seconds": 1.0
+            }
+          ]
+        },
+        {
+          "id": 110767718650,
+          "name": "Frontend tests (nightly, site)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075022",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:58Z",
+          "completed_at": "2026-10-02T08:47:43Z",
+          "execution_seconds": 705.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:59Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:04Z",
+              "execution_seconds": 5.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:04Z",
+              "completed_at": "2026-10-02T08:39:02Z",
+              "execution_seconds": 178.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:02Z",
+              "completed_at": "2026-10-02T08:41:57Z",
+              "execution_seconds": 175.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:41:57Z",
+              "completed_at": "2026-10-02T08:42:34Z",
+              "execution_seconds": 37.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:42:34Z",
+              "completed_at": "2026-10-02T08:43:08Z",
+              "execution_seconds": 34.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:43:08Z",
+              "completed_at": "2026-10-02T08:47:25Z",
+              "execution_seconds": 257.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:47:25Z",
+              "completed_at": "2026-10-02T08:47:25Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:47:25Z",
+              "completed_at": "2026-10-02T08:47:41Z",
+              "execution_seconds": 16.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:47:41Z",
+              "completed_at": "2026-10-02T08:47:41Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:47:41Z",
+              "completed_at": "2026-10-02T08:47:41Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110767718721,
+          "name": "Frontend tests (nightly, data)",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075025",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:35:58Z",
+          "completed_at": "2026-10-02T08:44:48Z",
+          "execution_seconds": 530.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:58Z",
+              "completed_at": "2026-10-02T08:35:59Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:35:59Z",
+              "completed_at": "2026-10-02T08:36:02Z",
+              "execution_seconds": 3.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:36:02Z",
+              "completed_at": "2026-10-02T08:39:14Z",
+              "execution_seconds": 192.0
+            },
+            {
+              "name": "Prepare generated and embedded assets",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:39:14Z",
+              "completed_at": "2026-10-02T08:42:43Z",
+              "execution_seconds": 209.0
+            },
+            {
+              "name": "Run frontend validation",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:42:43Z",
+              "completed_at": "2026-10-02T08:43:49Z",
+              "execution_seconds": 66.0
+            },
+            {
+              "name": "Verify generated artifacts",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:43:49Z",
+              "completed_at": "2026-10-02T08:44:28Z",
+              "execution_seconds": 39.0
+            },
+            {
+              "name": "Run UI route QA",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:44:28Z",
+              "completed_at": "2026-10-02T08:44:28Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload UI visual-regression failure artifacts",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T08:44:28Z",
+              "completed_at": "2026-10-02T08:44:28Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:28Z",
+              "completed_at": "2026-10-02T08:44:46Z",
+              "execution_seconds": 18.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:46Z",
+              "completed_at": "2026-10-02T08:44:46Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:44:46Z",
+              "completed_at": "2026-10-02T08:44:46Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110774333009,
+          "name": "CI gate",
+          "conclusion": "failure",
+          "runner_name": "GitHub Actions 1000075135",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T08:58:00Z",
+          "completed_at": "2026-10-02T08:58:02Z",
+          "execution_seconds": 2.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:58:00Z",
+              "completed_at": "2026-10-02T08:58:01Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Require exhaustive nightly validation",
+              "conclusion": "failure",
+              "started_at": "2026-10-02T08:58:01Z",
+              "completed_at": "2026-10-02T08:58:01Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T08:58:01Z",
+              "completed_at": "2026-10-02T08:58:01Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        }
+      ],
+      "runner_minutes": 141.13333333333333,
+      "tested_revision": "aacccbbed9c7be4361eabdb686d266c030fabd2b",
+      "tested_revision_source": "event head_sha; default checkout",
+      "workflow_revision": "aacccbbed9c7be4361eabdb686d266c030fabd2b",
+      "workflow_blob": "e5565200ee1dfa9ef84952305fe94b5fa5a185fc",
+      "workflow_revision_source": "event checkout revision; workflow blob independently resolved via Contents API",
+      "population": "earlier main graph"
+    },
+    {
+      "id": 36996263673,
+      "name": "Main artifacts",
+      "path": ".github/workflows/artifacts.yml",
+      "event": "push",
+      "head_sha": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+      "head_branch": "main",
+      "run_attempt": 1,
+      "created_at": "2026-10-02T10:34:58Z",
+      "run_started_at": "2026-10-02T10:34:58Z",
+      "updated_at": "2026-10-02T11:03:23Z",
+      "conclusion": "success",
+      "html_url": "https://github.com/flidai/leapview/actions/runs/36996263673",
+      "referenced_workflows": [
+        {
+          "path": "flidai/leapview/.github/workflows/demo-upgrade-qualification.yml@d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+          "sha": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+          "ref": "refs/heads/main"
+        }
+      ],
+      "completion_seconds": 1705.0,
+      "initial_queue_seconds": 0.0,
+      "jobs": [
+        {
+          "id": 110803565118,
+          "name": "Build production image",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075247",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:35:02Z",
+          "completed_at": "2026-10-02T10:50:17Z",
+          "execution_seconds": 915.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:35:03Z",
+              "completed_at": "2026-10-02T10:35:07Z",
+              "execution_seconds": 4.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:35:07Z",
+              "completed_at": "2026-10-02T10:35:15Z",
+              "execution_seconds": 8.0
+            },
+            {
+              "name": "Resolve authoritative build identity",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:35:15Z",
+              "completed_at": "2026-10-02T10:35:15Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Set up Buildx",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:35:15Z",
+              "completed_at": "2026-10-02T10:35:20Z",
+              "execution_seconds": 5.0
+            },
+            {
+              "name": "Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:35:20Z",
+              "completed_at": "2026-10-02T10:35:21Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Build and publish the production image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:35:21Z",
+              "completed_at": "2026-10-02T10:49:34Z",
+              "execution_seconds": 853.0
+            },
+            {
+              "name": "Attest production image provenance",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:49:34Z",
+              "completed_at": "2026-10-02T10:49:41Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Post Build and publish the production image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:49:41Z",
+              "completed_at": "2026-10-02T10:49:43Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Post Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:49:43Z",
+              "completed_at": "2026-10-02T10:49:43Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up Buildx",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:49:43Z",
+              "completed_at": "2026-10-02T10:50:15Z",
+              "execution_seconds": 32.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:15Z",
+              "completed_at": "2026-10-02T10:50:15Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:15Z",
+              "completed_at": "2026-10-02T10:50:15Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110803565834,
+          "name": "Authorize pull-request candidate",
+          "conclusion": "skipped",
+          "runner_name": null,
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:34:59Z",
+          "completed_at": "2026-10-02T10:34:58Z",
+          "execution_seconds": -1.0,
+          "steps": []
+        },
+        {
+          "id": 110808030666,
+          "name": "Qualify production image",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075294",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:50:20Z",
+          "completed_at": "2026-10-02T11:00:17Z",
+          "execution_seconds": 597.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:21Z",
+              "completed_at": "2026-10-02T10:50:22Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:22Z",
+              "completed_at": "2026-10-02T10:50:25Z",
+              "execution_seconds": 3.0
+            },
+            {
+              "name": "Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:25Z",
+              "completed_at": "2026-10-02T10:54:28Z",
+              "execution_seconds": 243.0
+            },
+            {
+              "name": "Populate main-branch Bun cache",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:28Z",
+              "completed_at": "2026-10-02T10:54:34Z",
+              "execution_seconds": 6.0
+            },
+            {
+              "name": "Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:34Z",
+              "completed_at": "2026-10-02T10:54:34Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Admit the exact production image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:34Z",
+              "completed_at": "2026-10-02T10:55:11Z",
+              "execution_seconds": 37.0
+            },
+            {
+              "name": "Upload OCI vulnerability diagnostic",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:11Z",
+              "completed_at": "2026-10-02T10:55:12Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Qualify the immutable production image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:12Z",
+              "completed_at": "2026-10-02T10:59:24Z",
+              "execution_seconds": 252.0
+            },
+            {
+              "name": "Upload failed qualification phase summary",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:59:24Z",
+              "completed_at": "2026-10-02T10:59:24Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Admit the exact production image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:24Z",
+              "completed_at": "2026-10-02T10:59:24Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:24Z",
+              "completed_at": "2026-10-02T10:59:24Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the cached CI toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:59:24Z",
+              "completed_at": "2026-10-02T11:00:16Z",
+              "execution_seconds": 52.0
+            },
+            {
+              "name": "Post Check out repository",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:00:16Z",
+              "completed_at": "2026-10-02T11:00:16Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:00:16Z",
+              "completed_at": "2026-10-02T11:00:16Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808031079,
+          "name": "Qualify schema-32 predecessor transition against exact image / Schema-32 legacy access transition",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075295",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:50:21Z",
+          "completed_at": "2026-10-02T11:03:14Z",
+          "execution_seconds": 773.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:21Z",
+              "completed_at": "2026-10-02T10:50:23Z",
+              "execution_seconds": 2.0
+            },
+            {
+              "name": "Check out the exact candidate source",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:23Z",
+              "completed_at": "2026-10-02T10:50:30Z",
+              "execution_seconds": 7.0
+            },
+            {
+              "name": "Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:50:30Z",
+              "completed_at": "2026-10-02T10:54:29Z",
+              "execution_seconds": 239.0
+            },
+            {
+              "name": "Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:29Z",
+              "completed_at": "2026-10-02T10:54:30Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Build a local candidate image for pre-merge transition testing",
+              "conclusion": "skipped",
+              "started_at": "2026-10-02T10:54:30Z",
+              "completed_at": "2026-10-02T10:54:30Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Admit the exact final candidate image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:54:30Z",
+              "completed_at": "2026-10-02T10:55:30Z",
+              "execution_seconds": 60.0
+            },
+            {
+              "name": "Upload OCI vulnerability diagnostic",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:30Z",
+              "completed_at": "2026-10-02T10:55:31Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Pull the admitted final candidate image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:55:31Z",
+              "completed_at": "2026-10-02T10:56:00Z",
+              "execution_seconds": 29.0
+            },
+            {
+              "name": "Resolve candidate image identity",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:56:00Z",
+              "completed_at": "2026-10-02T10:56:00Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Prepare the real publication browser validator",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:56:00Z",
+              "completed_at": "2026-10-02T10:56:00Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Run the required historical transition fixture",
+              "conclusion": "success",
+              "started_at": "2026-10-02T10:56:00Z",
+              "completed_at": "2026-10-02T11:02:08Z",
+              "execution_seconds": 368.0
+            },
+            {
+              "name": "Upload passed historical transition receipt",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:08Z",
+              "completed_at": "2026-10-02T11:02:09Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Admit the exact final candidate image",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:09Z",
+              "completed_at": "2026-10-02T11:02:10Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Post Log in to GitHub Container Registry",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:10Z",
+              "completed_at": "2026-10-02T11:02:10Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Post Set up the pinned toolchain",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:02:10Z",
+              "completed_at": "2026-10-02T11:03:11Z",
+              "execution_seconds": 61.0
+            },
+            {
+              "name": "Post Check out the exact candidate source",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:11Z",
+              "completed_at": "2026-10-02T11:03:11Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:11Z",
+              "completed_at": "2026-10-02T11:03:11Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        },
+        {
+          "id": 110808032605,
+          "name": "Qualify schema-32 predecessor transition against exact image / Isolated host recovery and migration boundary contracts",
+          "conclusion": "skipped",
+          "runner_name": null,
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T10:50:18Z",
+          "completed_at": "2026-10-02T10:50:17Z",
+          "execution_seconds": -1.0,
+          "steps": []
+        },
+        {
+          "id": 110811731833,
+          "name": "Record exact production image and historical transition",
+          "conclusion": "success",
+          "runner_name": "GitHub Actions 1000075303",
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "started_at": "2026-10-02T11:03:17Z",
+          "completed_at": "2026-10-02T11:03:22Z",
+          "execution_seconds": 5.0,
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:17Z",
+              "completed_at": "2026-10-02T11:03:18Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Require both exact-image qualifications",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:18Z",
+              "completed_at": "2026-10-02T11:03:18Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Download the exact historical transition receipt",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:18Z",
+              "completed_at": "2026-10-02T11:03:19Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Bind both receipts to this exact workflow attempt",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:19Z",
+              "completed_at": "2026-10-02T11:03:19Z",
+              "execution_seconds": 0.0
+            },
+            {
+              "name": "Upload exact image and historical transition qualification",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:19Z",
+              "completed_at": "2026-10-02T11:03:20Z",
+              "execution_seconds": 1.0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "started_at": "2026-10-02T11:03:20Z",
+              "completed_at": "2026-10-02T11:03:20Z",
+              "execution_seconds": 0.0
+            }
+          ]
+        }
+      ],
+      "runner_minutes": 38.13333333333333,
+      "tested_revision": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+      "tested_revision_source": "event head_sha; default checkout",
+      "workflow_revision": "d24ae7d19d18abb2c5e7019e0957a997494e19e3",
+      "workflow_blob": "b58431120a535b13112f0a06f6f1618c100a16b1",
+      "workflow_revision_source": "event checkout revision; workflow blob independently resolved via Contents API",
+      "population": "current-main graph"
+    }
+  ],
+  "cache_snapshot": {
+    "total_count": 1151,
+    "actions_caches": [
+      {
+        "id": 8121972901,
+        "ref": "refs/heads/main",
+        "namespace": "bun-v2-Linux-X64-1.3.14-accefb5286bcdd9b1a746eba95c6c5fa576c74a1b77a4580ddb4751c1613b873",
+        "version": "fa41662746cbc87250de5e92176076fe85bd909a356918ae89303fda6c1de20c",
+        "last_accessed_at": "2026-10-02T11:27:44.621286Z",
+        "created_at": "2026-09-25T15:29:14.645377Z",
+        "size_in_bytes": 139233935
+      },
+      {
+        "id": 8411800675,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-source-validation-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-f6b491649968869a15dbf2374917cce53b0508550fae4b59ae07a86c118a529f",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:27:31.150009Z",
+        "created_at": "2026-10-02T10:40:49.683242Z",
+        "size_in_bytes": 311596422
+      },
+      {
+        "id": 8411737860,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-policy-validation-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-f6b491649968869a15dbf2374917cce53b0508550fae4b59ae07a86c118a529f",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:27:30.074590Z",
+        "created_at": "2026-10-02T10:39:04.912839Z",
+        "size_in_bytes": 15660689
+      },
+      {
+        "id": 8411801082,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-dependency-validation-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-f6b491649968869a15dbf2374917cce53b0508550fae4b59ae07a86c118a529f",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:27:21.408409Z",
+        "created_at": "2026-10-02T10:40:51.196782Z",
+        "size_in_bytes": 622661933
+      },
+      {
+        "id": 8407646808,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-go-packages-validation-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-9a06745b89c6cca0ae384aca593f369f2caceaa1a443c32d1a8fdd266dbe5977",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:27:19.920330Z",
+        "created_at": "2026-10-02T08:51:29.594102Z",
+        "size_in_bytes": 1386897874
+      },
+      {
+        "id": 8407842118,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-full-validation-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-9a06745b89c6cca0ae384aca593f369f2caceaa1a443c32d1a8fdd266dbe5977",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:27:19.497262Z",
+        "created_at": "2026-10-02T08:57:35.431937Z",
+        "size_in_bytes": 1343569130
+      },
+      {
+        "id": 8411678753,
+        "ref": "refs/heads/main",
+        "namespace": "codeql-overlay-base-database-1-915afb8905dfdeeb-javascript-2.27.1-d24ae7d19d18abb2c5e7019e0957a997494e19e3-36996263237-1",
+        "version": "d96c176a7c72d361c40b4e5bcab0abec796173d7f00eca68f52f8039917812e4",
+        "last_accessed_at": "2026-10-02T11:25:06.980045Z",
+        "created_at": "2026-10-02T10:37:25.013494Z",
+        "size_in_bytes": 174325207
+      },
+      {
+        "id": 8411780535,
+        "ref": "refs/heads/main",
+        "namespace": "codeql-overlay-base-database-1-0004daf3927e5ac4-go-2.27.1-d24ae7d19d18abb2c5e7019e0957a997494e19e3-36996263237-1",
+        "version": "d96c176a7c72d361c40b4e5bcab0abec796173d7f00eca68f52f8039917812e4",
+        "last_accessed_at": "2026-10-02T11:25:05.088968Z",
+        "created_at": "2026-10-02T10:40:15.472088Z",
+        "size_in_bytes": 243221904
+      },
+      {
+        "id": 8405110837,
+        "ref": "refs/heads/main",
+        "namespace": "setup-go-Linux-x64-ubuntu24-go-1.26.8-9f1e796e9cad4cb2dd28324462aeadc860a6a7d41fc621bac61fd20688452e2e",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:25:03.937955Z",
+        "created_at": "2026-10-02T07:38:40.728170Z",
+        "size_in_bytes": 24801970
+      },
+      {
+        "id": 6567408929,
+        "ref": "refs/heads/main",
+        "namespace": "bun-fR4r1tsFeXfPQkusQwkKD2kGnsE=",
+        "version": "4793076103aa823b0a4c97942d7385d4346f77a3c30a0bad6e0f1d748becbab5",
+        "last_accessed_at": "2026-10-02T11:25:03.078137Z",
+        "created_at": "2026-08-12T11:17:10.021206Z",
+        "size_in_bytes": 33843766
+      },
+      {
+        "id": 8412591847,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-historical-transition-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-f6b491649968869a15dbf2374917cce53b0508550fae4b59ae07a86c118a529f",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:03:11.325313Z",
+        "created_at": "2026-10-02T11:03:11.325313Z",
+        "size_in_bytes": 1755806841
+      },
+      {
+        "id": 8412491746,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-qualify-production-image-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-f6b491649968869a15dbf2374917cce53b0508550fae4b59ae07a86c118a529f",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T11:00:16.459440Z",
+        "created_at": "2026-10-02T11:00:16.459440Z",
+        "size_in_bytes": 748151092
+      },
+      {
+        "id": 8407884390,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-go-application-validation-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-9a06745b89c6cca0ae384aca593f369f2caceaa1a443c32d1a8fdd266dbe5977",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T10:58:23.080747Z",
+        "created_at": "2026-10-02T08:57:53.565899Z",
+        "size_in_bytes": 1117708267
+      },
+      {
+        "id": 8407416520,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-frontend-validation-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-9a06745b89c6cca0ae384aca593f369f2caceaa1a443c32d1a8fdd266dbe5977",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T10:57:40.938704Z",
+        "created_at": "2026-10-02T08:44:46.419553Z",
+        "size_in_bytes": 1141882677
+      },
+      {
+        "id": 7381755920,
+        "ref": "refs/heads/main",
+        "namespace": "setup-python-Linux-x64-24.04-Ubuntu-python-3.13.14-pip-098d6ebd2e3ef7c586cf5368043898a2dbed5a7f26bea66b95163d6977b65352",
+        "version": "bceda5fc9790311ca62ca27a213556fe42fbb764a6135a3ce6521f9e2ab44b90",
+        "last_accessed_at": "2026-10-02T10:54:22.678972Z",
+        "created_at": "2026-09-06T10:43:42.898111Z",
+        "size_in_bytes": 49261471
+      },
+      {
+        "id": 8405979651,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-qualify-production-image-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-9a06745b89c6cca0ae384aca593f369f2caceaa1a443c32d1a8fdd266dbe5977",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T10:54:10.047832Z",
+        "created_at": "2026-10-02T08:04:05.416921Z",
+        "size_in_bytes": 748182272
+      },
+      {
+        "id": 8406086262,
+        "ref": "refs/heads/main",
+        "namespace": "go-validation-v2-historical-transition-Linux-X64-auto-ubuntu24-1.26.8-595da9572f4c64eec20ae28faba2de815321cdb79a7cc8285317129db477b532-9a06745b89c6cca0ae384aca593f369f2caceaa1a443c32d1a8fdd266dbe5977",
+        "version": "1cb9802e5b5c597f946446bf4b3344ff6eb214d674e7138050afa0c8b9619604",
+        "last_accessed_at": "2026-10-02T10:53:43.936928Z",
+        "created_at": "2026-10-02T08:07:10.211167Z",
+        "size_in_bytes": 1581706359
+      },
+      {
+        "id": 8412123655,
+        "ref": "refs/heads/main",
+        "namespace": "index-production-amd64-1-f921bd05#146",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:49:34.808693Z",
+        "created_at": "2026-10-02T10:49:34.808693Z",
+        "size_in_bytes": 77020
+      },
+      {
+        "id": 8405600043,
+        "ref": "refs/heads/main",
+        "namespace": "index-production-amd64-1-f921bd05#145",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:49:34.486871Z",
+        "created_at": "2026-10-02T07:52:55.810025Z",
+        "size_in_bytes": 77024
+      },
+      {
+        "id": 8412123329,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:fe040f188ae2b4ae21a9516ae5d741d59ffd76b5c9dd81bdb8a44c034e037fca",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:49:34.346093Z",
+        "created_at": "2026-10-02T10:49:34.346093Z",
+        "size_in_bytes": 308654
+      },
+      {
+        "id": 8412110991,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:fcf1baf1a2dbce71425b5d2444641cfad066399c819ad21eb2ae89321af469a4",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:49:33.851094Z",
+        "created_at": "2026-10-02T10:49:33.851094Z",
+        "size_in_bytes": 265616590
+      },
+      {
+        "id": 8412096832,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:fc20f592710c20c37e1bd0bdebde0d2b4ba6eb020f39860602784afa78b4bde9",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:49:12.637985Z",
+        "created_at": "2026-10-02T10:49:12.637985Z",
+        "size_in_bytes": 253884301
+      },
+      {
+        "id": 8412096607,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:fbbc6086f0087e9801de727ca29076ee3ccefd1586ba5812be5434a2f588298a",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:49.117117Z",
+        "created_at": "2026-10-02T10:48:49.117117Z",
+        "size_in_bytes": 308651
+      },
+      {
+        "id": 8412096472,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:f9343315b04cc10596f36a9a1e665f97373daba02e5b84246cf3d31ceeb45aa3",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:48.658531Z",
+        "created_at": "2026-10-02T10:48:48.658531Z",
+        "size_in_bytes": 8898
+      },
+      {
+        "id": 8412096323,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:f87c446fbc80eaf2f5cdcdcb85ae78302c0131cdb33475b73826ee75935c8cd5",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:48.356407Z",
+        "created_at": "2026-10-02T10:48:48.356407Z",
+        "size_in_bytes": 10192
+      },
+      {
+        "id": 8412096140,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:f8101bac566632437138adc234559204e53822d8902a86b333861ec4e12e2fa7",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:48.100585Z",
+        "created_at": "2026-10-02T10:48:48.100585Z",
+        "size_in_bytes": 116590
+      },
+      {
+        "id": 8344463324,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:f6069939f718601b38d25ec5ed5631ed047e4da24acec2e252f8f29d251be718",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:47.688004Z",
+        "created_at": "2026-10-01T03:14:28.976176Z",
+        "size_in_bytes": 254668
+      },
+      {
+        "id": 8412095969,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:f5e4bdf6f154f6ce3b0b5fac9d82cb94ff985cf2af1cc879968242e434d64b41",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:47.615263Z",
+        "created_at": "2026-10-02T10:48:47.615263Z",
+        "size_in_bytes": 30192
+      },
+      {
+        "id": 7733710128,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:f299badb7e77967db1ed2406bb5752b30ffdf228708b8542eec14690443791a8",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:47.301959Z",
+        "created_at": "2026-09-15T20:35:27.641011Z",
+        "size_in_bytes": 1364184
+      },
+      {
+        "id": 7697656109,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ef1dbfdbb5d59bdeac07b1398a9f0808b453513bf6a76eb3ffd509a284483095",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:47.246049Z",
+        "created_at": "2026-09-15T02:46:22.349765Z",
+        "size_in_bytes": 71077884
+      },
+      {
+        "id": 8412095797,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:eee0e33b25a40037a9289c0b88e394300e340907e1693d3fc1261a988379b351",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:47.186985Z",
+        "created_at": "2026-10-02T10:48:47.186985Z",
+        "size_in_bytes": 4678
+      },
+      {
+        "id": 8412095666,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ec39e2b7f57be98f6b9b4506fcc395e99a44afdd9095def4c70631f050d3e3f7",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:46.921692Z",
+        "created_at": "2026-10-02T10:48:46.921692Z",
+        "size_in_bytes": 6507
+      },
+      {
+        "id": 8344462916,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ebddc55facdc6b1f7e0f30816a5fc7cc62f38abdf76c0a8b0a0ce52085754795",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:46.635591Z",
+        "created_at": "2026-10-01T03:14:27.895763Z",
+        "size_in_bytes": 311
+      },
+      {
+        "id": 8105339305,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:eaac70c68abdf6ffacf6de10d31ed9de4813505d1a794eb7393cb27fceb624a6",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:46.575626Z",
+        "created_at": "2026-09-25T07:25:45.557022Z",
+        "size_in_bytes": 48503440
+      },
+      {
+        "id": 8412095463,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:e5ce61888b23458655071c317349be7a76837e7919b0ff63940ba64be3cc94ce",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:46.513130Z",
+        "created_at": "2026-10-02T10:48:46.513130Z",
+        "size_in_bytes": 5479
+      },
+      {
+        "id": 8412095216,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:e5531aa10383f5fee520eb4721e7a26c04d8223e25cacea0ee9e129d485c27a6",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:46.211473Z",
+        "created_at": "2026-10-02T10:48:46.211473Z",
+        "size_in_bytes": 4825
+      },
+      {
+        "id": 8412095075,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:e41282d7f9c2a6a67bac2fe8f1876558a0d3d319db6911f7bbc512633b31d70d",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:45.786231Z",
+        "created_at": "2026-10-02T10:48:45.786231Z",
+        "size_in_bytes": 2644
+      },
+      {
+        "id": 8412094868,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:deaff7fb8e54b9a24a473c90fc262a632afecd03756678decffb715941e06339",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:45.478112Z",
+        "created_at": "2026-10-02T10:48:45.478112Z",
+        "size_in_bytes": 31233
+      },
+      {
+        "id": 8344449543,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:45.146291Z",
+        "created_at": "2026-10-01T03:14:25.587002Z",
+        "size_in_bytes": 211707818
+      },
+      {
+        "id": 7697638024,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:dd64bf2dd177757451a98fcdc999a339c35dee5d9872d8f4dc69c8f3c4dd0112",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:45.086196Z",
+        "created_at": "2026-09-15T02:45:27.243251Z",
+        "size_in_bytes": 80
+      },
+      {
+        "id": 8344449173,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:dd0d9bfd3bee080ad25a464362ec4f37ec5ca625695a4d7179fe69d207dc068d",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:45.027738Z",
+        "created_at": "2026-10-01T03:14:00.876875Z",
+        "size_in_bytes": 158447
+      },
+      {
+        "id": 7699610473,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:dd000cfe5146b0540e51ab7091b532f4575a75f0b7d02da7e3b5f0c2b4f69931",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:44.975535Z",
+        "created_at": "2026-09-15T04:16:45.673341Z",
+        "size_in_bytes": 296
+      },
+      {
+        "id": 8412094587,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:dc0e713c51424b5369905fbb2bf2905ee66a0fbb1d0e53e0ee34ee4cfe711feb",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:44.912023Z",
+        "created_at": "2026-10-02T10:48:44.912023Z",
+        "size_in_bytes": 1774
+      },
+      {
+        "id": 8412094402,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:d821e00451d515a74b97838c36dfa060fa9828cf76fb4a1230b21c528233bd5f",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:44.638857Z",
+        "created_at": "2026-10-02T10:48:44.638857Z",
+        "size_in_bytes": 22398
+      },
+      {
+        "id": 8344448486,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:d6b1b89eccacc15c2420b2776d72c1dae334a00805ed9af54bf2f71e4d536f28",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:44.302864Z",
+        "created_at": "2026-10-01T03:13:59.510287Z",
+        "size_in_bytes": 32093
+      },
+      {
+        "id": 8412093916,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:d5acd5c69fb0f4f9c27ebd2365c352de35a848e25e2c09bbcee8b513eb097a39",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:44.231922Z",
+        "created_at": "2026-10-02T10:48:44.231922Z",
+        "size_in_bytes": 3735574
+      },
+      {
+        "id": 8412093731,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:d464e9456f80182359d3ade0071808e7088f827f8bd2df0079ec94f69053d2b1",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:43.405631Z",
+        "created_at": "2026-10-02T10:48:43.405631Z",
+        "size_in_bytes": 17539
+      },
+      {
+        "id": 8260334252,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:d3b2a561decb23ffdaa32473362a3e9160914ddd60e1c26ef01bf8856c590635",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:43.100636Z",
+        "created_at": "2026-09-29T11:34:21.025223Z",
+        "size_in_bytes": 41462
+      },
+      {
+        "id": 8412093554,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:d18302faadc653e226935604a672704eb45f525c85f5096e500763cc449e9933",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:43.040625Z",
+        "created_at": "2026-10-02T10:48:43.040625Z",
+        "size_in_bytes": 9578
+      },
+      {
+        "id": 8412093386,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:d08074811d028ce185d0cf2ed1630f8c3505a62ded6f44b421c3b5b6550daca3",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:42.756515Z",
+        "created_at": "2026-10-02T10:48:42.756515Z",
+        "size_in_bytes": 156477
+      },
+      {
+        "id": 8412079037,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ce832424e78b324668f47cf84d99300c27e899526a90688f2c05886469deb481",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:41.875009Z",
+        "created_at": "2026-10-02T10:48:41.875009Z",
+        "size_in_bytes": 265615139
+      },
+      {
+        "id": 8344444578,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ce128d9b45eda94d173f34366e48d7e524e2aa5d5f4e84cbd2b2b5b1375a2b0a",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:18.467474Z",
+        "created_at": "2026-10-01T03:13:58.083786Z",
+        "size_in_bytes": 64537808
+      },
+      {
+        "id": 7699610267,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ccb86fd70cf1a92d9dddfaaebf11f09cebaec4c7fa60a748c8313b0828b9e41c",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:18.406317Z",
+        "created_at": "2026-09-15T04:16:45.433249Z",
+        "size_in_bytes": 5908192
+      },
+      {
+        "id": 8349777479,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:cb8a1a987ae4dc77d8c7d0b321b9ffd3f148df442c249f130ee1f874d885c119",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:18.337988Z",
+        "created_at": "2026-10-01T06:31:14.758660Z",
+        "size_in_bytes": 6309855
+      },
+      {
+        "id": 8344444188,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:cac2ae0193cb073e7492050b05fc342a888651b4bbc966908c8793f889c299ba",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:18.274266Z",
+        "created_at": "2026-10-01T03:13:49.972165Z",
+        "size_in_bytes": 96148
+      },
+      {
+        "id": 8412078714,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c9b5707520db169db35e961d5b79f87438c7f99ce70ff84f2847da05fff507a5",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:18.205109Z",
+        "created_at": "2026-10-02T10:48:18.205109Z",
+        "size_in_bytes": 8354
+      },
+      {
+        "id": 8412078475,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c99ed9db3c2d3c53af26fe5c820ce9d140cca1a333844e8714a667fc16b01ff7",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:17.912542Z",
+        "created_at": "2026-10-02T10:48:17.912542Z",
+        "size_in_bytes": 42087
+      },
+      {
+        "id": 8412078276,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c99134b92eb4c7d6b0f91ae6d7ef666c3d190b4ea05c949ec144b11fbc740db2",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:17.550128Z",
+        "created_at": "2026-10-02T10:48:17.550128Z",
+        "size_in_bytes": 1601
+      },
+      {
+        "id": 8405551960,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c7c5b90b8277d38e35f02f7a52283c472f1704416291c058ace2b4da4f075b83",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:17.272343Z",
+        "created_at": "2026-10-02T07:51:36.474455Z",
+        "size_in_bytes": 50794421
+      },
+      {
+        "id": 8412072629,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c7a2a5b9a8a9448142316a7efd4e0c131613af7e69fe3121711e7803b27c64c8",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:17.210940Z",
+        "created_at": "2026-10-02T10:48:17.210940Z",
+        "size_in_bytes": 92482573
+      },
+      {
+        "id": 8344443012,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c4bc6f35ff5e25aa1afe7a148a0b6f10a760f54e298f86a4a4d44b91f1afbfab",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:09.005357Z",
+        "created_at": "2026-10-01T03:13:47.418776Z",
+        "size_in_bytes": 143338
+      },
+      {
+        "id": 8412072389,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c2f872c5204336fa9c722f2724823a232f67a54e4d97b74584e4e68ca18d1d48",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:08.940225Z",
+        "created_at": "2026-10-02T10:48:08.940225Z",
+        "size_in_bytes": 3866
+      },
+      {
+        "id": 7699610094,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c1bdc9ba2b9ee10de067d50e69caa7454dcd7e80a7f363bc3f26c85ab44175f0",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:08.674966Z",
+        "created_at": "2026-09-15T04:16:44.662657Z",
+        "size_in_bytes": 185
+      },
+      {
+        "id": 8412071732,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c19c555f7d1065089191b0183cff781cf8837be850f2dfd27cd056006689e8d3",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:08.616450Z",
+        "created_at": "2026-10-02T10:48:08.616450Z",
+        "size_in_bytes": 3551404
+      },
+      {
+        "id": 8344442708,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c172f21841dff4c8cf45cde46589c1c2616cefe7e819965e92e6d3475c428aa0",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:07.691094Z",
+        "created_at": "2026-10-01T03:13:46.585337Z",
+        "size_in_bytes": 12675
+      },
+      {
+        "id": 8405551443,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:c07715df0ac686facbbef56b79f618935e9ac959253b9bb41b3b6b368b9be1c1",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:07.635210Z",
+        "created_at": "2026-10-02T07:51:31.042754Z",
+        "size_in_bytes": 203
+      },
+      {
+        "id": 8344441887,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:bd8962e292918c50c90edebd9684c053bc386b9c5503acd8fec75d0c6f93a0b7",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:07.577852Z",
+        "created_at": "2026-10-01T03:13:44.923935Z",
+        "size_in_bytes": 372772
+      },
+      {
+        "id": 8412071433,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:bd425d4027acb090ec065f38003615db19c8ad3514ef611b660002260765dc0e",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:07.511862Z",
+        "created_at": "2026-10-02T10:48:07.511862Z",
+        "size_in_bytes": 4298
+      },
+      {
+        "id": 8412071269,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:bce111b478ba7febd397aabdf26ca8fe48e1a437560632673f274bba2974a356",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:07.238973Z",
+        "created_at": "2026-10-02T10:48:07.238973Z",
+        "size_in_bytes": 279
+      },
+      {
+        "id": 8412071069,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:bacb023121c70ab783533b37ef269b35f0de2da0595682f60a3aec520c8a1bbe",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:06.912834Z",
+        "created_at": "2026-10-02T10:48:06.912834Z",
+        "size_in_bytes": 1774
+      },
+      {
+        "id": 8344440583,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:b96fe2995f90d0ef0bf14f9b4a67b5f4e77d478e6108166e0565adc9efd6e4a3",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:06.646927Z",
+        "created_at": "2026-10-01T03:13:42.442476Z",
+        "size_in_bytes": 5079079
+      },
+      {
+        "id": 7697624746,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:b839dfae01f66e15c6a8b63520557ed315bdfe036342fa7a0c537259f10d7a9a",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:06.587625Z",
+        "created_at": "2026-09-15T02:44:53.488634Z",
+        "size_in_bytes": 351
+      },
+      {
+        "id": 8412070831,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:b71638ef5ececc5f05572f808f1b7bab0323eb15d2eb764376e5e9b5d2754d71",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:06.505744Z",
+        "created_at": "2026-10-02T10:48:06.505744Z",
+        "size_in_bytes": 2008
+      },
+      {
+        "id": 8412070668,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:b3d0e366494ebb309d461559a8f0baaff66d99bea2060375e554da2980c51b17",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:06.241791Z",
+        "created_at": "2026-10-02T10:48:06.241791Z",
+        "size_in_bytes": 9004
+      },
+      {
+        "id": 8412070417,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:af5558febf2304c87c97818bbdffd876a64a0f6b1b43e55ef8bc382240fc93ee",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:05.961206Z",
+        "created_at": "2026-10-02T10:48:05.961206Z",
+        "size_in_bytes": 41803
+      },
+      {
+        "id": 8412063101,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ad7c207937f377c8445e7fbd1b6dd0feb9acfebf1f6d8c4818698bff86f86602",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:48:05.586311Z",
+        "created_at": "2026-10-02T10:48:05.586311Z",
+        "size_in_bytes": 133147563
+      },
+      {
+        "id": 8405549322,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:ad157a12462d8f19deb4f9fa4ef6cb80e6cde44d04596a8296c26df406f5bc5a",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:53.908242Z",
+        "created_at": "2026-10-02T07:51:27.314484Z",
+        "size_in_bytes": 2755
+      },
+      {
+        "id": 8412062931,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:a2fff99af76ea8153eddcf0c534be6f860206d6cc58c59578aee682ef812589d",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:53.850544Z",
+        "created_at": "2026-10-02T10:47:53.850544Z",
+        "size_in_bytes": 4149
+      },
+      {
+        "id": 8412062685,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:a010b6d368daeb78a02ff89701378500cf549dde4ab3af4f2bda0ee8abc86398",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:53.567314Z",
+        "created_at": "2026-10-02T10:47:53.567314Z",
+        "size_in_bytes": 8588
+      },
+      {
+        "id": 8405549048,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:9fe823ea2bb8df5da9c87040859b8356e2b51f6260d142aee0c268fc961e8247",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:53.149517Z",
+        "created_at": "2026-10-02T07:51:26.904696Z",
+        "size_in_bytes": 49109
+      },
+      {
+        "id": 8412062515,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:9d926b86755b1e4a9006fd730fd07c8497a3a5b0a959c16ecf13266dd59858e0",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:53.086024Z",
+        "created_at": "2026-10-02T10:47:53.086024Z",
+        "size_in_bytes": 309
+      },
+      {
+        "id": 7699604885,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:995f23d6717fb18d9e3ee7901ce64cf02d5386f0358688dcb35682d362a9fa11",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:52.771066Z",
+        "created_at": "2026-09-15T04:16:29.054040Z",
+        "size_in_bytes": 3398
+      },
+      {
+        "id": 8412062317,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:98bbc29dfed613b15a6a446630297f3f145f6ea94170e1ea629deef0446c3ee8",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:52.713336Z",
+        "created_at": "2026-10-02T10:47:52.713336Z",
+        "size_in_bytes": 11343
+      },
+      {
+        "id": 8344420039,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:98803031a6def7cdb7459479729e4aa6d6185861b9f7480ed3ac5743416cea94",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:52.346123Z",
+        "created_at": "2026-10-01T03:12:59.556477Z",
+        "size_in_bytes": 446
+      },
+      {
+        "id": 8412062094,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:94e08b18bb6823186a9ef59432056c7d81105a8362f841afcdfab4054eed28d6",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:52.287411Z",
+        "created_at": "2026-10-02T10:47:52.287411Z",
+        "size_in_bytes": 13217
+      },
+      {
+        "id": 8412061903,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:91b944e5c2a3c8b01473cff76cca1a1fcf7af3edafc5dc98dbaada25de5e80ca",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:51.977050Z",
+        "created_at": "2026-10-02T10:47:51.977050Z",
+        "size_in_bytes": 7408
+      },
+      {
+        "id": 8412049636,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:8f2cf30dd6333142eb41b8496aab88943688125ca13efce430f9f3db8c3a5906",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:51.553188Z",
+        "created_at": "2026-10-02T10:47:51.553188Z",
+        "size_in_bytes": 253887362
+      },
+      {
+        "id": 8412049433,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:8d6a7271e59356447ee3113d36caeb1a84f6af7e4fa0e90922c80e20be109652",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:28.989162Z",
+        "created_at": "2026-10-02T10:47:28.989162Z",
+        "size_in_bytes": 16047
+      },
+      {
+        "id": 8412049261,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:8bb44676e00804fc7b050c25bd7266d9348c5a825be5153b1d48e7838f3a9ea6",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:28.655954Z",
+        "created_at": "2026-10-02T10:47:28.655954Z",
+        "size_in_bytes": 29163
+      },
+      {
+        "id": 8412048861,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:866b43c0451eaacc12181fa5981673666d6fad4b510aca9ad6c2269362300c85",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:28.351565Z",
+        "created_at": "2026-10-02T10:47:28.351565Z",
+        "size_in_bytes": 1469784
+      },
+      {
+        "id": 8412048627,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:84d548d9bc5a8c975e12cf85c233cd1ebaad704b21017f63c6bfec7d61e7a1ff",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:27.681842Z",
+        "created_at": "2026-10-02T10:47:27.681842Z",
+        "size_in_bytes": 27617
+      },
+      {
+        "id": 8344418536,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:8224d91da70b7992430d3b04040ea38ecdef4a7b719bee38397c89aaa886e198",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:27.328769Z",
+        "created_at": "2026-10-01T03:12:56.018403Z",
+        "size_in_bytes": 84214
+      },
+      {
+        "id": 8105294871,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:81578410df169380efec491bfdc60a7e586d4b48ef4c0aeb9b6ff085812d9a7d",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:27.268609Z",
+        "created_at": "2026-09-25T07:24:12.441505Z",
+        "size_in_bytes": 64424271
+      },
+      {
+        "id": 8412048112,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:7fb58b7ebd49170d443df1799b3b2be63e208f93cca2f4d5d57a2d3d6877928b",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:27.201169Z",
+        "created_at": "2026-10-02T10:47:27.201169Z",
+        "size_in_bytes": 1088297
+      },
+      {
+        "id": 8412047875,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:7d1674d2bc18fa9a02776a46ae7994e73e4ca0432e627e49c8c1a754fb3e41c4",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:26.461723Z",
+        "created_at": "2026-10-02T10:47:26.461723Z",
+        "size_in_bytes": 27611
+      },
+      {
+        "id": 8344418141,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:7cc70dfd88cf2327bb827123c9156f7cb95de95b2f98f3a7a931296aacec5786",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:26.119723Z",
+        "created_at": "2026-10-01T03:12:55.243525Z",
+        "size_in_bytes": 901291
+      },
+      {
+        "id": 7697601455,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:26.062150Z",
+        "created_at": "2026-09-15T02:43:48.104995Z",
+        "size_in_bytes": 188
+      },
+      {
+        "id": 8105293351,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:7b2de2423ebd9d3290883175c0e46dccd6de955b08e6e9a5bd20909e3face240",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:25.994530Z",
+        "created_at": "2026-09-25T07:24:06.133301Z",
+        "size_in_bytes": 24056077
+      },
+      {
+        "id": 8405487676,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:75cd05f1e98e302fae3ff7d4da773dc4e986c0b32f0afa5f55bd428e95e4210a",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:25.934290Z",
+        "created_at": "2026-10-02T07:50:40.720564Z",
+        "size_in_bytes": 650137875
+      },
+      {
+        "id": 8412047417,
+        "ref": "refs/heads/main",
+        "namespace": "buildkit-blob-1-sha256:720234e6e3d527d7339e3294da1d6993f4d55a744f6d2e3ca7f2ec00180645c0",
+        "version": "693bb7016429d80366022f036f84856888c9f13e00145f5f6f4dce303a38d6f2",
+        "last_accessed_at": "2026-10-02T10:47:25.861461Z",
+        "created_at": "2026-10-02T10:47:25.861461Z",
+        "size_in_bytes": 11672
+      }
+    ]
+  }
+}

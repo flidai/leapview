@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
@@ -69,6 +70,7 @@ func postgresCredentialIdentity(raw string) (string, bool) {
 // empty URL rather than synthesizing credentials from another role. The
 // readonly pool is omitted when its URL is empty.
 func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig {
+	destinationPolicy := c.postgresDestinationPolicy()
 	migratorRole := strings.TrimSpace(c.PostgresControlMigratorRole)
 	if migratorRole == "" {
 		migratorRole = postgresControlMigratorRole
@@ -84,6 +86,7 @@ func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig
 	config := platformpostgres.ControlPlaneConfig{
 		Migrator: platformpostgres.Config{
 			URL:                    c.PostgresControlMigratorURL,
+			DestinationPolicy:      destinationPolicy,
 			ExpectedMajor:          c.PostgresExpectedMajor,
 			RuntimeRole:            migratorRole,
 			Intent:                 platformpostgres.IntentReadWrite,
@@ -97,6 +100,7 @@ func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig
 		},
 		Runtime: platformpostgres.Config{
 			URL:                    c.PostgresControlURL,
+			DestinationPolicy:      destinationPolicy,
 			ExpectedMajor:          c.PostgresExpectedMajor,
 			RuntimeRole:            runtimeRole,
 			Intent:                 platformpostgres.IntentReadWrite,
@@ -113,6 +117,7 @@ func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig
 	if strings.TrimSpace(c.PostgresControlReadonlyURL) != "" {
 		readonly := platformpostgres.Config{
 			URL:                    c.PostgresControlReadonlyURL,
+			DestinationPolicy:      destinationPolicy,
 			ExpectedMajor:          c.PostgresExpectedMajor,
 			RuntimeRole:            readonlyRole,
 			Intent:                 platformpostgres.IntentReadOnly,
@@ -139,6 +144,7 @@ func (c Config) PostgresDuckLakeRuntimeConfig() platformpostgres.Config {
 	}
 	return platformpostgres.Config{
 		URL:                    c.PostgresDuckLakeURL,
+		DestinationPolicy:      c.postgresDestinationPolicy(),
 		ExpectedMajor:          c.PostgresExpectedMajor,
 		RuntimeRole:            role,
 		Intent:                 platformpostgres.IntentReadWrite,
@@ -163,7 +169,8 @@ func (c Config) PostgresDuckLakeMaintenanceConfig() platformpostgres.Config {
 	}
 	return platformpostgres.Config{
 		URL: c.PostgresDuckLakeMaintenanceURL, ExpectedMajor: c.PostgresExpectedMajor,
-		RuntimeRole: role, Intent: platformpostgres.IntentReadWrite,
+		DestinationPolicy: c.postgresDestinationPolicy(),
+		RuntimeRole:       role, Intent: platformpostgres.IntentReadWrite,
 		RequireTLS: c.PostgresRequireTLS, MinConns: 1, MaxConns: 1,
 		AcquireTimeout: c.PostgresDuckLakeAcquireTimeout, StatementTimeout: c.PostgresDuckLakeStatementTimeout,
 		LockTimeout: c.PostgresDuckLakeLockTimeout, IdleTransactionTimeout: c.PostgresDuckLakeIdleTransactionTimeout,
@@ -184,14 +191,16 @@ func (c Config) PostgresDuckLakeUpgradeConfig() (platformpostgres.Config, platfo
 	}
 	coordinator := platformpostgres.Config{
 		URL: c.PostgresControlUpgradeCoordinatorURL, ExpectedMajor: c.PostgresExpectedMajor,
-		RuntimeRole: coordinatorRole, Intent: platformpostgres.IntentReadWrite,
+		DestinationPolicy: c.postgresDestinationPolicy(),
+		RuntimeRole:       coordinatorRole, Intent: platformpostgres.IntentReadWrite,
 		RequireTLS: c.PostgresRequireTLS, MinConns: 1, MaxConns: 1,
 		AcquireTimeout: c.PostgresControlAcquireTimeout, StatementTimeout: c.PostgresControlStatementTimeout,
 		LockTimeout: c.PostgresControlLockTimeout, IdleTransactionTimeout: c.PostgresControlIdleTransactionTimeout,
 	}
 	catalog := platformpostgres.Config{
 		URL: c.PostgresDuckLakeMigratorURL, ExpectedMajor: c.PostgresExpectedMajor,
-		RuntimeRole: catalogRole, Intent: platformpostgres.IntentReadWrite,
+		DestinationPolicy: c.postgresDestinationPolicy(),
+		RuntimeRole:       catalogRole, Intent: platformpostgres.IntentReadWrite,
 		RequireTLS: c.PostgresRequireTLS, MinConns: 1, MaxConns: 1,
 		AcquireTimeout: c.PostgresDuckLakeAcquireTimeout, StatementTimeout: c.PostgresDuckLakeStatementTimeout,
 		LockTimeout: c.PostgresDuckLakeLockTimeout, IdleTransactionTimeout: c.PostgresDuckLakeIdleTransactionTimeout,
@@ -211,11 +220,19 @@ func (c Config) PostgresControlMaintenanceConfig() platformpostgres.Config {
 	}
 	return platformpostgres.Config{
 		URL: c.PostgresControlMaintenanceURL, ExpectedMajor: c.PostgresExpectedMajor,
-		RuntimeRole: role, Intent: platformpostgres.IntentReadWrite,
+		DestinationPolicy: c.postgresDestinationPolicy(),
+		RuntimeRole:       role, Intent: platformpostgres.IntentReadWrite,
 		RequireTLS: c.PostgresRequireTLS, MinConns: 1, MaxConns: 1,
 		AcquireTimeout: c.PostgresControlAcquireTimeout, StatementTimeout: c.PostgresControlStatementTimeout,
 		LockTimeout: c.PostgresControlLockTimeout, IdleTransactionTimeout: c.PostgresControlIdleTransactionTimeout,
 	}
+}
+
+func (c Config) postgresDestinationPolicy() *outbound.Policy {
+	if !c.Production {
+		return nil
+	}
+	return outbound.New(outbound.ExplicitPrivate, outbound.Options{})
 }
 
 // ValidatePostgresUpgrade enforces the explicit two-credential operation

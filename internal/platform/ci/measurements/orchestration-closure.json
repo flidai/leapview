@@ -1,0 +1,19 @@
+{
+  "environment": "shared local x86_64-linux Nix store; already warm; not paired hosted evidence",
+  "measurements": [
+    {
+      "profile": "orchestration",
+      "root": "/nix/store/5ns65hn9b9dsrwdbag8rilk3pka44njh-nix-shell",
+      "local_warm_realization_seconds": 1.137,
+      "closure_paths": 124,
+      "closure_nar_bytes": 657007400
+    },
+    {
+      "profile": "default",
+      "root": "/nix/store/vll41vdgdnv3lgc44bczqfs439q3l0dp-nix-shell",
+      "local_warm_realization_seconds": 2.793,
+      "closure_paths": 347,
+      "closure_nar_bytes": 4440607648
+    }
+  ]
+}

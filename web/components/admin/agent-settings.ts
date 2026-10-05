@@ -3,8 +3,10 @@ import { property, state } from 'lit/decorators.js'
 import type { AdminAgentSignal } from '../../generated/signals'
 import { renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
+import { tabBarStyles } from '../shared/tab-bar.styles'
 import './agent-prompt-editor'
 import './agent-tools'
+import './agent-provider-settings'
 
 type AgentSettingsTab = 'instructions' | 'tools'
 
@@ -17,7 +19,7 @@ export class AgentSettings extends LitElement {
   @property({ attribute: false }) prompt = ''
   @state() private tab: AgentSettingsTab = 'instructions'
 
-  static styles = [settingsFieldStyles, settingsLayoutStyles, css`
+  static styles = [settingsFieldStyles, settingsLayoutStyles, tabBarStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -138,51 +140,6 @@ export class AgentSettings extends LitElement {
     }
 
 
-    .tab-bar {
-      display: flex;
-      align-items: center;
-      gap: var(--base-size-4);
-      border-bottom: var(--lv-border-muted);
-      padding: 0;
-    }
-
-    .tab-bar button {
-      position: relative;
-      border: 0;
-      border-radius: var(--lv-radius-small) var(--lv-radius-small) 0 0;
-      background: transparent;
-      padding: var(--base-size-8) var(--base-size-12);
-      color: var(--lv-fg-muted);
-      cursor: pointer;
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .tab-bar button:hover {
-      background: var(--lv-bg-panel-muted);
-      color: var(--lv-fg-default);
-    }
-
-    .tab-bar button.is-active {
-      color: var(--lv-fg-accent);
-    }
-
-    .tab-bar button.is-active::after {
-      position: absolute;
-      right: var(--base-size-8);
-      bottom: -1px;
-      left: var(--base-size-8);
-      height: 2px;
-      background: var(--lv-fg-accent);
-      content: '';
-    }
-
-    .tab-bar button:focus-visible {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: -2px;
-    }
-
-
     .empty {
       padding: var(--base-size-16) 0;
       color: var(--lv-fg-muted);
@@ -233,10 +190,12 @@ export class AgentSettings extends LitElement {
           </div>
         ` })}
 
+        <lv-agent-provider-settings .agent=${agent}></lv-agent-provider-settings>
+
         ${!agent.canWrite ? html`
           <div class="notice" role="note">
-            <strong>Deployment managed.</strong>
-            <span>Agent instructions are controlled by deployment configuration and cannot be changed here.</span>
+            <strong>Read-only.</strong>
+            <span>Only a LeapView platform admin can change agent configuration.</span>
           </div>
         ` : ''}
 
@@ -287,7 +246,7 @@ function normalizeAgentStatus(value: string | undefined, enabled: boolean): 'ena
 
 function formatReasoningEffort(value?: string): string {
   const effort = value?.trim().toLowerCase()
-  if (!effort) return 'Not configured'
+  if (!effort) return 'Provider default'
   return effort === 'xhigh' ? 'Extra high' : effort[0].toUpperCase() + effort.slice(1)
 }
 

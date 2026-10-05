@@ -39,6 +39,7 @@ type Module struct {
 	projectID          projectgraph.ResourceID
 	projectIDResolver  func(context.Context) (projectgraph.ResourceID, error)
 	currentPrincipal   func(*http.Request) (Principal, bool)
+	currentCredential  func(*http.Request) (access.APICredential, bool)
 	dashboardMetrics   func(string) (queryruntime.Metrics, bool)
 	recordAudit        func(context.Context, access.AuditEventInput) error
 	dispatchAPIGen     func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
@@ -126,6 +127,7 @@ type Principal struct {
 }
 
 type ModelConfig struct {
+	CredentialKey   string
 	APIKey          string
 	BaseURL         string
 	Model           string
@@ -148,9 +150,11 @@ type Scope struct {
 type ResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
 
 type CredentialScope struct {
-	ProjectID    string
-	Capabilities []string
-	Restricted   bool
+	ProjectID         string
+	Capabilities      []string
+	PermissionProfile string
+	Permissions       []access.PermissionPair
+	Restricted        bool
 }
 
 type Settings interface {
@@ -211,7 +215,28 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
 		})
-		if config.ModelConfigFile != "" {
+		if config.Persistence != nil {
+			store, ok := config.Persistence.Repository.(agent.ConfigurationStore)
+			if !ok {
+				return nil, fmt.Errorf("agent configuration persistence is unavailable")
+			}
+			if config.Model.CredentialKey != "" {
+				manager, err := agent.NewConfigurationManager(store, service, config.Model.CredentialKey, agentopenai.TestConnection)
+				if err != nil {
+					return nil, err
+				}
+				service.SetConfigurationManager(manager)
+				if err := manager.Refresh(ctx); err != nil {
+					return nil, err
+				}
+			} else if _, err := store.CurrentConfiguration(ctx); !errors.Is(err, agent.ErrConfigurationNotFound) {
+				if err != nil {
+					return nil, err
+				}
+				return nil, fmt.Errorf("administrator-managed agent credentials require LEAPVIEW_AGENT_CREDENTIAL_KEY")
+			}
+		}
+		if config.ModelConfigFile != "" && !service.AdminManaged() {
 			reloader, reloadErr := configreload.NewFileReloader(config.ModelConfigFile, service, config.Logger, config.ReloadInterval)
 			if reloadErr != nil {
 				return nil, reloadErr
@@ -247,6 +272,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		projectID:         config.ProjectID,
 		projectIDResolver: config.ResolveProjectID,
 		currentPrincipal:  config.HTTP.CurrentPrincipal,
+		currentCredential: config.HTTP.CurrentCredential,
 		dashboardMetrics:  config.DashboardMetrics,
 		recordAudit:       config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
@@ -287,7 +313,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return agenthttp.Principal{ID: principal.ID, DevAuthBypass: principal.DevAuthBypass}, ok
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
-		Service: service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
+		DashboardAuthoring:     config.DashboardAuthoring,
+		AuthorizeSemanticModel: m.authorizeChatVisualModel,
+		Service:                service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
 		PlatformAdmin:    config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
 		ResolveGroupIDs: config.HTTP.ResolveGroupIDs,
@@ -309,9 +337,11 @@ func scopeFromAgent(scope agent.Scope) Scope {
 		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
-			ProjectID:    scope.Credential.ProjectID,
-			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
-			Restricted:   scope.Credential.Restricted,
+			ProjectID:         scope.Credential.ProjectID,
+			Capabilities:      append([]string(nil), scope.Credential.Capabilities...),
+			PermissionProfile: scope.Credential.PermissionProfile,
+			Permissions:       clonePermissionPairs(scope.Credential.Permissions),
+			Restricted:        scope.Credential.Restricted,
 		},
 	}
 }
@@ -321,11 +351,20 @@ func scopeToAgent(scope Scope) agent.Scope {
 		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: agent.CredentialScope{
-			ProjectID:    scope.Credential.ProjectID,
-			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
-			Restricted:   scope.Credential.Restricted,
+			ProjectID:         scope.Credential.ProjectID,
+			Capabilities:      append([]string(nil), scope.Credential.Capabilities...),
+			PermissionProfile: scope.Credential.PermissionProfile,
+			Permissions:       clonePermissionPairs(scope.Credential.Permissions),
+			Restricted:        scope.Credential.Restricted,
 		},
 	}
+}
+
+func clonePermissionPairs(pairs []access.PermissionPair) []access.PermissionPair {
+	if pairs == nil {
+		return nil
+	}
+	return append(make([]access.PermissionPair, 0, len(pairs)), pairs...)
 }
 
 func (m *Module) HTTP() *agenthttp.Handler { return m.handler }
@@ -338,4 +377,21 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		w,
 		r,
 	)
+}
+
+// authorizeChatVisualModel repeats the source query's resource-use decision
+// before a persisted chat artifact can be imported into an editable dashboard.
+func (m *Module) authorizeChatVisualModel(ctx context.Context, scope agent.Scope, id string) error {
+	if m == nil || m.resolveResource == nil {
+		return agent.ErrNotFound
+	}
+	modelID := projectgraph.ResourceID(id)
+	if err := modelID.Validate(); err != nil {
+		return agent.ErrNotFound
+	}
+	resolved, err := m.resolveResource(ctx, scopeFromAgent(scope), modelID, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
+	if err != nil || resolved != modelID {
+		return agent.ErrNotFound
+	}
+	return nil
 }

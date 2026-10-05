@@ -59,6 +59,28 @@ func TestPostgresControlPlaneConfigAppliesReviewedRoleDefaults(t *testing.T) {
 	require.Equal(t, "leapview_control_runtime", got.Runtime.RuntimeRole)
 }
 
+func TestProductionPostgresConfigsCarryOutboundDestinationPolicy(t *testing.T) {
+	cfg := Config{Production: true}
+	control := cfg.PostgresControlPlaneConfig()
+	if control.Migrator.DestinationPolicy == nil || control.Runtime.DestinationPolicy == nil ||
+		control.Maintenance.DestinationPolicy == nil {
+		t.Fatal("production control-plane PostgreSQL config omitted destination policy")
+	}
+	if cfg.PostgresDuckLakeRuntimeConfig().DestinationPolicy == nil ||
+		cfg.PostgresDuckLakeMaintenanceConfig().DestinationPolicy == nil {
+		t.Fatal("production DuckLake PostgreSQL config omitted destination policy")
+	}
+	coordinator, catalog := cfg.PostgresDuckLakeUpgradeConfig()
+	if coordinator.DestinationPolicy == nil || catalog.DestinationPolicy == nil {
+		t.Fatal("production upgrade PostgreSQL config omitted destination policy")
+	}
+
+	development := Config{}
+	if development.PostgresControlPlaneConfig().Runtime.DestinationPolicy != nil {
+		t.Fatal("development loopback profile unexpectedly installed production destination policy")
+	}
+}
+
 func TestValidatePostgresProductionFailsClosedWithoutSeparateMigrator(t *testing.T) {
 	cfg := Config{Production: true, PostgresRequireTLS: true, PostgresControlURL: "postgres://runtime:secret@db/control?sslmode=require"}
 	if err := cfg.ValidatePostgresProduction(); err == nil {

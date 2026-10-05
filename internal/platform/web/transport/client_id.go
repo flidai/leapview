@@ -29,9 +29,20 @@ func EnsureClientID(w http.ResponseWriter, r *http.Request) (string, error) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   requestUsesHTTPS(r),
 	})
 	return clientID, nil
+}
+
+func requestUsesHTTPS(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	forwardedProto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(forwardedProto), "https")
 }
 
 // RequireClientID ensures a client ID or writes a service-unavailable response.

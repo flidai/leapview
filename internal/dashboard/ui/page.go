@@ -67,7 +67,8 @@ type Presentation = webpage.Presentation
 // RouteScope moves every interactive dashboard endpoint beneath one private
 // route prefix. An empty scope preserves the canonical authenticated routes.
 type RouteScope struct {
-	BasePath string
+	BasePath                     string
+	DevelopmentSessionEventsPath string
 }
 
 // AgentCommandBindings is supplied by the composition root so dashboard UI
@@ -155,6 +156,9 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
 		g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
 		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.ConcurrentEventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+	}
+	if routes.BasePath == "" && strings.TrimSpace(routes.DevelopmentSessionEventsPath) != "" {
+		componentAttrs = append(componentAttrs, g.Attr("development-session-events-path", routes.DevelopmentSessionEventsPath))
 	}
 	if strings.TrimSpace(action.Label) != "" && strings.TrimSpace(action.Href) != "" && routes.BasePath == "" {
 		componentAttrs = append(componentAttrs,

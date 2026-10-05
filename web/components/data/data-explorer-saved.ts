@@ -454,6 +454,8 @@ export function explorationDisplayTitle(
 export function renderSavedExplorations(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions) {
   const current = state.current
   const items = state.list?.items ?? []
+  const legacyItems = state.list?.legacyItems ?? []
+  const savedCount = items.length + legacyItems.length
   const unavailable = state.save?.state === 'error'
   if (!state.enabled) return nothing
   const hasCanonicalState = options.canSaveCurrent() && Boolean(options.activeSpec().modelId?.trim())
@@ -477,11 +479,12 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
     }}>
       <div class="saved-explorations-header">
         <span class="saved-exploration-status" role=${unavailable ? 'alert' : 'status'}>${saveStatus}</span>
-        ${items.length ? html`
+        ${savedCount ? html`
           <details class="saved-exploration-picker">
-            <summary aria-label="Open saved explorations" title="Open saved explorations" @click=${() => options.onToggleActions()}><span>Saved explorations (${items.length})</span>${lucideIcon(ChevronDown, { size: 13 })}</summary>
+            <summary aria-label="Open saved explorations" title="Open saved explorations" @click=${() => options.onToggleActions()}><span>Saved explorations (${savedCount})</span>${lucideIcon(ChevronDown, { size: 13 })}</summary>
             <div class="saved-exploration-list">
               ${items.map((item) => html`<a class="saved-exploration-item" href=${savedExplorationShareURL(item.id, item.status === 'archived')} aria-current=${item.id === current?.id ? 'page' : nothing}>${item.title}</a>`)}
+              ${legacyItems.map((item) => html`<a class="saved-exploration-item" href=${item.openHref}>${item.name}</a>`)}
             </div>
           </details>
         ` : nothing}

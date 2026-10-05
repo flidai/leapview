@@ -36,7 +36,7 @@ func (m Metrics) authorizeViewAs(ctx context.Context, actor Principal, request d
 	actorID := strings.TrimSpace(capability.ActorPrincipalID)
 	subjectID := strings.TrimSpace(capability.SubjectPrincipalID)
 	deny := func(cause error) (dataquery.Query, error) {
-		denied := DeniedError{PrincipalID: actor.ID, Capability: access.CapabilityProjectAdmin}
+		denied := DeniedError{PrincipalID: actor.ID, Action: access.ActionProjectAccessManage}
 		if auditErr := m.recordViewAsAudit(ctx, request, actor.ID, subjectID, capability.ProjectID, "denied", cause); auditErr != nil {
 			return request, errors.Join(denied, auditErr)
 		}
@@ -58,33 +58,16 @@ func (m Metrics) authorizeViewAs(ctx context.Context, actor Principal, request d
 	if err != nil {
 		return request, err
 	}
-	projectRef, err := access.NewResourceRef(capability.ProjectID, projectgraph.KindProjectNamespace)
-	if err != nil {
-		return deny(err)
-	}
+	var credentialToken *access.APIToken
 	if credential, ok := m.currentCredential(ctx); ok {
-		allowed, err := m.capabilityAllowed(ctx, snapshot, actorID, credential.Token, access.CapabilityProjectAdmin)
-		if err != nil || !allowed {
-			if err == nil {
-				err = errors.New("view-as credential lacks PROJECT_ADMIN")
-			}
-			return deny(err)
-		}
+		credentialToken = &credential.Token
 	}
-	subjects, err := m.subjects(ctx, actorID)
+	allowed, err := m.viewAsAllowed(ctx, snapshot, actorID, credentialToken, capability.ProjectID)
 	if err != nil {
 		return deny(err)
-	}
-	allowed := false
-	for _, subject := range subjects {
-		ok, allowErr := snapshot.Allows(subject, projectRef, access.CapabilityProjectAdmin)
-		if allowErr != nil {
-			return deny(allowErr)
-		}
-		allowed = allowed || ok
 	}
 	if !allowed {
-		return deny(errors.New("actor lacks PROJECT_ADMIN"))
+		return deny(errors.New("actor lacks project.access.manage"))
 	}
 	if err := m.recordViewAsAudit(ctx, request, actor.ID, subjectID, capability.ProjectID, "authorized", nil); err != nil {
 		return request, err

@@ -41,6 +41,7 @@ func mountDevelopmentSessionRoutes(r chi.Router, session *developmentsessionmodu
 	if updates == nil {
 		updates = func(next http.Handler) http.Handler { return next }
 	}
+	r.With(updates).Get("/development-session/events", guard(session.ActiveProjectEvents))
 	r.With(updates).Get(base+"/updates", guard(func(w http.ResponseWriter, request *http.Request) {
 		stableCandidateUpdates(session, candidates, w, request)
 	}))

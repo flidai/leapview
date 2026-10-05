@@ -86,12 +86,13 @@ type PublishEvidenceResponse struct {
 }
 
 type BindingEvidence struct {
-	BindingID          string `json:"bindingId"`
-	ConnectionID       string `json:"connectionId"`
-	ConnectorKind      string `json:"connectorKind"`
-	Revision           int64  `json:"revision"`
-	ValidatedVersion   string `json:"validatedVersion"`
-	EndpointConfigHash string `json:"endpointConfigHash"`
+	BindingID           string `json:"bindingId"`
+	ConnectionID        string `json:"connectionId"`
+	ConnectorKind       string `json:"connectorKind"`
+	Revision            int64  `json:"revision"`
+	ValidatedVersion    string `json:"validatedVersion"`
+	CredentialVersionID string `json:"credentialVersionId,omitempty"`
+	EndpointConfigHash  string `json:"endpointConfigHash"`
 }
 
 type Status string

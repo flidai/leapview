@@ -14,6 +14,7 @@ import (
 	"time"
 
 	agentapp "github.com/flidai/leapview/internal/agent"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -26,7 +27,10 @@ type OpenAIModel struct {
 
 func NewModel(config agentapp.Config, client *http.Client) *OpenAIModel {
 	if client == nil {
-		client = &http.Client{Timeout: DefaultHTTPTimeout}
+		client = outbound.New(outbound.ExplicitPrivate, outbound.Options{}).HTTPClient(
+			&http.Client{Timeout: DefaultHTTPTimeout},
+			outbound.HTTPConfig{AllowedSchemes: []string{"http", "https"}},
+		)
 	}
 	return &OpenAIModel{config: config, client: client}
 }
@@ -35,8 +39,10 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	if !m.config.Enabled() {
 		return agentcore.ModelResponse{}, agentapp.ErrDisabled
 	}
-	if usesGPT6LunaResponses(m.config) {
-		return m.completeResponse(ctx, req, stream)
+	if m.config.APIMode == "responses" || (m.config.APIMode == "" && usesGPT6LunaResponses(m.config)) {
+		req.Messages = m.compatibleMessages(req.Messages)
+		response, err := m.completeResponse(ctx, req, stream)
+		return m.scopeResponse(response), err
 	}
 	streaming := req.Purpose == agentcore.ModelRequestPurposeTurn && stream != nil
 	body := openAIChatRequest{

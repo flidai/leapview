@@ -68,6 +68,21 @@ func TestDiscoverLocalCheckoutWithoutGitReturnsCanonicalStart(t *testing.T) {
 	require.Equal(t, want, resolved)
 }
 
+func TestDiscoverLocalCheckoutPrefersInitializedProjectWithinGitCheckout(t *testing.T) {
+	outer := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(outer, ".git"), 0o755))
+	project := filepath.Join(outer, "my-analytics")
+	require.NoError(t, os.MkdirAll(filepath.Join(project, ".leapview"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(project, ".leapview", "development-inputs.yaml"), []byte("version: 1\n"), 0o644))
+	nested := filepath.Join(project, "dashboards")
+	require.NoError(t, os.Mkdir(nested, 0o755))
+	resolved, err := discoverLocalCheckout(nested)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(project)
+	require.NoError(t, err)
+	require.Equal(t, want, resolved)
+}
+
 func localProfileCommand() *cobra.Command {
 	command := &cobra.Command{Use: "dev [source-root]"}
 	command.Flags().String("source-root", "dashboards", "source")

@@ -276,24 +276,30 @@ func (e *BundleBranchError) Error() string {
 func (e *BundleBranchError) Unwrap() error { return e.Err }
 
 const (
-	SurfaceDashboard       = "dashboard"
-	SurfaceAPI             = "api"
-	SurfaceAgent           = "agent"
-	SurfaceCLI             = "cli"
-	SurfaceDataExplorer    = "data_explorer"
-	SurfacePublicDashboard = "public_dashboard"
+	SurfaceDashboard        = "dashboard"
+	SurfaceAPI              = "api"
+	SurfaceAgent            = "agent"
+	SurfaceCLI              = "cli"
+	SurfaceDataExplorer     = "data_explorer"
+	SurfaceSavedExploration = "saved_exploration"
+	SurfacePublicDashboard  = "public_dashboard"
 
-	OperationDashboardAggregate           = "dashboard_aggregate"
-	OperationDashboardRows                = "dashboard_rows"
-	OperationDashboardCount               = "dashboard_count"
-	OperationDashboardHistogram           = "dashboard_histogram"
-	OperationDashboardDistribution        = "dashboard_distribution"
-	OperationDashboardFilterOptions       = "dashboard_filter_options"
-	OperationDashboardSpatialTile         = "dashboard_spatial_tile"
-	OperationDashboardSpatialTileBudget   = "dashboard_spatial_tile_budget"
-	OperationDashboardSpatialMetadata     = "dashboard_spatial_metadata"
-	OperationAPIQuery                     = "api_query"
-	OperationAPIPreview                   = "api_preview"
+	OperationDashboardAggregate         = "dashboard_aggregate"
+	OperationDashboardRows              = "dashboard_rows"
+	OperationDashboardCount             = "dashboard_count"
+	OperationDashboardHistogram         = "dashboard_histogram"
+	OperationDashboardDistribution      = "dashboard_distribution"
+	OperationDashboardFilterOptions     = "dashboard_filter_options"
+	OperationDashboardSpatialTile       = "dashboard_spatial_tile"
+	OperationDashboardSpatialTileBudget = "dashboard_spatial_tile_budget"
+	OperationDashboardSpatialMetadata   = "dashboard_spatial_metadata"
+	OperationAPIQuery                   = "api_query"
+	OperationAPIPreview                 = "api_preview"
+	// OperationDashboardDraftPreview marks queries emitted while rendering an
+	// authored draft. A draft is a new query shape, even though its compiled
+	// report uses the dashboard execution surface; authorization therefore
+	// requires semantic.query (and its semantic.consume prerequisite).
+	OperationDashboardDraftPreview        = "dashboard_draft_preview"
 	OperationAgentQuery                   = "agent_query"
 	OperationPreviewWindow                = "preview_window"
 	OperationSemanticExplore              = "semantic_explore"

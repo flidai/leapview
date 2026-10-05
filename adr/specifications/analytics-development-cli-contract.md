@@ -86,6 +86,10 @@ the Connection's exact graph identity and derives its connector type. Unknown
 names, unsupported options, duplicate YAML keys, unsupported versions, and
 unknown document fields must fail with file-and-field diagnostics. Names must
 not be silently case-folded or matched to a different resource.
+The selected profile is pinned to the compiled logical connection catalog,
+not to the whole analytics graph digest. Dashboard and model edits with the
+same connection contract must continue to synchronize; connection catalog
+changes require a reviewed local runtime reset or replacement.
 
 The initial authenticated local profile uses `credentials.env` to reference one
 allowlisted `LEAPVIEW_DEV_CONNECTION_<NAME>` variable containing an atomic JSON
@@ -472,6 +476,25 @@ noninteractive mode. Only confirmed activation may be reported as active success
 
 ## Required conformance evidence
 
+Bare local `dev` must publish each valid sealed candidate to its exact
+checkout-owned `dev` target, wait for a committed publication and matching
+active generation, and only then report the candidate as current and open the
+ordinary app URL. The local unprotected plan uses the normal publication,
+worker, CAS, audit, and serving-generation path. A retry of the same candidate
+must replay its publication; a different source revision must not be reported
+as active while the prior generation is still selected. A failed, rejected, or
+indeterminate activation keeps the previous candidate/current app usable and
+reports the exact failure. Remote `dev --target` never auto-publishes.
+
+The initialized project must make the normal local product navigation useful:
+Insights, the authored dashboards, source/model/semantic-model catalogs,
+exploration, and locally applicable administration routes must serve the
+active local generation. Unconfigured external integrations may require setup
+but must not appear as unexplained Service Unavailable links. The local browser
+handoff must not open an empty app before the first activation. Local admin
+authority must remain bound to the loopback checkout target and must not grant
+authority over a production target.
+
 | Scenario | Required evidence |
 | --- | --- |
 | Remote active Docker context, `DOCKER_HOST`, or `DOCKER_CONTEXT` | Each is tested, including precedence conflicts; reject before mutations, pulls, or staging. |
@@ -495,6 +518,10 @@ noninteractive mode. Only confirmed activation may be reported as active success
 | Guided setup, manual profile editing, and repeated application | Same schema and owning binding APIs; protect existing files, credentials, and binding revisions. |
 | Approved remote reads and subsequent YAML edits | Explicit read/refresh scope; no unrequested mutable-data refresh or offline guarantee for live reads. |
 | Local profile followed by production deployment | Profiles and credentials excluded from bundles; production bindings remain unchanged. |
+| Fresh `init → dev` with no active generation | Local candidate publishes through the normal unprotected activation worker; browser opens the ordinary app only after its exact generation is active. |
+| Valid edit, invalid edit, repair, and restart | Each valid edit atomically advances local serving state; an invalid edit retains the previous app and marks the preview stale with a diagnostic; restart recovers the same active generation and data. |
+| Local app navigation and admin | Insights, dashboard/catalog/explore, and locally available admin surfaces work without generic 503 links; external integrations show actionable setup states. |
+| Explicit remote `dev --target` | No automatic publication or local admin authority is applied to the remote target. |
 | Two sessions; one receives Ctrl-C | Other session and services remain usable; last detach stops services and retains data. |
 | Crash or concurrent join/last exit | Stale ownership expires; a newly registered live session is never stopped implicitly. |
 | Stop/reset with attachments or a racing join | Refuse or serialize safely; no active session loses resources and no other checkout is affected. |

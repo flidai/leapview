@@ -745,6 +745,12 @@ func flattenHierarchyRowsTyped(rows reportdef.QueryRows, levelAliases []string, 
 	nodes := make(map[string]*hierarchyFrameNode)
 	for rowIndex, row := range rows {
 		rawValue := normalizeDatumValue(row[metricAlias])
+		// Aggregate queries preserve groups whose metric is empty. Those rows do
+		// not contribute a hierarchy node, just as they do not contribute to the
+		// aggregate itself, and must not be mistaken for malformed numeric data.
+		if rawValue == nil {
+			continue
+		}
 		value := 0.0
 		ok := true
 		var exact *big.Rat

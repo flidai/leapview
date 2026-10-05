@@ -24,7 +24,7 @@ var errActivateCommitLostAck = errors.New("injected activation commit acknowledg
 func TestPostgresActivateReplaysAfterCommitLostAcknowledgement(t *testing.T) {
 	p := deliveryTestDB(t)
 	lineage := &testActivationLineage{}
-	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
+	r := NewWithOptions(p, Options{ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	input, ids := prepareLostAckActivation(t, r)
 	lineage.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}
 	if _, err := r.Activate(t.Context(), input); !errors.Is(err, ErrConflict) {
@@ -90,7 +90,7 @@ func TestPostgresActivateReplaysAfterCommitLostAcknowledgement(t *testing.T) {
 func TestPostgresActivateRepublishActiveGenerationKeepsRootLive(t *testing.T) {
 	p := deliveryTestDB(t)
 	lineage := &testActivationLineage{}
-	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
+	r := NewWithOptions(p, Options{ActivationAdmission: allowTestActivation, ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	input, ids := prepareLostAckActivation(t, r)
 	lineage.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation, CompiledGraphDigest: testDigest('b')}
 	seedPhysicalRetentionFixture(t, p, ids.seal)

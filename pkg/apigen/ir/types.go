@@ -113,6 +113,43 @@ type Endpoint struct {
 	Extensions  map[string]any        `json:"extensions,omitempty"`
 }
 
+// AuthzMetadata is the transport-neutral authorization annotation attached to
+// an endpoint's x-authz extension. Mode and privilege preserve the legacy
+// capability contract. Action and Resolver identify an optional typed action
+// and the domain-owned resolver that can produce its concrete target.
+//
+// APIGen deliberately treats Action and Resolver as opaque stable names. The
+// product authorization layer owns their vocabulary and resolution semantics.
+type AuthzMetadata struct {
+	Mode      string `json:"mode,omitempty"`
+	Privilege string `json:"privilege,omitempty"`
+	Action    string `json:"action,omitempty"`
+	Resolver  string `json:"resolver,omitempty"`
+}
+
+// AuthzMetadataFromExtensions returns the normalized authorization annotation
+// from an endpoint extension map. Validate must be called before consuming an
+// IR document, so a present x-authz object is expected to contain strings.
+func AuthzMetadataFromExtensions(extensions map[string]any) (AuthzMetadata, bool) {
+	if extensions == nil {
+		return AuthzMetadata{}, false
+	}
+	raw, ok := extensions["x-authz"]
+	if !ok {
+		return AuthzMetadata{}, false
+	}
+	value, ok := raw.(map[string]any)
+	if !ok {
+		return AuthzMetadata{}, false
+	}
+	metadata := AuthzMetadata{}
+	metadata.Mode, _ = value["mode"].(string)
+	metadata.Privilege, _ = value["privilege"].(string)
+	metadata.Action, _ = value["action"].(string)
+	metadata.Resolver, _ = value["resolver"].(string)
+	return metadata, true
+}
+
 // Command describes a transport-neutral application command derived from an endpoint.
 type Command struct {
 	Owner               string           `json:"owner"`

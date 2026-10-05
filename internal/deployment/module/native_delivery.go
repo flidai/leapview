@@ -484,8 +484,21 @@ func (p NativeDeliveryPublication) validate(project projectgraph.ResourceID, tar
 	if p.ID != p.OperationID || p.ID.String() != strings.TrimSpace(p.ID.String()) || p.OperationID.String() != strings.TrimSpace(p.OperationID.String()) || p.EventID.String() != strings.TrimSpace(p.EventID.String()) || p.AuditID.String() != strings.TrimSpace(p.AuditID.String()) {
 		return fmt.Errorf("%w: native publication identities are not canonical", deployment.ErrDeliveryInvalid)
 	}
-	if p.Status != "pending" {
-		return fmt.Errorf("%w: native publication must remain pending", deployment.ErrDeliveryConflict)
+	switch p.Status {
+	case "pending":
+		if !p.CompletedAt.IsZero() || p.ResultTargetRevision != 0 {
+			return fmt.Errorf("%w: pending native publication has completion evidence", deployment.ErrDeliveryConflict)
+		}
+	case "committed":
+		// An exact idempotent retry may arrive after the activation worker has
+		// committed. The repository has already checked the operation identity;
+		// retain the completed projection instead of turning a lost response
+		// into a conflict.
+		if p.CompletedAt.IsZero() || !p.CompletedAt.Equal(p.CompletedAt.UTC()) || p.ResultTargetRevision != p.ExpectedTargetRevision+1 {
+			return fmt.Errorf("%w: committed native publication has invalid completion evidence", deployment.ErrDeliveryConflict)
+		}
+	default:
+		return fmt.Errorf("%w: native publication is not pending or committed", deployment.ErrDeliveryConflict)
 	}
 	if err := platformdigest.ValidateSHA256Identity(p.PlanDigest); err != nil {
 		return fmt.Errorf("%w: plan digest: %v", deployment.ErrDeliveryInvalid, err)
@@ -493,7 +506,7 @@ func (p NativeDeliveryPublication) validate(project projectgraph.ResourceID, tar
 	if err := platformdigest.ValidateSHA256Identity(p.RequestDigest); err != nil {
 		return fmt.Errorf("%w: request digest: %v", deployment.ErrDeliveryInvalid, err)
 	}
-	if p.ExpectedTargetRevision <= 0 || p.CreatedAt.IsZero() || !p.CreatedAt.Equal(p.CreatedAt.UTC()) || !p.CompletedAt.IsZero() {
+	if p.ExpectedTargetRevision <= 0 || p.CreatedAt.IsZero() || !p.CreatedAt.Equal(p.CreatedAt.UTC()) || (!p.CompletedAt.IsZero() && p.CompletedAt.Before(p.CreatedAt)) {
 		return fmt.Errorf("%w: native publication lifecycle evidence is invalid", deployment.ErrDeliveryInvalid)
 	}
 	if p.ExpectedBaseGenerationID != uuid.Nil && p.ExpectedBaseGenerationID.String() != strings.TrimSpace(p.ExpectedBaseGenerationID.String()) {

@@ -37,6 +37,10 @@ func (activationAuditStub) AppendActivationAudit(context.Context, postgres.Tx, p
 	return postgres.AuditEvent{}, nil
 }
 
+func allowTestActivationAdmission(context.Context, postgres.Tx, postgres.DeliveryPublication) error {
+	return nil
+}
+
 type nativeEventStub struct{}
 
 func (nativeEventStub) AppendDeliveryEvent(context.Context, postgres.Tx, NativeDeliveryEventInput) (postgres.Event, error) {
@@ -90,7 +94,9 @@ func testApprovalAuthority(repository *postgres.Repository) (*postgres.ApprovalA
 }
 
 func TestNewPostgresPersistenceWiresNativeSurfaces(t *testing.T) {
-	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{
+		ActivationAudit: activationAuditStub{}, ActivationAdmission: allowTestActivationAdmission,
+	})
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
 		t.Fatal(err)
@@ -114,14 +120,18 @@ func TestNewPostgresPersistenceRejectsNil(t *testing.T) {
 }
 
 func TestNewPostgresPersistenceRejectsNonTransactionalHandle(t *testing.T) {
-	repository := postgres.NewWithOptions(readOnlyDeploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	repository := postgres.NewWithOptions(readOnlyDeploymentDBStub{}, postgres.Options{
+		ActivationAudit: activationAuditStub{}, ActivationAdmission: allowTestActivationAdmission,
+	})
 	if _, err := NewPostgresPersistence(repository); err == nil {
 		t.Fatal("expected non-transactional PostgreSQL handle rejection")
 	}
 }
 
 func TestBuildNativePostgreSQLPersistenceExposesModule(t *testing.T) {
-	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{
+		ActivationAudit: activationAuditStub{}, ActivationAdmission: allowTestActivationAdmission,
+	})
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +164,9 @@ func TestBuildNativePostgreSQLPersistenceExposesModule(t *testing.T) {
 }
 
 func TestBuildNativePostgreSQLPersistenceRequiresMutationAuthority(t *testing.T) {
-	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{
+		ActivationAudit: activationAuditStub{}, ActivationAdmission: allowTestActivationAdmission,
+	})
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +188,9 @@ func TestBuildNativePostgreSQLPersistenceRequiresMutationAuthority(t *testing.T)
 }
 
 func TestBuildNativePostgreSQLPersistenceRejectsMissingMutationAuthority(t *testing.T) {
-	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{
+		ActivationAudit: activationAuditStub{}, ActivationAdmission: allowTestActivationAdmission,
+	})
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +217,21 @@ func TestBuildNativePostgreSQLPersistenceRejectsMissingMutationAuthority(t *test
 				t.Fatal("expected missing native mutation authority rejection")
 			}
 		})
+	}
+}
+
+func TestPostgresPersistenceRequiresActivationAdmission(t *testing.T) {
+	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence.Approval, err = testApprovalAuthority(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistence.validate(); err == nil {
+		t.Fatal("expected missing PostgreSQL activation admission rejection")
 	}
 }
 

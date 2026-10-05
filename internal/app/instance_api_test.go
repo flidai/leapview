@@ -15,7 +15,7 @@ import (
 func TestGetInstanceReturnsConfiguredEnvironment(t *testing.T) {
 	store := testStore(t)
 	principal := testPrincipal(t, context.Background(), store, "publisher@example.com", "Publisher")
-	token, _ := testScopedAPIToken(t, context.Background(), store, access.APITokenInput{PrincipalID: principal.ID, Name: "publisher", Capabilities: []access.Capability{access.CapabilityResourceEdit}})
+	token := testTypedInstanceAPIToken(t, context.Background(), store, principal.ID, "publisher", access.ActionPlatformSettingsRead)
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(nil, testStoreOptions(store, assemblyConfig{Auth: auth, DefaultEnvironment: "prod"}))
 	unauthenticated := httptest.NewRecorder()

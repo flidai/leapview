@@ -494,6 +494,11 @@ type ToolResultPreview struct {
 // PreviewToolResult applies the durable transcript result limits and summaries
 // before an in-flight result is published to the browser.
 func PreviewToolResult(result, displayJSON string) ToolResultPreview {
+	if preview, ok := previewVisualDisplayResult(displayJSON); ok {
+		preview.Summary = toolSummary(result)
+		preview.Error = toolErrorSummary(result)
+		return preview
+	}
 	if preview, ok := previewCodeDisplay(displayJSON); ok {
 		preview.Summary = toolSummary(result)
 		preview.Error = toolErrorSummary(result)
@@ -505,6 +510,24 @@ func PreviewToolResult(result, displayJSON string) ToolResultPreview {
 		Summary:    toolSummary(result),
 		Error:      toolErrorSummary(result),
 	}
+}
+
+func previewVisualDisplayResult(raw string) (ToolResultPreview, bool) {
+	var display struct {
+		ID     string          `json:"id"`
+		Patch  json.RawMessage `json:"patch"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(raw), &display); err != nil || display.ID == "" || len(display.Patch) == 0 || len(display.Result) == 0 {
+		return ToolResultPreview{}, false
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(display.Result, &result); err != nil || result.ID != display.ID {
+		return ToolResultPreview{}, false
+	}
+	return ToolResultPreview{ResultJSON: formatJSONPreview(string(display.Result), maxToolResultPreviewBytes), Format: "json"}, true
 }
 
 func previewCodeDisplay(raw string) (ToolResultPreview, bool) {

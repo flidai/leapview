@@ -57,9 +57,9 @@ test('theme bootstrap does not emit applied event during page reveal', async () 
 
     expect(state).toEqual({
       events: [],
-      colorMode: 'light',
+      colorMode: 'auto',
       colorScheme: 'light',
-      storedMode: 'light',
+      storedMode: null,
     })
   } finally {
     await page.close()
@@ -92,6 +92,38 @@ test('explicit theme changes still emit applied event', async () => {
       colorScheme: 'dark',
       storedMode: 'dark_dimmed',
     })
+
+    await page.reload()
+    await page.waitForFunction(() => (window as any).themeBooted === true)
+    const reloaded = await page.evaluate(() => ({
+      colorMode: document.documentElement.dataset.colorMode,
+      darkTheme: document.documentElement.dataset.darkTheme,
+      storedMode: localStorage.getItem('leapview-color-mode'),
+    }))
+    expect(reloaded).toEqual({ colorMode: 'dark', darkTheme: 'dark_dimmed', storedMode: 'dark_dimmed' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('clearing the theme preference restores the system default without persisting it again', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).themeBooted === true)
+    await page.evaluate(() => {
+      document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: 'dark' } }))
+      localStorage.removeItem('leapview-color-mode')
+    })
+
+    await page.reload()
+    await page.waitForFunction(() => (window as any).themeBooted === true)
+    const state = await page.evaluate(() => ({
+      colorMode: document.documentElement.dataset.colorMode,
+      colorScheme: document.documentElement.style.colorScheme,
+      storedMode: localStorage.getItem('leapview-color-mode'),
+    }))
+    expect(state).toEqual({ colorMode: 'auto', colorScheme: 'light', storedMode: null })
   } finally {
     await page.close()
   }
@@ -143,6 +175,7 @@ test('supported Primer themes apply their native color mode and theme identifier
 test('authenticated saved theme overrides stale browser storage', async () => {
   const page = await browser.newPage()
   try {
+    await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'light'))
     await page.goto(`${baseURL}/saved-theme`)
     await page.waitForFunction(() => (window as any).themeBooted === true)
     const state = await page.evaluate(() => ({
@@ -186,7 +219,6 @@ function testDocument(savedTheme = ''): string {
     <html data-color-mode="auto" data-light-theme="light" data-dark-theme="dark"${savedTheme ? ` data-theme-preference="${savedTheme}"` : ''}>
       <head>
         <script>
-          localStorage.setItem('leapview-color-mode', 'light');
           window.themeAppliedEvents = [];
           document.addEventListener('leapview-theme-applied', (event) => {
             window.themeAppliedEvents.push(event.detail);

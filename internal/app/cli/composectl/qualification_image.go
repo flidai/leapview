@@ -426,18 +426,12 @@ func (c *Controller) QualifyImage(
 	if err := instanceController.FirstLogin(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(credentialsPath, credentialsOutput.Bytes(), 0o600); err != nil {
-		return err
-	}
 	var credentials qualificationCredentials
 	if err := json.Unmarshal(credentialsOutput.Bytes(), &credentials); err != nil {
 		return fmt.Errorf("decode initial credentials: %w", err)
 	}
 	credentials.QualificationPassword, err = randomHex(24)
 	if err != nil {
-		return err
-	}
-	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
 		return err
 	}
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
@@ -448,12 +442,27 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	if err := bootstrapQualificationProject(
+	bootstrapResult, err := bootstrapQualificationProject(
 		ctx,
 		c.qualificationContainers.Existing(containerID),
 		"http://localhost:8080",
-		credentials.PublisherToken,
-	); err != nil {
+		credentials.ProjectClaimToken,
+	)
+	if err != nil {
+		return err
+	}
+	credentials.ClaimCredentialID = bootstrapResult.ClaimCredentialID
+	credentials.PublisherToken = bootstrapResult.PublisherToken
+	credentials.PublisherTokenExpires = bootstrapResult.PublisherTokenExpiresAt
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	if err := acknowledgeQualificationProjectClaim(ctx, c.qualificationContainers.Existing(containerID), "http://localhost:8080", credentials.PublisherToken, credentials.ClaimCredentialID); err != nil {
+		return err
+	}
+	credentials.ProjectClaimToken = ""
+	credentials.ProjectClaimTokenExpiresAt = ""
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
 		return err
 	}
 	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(

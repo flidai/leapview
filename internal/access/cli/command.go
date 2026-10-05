@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/spf13/cobra"
 )
 
@@ -68,12 +69,7 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 			result, err := authentication.Login(ctx, LoginRequest{
 				Name: profileName, Origin: metadata.Origin, InstanceID: metadata.InstanceID,
 				Environment: metadata.Environment, ProjectID: projectID,
-				Capabilities: []string{
-					"RESOURCE_USE",
-					"RESOURCE_READ",
-					"RESOURCE_EDIT",
-					"RESOURCE_PUBLISH",
-				},
+				Actions: access.DefaultAuthoringActions(),
 				Headless: headless,
 			}, func(challenge DeviceChallenge) {
 				if format == "json" {

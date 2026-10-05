@@ -1,5 +1,7 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, nothing } from 'lit'
 import { property } from 'lit/decorators.js'
+import { ArrowUpRight } from 'lucide'
+import { lucideIcon } from './lucide-icons'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import '../dashboard/visualization/host'
 
@@ -7,6 +9,7 @@ class VisualArtifact extends LitElement {
   @property() type: string = ''
   @property({ attribute: 'artifact-id' }) artifactId = ''
   @property({ attribute: false }) payload?: VisualizationEnvelope
+  @property({ attribute: false }) explorerHref = ''
 
   static styles = css`
     :host {
@@ -41,6 +44,27 @@ class VisualArtifact extends LitElement {
       flex: 1;
     }
 
+    .explorer-action {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--base-size-4);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      text-decoration: none;
+    }
+
+    .explorer-action:hover,
+    .explorer-action:focus-visible {
+      color: var(--lv-fg-default);
+      text-decoration: underline;
+      outline-color: var(--lv-fg-accent);
+    }
+
+    .explorer-action svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+    }
+
     .limit-notice { margin: 0; padding: 6px 10px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
 
     .state {
@@ -68,7 +92,7 @@ class VisualArtifact extends LitElement {
       && this.payload.dataState.datasets.some(dataset => dataset.rows.length >= budget)
     return html`
       <div class=${`artifact ${isTabularVisualType(this.payload.spec.kind) ? 'table' : 'chart'}`}>
-        <lv-visualization-host .envelope=${this.payload}></lv-visualization-host>
+        <lv-visualization-host .envelope=${this.payload}>${this.explorerHref ? html`<a slot="agent-action" class="explorer-action" href=${this.explorerHref} aria-label="Open in Data Explorer" title="Open in Data Explorer">${lucideIcon(ArrowUpRight, { size: 16 })}<span>Open in Data Explorer</span></a>` : nothing}</lv-visualization-host>
         ${limitNotice || limited ? html`<p class="limit-notice" role="note">${limitNotice || `Showing up to ${budget} rows. More data may exist.`}</p>` : null}
       </div>
     `

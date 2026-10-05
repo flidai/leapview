@@ -97,7 +97,9 @@ candidate APIs; it never mounts live YAML as serving state or stages/refreshes
 data. Fixture changes require a matching manifest update and a `dev` restart;
 ordinary YAML edits never refresh mutable inputs.
 Invalid edits retain the last valid candidate and report actionable
-diagnostics. A candidate transition pins all queries in a view to one
+file-and-line diagnostics in the terminal and open local dashboard. A valid
+edit refreshes an already-open local dashboard after activation. A candidate
+transition pins all queries in a view to one
 candidate/snapshot identity, so late responses from an older view cannot mix
 with the replacement.
 

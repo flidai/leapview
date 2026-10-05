@@ -6,7 +6,7 @@ import (
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 )
 
-func TestSavedExplorationCommandsRequireProjectManagePrivilege(t *testing.T) {
+func TestSavedExplorationCommandsAuthenticateBeforeDomainAuthorization(t *testing.T) {
 	for _, operationID := range []string{
 		"createSavedExploration", "updateSavedExploration", "duplicateSavedExploration", "archiveSavedExploration",
 	} {
@@ -14,11 +14,14 @@ func TestSavedExplorationCommandsRequireProjectManagePrivilege(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing generated operation contract %q", operationID)
 		}
-		if contract.AuthzMode != "privilege" || contract.Command == nil || contract.Command.Privilege != "RESOURCE_MANAGE" {
+		// Ownership and exact semantic/token checks are exercised by the saved
+		// authorizer tests; the transport must retain authentication and durable
+		// command targeting without an unrelated project-management shortcut.
+		if contract.AuthzMode != "authenticated" || contract.Command == nil || contract.Command.Privilege != "" {
 			t.Fatalf("%s authz/command = mode %q command %#v", operationID, contract.AuthzMode, contract.Command)
 		}
-		if scope := contract.Extensions["x-leapview-object-scope"]; scope != "project" {
-			t.Fatalf("%s object scope = %#v, want project", operationID, scope)
+		if scope := contract.Extensions["x-leapview-object-scope"]; scope != nil {
+			t.Fatalf("%s object scope = %#v, want domain-resolved ownership", operationID, scope)
 		}
 		if contract.Command.Target == nil || contract.Command.Target.Parameter != "project" {
 			t.Fatalf("%s target = %#v, want service-level project target metadata", operationID, contract.Command.Target)

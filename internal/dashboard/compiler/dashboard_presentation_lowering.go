@@ -298,8 +298,16 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if out.Maximum != nil && !finiteDashboardFloat(*out.Maximum) {
 			return nil, fmt.Errorf("presentation.maximum must be finite")
 		}
-		if visualType == document.DashboardVisualTypeGauge && (out.Minimum == nil || out.Maximum == nil) {
-			return nil, fmt.Errorf("presentation.minimum and presentation.maximum are required for gauge visuals")
+		if visualType == document.DashboardVisualTypeGauge {
+			if (out.Minimum == nil) != (out.Maximum == nil) {
+				return nil, fmt.Errorf("presentation.minimum and presentation.maximum must both be set for gauge visuals")
+			}
+			// An omitted pair is the canonical auto-domain intent. Targets and
+			// threshold positions are authored against a specific domain, so they
+			// still require an explicit pair.
+			if out.Minimum == nil && (out.Target != nil || out.Thresholds != nil) {
+				return nil, fmt.Errorf("presentation.minimum and presentation.maximum are required when gauge targets or thresholds are configured")
+			}
 		}
 		if out.Minimum != nil && out.Maximum != nil && *out.Minimum >= *out.Maximum {
 			return nil, fmt.Errorf("presentation.minimum must be less than maximum")

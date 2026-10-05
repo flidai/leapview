@@ -19,13 +19,14 @@ func (m *Module) Login(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) LoginPageOptions(r *http.Request) accessui.LoginPageOptions {
 	options := accessui.LoginPageOptions{
-		LocalAuth:     m != nil && m.auth != nil && m.auth.LocalAuthEnabled(),
-		SSOAuth:       m == nil || m.auth == nil || m.auth.SSOConfigured(),
-		ProviderLabel: "Sign in with Azure Active Directory",
-		Presentation:  m.presentation,
-		Assets:        m.assets,
-		Error:         loginErrorMessage(r),
-		ErrorCode:     loginErrorCode(r),
+		LocalAuth:        m != nil && m.auth != nil && m.auth.LocalAuthEnabled(),
+		DevelopmentLogin: m != nil && m.auth != nil && m.auth.DevelopmentLoginEnabled(),
+		SSOAuth:          m == nil || m.auth == nil || m.auth.SSOConfigured(),
+		ProviderLabel:    "Sign in with Azure Active Directory",
+		Presentation:     m.presentation,
+		Assets:           m.assets,
+		Error:            loginErrorMessage(r),
+		ErrorCode:        loginErrorCode(r),
 	}
 	if m == nil || m.auth == nil {
 		return options
@@ -91,6 +92,14 @@ func (m *Module) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.auth.LocalLogin(w, r)
+}
+
+func (m *Module) DevelopmentLogin(w http.ResponseWriter, r *http.Request) {
+	if m == nil || m.auth == nil {
+		http.NotFound(w, r)
+		return
+	}
+	m.auth.DevelopmentLogin(w, r)
 }
 
 func (m *Module) LocalPassword(w http.ResponseWriter, r *http.Request) {

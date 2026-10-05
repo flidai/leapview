@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,17 +19,27 @@ type commandRunner struct {
 	env []string
 }
 
+var (
+	credentialHeaderPattern = regexp.MustCompile(`(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+`)
+	credentialURLPattern    = regexp.MustCompile(`(?i)(://[^:/\s]+:)[^@/\s]+@`)
+	credentialQueryPattern  = regexp.MustCompile(`(?i)(token|password|secret|key)=([^&\s]+)`)
+)
+
 func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPolicy, policySHA256 string, contract *securitypolicy.Exceptions, stdout io.Writer) error {
+	report := newVulnerabilityReport(opts, policySHA256, "")
+	rejectNotScanned := func(message string) error {
+		return rejectWithReport(opts, report, outcomeNotScanned, message)
+	}
 	gh, ok := findExecutable("gh", r.env)
 	if !ok {
-		return errors.New("live verifier gh is missing")
+		return rejectNotScanned("live verifier gh is missing")
 	}
 	docker, dockerOK := findExecutable("docker", r.env)
 	if !dockerOK {
-		return errors.New("live verifier docker is missing")
+		return rejectNotScanned("live verifier docker is missing")
 	}
 	if _, err := r.run(gh, []string{"attestation", "verify", "--help"}, ""); err != nil {
-		return errors.New("live verifier gh attestation is missing")
+		return rejectNotScanned("live verifier gh attestation is missing")
 	}
 	ghToken, _ := envValue(r.env, "GH_TOKEN")
 	if ghToken == "" {
@@ -37,30 +48,37 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 	ghEnv := setEnv(r.env, "GH_TOKEN", ghToken)
 	attestation, err := r.runWithEnv(gh, []string{"attestation", "verify", "oci://" + opts.image, "--repo", repositoryIdentity, "--signer-workflow", opts.expectedWorkflow, "--source-digest", opts.sourceRevision, "--deny-self-hosted-runners", "--format", "json"}, "", ghEnv)
 	if err != nil || !verifyAttestation(attestation, opts.expectedWorkflow, opts.sourceRevision) {
-		return errors.New("attestation identity or source revision is wrong")
+		return rejectNotScanned("attestation identity or source revision is wrong")
 	}
 	sbom, err := r.run(docker, []string{"buildx", "imagetools", "inspect", opts.image, "--format", "{{ json .SBOM }}"}, "")
 	if err != nil || !hasSPDXDocument(sbom) {
-		return errors.New("no SPDX SBOM was discoverable for this digest")
+		return rejectNotScanned("no SPDX SBOM was discoverable for this digest")
 	}
 
-	trivyBin, trivyArgs, err := r.trivyCommand(policy, docker)
+	cacheDir, err := os.MkdirTemp("", "ociadmission-trivy-cache-")
 	if err != nil {
-		return err
+		return rejectWithReport(opts, report, outcomeScannerError, "pinned vulnerability scanner cache is unavailable")
+	}
+	defer os.RemoveAll(cacheDir)
+	trivyBin, trivyArgs, err := r.trivyCommand(policy, docker, cacheDir)
+	if err != nil {
+		return rejectWithReport(opts, report, outcomeScannerError, err.Error())
 	}
 	versionArgs := append([]string{trivyBin}, trivyArgs...)
 	versionArgs = append(versionArgs, "version", "--format", "json")
 	versionJSON, err := r.runCommandParts(versionArgs)
 	if err != nil {
-		return errors.New("could not determine trivy version")
+		return rejectWithReport(opts, report, outcomeScannerError, "could not determine trivy version")
 	}
 	actualVersion, err := scannerVersion(versionJSON)
 	if err != nil || actualVersion != policy.ScannerVersion {
 		if err == nil {
-			return errors.New("trivy version does not match pinned version")
+			report.Scanner.Version = sanitizeReportValue(actualVersion, r.env, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-", 64)
+			return rejectWithReport(opts, report, outcomeScannerError, "trivy version does not match pinned version")
 		}
-		return errors.New("could not determine trivy version")
+		return rejectWithReport(opts, report, outcomeScannerError, "could not determine trivy version")
 	}
+	report.Scanner.Version = actualVersion
 	args := append([]string{trivyBin}, trivyArgs...)
 	args = append(args, "image", "--quiet", "--format", "json", "--exit-code", "0")
 	for _, severity := range policy.Severity {
@@ -74,22 +92,38 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 	}
 	args = append(args, opts.image)
 	trivyJSON, diagnostic, err := r.runCommandPartsWithDiagnostic(args)
+	report.Database = reportDatabasesFromCache(cacheDir, r.env)
 	if err != nil {
+		summary := "pinned vulnerability scan could not complete"
 		if diagnostic != "" {
-			return fmt.Errorf("pinned vulnerability scan could not complete: %s", diagnostic)
+			summary += ": " + diagnostic
 		}
-		return errors.New("pinned vulnerability scan could not complete")
+		return rejectWithReport(opts, report, outcomeScannerError, summary)
 	}
-	unresolved, err := unresolvedCount(trivyJSON, contract)
+	if opts.vulnerabilityReportPath != "" {
+		db := report.Database.Vulnerability
+		if db.Version == "" || db.UpdatedAt == "" || db.NextUpdate == "" || db.DownloadedAt == "" {
+			return rejectWithReport(opts, report, outcomeScannerError, "scanner vulnerability database metadata is unavailable")
+		}
+	}
+	parsed, err := parseVulnerabilityReport(trivyJSON, contract, r.env)
 	if err != nil {
-		return errors.New("vulnerability evidence is not machine-readable")
+		return rejectWithReport(opts, report, outcomeInvalidReport, "vulnerability evidence is not machine-readable")
 	}
+	report.Revision = parsed.ImageRevision
 	max, err := maxUnresolved(policy.MaxUnresolved)
 	if err != nil {
-		return errors.New("vulnerability policy is not pinned")
+		return rejectWithReport(opts, report, outcomeScannerError, "vulnerability policy is not pinned")
 	}
-	if unresolved > max {
-		return errors.New("vulnerability evidence exceeds policy")
+	report.UnresolvedCount = parsed.UnresolvedCount
+	report.Findings = parsed.Findings
+	report.FindingsTruncated = parsed.FindingsTruncated
+	if parsed.UnresolvedCount > max {
+		return rejectWithReport(opts, report, outcomeRejected, fmt.Sprintf("vulnerability evidence exceeds policy (%d unresolved findings)", parsed.UnresolvedCount))
+	}
+	report.Outcome = outcomePassed
+	if err := writeVulnerabilityReport(opts.vulnerabilityReportPath, report); err != nil {
+		return errors.New("could not write vulnerability report")
 	}
 	digest := opts.image[strings.LastIndex(opts.image, "@")+1:]
 	vulnerabilityResult := map[string]any{"sha256": policySHA256, "scanner": "trivy", "passed": true}
@@ -105,9 +139,9 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 	return writeResult(opts, r.env, result, stdout)
 }
 
-func (r commandRunner) trivyCommand(policy vulnerabilityPolicy, docker string) (string, []string, error) {
+func (r commandRunner) trivyCommand(policy vulnerabilityPolicy, docker, cacheDir string) (string, []string, error) {
 	if trivy, ok := findExecutable("trivy", r.env); ok {
-		return trivy, nil, nil
+		return trivy, []string{"--cache-dir", cacheDir}, nil
 	}
 	if _, err := r.run(docker, []string{"info"}, ""); err != nil {
 		return "", nil, errors.New("pinned trivy verifier cannot access Docker")
@@ -116,7 +150,7 @@ func (r commandRunner) trivyCommand(policy vulnerabilityPolicy, docker string) (
 	if !ok || home == "" {
 		home = "/root"
 	}
-	return docker, []string{"run", "--rm", "--network", "host", "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", home + "/.docker:/root/.docker:ro", policy.ScannerImage}, nil
+	return docker, []string{"run", "--rm", "--network", "host", "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", home + "/.docker:/root/.docker:ro", "-v", cacheDir + ":/root/.cache/trivy", policy.ScannerImage, "--cache-dir", "/root/.cache/trivy"}, nil
 }
 
 func (r commandRunner) run(name string, args []string, stdin string) ([]byte, error) {
@@ -154,25 +188,66 @@ func (r commandRunner) runCommandPartsWithDiagnostic(parts []string) ([]byte, st
 	defer cancel()
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	cmd.Env = r.env
-	var diagnostic strings.Builder
+	output := boundedDiagnostic{limit: maxVulnerabilityJSONBytes}
+	cmd.Stdout = &output
+	diagnostic := boundedDiagnostic{limit: 4096}
 	cmd.Stderr = &diagnostic
-	output, err := cmd.Output()
+	err := cmd.Run()
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	return output, r.redactDiagnostic(diagnostic.String()), err
+	if output.overflow && err == nil {
+		err = errors.New("scanner output exceeds bounded size")
+	}
+	// Never expose a truncated credential: exact secret matching cannot redact
+	// a value cut off at the bounded stderr boundary.
+	if diagnostic.overflow {
+		return []byte(output.value.String()), "scanner stderr exceeded bounded size", err
+	}
+	return []byte(output.value.String()), r.redactDiagnostic(diagnostic.value.String()), err
+}
+
+type boundedDiagnostic struct {
+	value    strings.Builder
+	limit    int
+	overflow bool
+}
+
+func (b *boundedDiagnostic) Write(data []byte) (int, error) {
+	length := len(data)
+	remaining := b.limit - b.value.Len()
+	if remaining > 0 {
+		if len(data) > remaining {
+			b.overflow = true
+			data = data[:remaining]
+		}
+		_, _ = b.value.Write(data)
+	} else if length > 0 {
+		b.overflow = true
+	}
+	return length, nil
 }
 
 func (r commandRunner) redactDiagnostic(value string) string {
-	value = strings.TrimSpace(value)
-	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		if secret, ok := envValue(r.env, key); ok && secret != "" {
+	for _, entry := range r.env {
+		key, secret, ok := strings.Cut(entry, "=")
+		if ok && secret != "" && sensitiveEnvironmentKey(key) {
 			value = strings.ReplaceAll(value, secret, "***")
 		}
 	}
-	const limit = 2000
+	value = credentialHeaderPattern.ReplaceAllString(value, `${1}***`)
+	value = credentialURLPattern.ReplaceAllString(value, `${1}***@`)
+	value = credentialQueryPattern.ReplaceAllString(value, `${1}=***`)
+	value = strings.Map(func(char rune) rune {
+		if char < 32 || char == 127 {
+			return ' '
+		}
+		return char
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	const limit = 256
 	if len(value) > limit {
-		value = value[:limit] + "..."
+		value = strings.ToValidUTF8(value[:limit], "") + "..."
 	}
 	return value
 }

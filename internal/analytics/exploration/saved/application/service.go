@@ -585,7 +585,7 @@ func (s *Service) Execute(ctx context.Context, request saved.ExecuteRequest) (sa
 	if operation == "" {
 		operation = "saved_exploration_execute"
 	}
-	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: "saved_exploration", Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "saved_exploration", ObjectID: request.ID.String()})
+	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: dataquery.SurfaceSavedExploration, Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "saved_exploration", ObjectID: request.ID.String()})
 	result, err := s.executor.Execute(ctx, lease, request.ActorID, query)
 	if err != nil {
 		return saved.ExecuteResult{}, err
@@ -640,7 +640,7 @@ func (s *Service) ExecuteSpec(ctx context.Context, request saved.ExecuteSpecRequ
 	if operation == "" {
 		operation = "saved_exploration_url_execute"
 	}
-	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: "saved_exploration", Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "exploration_url", ObjectID: "url-export"})
+	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: dataquery.SurfaceSavedExploration, Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "exploration_url", ObjectID: "url-export"})
 	result, err := s.executor.Execute(ctx, lease, request.ActorID, query)
 	if err != nil {
 		return saved.ExecuteResult{}, err

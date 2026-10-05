@@ -13,6 +13,48 @@ export type ReportTableViewport = {
   height: number
 }
 
+export class ReportTableWindowRetryController {
+  delay = 2500
+  blocked = false
+  private retried = false
+  private timers = new Map<number, number>()
+
+  schedule(requestSeq: number, pending: () => boolean, acknowledged: () => boolean, expire: (retry: boolean) => void): void {
+    const timer = window.setTimeout(() => {
+      this.timers.delete(requestSeq)
+      if (!pending()) return
+      if (acknowledged()) {
+        this.schedule(requestSeq, pending, acknowledged, expire)
+        return
+      }
+      const retry = !this.retried
+      this.retried = true
+      this.blocked = !retry
+      expire(retry)
+    }, this.delay)
+    this.timers.set(requestSeq, timer)
+  }
+
+  settle(pendingSequences: Set<number>): void {
+    for (const [requestSeq, timer] of this.timers) {
+      if (pendingSequences.has(requestSeq)) continue
+      clearTimeout(timer)
+      this.timers.delete(requestSeq)
+    }
+  }
+
+  resetBudget(): void { this.retried = false }
+  allowRetry(): void { this.blocked = false; this.resetBudget() }
+  unblock(): void { this.blocked = false }
+  stop(): void { this.blocked = true; this.clear() }
+  reset(): void { this.clear(); this.allowRetry() }
+  get size(): number { return this.timers.size }
+  clear(): void {
+    for (const timer of this.timers.values()) clearTimeout(timer)
+    this.timers.clear()
+  }
+}
+
 export class ReportTableVirtualizationController {
   private viewport: ReportTableViewport = { top: 0, height: 0 }
 

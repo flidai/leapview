@@ -79,11 +79,11 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 
 	cfg := config.Config{
 		Production: true, PostgresExpectedMajor: platformpostgres.DefaultExpectedMajor, PostgresRequireTLS: true,
-		PostgresControlURL:             productionAdmissionTLSURL(control.URL(runtime), h.RootCertPath()),
-		PostgresControlMigratorURL:     productionAdmissionTLSURL(control.URL(migrator), h.RootCertPath()),
-		PostgresControlMaintenanceURL:  productionAdmissionTLSURL(control.URL(maintenance), h.RootCertPath()),
-		PostgresDuckLakeURL:            productionAdmissionTLSURL(ducklake.URL(ducklakeRuntime), h.RootCertPath()),
-		PostgresDuckLakeMaintenanceURL: productionAdmissionTLSURL(ducklake.URL(ducklakeMaintenance), h.RootCertPath()),
+		PostgresControlURL:             productionAdmissionTLSURL(control.PrivateURL(runtime), h.RootCertPath()),
+		PostgresControlMigratorURL:     productionAdmissionTLSURL(control.PrivateURL(migrator), h.RootCertPath()),
+		PostgresControlMaintenanceURL:  productionAdmissionTLSURL(control.PrivateURL(maintenance), h.RootCertPath()),
+		PostgresDuckLakeURL:            productionAdmissionTLSURL(ducklake.PrivateURL(ducklakeRuntime), h.RootCertPath()),
+		PostgresDuckLakeMaintenanceURL: productionAdmissionTLSURL(ducklake.PrivateURL(ducklakeMaintenance), h.RootCertPath()),
 		PostgresControlRuntimeRole:     runtime.Name, PostgresControlMigratorRole: migrator.Name,
 		PostgresControlMaintenanceRole: maintenance.Name, PostgresDuckLakeRuntimeRole: ducklakeRuntime.Name,
 		PostgresDuckLakeMaintenanceRole: ducklakeMaintenance.Name,

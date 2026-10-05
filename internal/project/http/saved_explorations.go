@@ -27,7 +27,7 @@ func (h *BrowserHandler) savedExplorationStateForBrowser(r *stdhttp.Request, sel
 		Enabled: h != nil && h.SavedExplorations != nil,
 		State: projectsignals.SavedExplorationStateSignal{
 			Enabled: h != nil && h.SavedExplorations != nil,
-			List:    projectsignals.SavedExplorationListSignal{Items: []projectsignals.SavedExplorationListItemSignal{}, IncludeArchived: includeArchived},
+			List:    projectsignals.SavedExplorationListSignal{Items: []projectsignals.SavedExplorationListItemSignal{}, LegacyItems: projectsignals.Pointer([]projectsignals.SavedExplorationLegacyItemSignal{}), IncludeArchived: includeArchived},
 			Command: projectsignals.SavedExplorationCommandSignal{Action: "create"},
 			Save:    projectsignals.SavedExplorationSaveStateSignal{State: "saved"},
 		},
@@ -44,6 +44,22 @@ func (h *BrowserHandler) savedExplorationStateForBrowser(r *stdhttp.Request, sel
 		message := "Saved explorations are temporarily unavailable."
 		bootstrap.State.Save = projectsignals.SavedExplorationSaveStateSignal{State: "error", Message: &message}
 		return bootstrap
+	}
+	// Earlier saved items retain their original actor/project/environment scope.
+	// Expose links only: revision and mutation authority belong to the new
+	// lifecycle service and cannot be invented for these stored commands.
+	if h.LegacySavedExplorations != nil {
+		scope, status := h.savedExplorationScope(r)
+		if status == 0 {
+			legacyItems, legacyErr := h.LegacySavedExplorations.ListSavedExplorations(r.Context(), scope)
+			if legacyErr == nil {
+				items := make([]projectsignals.SavedExplorationLegacyItemSignal, 0, len(legacyItems))
+				for _, item := range legacyItems {
+					items = append(items, projectsignals.SavedExplorationLegacyItemSignal{ID: item.ID, Name: item.Title, OpenHref: savedExplorationHref(item.ID)})
+				}
+				bootstrap.State.List.LegacyItems = &items
+			}
+		}
 	}
 	items, err := h.SavedExplorations.List(r.Context(), saved.ListRequest{ProjectID: projectID, ActorID: principal.ID, IncludeArchived: includeArchived})
 	if err != nil {

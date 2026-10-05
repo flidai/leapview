@@ -20,6 +20,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/decimal128"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	materializeruntime "github.com/flidai/leapview/internal/analytics/materialize"
@@ -410,7 +411,12 @@ func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixt
 	return &dashboardBaselineFixture{
 		service: service, core: factory.core, database: database,
 		governor: dashboardBaselineGovernor{policyFingerprint: dashboardBaselineDigest("effective-policy")},
-		handler:  Handler{Metrics: service, ProjectID: dashboardBaselineProjectID},
+		handler: Handler{
+			Metrics: service, ProjectID: dashboardBaselineProjectID,
+			AuthorizeListResource: func(context.Context, string, access.ResourceRef, access.Capability) (bool, error) {
+				return true, nil
+			},
+		},
 	}
 }
 

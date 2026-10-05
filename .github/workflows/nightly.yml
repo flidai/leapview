@@ -276,11 +276,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up the cached CI toolchain
-        uses: ./.github/actions/setup-ci
-        with:
-          browser: "false"
-
       - name: Detect live-model credentials
         id: credentials
         env:
@@ -292,6 +287,12 @@ jobs:
             echo "available=false" >> "${GITHUB_OUTPUT}"
             echo "DeepSeek evaluation skipped because DEEPSEEK_API_KEY is unavailable." >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+      - name: Set up the cached CI toolchain
+        if: steps.credentials.outputs.available == 'true'
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
 
       - name: Run all-tools headless evaluation
         if: steps.credentials.outputs.available == 'true'
@@ -312,10 +313,19 @@ jobs:
             .data/agent-e2e/report.json
             .data/agent-e2e/transcript-summary.jsonl
 
+  host-recovery-validation:
+    name: Isolated host recovery and migration boundary contracts
+    if: github.repository == 'flidai/leapview'
+    uses: ./.github/workflows/demo-upgrade-qualification.yml
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation, dependency-evidence-refresh]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, security-validation, dependency-evidence-refresh, host-recovery-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -327,9 +337,10 @@ jobs:
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_RESULT: ${{ needs.full-validation.result }}
           SECURITY_RESULT: ${{ needs.security-validation.result }}
+          HOST_RECOVERY_RESULT: ${{ needs.host-recovery-validation.result }}
           DEPENDENCY_EVIDENCE_REFRESH_RESULT: ${{ needs.dependency-evidence-refresh.result }}
         run: |
-          for result in "${APIGEN_RESULT}" "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}" "${DEPENDENCY_EVIDENCE_REFRESH_RESULT}"; do
+          for result in "${APIGEN_RESULT}" "${GO_PACKAGES_RESULT}" "${GO_APPLICATION_RESULT}" "${FRONTEND_RESULT}" "${FULL_RESULT}" "${SECURITY_RESULT}" "${DEPENDENCY_EVIDENCE_REFRESH_RESULT}" "${HOST_RECOVERY_RESULT}"; do
             test "${result}" = success || {
               printf 'Nightly validation result: %s\n' "${result}" >&2
               exit 1

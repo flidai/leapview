@@ -471,26 +471,31 @@ func (s *VisualizationDataService) queryDataTableWindow(ctx context.Context, run
 		start = blockStarts["a"]
 		queryCount = count * 3
 	}
-	rowRequest, err := s.tableRowRequest(ctx, runtime, report, tableModel, filters, request, start, queryCount)
-	if err != nil {
-		return dashboard.EmptyTable(request, err), nil
+	start = max(0, start)
+	availableRows := effectiveTableRowLimit(tableModel.Limit)
+	queryCount = min(queryCount, max(0, availableRows-start))
+	rows := []map[string]any{}
+	if queryCount > 0 {
+		rowRequest, err := s.tableRowRequest(ctx, runtime, report, tableModel, filters, request, start, queryCount)
+		if err != nil {
+			return dashboard.EmptyTable(request, err), nil
+		}
+		result, err := runtime.data.ExecuteDataQuery(ctx, reportRowDataQuery(report.SemanticModel, rowRequest, false))
+		if err != nil {
+			return dashboard.EmptyTable(request, err), nil
+		}
+		rows = tableRowsFromAnalytics(reportRowsFromDataQuery(result.Rows))
 	}
-	result, err := runtime.data.ExecuteDataQuery(ctx, reportRowDataQuery(report.SemanticModel, rowRequest, false))
-	if err != nil {
-		return dashboard.EmptyTable(request, err), nil
-	}
-	rows := tableRowsFromAnalytics(reportRowsFromDataQuery(result.Rows))
 	// A short first page proves the exact cardinality. At a non-zero offset it
 	// only proves that the requested window reached or overshot the end; the
 	// true count may be lower than start and must remain unknown.
 	totalRowsKnown := start == 0 && len(rows) < queryCount
 	totalRows := 0
 	cardinality := dashboard.TableCardinality{Kind: dashboard.CardinalityUnknown}
-	availableRows := dashboard.TableInteractiveRowCap
 	if totalRowsKnown {
 		totalRows = start + len(rows)
 		cardinality = dashboard.ExactCardinality(totalRows)
-		availableRows = min(totalRows, dashboard.TableInteractiveRowCap)
+		availableRows = min(totalRows, availableRows)
 	} else if len(rows) > 0 {
 		cardinality = dashboard.LowerBoundCardinality(start + len(rows))
 	}
@@ -561,6 +566,13 @@ func (s *VisualizationDataService) queryCalculatedDataTableWindow(ctx context.Co
 		return dashboard.EmptyTable(request, err), nil
 	}
 	sortAggregateTableRows(records, request.Sort)
+	returnedRecordCount := len(records)
+	rowLimit := effectiveTableRowLimit(tableModel.Limit)
+	availableRows := min(returnedRecordCount, rowLimit)
+	rowsCappedByQuery := returnedRecordCount > availableRows
+	if rowsCappedByQuery {
+		records = records[:availableRows]
+	}
 
 	count := request.Count
 	if count <= 0 {
@@ -588,7 +600,7 @@ func (s *VisualizationDataService) queryCalculatedDataTableWindow(ctx context.Co
 			Sort: request.Sort, Rows: records[rowStart:rowEnd],
 		}
 	}
-	cardinality := dashboard.ExactCardinality(len(records))
+	cardinality := dashboard.ExactCardinality(returnedRecordCount)
 	if isCapped {
 		cardinality = dashboard.LowerBoundCardinality(dashboard.TableInteractiveRowCap + 1)
 	}
@@ -596,7 +608,7 @@ func (s *VisualizationDataService) queryCalculatedDataTableWindow(ctx context.Co
 	return dashboard.Table{
 		Version: 2, Kind: tableModel.Kind, Title: tableModel.Title, Style: style, Interaction: tableModel.Interaction,
 		Selection: []dashboard.InteractionSelectionEntry{}, Columns: tableModel.Columns, Cardinality: cardinality,
-		AvailableRows: len(records), IsCapped: isCapped, RowCap: dashboard.TableInteractiveRowCap, ChunkSize: count,
+		AvailableRows: availableRows, IsCapped: isCapped || rowsCappedByQuery, RowCap: dashboard.TableInteractiveRowCap, ChunkSize: count,
 		RowHeight: style.RowHeight(), ResetVersion: request.ResetVersion, Sort: request.Sort, Blocks: blocks,
 	}, nil
 }
@@ -660,7 +672,7 @@ func (s *VisualizationDataService) queryDataTableCount(ctx context.Context, runt
 
 func applyTableTotal(table *dashboard.Table, totalRows int) {
 	table.Cardinality = dashboard.ExactCardinality(totalRows)
-	table.AvailableRows = min(totalRows, dashboard.TableInteractiveRowCap)
+	table.AvailableRows = min(totalRows, min(table.AvailableRows, dashboard.TableInteractiveRowCap))
 	table.IsCapped = totalRows > table.AvailableRows
 }
 

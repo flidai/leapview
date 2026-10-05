@@ -38,15 +38,36 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 		if id == "" {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q requires stable id", name)
 		}
-		role, err := access.ParseProjectRole(authored.Role)
-		if err != nil {
-			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q role: %w", id, err)
-		}
 		subject, err := canonicalSubject(authored.Subject)
 		if err != nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q subject: %w", id, err)
 		}
-		roleBindings = append(roleBindings, accesssnapshot.RoleBinding{ID: id, Name: authored.Name, Subject: subject, Role: role, Capabilities: access.ProjectRoleCapabilities(role)})
+		binding := accesssnapshot.RoleBinding{
+			ID:                id,
+			Name:              authored.Name,
+			Subject:           subject,
+			Role:              access.ProjectRole(authored.Role),
+			PermissionProfile: authored.PermissionProfile,
+			Permissions:       access.ClonePermissionPairs(authored.Permissions),
+			PermissionRole:    authored.PermissionRole,
+		}
+		if binding.TypedRoleBinding() {
+			// Typed assignments carry an exact, profile-pinned PairSet. Validate
+			// its role expansion against the serving project before the snapshot
+			// constructor checks target namespaces; never infer pairs from a
+			// legacy role or capability bundle.
+			if err := access.ValidateTypedRoleBindingForProject(binding, identity.ProjectID); err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q typed assignment: %w", id, err)
+			}
+		} else {
+			role, err := access.ParseProjectRole(authored.Role)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q role: %w", id, err)
+			}
+			binding.Role = role
+			binding.Capabilities = access.ProjectRoleCapabilities(role)
+		}
+		roleBindings = append(roleBindings, binding)
 	}
 
 	grantNames := sortedPolicyKeys(policy.Grants)
@@ -63,6 +84,29 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 		resource, err := canonicalResource(project, authored.Object.Kind, authored.Object.ID)
 		if err != nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q resource: %w", id, err)
+		}
+		if authored.PermissionProfile != "" || authored.Permissions != nil {
+			subject, err := canonicalSubject(authored.Subject)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q subject: %w", id, err)
+			}
+			authorizationGrant := access.AuthorizationGrant{
+				ID: id, Name: authored.Name, Subject: subject, Resource: resource,
+				Capability:        access.Capability(authored.Capability),
+				PermissionProfile: authored.PermissionProfile, Permissions: access.ClonePermissionPairs(authored.Permissions),
+			}
+			if err := authorizationGrant.ValidateAgainst(project); err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q typed target: %w", id, err)
+			}
+			grant, err := accesssnapshot.NewTypedGrant(id, authored.Name, subject, authored.Permissions)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q typed permissions: %w", id, err)
+			}
+			if grant.PermissionProfile != authored.PermissionProfile {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q has a mismatched permission profile", id)
+			}
+			grants = append(grants, grant)
+			continue
 		}
 		subject, err := canonicalSubject(authored.Subject)
 		if err != nil {

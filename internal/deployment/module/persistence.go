@@ -409,5 +409,8 @@ func (p Persistence) validate() error {
 	if !p.Repository.AuditCapable() {
 		return errors.New("PostgreSQL deployment activation audit capability is required")
 	}
+	if !p.Repository.ActivationAdmissionCapable() {
+		return errors.New("PostgreSQL deployment activation admission capability is required")
+	}
 	return nil
 }

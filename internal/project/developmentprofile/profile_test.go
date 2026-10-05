@@ -43,6 +43,27 @@ func TestCatalogFromManifestUsesExactCompilerIdentityAndType(t *testing.T) {
 	}
 }
 
+func TestCatalogDigestTracksOnlyLogicalConnectionContract(t *testing.T) {
+	first := map[string]LogicalConnection{"sample": {ID: "connection:sample", ConnectorKind: "duckdb"}}
+	digest, err := CatalogDigest(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
+		t.Fatalf("catalog digest = %q", digest)
+	}
+	second := map[string]LogicalConnection{"sample": {ID: "connection:sample", ConnectorKind: "duckdb"}}
+	again, err := CatalogDigest(second)
+	if err != nil || again != digest {
+		t.Fatalf("same connection catalog changed digest: %q != %q (%v)", digest, again, err)
+	}
+	second["sample"] = LogicalConnection{ID: "connection:sample", ConnectorKind: "postgres"}
+	changed, err := CatalogDigest(second)
+	if err != nil || changed == digest {
+		t.Fatalf("changed connection catalog did not change digest: %q (%v)", changed, err)
+	}
+}
+
 func TestLoadResolvesExactGraphIdentitiesAndSortsConnections(t *testing.T) {
 	root := t.TempDir()
 	file := writeProfile(t, root, `version: 1

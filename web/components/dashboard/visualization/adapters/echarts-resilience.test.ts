@@ -3,7 +3,8 @@ import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
-import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, EChartsHandle, preservesEChartsViewState, responsiveEChartsPatch } from './echarts'
+import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, EChartsHandle, preservesEChartsViewState } from './echarts'
+import { responsiveEChartsLayoutKey, responsiveEChartsPatch } from './echarts/view-state'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { proportionalFixture } from './echarts-test-fixtures'
 
@@ -43,7 +44,43 @@ test('ECharts responsive patch is deterministic and preserves stable option iden
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
 })
 
-test('ECharts responsive patch leaves proportional geometry and legend bands to ECharts', () => {
+test('compact gauges hide crowded scale ticks and restore them when the tile grows', () => {
+  const envelope = { spec: { kind: 'polar', mark: 'gauge' } } as unknown as VisualizationEnvelope
+  const option = {
+    series: [
+      { id: 'series:polar:gauge', type: 'gauge', min: 0, max: 200, splitNumber: 5, axisLabel: { formatter: (value: number) => String(value) }, axisTick: { lineStyle: {} }, splitLine: { lineStyle: {} } },
+      { id: 'series:polar:gauge:target', type: 'gauge', silent: true, axisLabel: { show: false }, axisTick: { show: false }, splitLine: { show: false } },
+    ],
+  }
+  const compact = responsiveEChartsPatch(option, 427, 174)
+  expect(responsiveEChartsLayoutKey(envelope, 427, 174)).toBe('compact:gauge-quiet')
+  expect(compact.series[0]).toMatchObject({ splitNumber: 3, axisLabel: { show: false }, axisTick: { show: false }, splitLine: { show: false } })
+  expect(compact.series[1]).toEqual(option.series[1])
+
+  const tallerCompact = responsiveEChartsPatch(option, 427, 240)
+  expect(responsiveEChartsLayoutKey(envelope, 427, 240)).toBe('compact:gauge-labeled')
+  expect(tallerCompact.series[0]).toMatchObject({ splitNumber: 5, axisLabel: { show: true }, axisTick: { show: true }, splitLine: { show: true } })
+
+  const roomy = responsiveEChartsPatch(option, 800, 500)
+  expect(responsiveEChartsLayoutKey(envelope, 800, 500)).toBe('roomy:gauge-labeled')
+  expect(roomy.series[0]).toMatchObject({ axisLabel: { show: true }, axisTick: { show: true }, splitLine: { show: true } })
+  expect(option.series[0].axisLabel).not.toHaveProperty('show')
+})
+
+test('compact gauge domain diagnostics wrap to the available card width', () => {
+  const message = 'Value $25,346,402.80 is outside configured gauge domain $0.00–$100.00'
+  const option = { series: [], graphic: [{ type: 'text', left: 'center', top: 'middle', style: { text: message, fontSize: 12 } }] }
+  const compact = responsiveEChartsPatch(option, 256, 105)
+  const rendered = compact.graphic[0].style.text as string
+  const lines = rendered.split('\n')
+  expect(lines.length).toBeGreaterThan(1)
+  expect(lines.join(' ')).toBe(message)
+  expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(42)
+  expect(compact.graphic[0].style).toMatchObject({ width: 232, fontSize: 10, overflow: 'break' })
+  expect(option.graphic[0].style.text).toBe(message)
+})
+
+test('ECharts responsive patch keeps proportional geometry stable while adapting outside labels', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalFixture(mark) as any
     envelope.spec.presentation.legend = 'bottom'
@@ -54,7 +91,32 @@ test('ECharts responsive patch leaves proportional geometry and legend bands to 
     }]
     const option = echartsOption(envelope, defaultRendererContext) as Record<string, any>
     const before = JSON.stringify(option)
-    expect(responsiveEChartsPatch(option, 320, 240)).toEqual({})
+    const compact = responsiveEChartsPatch(option, 320, 240)
+    const expanded = responsiveEChartsPatch(option, 1200, 720)
+    if (mark === 'funnel') {
+      expect(compact.series[0]).toMatchObject({ id: 'series:primary:funnel' })
+      expect(compact.series[0].label.formatter({ value: ['United States of America', 10] })).toBe('United States of Am…:\n10')
+      expect(expanded.series[0].label.formatter({ value: ['United States of America', 10] })).toBe('United States of Am…: 10')
+    } else {
+      expect(compact.series[0]).toMatchObject({
+        id: `series:primary:${mark}`,
+        bottom: '12%',
+        label: { alignTo: 'edge' },
+      })
+      expect(expanded.series[0]).toMatchObject({
+        id: `series:primary:${mark}`,
+        bottom: '12%',
+        label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+        labelLine: { length: 58, length2: 42 },
+      })
+      if (Array.isArray(option.series[0].radius)) {
+        expect(Number.parseFloat(compact.series[0].radius[1])).toBeLessThanOrEqual(66)
+        expect(Number.parseFloat(compact.series[0].radius[0])).toBeLessThan(Number.parseFloat(compact.series[0].radius[1]))
+      } else {
+        expect(compact.series[0].radius).toEqual(option.series[0].radius)
+      }
+      expect(expanded.series[0].radius).toEqual(option.series[0].radius)
+    }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
     expect(JSON.stringify(option)).toBe(before)
   }
@@ -119,22 +181,26 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   }
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   const initial = cartesian(true)
-  handle.mount(initial, defaultRendererContext)
-  handle.resize(320, 240)
-  const compactCall = calls.at(-1)!
-  expect(compactCall.grid).toMatchObject({ bottom: 54 })
+  try {
+    handle.mount(initial, defaultRendererContext)
+    handle.resize(320, 240)
+    const compactCall = calls.at(-1)!
+    expect(compactCall.grid).toMatchObject({ bottom: 54 })
 
-  const updated = structuredClone(initial)
-  updated.dataRevision = 2
-  updated.dataState.dataRevision = 2
-  handle.update(updated, Change.Data, defaultRendererContext)
-  expect(calls.at(-1)!.grid).toMatchObject({ bottom: 54 })
+    const updated = structuredClone(initial)
+    updated.dataRevision = 2
+    updated.dataState.dataRevision = 2
+    handle.update(updated, Change.Data, defaultRendererContext)
+    expect(calls.at(-1)!.grid).toMatchObject({ bottom: 54 })
 
-  handle.resize(640, 360)
-  expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
+    handle.resize(640, 360)
+    expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
+  } finally {
+    handle.dispose()
+  }
 })
 
-test('ECharts handle leaves proportional resize geometry to the native chart', () => {
+test('ECharts handle reapplies width-sensitive legends and switches proportional labels across responsive breakpoints', () => {
   const calls: Record<string, any>[] = []
   const chart = {
     on() {}, off() {}, resize() {}, dispose() {},
@@ -148,15 +214,50 @@ test('ECharts handle leaves proportional resize geometry to the native chart', (
     rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'danger', icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
   }]
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
-  handle.mount(envelope, defaultRendererContext)
-  handle.resize(320, 240)
-  const first = calls.at(-1)!.series[0]
-  const count = calls.length
-  handle.resize(420, 240)
-  expect(calls.length).toBe(count)
-  expect(first.radius).toEqual(['54%', '76%'])
-  expect(first.left).toBeUndefined()
-  expect(first.right).toBeUndefined()
+  try {
+    handle.mount(envelope, defaultRendererContext)
+    handle.resize(320, 300)
+    const first = calls.at(-1)!.series[0]
+    const count = calls.length
+    handle.resize(360, 300)
+    expect(calls.length).toBe(count + 1)
+    expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
+    expect(first.radius).toEqual(['28.42%', '40%'])
+    expect(first.left).toBeUndefined()
+    expect(first.right).toBeUndefined()
+    expect(first.label.alignTo).toBe('edge')
+
+    handle.resize(435, 420)
+    expect(calls.at(-1)!.series[0]).toMatchObject({
+      id: 'series:primary:donut', label: { alignTo: 'edge' },
+    })
+
+    handle.resize(1200, 720)
+    expect(calls.at(-1)!.series[0]).toMatchObject({
+      id: 'series:primary:donut',
+      label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+      labelLine: { length: 58, length2: 42 },
+    })
+    expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
+
+    const roomyCount = calls.length
+    handle.resize(900, 500)
+    expect(calls.length).toBe(roomyCount + 1)
+    expect(calls.at(-1)!.series[0].labelLine).toMatchObject({ length: 40, length2: 32 })
+
+    handle.resize(320, 300)
+    expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
+
+    const inside = structuredClone(envelope)
+    inside.spec.presentation.labelPosition = 'inside'
+    handle.update(inside, Change.Spec, defaultRendererContext)
+    handle.resize(535, 420)
+    expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 11, padding: 0 })
+    handle.resize(700, 500)
+    expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 12, padding: 3 })
+  } finally {
+    handle.dispose()
+  }
 })
 
 function legendHandle() {
@@ -234,6 +335,64 @@ test('ECharts SSR legend actions distinguish native visibility from governed sel
   expect(selected.events).toHaveLength(1)
 })
 
+test('focused ECharts handles reapply bottom radius geometry for bottom and moved side legends', () => {
+  class FocusShadowRoot {}
+  const shadowRootDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ShadowRoot')
+  Object.defineProperty(globalThis, 'ShadowRoot', { configurable: true, writable: true, value: FocusShadowRoot })
+  try {
+    const sideLegend = proportionalFixture('donut') as any
+    sideLegend.spec.presentation.legend = 'right'
+    expect(responsiveEChartsLayoutKey(sideLegend, 599, 500, true)).not.toBe(responsiveEChartsLayoutKey(sideLegend, 600, 500, true))
+    expect(responsiveEChartsLayoutKey(sideLegend, 799, 500, true)).not.toBe(responsiveEChartsLayoutKey(sideLegend, 800, 500, true))
+
+    for (const legend of ['bottom', 'right'] as const) {
+      const calls: Record<string, any>[] = []
+      const chart = {
+        on() {}, off() {}, resize() {}, dispose() {},
+        setOption(option: Record<string, any>) { calls.push(option) },
+        getOption() { return {} },
+      }
+      const focusState = { focused: true }
+      const root = new FocusShadowRoot() as any
+      root.host = { getAttribute: (name: string) => name === 'slot' && focusState.focused ? 'focus-visual' : null }
+      const container = { getRootNode: () => focusState.focused ? root : { host: root.host } }
+      const envelope = proportionalFixture('donut') as any
+      envelope.spec.presentation.legend = legend
+      const handle = new EChartsHandle(container as any, {} as any, chart as any, new CategoryColorRegistry())
+      try {
+        handle.mount(envelope, defaultRendererContext)
+        handle.resize(550, 500)
+        expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+        let count = calls.length
+
+        handle.resize(650, 500)
+        expect(calls.length).toBe(count + 1)
+        expect(calls.at(-1)!.series[0].radius).toEqual(['46.89%', '66%'])
+        count = calls.length
+
+        if (legend === 'right') {
+          handle.resize(799, 500)
+          expect(calls.at(-1)!.series[0].label.alignTo).toBe('edge')
+          count = calls.length
+          handle.resize(800, 500)
+          expect(calls.length).toBe(count + 1)
+          expect(calls.at(-1)!.series[0].label.alignTo).toBe('labelLine')
+        }
+        count = calls.length
+
+        handle.resize(550, 500)
+        expect(calls.length).toBe(count + 1)
+        expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+      } finally {
+        handle.dispose()
+      }
+    }
+  } finally {
+    if (shadowRootDescriptor) Object.defineProperty(globalThis, 'ShadowRoot', shadowRootDescriptor)
+    else Reflect.deleteProperty(globalThis, 'ShadowRoot')
+  }
+})
+
 test('ECharts responsive and view-state helpers fail closed on malformed renderer options', () => {
   expect(responsiveEChartsPatch({ grid: [null] } as any, 320, 240)).toEqual({ grid: [{ left: 8, right: 8, top: 10, bottom: 12 }] })
   expect(captureEChartsViewState({ dataZoom: [null], series: [null] } as any)).toEqual({})
@@ -245,4 +404,40 @@ test('ECharts accessibility describes empty and null data without exposing raw n
   const option = echartsOption(empty, defaultRendererContext) as any
   expect(option.aria.description).toContain('No data rows are available.')
   expect(option.aria.description).not.toContain('null')
+})
+
+test('ECharts handle reapplies donut radius when crossing the bottom-legend narrow breakpoint in both directions', () => {
+  const calls: Record<string, any>[] = []
+  const chart = {
+    on() {}, off() {}, resize() {}, dispose() {},
+    setOption(option: Record<string, any>) { calls.push(option) },
+    getOption() { return {} },
+  }
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.presentation.legend = 'bottom'
+  expect(responsiveEChartsLayoutKey(envelope, 550, 500)).not.toBe(responsiveEChartsLayoutKey(envelope, 650, 500))
+  expect(responsiveEChartsLayoutKey(envelope, 650, 500)).toBe(responsiveEChartsLayoutKey(envelope, 700, 500))
+  const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
+  try {
+    handle.mount(envelope, defaultRendererContext)
+
+    handle.resize(550, 500)
+    expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+    let count = calls.length
+
+    handle.resize(650, 500)
+    expect(calls.length).toBe(count + 1)
+    expect(calls.at(-1)!.series[0].radius).toEqual(['39.79%', '56%'])
+    count = calls.length
+
+    handle.resize(700, 500)
+    expect(calls.length).toBe(count)
+    count = calls.length
+
+    handle.resize(550, 500)
+    expect(calls.length).toBe(count + 1)
+    expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+  } finally {
+    handle.dispose()
+  }
 })

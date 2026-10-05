@@ -66,3 +66,36 @@ func TestChatBootstrapSignalsAreOwnedByAgent(t *testing.T) {
 		t.Fatalf("history item = %#v", chrome.Sidebar.History.Items[0])
 	}
 }
+
+func TestChatConversationsPatchPreservesOneOrderForListAndSidebar(t *testing.T) {
+	conversations := []ChatConversationSummary{
+		{ID: "recent", Title: "Recent"},
+		{ID: "restored", Title: "Restored"},
+		{ID: "older", Title: "Older"},
+	}
+	patch := ChatConversationsPatch(conversations, "restored")
+
+	agentPatch, ok := patch["agent"].(map[string]any)
+	if !ok {
+		t.Fatalf("agent patch = %#v", patch["agent"])
+	}
+	list, ok := agentPatch["conversations"].([]ChatConversationSummary)
+	if !ok || len(list) != len(conversations) {
+		t.Fatalf("chat list conversations = %#v", agentPatch["conversations"])
+	}
+	chrome := patch["chrome"].(map[string]any)
+	sidebar := chrome["sidebar"].(map[string]any)
+	history := sidebar["history"].(map[string]any)
+	items, ok := history["items"].([]SidebarHistoryItemSignal)
+	if !ok || len(items) != len(conversations) {
+		t.Fatalf("sidebar history = %#v", history["items"])
+	}
+	for index, conversation := range conversations {
+		if list[index].ID != conversation.ID || items[index].ID != conversation.ID {
+			t.Fatalf("order differs at %d: list=%#v sidebar=%#v want=%q", index, list, items, conversation.ID)
+		}
+	}
+	if !items[1].Active {
+		t.Fatalf("active sidebar item = %#v", items)
+	}
+}

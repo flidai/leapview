@@ -411,6 +411,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
 			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
 			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, options.AccessModule.ResolveSemanticAttributes, semanticCatalogAuditRecorder)),
+			projectcatalog.WithSemanticModelSearchTerms(projectmodule.SemanticCatalogSearchTerms()),
 		)
 		if err != nil {
 			return nil, err

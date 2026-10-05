@@ -26,6 +26,28 @@ CREATE TABLE IF NOT EXISTS project.project_identity (
     CHECK (updated_at >= created_at)
 );
 
+-- Browser-saved Data Explorer commands are private to an authenticated
+-- principal and bound to the process-selected project/environment.
+CREATE TABLE IF NOT EXISTS project.saved_exploration (
+    id              uuid PRIMARY KEY,
+    project_id      text NOT NULL,
+    environment     text NOT NULL,
+    principal_id    text NOT NULL,
+    title           text NOT NULL,
+    command_json    jsonb NOT NULL,
+    created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255),
+    CHECK (environment = btrim(environment) AND octet_length(environment) BETWEEN 1 AND 255),
+    CHECK (principal_id = btrim(principal_id) AND octet_length(principal_id) BETWEEN 1 AND 255),
+    CHECK (title = btrim(title) AND octet_length(title) BETWEEN 1 AND 255),
+    CHECK (jsonb_typeof(command_json) = 'object'),
+    CHECK (octet_length(command_json::text) BETWEEN 1 AND 65536),
+    CHECK (updated_at >= created_at)
+);
+CREATE INDEX IF NOT EXISTS saved_exploration_owner_recent_idx
+    ON project.saved_exploration(project_id, environment, principal_id, updated_at DESC, id);
+
 -- Project identity and its authored metadata are an immutable authority. A
 -- replay with different metadata is rejected by the repository as a hard
 -- conflict; direct UPDATE/DELETE attempts are rejected by the database too.
@@ -61,9 +83,9 @@ BEGIN
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
             EXECUTE format('GRANT USAGE ON SCHEMA project TO %I', role_name);
             IF role_name = 'leapview_control_runtime' THEN
-                EXECUTE format('GRANT SELECT, INSERT ON project.project_identity TO %I', role_name);
+                EXECUTE format('GRANT SELECT, INSERT ON project.project_identity, project.saved_exploration TO %I', role_name);
             ELSE
-                EXECUTE format('GRANT SELECT ON project.project_identity TO %I', role_name);
+                EXECUTE format('GRANT SELECT ON project.project_identity, project.saved_exploration TO %I', role_name);
             END IF;
         END IF;
     END LOOP;

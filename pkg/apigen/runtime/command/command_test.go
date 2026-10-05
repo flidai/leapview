@@ -188,6 +188,57 @@ func TestGeneratedPolicyDrivesDependenciesAndSurfaces(t *testing.T) {
 	}
 }
 
+func TestForbiddenIdempotencyPolicyRejectsReplayKeysWithoutIdempotencyDependency(t *testing.T) {
+	contract, _ := testLookup(GuaranteeTransactional)("createWidget")
+	contract.Idempotency = IdempotencyForbidden
+	if err := contract.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	want := []Dependency{DependencyAuthorization, DependencyAudit}
+	if got := contract.Dependencies(); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("dependencies = %#v, want %#v", got, want)
+	}
+	if err := ValidateDependencies(map[string]Contract{contract.OperationID: contract}, map[Dependency]bool{
+		DependencyAuthorization: true,
+		DependencyAudit:         true,
+	}); err != nil {
+		t.Fatalf("forbidden idempotency incorrectly requires a key store: %v", err)
+	}
+	if _, _, err := BeginInvocation(t.Context(), contract, Invocation{Surface: SurfaceAPI}); err != nil {
+		t.Fatalf("keyless invocation rejected: %v", err)
+	}
+	_, _, err := BeginInvocation(t.Context(), contract, Invocation{Surface: SurfaceAPI, IdempotencyKey: "secret-replay-key"})
+	if !errors.Is(err, ErrIdempotencyForbidden) {
+		t.Fatalf("replay key error = %v, want ErrIdempotencyForbidden", err)
+	}
+	if strings.Contains(err.Error(), "secret-replay-key") {
+		t.Fatalf("replay key appeared in rejection error: %v", err)
+	}
+}
+
+func TestForbiddenIdempotencyRequiresSynchronousProtectedTransactionalPost(t *testing.T) {
+	base, _ := testLookup(GuaranteeTransactional)("createWidget")
+	base.Idempotency = IdempotencyForbidden
+	tests := []struct {
+		name   string
+		mutate func(*Contract)
+	}{
+		{name: "method", mutate: func(contract *Contract) { contract.Method = "GET" }},
+		{name: "authorization", mutate: func(contract *Contract) { contract.AuthzMode = "none"; contract.Privilege = "" }},
+		{name: "audit guarantee", mutate: func(contract *Contract) { contract.Guarantee = GuaranteeBestEffort }},
+		{name: "async", mutate: func(contract *Contract) { contract.Execution = &AsyncExecutionContract{Mode: "async"} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			contract := base
+			test.mutate(&contract)
+			if err := contract.Validate(); !errors.Is(err, ErrInvalidContract) {
+				t.Fatalf("contract validation error = %v, want ErrInvalidContract", err)
+			}
+		})
+	}
+}
+
 func TestExecutorAppliesGeneratedIfMatchPolicy(t *testing.T) {
 	lookup := func(operationID string) (Contract, bool) {
 		contract, ok := testLookup(GuaranteeTransactional)("createWidget")

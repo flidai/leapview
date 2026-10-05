@@ -5,11 +5,13 @@ import { governedBarPreviewEnvelope } from './dashboard-builder-test-fixtures'
 export async function verifyBuilderZoomActionTargets(page: Page, baseURL: string): Promise<void> {
   const previewEnvelope = governedBarPreviewEnvelope('sha256:builder-zoom-targets')
   await page.goto(baseURL)
-  await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-  await page.locator('lv-dashboard-builder').evaluate(async (element: any, envelope: any) => {
+  await page.waitForFunction(async (envelope: any) => {
+    const element = document.querySelector('lv-dashboard-builder') as any
+    if (!customElements.get('lv-dashboard-builder') || !element) return false
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
     mergePatch({ builderVisuals: { 'sales-chart': envelope } })
     await element.updateComplete
+    return true
   }, previewEnvelope)
   await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-builder')?.shadowRoot?.querySelector('.visual-preview lv-visualization-host')?.shadowRoot?.querySelector('.visual-options')))
 

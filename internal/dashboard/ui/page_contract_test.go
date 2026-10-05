@@ -101,6 +101,28 @@ func TestCanonicalPrivateRouteScopeKeepsDashboardTrafficInsideCandidate(t *testi
 	}
 }
 
+func TestOrdinaryLocalDashboardAdvertisesOnlyItsScopedSessionStream(t *testing.T) {
+	report := dashboarddefinition.Definition{ID: "report", SemanticModel: "model", Pages: []dashboard.Page{{ID: "overview"}}, Visualizations: map[string]visualizationdefinition.Definition{}}
+	var ordinary, local, candidate strings.Builder
+	catalog := dashboard.Catalog{Project: dashboard.CatalogProject{ID: "sales"}}
+	for _, entry := range []struct {
+		out   *strings.Builder
+		scope RouteScope
+	}{
+		{&ordinary, RouteScope{}},
+		{&local, RouteScope{DevelopmentSessionEventsPath: "/development-session/events"}},
+		{&candidate, RouteScope{BasePath: "/candidates/candidate_1", DevelopmentSessionEventsPath: "/development-session/events"}},
+	} {
+		if err := PageWithRouteScope(Presentation{ProductName: "LeapView"}, entry.scope, "client", "", catalog, report, canonicalPageModel(), report.Pages, report.Pages[0], dashboard.Filters{}).Render(entry.out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker := `development-session-events-path="/development-session/events"`
+	if strings.Contains(ordinary.String(), marker) || !strings.Contains(local.String(), marker) || strings.Contains(candidate.String(), marker) {
+		t.Fatalf("local session stream marker leaked or missing: ordinary=%t local=%t candidate=%t", strings.Contains(ordinary.String(), marker), strings.Contains(local.String(), marker), strings.Contains(candidate.String(), marker))
+	}
+}
+
 func TestCanonicalPageExposesOneContextualAuthoringAction(t *testing.T) {
 	report := canonicalPageDefinition(t)
 	var out strings.Builder
