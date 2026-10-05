@@ -260,7 +260,7 @@ func (c *Controller) QualifyFirstPublication(ctx context.Context, options Qualif
 	if readinessBefore != http.StatusServiceUnavailable {
 		return fmt.Errorf("fresh installed target readiness before publication is %d, want 503", readinessBefore)
 	}
-	credentialsPath, removeCredentials, err := newQualificationCredentialWorkspace(c.root)
+	credentialsPath, removeCredentials, err := newQualificationCredentialDirectory(c.root)
 	if err != nil {
 		return err
 	}
@@ -399,7 +399,7 @@ func (c *Controller) QualifyFirstPublication(ctx context.Context, options Qualif
 
 // Own a private directory before the atomic writer can create or rename a
 // credential file. A failed directory sync after rename still requires cleanup.
-func newQualificationCredentialWorkspace(root string) (string, func() error, error) {
+func newQualificationCredentialDirectory(root string) (string, func() error, error) {
 	directory, err := os.MkdirTemp(root, ".qualification-first-publication-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create private qualification credential directory: %w", err)

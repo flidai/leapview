@@ -79,7 +79,7 @@ func TestQualificationFirstPublicationCleanupPreservesPreexistingCredentials(t *
 	root := t.TempDir()
 	path := filepath.Join(root, qualificationFirstPublicationCredentials)
 	require.NoError(t, os.WriteFile(path, []byte("preexisting-private-credential"), 0o600))
-	temporaryPath, cleanup, err := newQualificationCredentialWorkspace(root)
+	temporaryPath, cleanup, err := newQualificationCredentialDirectory(root)
 	require.NoError(t, err)
 	info, err := os.Stat(filepath.Dir(temporaryPath))
 	require.NoError(t, err)
