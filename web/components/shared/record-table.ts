@@ -198,8 +198,9 @@ function applyUpdater<T>(updater: unknown, current: T): T {
 }
 
 function columnAlignClass(column: RecordColumn): string {
+  const align = column.align ?? (column.kind === 'number' ? 'right' : 'left')
   return [
-    column.align === 'center' ? 'is-center' : column.align === 'right' || column.kind === 'number' ? 'is-right' : '',
+    align === 'center' ? 'is-center' : align === 'right' ? 'is-right' : '',
     column.mobileHidden ? 'is-mobile-hidden' : '',
   ].filter(Boolean).join(' ')
 }
@@ -270,7 +271,7 @@ class RecordTable extends LitElement {
                         ?disabled=${!sortable}
                         @click=${() => sortable ? this.toggleSort(column.id) : undefined}
                       >
-                        <span>${column.header}</span>
+                        <span class="record-table-header-label">${column.header}</span>
                         <span class=${direction ? 'record-table-sort-indicator is-active' : 'record-table-sort-indicator'} aria-hidden="true">${sortable ? this.sortIndicator(direction) : nothing}</span>
                       </button>
                     </span>
@@ -973,6 +974,7 @@ const recordTableStyles = `
   lv-record-table .record-table td {
     color: var(--lv-fg-default);
     font: var(--lv-type-body);
+    vertical-align: middle;
   }
 
   lv-record-table .variant-primary .record-table td {
@@ -1006,7 +1008,6 @@ const recordTableStyles = `
 
   lv-record-table .record-table th.is-center,
   lv-record-table .record-table td.is-center { text-align: center; }
-  lv-record-table .record-table th.is-center .record-table-sort { justify-content: center; }
   lv-record-table .record-table tbody tr:last-child td {
     border-bottom: 0;
   }
@@ -1034,12 +1035,10 @@ const recordTableStyles = `
   }
 
   lv-record-table .record-table-sort {
-    display: inline-flex;
+    position: relative;
+    display: block;
     width: 100%;
     min-width: 0;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--base-size-6);
     border: 0;
     background: transparent;
     color: inherit;
@@ -1049,6 +1048,25 @@ const recordTableStyles = `
     letter-spacing: inherit;
     text-align: inherit;
     text-transform: inherit;
+  }
+
+  lv-record-table .record-table-header-label {
+    display: block;
+    box-sizing: border-box;
+    min-width: 0;
+    padding-inline-end: calc(var(--base-size-16) + var(--base-size-6));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  lv-record-table th.is-right .record-table-header-label {
+    padding-inline-start: calc(var(--base-size-16) + var(--base-size-6));
+    padding-inline-end: 0;
+  }
+
+  lv-record-table th.is-center .record-table-header-label {
+    padding-inline-start: calc(var(--base-size-16) + var(--base-size-6));
   }
 
   lv-record-table .record-table-header-content {
@@ -1071,11 +1089,20 @@ const recordTableStyles = `
   }
 
   lv-record-table .record-table-sort-indicator {
+    position: absolute;
+    inset-inline-end: 0;
+    top: 50%;
+    transform: translateY(-50%);
     display: inline-flex;
     min-width: var(--base-size-16);
     justify-content: flex-end;
     color: var(--lv-fg-muted);
     opacity: 0;
+  }
+
+  lv-record-table th.is-right .record-table-sort-indicator {
+    inset-inline-start: 0;
+    inset-inline-end: auto;
   }
 
   lv-record-table .record-table-sort:hover .record-table-sort-indicator,
@@ -1370,6 +1397,9 @@ const recordTableStyles = `
     flex-wrap: wrap;
     gap: var(--base-size-4);
   }
+
+  lv-record-table td.is-right .record-tags { justify-content: flex-end; }
+  lv-record-table td.is-center .record-tags { justify-content: center; }
 
   lv-record-table .record-tags span {
     display: inline-flex;

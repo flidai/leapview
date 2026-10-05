@@ -77,6 +77,15 @@ the normal generation or dependency-install command. Generated bundles stay unde
 - Usage notes identify the production source, public inputs and emitted events.
   Inspect those files before extending an example; they own the interface.
 
+For table review, compare headings with the values below them: text stays left,
+numeric columns use their declared right alignment, and record cells are centered
+vertically beside multiline asset names. Sort indicators must not shift headings.
+For lineage review, switch the Scope dropdown at a narrow preview width; the
+selected asset stays in view. **Fit** shows all included nodes in Full graph,
+while Focused path keeps the selected neighborhood readable. In the semantic
+graph, **Related / All** keeps keyboard focus on the field toggle after resizing
+the nodes.
+
 ## Structure and extension
 
 `app.ts` owns navigation and the preview viewport. Each group module exports its

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 
 let server: Server
 let baseURL = ''
@@ -395,6 +395,60 @@ test('scope controls graph inclusion separately from Fit, and Expand opens a ful
   } finally {
     await page.close()
   }
+})
+
+test('external lineage scope changes keep the anchor visible and narrow Full Fit contains every node', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      element.style.width = '346px'
+      element.graph = {
+        nodes: [-2, -1, 0, 1, 2].map(rank => ({ id: `asset-${rank}`, label: `Asset ${rank}`, kind: 'model', rank, selected: rank === 0 })),
+        edges: [-2, -1, 0, 1].map(rank => ({ id: `edge-${rank}`, source: `asset-${rank}`, target: `asset-${rank + 1}`, kind: 'uses_model' })),
+      }
+    })
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveText(/Asset 0/)
+    for (const cleared of [false, true]) {
+      if (cleared) {
+        await graph.locator('.react-flow__renderer').dispatchEvent('click')
+        await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(0)
+        const flow = (await graph.locator('.react-flow').boundingBox())!
+        await page.mouse.move(flow.x + flow.width - 16, flow.y + flow.height - 20)
+        await page.mouse.down()
+        await page.mouse.move(flow.x + 4, flow.y + flow.height - 20, { steps: 4 })
+        await page.mouse.up()
+        await browserExpect.poll(() => graph.evaluate(element => {
+          const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+          return element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect().right < flow.left
+        }), { message: 'Pan must move the fallback asset out of view' }).toBe(true)
+      }
+      for (const scope of cleared ? ['focused', 'full'] : ['full']) {
+        await graph.evaluate((element: HTMLElement & { scope: string }, value) => { element.scope = value }, scope)
+        await browserExpect(graph.locator('.react-flow__node')).toHaveCount(scope === 'full' ? 5 : 3)
+        await browserExpect.poll(() => graph.evaluate(element => {
+          const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+          const anchor = element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect()
+          return anchor.width > 0 && anchor.left >= flow.left && anchor.right <= flow.right
+            && anchor.top >= flow.top && anchor.bottom <= flow.bottom
+        }), { message: `${scope} scope must center the ${cleared ? 'fallback' : 'selected'} asset` }).toBe(true)
+        await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(cleared ? 0 : 1)
+      }
+    }
+    await graph.getByRole('button', { name: 'Fit', exact: true }).click()
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(5)
+    await browserExpect.poll(() => graph.evaluate(element => {
+      const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+      return Array.from(element.querySelectorAll('.react-flow__node')).flatMap(node => {
+        const bounds = node.getBoundingClientRect()
+        const inside = bounds.width > 0 && bounds.left >= flow.left && bounds.right <= flow.right
+          && bounds.top >= flow.top && bounds.bottom <= flow.bottom
+        return inside ? [] : [{ id: node.getAttribute('data-id'), node: bounds.toJSON(), flow: flow.toJSON() }]
+      })
+    }), { message: 'Full Fit must contain every included node' }).toEqual([])
+  } finally { await page.close() }
 })
 
 function testDocument(): string {

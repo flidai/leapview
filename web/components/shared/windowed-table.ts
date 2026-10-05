@@ -385,11 +385,15 @@ class WindowedTable extends LitElement {
       text-transform: uppercase;
     }
 
-    .header-cell button:hover,
+    .header-cell button:not(:disabled):hover,
     .header-cell button:focus-visible {
       background: var(--lv-bg-control-hover);
       color: var(--lv-fg-default);
       outline: 0;
+    }
+
+    .header-cell button:disabled {
+      cursor: default;
     }
 
     :host([compact]) .header-cell button {
@@ -402,7 +406,7 @@ class WindowedTable extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      text-align: left;
+      text-align: inherit;
     }
 
     .sort {
@@ -488,6 +492,10 @@ class WindowedTable extends LitElement {
       font-variant-numeric: tabular-nums;
     }
 
+    .header-cell.right button {
+      flex-direction: row-reverse;
+    }
+
     .cell code,
     .cell > span:not(.muted):not(.skeleton) {
       display: block;
@@ -506,8 +514,11 @@ class WindowedTable extends LitElement {
 
     .muted, .empty, .error {
       color: var(--lv-fg-muted);
-      padding: var(--base-size-16);
       font: var(--lv-type-body);
+    }
+
+    .empty, .error {
+      padding: var(--base-size-16);
     }
 
     .error {
@@ -620,6 +631,7 @@ class WindowedTable extends LitElement {
     const visibleRows = this.visibleRows(table)
     const rowRange = this.rowRangeText(table)
     const loading = Boolean(table.loadingBlock) || this.visibleLoading(table)
+    const sort = normalizeSort(table.sort)
 
     return html`
       <section class="shell">
@@ -661,8 +673,8 @@ class WindowedTable extends LitElement {
                 ${this.resizeGuide >= 0 ? html`<span class="resize-guide" style=${`--lv-windowed-resize-guide-x:${this.resizeGuide}px`}></span>` : nothing}
                 <div class="head" role="row">
                   ${columns.map((column) => html`
-                    <div class=${`header-cell ${column.align === 'right' ? 'right' : ''}`} role="columnheader">
-                      <button type="button" title=${column.label || column.key} @click=${() => this.sortColumn(table, column)}>
+                    <div class=${`header-cell ${column.align === 'right' ? 'right' : ''}`} role="columnheader" aria-sort=${sort.key === column.key ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
+                      <button type="button" title=${column.label || column.key} ?disabled=${column.sortable === false} @click=${() => this.sortColumn(table, column)}>
                         <span class="header-label">${column.label || column.key}</span>
                         <span class="sort">${sortMarker(table.sort, column.key)}</span>
                       </button>

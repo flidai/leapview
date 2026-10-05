@@ -79,6 +79,7 @@ const NODE_OFFSET_X = 96
 const NODE_MIN_Y = 48
 const NARROW_FOCUS_GAP_Y = 132
 const FIT_MIN_ZOOM = 0.4
+const FULL_GRAPH_MIN_ZOOM = 0.1
 const FIT_MAX_ZOOM = 1
 const NARROW_GRAPH_WIDTH = 460
 
@@ -91,6 +92,7 @@ class AssetLineageGraph extends LitElement {
   private mount?: HTMLDivElement
   private initialFitScope?: LineageScope
   private flow?: ReactFlowInstance
+  private renderedNodes: Node<LineageNodeData>[] = []
   private resizeObserver?: ResizeObserver
   private fitFrame?: number
   private selectedNodeID?: string
@@ -131,6 +133,9 @@ class AssetLineageGraph extends LitElement {
     }
     if (changed.has('graph') || changed.has('scope') || changed.has('scopeMode') || changed.has('dialogTitle')) {
       this.renderFlow()
+    }
+    if (changed.has('scope') && changed.get('scope') !== undefined) {
+      this.scheduleCenterSelectedAtCurrentZoom(this.selectedNodeID ?? selectedLineageNode(this.resolvedGraph.nodes)?.id)
     }
   }
 
@@ -179,6 +184,13 @@ class AssetLineageGraph extends LitElement {
       this.selectionCleared = true
       this.renderFlow()
     }
+    this.renderedNodes = graph.nodes.filter((node) => visibleNodeSet.has(node.id)).map((node) => toFlowNode(node, layout, pathState, (id) => {
+      this.selectedNodeID = id
+      this.userSelectedNodeID = id
+      this.selectionCleared = false
+      this.renderFlow()
+      this.dispatchEvent(new CustomEvent('lv-lineage-select', { bubbles: true, composed: true, detail: { id } }))
+    }, focusPositions?.get(node.id), focusPositions !== undefined && narrow))
     this.root.render(
       React.createElement(
         'dialog',
@@ -233,13 +245,7 @@ class AssetLineageGraph extends LitElement {
             'div',
             { className: 'asset-lineage-flow', 'aria-label': 'Asset lineage graph' },
             React.createElement(ReactFlow, {
-              nodes: graph.nodes.filter((node) => visibleNodeSet.has(node.id)).map((node) => toFlowNode(node, layout, pathState, (id) => {
-                this.selectedNodeID = id
-                this.userSelectedNodeID = id
-                this.selectionCleared = false
-                this.renderFlow()
-                this.dispatchEvent(new CustomEvent('lv-lineage-select', { bubbles: true, composed: true, detail: { id } }))
-              }, focusPositions?.get(node.id), focusPositions !== undefined && narrow)),
+              nodes: this.renderedNodes,
               edges: graph.edges
                 .filter((edge) => visibleNodeSet.has(edge.source) && visibleNodeSet.has(edge.target))
                 .map((edge) => toFlowEdge(edge, pathState, nodeRanks)),
@@ -253,7 +259,7 @@ class AssetLineageGraph extends LitElement {
                 }
               },
               fitView: false,
-              minZoom: 0.25,
+              minZoom: FULL_GRAPH_MIN_ZOOM,
               maxZoom: 1.35,
               nodesDraggable: false,
               nodesConnectable: false,
@@ -289,38 +295,36 @@ class AssetLineageGraph extends LitElement {
     void this.flow?.fitView({
       nodes: ids.map((id) => ({ id })),
       padding: 0.08,
-      minZoom: FIT_MIN_ZOOM,
+      minZoom: scope === 'full' ? FULL_GRAPH_MIN_ZOOM : FIT_MIN_ZOOM,
       maxZoom: FIT_MAX_ZOOM,
       duration,
     })
   }
 
   private toggleScope(): void {
-    const graph = this.resolvedGraph
-    const selectedID = this.selectedNodeID ?? selectedLineageNode(graph.nodes)?.id
     if (this.fitFrame !== undefined) cancelAnimationFrame(this.fitFrame)
     this.fitFrame = undefined
     this.initialFitScope = undefined
     this.scope = this.scope === 'focused' ? 'full' : 'focused'
     this.skipScopeFit = true
-    this.renderFlow()
     this.dispatchEvent(new CustomEvent('lv-lineage-scope-change', {
       bubbles: true,
       composed: true,
       detail: { scope: this.scope },
     }))
-    this.scheduleCenterSelectedAtCurrentZoom(selectedID)
   }
 
   private scheduleCenterSelectedAtCurrentZoom(selectedID?: string): void {
     if (!selectedID || !this.flow) return
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const node = this.flow?.getNode(selectedID)
-      if (!node) return
+      // React Flow can still expose the previous scope's positions during a render.
+      const position = this.renderedNodes.find((node) => node.id === selectedID)?.position
+      if (!node || !position) return
       const zoom = this.flow?.getZoom() ?? 1
       const width = node.measured?.width ?? node.width ?? 200
       const height = node.measured?.height ?? node.height ?? 96
-      void this.flow?.setCenter(node.position.x + width / 2, node.position.y + height / 2, { zoom, duration: 0 })
+      void this.flow?.setCenter(position.x + width / 2, position.y + height / 2, { zoom, duration: 0 })
     }))
   }
 

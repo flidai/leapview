@@ -142,6 +142,15 @@ function SemanticModelGraphFlow({
   const [selectedEdgeID, setSelectedEdgeID] = React.useState<string | undefined>()
   const [hoveredEdgeID, setHoveredEdgeID] = React.useState<string | undefined>()
   const [showAllFields, setShowAllFields] = React.useState(false)
+  const relatedButton = React.useRef<HTMLButtonElement>(null)
+  const allButton = React.useRef<HTMLButtonElement>(null)
+  const restoreFieldFocus = React.useRef(false)
+  React.useLayoutEffect(() => {
+    if (!restoreFieldFocus.current) return
+    restoreFieldFocus.current = false
+    const button = showAllFields ? allButton : relatedButton
+    button.current?.focus()
+  }, [showAllFields])
   const [nodes, setNodes, onNodesChange] = useNodesState<DatasetNode>([])
   const displayGraph = React.useMemo(() => relationshipFocusedGraph(graph, showAllFields), [graph, showAllFields])
   const fieldCounts = React.useMemo(() => new Map(graph.nodes.map((node) => [node.id, node.fields.length])), [graph.nodes])
@@ -268,16 +277,24 @@ function SemanticModelGraphFlow({
             { className: 'semantic-model-fields-control', role: 'group', 'aria-label': 'Fields shown' },
             React.createElement('span', { className: 'semantic-model-fields-label' }, 'Fields:'),
             React.createElement('button', {
+              ref: relatedButton,
               className: 'semantic-model-fields-option',
               type: 'button',
               'aria-pressed': !showAllFields,
-              onClick: () => setShowAllFields(false),
+              onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+                restoreFieldFocus.current = event.currentTarget.matches(':focus')
+                setShowAllFields(false)
+              },
             }, 'Related'),
             React.createElement('button', {
+              ref: allButton,
               className: 'semantic-model-fields-option',
               type: 'button',
               'aria-pressed': showAllFields,
-              onClick: () => setShowAllFields(true),
+              onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+                restoreFieldFocus.current = event.currentTarget.matches(':focus')
+                setShowAllFields(true)
+              },
             }, 'All'),
           ),
           React.createElement(
