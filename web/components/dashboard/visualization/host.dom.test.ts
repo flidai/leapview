@@ -726,8 +726,12 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
       canvas.append(deferred)
       document.body.append(canvas)
+      // Await the fallback's own validation and renderer apply; explicitly
+      // mounting here would hide a broken unsupported-observer fallback.
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
       await deferred.updateComplete
-      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      while (deferred.pendingApply) await deferred.pendingApply
+      await deferred.updateComplete
       return {
         mounted: ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         disconnected: (window as any).__lvIntersectionObservers[0]?.disconnected,
