@@ -138,6 +138,8 @@ type BuilderClipboard = {
 class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private readonly embeddedInChat = window.parent !== window && new URL(window.location.href).searchParams.get('embed') === 'chat'
   private chatProjectionKey = ''
+  private importedVisualSources = new Map<string, string>()
+  private pendingVisualSource: { componentID: string; savedID: string } | null = null
   private pendingFixVisuals: { pageID: string; visualIDs: Set<string> } | null = null
   @state() private fixVisualsMessage = ''
 
@@ -166,7 +168,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         reference: { kind: 'dashboard', id: builder.dashboardId }, name: builder.title,
         hierarchy: [], href: href.pathname + href.search, locations: [], context: ['Editable dashboard draft'],
       },
-      components: builder.pages.flatMap(page => page.visuals.map(visual => ({ id: visual.id, pageId: page.id }))),
+      components: builder.pages.flatMap(page => page.visuals.map(visual => ({ id: visual.id, pageId: page.id, savedVisualId: this.importedVisualSources.get(visual.id) }))),
       artifacts: ordered.map(visual => ({ id: this.visualSignalID(visual), type: visual.type, summary: visual.title })),
       visuals,
     } satisfies ChatDashboardMessage, window.location.origin)
@@ -3641,6 +3643,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private finishVisualImport(message = ''): void {
     const imported = this.importingSavedVisual
+    this.pendingVisualSource = null
     window.clearTimeout(this.importTimer)
     this.importingSavedVisual = false
     this.refreshingBuilder = false
@@ -3673,6 +3676,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if ((!this.importingSavedVisual && !this.refreshingBuilder) || event.origin !== window.location.origin || event.source !== this.visualImportFrame?.contentWindow || event.data?.type !== 'lv-builder-imported') return
     const envelope = event.data.envelope
     if (envelope.builder?.dashboardId !== this.builder?.dashboardId || envelope.builder.draftId !== this.builder?.draftId) return
+    const source = this.pendingVisualSource
+    if (source && envelope.builder.pages.some(page => page.visuals.some(visual => visual.id === source.componentID))) {
+      this.importedVisualSources.set(source.componentID, source.savedID)
+    }
     const runtime = await loadDatastarRuntime()
     // Replace discriminated chart envelopes instead of merging stale specs.
     runtime.mergePatch({ builderVisuals: null })
@@ -3762,6 +3769,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canEdit || !page || this.commandPending || this.importingSavedVisual || !id) return
+    const importID = requestId || uuidv7()
+    this.pendingVisualSource = { componentID: `saved_${importID.replaceAll('-', '')}`, savedID: id }
     this.importingSavedVisual = true
     this.importRevision = this.currentRevisionReference()
     this.pendingAddVisual = { revision: this.revisionKey(builder), visualIDs: new Set(page.visuals.map(visual => visual.id)), pageID: page.id, autoArrange: row === undefined }
@@ -3772,7 +3781,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.importTimer = window.setTimeout(() => this.finishVisualImport('Adding this visual took too long. Please try again.'), 45000)
     this.requestUpdate()
     submitVisualForm(`/dashboards/${encodeURIComponent(builder.dashboardId)}/draft/saved-visual`, this.visualImportFrame, {
-      idempotencyKey: requestId || uuidv7(), builderReceipt: '1',
+      idempotencyKey: importID, builderReceipt: '1',
       savedVisualId: id, pageId: page.id, revisionId: builder.revision.id,
       row: String(row ?? 1), embed: this.embeddedInChat ? 'chat' : '',
     })

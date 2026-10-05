@@ -3,7 +3,7 @@ import { property } from 'lit/decorators.js'
 import type { ChatSignal, SavedVisualLibrarySignal } from '../../generated/signals'
 import { submitVisualForm, type SavedVisualLibraryMessage } from './visual-library-bridge'
 
-export type VisualLibraryState = { savedIds: string[]; savingId: string; error: string }
+export type VisualLibraryState = { savedIds: string[]; libraryIds?: Record<string, string>; savingId: string; error: string }
 
 // Native forms keep saving inside the authenticated, CSRF-protected page flow.
 // Both chat surfaces share this controller and the account's server-side library.
@@ -58,8 +58,9 @@ class AgentVisualLibrary extends LitElement {
     const savedIds = (this.agent?.transcript ?? [])
       .filter(item => item.artifact && this.library?.visuals.some(visual => visual.sourceKey === this.sourceKey(item.artifact!.id)))
       .map(item => item.artifact!.id)
+    const libraryIds = Object.fromEntries(savedIds.map(id => [id, this.library!.visuals.find(visual => visual.sourceKey === this.sourceKey(id))!.id]))
     this.dispatchEvent(new CustomEvent<VisualLibraryState>('lv-visual-library-state', {
-      bubbles: true, composed: true, detail: { savedIds, savingId: this.pending?.artifactId ?? '', error },
+      bubbles: true, composed: true, detail: { savedIds, libraryIds, savingId: this.pending?.artifactId ?? '', error },
     }))
   }
 

@@ -18,7 +18,7 @@ import { agentIcon } from './agent-icon'
 import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId, mergeReferences, normalizeReferenceLimit } from './reference'
 import './chat-composer'
 import './chat-list'
-import type { ChatDashboardMessage } from './dashboard-workspace'
+import type { ChatDashboardMessage, DashboardChatComponent } from './dashboard-workspace'
 import { chatVisualsFromSignals } from './visual-signals'
 
 const emptyAgent: ChatSignal = {
@@ -50,6 +50,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   @state() private savedDashboardArtifacts: ChatArtifactSignal[] = []
   @state() private savedDashboardVisuals: Record<string, VisualizationEnvelope> = {}
   @state() private dashboardCopies: Record<string, { id: string; pageId: string }> = {}
+  // Keep identity links through removal so Undo can restore membership.
+  private dashboardCopyLinks: Record<string, DashboardChatComponent[]> = {}
+  private dashboardComponents: DashboardChatComponent[] = []
   private pendingDashboardChange: { artifactId: string; componentId: string; remove: boolean } | null = null
   private pendingPreviewArtifacts: string[] = []
   private dashboardRevisionId = ''
@@ -149,24 +152,21 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const href = new URL(event.data.href, window.location.href)
     if (href.origin !== window.location.origin || !href.pathname.startsWith('/dashboards/')) return
     const components = event.data.components
-    const copies = { ...this.dashboardCopies }
-    for (const [artifactId, copy] of Object.entries(copies)) {
-      if (!components.some(component => component.id === copy.id && component.pageId === copy.pageId)) delete copies[artifactId]
-    }
+    this.dashboardComponents = components
     for (const [index, artifactId] of this.pendingPreviewArtifacts.entries()) {
       const component = components.find(component => component.id === `visual_${index + 1}`)
-      if (component) copies[artifactId] = component
+      if (component) this.rememberDashboardCopy(artifactId, component)
     }
-    this.pendingPreviewArtifacts = []
+    // An early loading projection may not contain the created components yet.
+    if (this.pendingPreviewArtifacts.every((_, index) => components.some(component => component.id === `visual_${index + 1}`))) this.pendingPreviewArtifacts = []
     const pending = this.pendingDashboardChange
     const component = pending && components.find(component => component.id === pending.componentId)
     const completed = !pending || (pending.remove ? !component : Boolean(component))
     if (pending && completed) {
-      if (component) copies[pending.artifactId] = component
-      else delete copies[pending.artifactId]
+      if (component) this.rememberDashboardCopy(pending.artifactId, component)
       this.pendingDashboardChange = null
     }
-    this.dashboardCopies = copies
+    this.reconcileDashboardCopies()
     if (completed) {
       window.clearTimeout(this.saveTimer)
       this.savingDashboard = false
@@ -185,6 +185,30 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
     const reference = event.data.reference
     this.references = mergeReferences([...this.references, reference])
+  }
+
+  private rememberDashboardCopy(artifactId: string, component: DashboardChatComponent): void {
+    const links = this.dashboardCopyLinks[artifactId] ?? []
+    if (!links.some(link => link.id === component.id && link.pageId === component.pageId)) this.dashboardCopyLinks[artifactId] = [...links, component]
+  }
+
+  private reconcileDashboardCopies(): void {
+    for (const [artifactId, savedId] of Object.entries(this.visualLibraryState.libraryIds ?? {})) {
+      for (const component of this.dashboardComponents) {
+        if (component.savedVisualId === savedId) this.rememberDashboardCopy(artifactId, component)
+      }
+    }
+    const copies: Record<string, DashboardChatComponent> = {}
+    for (const [artifactId, links] of Object.entries(this.dashboardCopyLinks)) {
+      const component = this.dashboardComponents.find(component => links.some(link => link.id === component.id && link.pageId === component.pageId))
+      if (component) copies[artifactId] = component
+    }
+    this.dashboardCopies = copies
+  }
+
+  private handleVisualLibraryState = (event: CustomEvent<VisualLibraryState>): void => {
+    this.visualLibraryState = event.detail
+    this.reconcileDashboardCopies()
   }
 
   private arrangeDashboard = (): void => {
@@ -1027,7 +1051,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private renderConversationView(agent: ChatSignal, status: ChatSignal['status'], composer: ChatSignal['composer']) {
     return html`
       <div class="thread-stack">
-        <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${(event: CustomEvent<VisualLibraryState>) => { this.visualLibraryState = event.detail }}></lv-agent-visual-library>
+        <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${this.handleVisualLibraryState}></lv-agent-visual-library>
         <lv-chat-thread .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId}
           .transcript=${this.displayTranscript(agent.transcript ?? [])}
           .visuals=${this.visuals ?? {}}

@@ -7,10 +7,12 @@ export type SavedVisualImportMessage = {
   agentContext: AgentContextSignal
 }
 
+export type DashboardChatComponent = { id: string; pageId: string; savedVisualId?: string }
+
 // Same-origin bridge between the existing builder and its owning chat.
 // The parent validates both origin and the exact iframe window before use.
 export type ChatDashboardMessage =
-  | { type: 'lv-dashboard-mutation'; href: string; revisionId: string; pageId: string; reference: AgentReferenceSignal; components: {id: string; pageId: string}[] }
+  | { type: 'lv-dashboard-mutation'; href: string; revisionId: string; pageId: string; reference: AgentReferenceSignal; components: DashboardChatComponent[] }
   | { type: 'lv-builder-back-to-chat' }
   | { type: 'lv-refresh-builder' }
   | { type: 'lv-arrange-dashboard-visuals' }
@@ -24,7 +26,7 @@ export type ChatDashboardMessage =
     pageId: string
     href: string
     reference: AgentReferenceSignal
-    components: { id: string; pageId: string }[]
+    components: DashboardChatComponent[]
     artifacts: ChatArtifactSignal[]
     visuals: Record<string, VisualizationEnvelope>
   }

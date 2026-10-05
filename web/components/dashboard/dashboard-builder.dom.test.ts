@@ -73,6 +73,8 @@ test('saved visual imports update the current builder without navigation and ret
       expect(form.get('builderReceipt')).toBe('1')
       expect(form.get('pageId')).toBe('overview')
       expect(form.get('savedVisualId')).toBe('saved-visual-1')
+      const imported = envelope.builder.pages[0].visuals[1]
+      imported.id = imported.visualId = `saved_${form.get('idempotencyKey')!.replaceAll('-', '')}`
       await route.fulfill({ contentType: 'text/html', body: `<html><body><div id="chat-dashboard-receipt"></div><script>parent.postMessage(${JSON.stringify({ type: 'lv-builder-imported', envelope, agentContext: {} })}, location.origin)</script></body></html>` })
     })
     await page.locator('lv-dashboard-builder').evaluate((element: any) => element.addSavedVisual('saved-visual-1'))
@@ -86,11 +88,12 @@ test('saved visual imports update the current builder without navigation and ret
         pending: element.commandPending,
         undo: element.undoStack.map((revision: any) => revision.id),
         visuals: element.shadowRoot.querySelectorAll('.canvas .visual').length,
+        importedSource: element.importedVisualSources.get(element.builder.pages[0].visuals[1].id),
       }
     })
     expect(imports).toBe(1)
     expect(page.url()).toBe(`${baseURL}/`)
-    expect(state).toEqual({ sameBuilder: true, sameCanvas: true, selectedPage: 'overview', pending: false, undo: ['rev-7'], visuals: 2 })
+    expect(state).toEqual({ sameBuilder: true, sameCanvas: true, selectedPage: 'overview', pending: false, undo: ['rev-7'], visuals: 2, importedSource: 'saved-visual-1' })
   } finally {
     await page.close()
   }

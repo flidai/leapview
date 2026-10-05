@@ -848,3 +848,47 @@ test('Arrange appears only in preview chat and sends its command to the retained
     expect(await page.getByRole('button', { name: 'Fix view visuals', exact: true }).count()).toBe(0)
   } finally { await page.close() }
 })
+
+test('dashboard membership follows Preview, delete, Undo, and saved-library imports', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ agent: { transcript: [{ kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'chart-one', type: 'bar', summary: 'Revenue' } }] } })
+      e.dashboardPreview = true
+      e.pendingPreviewArtifacts = ['chart-one']
+      await e.updateComplete
+    })
+    const project = async (components: Array<{id: string; pageId: string; savedVisualId?: string}>) => {
+      await page.frameLocator('.builder-frame').locator('body').evaluate((_, components) => {
+        window.parent.postMessage({ type: 'lv-builder-saved', revisionId: 'rev', pageId: 'overview', href: '/dashboards/demo/edit', components, artifacts: [], visuals: {},
+          reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], href: '/dashboards/demo/edit', locations: [], context: [] },
+        }, window.parent.location.origin)
+      }, components)
+      await page.waitForTimeout(50)
+    }
+    await project([])
+    expect(await chat.evaluate((e: any) => e.pendingPreviewArtifacts)).toEqual(['chart-one'])
+    await project([{id: 'visual_1', pageId: 'overview'}])
+    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
+    await project([])
+    expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
+    await project([{id: 'visual_1', pageId: 'overview'}])
+    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
+    await project([{id: 'saved_import', pageId: 'another-page', savedVisualId: 'saved-one'}])
+    await chat.evaluate(async (e: any) => {
+      e.handleVisualLibraryState(new CustomEvent('lv-visual-library-state', {detail: {savedIds: ['chart-one'], libraryIds: {'chart-one': 'saved-one'}, savingId: '', error: ''}}))
+      await e.updateComplete
+    })
+    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
+    expect(await chat.evaluate((e: any) => e.dashboardCopies['chart-one'])).toMatchObject({id: 'saved_import', pageId: 'another-page'})
+    await project([{id: 'saved_import', pageId: 'another-page', savedVisualId: 'saved-one'}, {id: 'second_copy', pageId: 'overview', savedVisualId: 'saved-one'}])
+    await project([{id: 'second_copy', pageId: 'overview', savedVisualId: 'saved-one'}])
+    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
+    await project([])
+    expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
+  } finally { await page.close() }
+})
