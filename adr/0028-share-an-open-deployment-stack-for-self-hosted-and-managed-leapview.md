@@ -8,7 +8,7 @@ Review: target architecture agreed; record remains proposed pending PR review
 
 Proposal date: 2026-09-25
 
-Last revised: 2026-10-01
+Last revised: 2026-10-05
 
 Implementation: pending; this proposal does not establish production readiness
 
@@ -41,24 +41,62 @@ Related: [ADR-0003](0003-retain-narrow-infisical-resolver.md),
 
 This deployment proposal is ADR-0028. Main's accepted ADR-0025 governs typed
 resource permissions and scoped API credentials; ADR-0026 governs authority across
-operations. ADR-0027 is reserved by the [credential lifecycle proposal in PR #785](https://github.com/flidai/leapview/pull/785).
-Neither accepted decision is renumbered or amended by this numbering repair.
+operations. ADR-0027 records the proposed credential-lifecycle decision. Its
+initial credential foundation merged in
+[PR #785](https://github.com/flidai/leapview/pull/785), but the ADR itself remains
+proposed and does not amend accepted ADR-0025 or ADR-0026. Neither accepted decision
+is renumbered or amended by this numbering repair.
 
-The managed target continues to require Kamal's normal candidate-first sequence
-and safe temporary process overlap. The current ADR-0027 proposal limits its
-credential lifecycle to one supervised process with stop/start deployment. That
-foundation may be reviewed within its declared limits, but its component evidence
-does not qualify the combined managed profile. Before accepting the combined
-implementation contract, reconcile ADR-0027's process ownership, admission,
-consumer draining, publication and restart boundaries with this overlap requirement.
-Readiness must remain separate from authority to mutate durable state, run workers,
-activate credentials or retire shared files and credential versions.
+This proposed amendment changes the managed stateful v1 release contract from
+requiring candidate-first process overlap to allowing a bounded maintenance
+interruption. ADR-0027's proposed single-supervised-process stop/start lifecycle is
+within this boundary, but its component evidence does not qualify the combined
+managed profile. The deployment completion roadmap is approved; this amendment asks
+reviewers to update its release gate. ADR-0028 acceptance and this amendment remain
+pending review, and neither enables production deployment.
 
-A stop-first maintenance profile is a different deployment contract. Substituting
-it requires an explicit reviewed amendment to this ADR and the migration roadmap,
-with named profile, interruption bounds and distinct qualification evidence. Until
-then, it cannot replace the overlap gate. The stateless public site's qualification
-does not establish stateful application or credential lifecycle correctness.
+[`serve`](../internal/app/cli/serve.go) takes the exclusive
+[`LEAPVIEW_HOME` instance lock](../internal/platform/locking/lock.go) before
+building or starting the application, and the
+[managed Kamal template](../deploy/managed/kamal/deploy.yml.example) mounts that
+same home into each application container. [`Application.Start`](../internal/app/application.go)
+starts workers before the HTTP listener; [`/readyz`](../internal/app/health.go)
+checks the active runtime lease. These facts
+make ordinary candidate-first Kamal overlap unsuitable for this shared-home layout
+and mean readiness alone cannot gate worker effects. Stock Kamal behavior remains
+research context, not the managed v1 lifecycle contract. No undocumented Kamal hook
+or capability is assumed; the selected adapter and its supported operations remain
+a qualification gate.
+
+For a compatible release, preflight the exact candidate artifact and its declared
+configuration, schema/catalog, credential and rollback compatibility while the
+current release still serves. Before handoff, close public routing and work
+admission, then drain admitted requests, streams, uploads, queries, worker effects,
+consumer leases and publication activity. Record finite, reviewable phase budgets
+and one end-to-end interruption budget for the selected profile; measure and obtain
+service-owner approval before any production claim. These are qualification inputs,
+not numeric SLAs set by this ADR.
+
+After a successful drain, stop the predecessor and confirm process exit and release
+of its instance lock before starting the candidate. A drain, stop or reconciliation
+timeout after admission closure leaves public and work admission closed and fails
+the release. Preflight failure/timeout or runner loss before closure leaves the predecessor
+serving and does not begin the handoff. Do not start a second owner, or represent
+force termination as a successful drain. Start the candidate against committed
+state with public and mutating-work admission still closed. Verify
+`/readyz`, worker ownership/health and required credential state before reopening
+traffic and work. Because workers currently start before the listener, qualification
+must prove that candidate startup cannot perform unauthorized or duplicate effects
+before those checks pass.
+
+If candidate startup or verification fails, remain closed and use the same exclusive
+handoff to restart a compatible predecessor, preserving acknowledged writes. An
+incompatible credential, schema or catalog transition has only its separately
+reviewed maintenance/recovery path; it cannot claim old-binary downgrade or ordinary
+rollback. Runner loss after closure at every handoff phase must leave durable,
+reconcilable evidence and must never produce two process owners. Independent host and PostgreSQL
+maintenance follow their own procedures. The stateless public site's qualification
+does not establish this stateful application or credential lifecycle correctness.
 
 ADR-0027 also proposes a clean credential-format break without old-binary downgrade
 support. Classify that boundary before any durable mutation. An incompatible
@@ -229,7 +267,7 @@ versions, plans and resource sizes are qualified separately.
 | Host configuration deployment | deploy-rs | Deploy reviewed NixOS generations with activation confirmation and rollback; qualify reboot and service health separately. |
 | Application runtime | Docker Engine | Immutable release images and persistent local volumes. |
 | Self-hosted deployment | Docker Compose; optional Caddy | Minimal public installation with bundled PostgreSQL and optional HTTPS. |
-| Managed application deployment | Kamal and kamal-proxy | Health-gated releases, TLS and traffic routing, draining and restart-based rollback. No retained warm release. |
+| Managed application deployment | Kamal and kamal-proxy | Remote image deployment, TLS, proxy routing and restart-based rollback. The proposed shared-home v1 handoff is serialized stop-first maintenance; the stock overlap sequence is not assumed to satisfy it. No retained warm release. |
 | Database | Self-operated PostgreSQL | Application state, encrypted customer credentials, jobs and DuckLake metadata. Separate customer database VPS with one primary; bundled locally for Compose. |
 | Background jobs | River / PostgreSQL | Selected baseline; a separate bounded River/DBOS evaluation may propose a later change. No additional broker. |
 | Analytical storage | DuckDB and DuckLake on local SSD | Local analytical serving; rebuild and republish only where complete source replay is supported. |
@@ -506,10 +544,23 @@ rollback eligibility. Promote the same artifact through internal qualification,
 selected managed customers, and broader rollout within maintenance windows.
 Serialize mutations per environment and stop promotion on failed checks.
 
-The managed profile uses Kamal's standard health-gated deployment: start the
-candidate, check readiness, switch traffic, drain and stop the prior container.
-Reserve capacity for temporary process overlap and analytical work. Qualify
-candidate failure before cutover, SSE reconnection and bounded shutdown.
+The managed stateful v1 profile proposes a serialized maintenance handoff because
+each application revision mounts the same `LEAPVIEW_HOME` and serving processes
+hold its exclusive instance lock. Preflight the exact candidate artifact and
+compatibility before closing service. Then close public routing and work admission,
+drain active effects and consumer leases, stop the predecessor, and verify exit and
+lock release before starting one candidate. Keep service closed while it rebuilds
+from committed state; verify active-runtime readiness, worker ownership/health and
+credential state before reopening. Qualify the pinned Kamal version and adapter
+against this sequence using supported operations. Do not infer that stock
+candidate-first deployment or an undocumented Kamal hook implements it.
+
+For each release, record finite budgets for preflight, admission closure, draining,
+stop/lock release, candidate start, verification and reopening, plus a measured
+end-to-end interruption budget. The specification does not invent numeric service
+targets; the service owner must review measured values before production use. On a
+phase timeout or lost runner, remain closed, record/reconcile the handoff state, and
+do not start a second process owner. A stop timeout is not a successful drain.
 
 Rollback restarts a compatible prior release; it does not depend on a warm
 standby. Retain the required immutable images and matching release configuration,
@@ -526,8 +577,8 @@ no bespoke metrics-driven release controller is required.
 
 Compose declares its own interruption and restart-based rollback bounds. Both
 profiles use the same compatibility and recovery contracts. Define background-job
-admission, draining, ownership and fencing during candidate overlap and rollback;
-HTTP routing does not determine which process may mutate durable state.
+admission, draining, ownership and fencing across the serialized handoff and
+rollback; HTTP routing does not determine which process may mutate durable state.
 
 Both releases use current durable data. Schema and data-format evolution must
 preserve the declared rollback window, using staged compatible changes where
@@ -535,9 +586,10 @@ appropriate. Destructive changes cannot occur while an older supported release
 still requires the old representation. A rollback-incompatible upgrade must be
 identified before execution and require its documented maintenance/recovery path.
 
-Cutover must account for SSE reconnection, in-flight requests, uploads, and
-queries. Concurrent versions must preserve job idempotency, leases, and fencing;
-starting a candidate must not duplicate scheduled work or publication effects.
+The handoff must account for SSE reconnection, in-flight requests, uploads and
+queries before the predecessor exits. Worker claims, scheduled jobs, credentials
+and publication effects must remain idempotent, leased and fenced across shutdown,
+candidate startup and rollback. Process overlap is not a managed v1 prerequisite.
 Application binary upgrades and authored analytics deployments remain distinct
 operations, each preserving the other's durable contracts.
 
@@ -757,8 +809,9 @@ backup operation and host/database recovery work. Self-operated PostgreSQL remov
 a separate database-service dependency and gives us control over its location,
 maintenance and access; it also makes database incident response our duty. Public
 operational interfaces need compatibility discipline, documentation and sanitized fixtures.
-Temporary release overlap requires spare capacity. Single-host outages and
-restart-based rollback constrain the customers and service levels supported. HA,
+The serialized release handoff requires measured interruption budgets and a
+reconcilable operator procedure. Single-host outages and restart-based rollback
+constrain the customers and service levels supported. HA,
 backup retention, optional operational services, and off-provider storage introduce
 recurring costs that must be measured against the offering's service commitments.
 
@@ -786,13 +839,22 @@ retain reproducible evidence appropriate to that profile:
    and managed-service outages do not prevent ordinary application serving
    outside documented dependency requirements.
 2. **Shared lifecycle:** Compose and Kamal use the same
-   application artifacts and lifecycle contracts, with a single container owner
-   per installation.
+   application artifacts and compatibility contracts, with one process/container
+   owner per installation. The managed adapter preserves the exclusive
+   `LEAPVIEW_HOME` ownership boundary.
 3. **Upgrade and rollback:** under queries, SSE, uploads, and background work,
-   upgrade A to B, commit new writes on B, then roll back to A within the supported
-   window. Verify preserved writes, correct authorization, reconnect behavior,
-   fenced work, and each profile's documented interruption bound. Kamal proves
-   restart-based rollback, artifact availability and safe worker ownership.
+   preflight exact artifact and compatibility while A is serving; close public and
+   work admission; drain active effects and leases; stop A and confirm exit/lock
+   release; then start B from committed state while admission remains closed.
+   Verify `/readyz`, worker ownership/health and credential state before reopening.
+   Commit writes on B, then roll back to compatible A through the same exclusive
+   handoff. Verify preserved writes, correct authorization, reconnect behavior,
+   fenced work, and measured finite phase and end-to-end interruption budgets
+   approved for the profile. Inject phase timeouts and runner loss: preflight
+   failure/loss leaves A serving; after closure, remain closed and never start a
+   second owner. The pinned Kamal adapter demonstrates this through supported
+   operations; stock candidate overlap is not a required gate and no undocumented
+   hook is assumed.
 4. **Recovery:** restore authoritative state and retained inputs into fresh
    infrastructure; rebuild and publish analytical outputs. Separately test any
    analytical backup restore with matching catalog/files. Verify governed queries
@@ -811,9 +873,12 @@ retain reproducible evidence appropriate to that profile:
    dependency upgrades, including PostgreSQL major-version transitions. Resume or
    recover without inconsistent state; serving credentials cannot acquire migration
    privileges. Preserve the recorded recovery point and data-loss bounds.
-9. **Management interruption:** stop the deployment runner during an update.
-   Inspect and safely resume or recover without duplicate migrations or job effects.
-   Prove routine serving continues during central management outages.
+9. **Management interruption:** stop the deployment runner during preflight and
+   after each maintenance-handoff phase. Before admission closes, the predecessor
+   continues serving; after closure, inspect durable and host state and reconcile
+   with admission closed, without a second owner or duplicate migrations/job
+   effects. Prove routine serving outside an active handoff continues during central
+   management outages.
 10. **Missing observation evidence:** inject unavailable, empty or stale monitoring
     evidence. Halt further customer promotions and alert the operator; exercise the
     bounded investigation/rollback procedure. Missing evidence cannot approve a
@@ -824,9 +889,11 @@ retain reproducible evidence appropriate to that profile:
     invalid and retired keys, retained backups, customer credential activation and
     rejected cross-scope access. An optional external resolver must separately
     prove its outage/expiry behavior. Include actual dependencies in recovery time.
-12. **Analytics overload:** saturate memory, query concurrency and temporary-disk
-    budgets under release overlap. Verify bounded admission and failure behavior,
-    truthful readiness, and sufficient capacity for release/recovery operations.
+12. **Analytics and handoff load:** saturate memory, query concurrency and
+    temporary-disk budgets while exercising release preflight and the serialized
+    handoff. Verify bounded admission and failure behavior, truthful readiness,
+    worker/credential checks, measured phase and total interruption budgets, and
+    sufficient capacity for release/recovery operations.
 13. **Application host loss:** provision an empty VPS, reconnect to the separate
     PostgreSQL VPS and rebuild analytical outputs into fresh metadata/files. Fence a
     returning host and preserve authoritative customer writes. Exercise unavailable

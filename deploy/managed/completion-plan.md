@@ -1,6 +1,6 @@
 # PR #760 takeover and completion plan
 
-Reviewed on 2026-09-30. Owner: Ganesh K. Implementation: PR #760.
+Reviewed on 2026-09-30; roadmap amendment proposed 2026-10-05. Owner: Ganesh K. Implementation: PR #760.
 
 ## Execution baseline
 
@@ -34,9 +34,13 @@ their limits visible is part of the delivery contract.
    deploy-rs checks, checks formatting and executes the kernel regression plus
    the isolated real-Docker test using the host's locked Docker package.
    Manual runs can additionally select the real-Docker reboot fixture.
-3. **The README prescribed stop-first replacement.** That historical workaround
-   conflicts with Stage 4's required normal Kamal sequence. The README now records
-   the overlap ownership gate and keeps stop-first results as historical evidence.
+3. **The stateful release contract changed.** The earlier completion plan treated
+   stock Kamal candidate overlap as a gate. The proposed ADR-0028 amendment replaces
+   that gate for managed v1 with a bounded serialized maintenance handoff because
+   application revisions share one locked `LEAPVIEW_HOME`. The README records the
+   new contract as proposed and unqualified. Earlier stop-first rehearsals remain
+   historical component evidence; they do not qualify preflight, admission/draining,
+   lock release, worker/credential verification, interruption budgets or recovery.
 4. **First-reviewer token issuance remains blocked.** Current main already has
    independent reviewer nomination under the unpublished-target lock. Personal
    project-token issuance still obtains project permissions from an active
@@ -77,7 +81,7 @@ it does not download an application or exercise application release compatibilit
 | Stage 2: release adoption (separate track) | Unchanged supported-host compatibility matrix, artifact/architecture qualification, exact-digest protected security admission including native dependencies, inventory/provenance and immutable promotion. Candidate availability does not establish production admission. |
 | Stage 3: host updates/recovery | Private reviewed inventory and state ownership; disposable fresh install; deploy-rs failed activation/connectivity recovery; retained known-good boot generations; rescue access; separate host-role reboot; mount/secret ownership; external port checks; disk pressure, GC and cache-outage exercises. Updates must never execute installation formatting. |
 | Stage 4: first publication | Extend the fenced, audited bootstrap contract to issue a bounded independent reviewer credential before activation. Bind exact target/project/environment and policy revision. Nominate before planning. Test publisher self-approval, foreign scope, expired authority, widening, concurrent activation and rollback of failed issuance. Qualify roles/schema/pool → private bootstrap → publisher/reviewer credentials → plan/approve/publish → `/readyz` → public traffic without development credentials or SQL bypasses. |
-| Stage 4: shared lifecycle | Extract reusable lifecycle admission from Compose without adding a second container owner. Enforce compatible release pairs, preflight/migration boundaries, serialized mutations and exact approved artifact identity. Resolve shared-home ownership and worker/publication fencing before ordinary Kamal overlap. Exercise candidate failure, interrupted switch, drain, SSE/uploads/jobs and rollback after writes with retained configuration/secrets and offline images. |
+| Stage 4: shared lifecycle | Extract reusable lifecycle admission from Compose without adding a second container owner. Enforce exact artifact and compatibility preflight; serialize mutations. Qualify the bounded handoff: preflight failure/runner loss before closure leaves the predecessor serving; then close public/work admission, drain requests/effects/consumer leases, stop the predecessor, confirm exit and `.instance.lock` release, and start the candidate from committed state with admission closed. Verify `/readyz`, workers and credentials before reopening. Record finite measured phase and end-to-end interruption budgets for review. Exercise drain/stop/start/verification timeouts and runner loss at every phase; before closure retain predecessor service, and after closure keep admission closed for no-second-owner reconciliation. Cover SSE/uploads/jobs, compatible rollback after writes and offline artifact recovery. The pinned Kamal adapter must demonstrate this using supported operations; do not assume undocumented hooks or require normal process overlap. |
 | Credential prerequisite | Review the focused credential-lifecycle ADR before implementing customer credential formats, activation or rotation. Host provisioning remains independent. |
 | Stage 5: complete managed qualification | Two real hosts; protected keys; pgBackRest PITR and file-consistent recovery; replacement/fencing of each host; fresh-pool analytical rebuild; private metrics collection/exposure and actionable off-host monitoring; operator revocation; measured downtime, recovery, write-loss and manual work. Record exact images, configuration and host generations. |
 | Stage 6: adoption/retirement | Internal handover, scoped customer eligibility, observation criteria and recovery acceptance. Retire each old script only after its callers and recovery responsibilities migrate. |

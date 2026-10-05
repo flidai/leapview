@@ -2,7 +2,7 @@
 
 Date: 2026-09-25
 
-Last revised: 2026-10-01
+Last revised: 2026-10-05
 
 Status: research supporting selected proposal; no production profile is qualified
 
@@ -16,8 +16,11 @@ LeapView with NixOS and pgBackRest. Local SSD holds analytical files.
 Derived data is explicitly rebuildable where complete source replay is supported.
 Off-host recovery protects irreplaceable managed customer state through the selected
 Hetzner Object Storage backup destination; S3 is outside the analytical serving path.
-Restart-based rollback and measured downtime are accepted; a warm retained
-release is no longer required. Customer-owned infrastructure remains a future option.
+Restart-based rollback and a measured, bounded maintenance interruption are
+proposed; a warm retained release is no longer required. Customer-owned
+infrastructure remains a future option. The proposed stateful v1 contract changes
+the earlier candidate-overlap gate and remains subject to ADR review and
+qualification.
 The alternatives below remain research context, not additional v1 support promises.
 
 ## Evaluation objective
@@ -48,7 +51,7 @@ No core platform replacement is required. The final refinements are:
 | Recovery | pgBackRest for PostgreSQL; Restic for irreplaceable local files where present; independent key recovery; analytical rebuild where qualified |
 | Backup isolation | Enforce customer-scoped credentials and decide Object Lock before bucket creation; test retention/restore compatibility |
 | Observability | Better Stack with explicit instrumentation, scoped collection and bounded buffers; broad mounts/privileged eBPF require justification |
-| Release overlap | Prove local path, catalog, publication, cleanup and capacity behavior across release pairs |
+| Release handoff | Prove serialized ownership, local path/catalog compatibility, publication fencing, cleanup and recovery across supported release pairs |
 | Pipeline orchestration | Retain River as baseline while the separate River/DBOS evaluation measures simplification |
 
 The next milestone is a complete deployment exercise: provision, deploy, upgrade,
@@ -129,7 +132,7 @@ Do not commit to supporting every candidate below.
 
 | Candidate | Existing machinery reused | Remaining cost or limitation | Research conclusion |
 |---|---|---|---|
-| Stock Kamal | Remote container deployment and health-gated release switching | Stops the old container; warm retained releases require additional orchestration; host lifecycle remains ours | Selected proposed v1 path with restart-based rollback |
+| Stock Kamal | Remote container deployment, image management and health-gated proxy switching | Its ordinary candidate-first sequence can overlap processes; the shared-home v1 handoff must stop and confirm the old owner before candidate start. Host lifecycle remains ours. No hook or callback capability is assumed. | Selected as the proposed deployment base, subject to a separately qualified adapter/operating sequence and restart-based rollback |
 | Docker Swarm + Traefik | Service reconciliation, replica replacement, configurable rolling updates and failure rollback, dynamic ingress | Cluster/quorum and host operations remain ours; no built-in retained full blue/green release contract | Lightweight candidate if rolling replacement meets the service objectives |
 | Managed Kubernetes + Argo Rollouts | Managed node/control-plane lifecycle plus standard rollout controllers | Provider cost and qualification, Kubernetes configuration, controller upgrades and application integration | Deferred alternative if future requirements justify advanced release analysis |
 | Self-managed K3s + Argo Rollouts | Standard rollout controllers and Kubernetes APIs | We own cluster upgrades, networking, datastore recovery and failure response | Portable alternative, but does not remove cluster operations |
@@ -137,8 +140,12 @@ Do not commit to supporting every candidate below.
 | Coolify / Dokploy | Operator UI/API and deployment management | Underlying deployment semantics and edition boundaries still matter | Useful administration products; not sufficient grounds to select a release engine |
 | Komodo / Semaphore UI | Existing interfaces for server operations or running automation | Another privileged service to operate; not an application recovery authority | Optional replacements for a future custom operations dashboard |
 
-Kamal's [deployment sequence](https://kamal-deploy.org/docs/commands/deploy/)
-stops the prior container. Swarm supports
+Kamal's [documented deployment commands](https://kamal-deploy.org/docs/commands/deploy/)
+provide image and proxy lifecycle operations, but their ordinary candidate-first
+release behavior is not suitable evidence for a shared-home stop-first handoff.
+The pinned Kamal version and deployment adapter must demonstrate the required
+sequence using supported operations; this research assumes no undocumented hooks.
+Swarm supports
 [service rollback and update monitoring](https://docs.docker.com/engine/swarm/services/),
 but [stack deployment uses the legacy Compose v3 format](https://docs.docker.com/engine/swarm/stack-deploy/).
 Reusing Compose concepts does not mean the existing file works unchanged.
@@ -153,15 +160,25 @@ need qualification on the chosen topology.
 
 The previous Kubernetes recommendation depended on warm retained releases and
 native post-promotion analysis. Accepting restart-based rollback removes those
-requirements. Kamal reuses health-gated deployment while avoiding a Kubernetes
-lifecycle and managed-cluster provider dependency for each customer.
+requirements. Kamal reuses image, proxy and remote deployment machinery while
+avoiding a Kubernetes lifecycle and managed-cluster provider dependency for each
+customer. It does not by itself implement the newly proposed serialized application
+handoff.
 
 The documented [rollback](https://kamal-deploy.org/docs/commands/rollback/) uses
 an earlier image; local pruning and artifact/configuration retention must match
 the supported window. The [proxy health check](https://kamal-deploy.org/docs/configuration/proxy/)
 ends after deployment, so continuous off-host monitoring and operator response
 remain necessary. Qualify SSE buffering, timeouts, uploads and drain behavior.
-Normal deployment still overlaps processes and needs memory and worker fencing.
+The application `serve` path acquires an exclusive `.instance.lock` under
+`LEAPVIEW_HOME` before application build/start; managed application revisions mount
+that same home. Workers start before the listener, and `/readyz` checks an active
+runtime lease. The candidate-first Kamal default can therefore conflict with the
+current single-owner runtime boundary. The proposed managed v1 sequence closes
+admission, drains, stops and confirms the predecessor/lock release, then starts and
+verifies one candidate before reopening. See the [qualification
+specification](deployment-profile-qualification.md); this proposal remains
+unqualified and does not imply current adapter support.
 
 Host and PostgreSQL maintenance stay with us. The separate database VPS holds
 control state while local SSD serves analytical outputs. Rebuilding a host must preserve authoritative
@@ -366,9 +383,9 @@ For the selected path, record:
 
 1. Product-independent controller/host code removed and new integration code added.
 2. Manual steps for onboarding, upgrades, failures, certificate renewal and rebuild.
-3. Idle per-customer cost, peak overlap capacity, and central operating cost.
-4. Exact-version upgrade; failure before and after promotion; rollback after writes;
-   node loss; management outage; and fresh-environment restoration outcomes.
+3. Idle per-customer cost, peak maintenance/recovery capacity, and central operating cost.
+4. Exact-version upgrade; failure before and after the handoff; rollback after
+   writes; node loss; management outage; and fresh-environment restoration outcomes.
 5. Customer isolation, operator access, provider exit and independent self-hosting.
 6. Remaining ownership for OS, Docker, Kamal/proxy, monitoring and data services.
 

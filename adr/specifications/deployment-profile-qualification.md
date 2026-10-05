@@ -4,7 +4,7 @@ Status: proposed requirements; no profile is qualified by this document
 
 Date: 2026-09-25
 
-Last revised: 2026-10-01
+Last revised: 2026-10-05
 
 Related: [ADR-0028](../0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md),
 [supporting technology research](deployment-stack-reuse-research.md)
@@ -17,11 +17,40 @@ contracts. Linear tracks owners and delivery status. No production capability or
 numeric service guarantee is established by this specification.
 
 Record the selected application's process and credential lifecycle contract before
-qualification. ADR-0028 requires candidate-first Kamal overlap; ADR-0027's current
-single-process foundation cannot qualify that profile. Resolve the process ownership,
-admission/draining, publication and restart contract under review before accepting
-their combined implementation. A separately accepted stop-first maintenance profile
-requires its own amended scope and evidence.
+qualification. The proposed ADR-0028 amendment selects a bounded, serialized
+maintenance handoff for managed stateful v1. It remains proposed pending ADR review
+and supplies no production approval. The current [`serve` path](../../internal/app/cli/serve.go)
+acquires the exclusive [`LEAPVIEW_HOME` instance lock](../../internal/platform/locking/lock.go)
+before application construction; the [managed template](../../deploy/managed/kamal/deploy.yml.example)
+mounts that same home. [`Application.Start`](../../internal/app/application.go)
+starts workers before HTTP listen, and [`/readyz`](../../internal/app/health.go)
+checks an active runtime lease. Qualification must therefore prove
+process ownership, public and work admission, draining, publication, credentials,
+worker startup and restart behavior as one contract. Stock Kamal's ordinary
+candidate-first overlap is not this contract, and no undocumented Kamal hook is
+assumed. The actual pinned-version adapter and operating sequence remain a gate.
+
+Preflight the exact approved candidate artifact and compatibility before entering
+maintenance. Then close public routing and work admission, drain active requests,
+SSE streams, uploads, queries, worker effects, consumer leases and publication
+activity, stop the predecessor, and confirm both process exit and instance-lock
+release before starting the candidate. Keep public routing and work admission
+closed while it reconstructs runtime state from committed data. Verify `/readyz`, worker
+ownership/health and credential state before reopening traffic and work. Handoff
+phase budgets and the end-to-end interruption budget must be finite, reviewable,
+measured and approved for a service profile; this specification assigns no numeric
+SLA.
+
+Preflight failure/timeout or runner loss before admission closure leaves the predecessor
+serving and does not begin the handoff. After closure begins, any drain/stop/start/
+verification timeout or runner loss keeps public and work admission closed. Do not
+start a second owner before predecessor exit and lock release, claim a
+force-terminated process was drained, or reopen based on stale phase evidence.
+Persist enough transition evidence to reconcile and resume or recover safely.
+Compatible rollback repeats the same exclusive handoff and preserves
+acknowledged writes. An incompatible credential/schema/catalog transition uses
+only its separately reviewed maintenance/recovery procedure and never old-binary
+downgrade. Host and PostgreSQL maintenance remain independent qualification paths.
 
 Classify incompatible credential/schema/catalog transitions before mutation and use
 their declared maintenance/recovery procedure. Ordinary compatible image rollback
@@ -110,7 +139,8 @@ database vendors are not required by this profile.
 - Exercise deploy-rs activation failure, connectivity rollback, service checks,
   kernel reboot, boot-generation recovery and out-of-band rescue access.
 - Prove Docker/Kamal container ownership, persistent mounts and secret permissions
-  survive configuration activation, host reboot and application release overlap.
+  survive configuration activation, host reboot and the serialized application
+  release handoff.
 - Retain and test known-good generations; qualify garbage collection, disk pressure,
   build/cache unavailability and overdue security-update detection.
 - Verify the NixOS security-notice review and scheduled/expedited input-update
@@ -354,15 +384,17 @@ avoid a new LeapView database backup or upgrade engine.
 
 | Behavior | Compose | Operated Kamal |
 |---|---|---|
-| Update | Documented Compose reconciliation | Candidate readiness, proxy switch, drain and stop prior container |
-| Interruption | Measured maintenance/restart bounds | Measured cutover/reconnection and restart-rollback bounds |
+| Update | Documented Compose reconciliation | Preflight, close admission, drain, stop/confirm old owner, start and verify candidate, reopen |
+| Interruption | Measured maintenance/restart bounds | Measured phase and end-to-end maintenance/restart-rollback bounds |
 | Previous release | Retained immutable artifact and restart procedure | Retained images and matching configuration; no running standby requirement |
 | Post-deploy failure | Monitoring and operator procedure where configured | Off-host monitoring, alert, campaign halt and operator rollback/recovery |
 | Durable state | Compatible current data; explicit restore for incompatible transitions | Same contract; application rollback does not rewind PostgreSQL or objects |
 
 ### Release and artifact policy
 
-Pin Kamal/proxy versions. Record readiness checks, deployment/drain/stop timeouts,
+Pin Kamal/proxy versions. Record exact-artifact preflight and compatibility checks,
+the supported operations used to enact the handoff, `/readyz` checks, worker and
+credential verification, each finite phase budget, measured end-to-end interruption,
 SSE buffering and response timeouts, upload limits, resource limits and supported
 release pairs. Deploy CI-built immutable artifacts; verify the image identity
 actually running. Serialize releases per environment and promote customers in
@@ -370,6 +402,9 @@ explicit batches using ordinary CI/inventory controls. Test first-event latency,
 long-lived SSE delivery, reconnects and draining through both direct kamal-proxy
 and optional Cloudflare ingress; explicitly configure buffering and timeouts.
 Test certificate renewal and trusted forwarding in each supported ingress mode.
+Demonstrate that the pinned Kamal version and adapter can perform the stop-first
+sequence through supported operations. Do not assume undocumented callbacks or
+hooks, and do not treat stock candidate-first overlap as satisfying this gate.
 
 Retain images, versioned configuration and compatible secret inputs for the
 supported rollback window. Align local pruning and registry retention. Test
@@ -389,22 +424,33 @@ Measure the time from failure detection through operator response, restart,
 readiness and successful user requests. Include the support coverage actually
 sold. Ordinary application rollback cannot downgrade incompatible durable state.
 
-### Background work and overlap
+### Serialized handoff, background work and runner recovery
 
-Define job admission, ownership, draining and fencing during candidate startup,
-cutover, rollback and host replacement. A candidate may serve readiness before
-it is authorized to claim mutating work. HTTP routing does not establish worker
-ownership. Use existing durable claims, idempotency and fencing; prove a stale
-worker cannot commit effects after authority transfers.
+The current server acquires `.instance.lock` in the application home before build
+or start, while `Application.Start` starts workers before the listener. `/readyz`
+checks the active runtime lease but does not itself establish worker admission or
+credential readiness. Qualification must verify those separate boundaries against
+the actual process and mounted-home configuration. Public routing and every source
+of mutating work must remain closed until the candidate has passed all required
+checks. A ready HTTP listener alone cannot authorize a worker or credential
+transition.
 
-Kamal's normal update briefly overlaps processes even without a warm standby.
-Budget concurrent DuckDB memory, container memory, query admission and temporary
-disk. Qualify file access and catalog compatibility during overlap; do not infer
-safe concurrent writes to a shared local database file. Verify identical persistent
-path mappings across release pairs, reader-safe cleanup, catalog compatibility and
-publication fencing. Recovery/rollback must respect committed schema and catalog
-changes. Bound interrupted queries, SSE reconnection and upload retries, and
-preserve queued-work compatibility.
+Use existing durable claims, idempotency and fencing to drain admitted work and
+prove a stale worker cannot commit after handoff. For each bounded phase, inject
+timeouts and loss of the deployment runner. The previous process must finish
+draining and release its lock before candidate start; if that cannot be confirmed,
+remain closed and fail for operator reconciliation. After candidate start, verify
+active-runtime readiness, worker ownership/health, credential activation and exact
+artifact/configuration identity before reopening. A failure after committed writes
+rolls back only through the same stop/lock-release/start sequence with a compatible
+release. Never infer safe shared-file access or concurrent writers from container
+readiness.
+
+Record finite phase budgets and a finite end-to-end interruption budget, then
+measure results through first successful user request and accepted work after
+reopening. Keep these profile-specific evidence and service-owner decisions; do not
+invent numeric targets here. Qualify query cancellation, SSE reconnection, upload
+retry and queued-work compatibility across both forward handoff and rollback.
 
 ## Availability and assurance gate
 
@@ -434,19 +480,25 @@ Certification and legal compliance claims require their own scope and evidence.
 
 ## Targeted failure evidence
 
-- **Upgrade/rollback:** failed candidate readiness, failure after cutover, rollback
-  after new writes, unavailable registry, stale configuration and expired secrets.
+- **Upgrade/rollback:** candidate preflight failure while old service remains open;
+  drain/stop/lock-release timeout with admission closed; candidate readiness,
+  worker or credential failure after stop; rollback after new writes through the
+  same exclusive handoff; unavailable registry, stale configuration and expired
+  secrets.
 - **Migrations:** interruption/retry preserves one durable operation and correct
   schema/catalog state; serving identities cannot assume migration privileges.
-- **Management outage:** interrupt the runner before/after cutover; inspect actual
-  host state and safely resume/recover without duplicate effects. Continued serving
-  must not require the central deployment runner.
+- **Management outage:** interrupt the runner before and after every handoff phase;
+  inspect durable phase evidence and actual process/lock/ingress state, then resume
+  or recover without reopening admission prematurely or duplicating effects.
+  Continued ordinary serving must not require the central deployment runner.
 - **Credential recovery:** restart with GitHub unavailable using provisioned host
   secrets. Restore a fresh host using independent encrypted bootstrap/key recovery.
   Test missing/invalid keys, retained backups after rotation and revoked credentials.
   Any optional external resolver separately proves outage and expiry behavior.
-- **Overload:** saturate memory, query concurrency and temporary disk during overlap;
-  prove bounded failure, truthful readiness and capacity for operator recovery.
+- **Overload:** saturate memory, query concurrency and temporary disk while
+  preflighting and executing the serialized handoff; prove bounded failure,
+  truthful readiness, closed admission on timeout and capacity for operator
+  recovery. Do not require old/new process overlap for managed v1.
 - **Host failure:** replace the VPS, preserve authoritative state, rebuild local
   analytics into fresh metadata/files, fence its predecessor and verify access/TLS.
 - **Analytical corruption:** fresh-pool rebuild, reset checkpoints, interrupted

@@ -47,7 +47,10 @@ customer site.
 | [ADR-0026](0026-preserve-authority-across-governed-operations.md) | Preserve authority across governed operations | Accepted | 2026-09-17 | Partial; restricted consumption, scheduled/delegated refresh, delivery planning/build, discovery, cache, and rollback slices qualified | — |
 | [ADR-0028](0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md) | Share an open deployment stack for self-hosted and managed LeapView | Proposed | 2026-09-28 | Pending | — |
 
-ADR-0027 is reserved by the [credential lifecycle proposal in PR #785](https://github.com/flidai/leapview/pull/785); it is not accepted by this deployment proposal.
+ADR-0027 records the proposed credential-lifecycle decision. Its
+initial credential foundation merged in
+[PR #785](https://github.com/flidai/leapview/pull/785), but the ADR itself remains
+proposed and does not amend accepted ADR-0025 or ADR-0026.
 
 ## Companion specifications
 
