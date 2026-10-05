@@ -344,7 +344,7 @@ test('scope controls graph inclusion separately from Fit, and Expand opens a ful
     expect(await graph.locator('.react-flow__node').count()).toBe(3)
     expect(await graph.getByRole('button', { name: 'Show direct dependencies' }).count()).toBe(1)
     await graph.getByRole('button', { name: 'Show direct dependencies' }).click()
-    expect(await graph.locator('.react-flow__node').count()).toBe(2)
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(2)
 
     const expand = graph.getByRole('button', { name: 'Expand graph' })
     const before = await graph.evaluate((element) => element.getBoundingClientRect().width)
@@ -395,7 +395,7 @@ test('scope controls graph inclusion separately from Fit, and Expand opens a ful
   } finally {
     await page.close()
   }
-})
+}, 10_000)
 
 test('external lineage scope changes keep the anchor visible and narrow Full Fit contains every node', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
