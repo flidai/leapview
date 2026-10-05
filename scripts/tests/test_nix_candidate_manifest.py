@@ -75,6 +75,8 @@ class CandidateTests(unittest.TestCase):
         self.assertIn('canonical-release-identity', manifest['requiredReleaseEvidence'])
         self.assertIn('supported-platform-matrix', manifest['requiredReleaseEvidence'])
         self.assertIn('exact-artifact-promotion', manifest['requiredReleaseEvidence'])
+        self.assertEqual(manifest['requiredReleaseEvidence'], sorted(m.COMMON_GATES +
+                         ['oci-admission', 'nix-runtime-enforcement']))
         self.assertEqual(manifest['evidence'], {})
         m.verify(manifest, self.archive, self.source)
 
@@ -218,8 +220,12 @@ class CandidateTests(unittest.TestCase):
         (directory / 'assessments.vex.json').write_bytes(m.runtime_assessment_path(platform).read_bytes())
         policy = ROOT / 'nix/runtime-security-policy.json'
         self.summary = {'schemaVersion': 1, 'enforcementMode': 'enforce',
+                        'kind': 'application-image', 'profile': 'application-image',
+                        'sourceRevision': self.source['revision'], 'releaseReady': False,
                         'coverageQualified': True, 'runtimeVulnerabilityGatePassed': True,
                         'platform': platform,
+                        'configDigest': m.image_identity(self.archive, self.source, 'application-image')['configDigest'],
+                        'layerDiffIDs': m.image_identity(self.archive, self.source, 'application-image')['layerDiffIDs'],
                         'archiveSHA256': sha(self.archive.read_bytes()).removeprefix('sha256:'),
                         'policySHA256': sha(policy.read_bytes()).removeprefix('sha256:'),
                         'assessmentsSHA256': sha((directory / 'assessments.vex.json').read_bytes()).removeprefix('sha256:'),
@@ -228,6 +234,99 @@ class CandidateTests(unittest.TestCase):
                         'scanners': {tool: json.loads(policy.read_bytes())[tool + 'Version'] for tool in ['syft', 'grype']},
                         'reportSHA256': {name: sha((directory / name).read_bytes()).removeprefix('sha256:') for name in names}}
         (directory / 'summary.json').write_text(json.dumps(self.summary))
+        return directory
+
+    def site_image(self):
+        revision = self.source['revision']
+        payload = {'leapview-site': (b'site-go-binary', 0o555),
+                   'etc/ssl/certs/ca-certificates.crt': (b'certificate-bundle', 0o444),
+                   '.data/map-assets/world.bin': (b'map-asset', 0o444)}
+        layer_bytes = io.BytesIO()
+        with tarfile.open(fileobj=layer_bytes, mode='w') as layer:
+            for name in ['.data', '.data/map-assets', 'etc', 'etc/ssl', 'etc/ssl/certs']:
+                entry = tarfile.TarInfo('/' + name)
+                entry.type = tarfile.DIRTYPE
+                entry.mode = 0o555
+                layer.addfile(entry)
+            for name, (data, mode) in payload.items():
+                entry = tarfile.TarInfo('/' + name)
+                entry.size = len(data)
+                entry.mode = mode
+                layer.addfile(entry, io.BytesIO(data))
+        layer_data = layer_bytes.getvalue()
+        config = {'architecture': 'amd64', 'os': 'linux',
+                  'rootfs': {'type': 'layers', 'diff_ids': [sha(layer_data)]},
+                  'config': {'Entrypoint': ['/leapview-site'], 'Cmd': ['-addr=:8081'],
+                             'User': '65532:65532', 'WorkingDir': '/',
+                             'ExposedPorts': {'8081/tcp': {}},
+                             'Env': ['LEAPVIEW_SITE_BASE_URL=', 'LEAPVIEW_SITE_SHOWCASE_EMBED_URL='],
+                             'Labels': {
+                                 'org.opencontainers.image.source': 'https://github.com/flidai/leapview',
+                                 'org.opencontainers.image.revision': revision,
+                                 'org.opencontainers.image.version': '0.3.0-alpha.1',
+                                 'dev.leapview.build.kind': 'site-image',
+                                 'dev.leapview.build.dirty': 'false'}}}
+        config_bytes = json.dumps(config).encode()
+        config_name = hashlib.sha256(config_bytes).hexdigest() + '.json'
+        with tarfile.open(self.archive, 'w:gz') as output:
+            files = [('manifest.json', json.dumps([{'Config': config_name, 'Layers': ['layer/layer.tar']}]).encode()),
+                     (config_name, config_bytes), ('layer/layer.tar', layer_data)]
+            for name, data in files:
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                output.addfile(entry, io.BytesIO(data))
+        return payload
+
+    def site_runtime_evidence(self, payload):
+        directory = self.root / 'site-runtime'
+        directory.mkdir()
+        policy_path = ROOT / 'nix/site-runtime-security-policy.json'
+        policy = m.read_json_file(policy_path)
+        artifact = m.image_identity(self.archive, self.source, 'site-image')
+        artifact.update(kind='site-image', sha256=m.digest_file(self.archive))
+        inventory_files = [{'path': name, 'type': 'file', 'mode': mode, 'size': len(content),
+                            'sha256': sha(content)} for name, (content, mode) in payload.items()]
+        inventory = {'schemaVersion': 1, 'profile': 'site-image',
+                     'archiveSHA256': artifact['sha256'], 'platform': artifact['platform'],
+                     'configDigest': artifact['configDigest'], 'layerDiffIDs': artifact['layerDiffIDs'],
+                     'files': sorted(inventory_files, key=lambda item: item['path']),
+                     'directories': [{'path': path, 'type': 'directory', 'mode': 0o555, 'size': 0}
+                                     for path in ['.data', '.data/map-assets', 'etc', 'etc/ssl', 'etc/ssl/certs']]}
+        files = {'site-image-inventory.json': inventory,
+                 'sbom.syft.json': {'artifacts': [{'id': 'site-module', 'type': 'go-module', 'name': 'example'}],
+                                    'artifactRelationships': [], 'source': {'name': 'site-image'}},
+                 'sbom.spdx.json': {'spdxVersion': 'SPDX-2.3', 'SPDXID': 'SPDXRef-DOCUMENT',
+                                    'documentNamespace': 'https://example.test/site', 'packages': [{'name': 'site'}]},
+                 'runtime.syft.json': {'artifacts': [], 'artifactRelationships': [],
+                                       'source': {'name': 'site-image'}},
+                 'runtime.grype.json': {'descriptor': {'db': {'status': {'valid': True}}}, 'matches': []},
+                 'controls.synthetic.syft.json': {'artifacts': [{'id': 'LEAPVIEW-SITE-RUNTIME-CONTROL',
+                                                                  'name': 'glibc', 'version': '2.37-84',
+                                                                  'cpes': [{'cpe': 'cpe:2.3:a:gnu:glibc:2.37-84:*:*:*:*:*:*:*',
+                                                                           'source': 'leapview-reviewed-site-runtime-control'}]}]},
+                 'controls.grype.json': {'descriptor': {'db': {'status': {'valid': True}}},
+                                         'matches': [{'artifact': {'id': 'LEAPVIEW-SITE-RUNTIME-CONTROL'},
+                                                      'vulnerability': {'id': 'CVE-2023-4911'}}]},
+                 'syft-config.json': {}, 'grype-config.json': {}}
+        for name, value in files.items():
+            (directory / name).write_text(json.dumps(value))
+        database = {'status': {'valid': True, 'built': datetime.now(timezone.utc).isoformat()}}
+        for name in ('runtime.grype.json', 'controls.grype.json'):
+            files[name]['descriptor']['db'] = database
+            (directory / name).write_text(json.dumps(files[name]))
+        summary = {'schemaVersion': 1, 'kind': 'site-image', 'profile': 'site-image',
+                   'sourceRevision': self.source['revision'], 'releaseReady': False,
+                   'enforcementMode': 'enforce', 'coverageQualified': True,
+                   'runtimeVulnerabilityGatePassed': True,
+                   'archiveSHA256': artifact['sha256'].removeprefix('sha256:'),
+                   'platform': artifact['platform'], 'configDigest': artifact['configDigest'],
+                   'layerDiffIDs': artifact['layerDiffIDs'],
+                   'policySHA256': m.digest_file(policy_path).removeprefix('sha256:'),
+                   'database': database, 'controlsPassed': 1, 'blockingFindings': [],
+                   'scanners': {'syft': policy['syftVersion'], 'grype': policy['grypeVersion']},
+                   'reportSHA256': {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
+                                    for name in files}}
+        (directory / 'summary.json').write_text(json.dumps(summary))
         return directory
 
     def test_runtime_evidence_is_bound_to_exact_bytes_without_release_authority(self):
@@ -242,6 +341,27 @@ class CandidateTests(unittest.TestCase):
         (directory / 'runtime.assessed.grype.json').write_text('{}')
         with self.assertRaisesRegex(ValueError, 'report'):
             m.verify(manifest, self.archive, self.source, runtime_dir=directory)
+
+    def test_site_runtime_uses_independent_profile_and_admission_gates(self):
+        payload = self.site_image()
+        directory = self.site_runtime_evidence(payload)
+        manifest = m.collect(self.archive, 'site-image', self.source, runtime_dir=directory)
+        self.assertEqual(manifest['requiredReleaseEvidence'], sorted(m.SITE_GATES))
+        self.assertNotIn('go-and-embedded-native-coverage', manifest['requiredReleaseEvidence'])
+        self.assertIn('go-vulnerability-coverage', manifest['requiredReleaseEvidence'])
+        self.assertIn('site-profile-installation-upgrade-rollback-recovery', manifest['requiredReleaseEvidence'])
+        self.assertIn('site-profile-observation', manifest['requiredReleaseEvidence'])
+        self.assertEqual(len(manifest['evidence']['nix-runtime']['reports']), len(m.SITE_RUNTIME_REPORTS))
+        self.assertEqual(manifest['evidence']['nix-runtime']['scope'], 'site-image-runtime-only')
+        self.assertFalse(manifest['releaseAdmission'])
+        m.verify(manifest, self.archive, self.source, runtime_dir=directory)
+
+        summary_path = directory / 'summary.json'
+        summary = json.loads(summary_path.read_bytes())
+        summary['sourceRevision'] = 'b' * 40
+        summary_path.write_text(json.dumps(summary))
+        with self.assertRaisesRegex(ValueError, 'candidate'):
+            m.collect(self.archive, 'site-image', self.source, runtime_dir=directory)
 
     def test_arm64_runtime_evidence_binds_only_the_arm_vex_bytes(self):
         directory = self.runtime_evidence('linux/arm64')

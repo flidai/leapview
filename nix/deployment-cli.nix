@@ -18,19 +18,8 @@ let
     else
       "${canonicalVersion}+nix.${builtins.substring 0 12 revision}";
   buildInfo = "github.com/flidai/leapview/internal/platform/buildinfo";
-  # The exported controller uses the conventional host's data files. Reverse
-  # only these locked NixOS data-path patches in a private SDK copy; retain
-  # compiler/linker fixes and the existing compiler/source hashes.
-  hostDataPatches = builtins.filter (
-    patch:
-    builtins.any (name: pkgs.lib.hasSuffix name (toString patch)) [
-      "iana-etc-1.25.patch"
-      "mailcap-1.17.patch"
-      "tzdata-1.19.patch"
-    ]
-  ) toolchain.go.patches;
+  portableGoSDK = import ./portable-go-sdk.nix { inherit pkgs toolchain; };
 in
-assert builtins.length hostDataPatches == 3;
 assert builtins.elem purpose [
   "development"
   "compose"
@@ -80,12 +69,7 @@ pkgs.stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     ./scripts/generate_build_sources.sh
-    cp -R ${toolchain.go}/share/go "$TMPDIR/host-go"
-    chmod -R u+w "$TMPDIR/host-go"
-    (cd "$TMPDIR/host-go"
-      ${pkgs.lib.concatMapStringsSep "\n" (patch: "patch --reverse -p1 < ${patch}") hostDataPatches}
-    )
-    export GOROOT="$TMPDIR/host-go"
+    ${portableGoSDK}
     # Retain function symbols for exact binary-mode vulnerability analysis.
     # A Compose candidate must match the image's canonical release metadata.
     # Metadata grants no archive publication or adoption authority.

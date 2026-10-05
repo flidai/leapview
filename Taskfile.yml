@@ -574,6 +574,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_site_image.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/agent_e2e_config.test.ts

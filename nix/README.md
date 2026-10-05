@@ -129,6 +129,9 @@ nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop -c docker load --input "$(readlink -f result-image)"
 # Full production-image qualification using disposable Docker fixtures:
 task nix:qualify
+nix build --no-update-lock-file .#leapview-site
+nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image
+nix develop -c docker load --input "$(readlink -f result-site-image)"
 ```
 
 `task nix:build`, `task nix:image`, and `task nix:qualify` expose the same paths.
@@ -146,6 +149,8 @@ loopback registry and existing PostgreSQL/browser fixtures.
 | `leapviewctl-compose-linux-amd64`, `leapviewctl-compose-linux-arm64` | Clean-source controller candidates with canonical release metadata for Compose bundle assembly; requires a matching immutable image and separate qualification |
 | `leapview-image` | Container archive with the existing entrypoint, UID/GID 999, health check, writable volume paths and deployment bundle |
 | `leapview-compose`, `leapview-linux-compose`, `leapview-image-compose` | Native application, portable binaries and image with canonical `VERSION`, exact clean source revision and `release=true`; candidate metadata grants no release admission |
+| `leapview-site` | Native Linux public-site binary with embedded CSS/JavaScript and map assets materialized on disk |
+| `leapview-site-image` | Minimal native Linux public-site image with canonical `VERSION`, exact revision labels, UID 65532, and read-only files; candidate metadata grants no release admission |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets` | Pinned runtime map assets |
 | `extension-supply` | Signed runtime extension assets pinned independently for both Linux ISAs |
@@ -165,6 +170,27 @@ runtime-asset fetches use the network. Their complete outputs are pinned in
 `build-hashes.json`, in addition to the existing module/package locks and asset
 integrity checks. The final image assembly also runs without network access.
 Use a Nix installation with `sandbox = true`; the image CI job sets it explicitly.
+
+### Standalone public-site candidates
+
+From a clean committed checkout, `nix build .#leapview-site-image` produces the
+native AMD64 or ARM64 site image. Its final Go binary is CGO-disabled and has no
+dynamic interpreter or Nix store references. Documentation generation uses the
+pinned signed extension supply during the build; those extensions and the
+application runtime are not included in the site image. The shared portable Go
+SDK preparation also serves the standalone controller build.
+
+The image contains the site executable, map assets and a CA bundle, with UID/GID
+65532 and port 8081. Run it with `--read-only`. The `native-site` manual lane in
+`nix-development.yml` builds both native architectures and checks health,
+readiness, exact served release/build metadata and installation documentation.
+It retains the exact archive and a runtime receipt with `releaseAdmission: false`.
+
+The protected site candidate workflow adds independent site inventory, Go and
+vulnerability evidence, then binds publication and native runtime checks to the
+same immutable image. Site adoption is independent of application or desktop
+adoption, and still requires its affected deployment-profile installation,
+recovery and observation evidence. See [candidate evidence](CANDIDATE-EVIDENCE.md).
 
 ### Runtime compatibility
 

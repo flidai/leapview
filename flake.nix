@@ -73,6 +73,21 @@
             purpose = "compose";
             src = source;
           };
+          site = import ./nix/site.nix {
+            pkgs = targetPkgs;
+            toolchain = targetToolchain;
+            src = source;
+            inherit revision dirty;
+          };
+          siteImage = import ./nix/site-image.nix {
+            pkgs = targetPkgs;
+            inherit
+              site
+              revision
+              dirty
+              buildTime
+              ;
+          };
           developmentRuntime = import ./nix/patched-runtime.nix {
             pkgs = targetPkgs;
             application = developmentBuild;
@@ -160,6 +175,8 @@
           leapview-compose = composeApplication;
           leapview-image-compose = composeImage;
           leapview-linux-compose = composePortable;
+          leapview-site = site.package;
+          leapview-site-image = siteImage;
           leapview-tools = developmentBuild.tools;
           map-assets = assets.maps;
           extension-supply = assets.extensions;
