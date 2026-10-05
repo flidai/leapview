@@ -95,6 +95,8 @@ func writeQualificationNativePostgresEnvironment(
 		if err := appendOrReplaceEnvFile(environmentPath, readonlyRoleKey, readonlyRole); err != nil {
 			return fmt.Errorf("write qualification PostgreSQL readonly serving role: %w", err)
 		}
+	} else if err := removePostgresEnvironmentURLs(environmentPath, readonlyURLKey, readonlyRoleKey); err != nil {
+		return fmt.Errorf("remove qualification PostgreSQL readonly serving credentials: %w", err)
 	}
 	return nil
 }
@@ -220,6 +222,7 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {}, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {},
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE": {}, "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {},
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {}, "LEAPVIEW_POSTGRES_CONTROL_URL": {},
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE": {},
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL": {},
 		"LEAPVIEW_POSTGRES_DUCKLAKE_URL": {}, "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL": {},
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL": {},
@@ -235,6 +238,13 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 		}
 		seenKeys[name] = struct{}{}
 	}
+	const readonlyURLKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"
+	const readonlyRoleKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"
+	_, hasReadonlyURL := seenKeys[readonlyURLKey]
+	_, hasReadonlyRole := seenKeys[readonlyRoleKey]
+	if hasReadonlyURL != hasReadonlyRole {
+		return errors.New("qualification serving environment must configure the readonly URL and role together")
+	}
 	values := environmentValues(string(contents))
 	if !strings.EqualFold(strings.TrimSpace(values["LEAPVIEW_POSTGRES_REQUIRE_TLS"]), "true") {
 		return errors.New("qualification serving environment must require PostgreSQL TLS")
@@ -245,6 +255,9 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE":  qualificationNativePostgresControlMaintenanceRole,
 		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE":     qualificationNativePostgresDuckLakeRuntimeRole,
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": qualificationNativePostgresDuckLakeMaintenanceRole,
+	}
+	if hasReadonlyRole {
+		roles[readonlyRoleKey] = qualificationNativePostgresControlReadonlyRole
 	}
 	for key, expected := range roles {
 		if strings.TrimSpace(values[key]) != expected {
@@ -263,6 +276,12 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 	for _, connection := range urls {
 		connections = append(connections, postgresConnection{
 			name: connection.key, value: values[connection.key], role: connection.role, database: connection.database,
+		})
+	}
+	if hasReadonlyURL {
+		connections = append(connections, postgresConnection{
+			name: "control readonly", value: values[readonlyURLKey],
+			role: qualificationNativePostgresControlReadonlyRole, database: qualificationNativePostgresControlDatabase,
 		})
 	}
 	if err := validateDistinctPostgresConnections(connections); err != nil {
