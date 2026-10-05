@@ -80,6 +80,29 @@ test('dbt reference installs the same requirements as Azure qualification', () =
   expect(installs[0].run).toContain('--requirement examples/dbt-warehouse-boundary/dbt/requirements.txt')
 })
 
+test('APIGen generation cache keys include the TypeSpec library and package inputs', () => {
+  const inputs = [
+    'pkg/apigen/typespec/lib/**/*.tsp',
+    'pkg/apigen/typespec/package.json',
+    'pkg/apigen/typespec/package-lock.json',
+  ]
+  const generators = [
+    'api:generate',
+    'agent-contracts:generate',
+    'data-resource-contracts:generate',
+    'desktop-discovery:generate',
+    'ui-signals:generate',
+    'visualization-ir:generate',
+    'exploration-contracts:generate',
+    'dashboard-contracts:generate',
+    'pipeline-contracts:generate',
+  ]
+
+  for (const name of generators) {
+    expect(tasks[name].sources).toEqual(expect.arrayContaining(inputs))
+  }
+})
+
 test('hosted docs retain regeneration and Go checks while the site shard owns browser tests', () => {
   const docs = tasks['ci:test:docs'].cmds
   expect(docs[0]).toContain('-- task --force docs:generate')

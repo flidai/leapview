@@ -441,3 +441,41 @@ test('ECharts handle reapplies donut radius when crossing the bottom-legend narr
     handle.dispose()
   }
 })
+
+test('same-sized focus changes still update proportional geometry without resizing its surface', () => {
+  class FocusShadowRoot {}
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'ShadowRoot')
+  Object.defineProperty(globalThis, 'ShadowRoot', { configurable: true, value: FocusShadowRoot })
+  let focused = false
+  let resizeCount = 0
+  const calls: Record<string, any>[] = []
+  const shadow = new FocusShadowRoot() as any
+  shadow.host = { getAttribute: () => focused ? 'focus-visual' : null }
+  const container = { getRootNode: () => shadow }
+  const chart = {
+    on() {}, off() {}, dispose() {},
+    resize() { resizeCount++ },
+    setOption(option: Record<string, any>) { calls.push(option) },
+    getOption() { return {} },
+  }
+  const handle = new EChartsHandle(container as any, {} as any, chart as any, new CategoryColorRegistry())
+  try {
+    const envelope = proportionalFixture('donut') as any
+    envelope.spec.presentation.legend = 'bottom'
+    handle.mount(envelope, defaultRendererContext)
+    handle.resize(550, 500)
+    const compactRadius = calls.at(-1)!.series[0].radius
+    focused = true
+    handle.resize(550, 500)
+    expect(resizeCount).toBe(1)
+    expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+    focused = false
+    handle.resize(550, 500)
+    expect(resizeCount).toBe(1)
+    expect(calls.at(-1)!.series[0].radius).toEqual(compactRadius)
+  } finally {
+    handle.dispose()
+    if (descriptor) Object.defineProperty(globalThis, 'ShadowRoot', descriptor)
+    else Reflect.deleteProperty(globalThis, 'ShadowRoot')
+  }
+})

@@ -4,7 +4,6 @@ import { lucideIcon } from '../../shared/lucide-icons'
 import { toggleAnchoredPopover } from '../../shared/anchored-popover'
 import { property, query, state } from 'lit/decorators.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
-import validateGeneratedEnvelope from '../../../generated/visualization/validate'
 import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
@@ -22,24 +21,71 @@ export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, su
 /** Start mounting within 600 CSS pixels above or below the viewport. */
 export const visualizationNearViewportRootMargin = '600px 0px'
 
+type GeneratedEnvelopeValidator = typeof import('../../../generated/visualization/validate')['default']
+let generatedEnvelopeValidator: GeneratedEnvelopeValidator | undefined
+let envelopeValidatorLoad: Promise<GeneratedEnvelopeValidator> | undefined
+
+function loadEnvelopeValidator(): Promise<GeneratedEnvelopeValidator> {
+  if (generatedEnvelopeValidator) return Promise.resolve(generatedEnvelopeValidator)
+  return envelopeValidatorLoad ??= import('../../../generated/visualization/validate').then(({ default: validate }) => {
+    generatedEnvelopeValidator = validate
+    return validate
+  }, (error: unknown) => {
+    envelopeValidatorLoad = undefined
+    throw error
+  })
+}
+
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
   private resizeSuspendedValue = false
   @property({ attribute: false })
   get envelope(): VisualizationEnvelope | undefined { return this.envelopeValue }
   set envelope(value: VisualizationEnvelope | undefined) {
-    const previous = this.envelopeValue
     // Keep the shell and actions on the same valid revision as the renderer,
     // both before and after a deferred host mounts. Spec revisions are opaque
     // identities (and may legitimately revert); data revisions order one spec.
     // Eager hosts retain their existing validation/error boundary.
     if (this.deferMount && !this.authoring) {
-      if (value && !isAcceptedEnvelope(value)) return
-      if (value && previous && previous.specRevision === value.specRevision && value.dataRevision < previous.dataRevision) return
+      if (value && !validateEnvelopeBoundary(value)) return
+      if (value && !generatedEnvelopeValidator) {
+        this.queueEnvelopeValidation(value)
+        return
+      }
+      if (value && (!generatedEnvelopeValidator!(value) || this.isStaleEnvelope(value))) return
     }
+    this.envelopeAssignmentGeneration++
+    this.assignEnvelope(value)
+  }
+
+  private assignEnvelope(value: VisualizationEnvelope | undefined): void {
+    const previous = this.envelopeValue
     if (Object.is(previous, value)) return
     this.envelopeValue = value
     this.requestUpdate('envelope', previous)
+  }
+
+  private isStaleEnvelope(value: VisualizationEnvelope): boolean {
+    const previous = this.envelopeValue
+    return previous !== undefined && previous.specRevision === value.specRevision && value.dataRevision < previous.dataRevision
+  }
+
+  private queueEnvelopeValidation(value: VisualizationEnvelope): void {
+    const generation = this.envelopeAssignmentGeneration
+    // Validate in assignment order so a rejected newer input still leaves the
+    // last valid envelope available to the shell and actions.
+    const pending = (this.pendingEnvelopeValidation ?? Promise.resolve()).then(async () => {
+      if (generation !== this.envelopeAssignmentGeneration) return
+      const validate = await loadEnvelopeValidator()
+      if (generation !== this.envelopeAssignmentGeneration) return
+      if (validate(value) && !this.isStaleEnvelope(value)) this.assignEnvelope(value)
+    }).catch((error: unknown) => {
+      if (generation === this.envelopeAssignmentGeneration) this.error = error instanceof Error ? error.message : String(error)
+    })
+    this.pendingEnvelopeValidation = pending
+    void pending.then(() => {
+      if (this.pendingEnvelopeValidation === pending) this.pendingEnvelopeValidation = undefined
+    })
   }
   /** Keep observing layout, but defer expensive renderer resizing until release. */
   get resizeSuspended(): boolean { return this.resizeSuspendedValue }
@@ -73,6 +119,8 @@ export class VisualizationHost extends LitElement {
   private pendingApply?: Promise<void>
   private applyQueued = false
   private mountEpoch = 0
+  private envelopeAssignmentGeneration = 0
+  private pendingEnvelopeValidation?: Promise<void>
   private optionsScrollRoots: Array<Document | ShadowRoot> = []
 
   static styles = [visualActionStyles, visualizationHostStyles]
@@ -135,7 +183,7 @@ export class VisualizationHost extends LitElement {
     this.controller = new VisualizationController(
       visualizationRegistry,
       this.rendererContainer,
-      (value): value is VisualizationEnvelope => validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value),
+      (value): value is VisualizationEnvelope => validateEnvelopeBoundary(value) && generatedEnvelopeValidator!(value),
       (detail) => this.dispatchEvent(new CustomEvent('lv-visualization-observation', { bubbles: true, composed: true, detail })),
     )
     this.controller.setResizeSuspended(this.resizeSuspendedValue)
@@ -196,6 +244,7 @@ export class VisualizationHost extends LitElement {
     this.mountRequested = true
     try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
     this.mountObserver = undefined
+    while (this.pendingEnvelopeValidation) await this.pendingEnvelopeValidation
     await this.updateComplete
     if (!this.isConnected || this.mountEpoch !== epoch) throw new Error('visualization mount superseded')
     this.ensureController()
@@ -309,8 +358,9 @@ export class VisualizationHost extends LitElement {
 
   private async applyEnvelope(): Promise<void> {
     const envelope = this.envelope
-    if (!envelope || !this.controller) return
-    const previous = this.controller.envelope
+    const controller = this.controller
+    if (!envelope || !controller) return
+    const previous = controller.envelope
     if (this.presentedRendererID !== envelope.rendererID) {
       this.presentedRendererID = envelope.rendererID
       this.presented = false
@@ -318,7 +368,9 @@ export class VisualizationHost extends LitElement {
     const generation = ++this.applyGeneration
     this.applying = true
     try {
-      await this.controller.apply(envelope, this.rendererContext())
+      if (!generatedEnvelopeValidator) await loadEnvelopeValidator()
+      if (generation !== this.applyGeneration || controller !== this.controller) return
+      await controller.apply(envelope, this.rendererContext())
       if (generation === this.applyGeneration && envelope === this.envelope) {
         this.error = ''
         this.presented = true
@@ -557,7 +609,3 @@ export class VisualizationHost extends LitElement {
 if (!customElements.get('lv-visualization-host')) customElements.define('lv-visualization-host', VisualizationHost)
 
 declare global { interface HTMLElementTagNameMap { 'lv-visualization-host': VisualizationHost } }
-
-function isAcceptedEnvelope(value: unknown): value is VisualizationEnvelope {
-  return validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value)
-}

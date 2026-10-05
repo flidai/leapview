@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
-import { blockingAxeViolations, formatAxeViolations, type AxeViolation } from './axe_accessibility'
+import { blockingAxeViolations, formatAxeViolations, nonBlockingAxeViolationDetails, type AxeViolation } from './axe_accessibility'
 import { appendCapturedOutput, drainProcessOutput, formatManagedStartupFailure } from './qa_ui_framework_process'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
@@ -311,6 +311,21 @@ test('WCAG route QA blocks only serious and critical axe violations', () => {
   ]
 
   expect(blockingAxeViolations(violations).map((violation) => violation.id)).toEqual(['serious-rule', 'critical-rule'])
+})
+
+test('WCAG route QA retains minor, moderate, and unclassified axe nodes in its receipts', () => {
+  const violations = [
+    axeViolation('minor-rule', 'minor'),
+    axeViolation('moderate-rule', 'moderate'),
+    axeViolation('serious-rule', 'serious'),
+    { ...axeViolation('unknown-rule', ''), impact: null },
+  ]
+
+  expect(nonBlockingAxeViolationDetails(violations)).toEqual([
+    expect.objectContaining({ id: 'minor-rule', impact: 'minor', nodes: [{ target: ['main'] }] }),
+    expect.objectContaining({ id: 'moderate-rule', impact: 'moderate', nodes: [{ target: ['main'] }] }),
+    expect.objectContaining({ id: 'unknown-rule', impact: null, nodes: [{ target: ['main'] }] }),
+  ])
 })
 
 test('WCAG route QA failures identify the route, rule, element, and remediation', () => {

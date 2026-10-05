@@ -921,7 +921,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       if (!orderID) throw new Error(`Order ID field was not rendered: ${root.textContent}`)
       orderID.click()
       await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
+      await new Promise((resolve) => requestAnimationFrame(resolve))
 
       const statusRow = Array.from(root.querySelectorAll<HTMLElement>('.column-item')).find((row) => row.textContent?.includes('Status'))
       const filterButton = statusRow?.querySelector<HTMLButtonElement>('.field-action')
@@ -945,7 +945,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       if (!applyButton) throw new Error(`Apply filter button was not rendered: ${root.textContent}`)
       applyButton.click()
       await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
+      await new Promise((resolve) => requestAnimationFrame(resolve))
       root.querySelector<HTMLButtonElement>('.semantic-filter-card button')?.click()
       await element.updateComplete
       await controls.updateComplete
@@ -1010,7 +1010,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       }
       rebaseField?.click()
       await element.updateComplete
-      await new Promise((resolve) => setTimeout(resolve, 380))
+      await new Promise((resolve) => requestAnimationFrame(resolve))
       const rebaseCommand = commands.at(-1)?.explore
       return {
         ...initialState,

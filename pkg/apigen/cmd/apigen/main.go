@@ -805,7 +805,7 @@ func stageTypeSpecProject(typeSpecDir string, pkg typeSpecPackage) (string, func
 	}
 	cleanup := func() { _ = os.RemoveAll(tempDir) }
 	stagedDir := filepath.Join(tempDir, "project")
-	if err := copyTypeSpecProject(typeSpecDir, stagedDir); err != nil {
+	if err := copyTypeSpecProject(typeSpecDir, stagedDir, tempDir); err != nil {
 		cleanup()
 		return "", nil, err
 	}
@@ -824,14 +824,30 @@ func stageTypeSpecProject(typeSpecDir string, pkg typeSpecPackage) (string, func
 	return stagedDir, cleanup, nil
 }
 
-func copyTypeSpecProject(src string, dst string) error {
-	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, walkErr error) error {
+func copyTypeSpecProject(src string, dst string, excludedDir string) error {
+	srcAbs, err := filepath.Abs(src)
+	if err != nil {
+		return fmt.Errorf("resolve typespec source path: %w", err)
+	}
+	srcAbs, err = filepath.EvalSymlinks(srcAbs)
+	if err != nil {
+		return fmt.Errorf("resolve typespec source symlinks: %w", err)
+	}
+	excludedRel, err := typeSpecStagingExclusionRelativePath(srcAbs, excludedDir)
+	if err != nil {
+		return err
+	}
+
+	return filepath.WalkDir(srcAbs, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		rel, err := filepath.Rel(src, path)
+		rel, err := filepath.Rel(srcAbs, path)
 		if err != nil {
 			return fmt.Errorf("resolve staged typespec path: %w", err)
+		}
+		if excludedRel != "" && filepath.Clean(rel) == excludedRel {
+			return filepath.SkipDir
 		}
 		if rel != "." && entry.IsDir() && entry.Name() == "node_modules" {
 			return filepath.SkipDir
@@ -873,6 +889,34 @@ func copyTypeSpecProject(src string, dst string) error {
 		}
 		return nil
 	})
+}
+
+func typeSpecStagingExclusionRelativePath(sourceDir string, excludedDir string) (string, error) {
+	sourceAbs, err := filepath.Abs(sourceDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve typespec source path: %w", err)
+	}
+	excludedAbs, err := filepath.Abs(excludedDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve staged typespec exclusion: %w", err)
+	}
+	sourceAbs, err = filepath.EvalSymlinks(sourceAbs)
+	if err != nil {
+		return "", fmt.Errorf("resolve typespec source symlinks: %w", err)
+	}
+	excludedAbs, err = filepath.EvalSymlinks(excludedAbs)
+	if err != nil {
+		return "", fmt.Errorf("resolve staged typespec exclusion symlinks: %w", err)
+	}
+	rel, err := filepath.Rel(sourceAbs, excludedAbs)
+	if err != nil {
+		// A staging directory on another volume is outside the source tree.
+		return "", nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", nil
+	}
+	return filepath.Clean(rel), nil
 }
 
 func linkTypeSpecPackage(projectDir string, modulePath string, packageDir string) error {

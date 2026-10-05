@@ -75,6 +75,13 @@ go test ./internal/app/cli/composectl -run 'TestQualification(DeliveryEvidence|A
 
 ## Performance policy
 
+Every latency phase must include a finite, nonnegative, ordered summary
+(`p50 <= p95 <= max`) with the exact sample count specified by the policy.
+Missing phases or invalid summaries fail qualification before they can be
+used in a baseline comparison. An absolute-budget run without a supplied
+baseline leaves `assertions.comparisonTolerance` false; its success is not
+evidence that a regression comparison ran.
+
 The installed-candidate gate assumes a dedicated Docker runtime with at least
 2 logical CPUs and 4 GiB memory. Its bundled Olist workload contains 24
 synthetic orders. The absolute rc.1 ceilings are:

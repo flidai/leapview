@@ -124,7 +124,7 @@ func (m *Module) chatConversations(ctx context.Context, scope agent.Scope) []ui.
 	if m.service == nil || scope.PrincipalID == "" {
 		return conversations
 	}
-	rows, err := m.service.ListConversations(ctx, scope)
+	rows, err := m.service.ListConversationSummaries(ctx, scope)
 	if err != nil {
 		return conversations
 	}

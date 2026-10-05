@@ -518,16 +518,10 @@ func TestQualificationPerformancePolicyAndEvaluationAreOwnedByGo(t *testing.T) {
 		t.Fatalf("performance failures = %d, want %d: %v", got, want, failures)
 	}
 
-	baseline := qualificationPerformanceReport{
-		Latency: map[string]qualificationDurationSummary{
-			"coldDashboardReadyMs": {P95: 1000},
-		},
-	}
-	candidate := qualificationPerformanceReport{
-		Latency: map[string]qualificationDurationSummary{
-			"coldDashboardReadyMs": {P95: 1260},
-		},
-	}
+	baseline := completeQualificationLatencyReport()
+	baseline.Latency["coldDashboardReadyMs"] = qualificationDurationSummary{Samples: 1, P50: 1000, P95: 1000, Max: 1000}
+	candidate := completeQualificationLatencyReport()
+	candidate.Latency["coldDashboardReadyMs"] = qualificationDurationSummary{Samples: 1, P50: 1260, P95: 1260, Max: 1260}
 	comparison := compareQualificationPerformance(candidate, baseline, policy)
 	if len(comparison) != 1 ||
 		!strings.Contains(comparison[0], "cold dashboard readiness") {

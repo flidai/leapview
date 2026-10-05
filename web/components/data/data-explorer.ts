@@ -145,7 +145,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private exploreTransportAction: 'run' | 'stop' | null = null
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
-  private exploreTimer = 0
+  private exploreFrame = 0
   private filterSuggestionTimer = 0
   private latestExploreRequestSeq = 0
   private agentStateInitialized = false
@@ -629,7 +629,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   disconnectedCallback(): void {
-    window.clearTimeout(this.exploreTimer)
+    window.cancelAnimationFrame(this.exploreFrame)
     window.clearTimeout(this.filterSuggestionTimer)
     this.browserResizeCleanup?.()
     if (typeof document !== 'undefined') document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
@@ -1079,7 +1079,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private emitExplore(next: DataExploreCommand, immediate = false) {
-    window.clearTimeout(this.exploreTimer)
+    window.cancelAnimationFrame(this.exploreFrame)
     const current = this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.explore(current, next, immediate)
     command.action = 'configure'
@@ -1089,11 +1089,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (!this.embedded) this.replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ action: 'configure', mode: 'explore', explore: command })
     if (immediate) dispatch()
-    else this.exploreTimer = window.setTimeout(dispatch, 320)
+    else this.exploreFrame = window.requestAnimationFrame(dispatch)
   }
 
   private emitExploreSpec(next: Partial<ExplorationSpec>, baseCommand?: DataExploreCommand, immediate = false): void {
-    window.clearTimeout(this.exploreTimer)
+    window.cancelAnimationFrame(this.exploreFrame)
     const current = baseCommand ?? this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.exploreSpec(current, next)
     delete command.filterSuggestions
@@ -1103,7 +1103,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (!this.embedded) this.replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ action: 'configure', mode: 'explore', explore: command })
     if (immediate) dispatch()
-    else this.exploreTimer = window.setTimeout(dispatch, 320)
+    else this.exploreFrame = window.requestAnimationFrame(dispatch)
   }
 
   private requestFilterSuggestions(command: DataExploreCommand, search: string): void {
@@ -1124,7 +1124,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private runExplore(command: DataExploreCommand): void {
-    window.clearTimeout(this.exploreTimer)
+    window.cancelAnimationFrame(this.exploreFrame)
     if (explorationRunValidation(explorationSpecFor(command), this.dataExplorer.explore.fields).length) return
     const recoveringUnknownOutcome = this.exploreExecutionState === 'uncertain'
     // A retry is a distinct run. If an earlier Stop is delayed in transport,
@@ -1140,7 +1140,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private stopExplore(command: DataExploreCommand): void {
-    window.clearTimeout(this.exploreTimer)
+    window.cancelAnimationFrame(this.exploreFrame)
     const uncertain = this.exploreExecutionState === 'uncertain'
     const latestRequestSeq = Math.max(
       command.requestSeq ?? 0,
