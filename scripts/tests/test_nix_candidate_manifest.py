@@ -142,13 +142,25 @@ class CandidateTests(unittest.TestCase):
         artifact.write_bytes(b'opaque archive; installation qualifier owns its contents')
         identity = {'platform': 'linux/arm64', 'version': '0.3.0-alpha.1',
                     'sourceRevision': self.source['revision']}
-        for kind in ['cli-archive', 'application-archive', 'desktop-archive']:
+        for kind in ['cli-archive', 'application-archive']:
             manifest = m.collect(artifact, kind, self.source, archive_identity=identity)
             self.assertEqual(manifest['artifact']['sha256'], sha(artifact.read_bytes()))
             self.assertIn('embedded-source-identity', manifest['requiredReleaseEvidence'])
             self.assertNotIn('oci-admission', manifest['requiredReleaseEvidence'])
             self.assertFalse(manifest['releaseAdmission'])
             m.verify(manifest, artifact, self.source, archive_identity=identity)
+        desktop_identity = {**identity, 'platform': 'linux/amd64'}
+        desktop = m.collect(artifact, 'desktop-archive', self.source, archive_identity=desktop_identity)
+        self.assertEqual(desktop['artifact']['format'], 'deb')
+        self.assertEqual(desktop['requiredReleaseEvidence'], sorted(m.DESKTOP_GATES))
+        self.assertNotIn('embedded-source-identity', desktop['requiredReleaseEvidence'])
+        self.assertNotIn('go-and-embedded-native-coverage', desktop['requiredReleaseEvidence'])
+        self.assertIn('desktop-installer-upgrade-rollback-recovery', desktop['requiredReleaseEvidence'])
+        self.assertIn('desktop-profile-observation', desktop['requiredReleaseEvidence'])
+        self.assertFalse(desktop['releaseAdmission'])
+        m.verify(desktop, artifact, self.source, archive_identity=desktop_identity)
+        with self.assertRaisesRegex(ValueError, 'Linux x64'):
+            m.collect(artifact, 'desktop-archive', self.source, archive_identity=identity)
         for invalid in [None, {**identity, 'platform': 'darwin/arm64'},
                         {**identity, 'sourceRevision': 'b' * 40}]:
             with self.assertRaises(ValueError):

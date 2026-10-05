@@ -2,10 +2,11 @@
 
 `scripts/nix_candidate_manifest.py` collects a common, versioned identity record
 for Nix application images, site images, CLI archives, application archives and
-Linux desktop archives. The Nix qualification workflow currently integrates the
-application-image adapter on AMD64. Other outputs and ARM64 still need their own
-builders and qualification; accepting an identity in this format does not add a
-supported release platform.
+Linux desktop archives. The protected qualification workflows integrate the
+application-image and site-image adapters on AMD64, plus the Linux x64 Desktop
+Debian adapter. The standalone CLI archive and ARM64 outputs still need their
+own builders and qualification; accepting an identity in this format does not
+add a supported release platform.
 
 ## Collect and verify
 
@@ -602,3 +603,22 @@ conventional site publisher remains authoritative until independent site
 adoption passes those gates. Application and desktop adoption are not
 prerequisites for site adoption. Track the exact retained evidence and remaining
 requirements in [FAI-1024](https://linear.app/flid/issue/FAI-1024).
+
+### Linux Desktop Debian candidate
+
+The manual protected Desktop workflow selects one exact .deb artifact from its
+own build attempt, then qualifies those unchanged bytes on native Ubuntu 22.04
+x86_64 with protected verifier code. It compares candidate and protected Desktop
+package, lockfile and release-policy bytes; checks the package control identity,
+exact dependency fields, payload inventory, launcher, `chrome-sandbox`
+root-owned setuid mode and absence of maintainer scripts; then installs the exact
+package and runs the existing package, installer and hostile-instance checks
+against the installed payload. The separate `native-desktop` development lane
+exercises the same host floor without publication credentials.
+
+The receipt binds the archive hash, source revision, protected verifier revision,
+policy files, reports and host identity and keeps `releaseAdmission: false`. It
+records install, reinstall, protocol registration and removal checks; upgrade,
+rollback, recovery and profile observation remain pending. It does not sign,
+publish or adopt Desktop releases, and conventional desktop release workflows
+remain authoritative.

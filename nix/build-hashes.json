@@ -1,6 +1,7 @@
 {
   "go": "sha256-SwuoKIrAOIJpUVcvnKoAhZpd90DoE3HKMiCpnhB2d0M=",
   "javascript": "sha256-fCgMF5nHCrJ0T2C6UOqOZcc605AnG66RgqLAPJqDwls=",
+  "desktopJavascript": "sha256-ImqAScZUt8Gu6y3++cE9CDYogHxU3eE72MLwzGFa19c=",
   "maps": "sha256-+dNOwjgM6tPltmKIqzwYqz8eKh/GR/nLaUGAXkBn3gs=",
   "extensions": {
     "x86_64-linux": "sha256-wLSZ2dQ8nlSxeQkzO18EuPJFLZruPV8g0g3uX6gzanU=",

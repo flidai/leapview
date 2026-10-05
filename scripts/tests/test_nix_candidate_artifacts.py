@@ -35,6 +35,16 @@ class ArtifactTests(unittest.TestCase):
         for phase, app_phase in zip(phases[:3], ['candidate', 'qualified', 'binding']):
             self.assertNotEqual(artifacts.PREFIXES[phase], artifacts.PREFIXES[app_phase])
 
+    def test_desktop_candidate_phases_are_exact_and_disjoint(self):
+        phases = ['desktop-candidate', 'desktop-qualified']
+        entries = [self.fixture('amd64', phase) for phase in phases]
+        for index, entry in enumerate(entries, start=31):
+            entry['id'] = index
+        selected = artifacts.resolve([{'artifacts': entries}], 123, 2, 'b' * 40, 'amd64', phases)
+        self.assertEqual(selected, {'desktop-candidate': 31, 'desktop-qualified': 32})
+        self.assertNotEqual(artifacts.PREFIXES['desktop-candidate'], artifacts.PREFIXES['candidate'])
+        self.assertNotEqual(artifacts.PREFIXES['desktop-qualified'], artifacts.PREFIXES['qualified'])
+
     def test_rejects_substitution_missing_or_duplicate_originals(self):
         valid = self.fixture()
         mutations = [('id', True), ('id', 0), ('expired', True), ('digest', 'unknown'),

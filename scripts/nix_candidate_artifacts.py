@@ -17,6 +17,8 @@ PREFIXES = {
     'site-qualified': 'nix-site-qualified',
     'site-binding': 'nix-site-candidate-binding',
     'site-published-qualification': 'nix-site-published-qualification',
+    'desktop-candidate': 'nix-desktop-candidate',
+    'desktop-qualified': 'nix-desktop-qualified',
 }
 
 

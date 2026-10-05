@@ -116,4 +116,11 @@ in
       cp -R "$typespec/node_modules" "$out/typespec/$cpu/"
     done
   '';
+  desktopJavascript = fixed "leapview-desktop-javascript-dependencies" hashes.desktopJavascript ''
+    cd desktop
+    bun install --frozen-lockfile --ignore-scripts --cpu=x64 --os=linux
+    ${prunePlatformPackages} "$PWD/node_modules" "x64"
+    mkdir -p "$out"
+    cp -R node_modules "$out/"
+  '';
 }

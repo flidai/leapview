@@ -151,6 +151,7 @@ loopback registry and existing PostgreSQL/browser fixtures.
 | `leapview-compose`, `leapview-linux-compose`, `leapview-image-compose` | Native application, portable binaries and image with canonical `VERSION`, exact clean source revision and `release=true`; candidate metadata grants no release admission |
 | `leapview-site` | Native Linux public-site binary with embedded CSS/JavaScript and map assets materialized on disk |
 | `leapview-site-image` | Minimal native Linux public-site image with canonical `VERSION`, exact revision labels, UID 65532, and read-only files; candidate metadata grants no release admission |
+| `leapview-desktop-linux-x64` | Linux x64 Debian package candidate assembled by the existing Electron Forge `MakerDeb` path with the preview distribution marker; no release admission |
 | `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
 | `map-assets` | Pinned runtime map assets |
 | `extension-supply` | Signed runtime extension assets pinned independently for both Linux ISAs |
@@ -170,6 +171,33 @@ runtime-asset fetches use the network. Their complete outputs are pinned in
 `build-hashes.json`, in addition to the existing module/package locks and asset
 integrity checks. The final image assembly also runs without network access.
 Use a Nix installation with `sandbox = true`; the image CI job sets it explicitly.
+
+### Linux desktop package candidate
+
+`nix build .#leapview-desktop-linux-x64` builds only the Linux x64 Debian
+package. It uses the locked desktop Bun dependency tree, the official Electron
+and Node archives matching versions declared by `desktop/release-policy.json`,
+and the existing `desktop/scripts/run-electron.mjs make` Forge packaging path.
+The recipe passes the hash-verified Electron ZIP through
+`LEAPVIEW_DESKTOP_ELECTRON_ZIP_DIR` to Packager's explicit archive input; a download
+cache alone still triggers checksum network requests. Desktop CI requires
+`sandbox = true` and `sandbox-fallback = false` so a host without the required
+kernel namespaces cannot silently supply an online build.
+The package carries the preview distribution marker. The manual `Protected Nix
+desktop candidate` workflow qualifies the exact Debian bytes on native Ubuntu
+22.04 x86_64 using protected verifier code, then retains the package and a
+hash-bound receipt with `releaseAdmission: false`. It checks the protected
+control-field and dependency contract, package contents, the embedded Electron
+sandbox helper's root-owned setuid mode, installed-payload identity, startup,
+installer metadata, release evidence and the hostile-instance boundary. The
+`native-desktop` development lane exercises this host floor
+without publication credentials.
+
+That candidate qualification records install, reinstall, protocol registration
+and removal. Upgrade, rollback, recovery and profile observation remain pending;
+it does not establish production adoption, signing, publication or release
+admission. Conventional desktop release workflows remain authoritative.
+macOS and Windows outputs remain on their existing toolchains.
 
 ### Standalone public-site candidates
 
