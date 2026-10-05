@@ -112,9 +112,13 @@ func runQualificationHistoricalTransitionScenario(
 	options qualificationHistoricalTransitionOptions,
 ) qualificationHistoricalTransitionChecks {
 	t.Helper()
+	phaseStarted := time.Now()
 	fixture := startQualificationHistoricalPredecessorFixture(t, ctx, repoRoot)
+	t.Logf("historical_transition_phase=predecessor_fixture elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
 	require.Equal(t, qualificationHistoricalPredecessorRevision, fixture.LegacyPublication.RuntimeRevision)
+	phaseStarted = time.Now()
 	candidate := runQualificationHistoricalCandidateTransition(t, ctx, repoRoot, options, fixture)
+	t.Logf("historical_transition_phase=candidate_transition elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
 	intent := candidate.Request.AccessTransition
 	require.NotNil(t, intent, "the native maintenance request must carry the actual typed access intent")
 	require.Equal(t, fixture.Seed.TargetID, intent.TargetID)
@@ -155,6 +159,7 @@ func runQualificationHistoricalTransitionScenario(
 	// run the ordinary publication adapter against the already migrated project.
 	// This proves subsequent replacement compatibility; it does not claim a
 	// second image digest was tested.
+	phaseStarted = time.Now()
 	require.NoError(t, runQualificationHistoricalBrowserValidation(ctx, t, repoRoot, fixture.Seed, candidate.Proxy),
 		"the newly activated typed generation must render the real CFO query proof")
 	require.NoError(t, verifyQualificationHistoricalTransitionAuthorization(ctx, candidate, fixture.Seed),
@@ -163,6 +168,8 @@ func runQualificationHistoricalTransitionScenario(
 		"gracefully stop and verify the candidate before starting its replacement")
 	_, err := candidate.Candidate.Remove(ctx)
 	require.NoError(t, err, "remove the stopped candidate before starting its replacement")
+	t.Logf("historical_transition_phase=initial_browser_auth_and_candidate_handoff elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
+	phaseStarted = time.Now()
 	replacementRuntime := newTestcontainersQualificationRuntime()
 	replacementCandidate, replacementEndpoint := startQualificationHistoricalServer(t, ctx, replacementRuntime,
 		fixture.Network, fixture.StateVolume, options.CandidateImage, fixture.ApplicationEnv,
@@ -192,6 +199,7 @@ func runQualificationHistoricalTransitionScenario(
 		qualificationHistoricalDashboardOverviewURL(fixture.Seed.DashboardID)))
 	require.NoError(t, runQualificationHistoricalBrowserValidation(ctx, t, repoRoot, replacementSeed, replacementProxy),
 		"the subsequent normal deployment must retain the real CFO query proof")
+	t.Logf("historical_transition_phase=replacement_publish_browser_proofs elapsed=%s", time.Since(phaseStarted).Round(time.Millisecond))
 
 	checks := qualificationHistoricalTransitionChecks{
 		LegacyPublication:       fixture.LegacyPublication.PublicationID != "",
@@ -338,26 +346,28 @@ func startQualificationHistoricalPredecessorFixture(t *testing.T, ctx context.Co
 	require.NoError(t, err)
 	poolDir := filepath.Join(t.TempDir(), "physical-pool")
 	require.NoError(t, os.MkdirAll(poolDir, 0o700))
-	poolArtifacts, err := qualificationNativePhysicalPoolArtifactsFromEnvelope(poolDir, poolEnvelope)
+	poolArtifacts, err := physicalPoolBootstrapArtifactsFromEnvelope(poolDir, poolEnvelope)
 	require.NoError(t, err)
-	require.NoError(t, writeQualificationNativePhysicalPoolArtifacts(poolArtifacts))
+	require.NoError(t, writePhysicalPoolBootstrapArtifacts(poolArtifacts))
 	_, err = poolUtility.Remove(ctx)
 	require.NoError(t, err)
 
 	applicationEnvironment := cloneQualificationEnvironment(baseEnvironment)
+	require.NotContains(t, applicationEnvironment, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"the predecessor migrator credential must stay out of the shared serving environment")
 	applicationEnvironment["LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID"] = poolArtifacts.PoolID
 	applicationEnvironment["LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST"] = poolArtifacts.CompatibilityDigest
 	utility := startQualificationHistoricalUtility(t, ctx, runtime, network.Name, stateVolume, oldImage, applicationEnvironment, composeProject+"-predecessor-setup")
 	copyQualificationHistoricalPoolFiles(t, ctx, utility, poolArtifacts)
 	bootstrapDryRun := runQualificationHistoricalPoolBootstrap(t, ctx, utility, poolArtifacts, false, nil)
-	require.NoError(t, verifyQualificationNativePhysicalPoolBootstrapResult(bootstrapDryRun, poolArtifacts, false))
+	require.NoError(t, verifyPhysicalPoolBootstrapResult(bootstrapDryRun, poolArtifacts, false))
 
-	initial, err := initializeQualificationHistoricalRuntime(ctx, t, utility)
+	initial, err := initializeQualificationHistoricalRuntime(ctx, t, utility, topology.ControlMigratorURL)
 	require.NoError(t, err)
 	operationEnvironment, err := qualificationNativePostgresOperationEnvironment(topology)
 	require.NoError(t, err)
 	bootstrapResult := runQualificationHistoricalPoolBootstrap(t, ctx, utility, poolArtifacts, true, operationEnvironment)
-	require.NoError(t, verifyQualificationNativePhysicalPoolBootstrapResult(bootstrapResult, poolArtifacts, true))
+	require.NoError(t, verifyPhysicalPoolBootstrapResult(bootstrapResult, poolArtifacts, true))
 	// The utility owns the shared home and captured initialization credentials;
 	// acknowledge them before starting the app, which holds the same native
 	// home lock for its lifetime.
@@ -566,7 +576,7 @@ func startQualificationHistoricalUtility(
 	return container
 }
 
-func copyQualificationHistoricalPoolFiles(t *testing.T, ctx context.Context, container qualificationContainer, artifacts qualificationNativePhysicalPoolArtifacts) {
+func copyQualificationHistoricalPoolFiles(t *testing.T, ctx context.Context, container qualificationContainer, artifacts physicalPoolBootstrapArtifacts) {
 	t.Helper()
 	const target = "/tmp/leapview-historical-transition-pool"
 	_, err := container.Exec(ctx, nil, "mkdir", "-p", target)
@@ -581,10 +591,10 @@ func runQualificationHistoricalPoolBootstrap(
 	t *testing.T,
 	ctx context.Context,
 	container qualificationContainer,
-	artifacts qualificationNativePhysicalPoolArtifacts,
+	artifacts physicalPoolBootstrapArtifacts,
 	apply bool,
 	operationEnvironment map[string]string,
-) qualificationNativePhysicalPoolBootstrapResult {
+) physicalPoolBootstrapResult {
 	t.Helper()
 	args := []string{"leapview", "admin", "delivery", "pool", "bootstrap",
 		"--pool", "/tmp/leapview-historical-transition-pool/pool-identity.json",
@@ -601,7 +611,7 @@ func runQualificationHistoricalPoolBootstrap(
 	}
 	output, err := container.Exec(ctx, nil, args...)
 	require.NoError(t, err)
-	result, err := parseQualificationNativePhysicalPoolBootstrapResult(output)
+	result, err := parsePhysicalPoolBootstrapResult(output)
 	require.NoError(t, err)
 	return result
 }

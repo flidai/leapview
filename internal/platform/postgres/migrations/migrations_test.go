@@ -41,8 +41,8 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"039_resource_share_no_onward_delegation.sql", "040_reject_active_legacy_api_tokens.sql", "041_typed_authoring_permissions.sql", "042_edit_api_tokens.sql", "043_initial_publisher_password_setup.sql", "044_typed_authorization_policy_grants.sql",
 		"045_refresh_manual_intent.sql", "046_connection_upload_permission.sql", "047_saved_explorations.sql",
 		"048_credential_draft_storage.sql", "049_instance_customer_owner.sql", "050_credential_validation_receipts.sql",
-		"051_credential_activation_preparation.sql", "052_credential_activation_abort.sql", "053_credential_activation_switching.sql", "054_credential_activation_commit.sql",
-		"055_saved_explorations.sql",
+		"051_credential_activation_preparation.sql", "052_credential_activation_abort.sql", "053_credential_activation_switching.sql", "054_credential_activation_commit.sql", "055_compound_snapshot_grants.sql",
+		"056_saved_explorations.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
@@ -764,7 +764,7 @@ func TestVerifyGooseFailsClosedOnFreshDatabase(t *testing.T) {
 }
 
 func TestSavedExplorationMigrationIsForwardOnlyAndAudited(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "055_saved_explorations.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "056_saved_explorations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

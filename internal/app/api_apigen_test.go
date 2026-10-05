@@ -740,8 +740,19 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 136 {
-		t.Fatalf("UI signal IR contracts = %d, want 136", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 144 {
+		t.Fatalf("UI signal IR contracts = %d, want 144", len(irDoc.Contracts))
+	}
+	// Saved lifecycle roots are additive to the existing UI contract catalog.
+	savedExplorationRoles := map[string]string{
+		"SavedExplorationRevisionSignal":   "signal",
+		"SavedExplorationListItemSignal":   "signal",
+		"SavedExplorationCurrentSignal":    "signal",
+		"SavedExplorationCommandSignal":    "command",
+		"SavedExplorationSaveStateSignal":  "signal",
+		"SavedExplorationLegacyItemSignal": "signal",
+		"SavedExplorationListSignal":       "signal",
+		"SavedExplorationStateSignal":      "signal",
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
@@ -750,6 +761,12 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	foundRefreshRunDrawerSignal := false
 	foundAssetVersionDrawerSignal := false
 	for _, contract := range irDoc.Contracts {
+		if role, ok := savedExplorationRoles[contract.Name]; ok {
+			if contract.Kind != "ui-signal" || contract.Extensions["x-leapview-contract-role"] != role || contract.Extensions["x-leapview-surface"] != "saved_explorations" {
+				t.Fatalf("saved exploration contract metadata was not preserved: %#v", contract)
+			}
+			delete(savedExplorationRoles, contract.Name)
+		}
 		if contract.Name == "DashboardEnvelope" && contract.Kind == "ui-envelope" && contract.Extensions["x-leapview-contract-role"] == "envelope" {
 			foundEnvelopeMetadata = true
 		}
@@ -768,6 +785,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		if contract.Name == "AssetVersionDrawerSignal" && contract.Kind == "ui-signal" {
 			foundAssetVersionDrawerSignal = true
 		}
+	}
+	if len(savedExplorationRoles) != 0 {
+		t.Fatalf("UI signals are missing saved exploration lifecycle contracts: %v", savedExplorationRoles)
 	}
 	if !foundEnvelopeMetadata {
 		t.Fatal("DashboardEnvelope contract metadata was not preserved in IR")
@@ -917,8 +937,6 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"decideDeviceAuthorization":        true,
 		"deleteCurrentAvatar":              true,
 		"executeDashboardAuthoringCommand": true,
-		"exportSavedExploration":           true,
-		"exportSavedExplorationURL":        true,
 		"getAgentConversation":             true,
 		"getAgentRun":                      true,
 		"getCapabilities":                  true,
@@ -954,6 +972,17 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"updateCurrentPrincipal":           true,
 		"updateCurrentTheme":               true,
 		"uploadCurrentAvatar":              true,
+		// Saved-object ownership, exact semantic permissions, and credential
+		// attenuation are enforced by the domain service after authentication.
+		// The saved exploration transport/authorizer tests cover those checks.
+		"listSavedExplorations":     true,
+		"getSavedExploration":       true,
+		"createSavedExploration":    true,
+		"updateSavedExploration":    true,
+		"duplicateSavedExploration": true,
+		"archiveSavedExploration":   true,
+		"exportSavedExploration":    true,
+		"exportSavedExplorationURL": true,
 	}
 	for operationID, contract := range contracts {
 		authz, ok := contract.Extensions["x-authz"].(map[string]any)

@@ -15,20 +15,15 @@ func TestNativePostgresQualificationPackagingContract(t *testing.T) {
 	initScript := read(t, filepath.Join(root, "deploy", "postgres", "init.sh"))
 	environment := read(t, filepath.Join(root, "deploy", "compose", "leapview.env.example"))
 
+	// Exact asset content, modes, checksums and rejection behavior are exercised
+	// by the shared packager's tests; this contract checks the release caller.
 	for _, required := range []string{
-		`canonical_postgres_init="deploy/postgres/init.sh"`,
-		`canonical_postgres_init_sha256="$(sha256sum "$canonical_postgres_init" | awk '{print $1}')"`,
-		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
-		`chmod 0755 "dist/$package/qualification/postgres-init.sh"`,
-		`test "$(stat -c '%a' "dist/$package/qualification/postgres-init.sh")" = "755"`,
-		`test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"`,
-		`chmod 0755 "dist/$package/qualification/validate-bundle.sh"`,
-		`chmod 0644 "dist/$package/Caddyfile"`,
-		`test "$(stat -c '%a' "dist/$package/Caddyfile")" = "644"`,
-		`"dist/$package/qualification/validate-bundle.sh" "dist/$package"`,
+		"python3 scripts/package_compose_bundle.py",
+		`--source-root . --controller "$controller" --platform "$os/$arch"`,
+		`--image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json`,
 	} {
 		if !strings.Contains(release, required) {
-			t.Errorf("release workflow missing native PostgreSQL packaging contract %q", required)
+			t.Errorf("release workflow missing shared packaging contract %q", required)
 		}
 	}
 	for _, required := range []string{

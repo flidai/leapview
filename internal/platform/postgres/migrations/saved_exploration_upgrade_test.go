@@ -4,8 +4,8 @@ import "testing"
 
 func TestSavedExplorationRevisionUpgradePreservesMainSavedRows(t *testing.T) {
 	pool, _, provider := newDemoUpgradeDatabase(t)
-	if _, err := provider.UpTo(t.Context(), 54); err != nil {
-		t.Fatalf("apply published main migrations through revision 54: %v", err)
+	if _, err := provider.UpTo(t.Context(), 55); err != nil {
+		t.Fatalf("apply published main migrations through revision 55: %v", err)
 	}
 	const savedID = "74dd035c-1a85-4c7e-af84-6d2edce11a17"
 	if _, err := pool.Exec(t.Context(), `INSERT INTO project.saved_exploration
@@ -30,14 +30,14 @@ func TestSavedExplorationRevisionUpgradePreservesMainSavedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	if exists {
-		t.Fatal("revision 54 unexpectedly contains the revisioned saved-exploration schema")
+		t.Fatal("revision 55 unexpectedly contains the revisioned saved-exploration schema")
 	}
-	if _, err := provider.UpTo(t.Context(), 55); err != nil {
-		t.Fatalf("upgrade published main revision 54 to revision 55: %v", err)
+	if _, err := provider.UpTo(t.Context(), 56); err != nil {
+		t.Fatalf("upgrade published main revision 55 to revision 56: %v", err)
 	}
 	current, _, err := provider.GetVersions(t.Context())
-	if err != nil || current != 55 {
-		t.Fatalf("upgraded revision = %d, error = %v; want 55", current, err)
+	if err != nil || current != 56 {
+		t.Fatalf("upgraded revision = %d, error = %v; want 56", current, err)
 	}
 	if after := readSavedRow(); after != before {
 		t.Fatalf("existing saved row changed during upgrade: before %s, after %s", before, after)
@@ -52,8 +52,8 @@ func TestSavedExplorationRevisionUpgradePreservesMainSavedRows(t *testing.T) {
 			t.Fatalf("runtime cannot read new revisioned table %s", table)
 		}
 	}
-	if _, err := provider.UpTo(t.Context(), 55); err != nil {
-		t.Fatalf("replay completed revision 55: %v", err)
+	if _, err := provider.UpTo(t.Context(), 56); err != nil {
+		t.Fatalf("replay completed revision 56: %v", err)
 	}
 	if after := readSavedRow(); after != before {
 		t.Fatal("existing saved row changed during migration replay")

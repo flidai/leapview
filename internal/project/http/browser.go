@@ -195,6 +195,7 @@ type CreatorCommandInvocation struct {
 }
 
 type BrowserHandler struct {
+	ClientIDs          uitransport.ClientIDCookies
 	Graph              GraphReader
 	HistoricalGraph    HistoricalGraphReader
 	AssetVersions      AssetVersionsReader
@@ -1002,7 +1003,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		}
 	}
 	if dataExplorerBootstrapCommand != nil && strings.TrimSpace(projectsignals.ValueOrZero(dataExplorerBootstrapCommand.ClientID)) != "" {
-		if _, err := uitransport.EnsureClientID(w, r); err != nil {
+		if _, err := h.ClientIDs.Ensure(w, r); err != nil {
 			return
 		}
 		stream := pagestream.NewSignalStream(w, r)
@@ -1021,12 +1022,12 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	if livePipeline && wake != nil {
-		uitransport.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {
+		h.ClientIDs.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {
 			return h.livePipelinePage(r)
 		})
 		return
 	}
-	uitransport.PatchAndWait(w, r, pagestream.SignalPatch(patch))
+	h.ClientIDs.PatchAndWait(w, r, pagestream.SignalPatch(patch))
 }
 
 func livePipelineRoute(route, assetID string) bool {

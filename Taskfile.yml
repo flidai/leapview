@@ -21,6 +21,12 @@ tasks:
       # Nix adds the selected output's -arm64 suffix to this prefix.
       - nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli
 
+  nix:compose:controllers:
+    desc: Build release-compatible controller candidates for Compose bundle assembly
+    cmds:
+      - nix build --no-update-lock-file .#leapviewctl-compose-linux-amd64 --out-link result-compose-cli-amd64
+      - nix build --no-update-lock-file .#leapviewctl-compose-linux-arm64 --out-link result-compose-cli
+
   nix:qualify:
     desc: Qualify the Nix image through the existing production deployment checks
     cmds:
@@ -54,6 +60,14 @@ tasks:
       - task: bootstrap
       - task: map-assets:install
       - ./scripts/dev-server.sh start
+
+  playground:
+    desc: Start the standalone component and chart playground (no application services)
+    cmds:
+      - task: visualization-ir:generate
+      - task: layout-contract:generate
+      - task: lucide-icons:generate
+      - bun run playground
 
   dev:reset-login:
     desc: Explicitly restore the private local development login and restart the managed server
@@ -542,17 +556,28 @@ tasks:
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_compose_candidate_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
+      - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_artifacts.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_archive_go_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_go_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_site_image.py
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/agent_e2e_config.test.ts
@@ -567,6 +592,7 @@ tasks:
       - bun run test:app-shell
       - bun run test:settings
       - bun run typecheck:app
+      - bun run typecheck:playground
       - bun run typecheck:contracts
       - bun run typecheck:tests
       - bun run test:production-assets
@@ -578,6 +604,7 @@ tasks:
     desc: Run dashboard, visualization, and report browser tests
     cmds:
       - bun run test:visualization-ir
+      - bun run test:playground
       - bun run test:table-selection
       - bun run test:interaction-selection
       - bun run test:record-table
@@ -2280,8 +2307,39 @@ tasks:
   security:policy:
     desc: Validate security coverage, updater ownership, exceptions, and pinned actions
     cmds:
-      - go test ./internal/app/securitypolicy ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults
+      - go test ./internal/app/securitypolicy ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults ./internal/app/tools/securitysast
       - go run ./internal/app/tools/securitypolicy -root .
+
+  security:sast:prepare:
+    desc: Prepare generated source in this SAST runner without building release assets
+    env:
+      NPM_CONFIG_AUDIT: "false"
+    cmds:
+      - task: go:deps
+      - task: db:generate
+      - task: config:generate
+      - task: api:generate
+      - task: ui-signals:generate
+      - task: agent-contracts:generate
+      - task: data-resource-contracts:generate
+      - task: pipeline-contracts:generate
+      - task: desktop-discovery:generate
+      - task: layout-contract:generate
+      - task: map-style:generate
+      - task: lucide-icons:generate
+      - task: visual-docs:generate
+
+  security:sast:typescript:
+    desc: Check maintained TypeScript graphs against prepared SAST source
+    cmds:
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.app.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.contracts.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.test.json
+      - ./node_modules/.bin/tsc --noEmit --project tsconfig.playground.json
+      - npm --prefix pkg/apigen/typespec run typecheck
+      - task: desktop:deps
+      - ./desktop/node_modules/.bin/tsc --noEmit --project desktop/tsconfig.json
+      - ./desktop/node_modules/.bin/tsc --noEmit --project desktop/tsconfig.test.json
 
   security:dependencies:
     desc: Evaluate .security/javascript-vulnerability-evidence.json offline and run live source-aware Go dependency checks

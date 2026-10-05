@@ -1,11 +1,12 @@
 # Hetzner single-node deployment
 
-This Terraform deployment runs LeapView and Caddy on one Hetzner Cloud server.
-It provides automatic HTTPS, generated production secrets, restricted SSH,
-provider-native backup integration.
-It is the supported small-instance topology, not a high-availability
-deployment. Production authority is PostgreSQL and PostgreSQL-backed DuckLake;
-managed objects remain in their configured object stores.
+This Terraform configuration prepares one Hetzner server for a single-node
+LeapView and Caddy deployment. It configures the firewall, restricted SSH, and
+cloud-init host prerequisites; an operator-delivered first-install step
+installs the application afterward. It is the small-instance topology, not a
+high-availability deployment. Production authority is PostgreSQL and
+PostgreSQL-backed DuckLake; managed objects remain in their configured object
+stores.
 
 ## Deploy
 
@@ -33,24 +34,33 @@ module deliberately rejects world-open SSH and mutable image tags. Set
 preflight; it is persisted in the installed host marker.
 
 Provisioning renders the provider-neutral Ubuntu host bootstrap with the
-domain, administrator email, target identity, environment, and immutable image digest. The
-bootstrap pulls that image, extracts its matching deployment payload, and
-delegates installation to the Go `leapviewctl host install` command. The
-Hetzner module contains no separate Compose, initialization, backup-retention,
-upgrade, or rollback implementation.
+domain, administrator email, target identity, environment, and immutable image
+digest. Cloud-init runs only `leapview-bootstrap prepare-host`, which installs
+Docker Compose and host prerequisites. After the host is ready, privately
+deliver `/run/leapview/operator-bootstrap.json` with provider-created external
+PostgreSQL URLs and reviewed physical-pool identity/evidence, then run
+`sudo /usr/local/sbin/leapview-bootstrap install`. Never put database
+credentials in Terraform variables, user data, or state. The operator input
+remains available for retry and should be removed explicitly after successful
+installation. The Hetzner module contains no separate Compose, initialization,
+backup-retention, upgrade, or rollback implementation.
 
 When `domain` is empty, the deployment uses an HTTPS `sslip.io` hostname. That
 is useful for evaluation. Set a domain you control for a durable installation.
 
 ## Hosted qualification
 
-The manually dispatched `Ephemeral Hetzner deployment` workflow exercises this
-topology from an immutable application image. It creates an isolated server,
-qualifies public health, consumes the one-time first-login credentials, verifies
-recovery-boundary readiness, and destroys the server even when an earlier step
-fails. PostgreSQL/PITR and DuckLake/object-store recovery are provider-native;
-follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations)
-and [Backup and restore guide](/docs/guides/operate/backup-restore).
+The manually dispatched `Deploy / Ephemeral Hetzner` workflow currently creates
+an isolated server, verifies cloud-init host preparation, reports that private
+bootstrap and first-install acceptance are pending, and destroys the server.
+This repository has no automated private delivery channel for the required
+operator input, so the workflow does not install LeapView or claim application
+health, first-login, recovery, or host qualification. Complete that separate
+operator-delivered first install before using a host as an application
+acceptance result. PostgreSQL/PITR and DuckLake/object-store recovery are
+provider-native; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore).
 
 The job is protected by the `leapview-ephemeral-qualification` GitHub
 environment and authenticates to Infisical through GitHub OIDC. The dedicated
@@ -60,9 +70,10 @@ stored in GitHub.
 
 ## First Login
 
-Provisioning creates a local platform administrator, a forced-change temporary
-password, and a privilege-restricted publisher token that expires after 24
-hours. Retrieve them once:
+After the operator-delivered first install completes, LeapView has created a
+local platform administrator, a forced-change temporary password, and a
+privilege-restricted publisher token that expires after 24 hours. Retrieve
+them once:
 
 ```sh
 terraform output -raw initial_local_user_command | sh
@@ -104,7 +115,8 @@ immutable bytes and pins without rebuilding them.
 
 ## Operations
 
-Terraform exposes an SSH prefix for the server-side lifecycle command:
+After application installation, Terraform exposes an SSH prefix for the
+server-side lifecycle command:
 
 ```sh
 $(terraform output -raw operations_command) status

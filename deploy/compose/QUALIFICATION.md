@@ -41,10 +41,37 @@ LEAPVIEWCTL_ROOT="$PWD/deploy/compose" \
   ./.tmp/leapviewctl-qualification qualify image --image leapview:ci
 ```
 
-The controller pushes the local image through an isolated registry, deploys its
-immutable digest with the production Compose bundle, and writes
+For local tag inputs, the controller pins the image through an isolated registry
+before deployment. Already-immutable registry references pass unchanged through
+bootstrap, authoring and performance qualification, without retagging or
+republishing. The report records the selected deployment image. The controller writes
 `qualification-evidence/authoring-ci/authoring-report.json`. Both trusted and
 fork pull-request production-image jobs run this gate.
+
+## Qualification read credentials
+
+The installed journey issues separate, short-lived project credentials for its
+evidence and upload calls. `delivery.read` is used only for the candidate and
+generation status reads before and after application upgrade. `connection.read`
+is used for active-revision and upload-session list/status/event reads. A
+recovery-only credential carries exactly `connection.read` and
+`connection.upload` on `project:leapview-evaluation` and `connection:sample`; it
+is used only by the recovery `leapview data sync` command, including its
+upload-session mutations. Before publication, qualification stages and reads
+back that exact owner grant. The approved authorization-policy digest includes
+both it and the pipeline-run grant. No API endpoint policy or default role is
+changed, and publisher/workload credentials are not reused for upload evidence.
+
+Both native jobs in [manual release workflow run 37196382702](https://github.com/flidai/leapview/actions/runs/37196382702)
+previously failed in application-upgrade qualification when the candidate-status
+request used a token without `delivery.read` and received HTTP 403. The same
+incorrect data credential would also fail recovery's active-revision request,
+which requires `connection.read`. The focused regressions reproduce both denied
+requests and verify the two dedicated bearer headers:
+
+```sh
+go test ./internal/app/cli/composectl -run 'TestQualification(DeliveryEvidence|ActiveRevision)' -count=1
+```
 
 ## Performance policy
 

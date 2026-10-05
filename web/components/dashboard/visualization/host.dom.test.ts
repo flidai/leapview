@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
 
 let server: Server
@@ -335,8 +335,8 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
       await host.ensureMounted()
       let action: any
       host.addEventListener('lv-visual-action', (event: CustomEvent) => { action = event.detail });
-      (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.visual-options summary')!.click();
-      (host.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.visual-options button')!.click()
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.options-trigger')!.click();
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.visual-options [role="menuitem"]')!.click()
       const state = {
         signalRevision: host.envelope.dataRevision,
         rendererRevision: host.controller.envelope.dataRevision,
@@ -380,52 +380,57 @@ test('Explore appears only when a trusted dashboard link is supplied', async () 
   } finally { await page.close() }
 })
 
-test('visual option menus are exclusive and dismiss on Escape or outside pointer input', async () => {
+test('visual option popovers are exclusive, keyboard navigable, and dismiss on Escape or outside input', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
-    const state = await page.evaluate(async () => {
+    // Standalone hosts need the layout tokens normally supplied by the page shell.
+    await page.addStyleTag({ content: ':root { --zIndex-sticky: 100; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-16: 16px; --base-size-24: 24px; } lv-visualization-host { display: block; width: 360px; height: 160px; margin: 24px; }' })
+    await page.evaluate(async () => {
       const envelope = structuredClone((window as any).__lvSourceHosts.orders_kpi.envelope)
       const first = document.createElement('lv-visualization-host') as any
       const second = document.createElement('lv-visualization-host') as any
+      first.id = 'first-options-host'
+      second.id = 'second-options-host'
       first.envelope = envelope
+      first.exploreHref = '/dashboards/sales/pages/overview/visuals/revenue/explore'
       second.envelope = { ...structuredClone(envelope), visualID: 'orders_kpi_second' }
       document.body.append(first, second)
       await Promise.all([first.updateComplete, second.updateComplete])
-      const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
-      const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
-      const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-
-      firstOptions.querySelector<HTMLElement>('summary')!.click()
-      await settle()
-      const firstOpened = firstOptions.open && first.hasAttribute('visual-options-open')
-      const firstMenu = firstOptions.querySelector<HTMLElement>('.menu')!
-      const firstMenuRect = firstMenu.getBoundingClientRect()
-      const labelRight = Math.max(...Array.from(firstMenu.querySelectorAll<HTMLElement>('button span')).map((label) => label.getBoundingClientRect().right))
-      const compact = firstMenuRect.right - labelRight <= 24
-
-      secondOptions.querySelector<HTMLElement>('summary')!.click()
-      await settle()
-      const exclusive = !firstOptions.open && !first.hasAttribute('visual-options-open')
-        && secondOptions.open && second.hasAttribute('visual-options-open')
-
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-      await settle()
-      const escapeDismissed = !secondOptions.open && !second.hasAttribute('visual-options-open')
-        && secondOptions.querySelector('summary') === second.shadowRoot.activeElement
-
-      firstOptions.querySelector<HTMLElement>('summary')!.click()
-      await settle()
-      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }))
-      await settle()
-      const outsideDismissed = !firstOptions.open && !first.hasAttribute('visual-options-open')
-
-      first.remove()
-      second.remove()
-      return { firstOpened, compact, exclusive, escapeDismissed, outsideDismissed }
     })
-    expect(state).toEqual({ firstOpened: true, compact: true, exclusive: true, escapeDismissed: true, outsideDismissed: true })
+    const first = page.locator('#first-options-host')
+    const second = page.locator('#second-options-host')
+    const firstMenu = first.getByRole('menu')
+    const secondMenu = second.getByRole('menu')
+    await first.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).toBeVisible()
+    await browserExpect(first).toHaveAttribute('visual-options-open', '')
+    const bounds = await firstMenu.boundingBox()
+    expect(bounds!.width).toBeLessThanOrEqual(220)
+    expect(bounds!.x).toBeGreaterThanOrEqual(0)
+    await browserExpect(first.getByRole('menuitem', { name: 'Show data', exact: true })).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await browserExpect(first.getByRole('menuitem', { name: 'Explore', exact: true })).toBeFocused()
+    await browserExpect(first.getByRole('menuitem', { name: 'Explore', exact: true })).toHaveAttribute('href', '/dashboards/sales/pages/overview/visuals/revenue/explore')
+    await page.keyboard.press('End')
+    await browserExpect(first.getByRole('menuitem', { name: 'Export CSV', exact: true })).toBeFocused()
+
+    await second.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).not.toBeVisible()
+    await browserExpect(first).not.toHaveAttribute('visual-options-open')
+    await browserExpect(secondMenu).toBeVisible()
+    await browserExpect(second).toHaveAttribute('visual-options-open', '')
+    await page.keyboard.press('Escape')
+    await browserExpect(secondMenu).not.toBeVisible()
+    await browserExpect(second).not.toHaveAttribute('visual-options-open')
+    await browserExpect(second.getByRole('button', { name: 'Visual options', exact: true })).toBeFocused()
+
+    await first.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).toBeVisible()
+    await page.mouse.click(1, 1)
+    await browserExpect(firstMenu).not.toBeVisible()
+    await browserExpect(first).not.toHaveAttribute('visual-options-open')
   } finally {
     await page.close()
   }
@@ -876,7 +881,7 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
       await page.evaluate(async variant => {
         const host = document.createElement('lv-visualization-host') as any
         host.id = 'focus-test'
-        host.style.cssText = '--base-size-48:48px;display:block;width:600px;height:400px'
+        host.style.cssText = 'display:block;width:600px;height:400px'
         const source = (window as any).__lvSourceHosts[variant === 'table' ? 'orders' : 'orders_chart']
         host.envelope = { ...source.envelope, status: { kind: 'ready' }, spec: { ...source.envelope.spec, titleVisible: variant !== 'headerless chart' } }
         document.body.append(host)
@@ -885,13 +890,25 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
       const host = page.locator('#focus-test')
       const expand = host.getByRole('button', { name: /^Expand / })
       await expand.waitFor({ state: 'visible' })
-      await host.evaluate(element => element.setAttribute('slot', 'focus-visual'))
+      await host.evaluate(element => {
+        element.setAttribute('slot', 'focus-visual')
+        const close = document.createElement('button')
+        close.slot = 'focus-action'
+        close.textContent = 'Close visual'
+        element.append(close)
+      })
       expect(await expand.count()).toBe(0)
       const options = host.getByLabel('Visual options', { exact: true })
       expect(await options.count()).toBe(1)
-      const reserved = await options.evaluate(node => document.querySelector('#focus-test')!.getBoundingClientRect().right - node.getBoundingClientRect().right)
-      expect(reserved).toBeGreaterThanOrEqual(48)
-      await host.evaluate(element => element.removeAttribute('slot'))
+      const close = host.getByRole('button', { name: 'Close visual', exact: true })
+      await close.waitFor({ state: 'visible' })
+      const menuBounds = (await options.boundingBox())!, closeBounds = (await close.boundingBox())!
+      expect(closeBounds.x).toBeGreaterThanOrEqual(menuBounds.x + menuBounds.width)
+      expect(Math.abs(closeBounds.y + closeBounds.height / 2 - menuBounds.y - menuBounds.height / 2)).toBeLessThan(1)
+      await host.evaluate(element => {
+        element.querySelector('[slot="focus-action"]')?.remove()
+        element.removeAttribute('slot')
+      })
       await expand.waitFor({ state: 'visible' })
     } finally { await page.close() }
   })

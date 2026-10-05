@@ -589,14 +589,14 @@ test('visualization actions keep touch targets and spacing when a report is scal
       await canvas.updateComplete
       const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
       const chart = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
-      const options = chart?.shadowRoot?.querySelector('.visual-options') as HTMLDetailsElement | null
+      const options = chart?.shadowRoot?.querySelector('.options-trigger') as HTMLButtonElement | null
       if (options) {
-        options.open = true
+        options.click()
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
       const actions = [
         chart?.shadowRoot?.querySelector('[data-visualization-expand]'),
-        chart?.shadowRoot?.querySelector('.visual-options summary'),
+        chart?.shadowRoot?.querySelector('.visual-options .options-trigger'),
       ].filter(Boolean) as HTMLElement[]
       const rects = actions.map((action) => {
         const rect = action.getBoundingClientRect()
@@ -643,11 +643,11 @@ test('an open visual menu escapes its card clipping layer and raises only its fr
       const second = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
       const firstFrame = first.closest('lv-dashboard-visual-frame') as HTMLElement
       const secondFrame = second.closest('lv-dashboard-visual-frame') as HTMLElement
-      const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
-      const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLElement
+      const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLElement
       const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 
-      firstOptions.querySelector<HTMLElement>('summary')!.click()
+      firstOptions.querySelector<HTMLElement>('.options-trigger')!.click()
       await settle()
       const firstZIndex = Number.parseInt(getComputedStyle(firstFrame).zIndex, 10)
       const secondZIndex = Number.parseInt(getComputedStyle(secondFrame).zIndex, 10)
@@ -658,14 +658,14 @@ test('an open visual menu escapes its card clipping layer and raises only its fr
         raised: Number.isFinite(firstZIndex) && (!Number.isFinite(secondZIndex) || firstZIndex > secondZIndex),
       }
 
-      secondOptions.querySelector<HTMLElement>('summary')!.click()
+      secondOptions.querySelector<HTMLElement>('.options-trigger')!.click()
       await settle()
       return {
         firstOpen,
         onlySecondRaised: !firstFrame.hasAttribute('data-visual-options-open')
           && secondFrame.hasAttribute('data-visual-options-open')
-          && !firstOptions.open
-          && secondOptions.open,
+          && !firstOptions.querySelector('.menu')!.matches(':popover-open')
+          && secondOptions.querySelector('.menu')!.matches(':popover-open'),
       }
     })
     expect(state).toEqual({

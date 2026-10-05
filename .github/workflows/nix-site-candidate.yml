@@ -1,0 +1,483 @@
+name: Qualification / Protected Nix site candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Exact open pull-request head directly based on main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-site-candidate-${{ inputs.source_revision }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: leapview-ephemeral-qualification
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - name: Require one exact open PR head directly based on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REVISION/pulls" \
+            | jq -e --arg revision "$SOURCE_REVISION" \
+              'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' >/dev/null
+
+  build:
+    needs: authorize
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build the standalone site image without signing or package credentials
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.machine }}"
+          nix build --no-update-lock-file .#leapview-site-image --out-link result-site -L
+          mkdir -p candidate
+          cp --dereference result-site candidate/image.tar
+      - name: Retain the exact candidate archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-site-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 7
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+
+  qualify:
+    needs: [authorize, build]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out protected qualification and scanner code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+      - name: Check out candidate identity only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Resolve this attempt's exact native site artifact
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/nix-artifacts.json"
+          python3 protected/scripts/nix_candidate_artifacts.py \
+            --metadata "$RUNNER_TEMP/nix-artifacts.json" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --revision "$GITHUB_SHA" --architecture "$ARCH" \
+            --phase site-candidate --github-output "$GITHUB_OUTPUT"
+      - name: Download the exact build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.site-candidate_id }}
+          merge-multiple: true
+          path: candidate
+      - name: Install protected Nix tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build the protected Go binary verifier
+        working-directory: protected
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Scan the archive using the protected site runtime policy
+        working-directory: protected
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/check_nix_runtime_security.py ../candidate/image.tar --kind site-image \
+            --source-revision "$SOURCE_REVISION" --evidence-dir ../candidate/runtime
+      - name: Bind the exact site Go entrypoint without executing candidate code
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_archive_go_evidence.py candidate/image.tar --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --evidence-dir candidate/runtime/go --binary-verifier "$RUNNER_TEMP/go-binary-verifier"
+      - name: Exercise the standalone site image with protected runtime checks
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/check_nix_site_image.py --archive candidate/image.tar \
+            --source-root source --evidence-dir candidate/runtime
+      - name: Bind source and runtime reports with the protected verifier
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py record --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --output candidate/runtime/candidate-manifest.json
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py prepare --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --layout "$RUNNER_TEMP/site-qualified-oci" --output "$RUNNER_TEMP/site-qualified-content.json"
+      - name: Retain the qualified site archive and evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-site-qualified-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain site runtime findings when qualification fails
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-site-runtime-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: candidate/runtime/
+          if-no-files-found: ignore
+          retention-days: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+
+  publish:
+    needs: [authorize, qualify]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    environment: leapview-ephemeral-qualification
+    permissions:
+      contents: read
+      pull-requests: read
+      packages: write
+      attestations: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Check out protected verifier and toolchain
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+      - name: Check out source identity without executing candidate code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Resolve the exact qualified site artifact
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/nix-artifacts.json"
+          python3 protected/scripts/nix_candidate_artifacts.py \
+            --metadata "$RUNNER_TEMP/nix-artifacts.json" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --revision "$GITHUB_SHA" --architecture "$ARCH" \
+            --phase site-qualified --github-output "$GITHUB_OUTPUT"
+      - name: Download only this protected attempt's immutable artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.site-qualified_id }}
+          merge-multiple: true
+          path: candidate
+      - name: Install protected Nix tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build only the protected offline Go verifier
+        working-directory: protected
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Verify archive and reports and export without rebuilding
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py prepare --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --layout "$RUNNER_TEMP/nix-site-oci" --output "$RUNNER_TEMP/nix-site-prepared.json"
+      - name: Reauthorize the still-current candidate before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C protected rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REVISION/pulls" \
+            | jq -e --arg revision "$SOURCE_REVISION" \
+              'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' >/dev/null
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish and refetch the preserved site candidate digest
+        id: publish
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py publish --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --layout "$RUNNER_TEMP/nix-site-oci" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/nix-site-published.json" --github-output "$GITHUB_OUTPUT"
+      - name: Attest site candidate root provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/flidai/leapview-site
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Attest the exact bound site runtime SPDX
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/flidai/leapview-site
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: candidate/runtime/sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: Verify live registry provenance and the bound site SPDX
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py verify-signed --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --image "$IMAGE" --signer-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/nix-site-signed.json"
+      - name: Retain exact site publication bindings
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-site-candidate-binding-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/nix-site-prepared.json
+            ${{ runner.temp }}/nix-site-published.json
+            ${{ runner.temp }}/nix-site-signed.json
+          if-no-files-found: error
+          retention-days: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+
+  qualify-published:
+    needs: [qualify, publish]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    steps:
+      - name: Check out protected site qualification and verifier code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: protected
+          persist-credentials: false
+      - name: Check out candidate identity only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Resolve this attempt's exact qualified and publisher artifacts
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/nix-artifacts.json"
+          python3 protected/scripts/nix_candidate_artifacts.py \
+            --metadata "$RUNNER_TEMP/nix-artifacts.json" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --revision "$GITHUB_SHA" --architecture "$ARCH" \
+            --phase site-qualified --phase site-binding --github-output "$GITHUB_OUTPUT"
+      - name: Download the exact native site archive and evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.site-qualified_id }}
+          merge-multiple: true
+          path: candidate
+      - name: Download the exact publisher bindings
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.site-binding_id }}
+          merge-multiple: true
+          path: bindings
+      - name: Install protected Nix tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build the protected Go binary verifier
+        working-directory: protected
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Read the exact architecture publication binding
+        id: image
+        env:
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          binding = json.loads(Path('bindings/nix-site-published.json').read_text())
+          image = binding['image']
+          if (not isinstance(image, str)
+                  or re.fullmatch(r'ghcr\.io/flidai/leapview-site@sha256:[0-9a-f]{64}', image) is None
+                  or binding['source']['revision'] != os.environ['SOURCE_REVISION']
+                  or binding['releaseAdmission'] is not False
+                  or not binding['tag'].endswith('-' + os.environ['ARCH'])):
+              raise SystemExit('site publication binding does not name this exact source and architecture')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('image=' + image + '\n')
+          PY
+      - name: Verify signed final content before executing the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py verify-signed --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --image "$IMAGE" --signer-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/nix-site-final-verified.json"
+      - name: Log in with read-only package access
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Qualify the exact signed registry digest with site runtime checks
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/check_nix_site_image.py --archive candidate/image.tar \
+            --source-root source --evidence-dir candidate/final --image "$IMAGE"
+      - name: Bind successful site qualification to freshly verified signed content
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          nix develop --no-update-lock-file ./protected#runtime-security -c \
+            python3 protected/scripts/nix_candidate_publication.py bind-qualified --kind site-image \
+            --source-root source --source-revision "$SOURCE_REVISION" \
+            --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+            --candidate candidate/image.tar candidate/runtime/candidate-manifest.json candidate/runtime \
+            --image "$IMAGE" --signer-revision "$GITHUB_SHA" \
+            --signed-evidence bindings/nix-site-signed.json \
+            --qualification-report candidate/final/site-qualification-report.json \
+            --output candidate/final/nix-site-qualified.json
+      - name: Retain final site qualification evidence and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-site-published-qualification-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: candidate/final/
+          if-no-files-found: warn
+          retention-days: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm

@@ -29,7 +29,7 @@ deployment** are manual and run on `main`, using one shared concurrency group:
   result is required before a database/permission upgrade.
 - **deploy** selects the supported image-only or database-upgrade path and replaces the application image on `app-leapview-demo-02` at
   `89.58.13.145`. Supply `image` as `ghcr.io/flidai/leapview@sha256:<digest>` and
-  `qualification_run` as the successful **Main artifacts** run ID for that exact
+  `qualification_run` as the successful **Build / Main image** run ID for that exact
   digest. The run must contain `production-image-qualification-<attempt>`; older
   runs without a receipt are not admissible. First qualify an image with the
   updated workflow. Mutable tags, PR candidates, foreign workflows, stale run
@@ -67,6 +67,14 @@ the request again, and a live upgrade requires a passed detached rehearsal bound
 to the same images, source identities, installation profile and access intent.
 It captures a fresh recovery point; it never restores the older rehearsal copy
 over subsequently acknowledged writes.
+
+Maintenance verifies installed deployment files against the immutable predecessor
+image before staging the candidate. The application healthcheck command may move
+to the canonical `CMD /usr/local/bin/leapview healthcheck`; all other Compose
+settings, proxy configuration, and deployment defaults must remain unchanged.
+The candidate generation supplies the new command, and recovery reactivates the
+original predecessor generation. A changed port, volume, service, or healthcheck
+timing still requires a separately reviewed topology change.
 
 Image payloads are extracted into a separate temporary directory before validation.
 New releases contain the same six runtime files and permissions as the host
@@ -199,7 +207,7 @@ with the operator adapter:
 ```sh
 DEMO_HOST=89.58.13.145 \
 DEMO_IMAGE='ghcr.io/flidai/leapview@sha256:<qualified-digest>' \
-QUALIFICATION_RUN='<successful Main artifacts run ID>' \
+QUALIFICATION_RUN='<successful Build / Main image run ID>' \
 python3 scripts/bootstrap/compose_installation.py
 ```
 
@@ -275,7 +283,7 @@ in the request and their own authenticated application validator.
 
 Select `prepare` before a forward schema/permission transition, then `deploy`.
 The deploy action selects the appropriate supported mode; the explicit `upgrade`
-alias remains available. Select `recover` only for an interrupted operation. Supply the immutable image and its successful main-push Main artifacts
+alias remains available. Select `recover` only for an interrupted operation. Supply the immutable image and its successful main-push Build / Main image
 qualification run. The controller is extracted from that exact candidate. No
 migration is run during serving startup or by the Python transport.
 

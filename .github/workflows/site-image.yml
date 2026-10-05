@@ -1,4 +1,4 @@
-name: Publish public site image
+name: Build / Public site image
 
 on:
   workflow_dispatch:

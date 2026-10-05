@@ -5,12 +5,14 @@ canonical LeapView Compose lifecycle. It deliberately supports a small tested
 guest-platform matrix—Ubuntu 24.04 LTS or Debian 13 with systemd—on any
 provider that can deliver the cloud-init document or run the bootstrap as root.
 
-The bootstrap has one bounded responsibility: install Docker Compose and the
-host prerequisites, pull an immutable LeapView image, extract that image's
-deployment payload, and invoke `leapviewctl host install`. The Go installer
-validates the typed configuration and payload, stages it under
-`/opt/leapview/releases/<digest>`, atomically activates the `current` generation,
-initializes the instance once, and starts it.
+The cloud-init bootstrap has two explicit commands. `prepare-host` installs
+Docker Compose and host prerequisites, then exits. After an operator privately
+delivers the external PostgreSQL credentials and reviewed physical-pool
+artifacts, `install` pulls the immutable LeapView image, extracts that image's
+deployment payload, and invokes `leapviewctl host install`. The Go installer
+validates both inputs before staging `/opt/leapview/releases/<digest>`, then
+dry-runs pool admission, initializes the control database, applies pool
+admission, and starts the instance.
 
 Provider adapters supply a private JSON document with this schema:
 
@@ -29,7 +31,54 @@ Provider adapters supply a private JSON document with this schema:
 The adapter also supplies the same immutable image reference as a private
 single-line file because the bootstrap must pull the image before the Go
 installer is available. `cloud-init.yaml.tftpl` writes these inputs and the
-shared `bootstrap-linux.sh`; it contains no application lifecycle logic.
+shared `bootstrap-linux.sh`, which runs only `prepare-host`; it contains no
+application lifecycle or database credential logic.
+
+First install requires a separate root-private file at
+`/run/leapview/operator-bootstrap.json`, mode `0600`. It is never part of
+Terraform variables, state, cloud-init, or provider user data. Deliver it over
+the operator's private secret channel after the host is prepared. Its schema
+uses six provider-created PostgreSQL URLs and the canonical physical-pool
+identity and evidence artifact types:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "postgres": {
+    "controlUrl": "postgres://leapview_control_runtime:<secret>@<provider-host>/leapview_control?sslmode=verify-full",
+    "controlMigratorUrl": "postgres://leapview_control_migrator:<secret>@<provider-host>/leapview_control?sslmode=verify-full",
+    "controlMaintenanceUrl": "postgres://leapview_control_maintenance:<secret>@<provider-host>/leapview_control?sslmode=verify-full",
+    "duckLakeUrl": "postgres://leapview_ducklake_runtime:<secret>@<provider-host>/leapview_ducklake?sslmode=verify-full",
+    "duckLakeMaintenanceUrl": "postgres://leapview_ducklake_maintenance:<secret>@<provider-host>/leapview_ducklake?sslmode=verify-full",
+    "duckLakeMigratorUrl": "postgres://leapview_ducklake_migrator:<secret>@<provider-host>/leapview_ducklake?sslmode=verify-full"
+  },
+  "physicalPool": {
+    "pool": { /* full canonical physicalpool.PoolIdentity object */ },
+    "evidence": { /* full canonical physicalpool.EvidenceArtifact object */ }
+  }
+}
+```
+
+This illustrates the top-level shape; replace both comments with complete
+canonical JSON objects before installing. Control runtime, maintenance, and migrator URLs must map to the same
+logical control database; DuckLake runtime, maintenance, and migrator URLs
+must map to the same logical DuckLake database. Provider pooler and direct
+endpoints may differ when they reach that same database. Each URL must use its
+fixed role and database, have unique credentials, and set `sslmode=verify-full`.
+Use a trusted system CA or `sslrootcert`; LeapView does not require a
+deployment-specific certificate path. Pool evidence must be reviewed conformance
+evidence matching the pool's compatibility tuple, with no credentials or raw
+observations in the artifact.
+
+On Ubuntu or Debian, after private delivery, run:
+
+```sh
+sudo /usr/local/sbin/leapview-bootstrap install
+```
+
+The installer reads but does not remove the operator file so an interrupted
+bootstrap can be retried. After successful installation, remove that file
+explicitly through the operator's secret-handling procedure.
 
 For the exact admitted FAI-518 revision-019 predecessor image, the current
 bootstrap translates this document to the six fields accepted by that image's
@@ -40,7 +89,9 @@ and translated configuration. The current upgrade command accepts that binding
 only for this exact predecessor and only while the marker still matches it.
 Other images receive the original configuration and keep the normal marker
 contract. This compatibility path does not change the predecessor artifact or
-qualify the real-host transition.
+qualify the real-host transition. The revision-019 predecessor remains usable
+for an already-installed host, but a fresh host requires an image with the
+operator-bootstrap lifecycle.
 
 The production image carries the matching payload under
 `/usr/local/share/leapview/deployment`. A digest therefore selects the server,
@@ -183,10 +234,35 @@ configuration, credentials, and deployment files remain outside the Nix store.
 
 The module only configures host prerequisites. It defines no Compose service,
 installer hook, or application lifecycle action, so `nixos-rebuild switch` does
-not install or initialize LeapView. The normal Docker restart policies continue
-to start existing containers when Docker starts after boot. PostgreSQL is not
-published through the host firewall. The Ubuntu 24.04 and Debian 13
-`bootstrap-linux.sh` path remains unchanged.
+not install or initialize LeapView. To install on NixOS, privately create the
+same operator file and a mode-0600 `bootstrap.json`, then pull the immutable
+image, extract `/usr/local/share/leapview/deployment` from a temporary
+container, and run its `leapviewctl host install` with `--config`,
+`--operator-config`, `--payload`, and `--source-image` set to those exact paths
+and image. For example, after privately delivering the two input files:
+
+```sh
+image='ghcr.io/flidai/leapview@sha256:<digest>'
+payload="$(mktemp -d)"
+container="$(docker create "$image")"
+docker cp "$container:/usr/local/share/leapview/deployment/." "$payload/"
+docker rm "$container"
+sudo "$payload/leapviewctl" host install \
+  --config /run/leapview/bootstrap.json \
+  --operator-config /run/leapview/operator-bootstrap.json \
+  --payload "$payload" \
+  --source-image "$image"
+rm -rf "$payload"
+```
+
+The Go installer rejects a missing operator file on first install.
+The normal Docker restart policies continue to start existing containers when
+Docker starts after boot. PostgreSQL is not published through the host
+firewall.
+
+The automated package bootstrap supports Ubuntu 24.04 and Debian 13. NixOS
+hosts use the module above and the same private first-install inputs; the
+provider-neutral apt bootstrap does not run on NixOS.
 
 After activating the host configuration, check the noninteractive command
 environment before running the normal controller installation procedure:
@@ -197,3 +273,27 @@ docker compose version
 python3 --version
 openssl version
 ```
+
+## Disposable first-install qualification
+
+The protected `nix-compose-candidate.yml` workflow includes an eight-cell
+Ubuntu 24.04 / Debian 13, AMD64 / ARM64, bootstrap / Nix-controller guest
+matrix. Each cell uses a checksum-pinned cloud image from
+`nix/guest-images.json`, a fresh QEMU guest, the exact controller archive,
+and an admitted immutable application image. Software virtualization is
+recorded as `tcg`; these runs do not claim hardware-virtualization coverage.
+
+The verifier creates a disposable TLS PostgreSQL fixture, checks the runtime
+roles with `sslmode=verify-full`, and invokes the candidate's pool qualification
+command before installation. Probe inputs live separately from the fresh
+installation target. Only canonical pool artifacts and private operator input
+are passed into installation; migration credentials must be absent from the
+resulting serving environment. The guest then reboots and proves automatic
+startup of the same image and installation generation. Retained evidence must
+not contain fixture credentials.
+
+A passing guest receipt covers only its named first-install and reboot checks.
+It does not qualify NixOS, upgrades, rollback, recovery, or production
+observation. Until a successful exact-image matrix is retained, this path is
+implemented but runtime qualification remains pending. The separate Hetzner
+preparation workflow is not a substitute for that evidence.

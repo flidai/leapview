@@ -1,4 +1,4 @@
-name: Merge validation
+name: CI / Merge queue
 
 on:
   merge_group:

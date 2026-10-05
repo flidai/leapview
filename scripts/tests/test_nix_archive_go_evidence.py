@@ -59,10 +59,11 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
         self.source = {'repository': 'flidai/leapview', 'revision': 'a' * 40,
                        'inputs': [{'path': 'flake.lock', 'sha256': candidate.digest_bytes(b'lock')}]}
         self.files = [(entry['path'], b'app' if entry['id'] == 'leapview' else b'controller')
-                      for entry in evidence.ENTRYPOINTS]
+                      for entry in evidence.APPLICATION_ENTRYPOINTS]
         self.write_archive([layer(self.files)])
 
-    def write_archive(self, layers, order=None, config_override=None):
+    def write_archive(self, layers, order=None, config_override=None, *, kind='application-image', entries=None):
+        entries = entries or evidence.APPLICATION_ENTRYPOINTS
         config = {'os': 'linux', 'architecture': 'amd64',
                   'rootfs': {'type': 'layers', 'diff_ids': [candidate.digest_bytes(data) for data in layers]},
                   'config': {'Entrypoint': ['/usr/local/bin/leapview'], 'Env': ['PATH=/usr/local/bin:/busybox/bin'],
@@ -70,7 +71,12 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
                       'org.opencontainers.image.source': 'https://github.com/flidai/leapview',
                       'org.opencontainers.image.revision': self.source['revision'],
                       'org.opencontainers.image.version': 'test', 'dev.leapview.build.dirty': 'false',
-                      'dev.leapview.build.kind': 'application-image'}}}
+                      'dev.leapview.build.kind': kind}}}
+        if kind == 'site-image':
+            config['config'] = {'Entrypoint': ['/leapview-site'], 'Cmd': ['-addr=:8081'],
+                                'User': '65532:65532', 'WorkingDir': '/', 'Env': ['LEAPVIEW_SITE_BASE_URL=',
+                                'LEAPVIEW_SITE_SHOWCASE_EMBED_URL='],
+                                'ExposedPorts': {'8081/tcp': {}}, 'Labels': config['config']['Labels']}
         if config_override:
             config['config'].update(config_override)
         encoded = json.dumps(config).encode()
@@ -84,18 +90,18 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
                 member = tarfile.TarInfo(name)
                 member.size = len(data)
                 archive.addfile(member, io.BytesIO(data))
-        self.artifact = candidate.image_identity(self.archive, self.source, 'application-image')
-        self.artifact.update(kind='application-image', sha256=candidate.digest_file(self.archive))
+        self.artifact = candidate.image_identity(self.archive, self.source, kind)
+        self.artifact.update(kind=kind, sha256=candidate.digest_file(self.archive))
 
-    def extract(self):
-        destination = self.root / 'binaries'
+    def extract(self, directory='binaries'):
+        destination = self.root / directory
         destination.mkdir()
         return evidence.extract(self.archive, self.artifact, destination)
 
     def test_extracts_exact_declared_entrypoints_without_running_them(self):
         result = self.extract()
-        self.assertEqual(set(result), {entry['id'] for entry in evidence.ENTRYPOINTS})
-        self.assertEqual([result[entry['id']].read_bytes() for entry in evidence.ENTRYPOINTS],
+        self.assertEqual(set(result), {entry['id'] for entry in evidence.APPLICATION_ENTRYPOINTS})
+        self.assertEqual([result[entry['id']].read_bytes() for entry in evidence.APPLICATION_ENTRYPOINTS],
                          [value for _, value in self.files])
         self.assertTrue(all(path.stat().st_mode & 0o777 == 0o600 for path in result.values()))
 
@@ -108,7 +114,7 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
         self.assertEqual(result['leapviewctl'].read_bytes(), b'new-controller')
 
     def test_conflicting_extended_headers_cannot_hide_the_runtime_binary(self):
-        app = evidence.ENTRYPOINTS[0]['path']
+        app = evidence.APPLICATION_ENTRYPOINTS[0]['path']
         pax = pax_header({'path': app})
         gnu = raw_member('././@LongLink', b'usr/local/bin/unused\0', tarfile.GNUTYPE_LONGNAME)
         chains = [pax + gnu, gnu + pax,
@@ -125,14 +131,14 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
                     shutil.rmtree(self.root / 'binaries')
 
     def test_global_pax_path_cannot_replace_the_scanned_path(self):
-        replacement = (pax_header({'path': evidence.ENTRYPOINTS[0]['path']}, tarfile.XGLTYPE)
+        replacement = (pax_header({'path': evidence.APPLICATION_ENTRYPOINTS[0]['path']}, tarfile.XGLTYPE)
                        + raw_member('usr/local/bin/unused', b'clean-replacement') + b'\0' * 1024)
         self.write_archive([layer(self.files), replacement])
         with self.assertRaisesRegex(ValueError, 'extended header'):
             self.extract()
 
     def test_independent_pax_and_gnu_headers_and_gnu_name_link_pair_are_supported(self):
-        app = evidence.ENTRYPOINTS[0]['path']
+        app = evidence.APPLICATION_ENTRYPOINTS[0]['path']
         replacement = pax_header({'path': app}) + raw_member('placeholder', b'new-app')
         # Normal GNU archives can need both a long name and a long link target.
         replacement += raw_member('././@LongLink', b'elsewhere/' + b'x' * 120 + b'\0', tarfile.GNUTYPE_LONGNAME)
@@ -142,7 +148,7 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
         self.assertEqual(self.extract()['leapview'].read_bytes(), b'new-app')
 
     def test_single_extended_header_replacement_is_supported_and_bounded(self):
-        app = evidence.ENTRYPOINTS[0]['path']
+        app = evidence.APPLICATION_ENTRYPOINTS[0]['path']
         for header in [pax_header({'path': app}), raw_member('././@LongLink', app.encode() + b'\0', tarfile.GNUTYPE_LONGNAME)]:
             self.write_archive([layer(self.files), header + raw_member('placeholder', b'new-app') + b'\0' * 1024])
             self.assertEqual(self.extract()['leapview'].read_bytes(), b'new-app')
@@ -152,14 +158,14 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
             shutil.rmtree(self.root / 'binaries')
 
     def test_pax_sparse_name_without_a_sparse_map_cannot_redirect_the_scan(self):
-        replacement = (pax_header({'GNU.sparse.name': evidence.ENTRYPOINTS[0]['path']})
+        replacement = (pax_header({'GNU.sparse.name': evidence.APPLICATION_ENTRYPOINTS[0]['path']})
                        + raw_member('usr/local/bin/unused', b'clean-replacement') + b'\0' * 1024)
         self.write_archive([layer(self.files), replacement])
         with self.assertRaisesRegex(ValueError, 'extended header'):
             self.extract()
 
     def test_pax_size_override_cannot_expose_fake_headers_inside_a_file(self):
-        hidden = raw_member(evidence.ENTRYPOINTS[0]['path'], b'clean-replacement') + b'\0' * 1024
+        hidden = raw_member(evidence.APPLICATION_ENTRYPOINTS[0]['path'], b'clean-replacement') + b'\0' * 1024
         replacement = pax_header({'size': ''}) + raw_member('unrelated', hidden) + b'\0' * 1024
         self.write_archive([layer(self.files), replacement])
         with self.assertRaisesRegex(ValueError, 'extended header'):
@@ -249,6 +255,64 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
         self.artifact = original
         with self.assertRaises(ValueError):
             self.extract()
+
+    def write_site_archive(self, layers, config_override=None):
+        self.write_archive(layers, config_override=config_override, kind='site-image',
+                           entries=evidence.SITE_ENTRYPOINTS)
+
+    def test_site_image_extracts_one_exact_entrypoint_and_uses_site_package(self):
+        site = evidence.SITE_ENTRYPOINTS[0]
+        self.write_site_archive([layer([(site['path'], b'site-binary')])])
+        result = self.extract('site-binaries')
+        self.assertEqual(set(result), {'leapview-site'})
+        self.assertEqual(result['leapview-site'].read_bytes(), b'site-binary')
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+        reports = self.root / 'site-go'
+        with patch.object(evidence.subprocess, 'run', side_effect=run):
+            evidence.scan(self.archive, self.artifact, reports, Path('/protected/verifier'))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][calls[0].index('-binary-package') + 1], site['package'])
+        self.assertEqual(calls[0][calls[0].index('-binary-platform') + 1], 'linux/amd64')
+
+    def test_site_entrypoint_symlink_replacement_and_whiteout_fail(self):
+        site = evidence.SITE_ENTRYPOINTS[0]['path']
+        cases = [[layer([(site, b'site-binary')]), layer([(site, (tarfile.SYMTYPE, '/replacement'))]),
+                  layer([(site, b'restored-binary')])],
+                 [layer([(site, b'site-binary')]), layer([('/.wh.' + site, b'')])],
+                 [layer([(site, b'site-binary')]), layer([('/.wh..wh..opq', b'')])]]
+        for layers in cases:
+            self.write_site_archive(layers)
+            with self.subTest(layers=len(layers)), self.assertRaises(ValueError):
+                self.extract('site-binaries')
+            if (self.root / 'site-binaries').exists():
+                shutil.rmtree(self.root / 'site-binaries')
+
+    def test_site_image_requires_its_runtime_configuration(self):
+        site = evidence.SITE_ENTRYPOINTS[0]['path']
+        for override in [{'Entrypoint': ['/usr/local/bin/leapview']},
+                         {'Cmd': ['serve']}, {'User': 'root'},
+                         {'WorkingDir': '/tmp'},
+                         {'ExposedPorts': {'8080/tcp': {}}},
+                         {'Env': ['LEAPVIEW_SITE_BASE_URL=']},
+                         {'Healthcheck': {'Test': ['CMD', '/leapview-site']}}]:
+            self.write_site_archive([layer([(site, b'site-binary')])], override)
+            with self.subTest(override=override), self.assertRaisesRegex(ValueError, 'site image configuration'):
+                self.extract('site-binaries')
+            shutil.rmtree(self.root / 'site-binaries')
+
+    def test_application_and_site_image_kinds_cannot_cross_extract(self):
+        site = evidence.SITE_ENTRYPOINTS[0]['path']
+        self.write_site_archive([layer([(site, b'site-binary')])])
+        self.artifact['kind'] = 'application-image'
+        with self.assertRaises(ValueError):
+            self.extract('site-as-application')
+        shutil.rmtree(self.root / 'site-as-application')
+        self.write_archive([layer(self.files)])
+        self.artifact['kind'] = 'site-image'
+        with self.assertRaises(ValueError):
+            self.extract('application-as-site')
 
     def test_offline_binding_runs_only_protected_verifier_and_retains_exact_reports(self):
         directory = self.root / 'go'
@@ -344,7 +408,7 @@ class ArchiveGoEvidenceTests(unittest.TestCase):
                             '-o', str(binary), './cmd/' + name], cwd=module, check=True)
             binaries[name] = binary.read_bytes()
         self.write_archive([layer([(entry['path'], binaries['leapview' if entry['id'] == 'leapview' else 'leapviewctl'])
-                                   for entry in evidence.ENTRYPOINTS])])
+                                   for entry in evidence.APPLICATION_ENTRYPOINTS])])
         reports = self.root / 'go'
         verifier = Path(os.environ['LEAPVIEW_TEST_GO_BINARY_VERIFIER']).resolve()
         evidence.scan(self.archive, self.artifact, reports, verifier)

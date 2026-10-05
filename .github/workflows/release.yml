@@ -1,16 +1,10 @@
-name: Release image
+name: Release / Server and CLI
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Candidate image tag
-        required: true
-        default: candidate
-        type: string
 
 permissions:
   contents: read
@@ -55,7 +49,8 @@ jobs:
             exit 1
           }
           revision="$(git rev-parse HEAD)"
-          build_time="$(git show -s --format=%cI HEAD)"
+          # Match the locked Nix build's UTC commit timestamp on every host.
+          build_time="$(git show -s --format=%ct HEAD | python3 -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.stdin.read()), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
           version=development
           release_tag=""
           is_release=false
@@ -218,9 +213,7 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=candidate-${{ github.run_id }}-${{ github.run_attempt }},enable=${{ github.event_name == 'push' }}
-            type=raw,value=${{ inputs.image_tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=sha,prefix=sha-
+            type=raw,value=candidate-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Download native image digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -343,98 +336,36 @@ jobs:
             "darwin amd64"
             "darwin arm64"
           )
-          canonical_postgres_init="deploy/postgres/init.sh"
-          test -s "$canonical_postgres_init"
-          test -x "$canonical_postgres_init"
-          canonical_postgres_init_sha256="$(sha256sum "$canonical_postgres_init" | awk '{print $1}')"
+          mkdir -p "$RUNNER_TEMP/compose-controllers"
           for target in "${targets[@]}"; do
             read -r os arch <<<"$target"
             package="leapview-compose-${RELEASE_TAG}-${os}-${arch}"
-            mkdir -p "dist/$package"
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="$build_ldflags" -o "dist/$package/leapviewctl" ./cmd/leapviewctl
-            cp deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/README.md deploy/compose/QUALIFICATION.md "dist/$package/"
-            cp deploy/host/files/leapviewctl-wrapper "dist/$package/"
-            cp deploy/host/bootstrap-linux.sh "dist/$package/"
-            cp -R deploy/compose/qualification "dist/$package/qualification"
-            chmod 0755 "dist/$package/qualification/validate-bundle.sh"
-            cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"
-            # GitHub artifact extraction (and hardened runners using umask
-            # 0077) can leave checked-in executable assets owner-only. The
-            # PostgreSQL entrypoint runs the init hook as the unprivileged
-            # `postgres` user, so preserve the reviewed world-readable mode
-            # explicitly instead of relying on cp's source mode.
-            chmod 0755 "dist/$package/qualification/postgres-init.sh"
-            test -x "dist/$package/qualification/postgres-init.sh"
-            test "$(stat -c '%a' "dist/$package/qualification/postgres-init.sh")" = "755"
-            test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
-            # The HTTPS proxy reads this bind-mounted file. Preserve its
-            # reviewed readable mode in the archive instead of relying on the
-            # checkout or cp mode.
-            chmod 0644 "dist/$package/Caddyfile"
-            test "$(stat -c '%a' "dist/$package/Caddyfile")" = "644"
-            cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
-            "dist/$package/qualification/validate-bundle.sh" "dist/$package"
-            sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
-            cp image-reference.txt release-identity.json "dist/$package/"
-            local_runtime_dir="dist/$package/local-runtime"
-            mkdir -p "$local_runtime_dir"
-            cp deploy/local/compose.yaml deploy/local/README.md deploy/local/runtime-package.schema.json "$local_runtime_dir/"
-            cp deploy/postgres/init.sh "$local_runtime_dir/postgres-init.sh"
-            chmod 0644 "$local_runtime_dir/compose.yaml" "$local_runtime_dir/README.md" "$local_runtime_dir/runtime-package.schema.json"
-            chmod 0755 "$local_runtime_dir/postgres-init.sh"
-            test "$(sha256sum "$local_runtime_dir/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
-            postgres_image="$(awk '/^[[:space:]]+image: docker.io\/library\/postgres:/{print $2; exit}' deploy/local/compose.yaml)"
-            test -n "$postgres_image"
-            POSTGRES_IMAGE="$postgres_image" python3 - "$local_runtime_dir/runtime-package.json" <<'PY'
+            controller="$RUNNER_TEMP/compose-controllers/leapviewctl-$os-$arch"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="$build_ldflags" -o "$controller" ./cmd/leapviewctl
+            if [ "$os/$arch" = linux/amd64 ]; then
+              "$controller" version --json > "$RUNNER_TEMP/compose-controllers/runtime-identity.json"
+              python3 - "$RUNNER_TEMP/compose-controllers/runtime-identity.json" <<'PY'
           import json
-          import os
           import sys
-
-          with open(sys.argv[1], "w", encoding="utf-8") as target:
-              json.dump({
-                  "schemaVersion": 1,
-                  "persistentStateSchemaVersion": 1,
-                  "composeMinimumVersion": "2.17.0",
-                  "leapview": {
-                      "version": os.environ["BUILD_VERSION"],
-                      "revision": os.environ["BUILD_REVISION"],
-                      "image": os.environ["IMAGE_REFERENCE"],
-                  },
-                  "postgres": {
-                      "major": 18,
-                      "image": os.environ["POSTGRES_IMAGE"],
-                  },
-              }, target, indent=2)
-              target.write("\n")
-          PY
-            chmod 0644 "$local_runtime_dir/runtime-package.json"
-            if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
-              (
-                cd "dist/$package"
-                ./leapviewctl version --json > runtime-identity.json
-                python3 - <<'PY'
-          import json
 
           with open("release-identity.json", encoding="utf-8") as source:
               expected = json.load(source)
-          with open("runtime-identity.json", encoding="utf-8") as source:
+          with open(sys.argv[1], encoding="utf-8") as source:
               actual = json.load(source)
           for field in ("version", "revision", "buildTime", "dirty", "development"):
               if actual[field] != expected[field]:
-                  raise SystemExit(f"runtime {field} disagrees with release identity")
+                  raise SystemExit(f"controller {field} disagrees with release identity")
           PY
-                rm runtime-identity.json
-              )
             fi
-            (
-              cd "dist/$package"
-              mapfile -d '' package_files < <(
-                find . -type f ! -name SHA256SUMS -print0 | sort -z
-              )
-              sha256sum "${package_files[@]}" > SHA256SUMS
-            )
-            tar -C dist -czf "dist/$package.tar.gz" "$package"
-            (cd dist && sha256sum "$package.tar.gz" > "$package.tar.gz.sha256")
+            python3 scripts/package_compose_bundle.py record-build-identity \
+              --controller "$controller" --platform "$os/$arch" \
+              --image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json \
+              --output "$controller.identity.json"
+            python3 scripts/package_compose_bundle.py assemble \
+              --source-root . --controller "$controller" --platform "$os/$arch" \
+              --controller-build-identity "$controller.identity.json" \
+              --image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json \
+              --package-name "$package" --output-dir dist
           done
 
       - name: Upload unpublished candidate
@@ -851,6 +782,10 @@ jobs:
     name: Publish qualified release
     if: github.event_name == 'push'
     needs: [image, authoring-cli, qualify, minio-conformance, plan-gc-conformance]
+    concurrency:
+      group: release-image-promotion
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -899,26 +834,30 @@ jobs:
       - name: Publish qualified image tags
         env:
           RELEASE_VERSION: ${{ needs.image.outputs.version }}
+          REVISION: ${{ needs.image.outputs.revision }}
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.image_digest }}
         run: |
-          tags=(--tag "${IMAGE_NAME}:${RELEASE_VERSION}")
-          case "$RELEASE_VERSION" in
-            *-*) ;;
-            *)
-              major_minor="${RELEASE_VERSION%.*}"
-              tags+=(--tag "${IMAGE_NAME}:${major_minor}" --tag "${IMAGE_NAME}:latest")
-              ;;
-          esac
-          docker buildx imagetools create "${tags[@]}" "$IMAGE_REFERENCE"
+          python3 scripts/release_image_promotion.py \
+            --repository "$IMAGE_NAME" \
+            --candidate-reference "$IMAGE_REFERENCE" \
+            --candidate-digest "$IMAGE_DIGEST" \
+            --version "$RELEASE_VERSION" \
+            --revision "$REVISION"
 
+      - name: Verify immutable release version tag
+        env:
+          RELEASE_VERSION: ${{ needs.image.outputs.version }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.image_digest }}
+        run: |
           docker logout ghcr.io
           actual_digest=""
           for _ in $(seq 1 12); do
             actual_digest="sha256:$(docker buildx imagetools inspect --raw "${IMAGE_NAME}:${RELEASE_VERSION}" 2>/dev/null | sha256sum | awk '{print $1}')"
-            [ "$actual_digest" = '${{ needs.image.outputs.image_digest }}' ] && break
+            [ "$actual_digest" = "$IMAGE_DIGEST" ] && break
             sleep 5
           done
-          test "$actual_digest" = '${{ needs.image.outputs.image_digest }}'
+          test "$actual_digest" = "$IMAGE_DIGEST"
 
       - name: Publish GitHub release
         env:

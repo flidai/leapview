@@ -17,8 +17,8 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 ### Start here
 
 - [What is LeapView?](/docs/introduction): Understand the problems LeapView solves and its code-native model.
-- [Installation](/docs/installation): Pull the public image locally or prepare a durable production instance.
-- [Get started with LeapView](/docs/getting-started): Choose a path from installation through your first validated dashboard change.
+- [Installation](/docs/installation): Install the authoring CLI, configure Compose, or set up a source checkout.
+- [Get started with LeapView](/docs/getting-started): Choose a workflow and follow the source-checkout dashboard tutorial.
 - [Build your first dashboard](/docs/first-dashboard): Change a model and dashboard and deploy it locally.
 - [Project structure](/docs/project-structure): Learn how project-wide resources are organized.
 

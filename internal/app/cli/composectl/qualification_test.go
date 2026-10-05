@@ -260,7 +260,7 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 	input := strings.Repeat("ordinary line\n", 600) +
 		"Authorization: Bearer secret-token\n" +
 		"LEAPVIEW_API_TOKEN=environment-secret\n" +
-		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","projectDataToken":"project-data","recoveryControlToken":"recovery-control","auditToken":"audit","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
+		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","deliveryEvidenceToken":"delivery-evidence","connectionEvidenceToken":"connection-evidence","recoveryUploadToken":"recovery-upload","recoveryControlToken":"recovery-control","auditToken":"audit","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
 		"\n"
 	redacted := redactQualificationLog([]byte(input), 500)
 	text := string(redacted)
@@ -270,7 +270,9 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 		`"access"`,
 		`"publisher"`,
 		`"workload"`,
-		`"project-data"`,
+		`"delivery-evidence"`,
+		`"connection-evidence"`,
+		`"recovery-upload"`,
 		`"recovery-control"`,
 		`"audit"`,
 		`"temporary"`,
@@ -297,21 +299,6 @@ func TestQualificationWorkloadTokenNeverFallsBackToPublisher(t *testing.T) {
 	require.NoError(t, err)
 	if got != credentials.WorkloadToken {
 		t.Fatalf("workloadToken() = %q, want dedicated workload token", got)
-	}
-}
-
-func TestQualificationProjectDataTokenNeverFallsBackToPublisher(t *testing.T) {
-	credentials := qualificationCredentials{
-		PublisherToken: "publisher-secret",
-	}
-	if _, err := credentials.projectDataToken(); err == nil {
-		t.Fatal("projectDataToken() error = nil, want a dedicated project-data credential")
-	}
-	credentials.ProjectDataToken = "project-data-secret"
-	got, err := credentials.projectDataToken()
-	require.NoError(t, err)
-	if got != credentials.ProjectDataToken {
-		t.Fatalf("projectDataToken() = %q, want dedicated project-data token", got)
 	}
 }
 
@@ -348,15 +335,6 @@ func TestQualificationWorkloadActionsAreExplicit(t *testing.T) {
 	} {
 		if slices.Contains(actions, forbidden) {
 			t.Errorf("workload actions unexpectedly include %s: %v", forbidden, actions)
-		}
-	}
-}
-
-func TestQualificationProjectDataActionsAreReadOnly(t *testing.T) {
-	actions := qualificationActionNames(qualificationProjectDataActions())
-	for _, forbidden := range []string{"dashboard.update", "delivery.plan", "connection.manage"} {
-		if slices.Contains(actions, forbidden) {
-			t.Fatalf("project-data actions include %s: %v", forbidden, actions)
 		}
 	}
 }
@@ -605,6 +583,44 @@ func TestFinalizeQualificationPerformanceReportWritesFailureEvidence(t *testing.
 	}
 }
 
+func TestInstalledQualificationReportCompletionUsesOneClockInstant(t *testing.T) {
+	started := time.Date(2031, time.January, 2, 3, 4, 5, 0, time.UTC)
+	justBeforeBoundary := started.Add(time.Second - time.Nanosecond)
+	justAfterBoundary := started.Add(time.Second + time.Nanosecond)
+
+	for _, result := range []string{"success", "failure"} {
+		t.Run(result, func(t *testing.T) {
+			calls := 0
+			controller := &Controller{now: func() time.Time {
+				calls++
+				if calls == 1 {
+					return justBeforeBoundary
+				}
+				return justAfterBoundary
+			}}
+			report := qualificationInstalledReport{
+				Result:    result,
+				StartedAt: qualificationStartedAt(started),
+			}
+			controller.completeInstalledQualificationReport(&report, started)
+
+			require.Equal(t, 1, calls, "completion timestamp and elapsed time must share one clock reading")
+			encoded, err := json.Marshal(report)
+			require.NoError(t, err)
+			var serialized struct {
+				CompletedAt    string `json:"completedAt"`
+				ElapsedSeconds int64  `json:"elapsedSeconds"`
+			}
+			require.NoError(t, json.Unmarshal(encoded, &serialized))
+			completed, err := time.Parse(time.RFC3339Nano, serialized.CompletedAt)
+			require.NoError(t, err)
+			require.Equal(t, int64(completed.Sub(started).Seconds()), serialized.ElapsedSeconds)
+			require.Equal(t, int64(0), serialized.ElapsedSeconds,
+				"the just-before-boundary completion must not borrow elapsed time from the next instant")
+		})
+	}
+}
+
 func validQualificationPerformancePolicy() qualificationPerformancePolicy {
 	var policy qualificationPerformancePolicy
 	policy.SchemaVersion = 1
@@ -679,6 +695,33 @@ func TestQualificationPhaseTrackerRecordsTypedFailureAndDuration(t *testing.T) {
 		evidence[0].TimeoutSeconds != 60 ||
 		!evidence[0].CleanupGuaranteed {
 		t.Fatalf("phase evidence = %+v", evidence)
+	}
+}
+
+func TestQualificationPhaseTrackerPreservesTimestampPrecisionForOrdering(t *testing.T) {
+	now := time.Date(2026, 10, 3, 10, 0, 20, 123456789, time.UTC)
+	started := now
+	tracker := newQualificationPhaseTracker(func() time.Time { return now })
+	tracker.Begin(context.Background(), "first", time.Minute)
+	now = now.Add(1500 * time.Millisecond)
+	if err := tracker.Finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	tracker.Begin(context.Background(), "second", time.Minute)
+	if err := tracker.Finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	phases := tracker.Evidence()
+	first, err := time.Parse(time.RFC3339Nano, phases[0].StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := time.Parse(time.RFC3339Nano, phases[1].StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Equal(started) || first.Add(time.Duration(phases[0].DurationMillis)*time.Millisecond).After(second) {
+		t.Fatalf("phase timestamps lost precision or falsely overlap: %+v", phases)
 	}
 }
 

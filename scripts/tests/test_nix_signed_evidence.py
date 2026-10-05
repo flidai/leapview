@@ -13,6 +13,7 @@ import nix_signed_evidence as signed
 
 IMAGE = 'ghcr.io/flidai/leapview@sha256:' + 'a' * 64
 WORKFLOW = 'flidai/leapview/.github/workflows/artifacts.yml'
+SITE_WORKFLOW = 'flidai/leapview/.github/workflows/nix-site-candidate.yml'
 SIGNER = 'b' * 40
 SPDX = {'spdxVersion': 'SPDX-2.3', 'SPDXID': 'SPDXRef-DOCUMENT',
         'documentNamespace': 'https://fixture.invalid/spdx/native', 'packages': [{'name': 'glibc'}]}
@@ -95,6 +96,14 @@ class SignedEvidenceTests(unittest.TestCase):
                                          ('application-image', WORKFLOW, 'main')]:
             with self.subTest(kind=kind), self.assertRaises(ValueError):
                 signed.validate_signer(kind, workflow, revision)
+
+    def test_site_signer_is_only_the_protected_site_candidate_workflow(self):
+        signed.validate_signer('site-image', SITE_WORKFLOW, SIGNER)
+        for kind, workflow in [('site-image', WORKFLOW),
+                               ('application-image', SITE_WORKFLOW),
+                               ('site-image', 'flidai/leapview/.github/workflows/site-image.yml')]:
+            with self.subTest(kind=kind, workflow=workflow), self.assertRaises(ValueError):
+                signed.validate_signer(kind, workflow, SIGNER)
 
     def test_binds_platform_sbom_to_same_runtime_report_and_registry_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:

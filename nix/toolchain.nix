@@ -7,20 +7,29 @@ let
     )
   );
   bunVersion = pkgs.lib.removePrefix "bun@" manifest.packageManager;
-  # Fixed-output overrides retain the application's existing versions while
-  # using upstream Nixpkgs build/patching logic. Update hashes with manifests.
-  go = pkgs.go_1_26.overrideAttrs {
-    version = goVersion;
-    src = pkgs.fetchurl {
-      url = "https://go.dev/dl/go${goVersion}.src.tar.gz";
-      hash = "sha256-Tjm5jkL5RvoFrIvFtxh335fb23y7Gnd7VBZnrXEX/S4=";
-    };
-  };
+  # The locked package includes the fuzztime cancellation fix (Go issue 75804).
+  go =
+    assert pkgs.go_1_27.version == goVersion;
+    pkgs.go_1_27;
+  bunArtifact =
+    if pkgs.stdenv.hostPlatform.isx86_64 then
+      {
+        name = "bun-linux-x64-baseline.zip";
+        sha256 = "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7";
+      }
+    else if pkgs.stdenv.hostPlatform.isAarch64 then
+      {
+        name = "bun-linux-aarch64.zip";
+        # GitHub's release API digest for the official bun-v1.3.14 asset.
+        sha256 = "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b";
+      }
+    else
+      throw "LeapView's Nix application toolchain supports x86_64-linux and aarch64-linux";
   bun = pkgs.bun.overrideAttrs {
     version = bunVersion;
     src = pkgs.fetchurl {
-      url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-x64-baseline.zip";
-      sha256 = "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7";
+      url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/${bunArtifact.name}";
+      inherit (bunArtifact) sha256;
     };
   };
   # sqlc currently deliberately selects this version through GOTOOLCHAIN. Expose

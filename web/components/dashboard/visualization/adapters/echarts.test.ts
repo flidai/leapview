@@ -740,12 +740,22 @@ test('ECharts incremental context and status plans refresh the renderer-owned AR
   expect(echartsUpdatePlan(Change.Status, option).option.aria).toBe(option.aria)
 })
 
-test('ECharts highlight plans replace series and refresh ARIA for apply and clear', () => {
-  const option = { aria: { enabled: true, description: 'Highlights cleared.' }, series: [{ id: 'series:primary:value', itemStyle: { opacity: 0.2 } }] } as any
+test('ECharts highlight plans replace highlight data and refresh ARIA for apply and clear', () => {
+  const option = {
+    aria: { enabled: true, description: 'Highlight active.' },
+    dataset: [{ source: [['value', 'highlight'], [42, 1]] }],
+    visualMap: [{ type: 'piecewise', dimension: 'highlight', pieces: [{ value: 1, opacity: 1 }] }],
+    series: [{ id: 'series:primary:value', type: 'bar' }],
+  } as any
   const plan = echartsUpdatePlan(Change.Highlight, option)
+  expect(plan.option.dataset).toBe(option.dataset)
+  expect(plan.option.visualMap).toBe(option.visualMap)
   expect(plan.option.series).toBe(option.series)
   expect(plan.option.aria).toBe(option.aria)
-  expect(plan.settings.replaceMerge).toEqual(['series'])
+  expect(plan.settings.replaceMerge).toEqual(['dataset', 'visualMap', 'series'])
+  const cleared = echartsUpdatePlan(Change.Highlight, { ...option, visualMap: undefined })
+  expect(cleared.option.visualMap).toEqual([])
+  expect(cleared.settings.replaceMerge).toContain('visualMap')
 })
 
 test('ECharts completeness ARIA prioritizes partial or truncated empty frames', () => {

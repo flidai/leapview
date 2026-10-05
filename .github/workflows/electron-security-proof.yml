@@ -1,4 +1,4 @@
-name: Electron security proof
+name: Security / Electron proof
 
 on:
   merge_group:

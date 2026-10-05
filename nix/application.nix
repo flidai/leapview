@@ -5,14 +5,26 @@
   revision,
   dirty,
   buildTime,
+  purpose,
 }:
 let
   manifest = builtins.fromJSON (builtins.readFile ../package.json);
+  canonicalVersion = pkgs.lib.trim (builtins.readFile ../VERSION);
   dependencies = import ./dependencies.nix { inherit pkgs toolchain src; };
   buildVersion =
-    if dirty then "development" else "${manifest.version}+nix.${builtins.substring 0 12 revision}";
+    if purpose == "compose" then
+      canonicalVersion
+    else if dirty then
+      "development"
+    else
+      "${manifest.version}+nix.${builtins.substring 0 12 revision}";
   buildInfo = "github.com/flidai/leapview/internal/platform/buildinfo";
 in
+assert builtins.elem purpose [
+  "development"
+  "compose"
+];
+assert purpose != "compose" || !dirty;
 pkgs.stdenv.mkDerivation {
   pname = "leapview";
   version = buildVersion;
@@ -52,11 +64,12 @@ pkgs.stdenv.mkDerivation {
     export GOPATH="$TMPDIR/go" GOCACHE="$TMPDIR/go-cache"
     export npm_config_cache="$TMPDIR/npm-cache"
     cp -R ${dependencies.javascript}/app/node_modules ./node_modules
-    cp -R ${dependencies.javascript}/typespec/node_modules pkg/apigen/typespec/node_modules
+    cp -R ${dependencies.javascript}/typespec/${dependencies.nativeCPU}/node_modules pkg/apigen/typespec/node_modules
     chmod -R u+w node_modules pkg/apigen/typespec/node_modules
-    # Bun retains both libc variants of these optional packages. This output
-    # supports glibc x86_64 Linux; do not patch the unused musl alternatives.
-    rm -rf node_modules/lightningcss-linux-x64-musl node_modules/@parcel/watcher-linux-x64-musl
+    # The fixed dependency tree contains every Linux CPU variant; retain only
+    # this native glibc target before patching executable helpers.
+    ${dependencies.prunePlatformPackages} "$PWD/node_modules" "${dependencies.nativeCPU}"
+    ${dependencies.prunePlatformPackages} "$PWD/pkg/apigen/typespec/node_modules" "${dependencies.nativeCPU}"
     # Native npm helpers (Tailwind, TypeScript, esbuild) need Nix interpreters.
     autoPatchelf node_modules pkg/apigen/typespec/node_modules
     patchShebangs node_modules pkg/apigen/typespec/node_modules
@@ -78,7 +91,7 @@ pkgs.stdenv.mkDerivation {
     # functions. Removing them forces conservative module-level analysis.
     flags="-w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
       if dirty then "true" else "false"
-    } -X ${buildInfo}.release=false"
+    } -X ${buildInfo}.release=${if purpose == "compose" then "true" else "false"}"
     go build -tags=duckdb_arrow -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview
     go build -tags=duckdb_arrow -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapviewctl" ./cmd/leapviewctl
     go build -tags=duckdb_arrow -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply

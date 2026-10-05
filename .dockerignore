@@ -1,6 +1,9 @@
 .DS_Store
 .git
 .github
+# Local generated-snapshot validation is not an application image input.
+scripts/check_generated_snapshots.sh
+scripts/generated_snapshot_check.test.ts
 .playwright-cli
 .task
 .tmp

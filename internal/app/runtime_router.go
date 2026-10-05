@@ -213,6 +213,7 @@ type platformServices struct {
 }
 
 type httpPolicy struct {
+	clientIDs            uitransport.ClientIDCookies
 	defaultEnvironment   string
 	scimBearerToken      string
 	metricsBearerToken   string
@@ -423,6 +424,7 @@ type runtimeAssemblyInputs struct {
 }
 
 type httpAssemblyInputs struct {
+	CookieSecure     bool
 	RateLimits       apihttpmiddleware.RateLimitConfig
 	SecurityHeaders  apihttpmiddleware.SecurityHeadersConfig
 	RequestBodyLimit apihttpmiddleware.RequestBodyLimitConfig
@@ -805,6 +807,7 @@ func buildApplicationSurfaces(
 	storage.instanceID = runtimeConfig.InstanceID
 	policy.defaultEnvironment = string(servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(runtimeConfig.DefaultEnvironment)))
 	storage.publicURL = strings.TrimSuffix(strings.TrimSpace(httpConfig.PublicURL), "/")
+	policy.clientIDs = uitransport.ClientIDCookies{Secure: httpConfig.CookieSecure || strings.HasPrefix(strings.ToLower(storage.publicURL), "https://")}
 	if strings.TrimSpace(httpConfig.DesktopDiscovery.CanonicalOrigin) != "" {
 		discovery, err := desktopdiscovery.NewHandler(httpConfig.DesktopDiscovery)
 		if err != nil {
@@ -846,7 +849,8 @@ func buildApplicationSurfaces(
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
+		ClientIDs: policy.clientIDs,
+		Graph:     capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		LegacySavedExplorations: capabilities.SavedExplorations,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, ExplorationQueryLowerer: analyticsmodule.NewExplorationQueryLowerer(), Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
@@ -1400,6 +1404,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			RequirePublication:       persistence.requireNativeDashboard,
 			Authoring:                routes.dashboardAuthoring,
 			HTTP: dashboardmodule.HTTPConfig{
+				ClientIDs:                  policy.clientIDs,
 				LocalDevelopmentSession:    runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" && runtime.developmentProjectIDResolver != nil,
 				Metrics:                    runtime.metrics,
 				ProjectID:                  runtime.projectID,
@@ -1719,7 +1724,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return ctx
 			},
 			HTTP: agentmodule.HTTPConfig{
-				Settings: persistence.agentSettings, Broker: runtime.broker,
+				ClientIDs: policy.clientIDs,
+				Settings:  persistence.agentSettings, Broker: runtime.broker,
 				ResolveGroupIDs: func(ctx context.Context, principalID string) ([]string, error) {
 					subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
 					if err != nil {
@@ -1857,12 +1863,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
-			EnsureClientID: func(w http.ResponseWriter, r *http.Request) bool {
-				_, ok := uitransport.RequireClientID(w, r)
-				return ok
-			},
-			Broker:  runtime.broker,
-			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
+			ClientIDs: policy.clientIDs,
+			Broker:    runtime.broker,
+			Product:   persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
 			ProductUICommands: productUICommandContract(),
 			SettingsAccess:    settingsAccess,
 			PersonalAvatar:    routes.accessModule.PersonalAvatar(),

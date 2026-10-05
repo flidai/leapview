@@ -2583,7 +2583,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
       const modal = root.querySelector('lv-visual-modal') as any
       await modal?.updateComplete
       const focusDialog = modal?.shadowRoot?.querySelector('[role="dialog"]')?.getAttribute('aria-label')
-      const close = modal?.shadowRoot?.querySelector('button[aria-label="Close visual modal"]') as HTMLButtonElement | null
+      const close = host?.querySelector('button[aria-label="Close visual modal"]') as HTMLButtonElement | null
       const closeButton = close?.getAttribute('aria-label')
       close?.click()
       await modal?.updateComplete

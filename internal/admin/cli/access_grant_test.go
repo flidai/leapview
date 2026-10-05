@@ -89,3 +89,24 @@ func TestStageGrantCommandDefaultsToPreview(t *testing.T) {
 		}
 	}
 }
+
+func TestStageGrantCommandAcceptsRepeatedExactActions(t *testing.T) {
+	operations := &stageGrantOperations{}
+	command := Command(t.Context(), operations)
+	command.SetOut(&bytes.Buffer{})
+	command.SetArgs([]string{
+		"access", "stage-grant", "--project", "project:test", "--id", "upload",
+		"--principal", "principal", "--resource", "connection:sample", "--kind", "connection",
+		"--action", "connection.read", "--action", "connection.upload",
+		"--expected-revision", "3", "--operation-id", "stage-upload",
+	})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.request.Actions) != 2 || operations.request.Actions[0] != "connection.read" || operations.request.Actions[1] != "connection.upload" {
+		t.Fatalf("repeated action flags parsed as %v, want exact read and upload", operations.request.Actions)
+	}
+	if _, err := operations.request.Grant(); err != nil {
+		t.Fatalf("repeated exact connection actions rejected: %v", err)
+	}
+}

@@ -6,6 +6,9 @@
 }:
 let
   hashes = builtins.fromJSON (builtins.readFile ./build-hashes.json);
+  extensionHash =
+    hashes.extensions.${pkgs.stdenv.hostPlatform.system}
+      or (throw "no native extension-supply hash is pinned for ${pkgs.stdenv.hostPlatform.system}");
   fixed =
     name: hash: script:
     pkgs.stdenvNoCC.mkDerivation {
@@ -36,7 +39,7 @@ in
   maps = fixed "leapview-map-assets" hashes.maps ''
     ${application.tools}/bin/mapassets --out "$out"
   '';
-  extensions = fixed "leapview-extension-supply" hashes.extensions ''
+  extensions = fixed "leapview-extension-supply" extensionHash ''
     # The existing publisher verifies exact extension LOADs and official signatures.
     # The Nix hash additionally pins the entire resulting supply across rebuilds.
     ${application.tools}/bin/extensionsupply --out "$TMPDIR/supply"

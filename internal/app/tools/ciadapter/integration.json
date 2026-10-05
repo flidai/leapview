@@ -5,7 +5,6 @@
   },
   "lane": {
     "neutral_id": "warehouse-validation",
-    "workflow_id": "dbt-warehouse-boundary-validation",
-    "display": "dbt physical contract"
+    "workflow_id": "dbt-warehouse-boundary-validation"
   }
 }

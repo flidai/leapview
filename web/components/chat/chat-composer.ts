@@ -126,6 +126,11 @@ class ChatComposer extends LitElement {
     })
   }
 
+  /** Read the current draft edited by the user or set through setDraft(). */
+  public getDraft(): string {
+    return this.draft
+  }
+
   render() {
 		const blocked = this.disabled || this.pending
 		const isEditing = this.editing || Boolean(this.editMessageId.trim())

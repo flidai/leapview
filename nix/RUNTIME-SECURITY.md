@@ -12,6 +12,7 @@ OCI admission, provenance, the published SPDX SBOM, or application dependency sc
 nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop --no-update-lock-file .#runtime-security -c \
   python3 scripts/check_nix_runtime_security.py result-image \
+  --kind application-image --source-revision "$SOURCE_REVISION" \
   --evidence-dir .tmp/runtime-security-review
 ```
 
@@ -21,6 +22,36 @@ unassessed HIGH/CRITICAL runtime finding, including findings without a fix.
 `--coverage-only` is a diagnostic option that records unresolved findings without
 enforcing the vulnerability gate. The Nix candidate workflow uses default
 enforcement. `releaseReady` remains false even when this individual check passes.
+
+## Independent public-site image profile
+
+The standalone site is qualified independently from the application image. Set
+`SOURCE_REVISION` to the full 40-character candidate commit, then run:
+
+```sh
+nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image
+nix develop --no-update-lock-file .#runtime-security -c \
+  python3 scripts/check_nix_runtime_security.py result-site-image \
+  --kind site-image --source-revision "$SOURCE_REVISION" \
+  --evidence-dir .tmp/site-runtime-security
+```
+
+This profile checks the exact archive identity and hashes every file in the
+minimal root filesystem: the static `leapview-site` binary, CA bundle and map
+assets. It rejects Nix store paths, unlisted files, links, whiteouts, writable
+or privileged modes, and unexpected directories. Site package inventory has no
+application runtime package allowlist or VEX exceptions. Syft's Go-module entries
+are retained in the raw SBOM and omitted only from the Grype runtime inventory;
+the exact binary remains subject to the separate protected Go vulnerability
+scan. A fresh database and a synthetic glibc matching control still gate the
+site runtime report.
+
+The candidate binder requires `summary.json` and the exact report set, including
+`site-image-inventory.json`, and binds the full source revision, archive digest,
+platform, config digest, layer diff IDs, policy digest, scanners and database.
+This evidence does not grant release admission. Site-profile installation,
+upgrade, rollback, recovery, observation, provenance, SPDX, OCI admission and
+native qualification remain separate required gates.
 
 ## What is checked
 
@@ -40,7 +71,8 @@ enforcement. `releaseReady` remains false even when this individual check passes
   `runtime-security-policy.json` without changing installed versions or store paths.
 - Vulnerable synthetic controls exercise glibc, BusyBox, GCC (both outputs), xgcc
   and libidn2 against the same fresh, hash-validated Grype database as the image.
-  The same VEX file is supplied to the control scan; filtering a control fails.
+  The VEX file selected for the archive's platform is supplied to the control
+  scan; filtering a control fails.
   These are matching controls, not vulnerable binaries and not image findings.
 - Evidence binds the archive SHA-256, scanner image identity, runtime inventory,
   database identity, control results and all runtime findings. Missing or stale
@@ -75,7 +107,13 @@ additional upstream patch. The image qualification exercises the corrected buffe
 boundary. Raw version-based matches remain after a backport.
 
 [`runtime-assessments.vex.json`](runtime-assessments.vex.json) records those
-dispositions in standard OpenVEX, consumed by [Grype's VEX support](https://oss.anchore.com/docs/guides/vulnerability/filter-results/).
+dispositions for the exact AMD64 package identity. The separate
+[`runtime-assessments.arm64.vex.json`](runtime-assessments.arm64.vex.json) binds
+the reviewed dispositions to the exact ARM64 output. The scanner selects the
+file from the Docker archive platform, and candidate evidence verification
+requires the copied VEX bytes and hash to match that platform's file. Grype
+consumes the selected OpenVEX document through its
+[VEX support](https://oss.anchore.com/docs/guides/vulnerability/filter-results/).
 Nine statements describe fixes; two classify disputed records as `not_affected`
 using Debian's published non-security assessment. Those two statements do not
 claim a patch or prove that application paths are unreachable. They require

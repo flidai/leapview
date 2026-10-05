@@ -21,16 +21,16 @@ import (
 )
 
 const (
-	qualificationNativePhysicalPoolIdentityFile = "pool-identity.json"
-	qualificationNativePhysicalPoolEvidenceFile = "shared-pool-evidence.json"
-	qualificationNativePhysicalPoolMount        = "/run/leapview/qualification"
+	physicalPoolIdentityFile   = "pool-identity.json"
+	physicalPoolEvidenceFile   = "shared-pool-evidence.json"
+	physicalPoolBootstrapMount = "/run/leapview/physical-pool"
 )
 
-// qualificationNativePhysicalPoolArtifacts is the host-side, immutable
+// physicalPoolBootstrapArtifacts is the host-side, immutable
 // description captured by the qualification generator.  Pool and Evidence
 // are retained so callers can report the exact owner-validated identities;
 // paths point to the canonical files used by the bootstrap command.
-type qualificationNativePhysicalPoolArtifacts struct {
+type physicalPoolBootstrapArtifacts struct {
 	EvidenceDir         string
 	PoolPath            string
 	EvidencePath        string
@@ -42,7 +42,7 @@ type qualificationNativePhysicalPoolArtifacts struct {
 	ConformanceVersion  string
 }
 
-type qualificationNativePhysicalPoolBootstrapResult struct {
+type physicalPoolBootstrapResult struct {
 	PoolID              string
 	CompatibilityDigest string
 	EvidenceDigest      string
@@ -58,20 +58,20 @@ type qualificationNativePhysicalPoolBootstrapResult struct {
 func (c *Controller) prepareQualificationNativePhysicalPool(
 	ctx context.Context,
 	evidenceDir string,
-) (qualificationNativePhysicalPoolArtifacts, error) {
+) (physicalPoolBootstrapArtifacts, error) {
 	if c == nil {
-		return qualificationNativePhysicalPoolArtifacts{}, errors.New("controller is required")
+		return physicalPoolBootstrapArtifacts{}, errors.New("controller is required")
 	}
 	evidenceDir = strings.TrimSpace(evidenceDir)
 	if evidenceDir == "" {
-		return qualificationNativePhysicalPoolArtifacts{}, errors.New("qualification physical-pool evidence directory is required")
+		return physicalPoolBootstrapArtifacts{}, errors.New("qualification physical-pool evidence directory is required")
 	}
 	absEvidenceDir, err := filepath.Abs(evidenceDir)
 	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("resolve qualification physical-pool evidence directory: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("resolve qualification physical-pool evidence directory: %w", err)
 	}
 	if err := os.MkdirAll(absEvidenceDir, 0o700); err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("create qualification physical-pool evidence directory: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("create qualification physical-pool evidence directory: %w", err)
 	}
 
 	output, err := c.qualificationCompose(
@@ -81,26 +81,26 @@ func (c *Controller) prepareQualificationNativePhysicalPool(
 		"admin", "delivery", "pool", "qualify",
 	)
 	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("generate qualification physical-pool artifacts: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("generate qualification physical-pool artifacts: %w", err)
 	}
 	envelope, err := decodeQualificationNativePhysicalPoolEnvelope(output)
 	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, err
+		return physicalPoolBootstrapArtifacts{}, err
 	}
-	artifacts, err := qualificationNativePhysicalPoolArtifactsFromEnvelope(absEvidenceDir, envelope)
+	artifacts, err := physicalPoolBootstrapArtifactsFromEnvelope(absEvidenceDir, envelope)
 	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, err
+		return physicalPoolBootstrapArtifacts{}, err
 	}
-	if err := writeQualificationNativePhysicalPoolArtifacts(artifacts); err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, err
+	if err := writePhysicalPoolBootstrapArtifacts(artifacts); err != nil {
+		return physicalPoolBootstrapArtifacts{}, err
 	}
 
-	result, err := c.runQualificationNativePhysicalPoolBootstrap(ctx, artifacts, false, nil)
+	result, err := c.runPhysicalPoolBootstrap(ctx, artifacts, false, nil)
 	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("dry-run qualification physical-pool bootstrap: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("dry-run qualification physical-pool bootstrap: %w", err)
 	}
-	if err := verifyQualificationNativePhysicalPoolBootstrapResult(result, artifacts, false); err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, err
+	if err := verifyPhysicalPoolBootstrapResult(result, artifacts, false); err != nil {
+		return physicalPoolBootstrapArtifacts{}, err
 	}
 	for _, entry := range []struct {
 		key   string
@@ -110,7 +110,7 @@ func (c *Controller) prepareQualificationNativePhysicalPool(
 		{key: "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST", value: artifacts.CompatibilityDigest},
 	} {
 		if err := appendOrReplaceQualificationEnv(c.path(appEnvName), entry.key, entry.value); err != nil {
-			return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("persist qualification physical-pool identity: %w", err)
+			return physicalPoolBootstrapArtifacts{}, fmt.Errorf("persist qualification physical-pool identity: %w", err)
 		}
 	}
 	return artifacts, nil
@@ -123,12 +123,12 @@ func (c *Controller) prepareQualificationNativePhysicalPool(
 func (c *Controller) applyQualificationNativePhysicalPool(
 	ctx context.Context,
 	topology *qualificationNativePostgresTopology,
-	artifacts qualificationNativePhysicalPoolArtifacts,
+	artifacts physicalPoolBootstrapArtifacts,
 ) error {
 	if c == nil {
 		return errors.New("controller is required")
 	}
-	if err := validateQualificationNativePhysicalPoolArtifacts(artifacts); err != nil {
+	if err := validatePhysicalPoolBootstrapArtifacts(artifacts); err != nil {
 		return fmt.Errorf("qualification physical-pool artifacts changed: %w", err)
 	}
 	operationEnvironment, err := qualificationNativePostgresOperationEnvironment(topology)
@@ -141,11 +141,11 @@ func (c *Controller) applyQualificationNativePhysicalPool(
 	if err := removeQualificationNativeOperationURLsIfPresent(c.path(appEnvName)); err != nil {
 		return fmt.Errorf("remove qualification operation URLs from serving environment: %w", err)
 	}
-	result, err := c.runQualificationNativePhysicalPoolBootstrap(ctx, artifacts, true, operationEnvironment)
+	result, err := c.runPhysicalPoolBootstrap(ctx, artifacts, true, operationEnvironment)
 	if err != nil {
 		return fmt.Errorf("apply qualification physical-pool bootstrap: %w", err)
 	}
-	if err := verifyQualificationNativePhysicalPoolBootstrapResult(result, artifacts, true); err != nil {
+	if err := verifyPhysicalPoolBootstrapResult(result, artifacts, true); err != nil {
 		return err
 	}
 	if err := removeQualificationNativeOperationURLsIfPresent(c.path(appEnvName)); err != nil {
@@ -162,40 +162,49 @@ func decodeQualificationNativePhysicalPoolEnvelope(output []byte) (adminoffline.
 	return artifacts, nil
 }
 
-func qualificationNativePhysicalPoolArtifactsFromEnvelope(
+func physicalPoolBootstrapArtifactsFromEnvelope(
 	evidenceDir string,
 	envelope adminoffline.QualificationPoolArtifacts,
-) (qualificationNativePhysicalPoolArtifacts, error) {
-	identity := envelope.Pool
+) (physicalPoolBootstrapArtifacts, error) {
+	return physicalPoolBootstrapArtifactsFromInput(evidenceDir, envelope.Pool, envelope.Evidence)
+}
+
+func physicalPoolBootstrapArtifactsFromInput(
+	evidenceDir string,
+	identity physicalpool.PoolIdentity,
+	evidenceArtifact physicalpool.EvidenceArtifact,
+) (physicalPoolBootstrapArtifacts, error) {
+	if strings.TrimSpace(evidenceDir) == "" {
+		return physicalPoolBootstrapArtifacts{}, errors.New("physical-pool evidence directory is required")
+	}
 	if err := identity.Validate(); err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("qualification physical-pool identity: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("physical-pool identity: %w", err)
 	}
 	pool, err := physicalpool.NewPhysicalPool(identity)
 	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("qualification physical-pool identity: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("physical-pool identity: %w", err)
 	}
 	if err := pool.Validate(); err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("qualification physical-pool identity: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("physical-pool identity: %w", err)
 	}
-	encodedEvidence, err := json.Marshal(envelope.Evidence)
-	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("encode qualification physical-pool evidence artifact: %w", err)
+	if evidenceArtifact.SchemaVersion != physicalpool.EvidenceArtifactSchemaVersion {
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("unsupported physical-pool evidence schema version %d", evidenceArtifact.SchemaVersion)
 	}
-	evidence, err := physicalpool.UnmarshalEvidenceArtifact(encodedEvidence)
-	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("qualification physical-pool evidence: %w", err)
+	evidence := evidenceArtifact.Evidence
+	if err := evidence.Verify(); err != nil {
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("physical-pool evidence: %w", err)
 	}
 	if !pool.Identity.Compatibility.StableEqual(evidence.Compatibility) {
-		return qualificationNativePhysicalPoolArtifacts{}, errors.New("qualification physical-pool identity and evidence storage contract differ")
+		return physicalPoolBootstrapArtifacts{}, errors.New("physical-pool identity and evidence compatibility differ")
 	}
 	compatibilityDigest, err := evidence.Compatibility.Digest()
 	if err != nil {
-		return qualificationNativePhysicalPoolArtifacts{}, fmt.Errorf("qualification physical-pool compatibility digest: %w", err)
+		return physicalPoolBootstrapArtifacts{}, fmt.Errorf("physical-pool compatibility digest: %w", err)
 	}
-	return qualificationNativePhysicalPoolArtifacts{
+	return physicalPoolBootstrapArtifacts{
 		EvidenceDir:         evidenceDir,
-		PoolPath:            filepath.Join(evidenceDir, qualificationNativePhysicalPoolIdentityFile),
-		EvidencePath:        filepath.Join(evidenceDir, qualificationNativePhysicalPoolEvidenceFile),
+		PoolPath:            filepath.Join(evidenceDir, physicalPoolIdentityFile),
+		EvidencePath:        filepath.Join(evidenceDir, physicalPoolEvidenceFile),
 		Pool:                pool.Identity,
 		Evidence:            evidence,
 		PoolID:              string(pool.ID),
@@ -205,7 +214,7 @@ func qualificationNativePhysicalPoolArtifactsFromEnvelope(
 	}, nil
 }
 
-func writeQualificationNativePhysicalPoolArtifacts(artifacts qualificationNativePhysicalPoolArtifacts) error {
+func writePhysicalPoolBootstrapArtifacts(artifacts physicalPoolBootstrapArtifacts) error {
 	poolContents, err := json.MarshalIndent(artifacts.Pool, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode qualification physical-pool identity: %w", err)
@@ -216,26 +225,26 @@ func writeQualificationNativePhysicalPoolArtifacts(artifacts qualificationNative
 		return fmt.Errorf("encode qualification physical-pool evidence: %w", err)
 	}
 	evidenceContents = append(evidenceContents, '\n')
-	if err := writeQualificationNativePhysicalPoolReadableAtomic(artifacts.PoolPath, poolContents); err != nil {
-		return fmt.Errorf("write qualification physical-pool identity: %w", err)
+	if err := writePhysicalPoolArtifactReadableAtomic(artifacts.PoolPath, poolContents); err != nil {
+		return fmt.Errorf("write physical-pool identity: %w", err)
 	}
-	if err := writeQualificationNativePhysicalPoolReadableAtomic(artifacts.EvidencePath, evidenceContents); err != nil {
-		return fmt.Errorf("write qualification physical-pool evidence: %w", err)
+	if err := writePhysicalPoolArtifactReadableAtomic(artifacts.EvidencePath, evidenceContents); err != nil {
+		return fmt.Errorf("write physical-pool evidence: %w", err)
 	}
 	return nil
 }
 
-// writeQualificationNativePhysicalPoolReadableAtomic is intentionally
+// writePhysicalPoolArtifactReadableAtomic is intentionally
 // separate from private environment writes: these artifacts contain no
 // credentials and are bind-mounted into the non-root LeapView image.
-func writeQualificationNativePhysicalPoolReadableAtomic(path string, contents []byte) error {
+func writePhysicalPoolArtifactReadableAtomic(path string, contents []byte) error {
 	if strings.TrimSpace(path) == "" {
-		return errors.New("qualification physical-pool artifact path is required")
+		return errors.New("physical-pool artifact path is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".qualification-pool-*.tmp")
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".physical-pool-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -271,28 +280,28 @@ func writeQualificationNativePhysicalPoolReadableAtomic(path string, contents []
 	return directory.Sync()
 }
 
-func (c *Controller) runQualificationNativePhysicalPoolBootstrap(
+func (c *Controller) runPhysicalPoolBootstrap(
 	ctx context.Context,
-	artifacts qualificationNativePhysicalPoolArtifacts,
+	artifacts physicalPoolBootstrapArtifacts,
 	apply bool,
 	operationEnvironment map[string]string,
-) (qualificationNativePhysicalPoolBootstrapResult, error) {
-	args := qualificationNativePhysicalPoolBootstrapArguments(artifacts, apply, operationEnvironment)
+) (physicalPoolBootstrapResult, error) {
+	args := physicalPoolBootstrapArguments(artifacts, apply, operationEnvironment)
 	var output []byte
 	var err error
 	if len(operationEnvironment) == 0 {
-		output, err = c.qualificationCompose(ctx, c.root, args...)
+		output, err = c.composeCapture(ctx, c.root, args...)
 	} else {
-		output, err = c.qualificationComposeEnvironment(ctx, c.root, operationEnvironment, args...)
+		output, err = c.composeCaptureWithEnvironment(ctx, c.root, operationEnvironment, args...)
 	}
 	if err != nil {
-		return qualificationNativePhysicalPoolBootstrapResult{}, err
+		return physicalPoolBootstrapResult{}, err
 	}
-	return parseQualificationNativePhysicalPoolBootstrapResult(output)
+	return parsePhysicalPoolBootstrapResult(output)
 }
 
-func qualificationNativePhysicalPoolBootstrapArguments(
-	artifacts qualificationNativePhysicalPoolArtifacts,
+func physicalPoolBootstrapArguments(
+	artifacts physicalPoolBootstrapArtifacts,
 	apply bool,
 	operationEnvironment map[string]string,
 ) []string {
@@ -302,8 +311,8 @@ func qualificationNativePhysicalPoolBootstrapArguments(
 	// reports, while the artifact files themselves remain readable by the image
 	// user.
 	args = append(args,
-		"--volume", artifacts.PoolPath+":"+qualificationNativePhysicalPoolMount+"/"+qualificationNativePhysicalPoolIdentityFile+":ro",
-		"--volume", artifacts.EvidencePath+":"+qualificationNativePhysicalPoolMount+"/"+qualificationNativePhysicalPoolEvidenceFile+":ro",
+		"--volume", artifacts.PoolPath+":"+physicalPoolBootstrapMount+"/"+physicalPoolIdentityFile+":ro",
+		"--volume", artifacts.EvidencePath+":"+physicalPoolBootstrapMount+"/"+physicalPoolEvidenceFile+":ro",
 	)
 	names := make([]string, 0, len(operationEnvironment))
 	for name := range operationEnvironment {
@@ -315,8 +324,8 @@ func qualificationNativePhysicalPoolBootstrapArguments(
 	}
 	args = append(args,
 		"leapview", "admin", "delivery", "pool", "bootstrap",
-		"--pool", qualificationNativePhysicalPoolMount+"/"+qualificationNativePhysicalPoolIdentityFile,
-		"--evidence", qualificationNativePhysicalPoolMount+"/"+qualificationNativePhysicalPoolEvidenceFile,
+		"--pool", physicalPoolBootstrapMount+"/"+physicalPoolIdentityFile,
+		"--evidence", physicalPoolBootstrapMount+"/"+physicalPoolEvidenceFile,
 	)
 	if apply {
 		args = append(args, "--apply")
@@ -324,7 +333,7 @@ func qualificationNativePhysicalPoolBootstrapArguments(
 	return args
 }
 
-func parseQualificationNativePhysicalPoolBootstrapResult(output []byte) (qualificationNativePhysicalPoolBootstrapResult, error) {
+func parsePhysicalPoolBootstrapResult(output []byte) (physicalPoolBootstrapResult, error) {
 	values := make(map[string]string, 5)
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
@@ -334,37 +343,37 @@ func parseQualificationNativePhysicalPoolBootstrapResult(output []byte) (qualifi
 		}
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
-			return qualificationNativePhysicalPoolBootstrapResult{}, fmt.Errorf("qualification physical-pool bootstrap returned malformed line %q", line)
+			return physicalPoolBootstrapResult{}, fmt.Errorf("physical-pool bootstrap returned malformed line %q", line)
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
 		if _, exists := values[key]; exists {
-			return qualificationNativePhysicalPoolBootstrapResult{}, fmt.Errorf("qualification physical-pool bootstrap returned duplicate field %q", key)
+			return physicalPoolBootstrapResult{}, fmt.Errorf("physical-pool bootstrap returned duplicate field %q", key)
 		}
 		switch key {
 		case "pool_id", "compatibility_digest", "evidence_digest", "conformance_version", "applied":
 			values[key] = value
 		default:
-			return qualificationNativePhysicalPoolBootstrapResult{}, fmt.Errorf("qualification physical-pool bootstrap returned unknown field %q", key)
+			return physicalPoolBootstrapResult{}, fmt.Errorf("physical-pool bootstrap returned unknown field %q", key)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return qualificationNativePhysicalPoolBootstrapResult{}, fmt.Errorf("read qualification physical-pool bootstrap result: %w", err)
+		return physicalPoolBootstrapResult{}, fmt.Errorf("read physical-pool bootstrap result: %w", err)
 	}
 	for _, key := range []string{"pool_id", "compatibility_digest", "evidence_digest", "conformance_version", "applied"} {
 		if strings.TrimSpace(values[key]) == "" {
-			return qualificationNativePhysicalPoolBootstrapResult{}, fmt.Errorf("qualification physical-pool bootstrap returned incomplete field %q", key)
+			return physicalPoolBootstrapResult{}, fmt.Errorf("physical-pool bootstrap returned incomplete field %q", key)
 		}
 	}
 	for _, key := range []string{"pool_id", "compatibility_digest", "evidence_digest"} {
-		if !qualificationNativePhysicalPoolDigest(values[key]) {
-			return qualificationNativePhysicalPoolBootstrapResult{}, fmt.Errorf("qualification physical-pool bootstrap returned invalid %s", key)
+		if !physicalPoolBootstrapDigest(values[key]) {
+			return physicalPoolBootstrapResult{}, fmt.Errorf("physical-pool bootstrap returned invalid %s", key)
 		}
 	}
 	if values["applied"] != "true" && values["applied"] != "false" {
-		return qualificationNativePhysicalPoolBootstrapResult{}, errors.New("qualification physical-pool bootstrap returned invalid applied flag")
+		return physicalPoolBootstrapResult{}, errors.New("physical-pool bootstrap returned invalid applied flag")
 	}
 	applied := values["applied"] == "true"
-	return qualificationNativePhysicalPoolBootstrapResult{
+	return physicalPoolBootstrapResult{
 		PoolID:              values["pool_id"],
 		CompatibilityDigest: values["compatibility_digest"],
 		EvidenceDigest:      values["evidence_digest"],
@@ -373,7 +382,7 @@ func parseQualificationNativePhysicalPoolBootstrapResult(output []byte) (qualifi
 	}, nil
 }
 
-func qualificationNativePhysicalPoolDigest(value string) bool {
+func physicalPoolBootstrapDigest(value string) bool {
 	value = strings.TrimSpace(value)
 	if !strings.HasPrefix(value, "sha256:") {
 		return false
@@ -386,13 +395,13 @@ func qualificationNativePhysicalPoolDigest(value string) bool {
 	return err == nil
 }
 
-func verifyQualificationNativePhysicalPoolBootstrapResult(
-	result qualificationNativePhysicalPoolBootstrapResult,
-	artifacts qualificationNativePhysicalPoolArtifacts,
+func verifyPhysicalPoolBootstrapResult(
+	result physicalPoolBootstrapResult,
+	artifacts physicalPoolBootstrapArtifacts,
 	expectApplied bool,
 ) error {
 	if result.Applied != expectApplied {
-		return fmt.Errorf("qualification physical-pool bootstrap applied=%t, want %t", result.Applied, expectApplied)
+		return fmt.Errorf("physical-pool bootstrap applied=%t, want %t", result.Applied, expectApplied)
 	}
 	checks := []struct {
 		name string
@@ -406,13 +415,13 @@ func verifyQualificationNativePhysicalPoolBootstrapResult(
 	}
 	for _, check := range checks {
 		if check.got != check.want {
-			return fmt.Errorf("qualification physical-pool bootstrap %s changed: got %q, want %q", check.name, check.got, check.want)
+			return fmt.Errorf("physical-pool bootstrap %s changed: got %q, want %q", check.name, check.got, check.want)
 		}
 	}
 	return nil
 }
 
-func validateQualificationNativePhysicalPoolArtifacts(artifacts qualificationNativePhysicalPoolArtifacts) error {
+func validatePhysicalPoolBootstrapArtifacts(artifacts physicalPoolBootstrapArtifacts) error {
 	if strings.TrimSpace(artifacts.PoolPath) == "" || strings.TrimSpace(artifacts.EvidencePath) == "" {
 		return errors.New("artifact paths are required")
 	}

@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["bun"] },
+  "include": ["playground/**/*.ts", "web/types/**/*.d.ts"],
+  "exclude": ["playground/**/*.test.ts"]
+}

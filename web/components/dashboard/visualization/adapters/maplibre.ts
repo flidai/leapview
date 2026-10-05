@@ -13,6 +13,7 @@ import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggr
 import { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleTableSides, mapOverlayBottom, mapOverlaysNeedStacking, mapVisibleDataSummary, mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
 import { applyTiledPrecisionLayerVisibility, emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, setMapStyleAndWait, tiledPrecisionLayerFamily, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
+import { rangeInput, mapRangeInputValue } from './maplibre/range-input'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection, type MapValueRange } from './maplibre/value-range'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
@@ -739,14 +740,16 @@ export class MapLibreHandle implements RendererHandle {
     minimum.dataset.mapRangeMinimum = ''; maximum.dataset.mapRangeMaximum = ''
     track.append(rail, fill, minimum, maximum)
     item.append(values, track)
+    let selectedMinimum = initial.selectedMinimum, selectedMaximum = initial.selectedMaximum
     const sync = (changed?: 'minimum' | 'maximum') => {
-      let lower = Number(minimum.value), upper = Number(maximum.value)
+      let lower = changed === 'minimum' ? mapRangeInputValue(minimum, initial) : selectedMinimum
+      let upper = changed === 'maximum' ? mapRangeInputValue(maximum, initial) : selectedMaximum
       if (lower > upper) {
-        if (changed === 'minimum') { upper = lower; maximum.value = String(upper) }
-        else { lower = upper; minimum.value = String(lower) }
+        if (changed === 'minimum') { upper = lower; maximum.value = minimum.value }
+        else { lower = upper; minimum.value = maximum.value }
       }
       const next = withMapValueSelection(initial, lower, upper)
-      minimum.max = String(next.selectedMaximum); maximum.min = String(next.selectedMinimum)
+      selectedMinimum = next.selectedMinimum; selectedMaximum = next.selectedMaximum
       minimumValue.value = formatMapRangeValue(next.selectedMinimum); maximumValue.value = formatMapRangeValue(next.selectedMaximum)
       minimum.setAttribute('aria-valuetext', minimumValue.value); maximum.setAttribute('aria-valuetext', maximumValue.value)
       const left = mapValueRangePercent(next.selectedMinimum, next), right = mapValueRangePercent(next.selectedMaximum, next)
@@ -1086,18 +1089,6 @@ export class MapLibreHandle implements RendererHandle {
     return mapDataLabelColors(theme, this.context.theme)
   }
 
-}
-
-function rangeInput(label: string, range: MapValueRange, value: number): HTMLInputElement {
-  const input = document.createElement('input')
-  input.type = 'range'
-  input.className = 'lv-map-range-input'
-  input.min = String(range.minimum)
-  input.max = String(range.maximum)
-  input.step = String(range.step)
-  input.value = String(value)
-  input.setAttribute('aria-label', label)
-  return input
 }
 
 function mapHomeCamera(value: unknown): MapHomeCamera | undefined {

@@ -2,10 +2,11 @@
 
 `scripts/nix_candidate_manifest.py` collects a common, versioned identity record
 for Nix application images, site images, CLI archives, application archives and
-Linux desktop archives. The Nix qualification workflow currently integrates the
-application-image adapter on AMD64. Other outputs and ARM64 still need their own
-builders and qualification; accepting an identity in this format does not add a
-supported release platform.
+Linux desktop archives. The protected qualification workflows integrate the
+application-image and site-image adapters on AMD64, plus the Linux x64 Desktop
+Debian adapter. The standalone CLI archive and ARM64 outputs still need their
+own builders and qualification; accepting an identity in this format does not
+add a supported release platform.
 
 ## Collect and verify
 
@@ -15,7 +16,8 @@ qualification and the enforced runtime scan:
 ```sh
 task nix:qualify
 nix develop --no-update-lock-file .#runtime-security -c \
-  python3 scripts/check_nix_runtime_security.py result-image \
+  python3 scripts/check_nix_runtime_security.py result-image --kind application-image \
+  --source-revision "$(git rev-parse HEAD)" \
   --evidence-dir .tmp/nix-runtime-security
 python3 scripts/nix_candidate_manifest.py result-image --kind application-image \
   --runtime-evidence .tmp/nix-runtime-security \
@@ -218,6 +220,42 @@ the already-built archive with protected PostgreSQL/browser fixtures and CLI.
 `check_nix_image.sh ARCHIVE TRUSTED_APPLICATION` performs qualification without
 building; `task nix:qualify` retains Task-owned build ordering for local use.
 
+After publication and live signature verification, `qualify-published` downloads
+the exact qualification and publisher-binding artifact IDs. Its commands,
+verifier and qualification CLI come from the same protected workflow revision.
+It has only read access to repository contents and packages, and no signing or
+publication authority. Before execution, it reverifies the archive, Go/runtime
+reports, preserved registry content, provenance and exact SPDX.
+
+`check_nix_registry_image.sh` pulls only an immutable application reference and
+keeps that exact reference in the loader probe and enterprise image qualification.
+It does not retag or repush the image, or substitute Docker's normalized daemon
+ID. The Go qualifier also preserves an already-immutable input through Compose
+bootstrap, authoring and performance; only local tag inputs need registry pinning.
+The image report records the selected deployment reference. A controller
+regression checks the generated Compose environment and rejects registry startup,
+retagging or republishing for a signed digest. The existing pre-publication archive
+qualification also remains enforced.
+
+`nix_candidate_publication.py bind-qualified --kind application-image` requires a successful schema-1
+image report for that same registry digest, all four current bounded phases and
+fresh, ordered phase timestamps. The qualifier preserves fractional-second UTC
+timestamps so millisecond phase durations can be checked for ordering without
+rounding a phase start backward.
+It repeats live signed-content verification, matches the publisher's retained
+signature receipt, and rejects changed report bytes. Its receipt binds the
+source, AMD64 candidate digest, signed-evidence
+digest, protected qualifier revision and exact qualification-report hash. The
+report and receipt are retained together for fourteen days, including the report
+when qualification fails; a failed run cannot produce a successful binding.
+
+This is AMD64 candidate image evidence and still sets `releaseAdmission: false`.
+The Nix authoring fixture's Ubuntu baseline does not replace the advertised
+Debian host matrix. Full platform/host, installation/upgrade/rollback/recovery,
+embedded native coverage, canonical release identity and exact production
+promotion remain separate gates. Live positive qualification of this protected
+path must run after the workflow and verifier changes land on main.
+
 The privileged publisher imports only protected verifier code and locked tools.
 Its separate source checkout supplies identity, never executable scripts or
 policy. Proposed runtime-policy or glibc-baseline changes must land on main
@@ -352,7 +390,7 @@ builder or authorize publication. The image config digest is not the registry
 manifest digest. Load/push can change representation; protected qualification
 must bind the final immutable published digest and every supported platform.
 
-The existing OCI admission action and protected `Main artifacts` / release
+The existing OCI admission action and protected `Build / Main image` / release
 workflows remain the release authority. Conventional published builders remain
 selected. The runtime SPDX export is not a trusted SPDX attestation discoverable
 by that action, and Nix runtime evidence covers neither Go vulnerabilities nor
@@ -392,3 +430,195 @@ main-owned tools; offline verification alone cannot establish the authenticity o
 PR-generated scanner results. Protected archive signing/admission, SPDX, full
 installation and recovery acceptance remain prerequisites; `releaseAdmission`
 stays false.
+
+### Protected static controller candidates
+
+The manual `Protected Nix controller candidate` workflow owns qualification and
+signing of development controller archives independently of application images.
+Dispatch it on `main` with the full `source_revision` of one open PR directly
+based on main. That exact source must still be eligible immediately before
+signing. Both Linux AMD64 and ARM64 qualifiers must succeed; the selected archive
+is never rebuilt between qualification and attestation.
+
+The candidate build has no signing authority. Separate native runners download
+its immutable artifact ID, then use the protected workflow revision's extractor,
+static ELF/Go checks, fresh binary-mode govulncheck, and pinned Syft SPDX inventory.
+The inventory must describe the exact extracted controller's Go modules. Each
+qualifier executes version and command discovery in all independently pinned
+Debian 12, Ubuntu 24.04 and Debian 13 fixtures with no network, a read-only
+filesystem, an unprivileged user and no capabilities. Debian 12 preserves the
+existing client baseline. The other two fixtures reflect the advertised Linux
+bootstrap hosts in `deploy/host/bootstrap-linux.sh`; candidate-provided libraries
+or deployment files cannot select these fixtures. `/etc/os-release` must identify
+the expected distribution and version in each fixture.
+These are userland executable checks; systemd, Docker installation, NixOS host
+execution and the complete install/upgrade/rollback/recovery lifecycle still need
+separate qualification.
+Probe stdout and stderr each have a 1 MiB limit, and Docker daemon logging is
+disabled so candidate output cannot bypass those limits through daemon log files.
+
+`scripts/nix_cli_publication.py qualify` retains the exact archive/source/platform
+manifest, full Go scanner reports, static and runtime identity, SPDX, and a
+hash-bound qualification receipt. `verify` recomputes that evidence without
+executing candidate code. The protected signing job downloads only the two
+qualifiers' exact artifact IDs, reverifies the reports, reauthorizes the current
+source, and attests the unchanged archive bytes and their bound SPDX documents.
+It runs no candidate executable.
+
+The qualification contract requires the ordered three-host matrix and all twelve
+raw host outputs (OS identity, version JSON and two help outputs per host).
+Every output hash, fixture digest, native architecture and runtime identity is
+bound into the candidate manifest. Missing, extra or altered reports, a partial
+matrix or a changed fixture fail verification. Older single-host receipts must
+be regenerated under the current contract.
+
+PR compatibility jobs use `scripts/nix_cli_publication.py probe-hosts` for the same
+bounded extractor and host probes. Its receipt binds archive/source/platform and
+binary identity to all raw matrix reports. It grants no signing or release
+authority; the protected producer reruns the entire matrix with main-owned tools.
+
+The final read-only `verify-signed` job retrieves the signing job's exact artifact
+ID and repeats offline verification. It then asks GitHub to verify each file's
+live provenance and SPDX attestations, requiring this repository, the exact
+`nix-cli-candidate.yml` workflow at the protected main revision, the main ref, and
+GitHub-hosted runners. The verified subject must match the archive basename and
+SHA-256; the SPDX predicate must equal the independently generated bound report.
+Retained unsigned JSON or a supplied offline attestation cannot grant success.
+Signed receipts bind the archive, source and qualification identities and keep
+`releaseAdmission: false`.
+
+Qualification and signed receipts are retained for 14 days. Download and retain
+the exact artifacts and receipts before expiry when recording a qualification
+result in the project ledger. This workflow creates signed candidates, not release
+downloads, Compose installation bundles or production tags. A reviewed workflow
+and green PR checks still require a positive protected run after landing.
+Complete supported-host, installation, publication, upgrade, rollback and recovery
+qualification remain required before adopting either controller architecture;
+conventional and supported non-Linux release builders remain selected.
+
+### Compose installation-bundle assembly
+
+The canonical shared packager consumes an exact prebuilt controller and an
+explicit immutable image plus matching release identity. Nix exposes clean-source
+Compose controller candidates with canonical release metadata separately from
+its standalone development-controller candidates. Static checks and assembly
+checks do not establish installed-runtime compatibility or grant release admission.
+
+Bundle assembly uses the same canonical Compose, PostgreSQL qualification and
+local-runtime assets as conventional release packaging, with fixed file modes,
+complete inner SHA256SUMS and a deterministic outer archive. A completed bundle
+must separately pass the existing native installed-candidate and host lifecycle
+journeys against its selected admitted image and acquire provenance over the
+outer archive hash. Protected signing and adoption remain pending for these Nix
+bundle candidates; no published builder is replaced by this assembly mechanism.
+
+### Protected Nix Compose candidates (FAI-1073, FAI-1074)
+
+The manual `Protected Nix Compose candidate` workflow takes the run ID of a
+completed successful `release.yml` `workflow_dispatch` on `main`. The protected
+gate checks the repository, workflow path and workflow ID, run attempt, event,
+branch, completion result and source SHA. The source commit must be an ancestor of
+the protected workflow revision. The gate selects the single artifact named
+`release-candidate-candidate-RUN_ID-RUN_ATTEMPT`, downloads it by its exact API
+artifact ID, and compares the raw ZIP bytes with the API SHA-256 digest before
+extracting only `image-reference.txt`, `release-identity.json` and
+`assembled-image-admission.json`. A fresh successful release run is required
+after release identity format changes; older artifacts with a different identity
+format fail closed.
+
+Separate native AMD64 and ARM64 preflight jobs repeat the protected OCI
+admission check for the immutable image and exact release source, then capture
+the image's runtime version JSON before any Compose controller is executed.
+Those read-only, credentialed jobs publish immutable pre-execution evidence.
+The workflow builds both clean-source Nix Compose controllers without signing
+permissions and passes their original Nix build receipts to the protected
+`scripts/package_compose_bundle.py` assembler. The conventional bundle
+controllers and Darwin publisher outputs are not inputs to this candidate.
+
+Native AMD64 and ARM64 qualification jobs verify the outer archive, inner
+checksums, canonical bundle layout, trusted Go build metadata and matching
+original Nix build receipt. They consume exact same-run pre-execution artifact
+IDs, compare release and OCI evidence to the authorized handoff, check the
+installed controller's runtime identity, and run the full installed-candidate
+`--multi-node-process` journey without registry credentials. The retained
+evidence directory inventory and each file hash are bound into the
+qualification receipt. Diagnostics are retained even when a job fails; only a
+successful qualification can emit its qualified artifact. The protected signer
+consumes exact artifact IDs, byte-compares qualified files to the original Nix
+build and pre-execution evidence, then rechecks reports and receipts without
+running candidate code. It attests the exact outer archive and the receipt that
+records `releaseAdmission: false`. A separate read-only job verifies the live
+attestations against this workflow path, its actual protected `main` revision
+and the exact subject hashes.
+
+This extends the candidate evidence with fresh protected Go vulnerability
+reports, a pinned Syft SPDX inventory and native version/help probes in pinned
+Debian 12, Ubuntu 24.04 and Debian 13 containers for each exact Compose
+controller. The evidence job runs before the installed bundle journey; its
+immutable reports are copied and hash-compared by the protected signer, which
+attests the exact outer archive and its SPDX predicate. The independent
+read-only verifier checks both live predicates against the protected workflow
+revision and retained evidence. Distribution probes use only digest-pinned
+containers with UID 65534, a read-only root filesystem, no network and no
+capabilities; no controller runs directly on the host.
+
+This is still not full release admission. Full systemd/NixOS installation,
+upgrade, rollback and recovery lifecycle qualification, other host qualification
+and promotion of the exact candidate remain open. The receipt keeps
+`releaseAdmission: false`; no artifact is added to release downloads and the
+existing conventional Compose and Darwin publishers remain authoritative. A
+successful workflow run after this change lands on `main` is needed before
+recording live evidence in [FAI-1074](https://linear.app/flid/issue/FAI-1074).
+
+## Standalone public-site candidates
+
+`nix-site-candidate.yml` runs protected code from `main` against one exact open
+PR head directly based on `main`. It builds the site's two native Linux images
+without signing credentials, checks the exact archive with the site inventory
+policy and Go binary verifier, and exercises the image on its native runner.
+The final site executable must be static and CGO-disabled. The site payload
+contains only that executable, map assets and the CA bundle; application glibc
+assessments cannot satisfy the site policy.
+
+The runtime check requires UID/GID 65532, a read-only filesystem, the declared
+command and environment, health/readiness, exact `release.json` bytes from the
+candidate checkout, matching revision/image in `build.json`, and installation
+documentation containing the canonical release URLs and identities. It rejects
+foreign architectures before starting the container and retains a bounded,
+source/archive/image-bound `site-qualification-report.json`.
+
+The publisher revalidates the retained reports and copies verified OCI content
+without rebuilding or executing candidate programs. It publishes only a unique
+candidate tag, signs exact provenance and SPDX subjects, and retains immutable
+bindings. A separate read-only native job verifies those live signatures and
+repeats the runtime checks against the published digest. Artifact selection uses
+the exact producer run, attempt, protected revision, architecture and artifact
+ID, with disjoint site artifact names. The site signer workflow is explicitly
+authorized for the site kind.
+
+These candidate receipts keep `releaseAdmission: false`. They do not satisfy the
+existing OCI admission/Trivy gate or the site's affected deployment-profile
+installation, upgrade, rollback, recovery and observation requirements. The
+conventional site publisher remains authoritative until independent site
+adoption passes those gates. Application and desktop adoption are not
+prerequisites for site adoption. Track the exact retained evidence and remaining
+requirements in [FAI-1024](https://linear.app/flid/issue/FAI-1024).
+
+### Linux Desktop Debian candidate
+
+The manual protected Desktop workflow selects one exact .deb artifact from its
+own build attempt, then qualifies those unchanged bytes on native Ubuntu 22.04
+x86_64 with protected verifier code. It compares candidate and protected Desktop
+package, lockfile and release-policy bytes; checks the package control identity,
+exact dependency fields, payload inventory, launcher, `chrome-sandbox`
+root-owned setuid mode and absence of maintainer scripts; then installs the exact
+package and runs the existing package, installer and hostile-instance checks
+against the installed payload. The separate `native-desktop` development lane
+exercises the same host floor without publication credentials.
+
+The receipt binds the archive hash, source revision, protected verifier revision,
+policy files, reports and host identity and keeps `releaseAdmission: false`. It
+records install, reinstall, protocol registration and removal checks; upgrade,
+rollback, recovery and profile observation remain pending. It does not sign,
+publish or adopt Desktop releases, and conventional desktop release workflows
+remain authoritative.

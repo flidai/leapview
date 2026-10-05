@@ -2,10 +2,12 @@
 
 This directory owns the Milestone 5 qualification contract for a future or
 exact released `leapview` authoring archive. It is independent of the source
-checkout and of the unfinished remote preview/deploy flows. Current public
-archives are recorded as Compose/`leapviewctl`-only until FAI-798 ships the
-installable authoring CLI; running this harness against repository code does
-not create released evidence.
+checkout and of the remote preview/deploy flows.
+[v0.3.0-alpha.1](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
+publishes authoring archives for Linux and macOS on AMD64 and ARM64. Published
+archives and build/provenance checks do not establish the optional lifecycle
+results below; running this harness against repository code does not create
+released evidence.
 
 ## Qualification evidence boundary
 

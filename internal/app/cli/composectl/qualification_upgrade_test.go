@@ -19,10 +19,16 @@ func TestQualificationDeliveryPersistenceEvidenceBindsCandidateGenerationAndSeal
 		planDigest   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	)
 	candidate, generation := qualificationDeliveryEvidenceFixture(candidateID, generationID, sealID, planID, planDigest)
-	server := qualificationDeliveryEvidenceServer(t, candidate, generation)
+	server := qualificationDeliveryEvidenceServer(t, candidate, generation, "delivery-read-token", nil)
 	defer server.Close()
+	credentials := qualificationCredentials{DeliveryEvidenceToken: "delivery-read-token"}
+	token, err := credentials.deliveryEvidenceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	evidence, err := (&Controller{}).qualificationDeliveryPersistenceEvidence(
-		t.Context(), server.URL, "project-1", candidateID, generationID, "token",
+		t.Context(), server.URL, "project-1", candidateID, generationID,
+		token,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -99,11 +105,17 @@ func TestQualificationDeliveryPersistenceEvidenceDiagnosesMismatchedFieldsWithou
 		t.Run(test.name, func(t *testing.T) {
 			candidate, generation := qualificationDeliveryEvidenceFixture(candidateID, generationID, sealID, planID, planDigest)
 			test.mutate(&candidate, &generation)
-			server := qualificationDeliveryEvidenceServer(t, candidate, generation)
+			server := qualificationDeliveryEvidenceServer(t, candidate, generation, "delivery-read-token", nil)
 			defer server.Close()
+			credentials := qualificationCredentials{DeliveryEvidenceToken: "delivery-read-token"}
+			token, err := credentials.deliveryEvidenceToken()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-			_, err := (&Controller{}).qualificationDeliveryPersistenceEvidence(
-				t.Context(), server.URL, "project-1", candidateID, generationID, "token",
+			_, err = (&Controller{}).qualificationDeliveryPersistenceEvidence(
+				t.Context(), server.URL, "project-1", candidateID, generationID,
+				token,
 			)
 			if err == nil {
 				t.Fatal("mismatched delivery evidence unexpectedly succeeded")
@@ -115,6 +127,51 @@ func TestQualificationDeliveryPersistenceEvidenceDiagnosesMismatchedFieldsWithou
 				t.Fatalf("error exposed a secret value: %q", err)
 			}
 		})
+	}
+}
+
+func TestQualificationDeliveryEvidenceRejectsWrongActorWithForbidden(t *testing.T) {
+	candidate, generation := qualificationDeliveryEvidenceFixture(
+		"candidate-1", "generation-1", "seal-1", "plan-1",
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+	server := qualificationDeliveryEvidenceServer(t, candidate, generation, "delivery-read-token", nil)
+	defer server.Close()
+	_, err := (&Controller{}).qualificationDeliveryPersistenceEvidence(
+		t.Context(), server.URL, "project-1", "candidate-1", "generation-1",
+		qualificationDeliveryEvidenceToken("project-data-token-from-previous-run"),
+	)
+	if err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("wrong-actor delivery read error = %v, want HTTP 403", err)
+	}
+}
+
+func TestQualificationDeliveryEvidenceUsesDedicatedReadCredentialForBeforeAndAfter(t *testing.T) {
+	candidate, generation := qualificationDeliveryEvidenceFixture(
+		"candidate-1", "generation-1", "seal-1", "plan-1",
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+	requests := qualificationDeliveryRequestCounts{}
+	server := qualificationDeliveryEvidenceServer(t, candidate, generation, "delivery-read-token", &requests)
+	defer server.Close()
+	credentials := qualificationCredentials{
+		DeliveryEvidenceToken: "delivery-read-token",
+		WorkloadToken:         "release-operator-token",
+	}
+	token, err := credentials.deliveryEvidenceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := &Controller{}
+	for snapshot := 0; snapshot < 2; snapshot++ {
+		if _, err := controller.qualificationDeliveryPersistenceEvidence(
+			t.Context(), server.URL, "project-1", "candidate-1", "generation-1", token,
+		); err != nil {
+			t.Fatalf("snapshot %d delivery evidence: %v", snapshot, err)
+		}
+	}
+	if requests.candidate != 2 || requests.generation != 2 {
+		t.Fatalf("delivery status requests = %#v, want two candidate and two generation reads", requests)
 	}
 }
 
@@ -138,22 +195,44 @@ func strptr(value string) *string { return &value }
 
 func int64ptr(value int64) *int64 { return &value }
 
+type qualificationDeliveryRequestCounts struct {
+	candidate  int
+	generation int
+}
+
 func qualificationDeliveryEvidenceServer(
 	t *testing.T,
 	candidate deploymentgen.DeliveryCandidateStatusResponse,
 	generation deploymentgen.DeliveryGenerationStatusResponse,
+	readToken string,
+	requestCounts *qualificationDeliveryRequestCounts,
 ) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer token" {
-			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer "+readToken {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		var response any
 		switch {
 		case strings.Contains(r.URL.Path, "/candidates/"):
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if requestCounts != nil {
+				requestCounts.candidate++
+			}
 			response = candidate
 		case strings.Contains(r.URL.Path, "/generations/"):
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if requestCounts != nil {
+				requestCounts.generation++
+			}
 			response = generation
 		default:
 			http.NotFound(w, r)

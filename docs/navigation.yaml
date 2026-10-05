@@ -1,7 +1,7 @@
 sections:
   - id: start
     title: Start here
-    summary: Install LeapView, run the sample project, and understand the project layout.
+    summary: Choose analytics authoring, server operations, or source contribution.
     documents:
       - slug: introduction
         title: What is LeapView?
@@ -11,12 +11,12 @@ sections:
       - slug: installation
         title: Installation
         type: how-to
-        summary: Pull the public image locally or prepare a durable production instance.
+        summary: Install the authoring CLI, configure Compose, or set up a source checkout.
         source: articles/start/installation.md
       - slug: getting-started
         title: Get started with LeapView
         type: landing
-        summary: Choose a path from installation through your first validated dashboard change.
+        summary: Choose a workflow and follow the source-checkout dashboard tutorial.
         source: getting-started.md
         breadcrumb: Getting started
       - slug: first-dashboard

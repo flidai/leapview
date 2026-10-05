@@ -2820,7 +2820,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	text := string(workflow)
 	for _, want := range []string{
-		"name: CI",
+		"name: CI / Pull requests",
 		"pull_request:",
 		"types: [opened, synchronize, reopened, ready_for_review, stacked, labeled, unlabeled]",
 		"workflow_dispatch:",
@@ -2924,7 +2924,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	mergeText := string(mergeWorkflow)
 	for _, want := range []string{
-		"name: Merge validation",
+		"name: CI / Merge queue",
 		"merge_group:",
 		"types: [checks_requested]",
 		"group: merge-validation-${{ github.ref }}",
@@ -2982,7 +2982,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	artifactText := string(artifactWorkflow)
 	for _, want := range []string{
-		"name: Main artifacts",
+		"name: Build / Main image",
 		"push:",
 		"branches: [main]",
 		"build-production-image:",
@@ -3594,7 +3594,7 @@ func TestContinuousIntegrationHealthWorkflowReportsAndAlerts(t *testing.T) {
 	}
 	text := string(workflow)
 	for _, want := range []string{
-		"name: CI health",
+		"name: Maintenance / CI health",
 		"schedule:",
 		"workflow_dispatch:",
 		"actions: read",

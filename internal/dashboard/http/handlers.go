@@ -217,7 +217,8 @@ type SessionKeyFactory func(
 ) (dashboardsession.Key, error)
 
 type Handler struct {
-	Metrics Metrics
+	ClientIDs webtransport.ClientIDCookies
+	Metrics   Metrics
 	// ProjectID is the stable graph project resource selected by app
 	// composition. It is deliberately not taken from a route segment. When
 	// ResolveProjectID is configured, the lease-bound resolver is authoritative.
@@ -455,7 +456,7 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 		nethttp.NotFound(w, r)
 		return
 	}
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}

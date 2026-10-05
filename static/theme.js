@@ -50,8 +50,12 @@ window.addEventListener('unhandledrejection', (event) => {
 function storedMode() {
   const preference = root.dataset.themePreference;
   if (Object.hasOwn(themes, preference)) return preference;
-  const saved = localStorage.getItem(storageKey);
-  if (Object.hasOwn(themes, saved)) return saved;
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (Object.hasOwn(themes, saved)) return saved;
+  } catch {
+    // Storage can be unavailable; the system theme still works for this page.
+  }
   return 'system';
 }
 
@@ -65,7 +69,13 @@ function setMode(mode, options = {}) {
   root.dataset.lightTheme = theme.lightTheme;
   root.dataset.darkTheme = theme.darkTheme;
   root.style.colorScheme = resolved;
-  if (options.persist !== false) localStorage.setItem(storageKey, next);
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem(storageKey, next);
+    } catch {
+      // Keep the in-memory preference and notify controls even if saving fails.
+    }
+  }
   for (const button of document.querySelectorAll('[data-theme-value]')) {
     button.setAttribute('aria-pressed', String(button.dataset.themeValue === next));
   }

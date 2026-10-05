@@ -1,4 +1,4 @@
-name: Isolated host recovery qualification
+name: Qualification / Host recovery and migration
 
 on:
   workflow_call:

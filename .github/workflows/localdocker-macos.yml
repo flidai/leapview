@@ -1,4 +1,4 @@
-name: Local Docker macOS tests
+name: CI / Local Docker macOS
 
 on:
   pull_request:
