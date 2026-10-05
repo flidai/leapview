@@ -353,6 +353,8 @@ func startQualificationHistoricalPredecessorFixture(t *testing.T, ctx context.Co
 	require.NoError(t, err)
 
 	applicationEnvironment := cloneQualificationEnvironment(baseEnvironment)
+	require.NotContains(t, applicationEnvironment, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"the predecessor migrator credential must stay out of the shared serving environment")
 	applicationEnvironment["LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID"] = poolArtifacts.PoolID
 	applicationEnvironment["LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST"] = poolArtifacts.CompatibilityDigest
 	utility := startQualificationHistoricalUtility(t, ctx, runtime, network.Name, stateVolume, oldImage, applicationEnvironment, composeProject+"-predecessor-setup")
@@ -360,7 +362,7 @@ func startQualificationHistoricalPredecessorFixture(t *testing.T, ctx context.Co
 	bootstrapDryRun := runQualificationHistoricalPoolBootstrap(t, ctx, utility, poolArtifacts, false, nil)
 	require.NoError(t, verifyPhysicalPoolBootstrapResult(bootstrapDryRun, poolArtifacts, false))
 
-	initial, err := initializeQualificationHistoricalRuntime(ctx, t, utility)
+	initial, err := initializeQualificationHistoricalRuntime(ctx, t, utility, topology.ControlMigratorURL)
 	require.NoError(t, err)
 	operationEnvironment, err := qualificationNativePostgresOperationEnvironment(topology)
 	require.NoError(t, err)
