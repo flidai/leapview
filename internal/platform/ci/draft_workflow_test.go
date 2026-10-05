@@ -69,6 +69,7 @@ func TestAllPRWorkflowsSkipDraftsAndAllowRequestedRuns(t *testing.T) {
 					// Dependency discovery only runs when explicitly dispatched.
 					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-application' }}",
 					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-site' }}",
+					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-desktop' }}",
 					"${{ github.event_name != 'pull_request' }}", "${{ github.event_name == 'push' }}":
 				default:
 					t.Errorf("job %s can start on a draft PR: %q", id, job.If)
