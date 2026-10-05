@@ -20,6 +20,7 @@ type performanceInlineRuntime struct {
 	ctx      context.Context
 	entered  chan struct{}
 	release  chan struct{}
+	releases map[string]<-chan struct{}
 	active   atomic.Int32
 	maximum  atomic.Int32
 	calls    atomic.Int32
@@ -40,10 +41,14 @@ func (r *performanceInlineRuntime) Query(ctx context.Context, query reportdef.Ag
 		}
 	}
 	r.entered <- struct{}{}
+	release := (<-chan struct{})(r.release)
+	if specific, ok := r.releases[query.Metrics[0].Field]; ok {
+		release = specific
+	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-r.release:
+	case <-release:
 	}
 	if failure := r.failures[query.Metrics[0].Field]; failure != nil {
 		return nil, failure
@@ -176,10 +181,55 @@ func TestWholePageInlineErrorsFollowVisualOrder(t *testing.T) {
 		report.Visualizations[key] = definition
 	}
 	release := make(chan struct{})
-	close(release)
 	data := &performanceInlineRuntime{snapshotDataRuntime: snapshotDataRuntime{snapshotID: 42, readConcurrency: 2}, ctx: t.Context(), entered: make(chan struct{}, len(keys)), release: release, failures: map[string]error{keys[0]: first, keys[1]: second}}
-	_, err := service.pageVisuals(data.ctx, &modelRuntime{data: data}, report, dashboard.Filters{}, keys)
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.pageVisuals(data.ctx, &modelRuntime{data: data}, report, dashboard.Filters{}, keys)
+		done <- err
+	}()
+	waitInlineQuery(t, data.entered)
+	waitInlineQuery(t, data.entered)
+	close(release)
+	err := <-done
 	if !errors.Is(err, first) || data.calls.Load() != 2 || data.active.Load() != 0 {
 		t.Fatalf("first error=%v queries=%d active=%d", err, data.calls.Load(), data.active.Load())
+	}
+}
+
+func TestWholePageInlineFailureStopsLaterQueries(t *testing.T) {
+	service, report, keys := performanceInlineFixture(t, 6)
+	first, second := errors.New("first visual failed"), errors.New("second visual failed")
+	for _, key := range keys {
+		definition := report.Visualizations[key]
+		definition.Query.Aggregate.Metrics[0].FieldID = key
+		report.Visualizations[key] = definition
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	firstRelease, secondRelease := make(chan struct{}), make(chan struct{})
+	data := &performanceInlineRuntime{
+		snapshotDataRuntime: snapshotDataRuntime{snapshotID: 42, readConcurrency: 2},
+		ctx:                 ctx, entered: make(chan struct{}, len(keys)), release: make(chan struct{}),
+		releases: map[string]<-chan struct{}{keys[0]: firstRelease, keys[1]: secondRelease},
+		failures: map[string]error{keys[0]: first, keys[1]: second},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.pageVisuals(ctx, &modelRuntime{data: data}, report, dashboard.Filters{}, keys)
+		done <- err
+	}()
+	waitInlineQuery(t, data.entered)
+	waitInlineQuery(t, data.entered)
+	close(secondRelease)
+	close(firstRelease)
+	select {
+	case err := <-done:
+		if !errors.Is(err, first) || data.calls.Load() != 2 || data.active.Load() != 0 || ctx.Err() != nil {
+			t.Fatalf("first error=%v queries=%d active=%d caller error=%v", err, data.calls.Load(), data.active.Load(), ctx.Err())
+		}
+	case <-time.After(5 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("later visual queries started after an earlier failure")
 	}
 }

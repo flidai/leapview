@@ -62,32 +62,39 @@ func (s *VisualizationDataService) visualsWithConcurrency(ctx context.Context, r
 	// the original context so cancellation and any shared result budget apply.
 	envelopes := make([]visualizationir.VisualizationEnvelope, len(keys))
 	visualErrors := make([]error, len(keys))
-	jobs := make(chan int)
+	var dispatch sync.Mutex
+	nextIndex := 0
+	failed := false
 	var workers sync.WaitGroup
 	for range concurrency {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			for index := range jobs {
-				if err := ctx.Err(); err != nil {
-					visualErrors[index] = err
-					continue
+			for {
+				dispatch.Lock()
+				if failed || nextIndex == len(keys) || ctx.Err() != nil {
+					dispatch.Unlock()
+					return
 				}
+				index := nextIndex
+				nextIndex++
+				dispatch.Unlock()
+
 				envelopes[index], visualErrors[index] = s.inlineVisual(ctx, runtime, report, filters, keys[index], batchedData)
+				if visualErrors[index] != nil {
+					// Every lower index has already been claimed. Stop new reads
+					// and join those in progress without cancelling the caller.
+					dispatch.Lock()
+					failed = true
+					dispatch.Unlock()
+				}
 			}
 		}()
 	}
-	for index := range keys {
-		select {
-		case jobs <- index:
-		case <-ctx.Done():
-			close(jobs)
-			workers.Wait()
-			return nil, ctx.Err()
-		}
-	}
-	close(jobs)
 	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Assemble after workers finish, preserving the original visual order for
 	// errors and avoiding concurrent writes to the result map.
 	for index, key := range keys {

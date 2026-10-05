@@ -571,19 +571,29 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       transient.deferMount = true
       transient.envelope = JSON.parse(JSON.stringify(source.envelope))
       document.body.append(transient)
-      await transient.updateComplete
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
+      while (transient.pendingEnvelopeValidation) await transient.pendingEnvelopeValidation
+      await Promise.all([deferred.updateComplete, transient.updateComplete])
       const transientMount = transient.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
-      await Promise.resolve()
-      const transientController = transient.controller
-      const transientHolder = document.createElement('section')
-      document.body.append(transientHolder)
-      transientHolder.append(transient)
-      await transient.updateComplete
       const stale = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
-      const race = { stale, staleSettled: false, transientMount, transientController, transient, fresh: Promise.resolve('pending'), reattached: false }
+      const race = { stale, staleSettled: false, transientMount, transientController: transient.controller, transient, fresh: Promise.resolve('pending'), reattached: false }
       stale.then(() => { race.staleSettled = true })
       ;(window as any).__lvMountRace = { deferred, race }
-      await Promise.resolve()
+    })
+    await rendererRequest
+    // Establish that both hosts reached the blocked renderer load, rather than
+    // detaching a host that is still validating its envelope.
+    await page.waitForFunction(() => {
+      const { deferred, race } = (window as any).__lvMountRace
+      return Boolean(deferred.controller && deferred.pendingApply && race.transient.controller && race.transient.pendingApply)
+    })
+    await page.evaluate(async () => {
+      const { deferred, race } = (window as any).__lvMountRace
+      race.transientController = race.transient.controller
+      const transientHolder = document.createElement('section')
+      document.body.append(transientHolder)
+      transientHolder.append(race.transient)
+      await race.transient.updateComplete
       deferred.remove()
       await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
       document.body.append(deferred)
@@ -591,7 +601,6 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       race.fresh = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       race.reattached = true
     })
-    await rendererRequest
     const beforeRelease = await page.evaluate(() => (window as any).__lvMountRace.race.staleSettled)
     expect(beforeRelease).toBe(false)
     releaseRenderer()
