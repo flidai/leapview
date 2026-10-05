@@ -33,10 +33,23 @@ RUNTIME_PAYLOAD_MODES = {
     'leapviewctl-wrapper': 0o700,
     'compose.yaml': 0o600,
     'compose.https.yaml': 0o600,
+    'compose.first-install-bootstrap.yaml': 0o600,
+    'Caddyfile.first-install-bootstrap': 0o600,
+    'first-install.env': 0o600,
     'Caddyfile': 0o600,
     'deployment.env.example': 0o600,
     'leapview.env.example': 0o600,
 }
+
+def replace_installation_image(data, old, new):
+    marker = json.loads(data)
+    if (not re.fullmatch(IMAGE_RE, old) or not re.fullmatch(IMAGE_RE, new) or
+            marker.get('image') != old or marker.get('bootstrapPhase') != 'public' or
+            marker.get('generation') != 'sha256-'+old.split('sha256:')[1]):
+        raise ValueError('Image deployment requires the matching public installation marker')
+    marker['image'] = new
+    marker['generation'] = 'sha256-'+new.split('sha256:')[1]
+    return (json.dumps(marker, indent=2)+'\n').encode()
 
 def run(*args, **kwargs):
     return subprocess.run(args, check=True, stdout=kwargs.pop('stdout', LOG), stderr=LOG, **kwargs)
@@ -486,6 +499,7 @@ def _main():
     if b'COMPOSE_PROJECT_NAME=leapview-cfo\n' not in original_env or b'COMPOSE_HTTPS=1\n' not in original_env:
         raise RuntimeError('Unexpected deployment layout')
     original_marker = (ROOT/'.host-install.json').read_bytes()
+    new_marker = replace_installation_image(original_marker, old, image)
     previous_link = os.readlink(ROOT/'current')
     runtime_hash = hashlib.sha256((ROOT/'leapview.env').read_bytes()).hexdigest()
     if shutil.disk_usage(PROVIDER).free < 10*1024**3:
@@ -530,8 +544,7 @@ def _main():
             raise RuntimeError('Runtime configuration changed')
         print('AWAITING_BROWSER_VALIDATION',flush=True)
         await_approval(sys.stdin)
-        marker = json.loads(original_marker); marker['image'] = image
-        atomic(ROOT/'.host-install.json',(json.dumps(marker,indent=2)+'\n').encode())
+        atomic(ROOT/'.host-install.json', new_marker)
         receipt = dict(image=image,revision=revision,previousImage=old,backup=str(backup))
         atomic(PROVIDER/'compose-deployment.json',(json.dumps(receipt,indent=2)+'\n').encode())
     def rollback():

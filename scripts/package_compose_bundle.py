@@ -361,7 +361,10 @@ def _asset_inventory(source_root: Path) -> dict[PurePosixPath, tuple[Path, os.st
     fixed = {
         "compose.yaml": "deploy/compose/compose.yaml",
         "compose.https.yaml": "deploy/compose/compose.https.yaml",
+        "compose.first-install-bootstrap.yaml": "deploy/compose/compose.first-install-bootstrap.yaml",
         "Caddyfile": "deploy/compose/Caddyfile",
+        "Caddyfile.first-install-bootstrap": "deploy/compose/Caddyfile.first-install-bootstrap",
+        "first-install.env": "deploy/compose/first-install.env",
         "README.md": "deploy/compose/README.md",
         "QUALIFICATION.md": "deploy/compose/QUALIFICATION.md",
         "leapviewctl-wrapper": "deploy/host/files/leapviewctl-wrapper",

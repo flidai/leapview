@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/release/transitionoperation"
 	"github.com/flidai/leapview/internal/release/transitionpreflight"
@@ -138,6 +139,9 @@ func upgradeFixture(t *testing.T) (*Upgrader, UpgradeRequest, *upgradeStore, *up
 	installer, err := New(Options{Paths: paths, LifecycleFactory: func(string) (Lifecycle, error) { return &recordingLifecycle{}, nil }})
 	require.NoError(t, err)
 	require.NoError(t, installer.Install(t.Context()))
+	marker, err := readMarker(filepath.Join(paths.Root, installMarkerName))
+	require.NoError(t, err)
+	writeInstallationMarker(t, paths.Root, marker.Config, installationstate.PhasePublic)
 	evidenceBytes, err := result.Evidence.CanonicalJSON()
 	require.NoError(t, err)
 	predDigest, err := result.Evidence.Predecessor.Digest()
@@ -205,9 +209,11 @@ func TestUpgradeStagesThenActivatesAndRestartsExactCandidate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "sha256-"+strings.Repeat("b", 64), active)
 	require.Equal(t, request.CandidateImage, control.configured)
-	marker, _, err := readAndValidateConfig(filepath.Join(paths.Root, installMarkerName))
+	marker, err := readMarker(filepath.Join(paths.Root, installMarkerName))
 	require.NoError(t, err)
 	require.Equal(t, request.CandidateImage, marker.Image)
+	require.Equal(t, installationstate.PhasePublic, marker.BootstrapPhase)
+	require.Equal(t, "sha256-"+strings.Repeat("b", 64), marker.Generation)
 	// An activation retry before the runner records the phase is idempotent.
 	result, err = upgrader.Upgrade(t.Context(), request)
 	require.NoError(t, err)
@@ -360,7 +366,7 @@ func TestUpgradeRejectsWrongOrUnboundInstalledTargetBeforeEffect(t *testing.T) {
 		t.Run("installed-"+targetID, func(t *testing.T) {
 			upgrader, request, store, _, paths := upgradeFixture(t)
 			markerPath := filepath.Join(paths.Root, installMarkerName)
-			marker, _, err := readAndValidateConfig(markerPath)
+			marker, err := readMarker(markerPath)
 			require.NoError(t, err)
 			marker.TargetID = targetID
 			contents, err := json.Marshal(marker)
@@ -397,9 +403,11 @@ func TestUpgradeResumesInterruptedActivation(t *testing.T) {
 			result, err := upgrader.Upgrade(t.Context(), request)
 			require.NoError(t, err)
 			assertUpgradeResult(t, result, request, store)
-			marker, _, err := readAndValidateConfig(filepath.Join(paths.Root, installMarkerName))
+			marker, err := readMarker(filepath.Join(paths.Root, installMarkerName))
 			require.NoError(t, err)
 			require.Equal(t, request.CandidateImage, marker.Image)
+			require.Equal(t, installationstate.PhasePublic, marker.BootstrapPhase)
+			require.Equal(t, "sha256-"+strings.Repeat("b", 64), marker.Generation)
 			require.Equal(t, request.CandidateImage, control.configured)
 		})
 	}
@@ -502,4 +510,22 @@ func TestUpgradeRequiresExistingInstallation(t *testing.T) {
 	_, err := upgrader.Upgrade(t.Context(), request)
 	require.ErrorContains(t, err, "existing host installation")
 	require.False(t, called)
+}
+
+func TestUpgradeRejectsPrivateBootstrapBeforeEffects(t *testing.T) {
+	upgrader, request, store, control, paths := upgradeFixture(t)
+	marker, err := readMarker(filepath.Join(paths.Root, installMarkerName))
+	require.NoError(t, err)
+	writeInstallationMarker(t, paths.Root, marker.Config, installationstate.PhasePrivate)
+	called := false
+	upgrader.options.Payload = func(context.Context, string) (map[string][]byte, error) { called = true; return nil, nil }
+	_, err = upgrader.UpgradeAndRecord(t.Context(), request)
+	require.Error(t, err)
+	require.False(t, called)
+	require.Zero(t, control.starts)
+	require.Empty(t, store.op.PhaseResults)
+	after, err := readMarker(filepath.Join(paths.Root, installMarkerName))
+	require.NoError(t, err)
+	require.Equal(t, installationstate.PhasePrivate, after.BootstrapPhase)
+	require.Equal(t, marker.Image, after.Image)
 }

@@ -2,6 +2,7 @@ package hostinstall
 
 import (
 	"encoding/json"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +52,7 @@ func TestRevision019ProvisionedTargetBinding(t *testing.T) {
 	current := legacy
 	current.Image = "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
 	current.TargetID = "current-target"
-	writeConfig(t, filepath.Join(root, installMarkerName), current)
+	writeInstallationMarker(t, root, current, installationstate.PhasePublic)
 	installed, _, err = readUpgradeInstallation(root)
 	if err != nil || installed.TargetID != current.TargetID {
 		t.Fatalf("current installer marker changed behavior: %+v, %v", installed, err)

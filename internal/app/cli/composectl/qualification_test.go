@@ -46,7 +46,7 @@ func TestQualificationCommandSurfaceBelongsToLeapviewctl(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatalf("qualify help: %v", err)
 	}
-	for _, required := range []string{"image", "site-image", "installed-candidate"} {
+	for _, required := range []string{"image", "site-image", "installed-candidate", "first-publication"} {
 		if !strings.Contains(output.String(), required) {
 			t.Errorf("qualification help missing %q:\n%s", required, output.String())
 		}

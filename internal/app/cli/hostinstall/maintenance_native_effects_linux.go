@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
@@ -591,26 +592,17 @@ func (e *NativeEffects) ExposeCandidate(ctx context.Context, id Identity) error 
 	if id != e.id {
 		return ErrIdentity
 	}
+	marker, err := candidatePublicMarker(filepath.Join(e.operation, "original-config"), id.Candidate)
+	if err != nil {
+		return err
+	}
 	if err := e.resumeRuntime(ctx, id.Candidate, e.request.CandidateRevision, e.request.Plan.CandidateSchema); err != nil {
 		return err
 	}
 	if err := e.expose(ctx, id.Candidate); err != nil {
 		return err
 	}
-	raw, err := securefs.ReadPrivateFile(filepath.Join(e.operation, "original-config", ".host-install.json"))
-	if err != nil {
-		return err
-	}
-	var marker map[string]any
-	if err = json.Unmarshal(raw, &marker); err != nil {
-		return err
-	}
-	marker["image"] = id.Candidate
-	raw, err = json.Marshal(marker)
-	if err != nil {
-		return err
-	}
-	if err = securefs.WritePrivateFileAtomic(filepath.Join(e.root, ".host-install.json"), raw); err != nil {
+	if err = installationstate.WriteMarker(e.root, marker); err != nil {
 		return err
 	}
 	receipt, err := json.Marshal(map[string]any{"image": id.Candidate, "revision": e.request.CandidateRevision, "previousImage": id.Predecessor, "upgradeOperation": e.operation})

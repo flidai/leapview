@@ -55,9 +55,38 @@ ASSERTIONS = (
     "migratorURLsExcludedFromServingEnvironment",
     "privateOperatorInputRemoved",
     "postgresAutomaticallyRestarted",
+    "installedFirstPublicationCommitted",
+    "independentReviewerApprovedFirstPublication",
+    "firstPublicationReadinessTransitionObserved",
+    "protectedFirstPublicationVerifierMatched",
+    "protectedQualificationAssetsMatched",
+    "privateBootstrapPhaseSurvivedReboot",
+    "privateBootstrapProxyWasLoopbackOnly",
+    "firstPublicationRequiredExplicitActivation",
+    "publicActivationPhaseSurvivedReboot",
+    "publicActivationUsedConfiguredProxyBindings",
+    "applicationListenerStayedLoopbackOnly",
 )
 CONTAINER_RE = re.compile(r"^[0-9a-f]{64}$")
 BOOT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_-]{0,255}$")
+PROTECTED_QUALIFICATION_ASSETS = (
+    "Dockerfile.authoring-client",
+    "package.json",
+    "authoring-worker.mjs",
+)
+FIRST_PUBLICATION_SCOPE = "managed-first-publication"
+FIRST_PUBLICATION_PROJECT_ID = "project:leapview-evaluation"
+FIRST_PUBLICATION_ENVIRONMENT = "prod"
+FIRST_INSTALL_PRIVATE_PHASE = "private-bootstrap"
+FIRST_INSTALL_PUBLIC_PHASE = "public"
+CADDY_PORT_BINDING_KEYS = {"80/tcp", "443/tcp", "443/udp"}
+APP_PORT_BINDING_KEYS = {"8080/tcp"}
+CADDY_PUBLIC_BIND_CONFIG = {
+    "80/tcp": "CADDY_HTTP_BIND",
+    "443/tcp": "CADDY_HTTPS_BIND",
+    "443/udp": "CADDY_HTTPS_UDP_BIND",
+}
 
 
 class HostGuestError(ValueError):
@@ -225,6 +254,348 @@ def _validate_config(data: bytes, image: str) -> dict:
     return config
 
 
+def _validate_first_publication_host_config(config: dict) -> None:
+    domain = config.get("domain")
+    if (not isinstance(domain, str) or domain.strip().lower().removesuffix(".") != "localhost"
+            or config.get("https") is not True or config.get("environment") != FIRST_PUBLICATION_ENVIRONMENT):
+        raise HostGuestError("first-publication qualification requires the installed localhost HTTPS prod profile")
+
+
+def _first_install_generation(image: str) -> str:
+    if not isinstance(image, str) or qualification.IMAGE_RE.fullmatch(image) is None:
+        raise HostGuestError("first-install state cannot bind an invalid immutable image")
+    return "sha256-" + image.rsplit("sha256:", 1)[1]
+
+
+def _validate_host_install_marker(marker: dict, *, phase: str, image: str, target_id: str) -> dict:
+    expected_keys = {
+        "schemaVersion", "domain", "adminEmail", "environment", "https", "image", "targetId",
+        "bootstrapPhase", "generation",
+    }
+    if (not isinstance(marker, dict) or set(marker) != expected_keys
+            or type(marker.get("schemaVersion")) is not int or marker["schemaVersion"] != 1
+            or marker.get("domain") != "localhost" or marker.get("environment") != FIRST_PUBLICATION_ENVIRONMENT
+            or marker.get("https") is not True or marker.get("image") != image
+            or marker.get("targetId") != target_id
+            or marker.get("bootstrapPhase") != phase
+            or phase not in {FIRST_INSTALL_PRIVATE_PHASE, FIRST_INSTALL_PUBLIC_PHASE}
+            or marker.get("generation") != _first_install_generation(image)
+            or not isinstance(marker.get("adminEmail"), str) or not marker["adminEmail"]):
+        raise HostGuestError("host install marker does not bind the expected phase, localhost profile, image, and generation")
+    return marker
+
+
+def _validate_caddy_inspection(inspection: dict, *, image: str | None = None) -> dict:
+    if (not isinstance(inspection, dict) or set(inspection) != {
+        "id", "image", "status", "project", "service", "startedAt",
+    } or CONTAINER_RE.fullmatch(inspection.get("id", "")) is None
+            or not isinstance(inspection.get("image"), str) or not inspection["image"]
+            or (image is not None and inspection["image"] != image)
+            or inspection.get("status") != "running" or inspection.get("project") != "leapview"
+            or inspection.get("service") != "caddy" or not isinstance(inspection.get("startedAt"), str)
+            or not inspection["startedAt"]):
+        raise HostGuestError("private HTTPS proxy inspection does not identify one running Compose Caddy service")
+    return inspection
+
+
+def _parse_caddy_bind_config(data: bytes) -> dict:
+    expected_keys = set(CADDY_PUBLIC_BIND_CONFIG.values())
+    values = {}
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise HostGuestError("installed Caddy bind configuration is not UTF-8") from exc
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key in expected_keys:
+            if key in values or not value or any(character.isspace() for character in value):
+                raise HostGuestError("installed Caddy bind configuration has duplicate or invalid entries")
+            values[key] = value
+    if set(values) != expected_keys:
+        raise HostGuestError("installed Caddy bind configuration is incomplete")
+    for value in values.values():
+        _parse_host_bind_value(value)
+    return values
+
+
+def _parse_host_bind_value(value: str) -> tuple[str | None, str]:
+    address = None
+    port = value
+    if value.startswith("["):
+        close = value.find("]")
+        if close < 0 or value[close + 1:close + 2] != ":":
+            raise HostGuestError("installed Caddy bind configuration has an invalid IPv6 listener")
+        address, port = value[1:close], value[close + 2:]
+    elif ":" in value:
+        address, port = value.rsplit(":", 1)
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise HostGuestError("installed Caddy bind configuration has an invalid port")
+    if address is not None:
+        try:
+            address = str(ipaddress.ip_address(address))
+        except ValueError as exc:
+            raise HostGuestError("installed Caddy bind configuration has an invalid address") from exc
+    return address, port
+
+
+def _validate_caddy_port_bindings(bindings: dict, *, private: bool, public_config: dict | None = None) -> dict:
+    if not isinstance(bindings, dict) or set(bindings) != CADDY_PORT_BINDING_KEYS:
+        raise HostGuestError("HTTPS proxy port bindings differ from the exact Compose listener set")
+    if not private and public_config is not None and set(public_config) != set(CADDY_PUBLIC_BIND_CONFIG.values()):
+        raise HostGuestError("public Caddy bind configuration does not define the exact listener set")
+    normalized = {}
+    for transport in sorted(CADDY_PORT_BINDING_KEYS):
+        entries = bindings[transport]
+        expected_address, expected_port = (None, "80" if transport == "80/tcp" else "443")
+        if not private and public_config is not None:
+            expected_address, expected_port = _parse_host_bind_value(public_config[CADDY_PUBLIC_BIND_CONFIG[transport]])
+        if (not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict)
+                or set(entries[0]) != {"HostIp", "HostPort"} or entries[0].get("HostPort") != expected_port
+                or not isinstance(entries[0].get("HostIp"), str)):
+            raise HostGuestError("HTTPS proxy port binding is missing, duplicated, or uses an unexpected host port")
+        host_ip = entries[0]["HostIp"]
+        if host_ip == "":
+            host_ip = "0.0.0.0"
+        try:
+            address = ipaddress.ip_address(host_ip)
+        except ValueError as exc:
+            raise HostGuestError("HTTPS proxy port binding has an invalid host address") from exc
+        if private and str(address) != "127.0.0.1":
+            raise HostGuestError("first-install HTTPS proxy is exposed beyond IPv4 loopback")
+        if not private and address.is_loopback:
+            raise HostGuestError("activated HTTPS proxy is still bound only to loopback")
+        if not private and expected_address is not None and str(address) != expected_address:
+            raise HostGuestError("activated HTTPS proxy address differs from installed Caddy bind configuration")
+        normalized[transport] = {"hostIP": str(address), "hostPort": expected_port}
+    return normalized
+
+
+def _validate_application_port_bindings(bindings: dict) -> dict:
+    if (not isinstance(bindings, dict) or set(bindings) != APP_PORT_BINDING_KEYS
+            or not isinstance(bindings["8080/tcp"], list) or len(bindings["8080/tcp"]) != 1
+            or not isinstance(bindings["8080/tcp"][0], dict)
+            or set(bindings["8080/tcp"][0]) != {"HostIp", "HostPort"}
+            or bindings["8080/tcp"][0].get("HostIp") != "127.0.0.1"
+            or bindings["8080/tcp"][0].get("HostPort") != "8080"):
+        raise HostGuestError("application listener is not bound only to host IPv4 loopback")
+    return {"8080/tcp": {"hostIP": "127.0.0.1", "hostPort": "8080"}}
+
+
+def _validate_active_caddyfile(contents: bytes, *, private: bool) -> str:
+    try:
+        text = contents.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HostGuestError("active Caddy configuration is not UTF-8") from exc
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if ("{$CADDY_DOMAIN} {" not in lines or "reverse_proxy leapview:8080" not in lines
+            or ("tls internal" in lines) is not private):
+        raise HostGuestError("active Caddy configuration does not match the requested first-install TLS phase")
+    return text
+
+
+def _protected_checkout_revision(root: Path, expected_revision: str) -> str:
+    if REVISION_RE.fullmatch(expected_revision) is None:
+        raise HostGuestError("protected verifier revision must be a full lowercase commit SHA")
+    root_info = root.lstat()
+    if not stat.S_ISDIR(root_info.st_mode):
+        raise HostGuestError("protected checkout root must be a real directory")
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, timeout=10,
+        ).stdout.decode("ascii").strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        raise HostGuestError("cannot verify protected verifier checkout identity") from exc
+    if head != expected_revision or dirty:
+        raise HostGuestError("protected verifier checkout differs from the expected clean commit")
+    return head
+
+
+def _protected_qualification_assets(root: Path) -> tuple[dict[str, bytes], dict, str]:
+    asset_root = root / "deploy/compose/qualification"
+    try:
+        root_info = asset_root.lstat()
+    except OSError as exc:
+        raise HostGuestError("protected qualification assets are unavailable") from exc
+    if not stat.S_ISDIR(root_info.st_mode):
+        raise HostGuestError("protected qualification assets must be a real directory")
+    assets = {}
+    for name in PROTECTED_QUALIFICATION_ASSETS:
+        try:
+            info = (asset_root / name).lstat()
+        except OSError as exc:
+            raise HostGuestError(f"protected qualification asset {name} is unavailable") from exc
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 8 * 1024**2:
+            raise HostGuestError(f"protected qualification asset {name} is not a bounded regular file")
+        assets[name] = _read(asset_root / name, "protected qualification asset " + name, 8 * 1024**2)
+    manifest = {
+        "schemaVersion": 1,
+        "assets": {name: _digest(data) for name, data in sorted(assets.items())},
+    }
+    return assets, manifest, _digest(_canonical(manifest))
+
+
+def _protected_verifier_identity(path: Path) -> tuple[str, int]:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise HostGuestError("protected first-publication verifier is unavailable") from exc
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_size == 0 or info.st_size > 512 * 1024**2:
+        raise HostGuestError("protected first-publication verifier must be a bounded executable file")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("rb") as source:
+            while chunk := source.read(1024**2):
+                size += len(chunk)
+                if size > 512 * 1024**2:
+                    raise HostGuestError("protected first-publication verifier exceeds its byte limit")
+                digest.update(chunk)
+    except OSError as exc:
+        raise HostGuestError("cannot read protected first-publication verifier") from exc
+    if size != info.st_size:
+        raise HostGuestError("protected first-publication verifier changed while it was read")
+    return "sha256:" + digest.hexdigest(), size
+
+
+def _validate_first_publication_report(report: dict, *, image: str, image_revision: str,
+                                       environment: str) -> dict:
+    report_keys = {
+        "schemaVersion", "scope", "result", "request", "publication", "approval",
+        "publisherPrincipalID", "reviewerPrincipalID", "readinessBefore", "readinessAfter",
+        "phases", "assertions",
+    }
+    if (not isinstance(report, dict) or set(report) != report_keys
+            or type(report.get("schemaVersion")) is not int or report["schemaVersion"] != 1
+            or report.get("scope") != FIRST_PUBLICATION_SCOPE or report.get("result") != "passed"):
+        raise HostGuestError("installed first-publication report has an unsupported schema or result")
+    request, publication, approval = report["request"], report["publication"], report["approval"]
+    request_keys = {
+        "targetURL", "projectID", "environment", "image", "imageSourceRevision", "sourceRevision",
+        "candidateID", "candidateRevision", "targetID", "principalID", "artifactDigest", "releaseDigest", "planID", "planDigest",
+    }
+    publication_keys = {
+        "candidateID", "candidateRevision", "targetID", "publicationID", "publicationStatus", "generationID",
+        "principalID", "sourceArtifactDigest", "servingArtifactDigest", "releaseDigest", "sourceRevision", "planID", "planDigest",
+    }
+    approval_keys = {"id", "status", "approvedBy", "deploymentId", "projectId", "environment", "requestDigest"}
+    if (not isinstance(request, dict) or set(request) != request_keys
+            or not isinstance(publication, dict) or set(publication) != publication_keys
+            or not isinstance(approval, dict) or set(approval) != approval_keys):
+        raise HostGuestError("first-publication report has incomplete or unexpected request, publication, or approval fields")
+    for field in ("targetURL", "projectID", "environment", "image", "imageSourceRevision", "sourceRevision",
+                  "candidateID", "targetID", "principalID", "planID"):
+        value = request[field]
+        if not isinstance(value, str) or not value or len(value) > 512 or any(ord(character) < 0x20 for character in value):
+            raise HostGuestError(f"first-publication request {field} is not a bounded single-line value")
+    if (request["targetURL"] != "https://localhost" or request["projectID"] != FIRST_PUBLICATION_PROJECT_ID
+            or request["environment"] != environment or environment != FIRST_PUBLICATION_ENVIRONMENT
+            or request["image"] != image or request["imageSourceRevision"] != image_revision
+            or REVISION_RE.fullmatch(image_revision) is None
+            or SHA256_RE.fullmatch(request["sourceRevision"]) is None
+            or request["sourceRevision"] == image_revision
+            or not _safe_qualification_identifier(request["candidateID"])
+            or not _safe_qualification_identifier(request["targetID"])
+            or not _safe_qualification_identifier(request["principalID"])
+            or not _safe_qualification_identifier(request["planID"])
+            or type(request["candidateRevision"]) is not int or request["candidateRevision"] < 1
+            or not isinstance(request["artifactDigest"], str) or SHA256_RE.fullmatch(request["artifactDigest"]) is None
+            or not isinstance(request["releaseDigest"], str) or SHA256_RE.fullmatch(request["releaseDigest"]) is None
+            or not isinstance(request["planDigest"], str) or SHA256_RE.fullmatch(request["planDigest"]) is None):
+        raise HostGuestError("first-publication request is not bound to localhost, the installed image, and managed source revision")
+    for field in ("candidateID", "targetID", "publicationID", "generationID", "principalID", "planID"):
+        value = publication[field]
+        if not _safe_qualification_identifier(value):
+            raise HostGuestError(f"first-publication result {field} is not a safe identifier")
+    if (publication["candidateID"] != request["candidateID"]
+            or type(publication["candidateRevision"]) is not int
+            or publication["candidateRevision"] != request["candidateRevision"]
+            or publication["targetID"] != request["targetID"]
+            or publication["principalID"] != request["principalID"]
+            or publication["sourceArtifactDigest"] != request["artifactDigest"]
+            or publication["releaseDigest"] != request["releaseDigest"]
+            or publication["sourceRevision"] != request["sourceRevision"]
+            or publication["planID"] != request["planID"]
+            or publication["planDigest"] != request["planDigest"]
+            or publication["publicationStatus"] != "committed"
+            or not isinstance(publication["publicationID"], str)
+            or not _safe_qualification_identifier(publication["publicationID"])
+            or publication["publicationID"] == ""
+            or not isinstance(publication["sourceArtifactDigest"], str)
+            or SHA256_RE.fullmatch(publication["sourceArtifactDigest"]) is None
+            or not isinstance(publication["servingArtifactDigest"], str)
+            or SHA256_RE.fullmatch(publication["servingArtifactDigest"]) is None
+            or publication["servingArtifactDigest"] == publication["sourceArtifactDigest"]
+            or not isinstance(publication["releaseDigest"], str)
+            or SHA256_RE.fullmatch(publication["releaseDigest"]) is None
+            or not isinstance(publication["sourceRevision"], str)
+            or SHA256_RE.fullmatch(publication["sourceRevision"]) is None
+            or not isinstance(publication["planDigest"], str)
+            or SHA256_RE.fullmatch(publication["planDigest"]) is None):
+        raise HostGuestError("first-publication result does not bind the exact requested candidate tuple")
+    if (not _safe_qualification_identifier(approval["id"])
+            or approval["status"] != "approved" or approval["approvedBy"] != report.get("reviewerPrincipalID")
+            or approval["deploymentId"] != publication["publicationID"]
+            or approval["projectId"] != request["projectID"] or approval["environment"] != environment
+            or not isinstance(approval["requestDigest"], str) or SHA256_RE.fullmatch(approval["requestDigest"]) is None
+            or report.get("publisherPrincipalID") != request["principalID"]
+            or not isinstance(report.get("reviewerPrincipalID"), str)
+            or not _safe_qualification_identifier(report["reviewerPrincipalID"])
+            or report["reviewerPrincipalID"] == report["publisherPrincipalID"]):
+        raise HostGuestError("first-publication approval does not bind an independent reviewer to the committed publication")
+    if (type(report.get("readinessBefore")) is not int or report["readinessBefore"] != 503
+            or type(report.get("readinessAfter")) is not int or report["readinessAfter"] != 200):
+        raise HostGuestError("first-publication report lacks the 503-to-200 readiness transition")
+    assertions = report["assertions"]
+    expected_assertions = {
+        "firstLoginConsumedOnce", "readinessTransitionObserved", "temporaryCredentialsRemoved", "secretsExcludedFromEvidence",
+    }
+    if (not isinstance(assertions, dict) or set(assertions) != expected_assertions
+            or any(value is not True for value in assertions.values())):
+        raise HostGuestError("first-publication report does not prove the credential and readiness boundaries")
+    phases = report["phases"]
+    if not isinstance(phases, list) or not phases or len(phases) > 64:
+        raise HostGuestError("first-publication phase evidence is absent or oversized")
+    phase_indices = {}
+    phase_keys = {"name", "result", "startedAt", "durationMillis", "timeoutSeconds", "cleanupGuaranteed"}
+    expected_phase_names = (
+        "browser and client setup", "reviewer provisioning", "native keyring login",
+        "private candidate preview", "protected publish",
+    )
+    for index, phase in enumerate(phases):
+        if not isinstance(phase, dict) or set(phase) not in (phase_keys, phase_keys | {"failureCode"}):
+            raise HostGuestError("first-publication phase evidence has an unsupported schema")
+        name, started_at = phase.get("name"), phase.get("startedAt")
+        if (not isinstance(name, str) or name not in expected_phase_names or name in phase_indices
+                or phase.get("result") != "success" or not isinstance(started_at, str) or not started_at
+                or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z", started_at) is None
+                or type(phase.get("durationMillis")) is not int or phase["durationMillis"] < 0
+                or type(phase.get("timeoutSeconds")) is not int or phase["timeoutSeconds"] <= 0
+                or phase.get("cleanupGuaranteed") is not True or phase.get("failureCode", "") != ""):
+            raise HostGuestError("first-publication phase evidence is incomplete or failed")
+        phase_indices[name] = index
+    if tuple(phase["name"] for phase in phases) != expected_phase_names:
+        raise HostGuestError("first-publication phase evidence does not show the complete ordered lifecycle")
+    reviewer_phase = phase_indices.get("reviewer provisioning")
+    preview_phase = phase_indices.get("private candidate preview")
+    publish_phase = phase_indices.get("protected publish")
+    if (reviewer_phase is None or preview_phase is None or publish_phase is None
+            or not reviewer_phase < preview_phase < publish_phase):
+        raise HostGuestError("first-publication phase order does not bind independent review before publish")
+    return report
+
+
+def _safe_qualification_identifier(value) -> bool:
+    return (isinstance(value, str) and IDENTIFIER_RE.fullmatch(value) is not None
+            and re.fullmatch(r"[A-Fa-f0-9]{32,128}", value) is None)
+
+
 class SSHGuest:
     def __init__(self, *, port: int, identity: Path, known_hosts: Path, timeout: int):
         self.destination = "root@127.0.0.1"
@@ -289,6 +660,277 @@ class SSHGuest:
         if return_code != 0 and not (allow_disconnect and return_code == 255):
             raise HostGuestError(f"SSH guest command failed ({return_code})")
         return bytes(output)
+
+
+def _https_readiness_command() -> str:
+    request = (
+        "GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"
+    )
+    return (
+        "status=$(printf '" + request + "' | timeout 15 openssl s_client -quiet "
+        "-connect 127.0.0.1:443 -servername localhost 2>/dev/null | "
+        "sed -n '1s#^HTTP/[0-9.][0-9.]* \\([0-9][0-9][0-9]\\).*#\\1#p'); "
+        "case \"$status\" in 200|503) printf '%s\\n' \"$status\";; *) printf 'unavailable\\n';; esac"
+    )
+
+
+def _http_status_command(path: str) -> str:
+    if path not in {"/healthz", "/readyz"}:
+        raise HostGuestError("private application probe path is not allowed")
+    request = f"GET {path} HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"
+    script = (
+        "exec 3<>/dev/tcp/127.0.0.1/8080 2>/dev/null || { printf 'unavailable\\n'; exit 0; }; "
+        f"printf '{request}' >&3; IFS= read -r line <&3 || line=; "
+        "set -- $line; case \"${2:-}\" in [1-5][0-9][0-9]) printf '%s\\n' \"$2\";; *) printf 'unavailable\\n';; esac"
+    )
+    return "bash -c " + shlex.quote(script)
+
+
+def _caddy_inspect_command(docker_env: str) -> str:
+    return (
+        "set -eu; ids=$(env " + docker_env +
+        " docker ps -q --no-trunc --filter label=com.docker.compose.project=leapview"
+        " --filter label=com.docker.compose.service=caddy); "
+        "test -n \"$ids\"; test \"$(printf '%s\\n' \"$ids\" | wc -l)\" -eq 1; "
+        "env " + docker_env + " docker inspect --format '{{.Id}}|{{.Config.Image}}|"
+        "{{.State.Status}}|{{index .Config.Labels \"com.docker.compose.project\"}}|"
+        "{{index .Config.Labels \"com.docker.compose.service\"}}|{{.State.StartedAt}}|"
+        "{{json .HostConfig.PortBindings}}' \"$ids\""
+    )
+
+
+def _application_port_bindings_command(docker_env: str) -> str:
+    return (
+        "set -eu; ids=$(env " + docker_env +
+        " docker ps -q --no-trunc --filter label=com.docker.compose.project=leapview"
+        " --filter label=com.docker.compose.service=leapview); "
+        "test -n \"$ids\"; test \"$(printf '%s\\n' \"$ids\" | wc -l)\" -eq 1; "
+        "env " + docker_env + " docker inspect --format '{{json .HostConfig.PortBindings}}' \"$ids\""
+    )
+
+
+def _deployment_caddy_bind_config_command() -> str:
+    return (
+        "awk -F= '$1 == \"CADDY_HTTP_BIND\" || $1 == \"CADDY_HTTPS_BIND\" || "
+        "$1 == \"CADDY_HTTPS_UDP_BIND\" { print $1 \"=\" $2 }' /opt/leapview/deployment.env"
+    )
+
+
+def _parse_caddy_observation(data: bytes, *, private: bool, image: str | None = None,
+                            public_config: dict | None = None) -> dict:
+    line = _one_line(data, "Docker Caddy inspection")
+    fields = line.split("|", 6)
+    if len(fields) != 7:
+        raise HostGuestError("Docker Caddy inspection returned an unsupported field set")
+    inspection = _validate_caddy_inspection({
+        "id": fields[0], "image": fields[1], "status": fields[2], "project": fields[3],
+        "service": fields[4], "startedAt": fields[5],
+    }, image=image)
+    try:
+        bindings = _json((fields[6] + "\n").encode("utf-8"), "Docker Caddy port bindings", 64 * 1024)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(f"Docker Caddy port bindings are invalid: {exc}") from exc
+    return {
+        "inspection": inspection,
+        "portBindings": _validate_caddy_port_bindings(bindings, private=private, public_config=public_config),
+    }
+
+
+def _active_caddyfile_command(docker_env: str, container_id: str) -> str:
+    if CONTAINER_RE.fullmatch(container_id) is None:
+        raise HostGuestError("active Caddy container identity is invalid")
+    return "env " + docker_env + " docker exec " + shlex.quote(container_id) + " cat /etc/caddy/Caddyfile"
+
+
+def _active_caddy_domain_command(docker_env: str, container_id: str) -> str:
+    if CONTAINER_RE.fullmatch(container_id) is None:
+        raise HostGuestError("active Caddy container identity is invalid")
+    return "env " + docker_env + " docker exec " + shlex.quote(container_id) + " printenv CADDY_DOMAIN"
+
+
+def _wait_for_http_status(guest: SSHGuest, *, path: str, expected: str, timeout: int,
+                          evidence: Path, filename: str) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = _one_line(guest.run(_http_status_command(path), timeout=15), "private application readiness probe")
+        if status == expected:
+            _record(evidence, filename, (status + "\n").encode("ascii"))
+            return status
+        if status not in {"unavailable", "503"}:
+            _record(evidence, filename, (status + "\n").encode("ascii"))
+            raise HostGuestError(f"private application {path} returned unexpected status {status}")
+        time.sleep(2)
+    _record(evidence, filename, b"unavailable\n")
+    raise HostGuestError(f"private application {path} did not reach {expected} before timeout")
+
+
+def _capture_host_install_marker(guest: SSHGuest, evidence: Path, *, filename: str, phase: str,
+                                image: str, target_id: str) -> tuple[dict, bytes]:
+    raw = guest.run("cat /opt/leapview/.host-install.json")
+    try:
+        marker = _json(raw, "host installation marker", 64 * 1024)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(f"host installation marker is invalid: {exc}") from exc
+    _validate_host_install_marker(marker, phase=phase, image=image, target_id=target_id)
+    generation_link = _one_line(guest.run("readlink /opt/leapview/current"), "active installation generation link")
+    expected_link = "releases/" + marker["generation"]
+    if generation_link != expected_link:
+        raise HostGuestError("host installation marker generation differs from the real current symlink")
+    _record(evidence, filename, raw)
+    _record(evidence, filename.removesuffix(".json") + "-current-link.txt", (generation_link + "\n").encode())
+    owner_mode = _one_line(guest.run("stat -c '%u:%g:%a' /opt/leapview/.host-install.json"), "host marker owner and mode")
+    if owner_mode != "0:0:600":
+        raise HostGuestError("host installation marker is not root-owned mode 0600")
+    _record(evidence, filename.removesuffix(".json") + "-owner-mode.txt", (owner_mode + "\n").encode("ascii"))
+    return marker, raw
+
+
+def _capture_caddy_observation(guest: SSHGuest, evidence: Path, *, docker_env: str, prefix: str,
+                               private: bool, expected_image: str | None = None,
+                               public_config: dict | None = None) -> dict:
+    raw_inspection = guest.run(_caddy_inspect_command(docker_env), timeout=20)
+    observation = _parse_caddy_observation(
+        raw_inspection, private=private, image=expected_image, public_config=public_config,
+    )
+    active_config = guest.run(_active_caddyfile_command(docker_env, observation["inspection"]["id"]))
+    _validate_active_caddyfile(active_config, private=private)
+    domain = _one_line(guest.run(
+        _active_caddy_domain_command(docker_env, observation["inspection"]["id"]),
+    ), "active Caddy domain")
+    if domain != "localhost":
+        raise HostGuestError("active first-install Caddy service is not configured for localhost")
+    # Retryable probes must finish before immutable evidence is retained.
+    _record(evidence, prefix + "-docker-inspect.txt", raw_inspection)
+    _record(evidence, prefix + "-active-caddyfile.txt", active_config)
+    _record(evidence, prefix + "-active-domain.txt", (domain + "\n").encode("ascii"))
+    observation["caddyfileSHA256"] = _digest(active_config)
+    observation["domain"] = domain
+    return observation
+
+
+def _wait_for_caddy_observation(guest: SSHGuest, evidence: Path, *, docker_env: str, prefix: str,
+                                private: bool, timeout: int, expected_image: str | None = None,
+                                public_config: dict | None = None) -> dict:
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            return _capture_caddy_observation(
+                guest, evidence, docker_env=docker_env, prefix=prefix, private=private,
+                expected_image=expected_image, public_config=public_config,
+            )
+        except HostGuestError as exc:
+            last_error = exc
+            time.sleep(2)
+    raise HostGuestError(f"Caddy did not reach the expected {'private' if private else 'configured'} phase: {last_error}")
+
+
+def _capture_application_ports(guest: SSHGuest, evidence: Path, *, docker_env: str,
+                               filename: str) -> dict:
+    raw = guest.run(_application_port_bindings_command(docker_env), timeout=20)
+    try:
+        bindings = _json(raw, "application Docker port bindings", 64 * 1024)
+    except qualification.QualificationError as exc:
+        raise HostGuestError(f"application Docker port bindings are invalid: {exc}") from exc
+    normalized = _validate_application_port_bindings(bindings)
+    _record(evidence, filename, _canonical(bindings) + b"\n")
+    return normalized
+
+
+def _wait_for_https_readiness(guest: SSHGuest, *, expected: str, timeout: int, evidence: Path,
+                              filename: str) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = _one_line(guest.run(_https_readiness_command(), timeout=20), "private HTTPS readiness probe")
+        if status == expected:
+            _record(evidence, filename, (status + "\n").encode("ascii"))
+            return status
+        if status == "200" and expected == "503":
+            _record(evidence, filename, (status + "\n").encode("ascii"))
+            raise HostGuestError("fresh localhost HTTPS target was ready before its first publication")
+        if status not in {"unavailable", "503"}:
+            _record(evidence, filename, (status + "\n").encode("ascii"))
+            raise HostGuestError(f"private localhost HTTPS readiness returned unexpected status {status}")
+        time.sleep(2)
+    _record(evidence, filename, b"unavailable\n")
+    raise HostGuestError(f"private localhost HTTPS readiness did not reach {expected} before timeout")
+
+
+def _run_first_publication_qualification(guest: SSHGuest, evidence: Path, *, args, paths: dict,
+                                         fixture_secrets: list[str], image_runtime: dict) -> tuple[dict, dict]:
+    verifier_sha, _ = _protected_verifier_identity(args.first_publication_verifier)
+    assets, assets_manifest, assets_sha = _protected_qualification_assets(args.protected_root)
+    protected_revision = _protected_checkout_revision(args.protected_root, args.protected_revision)
+    verifier_path = _remote_path(paths["root"], "protected-first-publication-verifier")
+    assets_path = _remote_path(paths["root"], "protected-qualification-assets")
+    remote_evidence = _remote_path(paths["root"], "first-publication-evidence")
+    _record(evidence, "protected-first-publication-verifier-sha256.txt", (verifier_sha + "\n").encode("ascii"))
+    _record(evidence, "protected-first-publication-source-revision.txt", (protected_revision + "\n").encode("ascii"))
+    _record(evidence, "protected-qualification-assets-sha256.txt", (assets_sha + "\n").encode("ascii"))
+    _record(evidence, "protected-qualification-assets-manifest.json", (_canonical(assets_manifest) + b"\n"))
+
+    before = _wait_for_https_readiness(
+        guest, expected="503", timeout=args.startup_timeout, evidence=evidence,
+        filename="first-publication-https-readiness-before.txt",
+    )
+    report = None
+    try:
+        guest.run("install -d -m 700 -- " + shlex.quote(assets_path))
+        for name, data in assets.items():
+            remote_file = _remote_path(assets_path, name)
+            guest.run("umask 077; cat > " + shlex.quote(remote_file), input_bytes=data)
+            actual_sha = _one_line(guest.run("sha256sum -- " + shlex.quote(remote_file)), "protected qualification asset hash").split()[0]
+            if "sha256:" + actual_sha != assets_manifest["assets"][name]:
+                raise HostGuestError("protected qualification asset changed during transfer: " + name)
+        guest.run("cat > " + shlex.quote(verifier_path), input_file=args.first_publication_verifier, timeout=180)
+        guest.run("chmod 700 " + shlex.quote(verifier_path))
+        actual_verifier_line = _one_line(
+            guest.run("sha256sum -- " + shlex.quote(verifier_path)), "transferred protected first-publication verifier hash",
+        )
+        if "sha256:" + actual_verifier_line.split()[0] != verifier_sha:
+            raise HostGuestError("transferred first-publication verifier differs from its protected build")
+        verifier_command = (
+            "LEAPVIEWCTL_ROOT=/opt/leapview " + shlex.quote(verifier_path) +
+            " qualify first-publication --evidence-dir " + shlex.quote(remote_evidence) +
+            " --assets-root " + shlex.quote(assets_path)
+        )
+        guest.run(verifier_command, timeout=3600)
+        report_file = _remote_path(remote_evidence, "first-publication-report.json")
+        guest.run("test -f " + shlex.quote(report_file) + " && test ! -L " + shlex.quote(report_file))
+        raw_report = guest.run("cat " + shlex.quote(report_file), timeout=30)
+        try:
+            decoded_report = _json(raw_report, "protected first-publication report", 1024**2)
+        except qualification.QualificationError as exc:
+            raise HostGuestError(f"protected first-publication report is invalid: {exc}") from exc
+        report = _validate_first_publication_report(
+            decoded_report, image=args.image, image_revision=image_runtime["revision"],
+            environment=FIRST_PUBLICATION_ENVIRONMENT,
+        )
+        sanitized_report = _canonical(report) + b"\n"
+        _assert_no_secrets_in_bytes(sanitized_report, fixture_secrets, "first-publication report")
+    finally:
+        guest.run(
+            "rm -rf -- " + shlex.quote(remote_evidence) + " " + shlex.quote(assets_path) +
+            " && rm -f -- " + shlex.quote(verifier_path) +
+            " && test ! -e " + shlex.quote(remote_evidence) +
+            " && test ! -e " + shlex.quote(assets_path) +
+            " && test ! -e " + shlex.quote(verifier_path),
+            timeout=60,
+        )
+    if report is None:
+        raise HostGuestError("protected first-publication verifier produced no report")
+    after = _wait_for_https_readiness(
+        guest, expected="200", timeout=args.startup_timeout, evidence=evidence,
+        filename="first-publication-https-readiness-after.txt",
+    )
+    if report["readinessBefore"] != int(before) or report["readinessAfter"] != int(after):
+        raise HostGuestError("independent localhost HTTPS readiness probes differ from the protected report")
+    _record(evidence, "first-publication-report.json", sanitized_report)
+    return report, {
+        "protectedRevision": protected_revision,
+        "verifierSHA256": verifier_sha,
+        "qualificationAssetsSHA256": assets_sha,
+    }
 
 
 def _record(evidence: Path, name: str, data: bytes) -> bytes:
@@ -554,6 +1196,19 @@ def _assert_no_secrets_in_evidence(evidence: Path, secrets_to_check: list[str]) 
             raise HostGuestError("private PostgreSQL fixture credential appeared in retained guest evidence")
 
 
+def _assert_no_secrets_in_bytes(data: bytes, secrets_to_check: list[str], label: str) -> None:
+    unsafe_patterns = (
+        rb"(?i)authorization\s*:\s*bearer\s+[^\s\"']+",
+        rb"(?i)\"(?:accessToken|refreshToken|publisherToken|workloadToken|deliveryEvidenceToken|"
+        rb"connectionEvidenceToken|recoveryUploadToken|recoveryControlToken|auditToken|temporaryPassword|"
+        rb"qualificationPassword|password|clientSecret|apiKey|token)\"\s*:\s*\"[^\"]+\"",
+        rb"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+)?",
+    )
+    encoded = [value.encode("utf-8") for value in secrets_to_check if value]
+    if any(secret in data for secret in encoded) or any(re.search(pattern, data) for pattern in unsafe_patterns):
+        raise HostGuestError(f"secret material appeared in sanitized {label}")
+
+
 def _readiness_after_reboot_command(container_name: str, expected: str) -> str:
     return (
         "set -eu; actual=$(docker exec " + shlex.quote(container_name) + " sh -ec " + shlex.quote(
@@ -804,6 +1459,10 @@ def _install_and_collect(args) -> dict:
     )
     config_bytes = _read(args.config, "private host configuration", 64 * 1024)
     host_config = _validate_config(config_bytes, args.image)
+    _validate_first_publication_host_config(host_config)
+    _protected_checkout_revision(Path(args.protected_root), args.protected_revision)
+    _protected_qualification_assets(Path(args.protected_root))
+    _protected_verifier_identity(args.first_publication_verifier)
 
     source_root = Path(args.source_root)
     with tempfile.TemporaryDirectory(prefix="nix-compose-host-guest-") as temporary:
@@ -956,20 +1615,21 @@ def _install_and_collect(args) -> dict:
             raise HostGuestError("guest-owned private operator bootstrap input was not removed after install")
 
         _record(evidence, "host-install-exit-code.txt", b"0\n")
-        marker_data = guest.run("cat /opt/leapview/.host-install.json")
-        marker = _json(marker_data, "installed host configuration marker", 64 * 1024)
-        if (not isinstance(marker, dict) or marker.get("schemaVersion") != 1 or marker.get("image") != args.image
-                or marker.get("domain") != host_config["domain"].strip().lower().removesuffix(".")
-                or marker.get("adminEmail") != host_config["adminEmail"].strip()
-                or marker.get("environment") != host_config["environment"].strip()
-                or marker.get("https") is not host_config["https"]
-                or marker.get("targetId", "") != host_config.get("targetId", "")):
-            raise HostGuestError("host install marker does not bind the selected image")
+        target_id = host_config.get("targetId", "")
+        marker, marker_data = _capture_host_install_marker(
+            guest, evidence, filename="host-marker-private-after-install.json",
+            phase=FIRST_INSTALL_PRIVATE_PHASE, image=args.image, target_id=target_id,
+        )
+        if marker["adminEmail"] != host_config["adminEmail"].strip():
+            raise HostGuestError("host install marker does not bind the selected administrator")
         marker_sha = _digest(marker_data)
         _record(evidence, "host-marker-sha256.txt", (marker_sha + "\n").encode())
         _record(evidence, "host-marker-projection.json", (json.dumps({
             "schemaVersion": marker["schemaVersion"], "image": marker["image"],
-            "https": marker["https"], "markerSHA256": marker_sha,
+            "domain": marker["domain"], "environment": marker["environment"],
+            "https": marker["https"], "targetId": marker["targetId"],
+            "bootstrapPhase": marker["bootstrapPhase"], "generation": marker["generation"],
+            "markerSHA256": marker_sha,
         }, sort_keys=True) + "\n").encode())
         cleanup = (
             "rm -f -- " + " ".join(shlex.quote(paths[key]) for key in ("controller", "config", "bootstrap")) +
@@ -991,15 +1651,33 @@ def _install_and_collect(args) -> dict:
             "{{index .Config.Labels \"com.docker.compose.project\"}} "
             "{{index .Config.Labels \"com.docker.compose.service\"}} {{.State.StartedAt}}' \"$id\""
         )
+        public_bind_config_raw = guest.run(_deployment_caddy_bind_config_command())
+        public_bind_config = _parse_caddy_bind_config(public_bind_config_raw)
+        _record(evidence, "public-caddy-bind-config.txt", public_bind_config_raw)
         pre_inspect = _one_line(_record(evidence, "prereboot-container-inspect.txt", guest.run(inspect_command)), "pre-reboot container inspection")
         pre_parts = pre_inspect.split()
         if len(pre_parts) != 8:
             raise HostGuestError("pre-reboot container inspection returned an unsupported field set")
         pre_container_id, pre_configured_image, pre_image_id, pre_state, pre_health, pre_project, pre_service, pre_started_at = pre_parts
         if (CONTAINER_RE.fullmatch(pre_container_id) is None or pre_configured_image != args.image
-                or pre_image_id != pulled_image_id or pre_state != "running" or pre_health != "healthy"
+                or pre_image_id != pulled_image_id or pre_state != "running" or pre_health not in {"starting", "unhealthy"}
                 or not pre_project or pre_service != "leapview" or not pre_started_at):
-            raise HostGuestError("initial host install did not produce a healthy container on the selected image")
+            raise HostGuestError("initial host install did not produce the selected running image before first publication")
+        private_caddy_before_reboot = _capture_caddy_observation(
+            guest, evidence, docker_env=docker_env, prefix="private-caddy-before-reboot",
+            private=True,
+        )
+        private_app_ports_before_reboot = _capture_application_ports(
+            guest, evidence, docker_env=docker_env, filename="application-port-bindings-before-reboot.json",
+        )
+        _wait_for_http_status(
+            guest, path="/healthz", expected="200", timeout=args.startup_timeout,
+            evidence=evidence, filename="private-bootstrap-healthz-before-reboot.txt",
+        )
+        _wait_for_http_status(
+            guest, path="/readyz", expected="503", timeout=args.startup_timeout,
+            evidence=evidence, filename="private-bootstrap-readyz-before-reboot.txt",
+        )
         postgres_name = postgres_fixture["containerName"]
         postgres_inspect_command = (
             "env " + docker_env + " docker inspect --format '{{.Id}} {{.Image}} {{.State.Status}} "
@@ -1072,7 +1750,7 @@ def _install_and_collect(args) -> dict:
                 probe_history.append({"elapsedSeconds": round(args.startup_timeout - max(0, startup_deadline - time.monotonic()), 3),
                                       "inspection": candidate})
                 if (len(fields) == 8 and fields[0] == pre_container_id and fields[1] == args.image
-                        and fields[2] == pulled_image_id and fields[3] == "running" and fields[4] == "healthy"
+                        and fields[2] == pulled_image_id and fields[3] == "running" and fields[4] in {"starting", "unhealthy"}
                         and fields[5] == pre_project and fields[6] == "leapview" and fields[7] != pre_started_at):
                     inspect_line = candidate
                     break
@@ -1081,11 +1759,36 @@ def _install_and_collect(args) -> dict:
                                       "inspection": "unavailable"})
             time.sleep(5)
         if inspect_line is None:
-            raise HostGuestError("application container did not automatically restart and become healthy")
-        _record(evidence, "automatic-restart-probes.json", (json.dumps(probe_history, sort_keys=True) + "\n").encode())
-        _record(evidence, "container-inspect.txt", (inspect_line + "\n").encode())
-        parts = inspect_line.split()
-        container_id, configured_image, image_id, state, health, project, service, started_at = parts
+            raise HostGuestError("application container did not automatically restart before first publication")
+        _record(evidence, "postreboot-before-publication-container-inspect.txt", (inspect_line + "\n").encode())
+        prepublication_parts = inspect_line.split()
+        _, _, _, _, _, _, _, private_started_at = prepublication_parts
+        private_marker_after_reboot, private_marker_after_reboot_raw = _capture_host_install_marker(
+            guest, evidence, filename="host-marker-private-after-reboot.json",
+            phase=FIRST_INSTALL_PRIVATE_PHASE, image=args.image, target_id=target_id,
+        )
+        if private_marker_after_reboot != marker:
+            raise HostGuestError("pending private-bootstrap marker changed across reboot")
+        private_caddy_after_reboot = _capture_caddy_observation(
+            guest, evidence, docker_env=docker_env, prefix="private-caddy-after-reboot",
+            private=True, expected_image=private_caddy_before_reboot["inspection"]["image"],
+        )
+        private_app_ports_after_reboot = _capture_application_ports(
+            guest, evidence, docker_env=docker_env, filename="application-port-bindings-after-private-reboot.json",
+        )
+        if (private_caddy_after_reboot["portBindings"] != private_caddy_before_reboot["portBindings"]
+                or private_caddy_after_reboot["caddyfileSHA256"] != private_caddy_before_reboot["caddyfileSHA256"]
+                or private_caddy_after_reboot["inspection"]["startedAt"] == private_caddy_before_reboot["inspection"]["startedAt"]
+                or private_app_ports_after_reboot != private_app_ports_before_reboot):
+            raise HostGuestError("private Compose exposure did not survive the pending first-install reboot")
+        _wait_for_http_status(
+            guest, path="/healthz", expected="200", timeout=args.startup_timeout,
+            evidence=evidence, filename="private-bootstrap-healthz-after-reboot.txt",
+        )
+        _wait_for_http_status(
+            guest, path="/readyz", expected="503", timeout=args.startup_timeout,
+            evidence=evidence, filename="private-bootstrap-readyz-after-reboot.txt",
+        )
         status_result = guest.run(
             "set +e; env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview "
             "/opt/leapview/current/leapviewctl status >/dev/null 2>&1; "
@@ -1110,6 +1813,154 @@ def _install_and_collect(args) -> dict:
             "LEAPVIEWCTL_ROOT=/opt/leapview /opt/leapview/current/leapviewctl version --json",
         ))
         app_runtime = _runtime_identity(app_runtime_data, release_identity, "leapviewctl", "installed OCI controller runtime identity")
+        first_publication_report, protected_verifier = _run_first_publication_qualification(
+            guest, evidence, args=args, paths=paths, fixture_secrets=fixture_secrets, image_runtime=app_runtime,
+        )
+        direct_ready = _wait_for_http_status(
+            guest, path="/readyz", expected="200", timeout=args.startup_timeout,
+            evidence=evidence, filename="first-publication-direct-readyz-after.txt",
+        )
+        if first_publication_report["readinessAfter"] != int(direct_ready):
+            raise HostGuestError("protected first-publication readiness differs from the independent loopback probe")
+        private_marker_after_publication, private_marker_after_publication_raw = _capture_host_install_marker(
+            guest, evidence, filename="host-marker-private-after-publication.json",
+            phase=FIRST_INSTALL_PRIVATE_PHASE, image=args.image, target_id=target_id,
+        )
+        if private_marker_after_publication != marker:
+            raise HostGuestError("first publication changed the pending host marker before explicit activation")
+        private_caddy_after_publication = _capture_caddy_observation(
+            guest, evidence, docker_env=docker_env, prefix="private-caddy-after-publication",
+            private=True, expected_image=private_caddy_before_reboot["inspection"]["image"],
+        )
+        private_app_ports_after_publication = _capture_application_ports(
+            guest, evidence, docker_env=docker_env,
+            filename="application-port-bindings-after-publication.json",
+        )
+        if (private_caddy_after_publication["portBindings"] != private_caddy_before_reboot["portBindings"]
+                or private_caddy_after_publication["caddyfileSHA256"] != private_caddy_before_reboot["caddyfileSHA256"]
+                or private_app_ports_after_publication != private_app_ports_before_reboot):
+            raise HostGuestError("first publication changed the private Compose exposure before explicit activation")
+
+        activation_result = guest.run(
+            "set +e; env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview "
+            "/opt/leapview/current/leapviewctl activate-first-install >/dev/null 2>&1; "
+            "result=$?; printf '%s\\n' \"$result\"; exit \"$result\"",
+            timeout=900,
+        )
+        if _one_line(activation_result, "explicit first-install activation result") != "0":
+            raise HostGuestError("installed controller did not explicitly activate the first publication")
+        _record(evidence, "first-install-activation-exit-code.txt", b"0\n")
+        public_marker, public_marker_raw = _capture_host_install_marker(
+            guest, evidence, filename="host-marker-public-after-activation.json",
+            phase=FIRST_INSTALL_PUBLIC_PHASE, image=args.image, target_id=target_id,
+        )
+        expected_public_marker = {**marker, "bootstrapPhase": FIRST_INSTALL_PUBLIC_PHASE}
+        if public_marker != expected_public_marker:
+            raise HostGuestError("public activation changed the immutable host installation configuration")
+        public_caddy_after_activation = _wait_for_caddy_observation(
+            guest, evidence, docker_env=docker_env, prefix="public-caddy-after-activation",
+            private=False, timeout=args.startup_timeout,
+            expected_image=private_caddy_before_reboot["inspection"]["image"],
+            public_config=public_bind_config,
+        )
+        public_app_ports_after_activation = _capture_application_ports(
+            guest, evidence, docker_env=docker_env,
+            filename="application-port-bindings-after-activation.json",
+        )
+        if (public_caddy_after_activation["portBindings"] == private_caddy_after_publication["portBindings"]
+                or public_caddy_after_activation["caddyfileSHA256"] == private_caddy_after_publication["caddyfileSHA256"]
+                or public_app_ports_after_activation != private_app_ports_before_reboot):
+            raise HostGuestError("first-install activation did not switch Caddy while preserving the loopback app listener")
+        _wait_for_http_status(
+            guest, path="/healthz", expected="200", timeout=args.startup_timeout,
+            evidence=evidence, filename="public-activation-healthz.txt",
+        )
+        _wait_for_http_status(
+            guest, path="/readyz", expected="200", timeout=args.startup_timeout,
+            evidence=evidence, filename="public-activation-readyz.txt",
+        )
+        _wait_for_https_readiness(
+            guest, expected="200", timeout=args.startup_timeout, evidence=evidence,
+            filename="public-activation-https-readiness.txt",
+        )
+
+        guest.run("systemctl reboot", timeout=15, allow_disconnect=True)
+        public_boot_after = None
+        public_reboot_deadline = time.monotonic() + args.reboot_timeout
+        while time.monotonic() < public_reboot_deadline:
+            try:
+                candidate = _one_line(guest.run("cat /proc/sys/kernel/random/boot_id", timeout=12), "public-phase reboot ID")
+            except HostGuestError:
+                candidate = None
+            if candidate and candidate != boot_after:
+                public_boot_after = candidate
+                break
+            time.sleep(5)
+        if public_boot_after is None or BOOT_ID_RE.fullmatch(public_boot_after) is None:
+            raise HostGuestError("guest did not return from the public-phase reboot with a new boot ID")
+        _record(evidence, "post-public-reboot-boot-id.txt", (public_boot_after + "\n").encode())
+        public_marker_after_reboot, public_marker_after_reboot_raw = _capture_host_install_marker(
+            guest, evidence, filename="host-marker-public-after-reboot.json",
+            phase=FIRST_INSTALL_PUBLIC_PHASE, image=args.image, target_id=target_id,
+        )
+        if public_marker_after_reboot != public_marker:
+            raise HostGuestError("public host marker phase did not survive the post-activation reboot")
+        public_caddy_after_reboot = _wait_for_caddy_observation(
+            guest, evidence, docker_env=docker_env, prefix="public-caddy-after-reboot",
+            private=False, timeout=args.startup_timeout,
+            expected_image=public_caddy_after_activation["inspection"]["image"],
+            public_config=public_bind_config,
+        )
+        public_app_ports_after_reboot = _capture_application_ports(
+            guest, evidence, docker_env=docker_env,
+            filename="application-port-bindings-after-public-reboot.json",
+        )
+        if (public_caddy_after_reboot["portBindings"] != public_caddy_after_activation["portBindings"]
+                or public_caddy_after_reboot["caddyfileSHA256"] != public_caddy_after_activation["caddyfileSHA256"]
+                or public_caddy_after_reboot["inspection"]["startedAt"] == public_caddy_after_activation["inspection"]["startedAt"]
+                or public_app_ports_after_reboot != private_app_ports_before_reboot):
+            raise HostGuestError("configured HTTPS proxy phase did not survive the public-phase reboot")
+        _wait_for_http_status(
+            guest, path="/healthz", expected="200", timeout=args.startup_timeout,
+            evidence=evidence, filename="public-reboot-healthz.txt",
+        )
+        _wait_for_http_status(
+            guest, path="/readyz", expected="200", timeout=args.startup_timeout,
+            evidence=evidence, filename="public-reboot-readyz.txt",
+        )
+        _wait_for_https_readiness(
+            guest, expected="200", timeout=args.startup_timeout, evidence=evidence,
+            filename="public-reboot-https-readiness.txt",
+        )
+
+        postpublication_inspect = None
+        postpublication_deadline = time.monotonic() + args.startup_timeout
+        while time.monotonic() < postpublication_deadline:
+            try:
+                candidate = _one_line(guest.run(inspect_command, timeout=20), "post-publication container inspection")
+                fields = candidate.split()
+                probe_history.append({
+                    "elapsedSeconds": round(args.startup_timeout - max(0, postpublication_deadline - time.monotonic()), 3),
+                    "inspection": candidate,
+                })
+                if (len(fields) == 8 and fields[0] == pre_container_id and fields[1] == args.image
+                        and fields[2] == pulled_image_id and fields[3] == "running" and fields[4] == "healthy"
+                        and fields[5] == pre_project and fields[6] == "leapview" and fields[7] != private_started_at):
+                    postpublication_inspect = candidate
+                    break
+            except HostGuestError:
+                probe_history.append({
+                    "elapsedSeconds": round(args.startup_timeout - max(0, postpublication_deadline - time.monotonic()), 3),
+                    "inspection": "unavailable",
+                })
+            time.sleep(2)
+        if postpublication_inspect is None:
+            raise HostGuestError("application container did not remain healthy after public activation and reboot")
+        _record(evidence, "automatic-restart-probes.json", (json.dumps(probe_history, sort_keys=True) + "\n").encode())
+        _record(evidence, "container-inspect.txt", (postpublication_inspect + "\n").encode())
+        _record(evidence, "post-public-reboot-container-inspect.txt", (postpublication_inspect + "\n").encode())
+        parts = postpublication_inspect.split()
+        container_id, configured_image, image_id, state, health, project, service, started_at = parts
         _record(evidence, "database-secret-boundary.json", (json.dumps({
             "poolProbeUsedSeparatePrivateEnvironment": True,
             "operationOnlyMigratorURLsAbsentFromServingEnvironment": True,
@@ -1137,6 +1988,46 @@ def _install_and_collect(args) -> dict:
         inventory = qualification._qualification_evidence_inventory(evidence)
     except qualification.QualificationError as exc:
         raise HostGuestError(f"cannot inventory fresh-guest evidence: {exc}") from exc
+
+    first_install_lifecycle = {
+        "targetID": target_id,
+        "privateMarkers": {
+            "afterInstall": marker,
+            "afterPendingReboot": private_marker_after_reboot,
+            "afterPublication": private_marker_after_publication,
+        },
+        "publicMarkers": {
+            "afterActivation": public_marker,
+            "afterPublicReboot": public_marker_after_reboot,
+        },
+        "markerSHA256": {
+            "privateAfterInstall": marker_sha,
+            "privateAfterPendingReboot": _digest(private_marker_after_reboot_raw),
+            "privateAfterPublication": _digest(private_marker_after_publication_raw),
+            "publicAfterActivation": _digest(public_marker_raw),
+            "publicAfterReboot": _digest(public_marker_after_reboot_raw),
+        },
+        "privateCaddy": {
+            "beforePendingReboot": private_caddy_before_reboot,
+            "afterPendingReboot": private_caddy_after_reboot,
+            "afterPublication": private_caddy_after_publication,
+        },
+        "publicCaddy": {
+            "afterActivation": public_caddy_after_activation,
+            "afterPublicReboot": public_caddy_after_reboot,
+        },
+        "publicBindConfig": public_bind_config,
+        "applicationPortBindings": {
+            "beforePendingReboot": private_app_ports_before_reboot,
+            "afterPendingReboot": private_app_ports_after_reboot,
+            "afterPublication": private_app_ports_after_publication,
+            "afterActivation": public_app_ports_after_activation,
+            "afterPublicReboot": public_app_ports_after_reboot,
+        },
+        "bootIDAfterPendingReboot": boot_after,
+        "bootIDAfterPublicReboot": public_boot_after,
+        "activationExitCode": 0,
+    }
 
     receipt = {
         "schemaVersion": SCHEMA_VERSION,
@@ -1190,6 +2081,7 @@ def _install_and_collect(args) -> dict:
                 "service": service,
                 "repoDigests": repo_digests,
                 "startedAtBeforeReboot": pre_started_at,
+                "startedAtAfterPrivateReboot": private_started_at,
                 "startedAtAfterReboot": started_at,
             },
             "markerSHA256": marker_sha,
@@ -1205,6 +2097,16 @@ def _install_and_collect(args) -> dict:
             "postgresFixture": postgres_fixture,
             "physicalPoolArtifactsSHA256": pool_info["poolArtifactsSHA256"],
         },
+        "firstPublication": {
+            "report": first_publication_report,
+            "httpsReadiness": {
+                "url": "https://localhost/readyz",
+                "before": 503,
+                "after": 200,
+            },
+        },
+        "firstInstallLifecycle": first_install_lifecycle,
+        "protectedVerifier": protected_verifier,
         "assertions": {assertion: True for assertion in ASSERTIONS},
         "excludedGates": ["two-image-upgrade-and-rollback", "full-enterprise-publication-journey"],
         "evidenceInventory": inventory,
@@ -1221,11 +2123,184 @@ def _evidence_bytes(root: Path, name: str) -> bytes:
         raise HostGuestError(str(exc)) from exc
 
 
+def _validate_first_install_lifecycle(lifecycle: dict, evidence: Path, *, image: str,
+                                      boot_id_before: str, boot_id_after_pending_reboot: str) -> dict:
+    expected_keys = {
+        "targetID", "privateMarkers", "publicMarkers", "markerSHA256", "privateCaddy", "publicCaddy",
+        "publicBindConfig", "applicationPortBindings", "bootIDAfterPendingReboot", "bootIDAfterPublicReboot",
+        "activationExitCode",
+    }
+    if not isinstance(lifecycle, dict) or set(lifecycle) != expected_keys:
+        raise HostGuestError("receipt lacks the exact private-to-public first-install lifecycle record")
+    target_id = lifecycle["targetID"]
+    if not _safe_qualification_identifier(target_id):
+        raise HostGuestError("first-install lifecycle target identity is invalid")
+    private_names = ("afterInstall", "afterPendingReboot", "afterPublication")
+    public_names = ("afterActivation", "afterPublicReboot")
+    private_markers = lifecycle["privateMarkers"]
+    public_markers = lifecycle["publicMarkers"]
+    if (not isinstance(private_markers, dict) or set(private_markers) != set(private_names)
+            or not isinstance(public_markers, dict) or set(public_markers) != set(public_names)):
+        raise HostGuestError("first-install lifecycle marker phases are incomplete")
+    for name in private_names:
+        _validate_host_install_marker(private_markers[name], phase=FIRST_INSTALL_PRIVATE_PHASE,
+                                      image=image, target_id=target_id)
+    for name in public_names:
+        _validate_host_install_marker(public_markers[name], phase=FIRST_INSTALL_PUBLIC_PHASE,
+                                      image=image, target_id=target_id)
+    private_base = {key: value for key, value in private_markers["afterInstall"].items() if key != "bootstrapPhase"}
+    if any({key: value for key, value in marker.items() if key != "bootstrapPhase"} != private_base
+           for marker in private_markers.values()):
+        raise HostGuestError("private host installation configuration changed before activation")
+    public_base = {key: value for key, value in public_markers["afterActivation"].items() if key != "bootstrapPhase"}
+    if public_base != private_base or any(
+        {key: value for key, value in marker.items() if key != "bootstrapPhase"} != public_base
+        for marker in public_markers.values()
+    ):
+        raise HostGuestError("public activation changed the installed image or generation marker")
+    if public_markers["afterActivation"]["bootstrapPhase"] != FIRST_INSTALL_PUBLIC_PHASE:
+        raise HostGuestError("host marker did not change to public only after explicit activation")
+
+    marker_hashes = lifecycle["markerSHA256"]
+    marker_hash_names = {
+        "privateAfterInstall": ("afterInstall", "host-marker-private-after-install.json"),
+        "privateAfterPendingReboot": ("afterPendingReboot", "host-marker-private-after-reboot.json"),
+        "privateAfterPublication": ("afterPublication", "host-marker-private-after-publication.json"),
+        "publicAfterActivation": ("afterActivation", "host-marker-public-after-activation.json"),
+        "publicAfterReboot": ("afterPublicReboot", "host-marker-public-after-reboot.json"),
+    }
+    if not isinstance(marker_hashes, dict) or set(marker_hashes) != set(marker_hash_names):
+        raise HostGuestError("first-install lifecycle marker digests are incomplete")
+    marker_collections = {**private_markers, **public_markers}
+    generation = _first_install_generation(image)
+    for digest_name, (marker_name, filename) in marker_hash_names.items():
+        raw_marker = _evidence_bytes(evidence, filename)
+        marker = _json(raw_marker, filename)
+        if (not isinstance(marker_hashes[digest_name], str) or SHA256_RE.fullmatch(marker_hashes[digest_name]) is None
+                or _digest(raw_marker) != marker_hashes[digest_name]
+                or _canonical(marker) != _canonical(marker_collections[marker_name])):
+            raise HostGuestError(f"retained installation marker {filename} differs from the lifecycle receipt")
+        link_filename = filename.removesuffix(".json") + "-current-link.txt"
+        mode_filename = filename.removesuffix(".json") + "-owner-mode.txt"
+        if (_one_line(_evidence_bytes(evidence, link_filename), link_filename) != "releases/" + generation
+                or _one_line(_evidence_bytes(evidence, mode_filename), mode_filename) != "0:0:600"):
+            raise HostGuestError(f"installation marker {filename} is not root-owned and bound to current generation")
+    if (lifecycle["markerSHA256"]["privateAfterInstall"] != _one_line(
+            _evidence_bytes(evidence, "host-marker-sha256.txt"), "initial host marker digest")
+            or _one_line(_evidence_bytes(evidence, "host-marker-private-after-install-current-link.txt"),
+                         "initial host marker generation link") != "releases/" + generation):
+        raise HostGuestError("initial host marker digest or active generation evidence differs")
+
+    public_bind_config = lifecycle["publicBindConfig"]
+    if not isinstance(public_bind_config, dict) or set(public_bind_config) != set(CADDY_PUBLIC_BIND_CONFIG.values()):
+        raise HostGuestError("public Compose Caddy listener configuration is incomplete")
+    raw_bind_config = _evidence_bytes(evidence, "public-caddy-bind-config.txt")
+    if _parse_caddy_bind_config(raw_bind_config) != public_bind_config:
+        raise HostGuestError("public Caddy listener configuration differs from installed deployment.env")
+    caddy_groups = {
+        "privateCaddy": ("beforePendingReboot", "afterPendingReboot", "afterPublication"),
+        "publicCaddy": ("afterActivation", "afterPublicReboot"),
+    }
+    caddy_evidence_names = {
+        "beforePendingReboot": "private-caddy-before-reboot",
+        "afterPendingReboot": "private-caddy-after-reboot",
+        "afterPublication": "private-caddy-after-publication",
+        "afterActivation": "public-caddy-after-activation",
+        "afterPublicReboot": "public-caddy-after-reboot",
+    }
+    caddy_image = None
+    for group, names in caddy_groups.items():
+        observations = lifecycle[group]
+        if not isinstance(observations, dict) or set(observations) != set(names):
+            raise HostGuestError(f"first-install {group} observations are incomplete")
+        private = group == "privateCaddy"
+        for name in names:
+            observation = observations[name]
+            if (not isinstance(observation, dict) or set(observation) != {
+                "inspection", "portBindings", "caddyfileSHA256", "domain",
+            } or observation.get("domain") != "localhost"
+                    or not isinstance(observation.get("caddyfileSHA256"), str)
+                    or SHA256_RE.fullmatch(observation["caddyfileSHA256"]) is None):
+                raise HostGuestError(f"first-install Caddy observation {name} has an unsupported schema")
+            validated_inspection = _validate_caddy_inspection(
+                observation["inspection"], image=caddy_image,
+            )
+            if caddy_image is None:
+                caddy_image = validated_inspection["image"]
+            prefix = caddy_evidence_names[name]
+            raw_inspection = _parse_caddy_observation(
+                _evidence_bytes(evidence, prefix + "-docker-inspect.txt"), private=private,
+                image=caddy_image, public_config=public_bind_config if not private else None,
+            )
+            if (raw_inspection["inspection"] != validated_inspection
+                    or raw_inspection["portBindings"] != observation["portBindings"]):
+                raise HostGuestError(f"first-install Caddy observation {name} differs from raw Docker inspection")
+            config = _evidence_bytes(evidence, prefix + "-active-caddyfile.txt")
+            _validate_active_caddyfile(config, private=private)
+            if (_digest(config) != observation["caddyfileSHA256"]
+                    or _one_line(_evidence_bytes(evidence, prefix + "-active-domain.txt"), "active Caddy domain") != "localhost"):
+                raise HostGuestError(f"active Caddy configuration {name} differs from its container receipt")
+    private_observations = lifecycle["privateCaddy"]
+    public_observations = lifecycle["publicCaddy"]
+    if (private_observations["beforePendingReboot"]["portBindings"] != private_observations["afterPendingReboot"]["portBindings"]
+            or private_observations["beforePendingReboot"]["portBindings"] != private_observations["afterPublication"]["portBindings"]
+            or private_observations["beforePendingReboot"]["caddyfileSHA256"] != private_observations["afterPendingReboot"]["caddyfileSHA256"]
+            or private_observations["beforePendingReboot"]["caddyfileSHA256"] != private_observations["afterPublication"]["caddyfileSHA256"]
+            or private_observations["beforePendingReboot"]["inspection"]["startedAt"] == private_observations["afterPendingReboot"]["inspection"]["startedAt"]):
+        raise HostGuestError("private HTTPS proxy phase did not remain loopback-bound across pending reboot and publication")
+    if (public_observations["afterActivation"]["portBindings"] == private_observations["afterPublication"]["portBindings"]
+            or public_observations["afterActivation"]["caddyfileSHA256"] == private_observations["afterPublication"]["caddyfileSHA256"]
+            or public_observations["afterActivation"]["portBindings"] != public_observations["afterPublicReboot"]["portBindings"]
+            or public_observations["afterActivation"]["caddyfileSHA256"] != public_observations["afterPublicReboot"]["caddyfileSHA256"]
+            or public_observations["afterActivation"]["inspection"]["startedAt"] == public_observations["afterPublicReboot"]["inspection"]["startedAt"]):
+        raise HostGuestError("activated Caddy Compose phase did not use configured binds or survive reboot")
+
+    app_bindings = lifecycle["applicationPortBindings"]
+    app_binding_names = {
+        "beforePendingReboot": "application-port-bindings-before-reboot.json",
+        "afterPendingReboot": "application-port-bindings-after-private-reboot.json",
+        "afterPublication": "application-port-bindings-after-publication.json",
+        "afterActivation": "application-port-bindings-after-activation.json",
+        "afterPublicReboot": "application-port-bindings-after-public-reboot.json",
+    }
+    if not isinstance(app_bindings, dict) or set(app_bindings) != set(app_binding_names):
+        raise HostGuestError("application loopback listener observations are incomplete")
+    for name, filename in app_binding_names.items():
+        raw_bindings = _json(_evidence_bytes(evidence, filename), filename)
+        normalized = _validate_application_port_bindings(raw_bindings)
+        if app_bindings[name] != normalized:
+            raise HostGuestError(f"application listener {name} differs from actual Docker port bindings")
+    if any(bindings != app_bindings["beforePendingReboot"] for bindings in app_bindings.values()):
+        raise HostGuestError("application port binding changed across first-install activation")
+
+    if (type(lifecycle.get("activationExitCode")) is not int or lifecycle["activationExitCode"] != 0
+            or _one_line(_evidence_bytes(evidence, "first-install-activation-exit-code.txt"), "first-install activation status") != "0"):
+        raise HostGuestError("first-install public phase lacks a successful explicit activation command")
+    pending_boot, public_boot = lifecycle["bootIDAfterPendingReboot"], lifecycle["bootIDAfterPublicReboot"]
+    if (pending_boot != boot_id_after_pending_reboot or BOOT_ID_RE.fullmatch(pending_boot or "") is None
+            or BOOT_ID_RE.fullmatch(public_boot or "") is None or public_boot in {pending_boot, boot_id_before}):
+        raise HostGuestError("first-install marker phase evidence lacks two distinct reboot identities")
+    if (_one_line(_evidence_bytes(evidence, "post-public-reboot-boot-id.txt"), "post-public reboot ID") != public_boot
+            or _one_line(_evidence_bytes(evidence, "private-bootstrap-healthz-before-reboot.txt"), "private pre-reboot healthz") != "200"
+            or _one_line(_evidence_bytes(evidence, "private-bootstrap-readyz-before-reboot.txt"), "private pre-reboot readyz") != "503"
+            or _one_line(_evidence_bytes(evidence, "private-bootstrap-healthz-after-reboot.txt"), "private post-reboot healthz") != "200"
+            or _one_line(_evidence_bytes(evidence, "private-bootstrap-readyz-after-reboot.txt"), "private post-reboot readyz") != "503"
+            or _one_line(_evidence_bytes(evidence, "first-publication-direct-readyz-after.txt"), "first-publication direct readyz") != "200"
+            or _one_line(_evidence_bytes(evidence, "public-activation-healthz.txt"), "public activation healthz") != "200"
+            or _one_line(_evidence_bytes(evidence, "public-activation-readyz.txt"), "public activation readyz") != "200"
+            or _one_line(_evidence_bytes(evidence, "public-reboot-healthz.txt"), "public reboot healthz") != "200"
+            or _one_line(_evidence_bytes(evidence, "public-reboot-readyz.txt"), "public reboot readyz") != "200"
+            or _one_line(_evidence_bytes(evidence, "public-activation-https-readiness.txt"), "public activation HTTPS") != "200"
+            or _one_line(_evidence_bytes(evidence, "public-reboot-https-readiness.txt"), "public reboot HTTPS") != "200"):
+        raise HostGuestError("private liveness/readiness or public post-activation readiness evidence is incomplete")
+    return lifecycle
+
+
 def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | None = None,
                       expected_platform: str | None = None) -> dict:
     required = {
         "schemaVersion", "scope", "result", "releaseAdmission", "identity", "runner", "guest",
-        "assertions", "excludedGates", "evidenceInventory",
+        "firstPublication", "firstInstallLifecycle", "protectedVerifier", "assertions", "excludedGates", "evidenceInventory",
     }
     if not isinstance(receipt, dict) or set(receipt) != required:
         raise HostGuestError("host guest receipt has an unsupported schema")
@@ -1317,6 +2392,10 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             or BOOT_ID_RE.fullmatch(guest.get("bootIDAfter", "")) is None
             or guest["bootIDBefore"] == guest["bootIDAfter"]):
         raise HostGuestError("host guest receipt lacks a valid automatic reboot identity")
+    first_install_lifecycle = _validate_first_install_lifecycle(
+        receipt["firstInstallLifecycle"], evidence, image=identity["image"],
+        boot_id_before=guest["bootIDBefore"], boot_id_after_pending_reboot=guest["bootIDAfter"],
+    )
     for key in ("nonceSHA256", "manifestSHA256", "sourceCloudImageSHA256", "markerSHA256"):
         if not isinstance(guest.get(key), str) or SHA256_RE.fullmatch(guest[key]) is None:
             raise HostGuestError(f"host guest receipt lacks {key}")
@@ -1326,7 +2405,7 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
     container = guest.get("container")
     if not isinstance(container, dict) or set(container) != {
         "id", "configuredImage", "imageID", "state", "health", "project", "service", "repoDigests",
-        "startedAtBeforeReboot", "startedAtAfterReboot",
+        "startedAtBeforeReboot", "startedAtAfterPrivateReboot", "startedAtAfterReboot",
     }:
         raise HostGuestError("host guest receipt has incomplete container identity")
     if (CONTAINER_RE.fullmatch(container["id"]) is None or container["configuredImage"] != identity["image"]
@@ -1335,6 +2414,9 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
             or not container["project"] or container["service"] != "leapview"
             or not container["startedAtBeforeReboot"] or not container["startedAtAfterReboot"]
             or container["startedAtBeforeReboot"] == container["startedAtAfterReboot"]
+            or not container["startedAtAfterPrivateReboot"]
+            or container["startedAtBeforeReboot"] == container["startedAtAfterPrivateReboot"]
+            or container["startedAtAfterPrivateReboot"] == container["startedAtAfterReboot"]
             or not isinstance(container["repoDigests"], list) or identity["image"] not in container["repoDigests"]):
         raise HostGuestError("host guest receipt container does not match the healthy immutable image")
     expected_generation = "sha256-" + identity["image"].rsplit("sha256:", 1)[1]
@@ -1397,6 +2479,59 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
         raise HostGuestError("host guest receipt does not pass every scoped assertion")
     if receipt["excludedGates"] != ["two-image-upgrade-and-rollback", "full-enterprise-publication-journey"]:
         raise HostGuestError("host guest receipt has an unexpected release-gate scope")
+
+    verifier = receipt["protectedVerifier"]
+    if not isinstance(verifier, dict) or set(verifier) != {
+        "protectedRevision", "verifierSHA256", "qualificationAssetsSHA256",
+    } or REVISION_RE.fullmatch(verifier["protectedRevision"]) is None or any(
+        not isinstance(verifier[key], str) or SHA256_RE.fullmatch(verifier[key]) is None
+        for key in ("verifierSHA256", "qualificationAssetsSHA256")
+    ):
+        raise HostGuestError("host guest receipt lacks the protected first-publication verifier identity")
+    for filename, expected in (
+        ("protected-first-publication-source-revision.txt", verifier["protectedRevision"]),
+        ("protected-first-publication-verifier-sha256.txt", verifier["verifierSHA256"]),
+        ("protected-qualification-assets-sha256.txt", verifier["qualificationAssetsSHA256"]),
+    ):
+        if _one_line(_evidence_bytes(evidence, filename), filename) != expected:
+            raise HostGuestError(f"host guest evidence {filename} differs from its protected verifier binding")
+    assets_manifest = _json(
+        _evidence_bytes(evidence, "protected-qualification-assets-manifest.json"),
+        "protected qualification asset manifest",
+    )
+    if (not isinstance(assets_manifest, dict) or set(assets_manifest) != {"schemaVersion", "assets"}
+            or type(assets_manifest["schemaVersion"]) is not int or assets_manifest["schemaVersion"] != 1
+            or not isinstance(assets_manifest["assets"], dict)
+            or set(assets_manifest["assets"]) != set(PROTECTED_QUALIFICATION_ASSETS)
+            or any(not isinstance(value, str) or SHA256_RE.fullmatch(value) is None
+                   for value in assets_manifest["assets"].values())
+            or _digest(_canonical(assets_manifest)) != verifier["qualificationAssetsSHA256"]):
+        raise HostGuestError("protected qualification asset manifest differs from its receipt digest")
+    first_publication = receipt["firstPublication"]
+    if not isinstance(first_publication, dict) or set(first_publication) != {"report", "httpsReadiness"}:
+        raise HostGuestError("host guest receipt lacks the first-publication subreport and independent readiness probe")
+    report = _validate_first_publication_report(
+        first_publication["report"], image=identity["image"],
+        image_revision=controllers["installedRuntimeIdentity"]["revision"],
+        environment=FIRST_PUBLICATION_ENVIRONMENT,
+    )
+    readiness = first_publication["httpsReadiness"]
+    if (not isinstance(readiness, dict) or set(readiness) != {"url", "before", "after"}
+            or readiness != {"url": "https://localhost/readyz", "before": 503, "after": 200}
+            or report["readinessBefore"] != readiness["before"]
+            or report["readinessAfter"] != readiness["after"]):
+        raise HostGuestError("independent HTTPS readiness probe differs from the first-publication report")
+    retained_first_publication = _json(
+        _evidence_bytes(evidence, "first-publication-report.json"), "retained first-publication report",
+    )
+    if _canonical(retained_first_publication) != _canonical(report):
+        raise HostGuestError("retained first-publication report differs from the receipt subreport")
+    for filename, expected in (
+        ("first-publication-https-readiness-before.txt", str(readiness["before"])),
+        ("first-publication-https-readiness-after.txt", str(readiness["after"])),
+    ):
+        if _one_line(_evidence_bytes(evidence, filename), filename) != expected:
+            raise HostGuestError(f"independent HTTPS readiness evidence {filename} differs from its receipt")
 
     report = _json(_evidence_bytes(evidence, "qualification-report.json"), "host guest qualification report")
     if (not isinstance(report, dict) or set(report) != {
@@ -1473,10 +2608,18 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
     elif any((evidence / filename).exists() for filename in ("source-bootstrap-sha256.txt", "guest-bootstrap-sha256.txt")):
         raise HostGuestError("Nix-controller mode unexpectedly retains bootstrap evidence")
     marker_projection = _json(_evidence_bytes(evidence, "host-marker-projection.json"), "host marker projection")
-    if (not isinstance(marker_projection, dict) or set(marker_projection) != {"schemaVersion", "image", "https", "markerSHA256"}
+    if (not isinstance(marker_projection, dict) or set(marker_projection) != {
+        "schemaVersion", "image", "domain", "environment", "https", "targetId", "bootstrapPhase",
+        "generation", "markerSHA256",
+    }
             or marker_projection["schemaVersion"] != 1 or marker_projection["image"] != identity["image"]
-            or type(marker_projection["https"]) is not bool or marker_projection["markerSHA256"] != guest["markerSHA256"]):
-        raise HostGuestError("host marker projection differs from the installed image or marker hash")
+            or marker_projection["domain"] != "localhost" or marker_projection["environment"] != FIRST_PUBLICATION_ENVIRONMENT
+            or marker_projection["https"] is not True
+            or marker_projection["targetId"] != first_install_lifecycle["targetID"]
+            or marker_projection["bootstrapPhase"] != FIRST_INSTALL_PRIVATE_PHASE
+            or marker_projection["generation"] != guest["generation"]
+            or marker_projection["markerSHA256"] != guest["markerSHA256"]):
+        raise HostGuestError("host marker projection differs from the private install phase or generation")
     repo_digests = _json(_evidence_bytes(evidence, "oci-repo-digests.json"), "OCI RepoDigests")
     if repo_digests != container["repoDigests"]:
         raise HostGuestError("container image digest inventory differs from raw OCI evidence")
@@ -1486,12 +2629,27 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
         raise HostGuestError("container identity differs from raw Docker inspection evidence")
     pre_inspect = _one_line(_evidence_bytes(evidence, "prereboot-container-inspect.txt"), "pre-reboot inspection").split()
     if (len(pre_inspect) != 8 or pre_inspect[0] != container["id"] or pre_inspect[1] != identity["image"]
-            or pre_inspect[2] != container["imageID"] or pre_inspect[3:7] != ["running", "healthy", container["project"], "leapview"]
+            or pre_inspect[2] != container["imageID"] or pre_inspect[3] != "running"
+            or pre_inspect[4] not in {"starting", "unhealthy"}
+            or pre_inspect[5:7] != [container["project"], "leapview"]
             or pre_inspect[7] != container["startedAtBeforeReboot"]
             or container["startedAtBeforeReboot"] == container["startedAtAfterReboot"]):
-        raise HostGuestError("container did not restart from the same running container after reboot")
+        raise HostGuestError("container did not restart from the same running image before first publication")
+    before_publication_inspect = _one_line(
+        _evidence_bytes(evidence, "postreboot-before-publication-container-inspect.txt"),
+        "post-reboot pre-publication inspection",
+    ).split()
+    if (len(before_publication_inspect) != 8 or before_publication_inspect[0] != container["id"]
+            or before_publication_inspect[1] != identity["image"] or before_publication_inspect[2] != container["imageID"]
+            or before_publication_inspect[3] != "running" or before_publication_inspect[4] not in {"starting", "unhealthy"}
+            or before_publication_inspect[5:7] != [container["project"], "leapview"]
+            or before_publication_inspect[7] != container["startedAtAfterPrivateReboot"]):
+        raise HostGuestError("first-publication readiness baseline is not the rebooted candidate container")
     probes = _json(_evidence_bytes(evidence, "automatic-restart-probes.json"), "automatic restart probes")
-    if not isinstance(probes, list) or not probes or probes[-1].get("inspection") != " ".join(inspect_parts):
+    if (not isinstance(probes, list) or not probes
+            or not all(isinstance(probe, dict) and isinstance(probe.get("inspection"), str) for probe in probes)
+            or probes[-1]["inspection"] != " ".join(inspect_parts)
+            or not any(probe["inspection"] == " ".join(before_publication_inspect) for probe in probes)):
         raise HostGuestError("automatic restart probe history does not end at the retained healthy inspection")
     if _json(_evidence_bytes(evidence, "nix-controller-runtime.json"), "Nix controller runtime") != nix_runtime:
         raise HostGuestError("Nix controller identity differs from raw runtime evidence")
@@ -1592,6 +2750,9 @@ def main() -> None:
     operations = parser.add_subparsers(dest="operation", required=True)
     qualify = operations.add_parser("qualify-guest")
     _add_identity_arguments(qualify)
+    qualify.add_argument("--protected-root", type=Path, required=True)
+    qualify.add_argument("--protected-revision", required=True)
+    qualify.add_argument("--first-publication-verifier", type=Path, required=True)
     qualify.add_argument("--host", default="127.0.0.1")
     qualify.add_argument("--port", type=int, required=True)
     qualify.add_argument("--ssh-identity", type=Path, required=True)

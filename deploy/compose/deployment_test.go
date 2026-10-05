@@ -410,7 +410,8 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	ci := read(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	artifacts := read(t, filepath.Join(root, ".github", "workflows", "artifacts.yml"))
 	installed := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_installed.go"))
-	authoring := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authoring.go"))
+	authoring := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authoring.go")) +
+		read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_approval.go"))
 	client := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_client.go"))
 	policy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authorization_policy.go"))
 	deploymentClient := read(t, filepath.Join(root, "internal", "deployment", "api", "gen", "client.apigen.gen.go"))

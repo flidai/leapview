@@ -117,6 +117,9 @@ class ControllerEvidenceTests(unittest.TestCase):
         files = [
             "deploy/compose/compose.yaml",
             "deploy/compose/compose.https.yaml",
+            "deploy/compose/compose.first-install-bootstrap.yaml",
+            "deploy/compose/Caddyfile.first-install-bootstrap",
+            "deploy/compose/first-install.env",
             "deploy/compose/Caddyfile",
             "deploy/compose/README.md",
             "deploy/compose/QUALIFICATION.md",
