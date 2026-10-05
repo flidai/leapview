@@ -182,7 +182,7 @@ RUN set -eu; \
       install -m 0644 "$control_dir/md5sums" "/out/runtime-security/var/lib/dpkg/status.d/$package.md5sums"; \
     done
 
-FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:f525a9a37aed3e8a848f46cfe055999782d66ed797e9e2886928c8caaaa4fc52 AS runtime-base
+FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:984d31d4bd6e71bb9469353d93e73c68f7b3c17142b2aec45f2a960489095b22 AS runtime-base
 COPY --from=runtime-security-update /out/runtime-security/ /
 
 FROM runtime-base AS runtime
