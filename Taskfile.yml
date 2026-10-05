@@ -1317,6 +1317,9 @@ tasks:
       - internal/app/tools/openapidocgen/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/json-ir.json
       - api/gen/openapi.yaml
@@ -1379,6 +1382,9 @@ tasks:
       - internal/agent/contracts/generate/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - internal/agent/contracts/gen/agent-tools-ir.json
       - internal/agent/contracts/gen/agent-tools.schema.json
@@ -1404,6 +1410,9 @@ tasks:
       - internal/analytics/connectors/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/data-resources-ir.json
       - internal/project/contracts/gen/data-resources.schema.json
@@ -1428,6 +1437,9 @@ tasks:
       - api/desktop-discovery/**/*.tsp
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/desktop-discovery-ir.json
       - schemas/desktop/discovery.schema.json
@@ -1490,6 +1502,9 @@ tasks:
       - internal/app/tools/signalcontracts/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/ui-signals-ir.json
       - internal/access/ui/signals/models.gen.go
@@ -1516,6 +1531,9 @@ tasks:
       - scripts/generate_visualization_validator.ts
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/visualization-ir.json
       - internal/dashboard/visualization/ir/models.gen.go
@@ -1543,6 +1561,9 @@ tasks:
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/src/**/*.ts
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/dashboard-ir.json
       - internal/dashboard/document/models.gen.go
@@ -1563,6 +1584,9 @@ tasks:
       - api/pipeline/**/*.tsp
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
     generates:
       - api/gen/pipeline-ir.json
       - internal/project/contracts/pipeline_models.gen.go
