@@ -145,7 +145,20 @@ jobs:
 
       - name: Trace every maintained Go module
         if: matrix.language == 'go'
-        run: '"$RUNNER_TEMP/securitysast" build -root .'
+        # The pinned action cannot trace a static Go program as the build entry
+        # point. Keep compiler invocations in the runner's dynamic system shell;
+        # retain the initialized CodeQL PATH and locked compiler environment.
+        shell: /bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          "$RUNNER_TEMP/securitysast" modules -root . > "$RUNNER_TEMP/security-sast-modules"
+          while IFS= read -r -d '' module; do
+            (
+              cd -- "$module"
+              echo "Tracing Go module: $module"
+              go list -mod=readonly -deps -tags=duckdb_arrow ./...
+              go build -a -p=2 -mod=readonly -tags=duckdb_arrow ./...
+            )
+          done < "$RUNNER_TEMP/security-sast-modules"
 
       - name: Analyze selected source language
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2

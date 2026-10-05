@@ -41,38 +41,14 @@ surfaces:
 	return root
 }
 
-func TestBuildUsesEveryInventoriedModuleAndForcesReadOnlyCompilation(t *testing.T) {
+func TestModuleDirectoriesUseEveryInventoriedModule(t *testing.T) {
 	root := moduleFixture(t)
-	var calls []string
-	err := buildModules(context.Background(), root, func(_ context.Context, dir string, args ...string) error {
-		rel, _ := filepath.Rel(root, dir)
-		calls = append(calls, rel+": "+strings.Join(args, " "))
-		return nil
-	})
+	modules, err := moduleDirectories(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ".: list -mod=readonly -deps -tags=duckdb_arrow ./...\n.: build -a -p=2 -mod=readonly -tags=duckdb_arrow ./...\nnested: list -mod=readonly -deps -tags=duckdb_arrow ./...\nnested: build -a -p=2 -mod=readonly -tags=duckdb_arrow ./..."
-	if strings.Join(calls, "\n") != want {
-		t.Fatalf("calls = %v", calls)
-	}
-}
-
-func TestBuildPropagatesFailureAndStops(t *testing.T) {
-	for _, failedCall := range []int{1, 2, 3, 4} {
-		t.Run(fmt.Sprint(failedCall), func(t *testing.T) {
-			calls := 0
-			err := buildModules(context.Background(), moduleFixture(t), func(context.Context, string, ...string) error {
-				calls++
-				if calls == failedCall {
-					return fmt.Errorf("missing generated package")
-				}
-				return nil
-			})
-			if err == nil || !strings.Contains(err.Error(), "missing generated package") || calls != failedCall {
-				t.Fatalf("calls=%d error=%v", calls, err)
-			}
-		})
+	if len(modules) != 2 || modules[0] != root || modules[1] != filepath.Join(root, "nested") {
+		t.Fatalf("modules=%v", modules)
 	}
 }
 
@@ -108,10 +84,7 @@ func TestBuildRejectsIncompleteAndUnsafeInventory(t *testing.T) {
 			if err := os.WriteFile(file, data, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			err := buildModules(context.Background(), root, func(context.Context, string, ...string) error {
-				t.Fatal("must not build invalid inventory")
-				return nil
-			})
+			_, err := moduleDirectories(root)
 			if err == nil {
 				t.Fatal("accepted invalid inventory")
 			}
@@ -254,7 +227,7 @@ func TestSARIFHealth(t *testing.T) {
 }
 
 func TestCLIRejectsMissingSARIFAndInvalidCommands(t *testing.T) {
-	for _, args := range [][]string{nil, {"unknown"}, {"sarif"}, {"sarif", "-input", filepath.Join(t.TempDir(), "missing.sarif"), "-category", "/language:go"}, {"build", "unexpected"}, {"integrity", "-revision", "HEAD"}} {
+	for _, args := range [][]string{nil, {"unknown"}, {"sarif"}, {"sarif", "-input", filepath.Join(t.TempDir(), "missing.sarif"), "-category", "/language:go"}, {"modules", "unexpected"}, {"integrity", "-revision", "HEAD"}} {
 		if err := run(context.Background(), args); err == nil {
 			t.Errorf("accepted %v", args)
 		}
@@ -294,5 +267,19 @@ func TestSARIFDescriptorReferencesAndDiagnosticLocations(t *testing.T) {
 				t.Fatalf("descriptor validity: %v", err)
 			}
 		})
+	}
+}
+
+func TestRawHostedJavaScriptHealthFixture(t *testing.T) {
+	data, err := os.ReadFile("testdata/javascript-raw-health.sarif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSARIF(data, "/language:javascript-typescript"); err != nil {
+		t.Fatal(err)
+	}
+	warning := strings.Replace(string(data), `"level": "none"`, `"level": "warning"`, 1)
+	if err := validateSARIF([]byte(warning), "/language:javascript-typescript"); err == nil {
+		t.Fatal("injected warning accepted")
 	}
 }

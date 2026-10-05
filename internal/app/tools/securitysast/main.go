@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -24,7 +23,7 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("expected build, integrity, or sarif subcommand")
+		return fmt.Errorf("expected modules, integrity, or sarif subcommand")
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	root := flags.String("root", ".", "repository root")
@@ -42,14 +41,17 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	switch args[0] {
-	case "build":
-		return buildModules(ctx, absRoot, func(ctx context.Context, dir string, args ...string) error {
-			fmt.Fprintf(os.Stdout, "SAST Go module %s: go %v\n", dir, args)
-			cmd := exec.CommandContext(ctx, "go", args...)
-			cmd.Dir, cmd.Stdout, cmd.Stderr = dir, os.Stdout, os.Stderr
-			// Inherit CodeQL's tracer and the shared compiler environment intact.
-			return cmd.Run()
-		})
+	case "modules":
+		modules, err := moduleDirectories(absRoot)
+		if err != nil {
+			return err
+		}
+		for _, dir := range modules {
+			if _, err := fmt.Fprintf(os.Stdout, "%s\x00", dir); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "integrity":
 		return checkIntegrity(ctx, absRoot, *revision)
 	case "sarif":

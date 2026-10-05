@@ -1,7 +1,9 @@
 package securitycontracts
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -503,5 +505,73 @@ func TestSASTPreparationUsesSequentialGenerationAndBootstrapsAPI(t *testing.T) {
 		if task.Cmds[i].Task != name {
 			t.Errorf("generation step %d: %q, want %q", i, task.Cmds[i].Task, name)
 		}
+	}
+}
+
+func TestSASTShellBuildPreservesTracingAndPropagatesCommandFailures(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Linux SAST runner contract")
+	}
+	var document struct {
+		Jobs map[string]struct {
+			Steps []struct{ Name, Run, Shell string } `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(repositoryYAML(t, ".github/workflows/security.yml")), &document); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for _, step := range document.Jobs["sast-validation"].Steps {
+		if step.Name == "Trace every maintained Go module" {
+			script = step.Run
+			if step.Shell != "/bin/bash --noprofile --norc -eo pipefail {0}" {
+				t.Fatal("manual Go tracing must enter through the dynamic system shell")
+			}
+		}
+	}
+	if script == "" {
+		t.Fatal("missing build step")
+	}
+	for _, failAt := range []int{0, 1, 2, 3, 4} {
+		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
+			root := t.TempDir()
+			nested := filepath.Join(root, "module with space")
+			if err := os.Mkdir(nested, 0700); err != nil {
+				t.Fatal(err)
+			}
+			write := func(name, body string, mode os.FileMode) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, name), []byte(body), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("modules", root+"\x00"+nested+"\x00", 0600)
+			write("securitysast", "#!/bin/bash\ncat \"$TEST_MODULES\"\n", 0700)
+			write("go", `#!/bin/bash
+printf '%s: %s\n' "$PWD" "$*" >> "$TEST_CALLS"
+count=$(wc -l < "$TEST_CALLS")
+if [ "$count" -eq "$TEST_FAIL" ]; then exit 23; fi
+`, 0700)
+			write("build.sh", script, 0600)
+			calls := filepath.Join(root, "calls")
+			cmd := exec.Command("/bin/bash", "--noprofile", "--norc", "-eo", "pipefail", filepath.Join(root, "build.sh"))
+			cmd.Env = append(os.Environ(), "RUNNER_TEMP="+root, "PATH="+root+":"+os.Getenv("PATH"), "TEST_MODULES="+filepath.Join(root, "modules"), "TEST_CALLS="+calls, fmt.Sprintf("TEST_FAIL=%d", failAt))
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != (failAt == 0) {
+				t.Fatalf("failure=%d err=%v output=%s", failAt, err, output)
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			expected := []string{root + ": list -mod=readonly -deps -tags=duckdb_arrow ./...", root + ": build -a -p=2 -mod=readonly -tags=duckdb_arrow ./...", nested + ": list -mod=readonly -deps -tags=duckdb_arrow ./...", nested + ": build -a -p=2 -mod=readonly -tags=duckdb_arrow ./..."}
+			if failAt > 0 {
+				expected = expected[:failAt]
+			}
+			if strings.Join(lines, "\n") != strings.Join(expected, "\n") {
+				t.Fatalf("calls=%q want=%q", lines, expected)
+			}
+		})
 	}
 }

@@ -201,3 +201,12 @@ The repository and authenticated SARIF traces provide the case-specific evidence
 - [GitHub: resolving alerts](https://docs.github.com/en/code-security/how-tos/manage-security-alerts/manage-code-scanning-alerts/resolve-alerts), [merge-protection limitations](https://docs.github.com/en/code-security/concepts/code-scanning/merge-protection), and [setting merge protection](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/manage-your-configuration/set-merge-protection): narrow triage and separation of status checks from vulnerability policy.
 
 Implementation finding: clean-workspace TypeScript test checking also requires `docs/visuals/examples.gen.json`. Add `visual-docs:generate` to sequential SAST preparation, using its existing offline extension preparation dependencies. This was exposed by the new type-check gate.
+
+Hosted finding (5 October): a statically linked Go helper must not be the manual
+build entry point. The pinned CodeQL action documents that limitation in
+`src/init-action.ts` and wraps Go in a dynamic shell. The helper now emits the
+validated module inventory as NUL-separated paths; the workflow invokes all
+compiler commands directly from `/bin/bash`, retaining CodeQL's initialized
+PATH and the locked compiler environment. Run 37263931523 proves missing raw
+SARIF fails the health step and propagates to Security gate. Its JavaScript
+analysis passed with 817 successful extraction notifications and no findings.
