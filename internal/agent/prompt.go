@@ -152,6 +152,18 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if err != nil {
 		return nil, err
 	}
+	if hasUnansweredTurn(initial) {
+		// Queued cancellations and older failed runs may have terminalized
+		// before any assistant message was persisted. Close that historical
+		// model turn while preserving genuine prepared/running prompts.
+		runs, err := s.repo.ListRunsPage(ctx, input.Scope.PrincipalID, input.ConversationID, Page{Limit: 1})
+		if err != nil {
+			return nil, err
+		}
+		if len(runs) > 0 && (runs[0].Status == RunStatusCanceled || runs[0].Status == RunStatusFailed) {
+			initial = closeUnansweredTurn(initial, runs[0].Status)
+		}
+	}
 	systemPrompt, err := s.systemPrompt(ctx)
 	if err != nil {
 		return nil, err
@@ -595,6 +607,11 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 	} else if errors.Is(promptErr, context.DeadlineExceeded) {
 		cause = RunCauseDeadlineExceeded
 	}
+	if status == RunStatusCanceled || status == RunStatusFailed {
+		// A stopped turn with no assistant output otherwise looks like a
+		// prepared prompt on the next request, preventing Continue or retry.
+		transcript = closeUnansweredTurn(transcript, status)
+	}
 	atomicCompletion := false
 	if p.claimID != "" && s.runWorkflowAvailable() {
 		if completion, ok := s.repo.(RunCompletionWorkflow); ok {
@@ -671,6 +688,30 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		StopReason:     result.StopReason,
 		Content:        result.FinalMessage.Content,
 	}, nil
+}
+
+func closeUnansweredTurn(transcript []agentcore.Message, status string) []agentcore.Message {
+	if !hasUnansweredTurn(transcript) {
+		return transcript
+	}
+	text := "Response stopped."
+	if status == RunStatusFailed {
+		text = "The response could not be completed."
+	}
+	return append(transcript, agentcore.Message{ID: newID("msg"), Role: agentcore.RoleAssistant, Content: text, FinishReason: agentcore.FinishReasonTruncated})
+}
+
+func hasUnansweredTurn(transcript []agentcore.Message) bool {
+	for i := len(transcript) - 1; i >= 0; i-- {
+		message := transcript[i]
+		if message.Role == agentcore.RoleAssistant {
+			return false
+		}
+		if message.Role == agentcore.RoleUser && message.Kind != agentcore.MessageKindExternalContext {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *StartedPrompt) Abort(ctx context.Context, runErr error) error {

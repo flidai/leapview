@@ -189,5 +189,12 @@ func TestCancelChatRunCancelsQueuedJobBeforeLocalPlaceholder(t *testing.T) {
 	if service.ConversationRunning(conversation.ID) {
 		t.Fatal("queued cancellation left the local durable placeholder running")
 	}
+	continued, err := service.StartPrompt(t.Context(), agent.PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Continue your previous response from where you stopped."})
+	if err != nil {
+		t.Fatalf("continue after queued cancellation: %v", err)
+	}
+	if err := continued.Abort(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
 
 }

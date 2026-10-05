@@ -360,7 +360,7 @@ export class DashboardFilterLeaf extends LitElement {
       return
     }
     this.dropdownOpen = toggleAnchoredPopover(trigger, popover, {
-      minWidth: this.presentation?.search ? 240 : 0,
+      minWidth: this.presentation?.search ? 240 : 200,
     })
     if (!this.dropdownOpen) return
     this.requestOptions()

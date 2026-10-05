@@ -741,3 +741,41 @@ test('side agent keeps the composer visible and starter prompts never submit aut
     await drawer.getByRole('status', { name: 'Working' }).waitFor()
   } finally { await page.close() }
 })
+
+for (const { width, embedded } of [{ width: 1440, embedded: false }, { width: 390, embedded: false }, { width: 390, embedded: true }]) {
+  test(`dashboard chat expands in place and preserves its draft, files, and page on ${width}px${embedded ? ' embedded' : ''}`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    try {
+      await page.goto(baseURL)
+      await page.getByRole('button', { name: 'Toggle dashboard agent', exact: true }).click()
+      const drawer = page.locator('lv-chat-drawer')
+      if (embedded) await drawer.evaluate((element: any) => { element.embedded = true })
+      const composer = drawer.locator('lv-chat-composer')
+      await composer.getByRole('combobox').fill('Keep this unsent dashboard question')
+      await composer.locator('input[type=file]').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment') })
+      await composer.locator('.file-chip').waitFor()
+      await page.locator('lv-dashboard-page').evaluate((host: any) => {
+        const drawer = host.shadowRoot.querySelector('lv-chat-drawer')
+        ;(window as any).auditOriginalNodes = { host, drawer, composer: drawer.shadowRoot.querySelector('lv-chat-composer'), canvas: host.shadowRoot.querySelector('lv-report-canvas') }
+      })
+      const beforeURL = page.url()
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).click()
+      expect(await drawer.evaluate((element: any) => ({ expanded: element.expanded, width: Math.round(element.getBoundingClientRect().width) }))).toEqual({ expanded: true, width })
+      expect(await drawer.locator('.title').isVisible()).toBe(true)
+      expect(await drawer.evaluate(element => ({ top: Math.round(element.getBoundingClientRect().top), height: Math.round(element.getBoundingClientRect().height) }))).toEqual({ top: 0, height: 900 })
+      await drawer.getByRole('button', { name: 'Shrink chat', exact: true }).click()
+      expect(page.url()).toBe(beforeURL)
+      expect(await composer.getByRole('combobox').inputValue()).toBe('Keep this unsent dashboard question')
+      expect(await composer.locator('.file-chip').innerText()).toContain('notes.txt')
+      expect(await page.locator('lv-dashboard-page').evaluate((host: any) => {
+        const nodes = (window as any).auditOriginalNodes
+        const drawer = host.shadowRoot.querySelector('lv-chat-drawer')
+        return host === nodes.host && drawer === nodes.drawer && drawer.shadowRoot.querySelector('lv-chat-composer') === nodes.composer && host.shadowRoot.querySelector('lv-report-canvas') === nodes.canvas
+      })).toBe(true)
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).click()
+      await page.goBack()
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).waitFor()
+      expect(await composer.getByRole('combobox').inputValue()).toBe('Keep this unsent dashboard question')
+    } finally { await page.close() }
+  }, 15000)
+}

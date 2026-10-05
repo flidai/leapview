@@ -1,6 +1,15 @@
 import { css } from 'lit'
 
 export const chatComposerStyles = css`
+    .file-input { display: none; }
+    .attached-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .file-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); font: var(--lv-type-caption); }
+    .file-chip>span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-chip svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .file-chip button { display: flex; border: 0; background: transparent; color: inherit; cursor: pointer; }
+    .file-status,.file-error { margin: 0 0 8px; font: var(--lv-type-caption); color: var(--lv-fg-muted); }
+    .file-error { color: var(--lv-fg-danger); }
+    .file-drop-hint { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; border: 2px dashed var(--lv-accent); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); color: var(--lv-fg-default); pointer-events: none; }
     :host {
       position: relative;
       display: block;

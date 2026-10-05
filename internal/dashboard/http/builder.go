@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	nethttp "net/http"
 	"net/url"
 	"sort"
@@ -65,6 +66,10 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeBuilderError(w, r, authoring.ErrStaleRevision)
 		return
 	}
+	if r.URL.Query().Get("builderReceipt") == "1" {
+		h.renderBuilderSignalReceipt(w, r, h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder))
+		return
+	}
 	envelope := dashboardBuilderEnvelope(builder)
 	csrfToken := ""
 	if h.CSRFToken != nil {
@@ -112,6 +117,7 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeBuilderError(w, r, errors.New("dashboard authoring create operation is unavailable"))
 		return
 	}
+	r.Body = nethttp.MaxBytesReader(w, r.Body, 4<<20)
 	if err := r.ParseForm(); err != nil {
 		writeBuilderError(w, r, fmt.Errorf("read dashboard draft form: %w", err))
 		return
@@ -119,6 +125,22 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 	idempotencyKey, err := browserFormRequestID(r)
 	if err != nil {
 		writeBuilderError(w, r, err)
+		return
+	}
+	if savedID := r.FormValue("savedVisualId"); savedID != "" {
+		if h.SavedVisuals == nil {
+			writeBuilderError(w, r, access.ErrForbidden)
+			return
+		}
+		saved, err := h.SavedVisuals.SavedVisual(r.Context(), project.String(), h.currentActor(r), savedID)
+		if err != nil {
+			writeBuilderError(w, r, err)
+			return
+		}
+		r.Form.Set("chatVisuals", "["+saved.DefinitionJSON+"]")
+	}
+	if r.FormValue("chatVisuals") != "" {
+		h.createChatDashboard(w, r, project, idempotencyKey)
 		return
 	}
 	semanticModel, err := projectgraph.NewResourceID(strings.TrimSpace(r.FormValue("semanticModel")))
@@ -546,35 +568,9 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
-	if command.SetPlacements != nil || command.UpdatePageLayout != nil {
-		// Moving, resizing, or changing the page canvas cannot change a visual's
-		// query or renderer envelope. Recompile only to bind the new authored
-		// revision to the active semantic generation, then leave the existing
-		// preview and filter signals untouched in the browser. Republishing (and
-		// especially clear-first replacing) builderVisuals here makes every
-		// renderer reload for a layout-only edit.
-		envelope := dashboardBuilderEnvelope(builder)
-		if compiled, compileErr := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
-			ProjectID: project, ActorID: actorID,
-			DashboardID: authoring.DashboardID(strings.TrimSpace(builder.DashboardID)),
-			DraftID:     authoring.DraftID(strings.TrimSpace(builder.DraftID)),
-			ExpectedRevision: authoring.RevisionToken{
-				RevisionID: authoring.RevisionID(strings.TrimSpace(builder.Revision.ID)), Number: uint64(maxInt64(builder.Revision.Number)), ContentHash: strings.TrimSpace(builder.Revision.ContentHash),
-			},
-		}); compileErr == nil {
-			envelope.Runtime.ServingStateID = optionalRuntimeString(builderServingStateIDForGeneration(builder, compiled.SemanticEvidence.Identity.GenerationID))
-		} else {
-			envelope.Runtime.ServingStateID = optionalRuntimeString(builderServingStateID(builder))
-		}
-		envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
-		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-			"builder":      envelope.Builder,
-			"agentContext": ui.DashboardBuilderAgentContext(envelope),
-			"runtime":      envelope.Runtime,
-			"status":       uisignals.DashboardStatus{Loading: false},
-		})
-		return
-	}
+	// Every authored revision gets its own preview serving identity, including
+	// layout edits. Publish the matching envelopes with that identity; leaving
+	// the old envelopes in place makes the browser reject all chart previews.
 	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
 	envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
 	// Datastar applies JSON merge-patch semantics. A complete visualization
@@ -880,6 +876,7 @@ type dashboardBuilderCommandSignal struct {
 	Color                     string                            `json:"color"`
 	Placement                 *document.DashboardPlacement      `json:"placement,omitempty"`
 	Placements                []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
+	FillMissingFields         bool                              `json:"fillMissingFields,omitempty"`
 	Column                    int32                             `json:"column,omitempty"`
 	Row                       int32                             `json:"row,omitempty"`
 	ColumnSpan                int32                             `json:"columnSpan,omitempty"`
@@ -1000,7 +997,7 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 				Column: s.Column, Row: s.Row, ColumnSpan: s.ColumnSpan, RowSpan: s.RowSpan, Col: s.Col, ColSpan: s.ColSpan,
 			}.placementUpdate())
 		}
-		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements}
+		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements, FillMissingFields: s.FillMissingFields}
 	case "add_filter":
 		command.AddFilter = &authoring.AddFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Dimension: strings.TrimSpace(s.FieldID), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType)}
 	case "add_slicer":
@@ -1396,6 +1393,9 @@ func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) 
 		return
 	}
 	message := "dashboard builder unavailable"
+	if status == nethttp.StatusInternalServerError {
+		slog.ErrorContext(r.Context(), "dashboard builder request failed", "path", r.URL.Path, "error", err)
+	}
 	switch status {
 	case nethttp.StatusForbidden:
 		message = "forbidden"

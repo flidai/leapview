@@ -21,6 +21,7 @@ export function DatastarLit<T extends Constructor<ReactiveElement>>(
   abstract class DatastarLit extends Base {
     #renderDispose: Dispose | null = null
     #connected = false
+    #signalSnapshots: WeakMap<object, unknown> | null = null
 
     override connectedCallback(): void {
       this.#connected = true
@@ -36,6 +37,18 @@ export function DatastarLit<T extends Constructor<ReactiveElement>>(
 
     override performUpdate(): void {
       if (!this.isUpdatePending) return
+      // Several route getters read the same transcript or datasets during
+      // render and updated. Materialize each tree once for this update only;
+      // the next effect must traverse it again to track fresh signal values.
+      this.#signalSnapshots = new WeakMap()
+      try {
+        this.#performSignalUpdate()
+      } finally {
+        this.#signalSnapshots = null
+      }
+    }
+
+    #performSignalUpdate(): void {
       const activeRuntime = runtime()
       if (!activeRuntime) {
         super.performUpdate()
@@ -69,7 +82,7 @@ export function DatastarLit<T extends Constructor<ReactiveElement>>(
 
     signal<T>(path: string, fallback: T): T {
       const value = runtime()?.getPath<T>(path)
-      return materializeSignal(value === undefined ? fallback : value)
+      return materializeSignal(value === undefined ? fallback : value, this.#signalSnapshots)
     }
   }
 
@@ -109,14 +122,21 @@ async function afterInitialSignalScan(): Promise<void> {
   })
 }
 
-function materializeSignal<T>(value: T): T {
+function materializeSignal<T>(value: T, snapshots: WeakMap<object, unknown> | null): T {
+  if (value && typeof value === 'object' && snapshots?.has(value)) {
+    return snapshots.get(value) as T
+  }
   if (Array.isArray(value)) {
-    return value.map((item) => materializeSignal(item)) as T
+    const out: unknown[] = new Array(value.length)
+    snapshots?.set(value, out)
+    value.forEach((item, index) => { out[index] = materializeSignal(item, snapshots) })
+    return out as T
   }
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {}
+    snapshots?.set(value, out)
     for (const key of Object.keys(value)) {
-      out[key] = materializeSignal((value as Record<string, unknown>)[key])
+      out[key] = materializeSignal((value as Record<string, unknown>)[key], snapshots)
     }
     return out as T
   }

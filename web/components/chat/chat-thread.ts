@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Check, Copy, FileText, LayoutDashboard, LayoutPanelTop, Pencil, Waypoints, Wrench, type IconNode } from 'lucide'
+import { ChevronRight, Check, Copy, FileText, Save, Plus, LayoutDashboard, LayoutPanelTop, Pencil, Waypoints, Wrench, type IconNode } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
@@ -10,6 +10,7 @@ import { chatThreadStyles } from './chat-thread-styles'
 import '../shared/markdown-view'
 import '../shared/code-block'
 import '../shared/visual-artifact'
+import { readAttachedMessage } from './attachments'
 
 type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
@@ -43,6 +44,11 @@ class ChatThread extends LitElement {
   @property({ attribute: 'status', converter: jsonConverter<ChatStatus>({ enabled: false, running: false }) }) status: ChatStatus = { enabled: false, running: false }
   @property({ attribute: 'conversation-id' }) conversationId = ''
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
+  @property({ type: Boolean }) dashboardPreviewAvailable = false
+  @property({ attribute: false }) selectedVisualId = ''
+  @property({ attribute: false }) savedVisualIds: string[] = []
+  @property({ attribute: false }) savingVisualId = ''
+  @state() private expandedVisuals = new Set<string>()
   @state() private expandedToolCalls = new Set<string>()
   @state() private copiedId = ''
   @state() private copyError = ''
@@ -137,7 +143,8 @@ class ChatThread extends LitElement {
 
 	private renderUserTurn(item: ChatTranscriptItemSignal) {
 		const references = item.references ?? []
-		if (references.length === 0) return html`<article class="message user">${this.renderBubble(item.text || '-', false)}${item.edited ? html`<span class="edited-label">Edited</span>` : nothing}${this.messageActions(item.id, item.text || '', item, true)}</article>`
+		const message = readAttachedMessage(item.text || '-')
+		if (references.length === 0 && message.files.length === 0) return html`<article class="message user">${this.renderBubble(item.text || '-', false)}${item.edited ? html`<span class="edited-label">Edited</span>` : nothing}${this.messageActions(item.id, item.text || '', item, true)}</article>`
 		return html`
 			<article class="message user">
 				<div class="bubble plain user-turn-bubble">
@@ -154,7 +161,8 @@ class ChatThread extends LitElement {
 							`
 						})}
 					</div>
-					<div class="turn-message-text">${item.text || '-'}</div>
+					<div class="turn-message-text">${message.text}</div>
+          ${message.files.map(file => html`<details class="message-attachment"><summary>${lucideIcon(FileText)} ${file.name}</summary><pre>${file.text}</pre></details>`)}
 				</div>
 				${item.edited ? html`<span class="edited-label">Edited</span>` : nothing}${this.messageActions(item.id, item.text || '', item, true)}
 			</article>
@@ -245,6 +253,7 @@ class ChatThread extends LitElement {
     const detailsID = toolDetailsID(key)
     const expanded = this.expandedToolCalls.has(key)
     const stateLabel = statusLabel(status)
+    if (status === 'complete' && item.artifact && this.dashboardPreviewAvailable) return this.renderArtifact(item.artifact)
     return html`
       <div
         class=${['tool-call', item.artifact ? 'has-artifact' : '', status === 'running' ? 'running' : '', status === 'complete' ? 'done' : '', status === 'error' ? 'error' : '', status === 'interrupted' ? 'interrupted' : ''].filter(Boolean).join(' ')}
@@ -271,7 +280,55 @@ class ChatThread extends LitElement {
 
   private renderArtifact(artifact: ChatArtifactSignal) {
     const payload = this.resolvedVisuals[artifact.id] || null
-    return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null}></lv-visual-artifact>`
+    const title = payload?.spec.title || artifact.summary || 'Visual'
+    if (this.dashboardPreviewAvailable) {
+      const kind = payload?.spec.kind ?? artifact.type
+      const label = kind === 'kpi' ? 'Metric' : ['table', 'matrix', 'pivot'].includes(kind) ? 'Table' : 'Chart'
+      return html`
+        <button class="visual-reference" type="button" aria-label=${`Open ${title} in visuals sidebar`}
+          aria-pressed=${this.selectedVisualId === artifact.id}
+          @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-dashboard-preview', {
+            detail: { artifactId: artifact.id }, bubbles: true, composed: true,
+          }))}>
+          <span class="visual-reference-icon">${lucideIcon(LayoutPanelTop)}</span>
+          <span class="visual-reference-copy"><span class="visual-reference-title">${title}</span><span class="visual-reference-hint">${label} · Open details</span></span>
+          <span class="visual-reference-chevron">${lucideIcon(ChevronRight)}</span>
+        </button>
+      `
+    }
+    const expanded = this.expandedVisuals.has(artifact.id)
+    return html`
+      <button class="dashboard-preview-link" type="button" aria-expanded=${expanded} @click=${() => {
+        const next = new Set(this.expandedVisuals)
+        if (expanded) next.delete(artifact.id)
+        else next.add(artifact.id)
+        this.expandedVisuals = next
+      }}>${lucideIcon(LayoutPanelTop)} ${expanded ? 'Hide visual' : 'View inside'}</button>
+      ${expanded ? html`${this.renderArtifactActions(artifact.id)}<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null}></lv-visual-artifact>` : nothing}
+    `
+  }
+
+  private renderArtifactActions(id: string) {
+    const saved = this.savedVisualIds.includes(id)
+    const save = (add: boolean) => this.dispatchEvent(new CustomEvent('lv-save-agent-visual', {
+      bubbles: true, composed: true, detail: { artifactId: id, add },
+    }))
+    return html`<div class="artifact-actions">
+      <button type="button" ?disabled=${Boolean(this.savingVisualId)} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => save(false)}>${lucideIcon(saved ? Check : Save)} ${this.savingVisualId === id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>
+      <button type="button" ?disabled=${Boolean(this.savingVisualId)} @click=${() => save(true)}>${lucideIcon(Plus)} Add to dashboard</button>
+    </div>`
+  }
+
+  captureScroll(): { top: number; autoScroll: boolean } {
+    return { top: this.renderRoot.querySelector<HTMLElement>('.scroll')?.scrollTop ?? 0, autoScroll: this.shouldAutoScroll }
+  }
+
+  restoreScroll(position: { top: number; autoScroll: boolean }): void {
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
+    const scroll = this.renderRoot.querySelector<HTMLElement>('.scroll')
+    if (scroll) scroll.scrollTop = position.top
+    this.shouldAutoScroll = position.autoScroll
   }
 
   private renderToolDetails(item: ChatTranscriptItemSignal, detailsID: string) {

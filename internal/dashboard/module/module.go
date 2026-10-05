@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/api"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	appearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -350,7 +351,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		usageNow = time.Now
 	}
 	telemetry := config.HTTP.Telemetry
+	var savedVisuals authoring.SavedVisualStore
+	if config.NativePersistence != nil {
+		savedVisuals = config.NativePersistence.authoring
+	}
 	handler := dashboardhttp.Handler{
+		SavedVisuals:               savedVisuals,
 		Metrics:                    config.HTTP.Metrics,
 		ProjectID:                  config.HTTP.ProjectID,
 		ResolveProjectID:           config.HTTP.ResolveProjectID,

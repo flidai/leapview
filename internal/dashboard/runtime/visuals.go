@@ -31,55 +31,131 @@ type VisualizationDataService struct {
 }
 
 func (s *VisualizationDataService) visuals(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, keys []string) (map[string]visualizationir.VisualizationEnvelope, error) {
+	return s.visualsWithConcurrency(ctx, runtime, report, filters, keys, 1)
+}
+
+func (s *VisualizationDataService) pageVisuals(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, keys []string) (map[string]visualizationir.VisualizationEnvelope, error) {
+	// Published consumer jobs already bound their own concurrency. Only the
+	// whole-page path, used by draft previews, needs parallel visual reads here.
+	return s.visualsWithConcurrency(ctx, runtime, report, filters, keys, inlineVisualConcurrency(runtime, len(keys)))
+}
+
+func (s *VisualizationDataService) visualsWithConcurrency(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, keys []string, concurrency int) (map[string]visualizationir.VisualizationEnvelope, error) {
 	visuals := make(map[string]visualizationir.VisualizationEnvelope, len(keys))
 	batchedData, err := s.batchedSingleValueData(ctx, runtime, report, filters, keys)
 	if err != nil {
 		return nil, err
 	}
-	for _, key := range keys {
-		definition, ok := report.Visualizations[key]
-		if !ok {
-			return nil, fmt.Errorf("page references unknown visual %q", key)
-		}
-		visual, err := newVisualPlan(definition)
-		if err != nil {
-			return nil, err
-		}
-		data, batched := batchedData[key]
-		if !batched {
-			data, err = s.visualData(ctx, runtime, report, key, visual, filters)
+	if concurrency <= 1 {
+		for _, key := range keys {
+			envelope, err := s.inlineVisual(ctx, runtime, report, filters, key, batchedData)
 			if err != nil {
 				return nil, err
 			}
+			visuals[key] = envelope
 		}
-		frame, err := frameFromDatums(definition, data)
-		if err != nil {
-			return nil, err
+		return visuals, nil
+	}
+
+	// Independent visuals read the same immutable snapshot. Use the runtime's
+	// advertised capacity rather than serializing the entire page, and retain
+	// the original context so cancellation and any shared result budget apply.
+	envelopes := make([]visualizationir.VisualizationEnvelope, len(keys))
+	visualErrors := make([]error, len(keys))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range concurrency {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if err := ctx.Err(); err != nil {
+					visualErrors[index] = err
+					continue
+				}
+				envelopes[index], visualErrors[index] = s.inlineVisual(ctx, runtime, report, filters, keys[index], batchedData)
+			}
+		}()
+	}
+	for index := range keys {
+		select {
+		case jobs <- index:
+		case <-ctx.Done():
+			close(jobs)
+			workers.Wait()
+			return nil, ctx.Err()
 		}
-		frame.Completeness = visualizationFrameCompleteness(definition.Spec, definition.Query.DatasetID, len(data), visualizationQueryLimit(definition.Query))
-		frames := map[string]visualizationruntime.Frame{definition.Query.DatasetID: frame}
-		contextFrames, err := s.contextFrames(ctx, runtime, report, key, definition, filters)
-		if err != nil {
-			return nil, err
+	}
+	close(jobs)
+	workers.Wait()
+	// Assemble after workers finish, preserving the original visual order for
+	// errors and avoiding concurrent writes to the result map.
+	for index, key := range keys {
+		if visualErrors[index] != nil {
+			return nil, visualErrors[index]
 		}
-		for datasetID, contextFrame := range contextFrames {
-			frames[datasetID] = contextFrame
-		}
-		envelope, err := visualizationruntime.EnvelopeFromFrames(definition, frames, selectedEntries(filters, "visual", key), 0, 0)
-		if err != nil {
-			return nil, err
-		}
-		envelope.Highlights, err = selectedHighlights(runtime, report, filters, key)
-		if err != nil {
-			return nil, err
-		}
-		envelope.SpatialSelection = selectedSpatialState(filters, key)
-		if err := visualizationir.ValidateEnvelope(envelope); err != nil {
-			return nil, err
-		}
-		visuals[key] = envelope
+		visuals[key] = envelopes[index]
 	}
 	return visuals, nil
+}
+
+func inlineVisualConcurrency(runtime *modelRuntime, count int) int {
+	if count < 2 || runtime == nil || runtime.data == nil {
+		return 1
+	}
+	snapshot, ok := runtime.data.(DataRuntimeSnapshot)
+	if !ok || snapshot.DuckLakeSnapshotID() <= 0 {
+		return 1
+	}
+	capacity, ok := runtime.data.(DataRuntimeReadConcurrency)
+	if !ok {
+		return 1
+	}
+	return max(1, min(count, capacity.ReadConcurrency()))
+}
+
+func (s *VisualizationDataService) inlineVisual(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, key string, batchedData map[string][]dashboard.Datum) (visualizationir.VisualizationEnvelope, error) {
+	definition, ok := report.Visualizations[key]
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("page references unknown visual %q", key)
+	}
+	visual, err := newVisualPlan(definition)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	data, batched := batchedData[key]
+	if !batched {
+		data, err = s.visualData(ctx, runtime, report, key, visual, filters)
+		if err != nil {
+			return visualizationir.VisualizationEnvelope{}, err
+		}
+	}
+	frame, err := frameFromDatums(definition, data)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	frame.Completeness = visualizationFrameCompleteness(definition.Spec, definition.Query.DatasetID, len(data), visualizationQueryLimit(definition.Query))
+	frames := map[string]visualizationruntime.Frame{definition.Query.DatasetID: frame}
+	contextFrames, err := s.contextFrames(ctx, runtime, report, key, definition, filters)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	for datasetID, contextFrame := range contextFrames {
+		frames[datasetID] = contextFrame
+	}
+	envelope, err := visualizationruntime.EnvelopeFromFrames(definition, frames, selectedEntries(filters, "visual", key), 0, 0)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	envelope.Highlights, err = selectedHighlights(runtime, report, filters, key)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	envelope.SpatialSelection = selectedSpatialState(filters, key)
+	if err := visualizationir.ValidateEnvelope(envelope); err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	return envelope, nil
 }
 
 func fieldBindingsToDataFields(bindings []visualizationdefinition.FieldBinding) []dataquery.Field {

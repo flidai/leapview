@@ -9,6 +9,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -53,6 +54,20 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.validateInitialVisualField(ctx, project, request.Command, lifecycle, visual)
 		}
 	}
+	if patch := request.Command.SetPlacements; patch != nil && patch.FillMissingFields {
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			revision, err := a.validateIntentRevision(ctx, project, request.Command, lifecycle)
+			if err != nil {
+				return err
+			}
+			model, err := a.semanticModelForRevision(ctx, revision)
+			if err != nil {
+				return err
+			}
+			patch.ResolvedFields, err = missingVisualFields(revision.Document, patch.PageID, model)
+			return err
+		}
+	}
 	if request.Command.AssignField != nil {
 		field := request.Command.AssignField
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
@@ -80,7 +95,39 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.prepareVisualTypeSwitch(ctx, project, request.Command, lifecycle, visual)
 		}
 	}
+	if request.Command.AddFilter != nil {
+		patch := request.Command.AddFilter
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			targets, err := a.prepareFilterTargets(ctx, project, request.Command, lifecycle, patch.Dimension)
+			patch.ResolvedTargets = targets
+			return err
+		}
+	}
+	if request.Command.AddSlicer != nil {
+		patch := request.Command.AddSlicer
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			targets, err := a.prepareFilterTargets(ctx, project, request.Command, lifecycle, patch.Dimension)
+			patch.ResolvedTargets = targets
+			return err
+		}
+	}
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
+}
+
+func (a *Application) prepareFilterTargets(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, dimension string) ([]string, error) {
+	revision, err := a.validateIntentRevision(ctx, project, command, lifecycle)
+	if err != nil {
+		return nil, err
+	}
+	model, err := a.semanticModelForRevision(ctx, revision)
+	if err != nil {
+		return nil, err
+	}
+	targets, err := dashboardcompiler.CompatibleDashboardFilterTargets(revision.Document, dimension, model)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", authoring.ErrInvalidPayload, err)
+	}
+	return targets, nil
 }
 
 func (a *Application) prepareVisualTypeSwitch(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, patch *authoring.SetVisualTypePayload) error {

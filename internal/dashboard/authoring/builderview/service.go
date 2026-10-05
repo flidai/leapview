@@ -16,6 +16,7 @@ import (
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/project/graph"
@@ -230,6 +231,25 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	semantic, err := projectSemanticModel(lifecycle.SemanticModel.String(), model)
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
+	}
+	filterAvailability := map[string]bool{}
+	for datasetIndex := range semantic.Datasets {
+		for fieldIndex := range semantic.Datasets[datasetIndex].Fields {
+			field := &semantic.Datasets[datasetIndex].Fields[fieldIndex]
+			if field.Kind != "dimension" {
+				continue
+			}
+			if _, exists := model.Dimensions[field.ID]; !exists {
+				continue
+			}
+			available, cached := filterAvailability[field.ID]
+			if !cached {
+				_, targetErr := dashboardcompiler.CompatibleDashboardFilterTargets(revision.Document, field.ID, model)
+				available = targetErr == nil
+				filterAvailability[field.ID] = available
+			}
+			field.CanFilter = uisignals.Pointer(available)
+		}
 	}
 	if len(diagnostics) > maxDiagnostics {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder diagnostics exceed bounded limit")

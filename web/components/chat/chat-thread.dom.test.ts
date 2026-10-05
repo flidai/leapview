@@ -125,6 +125,33 @@ test('chat thread uses the surrounding app surface background', async () => {
   await page.close()
 })
 
+test('narrow chat wraps messages and keeps long context and visual cards inside the panel', async () => {
+  const page = await browser.newPage({ viewport: { width: 340, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    const layout = await page.locator('lv-chat-thread').evaluate(async (element: any) => {
+      element.style.height = '700px'
+      element.style.setProperty('--lv-chat-stack-width', '100%')
+      element.status = { enabled: true, running: false }
+      element.transcript = [
+        { id: 'user-1', kind: 'user', text: 'Review this dashboard', references: [{ reference: { kind: 'dashboard', id: 'finance' }, name: 'Actual, budget, and forecast revenue dashboard for the finance team', href: '/dashboards/finance', hierarchy: [], locations: [], context: [] }] },
+        { id: 'tool-1', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'revenue', type: 'combo', summary: 'Actual, budget, and forecast revenue for the finance team' } },
+        { id: 'assistant-1', kind: 'assistant', text: 'The dashboard and this conversation are still available. Review revenue and cash together.' },
+      ]
+      element.dashboardPreviewAvailable = true
+      await element.updateComplete
+      const scroll = element.shadowRoot.querySelector('.scroll') as HTMLElement
+      const card = element.shadowRoot.querySelector('.visual-reference') as HTMLElement
+      return { width: scroll.clientWidth, scrollWidth: scroll.scrollWidth, cardRight: card.getBoundingClientRect().right }
+    })
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width + 1)
+    expect(layout.cardRight).toBeLessThanOrEqual(340)
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat thread distinguishes unavailable, empty, and working states', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
@@ -285,16 +312,16 @@ test('chat thread renders visual artifacts with dashboard web components', async
     const field = (id: string, role: string, dataType: string, label: string) => ({ id, role, dataType, nullable: false, label })
     thread.visuals = {
       agent_chart_1: {
-        schemaVersion: 4, visualID: 'agent_chart_1', rendererID: 'echarts', specRevision: 'sha256:chat-chart', dataRevision: 1,
+        schemaVersion: 14, visualID: 'agent_chart_1', rendererID: 'echarts', specRevision: 'sha256:chat-chart', dataRevision: 1,
         spec: { kind: 'cartesian', mark: 'bar', title: 'Orders', datasets: [{ id: 'primary', fields: [field('label', 'dimension', 'string', 'Status'), field('value', 'metric', 'decimal', 'Orders')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders by status' }, interactions: [], x: { dataset: 'primary', field: 'label' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
         dataState: { kind: 'inline', specRevision: 'sha256:chat-chart', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:chat-chart', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['delivered', 42]], completeness: 'complete' }] },
-        selection: [], status: { kind: 'ready' }, diagnostics: [],
+        selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
       },
       agent_table_1: {
-        schemaVersion: 4, visualID: 'agent_table_1', rendererID: 'tanstack', specRevision: 'sha256:chat-table', dataRevision: 1,
-        spec: { kind: 'table', title: 'Orders', datasets: [{ id: 'primary', fields: [field('order_id', 'identity', 'string', 'Order')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], columns: [{ field: { dataset: 'primary', field: 'order_id' }, label: 'Order' }], defaultSort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }], presentation: { rowHeight: 34, striped: true, showHeader: true } },
+        schemaVersion: 14, visualID: 'agent_table_1', rendererID: 'tanstack', specRevision: 'sha256:chat-table', dataRevision: 1,
+        spec: { kind: 'table', title: 'Orders', datasets: [{ id: 'primary', fields: [field('order_id', 'identity', 'string', 'Order')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], columns: [{ field: { dataset: 'primary', field: 'order_id' }, label: 'Order', formatting: [] }], defaultSort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }], presentation: { rowHeight: 34, striped: true, showHeader: true } },
         dataState: { kind: 'windowed', specRevision: 'sha256:chat-table', dataRevision: 1, generation: 1, schema: { id: 'primary', fields: [field('order_id', 'identity', 'string', 'Order')] }, cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 50, chunkSize: 50, resetVersion: 0, sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }], blocks: { a: { id: 'a', start: 0, rows: [['o1']], requestSeq: 0, resetVersion: 0, sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }] } } },
-        selection: [], status: { kind: 'ready' }, diagnostics: [],
+        selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
       },
     }
     thread.transcript = [
@@ -325,19 +352,21 @@ test('chat thread renders visual artifacts with dashboard web components', async
     ]
     await thread.updateComplete
   })
+  await page.getByRole('button', { name: 'View inside', exact: true }).nth(0).click()
+  await page.getByRole('button', { name: 'View inside', exact: true }).nth(0).click()
   await page.waitForFunction(() => Boolean(
     document.querySelector('lv-chat-thread')!
       .shadowRoot!
       .querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')
       ?.shadowRoot
-      ?.querySelector('lv-visualization-host'),
+      ?.querySelector<any>('lv-visualization-host')?.envelope,
   ))
   await page.waitForFunction(() => Boolean(
     document.querySelector('lv-chat-thread')!
       .shadowRoot!
       .querySelector('lv-visual-artifact[artifact-id="agent_table_1"]')
       ?.shadowRoot
-      ?.querySelector('lv-visualization-host'),
+      ?.querySelector<any>('lv-visualization-host')?.envelope,
   ))
 
   const rendered = await page.evaluate(() => {
@@ -606,6 +635,7 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
     }]
     await thread.updateComplete
   })
+  await page.getByRole('button', { name: 'View inside', exact: true }).click()
   const artifact = page.locator('lv-chat-thread').locator('lv-visual-artifact[artifact-id="legacy_chart_1"]')
   await artifact.waitFor()
   const state = await artifact.evaluate((element) => ({

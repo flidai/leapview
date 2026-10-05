@@ -798,3 +798,53 @@ function escapeHTML(value: string): string {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
 }
+
+test('Arrange appears only in preview chat and sends its command to the retained builder', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    expect(await page.getByRole('button', { name: 'Fix view visuals', exact: true }).count()).toBe(0)
+    await chat.evaluate(async (e: any) => {
+      e.dashboardPreview = true
+      e.builderOpen = true
+      await e.updateComplete
+      const frame = e.shadowRoot.querySelector('.builder-frame') as HTMLIFrameElement
+      ;(window as any).retainedBuilder = frame
+      ;(window as any).arrangeMessages = []
+      frame.contentWindow!.addEventListener('message', event => {
+        if (event.data?.type === 'lv-arrange-dashboard-visuals') (window as any).arrangeMessages.push(event.data)
+      })
+    })
+    expect(await page.getByRole('button', { name: 'Fix view visuals', exact: true }).isDisabled()).toBe(true)
+    await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
+      window.parent.postMessage({
+        type: 'lv-builder-saved', canArrange: true, revisionId: 'rev-1', pageId: 'overview', href: '/dashboards/demo/edit',
+        reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], href: '/dashboards/demo/edit', locations: [], context: [] },
+        components: [], artifacts: [], visuals: {},
+      }, window.parent.location.origin)
+    })
+    await page.waitForFunction(() => (document.querySelector('lv-chat-page') as any)?.canArrangeDashboard)
+    await page.getByRole('button', { name: 'Fix view visuals', exact: true }).click()
+    await page.waitForFunction(() => (window as any).arrangeMessages.length === 1)
+    expect(await page.evaluate(() => (window as any).arrangeMessages)).toEqual([{ type: 'lv-arrange-dashboard-visuals' }])
+    const fix = page.getByRole('button', { name: 'Fix view visuals', exact: true })
+    expect(await fix.isDisabled()).toBe(true)
+    expect(await fix.getAttribute('aria-busy')).toBe('true')
+    expect(await fix.innerText()).toContain('Fixing')
+    await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
+      window.parent.postMessage({
+        type: 'lv-builder-saved', canArrange: true, fixingVisuals: false, fixMessage: 'Completed 1 visual. Your layout is unchanged.', revisionId: 'rev-2', pageId: 'overview', href: '/dashboards/demo/edit',
+        reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], href: '/dashboards/demo/edit', locations: [], context: [] },
+        components: [], artifacts: [], visuals: {},
+      }, window.parent.location.origin)
+    })
+    await page.getByRole('status').filter({ hasText: 'Completed 1 visual' }).waitFor()
+    expect(await fix.isDisabled()).toBe(false)
+    expect(await fix.getAttribute('aria-busy')).toBe('false')
+    expect(await chat.evaluate((e: any) => e.shadowRoot.querySelector('.builder-frame') === (window as any).retainedBuilder)).toBe(true)
+    await page.getByRole('button', { name: 'Expand chat', exact: true }).click()
+    expect(await page.getByRole('button', { name: 'Fix view visuals', exact: true }).count()).toBe(0)
+  } finally { await page.close() }
+})

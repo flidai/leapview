@@ -1,6 +1,8 @@
+import './agent-visual-library'
+import type { VisualLibraryState } from './agent-visual-library'
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ExternalLink, Plus, X } from 'lucide'
+import { Maximize2, Minimize2, Plus, X } from 'lucide'
 import type {
   AgentContextSignal,
 	DashboardInteractionSelection,
@@ -14,6 +16,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
+import { chatVisualsFromSignals } from './visual-signals'
 import './chat-composer'
 import './chat-thread'
 import {
@@ -48,7 +51,9 @@ const emptyReferenceSearch: AgentReferenceSearchSignal = { query: '', requestId:
 class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) embedded = false
+  @property({ type: Boolean, reflect: true }) expanded = false
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
+  @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
 	@state() private editMessageId = ''
@@ -82,6 +87,19 @@ class ChatDrawer extends DatastarLit(LitElement) {
       height: 100%;
       border-left: 0;
     }
+
+    :host([open][expanded]) {
+      position: fixed;
+      inset: 0;
+      z-index: var(--zIndex-modal, 200);
+      width: 100%;
+      height: 100svh;
+      border: 0;
+      --lv-chat-stack-width: 760px;
+    }
+
+    :host([expanded]) .title { display: flex; }
+    :host([expanded]) lv-chat-composer { --lv-chat-composer-width: 760px; }
 
     .drawer {
       display: grid;
@@ -176,7 +194,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
       margin-left: var(--lv-space-xs);
     }
 
-    :host([embedded]) .title,
+    :host([embedded]:not([expanded])) .title,
     :host([embedded]) .close-action {
       display: none;
     }
@@ -250,7 +268,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
         border-left: 0;
       }
 
-      :host([open][embedded]) {
+      :host([open][embedded]:not([expanded])) {
         position: static;
         width: 100%;
         height: 100%;
@@ -269,6 +287,40 @@ class ChatDrawer extends DatastarLit(LitElement) {
       :host { transition: none; }
     }
   `
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener('popstate', this.syncExpandedLocation)
+    this.syncExpandedLocation()
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener('popstate', this.syncExpandedLocation)
+    super.disconnectedCallback()
+  }
+
+  private syncExpandedLocation = (): void => {
+    this.expanded = new URL(window.location.href).searchParams.get('chat') === 'expanded'
+    if (this.expanded) this.open = true
+  }
+
+  private toggleExpanded = async (): Promise<void> => {
+    const thread = this.shadowRoot?.querySelector<HTMLElement & { captureScroll(): { top: number; autoScroll: boolean }; restoreScroll(position: { top: number; autoScroll: boolean }): void }>('lv-chat-thread')
+    const position = thread?.captureScroll()
+    this.expanded = !this.expanded
+    const url = new URL(window.location.href)
+    if (this.expanded) {
+      url.searchParams.set('chat', 'expanded')
+      window.history.pushState(null, '', url)
+    } else {
+      url.searchParams.delete('chat')
+      window.history.replaceState(null, '', url)
+    }
+    await this.updateComplete
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    if (position) thread?.restoreScroll(position)
+    this.focusComposer()
+  }
 
 	override performUpdate(): void {
 		// DatastarLit materializes a signal tree on every read. The drawer reads
@@ -302,7 +354,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 	}
 
 	get visuals(): Record<string, VisualizationEnvelope> {
-		return this.cachedSignal<Record<string, VisualizationEnvelope>>('agentVisuals', emptyVisuals)
+		return chatVisualsFromSignals(this.cachedSignal<Record<string, VisualizationEnvelope>>('agentVisuals', emptyVisuals))
 	}
 
 	get dashboardFilters(): AgentContextSignal['filters'] {
@@ -380,9 +432,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
 			this.suggestions,
 		)
 		const catalogSuggestions = searchResults.filter((reference) => !isOnPageReference(reference, context))
-    const conversationHref = agent.activeConversationId
-      ? `/chats/${encodeURIComponent(agent.activeConversationId)}`
-      : '/chats/new'
     const agentEnabled = Boolean(agent.status?.enabled)
     const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
     return html`
@@ -392,7 +441,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
             <div class="toolbar-actions">
               <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
-              <a class="text-action" href=${conversationHref} title="Open full chat" aria-label="Open full chat" aria-disabled=${String(this.pending && !agent.activeConversationId)} @click=${(event: MouseEvent) => { if (this.pending && !agent.activeConversationId) event.preventDefault() }}>${lucideIcon(ExternalLink)}<span>Full chat</span></a>
+              <button type="button" title=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-label=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-pressed=${this.expanded} @click=${this.toggleExpanded}>${lucideIcon(this.expanded ? Minimize2 : Maximize2)}</button>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
             </div>
           </div>
@@ -416,7 +465,9 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <p>Choose a question to edit, or use @ to attach a specific chart.</p>
           </section>
         ` : null}
-        <lv-chat-thread ?hidden=${showWelcome}
+        <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${(event: CustomEvent<VisualLibraryState>) => { this.visualLibraryState = event.detail }}></lv-agent-visual-library>
+        ${this.visualLibraryState.error ? html`<p role="alert">${this.visualLibraryState.error}</p>` : null}
+        <lv-chat-thread .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId} ?hidden=${showWelcome}
           surface="drawer"
           .transcript=${agent.transcript ?? []}
           .visuals=${this.visuals}
@@ -464,6 +515,10 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
 	private closeDrawer() {
+		if (this.expanded) {
+			void this.toggleExpanded()
+			return
+		}
 		this.open = false
 		emitDomainEvent(this, domainEvents.chatDrawerClose, undefined)
 	}

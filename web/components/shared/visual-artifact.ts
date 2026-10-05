@@ -4,6 +4,7 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import '../dashboard/visualization/host'
 
 class VisualArtifact extends LitElement {
+  @property({ type: Boolean }) eager = false
   @property() type: string = ''
   @property({ attribute: 'artifact-id' }) artifactId = ''
   @property({ attribute: false }) payload?: VisualizationEnvelope
@@ -68,7 +69,7 @@ class VisualArtifact extends LitElement {
       && this.payload.dataState.datasets.some(dataset => dataset.rows.length >= budget)
     return html`
       <div class=${`artifact ${isTabularVisualType(this.payload.spec.kind) ? 'table' : 'chart'}`}>
-        <lv-visualization-host .envelope=${this.payload}></lv-visualization-host>
+        <lv-visualization-host .deferMount=${!this.eager} .envelope=${this.payload}></lv-visualization-host>
         ${limitNotice || limited ? html`<p class="limit-notice" role="note">${limitNotice || `Showing up to ${budget} rows. More data may exist.`}</p>` : null}
       </div>
     `

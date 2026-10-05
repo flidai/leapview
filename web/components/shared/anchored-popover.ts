@@ -6,44 +6,69 @@ export type AnchoredPopoverOptions = {
   viewportPadding?: number
 }
 
+const activePopovers = new WeakMap<HTMLElement, () => void>()
+
 export function toggleAnchoredPopover(
   trigger: HTMLElement,
   popover: HTMLElement,
   options: AnchoredPopoverOptions = {},
 ): boolean {
+  activePopovers.get(popover)?.()
   if (popover.matches(':popover-open')) {
     popover.hidePopover()
     return false
   }
-  const gap = options.gap ?? 4
+  const controller = new AbortController()
+  const view = trigger.ownerDocument.defaultView ?? window
   const padding = options.viewportPadding ?? 8
-  const bounds = trigger.getBoundingClientRect()
-  const scale = anchoredPopoverScale(trigger, bounds)
-  const visualGap = gap * scale
-  const availableWidth = Math.max(0, window.innerWidth - padding * 2) / scale
-  const triggerWidth = bounds.width / scale
-  const width = Math.min(
-    Math.max(triggerWidth, options.minWidth ?? 240),
-    options.maxWidth ?? availableWidth,
-    availableWidth,
-  )
-  const visualWidth = width * scale
-  const left = Math.max(padding, Math.min(bounds.left, window.innerWidth - visualWidth - padding))
-  const availableBelow = window.innerHeight - bounds.bottom - visualGap - padding
-  const availableAbove = bounds.top - visualGap - padding
-  const openAbove = availableBelow < 220 * scale && availableAbove > availableBelow
-  const availableHeight = (openAbove ? availableAbove : availableBelow) / scale
-  const maxHeight = Math.max(160, Math.min(options.maxHeight ?? 320, availableHeight))
-  const top = openAbove ? Math.max(padding, bounds.top - maxHeight * scale - visualGap) : bounds.bottom + visualGap
-  Object.assign(popover.style, {
-    left: `${left}px`,
-    top: `${top}px`,
-    width: `${width}px`,
-    maxHeight: `${maxHeight}px`,
-    transform: scale === 1 ? 'none' : `scale(${scale})`,
-    transformOrigin: 'top left',
-  })
+  let frame = 0
+  const position = () => {
+    if (!trigger.isConnected || !popover.isConnected) { cleanup(); return }
+    const bounds = trigger.getBoundingClientRect()
+    const scale = anchoredPopoverScale(trigger, bounds)
+    const gap = (options.gap ?? 4) * scale
+    const availableWidth = Math.max(0, view.innerWidth - padding * 2) / scale
+    const width = Math.min(Math.max(bounds.width / scale, options.minWidth ?? 240), options.maxWidth ?? availableWidth, availableWidth)
+    const below = Math.max(0, view.innerHeight - bounds.bottom - gap - padding)
+    const above = Math.max(0, bounds.top - gap - padding)
+    // Keep dropdowns below their controls whenever there is room for a few
+    // choices. Scroll long lists rather than flipping based on an estimate.
+    const openAbove = below < 96 * scale && above > below
+    const maxHeight = Math.min(options.maxHeight ?? 320, (openAbove ? above : below) / scale)
+    Object.assign(popover.style, {
+      left: `${Math.max(padding, Math.min(bounds.left, view.innerWidth - width * scale - padding))}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transform: scale === 1 ? 'none' : `scale(${scale})`,
+      transformOrigin: 'top left',
+    })
+    // Measure the actual visible height, including short or asynchronously
+    // loaded lists. This keeps an upward menu adjacent to its own trigger.
+    const height = popover.getBoundingClientRect().height
+    popover.style.top = `${openAbove ? Math.max(padding, bounds.top - height - gap) : bounds.bottom + gap}px`
+  }
+  const schedulePosition = () => {
+    if (!frame) frame = view.requestAnimationFrame(() => { frame = 0; position() })
+  }
+  const observer = new ResizeObserver(schedulePosition)
+  const cleanup = () => {
+    controller.abort()
+    observer.disconnect()
+    if (frame) view.cancelAnimationFrame(frame)
+    activePopovers.delete(popover)
+  }
+  activePopovers.set(popover, cleanup)
+  // Size before showing to avoid a first-frame flash at the default position.
+  position()
   popover.showPopover()
+  position()
+  observer.observe(popover)
+  observer.observe(trigger)
+  view.addEventListener('resize', schedulePosition, { signal: controller.signal })
+  trigger.ownerDocument.addEventListener('scroll', schedulePosition, { capture: true, signal: controller.signal })
+  popover.addEventListener('toggle', (event: Event) => {
+    if ((event as Event & { newState: string }).newState === 'closed') cleanup()
+  }, { signal: controller.signal })
   return true
 }
 

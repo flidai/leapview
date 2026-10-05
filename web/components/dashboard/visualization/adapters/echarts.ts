@@ -36,6 +36,8 @@ export function echartsOption(envelope: VisualizationEnvelope, context: Renderer
     default: throw new Error(`ECharts cannot render visualization kind ${JSON.stringify(envelope.spec.kind)}`)
   }
   const option = { ...base, ...translated } as Record<string, any>
+  // Tooltip transitions have their own defaults, independent of animation:false.
+  option.tooltip = { ...option.tooltip, transitionDuration: 0, displayTransition: false }
   if (base.aria || translated.aria) option.aria = { ...(base.aria ?? {}), ...(translated.aria ?? {}) }
   if (base.graphic && translated.graphic) option.graphic = [...base.graphic, ...translated.graphic]
   applyCrossHighlight(option, envelope)
@@ -112,6 +114,7 @@ export function removeEChartsRendererFrame(container: ParentNode, frame: HTMLEle
 export class EChartsHandle implements RendererHandle {
   private envelope?: VisualizationEnvelope
   private context?: RendererContext
+  private option?: EChartsOption
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
@@ -137,7 +140,7 @@ export class EChartsHandle implements RendererHandle {
     this.readinessAbort?.abort()
     this.readinessAbort = new AbortController()
     this.readiness = waitForEChartsFrame(this.chart, 5_000, this.readinessAbort.signal)
-    const option = echartsOption(envelope, context, this.categoryColors)
+    const option = this.option = echartsOption(envelope, context, this.categoryColors)
     this.dataZoomInitialized = hasEChartsDataZoom(option)
     this.chart.setOption(option, { notMerge: true, lazyUpdate: false })
   }
@@ -147,16 +150,16 @@ export class EChartsHandle implements RendererHandle {
   update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
     if (this.disposed) return
     const previous = this.envelope
-    const viewState = previous && preservesEChartsViewState(previous, envelope) ? this.captureViewState() : undefined
+    const preserveViewState = previous !== undefined && preservesEChartsViewState(previous, envelope)
+    const viewState = preserveViewState ? this.captureViewState() : undefined
     this.envelope = envelope
     this.context = context
-    const option = echartsOption(envelope, context, this.categoryColors)
+    const option = this.option = echartsOption(envelope, context, this.categoryColors)
     const initializeDataZoom = !this.dataZoomInitialized && hasEChartsDataZoom(option)
     const resetDataZoom = hasEmptyEChartsDataZoom(option)
     const refreshHeatmapDataZoom = isHeatmapWithDataZoom(envelope) && (change & Change.Data) !== 0 && hasEChartsDataZoom(option)
-    const preserveHeatmapFocus = previous !== undefined && preservesEChartsViewState(previous, envelope)
     const resetHeatmapFocus = isHeatmapWithDataZoom(envelope)
-      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveHeatmapFocus))
+      && (resetDataZoom || ((change & Change.Spec) !== 0 && !preserveViewState))
     const plan = echartsUpdatePlan(change, option, initializeDataZoom, refreshHeatmapDataZoom)
     if ((change & Change.Spec) !== 0 || initializeDataZoom || resetDataZoom) this.dataZoomInitialized = hasEChartsDataZoom(option)
     if (resetHeatmapFocus) {
@@ -171,6 +174,10 @@ export class EChartsHandle implements RendererHandle {
 
   resize(width: number, height: number): void {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    if (width === this.lastWidth && height === this.lastHeight) {
+      this.syncHeatmapFocusZoom()
+      return
+    }
     // Deferred hosts can report their initial 0×0 layout before the renderer
     // frame has entered the document. ECharts' hierarchy layouts assume a
     // positive viewport and can dereference a missing layout slot during that
@@ -184,12 +191,14 @@ export class EChartsHandle implements RendererHandle {
 
   private applyResponsiveLayout(force: boolean): void {
     const envelope = this.envelope
-    if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
+    if (!envelope || !this.option || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
     const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight)
     const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
-    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    // setOption clones its input. Keep the canonical translation for responsive
+    // patches instead of rebuilding datasets, labels and tooltips on each resize.
+    const patch = responsiveEChartsPatch(this.option as Record<string, any>, this.lastWidth, this.lastHeight)
     // Exact compact widths only affect scroll legends. Avoid reapplying an
     // unchanged proportional series while a card is continuously resized.
     if (!force && compact && sameLayout && patch.legend === undefined) {
@@ -243,6 +252,7 @@ export class EChartsHandle implements RendererHandle {
     this.chart.off('mouseover', this.handleMouseOver)
     this.chart.off('mouseout', this.handleMouseOut)
     this.chart.dispose()
+    this.option = undefined
     removeEChartsRendererFrame(this.container, this.frame)
   }
 

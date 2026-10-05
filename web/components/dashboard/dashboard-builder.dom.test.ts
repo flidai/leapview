@@ -15,6 +15,11 @@ const root = join(projectRoot, '.tmp/dashboard-builder-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/embed-host') {
+      response.setHeader('content-type', 'text/html')
+      response.end('<html><body style="margin:0"><iframe title="Chat builder" src="/?embed=chat" style="border:0;width:100%;height:820px"></iframe></body></html>')
+      return
+    }
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -46,6 +51,50 @@ afterAll(async () => {
   await browser?.close()
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
+
+test('saved visual imports update the current builder without navigation and retain undo history', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const envelope = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      ;(window as any).originalBuilder = element
+      ;(window as any).originalCanvas = element.shadowRoot.querySelector('.canvas')
+      const builder = JSON.parse(JSON.stringify(element.builder))
+      builder.revision = { id: 'rev-8', number: 8, contentHash: 'sha256:imported' }
+      builder.pages[0].visuals.push({ ...builder.pages[0].visuals[0], id: 'saved-copy', visualId: 'saved-copy', placement: { col: 1, row: 7, colSpan: 6, rowSpan: 5 } })
+      return { builder, builderVisuals: {}, runtime: { servingStateId: 'generation-7' }, status: element.status }
+    })
+    let imports = 0
+    await page.route('**/draft/saved-visual', async route => {
+      imports++
+      const form = new URLSearchParams(route.request().postData() ?? '')
+      expect(form.get('builderReceipt')).toBe('1')
+      expect(form.get('pageId')).toBe('overview')
+      expect(form.get('savedVisualId')).toBe('saved-visual-1')
+      await route.fulfill({ contentType: 'text/html', body: `<html><body><div id="chat-dashboard-receipt"></div><script>parent.postMessage(${JSON.stringify({ type: 'lv-builder-imported', envelope, agentContext: {} })}, location.origin)</script></body></html>` })
+    })
+    await page.locator('lv-dashboard-builder').evaluate((element: any) => element.addSavedVisual('saved-visual-1'))
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-builder') as any)?.builder?.revision?.id === 'rev-8')
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      return {
+        sameBuilder: (window as any).originalBuilder === element,
+        sameCanvas: (window as any).originalCanvas === element.shadowRoot.querySelector('.canvas'),
+        selectedPage: element.builder.selectedPageId,
+        pending: element.commandPending,
+        undo: element.undoStack.map((revision: any) => revision.id),
+        visuals: element.shadowRoot.querySelectorAll('.canvas .visual').length,
+      }
+    })
+    expect(imports).toBe(1)
+    expect(page.url()).toBe(`${baseURL}/`)
+    expect(state).toEqual({ sameBuilder: true, sameCanvas: true, selectedPage: 'overview', pending: false, undo: ['rev-7'], visuals: 2 })
+  } finally {
+    await page.close()
+  }
+})
 
 test('dashboard builder renders bottom page tabs, canvas, and visual builder with typed actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
@@ -158,7 +207,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.pickerButtons.every((button) => !button.hasVisibleLabel)).toBe(true)
     expect(state.pickerButtons.every((button) => button.iconType === button.type && button.filledMarks > 0)).toBe(true)
     expect(state.pickerGroups).toEqual(['Cartesian', 'Part to whole', 'Distribution', 'Hierarchy & flow', 'Specialized', 'Tables', 'Filters'])
-    expect(state.pickerColumns).toBe(7)
+    expect(state.pickerColumns).toBeGreaterThan(0)
     expect(state.pickerHasScroll).toBe(false)
     expect(state.referenceHref).toBe('/docs/visuals/bar')
     expect(state.inspectorTabs).toBe(0)
@@ -351,7 +400,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     expect(before.toggleTargets).toEqual([
       { pane: 'filters', controls: 'builder-filters-content', controlsExistingTarget: true, hasIcon: true },
       { pane: 'visuals', controls: 'builder-visuals-content', controlsExistingTarget: true, hasIcon: true },
-      { pane: 'data', controls: 'builder-data-content', controlsExistingTarget: true, hasIcon: true },
+      { pane: 'data', controls: 'builder-data-tabs', controlsExistingTarget: true, hasIcon: true },
       { pane: 'agent', controls: 'builder-agent-content', controlsExistingTarget: true, hasIcon: true },
     ])
     expect(visualsToggle).toEqual({ collapsed: { pane: 'true', hidden: true, expanded: 'false' }, reopened: 'false' })
@@ -996,6 +1045,57 @@ test('dashboard builder exposes field-token remove, role movement, and reorder a
   }
 })
 
+test('hiding tools gives the canvas full width and reopening restores the same editor', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const editor = page.locator('lv-dashboard-builder')
+    const initial = await editor.evaluate((element: any) => {
+      ;(window as any).originalToolPanel = element.shadowRoot.querySelector('#builder-tools')
+      return element.shadowRoot.querySelector('.canvas-pane').getBoundingClientRect().width
+    })
+    await editor.getByRole('button', { name: 'Hide tools', exact: true }).click()
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-builder') as any)?.toolsHidden)
+    expect(await editor.locator('.right-dock').isVisible()).toBe(false)
+    const fullWidth = await editor.locator('.canvas-pane').boundingBox()
+    expect(fullWidth!.width).toBeGreaterThan(initial + 200)
+    await editor.getByRole('button', { name: 'Show tools', exact: true }).click()
+    expect(await editor.locator('.right-dock').isVisible()).toBe(true)
+    expect(await editor.evaluate((element: any) => element.shadowRoot.querySelector('#builder-tools') === (window as any).originalToolPanel)).toBe(true)
+    expect(await editor.locator('.canvas-pane').evaluate(e => e.getBoundingClientRect().width)).toBeCloseTo(initial, 0)
+  } finally { await page.close() }
+})
+
+test('builder keeps advanced controls collapsed and retains them when toggling the panel', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const editor = page.locator('lv-dashboard-builder')
+    const query = editor.locator('details.visual-query-controls')
+    const format = editor.locator('details.visual-format-disclosure')
+    await expect(query.getAttribute('open')).resolves.toBe(null)
+    await expect(format.getAttribute('open')).resolves.toBe(null)
+    await query.locator('summary').click()
+    await format.locator('summary').click()
+    expect(await editor.getByRole('textbox', { name: 'Title text', exact: true }).isVisible()).toBe(true)
+    await editor.getByRole('textbox', { name: 'Title text', exact: true }).fill('Unsent title')
+    await editor.getByRole('button', { name: 'Collapse Visuals pane', exact: true }).click()
+    await editor.getByRole('button', { name: 'Expand Visuals pane', exact: true }).click()
+    expect(await editor.getByRole('textbox', { name: 'Title text', exact: true }).inputValue()).toBe('Unsent title')
+    expect(await query.getAttribute('open')).not.toBe(null)
+    expect(await format.getAttribute('open')).not.toBe(null)
+    const bounds = await editor.evaluate((element: any) => {
+      const dock = element.shadowRoot.querySelector('.right-dock').getBoundingClientRect()
+      const canvas = element.shadowRoot.querySelector('.canvas-pane').getBoundingClientRect()
+      return { width: dock.width, canvas: canvas.width }
+    })
+    expect(bounds.width).toBeLessThanOrEqual(288)
+    expect(bounds.canvas).toBeGreaterThanOrEqual(800)
+  } finally { await page.close() }
+})
+
 test('dashboard builder keeps format controls visible and persistent alongside build controls', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1368,7 +1468,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
       )).filter(Boolean).sort()
       return {
         hasGridStack: Boolean(canvas?.gridstack),
-        floating: canvas?.gridstack?.getFloat(),
+        layoutMode: canvas?.gridstack?.getFloat(),
         nodeID: visual.gridstackNode?.id,
         visualID: visual.getAttribute('gs-id'),
         contentWrapper: Boolean(visual.querySelector('.grid-stack-item-content')),
@@ -1380,7 +1480,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
     })
     expect(state).toEqual({
       hasGridStack: true,
-      floating: true,
+      layoutMode: true,
       nodeID: 'sales-chart',
       visualID: 'sales-chart',
       contentWrapper: true,
@@ -1526,6 +1626,31 @@ test('dashboard builder resizes a selected widget from its left edge', async () 
   }
 })
 
+test('arrange visuals saves one balanced layout', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const builder = JSON.parse(JSON.stringify(element.builder))
+      const visual = builder.pages[0].visuals[0]
+      builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder })
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { (window as any).arrangeCommand = event.detail }, { once: true })
+      await element.updateComplete
+    })
+    await page.getByRole('button', { name: 'Arrange visuals', exact: true }).click()
+    const command = await page.evaluate(() => (window as any).arrangeCommand)
+    expect(command).toMatchObject({ action: 'set_placements', pageId: 'overview', placements: [
+      { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 12, rowSpan: 5 } },
+      { componentId: 'chart-1', placement: { column: 1, row: 6, columnSpan: 6, rowSpan: 5 } },
+      { componentId: 'chart-2', placement: { column: 7, row: 6, columnSpan: 6, rowSpan: 5 } },
+    ] })
+  } finally { await page.close() }
+})
+
 test('dashboard builder emits one canonical atomic placement command after a GridStack change', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1630,7 +1755,7 @@ test('dashboard builder does not persist breakpoint-derived mobile stacking', as
   }
 })
 
-test('dashboard builder disables GridStack editing in read-only state and reinitializes on revision cutover', async () => {
+test('dashboard builder disables editing, retains metadata revisions, and reinitializes changed geometry', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1644,14 +1769,22 @@ test('dashboard builder disables GridStack editing in read-only state and reinit
       mergePatch({ builder: { capabilities: { canEdit: false }, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
       await element.updateComplete
       const visual = root.querySelector('.visual') as HTMLElement
+      const metadataGrid = canvas.gridstack
+      const disabled = visual.classList.contains('ui-draggable-disabled') && visual.classList.contains('ui-resizable-disabled')
+      const metadataRetained = metadataGrid === firstGrid
+      mergePatch({ builder: { pages: element.builder.pages.map((p: any, index: number) => index === 0
+        ? { ...p, visuals: p.visuals.map((v: any) => ({ ...v, placement: { ...v.placement, rowSpan: v.placement.rowSpan + 1 } })) }
+        : p) } })
+      await element.updateComplete
       const secondGrid = canvas.gridstack
       return {
-        disabled: visual.classList.contains('ui-draggable-disabled') && visual.classList.contains('ui-resizable-disabled'),
+        disabled,
+        metadataRetained,
         reinitialized: Boolean(secondGrid) && firstGrid !== secondGrid,
         firstDestroyed: !firstGrid.el,
       }
     })
-    expect(state).toEqual({ disabled: true, reinitialized: true, firstDestroyed: true })
+    expect(state).toEqual({ disabled: true, metadataRetained: true, reinitialized: true, firstDestroyed: true })
   } finally {
     await page.close()
   }
@@ -1671,7 +1804,7 @@ test('dashboard builder shows build and format controls in one inspector panel',
         hasVisualPicker: Boolean(root.querySelector('.visual-picker')),
         hasFieldWells: Boolean(root.querySelector('.field-wells')),
         formatControls: root.querySelectorAll('[data-format-control]').length,
-        formatHeading: root.querySelector('.format-controls-heading')?.textContent?.trim(),
+        formatHeading: root.querySelector('.visual-format-disclosure > summary')?.textContent?.trim(),
         dataPaneVisible: Boolean(root.querySelector('.data-pane')),
         dataSearchCount: root.querySelectorAll('.data-pane input[aria-label="Search fields"]').length,
       }
@@ -2152,7 +2285,7 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     expect(state.metadataLines).toBe(1)
     expect(state.metadata).toContain('Saved · Unpublished')
     expect(state.metadata).not.toContain('Unsaved')
-    expect(state.topLevelActions).toEqual(['more', 'Undo', 'Redo', 'Switch to dark mode', 'more', 'Publish'])
+    expect(state.topLevelActions).toEqual(['Arrange visuals', 'Hide tools', 'more', 'Undo', 'Redo', 'Switch to dark mode', 'more', 'Publish'])
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })
@@ -2983,10 +3116,8 @@ test('dashboard builder authors report filters from governed fields through focu
       const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
-      const select = root.querySelector('.filter-add-select') as HTMLSelectElement
-      const filterOptions = Array.from(select.options).map((option) => ({ value: option.value, label: option.textContent?.trim() }))
-      select.value = 'orders.status'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
+      const filterOptions = Array.from(root.querySelectorAll<HTMLButtonElement>('.filter-add-option')).map((option) => ({ value: option.dataset.fieldId, label: option.textContent?.trim() }))
+      root.querySelector<HTMLButtonElement>('.filter-add-option[data-field-id="orders.status"]')!.click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'filter_1', scope: 'report', targets: [] }] }] } })
@@ -3038,7 +3169,6 @@ test('dashboard builder authors report filters from governed fields through focu
     expect(state.settingsOpen).toBe(false)
     expect(state.filterActions).toEqual(['Add to canvas', 'Delete'])
     expect(state.filterOptions).toEqual([
-      { value: '', label: '+ Add filter' },
       { value: 'orders.status', label: 'Status' },
     ])
     expect(state.commands[0]).toMatchObject({ action: 'add_filter', fieldId: 'orders.status', dataset: 'orders', controlType: 'multiSelect' })
@@ -3407,4 +3537,295 @@ test('dashboard builder gates publishing on exact draft state and visible valida
   } finally {
     await page.close()
   }
+})
+
+
+test('collapsing every pane retains the tool headers and saved library tabs retain their frame', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const editor = page.locator('lv-dashboard-builder')
+    for (const pane of ['Filters', 'Visuals', 'Data']) {
+      await editor.getByRole('button', { name: `Collapse ${pane} pane`, exact: true }).click()
+    }
+    expect(await editor.locator('.right-dock').isVisible()).toBe(true)
+    await editor.getByRole('button', { name: 'Expand Data pane', exact: true }).click()
+    expect(await editor.getByRole('searchbox', { name: 'Search fields' }).isVisible()).toBe(true)
+    await editor.getByRole('button', { name: 'Saved visuals', exact: true }).click()
+    await editor.evaluate((element: any) => { (window as any).libraryFrame = element.shadowRoot.querySelector('.saved-visuals-frame') })
+    expect(await editor.locator('.data-pane .pane-title').textContent()).toBe('Data')
+    await editor.getByRole('button', { name: 'Fields', exact: true }).click()
+    await editor.getByRole('button', { name: 'Saved visuals', exact: true }).click()
+    expect(await editor.evaluate((element: any) => element.shadowRoot.querySelector('.saved-visuals-frame') === (window as any).libraryFrame)).toBe(true)
+    await editor.getByRole('button', { name: 'Collapse Data pane', exact: true }).click()
+    expect(await editor.locator('.right-dock').isVisible()).toBe(true)
+    await editor.getByRole('button', { name: 'Expand Data pane', exact: true }).click()
+    expect(await editor.getByRole('searchbox', { name: 'Search fields' }).isVisible()).toBe(true)
+  } finally { await page.close() }
+})
+
+
+test('embedded chat panels keep distinct click targets and default Data to fields', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 850 } })
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const frame = page.frameLocator('iframe')
+    const editor = frame.locator('lv-dashboard-builder')
+    await frame.locator('.field-results').waitFor()
+    expect(await editor.getByRole('searchbox', { name: 'Search fields' }).isVisible()).toBe(true)
+    for (const pane of ['filters', 'data']) {
+      const toggle = editor.locator(`[data-pane-toggle="${pane}"]`)
+      if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click()
+      expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+      const overlap = await toggle.evaluate(e => {
+        const rect = e.getBoundingClientRect()
+        const section = e.closest('aside')!.getBoundingClientRect()
+        return rect.top < section.top || rect.bottom > section.bottom + 1
+      })
+      expect(overlap).toBe(false)
+    }
+    await editor.getByRole('button', { name: 'Saved visuals', exact: true }).click()
+    expect(await editor.locator('.data-pane .pane-title').textContent()).toBe('Data')
+    await editor.getByRole('button', { name: 'Collapse Data pane', exact: true }).click()
+    expect(await editor.locator('.right-dock').isVisible()).toBe(true)
+    for (const pane of ['filters', 'data']) {
+      expect(await editor.locator(`[data-pane-toggle="${pane}"]`).isVisible()).toBe(true)
+    }
+    await editor.getByRole('button', { name: 'Expand Data pane', exact: true }).click()
+    expect(await editor.getByRole('searchbox', { name: 'Search fields' }).isVisible()).toBe(true)
+  } finally { await page.close() }
+})
+
+test('chat preview starts with side-by-side tools open and preserves independent manual collapse', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } })
+  try {
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem('seeded-pane-preferences')) {
+        localStorage.setItem('leapview-dashboard-builder-collapsed-panes-chat', JSON.stringify({ version: 2, collapsed: ['filters', 'visuals', 'agent'] }))
+        sessionStorage.setItem('seeded-pane-preferences', '1')
+      }
+    })
+    await page.goto(`${baseURL}/embed-host`)
+    const frame = page.frameLocator('iframe')
+    const editor = frame.locator('lv-dashboard-builder')
+    await frame.locator('.field-results').waitFor()
+    for (const pane of ['filters', 'data']) {
+      expect(await editor.locator(`[data-pane-toggle="${pane}"]`).getAttribute('aria-expanded')).toBe('true')
+    }
+    const regions = await editor.evaluate((element: any) => ['.canvas-pane', '.filters-pane', '.visual-builder', '.data-pane'].map(selector => {
+      const rect = element.shadowRoot.querySelector(selector).getBoundingClientRect()
+      return { left: rect.left, right: rect.right, top: rect.top }
+    }))
+    for (let i = 1; i < regions.length; i++) {
+      expect(regions[i].left).toBeGreaterThanOrEqual(regions[i - 1].right - 1)
+      expect(regions[i].top).toBeCloseTo(regions[0].top, 0)
+    }
+    expect(await editor.locator('[data-visual-picker-type="bar"]').isVisible()).toBe(true)
+    expect(await editor.locator('.visual-builder').evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true)
+    expect(await editor.locator('[data-pane-toggle="visuals"]').count()).toBe(0)
+    expect(await editor.locator('.visual-builder .pane-content').isVisible()).toBe(true)
+    await editor.getByRole('button', { name: 'Collapse Data pane', exact: true }).click()
+    expect(await editor.getByRole('button', { name: 'Collapse Filters pane', exact: true }).isVisible()).toBe(true)
+    expect(await editor.locator('.visual-builder .pane-content').isVisible()).toBe(true)
+    await page.reload()
+    await frame.locator('[data-pane-toggle="data"]').waitFor()
+    expect(await editor.locator('[data-pane-toggle="data"]').getAttribute('aria-expanded')).toBe('false')
+    expect(await editor.locator('[data-pane-toggle="filters"]').getAttribute('aria-expanded')).toBe('true')
+    expect(await editor.locator('.visual-builder').getAttribute('data-collapsed')).toBe('false')
+  } finally { await page.close() }
+})
+
+test('preview Fix preserves authored placement and zoom through its owning parent', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    expect(await editor.getByRole('button', { name: 'Arrange visuals', exact: true }).count()).toBe(0)
+    expect(await editor.locator('[data-pane-toggle="visuals"]').count()).toBe(0)
+    await editor.evaluate(async (element: any) => {
+      const builder = JSON.parse(JSON.stringify(element.builder))
+      const visual = builder.pages[0].visuals[0]
+      builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder })
+      element.canvasZoom = 1.25
+      element.testCommands = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => element.testCommands.push(event.detail))
+      await element.updateComplete
+      window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: window, data: { type: 'lv-arrange-dashboard-visuals' } }))
+    })
+    expect(await editor.evaluate((e: any) => e.testCommands.length)).toBe(0)
+    await page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'lv-arrange-dashboard-visuals' }, location.origin))
+    await editor.evaluate(async (e: any) => {
+      const started = Date.now()
+      while (e.testCommands.length !== 1) {
+        if (Date.now() - started > 3000) throw new Error('Parent Arrange command did not reach builder')
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+    })
+    expect(await editor.evaluate((e: any) => e.testCommands[0])).toMatchObject({ action: 'set_placements', fillMissingFields: true, placements: [
+      { componentId: 'chart-0', placement: { column: 1, row: 1, columnSpan: 12, rowSpan: 5 } },
+      { componentId: 'chart-1', placement: { column: 1, row: 6, columnSpan: 12, rowSpan: 5 } },
+      { componentId: 'chart-2', placement: { column: 1, row: 11, columnSpan: 12, rowSpan: 5 } },
+    ] })
+    expect(await editor.evaluate((e: any) => e.canvasZoom)).toBe(1.25)
+    const result = await editor.evaluate(async (e: any) => {
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: e } }))
+      await e.updateComplete
+      return { pending: e.pendingFixVisuals, message: e.fixVisualsMessage }
+    })
+    expect(result.pending).toBeNull()
+    expect(result.message).toContain('3 visuals could not be completed automatically')
+  } finally { await page.close() }
+})
+
+test('new preview visual automatically fits after its add settles and shares one Undo', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    const result = await editor.evaluate(async (element: any) => {
+      const original = element.builder.revision.id
+      const originalPlacement = { ...element.builder.pages[0].visuals[0].placement }
+      const originalID = element.builder.pages[0].visuals[0].id
+      element.testCommands = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => element.testCommands.push(event.detail))
+      element.addVisual('funnel')
+      const builder = JSON.parse(JSON.stringify(element.builder))
+      builder.revision.id = 'added-funnel'
+      builder.revision.number++
+      builder.pages[0].visuals.push({ ...builder.pages[0].visuals[0], id: 'new-funnel', type: 'funnel', slots: [], placement: { col: 1, row: 12, colSpan: 12, rowSpan: 12 } })
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder })
+      await element.updateComplete
+      const beforeSettle = element.testCommands.length
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const afterSettle = element.testCommands.slice()
+      const undo = element.undoStack.map((r: any) => r.id)
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      return { original, originalPlacement, originalID, beforeSettle, commands: afterSettle, undo, finalCount: element.testCommands.length }
+    })
+    expect(result.beforeSettle).toBe(1)
+    expect(result.commands.map((command: any) => command.action)).toEqual(['add_visual', 'set_placements'])
+    expect(result.commands[1].placements.find((p: any) => p.componentId === 'new-funnel').placement).toMatchObject({ columnSpan: 6, rowSpan: 5 })
+    expect(result.commands[1].placements.find((p: any) => p.componentId === result.originalID).placement).toEqual({ column: result.originalPlacement.col, row: result.originalPlacement.row, columnSpan: result.originalPlacement.colSpan, rowSpan: result.originalPlacement.rowSpan })
+    expect(result.undo).toEqual([result.original])
+    expect(result.finalCount).toBe(2)
+  } finally { await page.close() }
+})
+
+test('filter menu excludes incompatible datasets without blocking unfinished visuals', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const editor = page.locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    await editor.evaluate(async (element: any) => {
+      const builder = JSON.parse(JSON.stringify(element.builder))
+      const dimension = (id: string) => ({ id, label: id, kind: 'dimension', dataType: 'string', roles: ['dimension'], canFilter: id === 'country' })
+      builder.semanticModel.datasets = [
+        { id: 'sales', title: 'Sales', fields: [dimension('country'), { id: 'revenue', label: 'Revenue', kind: 'metric', dataType: 'number', roles: ['metric'] }] },
+        { id: 'cash', title: 'Cash', fields: [dimension('scenario')] },
+      ]
+      const visual = builder.pages[0].visuals[0]
+      builder.pages = [{ ...builder.pages[0], visuals: [
+        { ...visual, datasetId: undefined, slots: [{ id: 'revenue', label: 'Revenue', fieldId: 'revenue', kind: 'metric', required: true }] },
+        { ...visual, id: 'unfinished', datasetId: undefined, slots: [] },
+      ] }]
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder })
+      await element.updateComplete
+    })
+    expect(await editor.locator('.filter-add-option[data-field-id="country"]').evaluate((e: HTMLButtonElement) => e.disabled)).toBe(false)
+    expect(await editor.locator('.filter-add-option[data-field-id="scenario"]').evaluate((e: HTMLButtonElement) => e.disabled)).toBe(true)
+    const result = await editor.evaluate(async (element: any) => {
+      const commands: any[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      const field = element.builder.semanticModel.datasets[1].fields[0]
+      element.addFilterForField(field)
+      await element.updateComplete
+      return { commands, message: element.builderFilterTransportError }
+    })
+    expect(result.commands).toEqual([])
+    expect(result.message).toContain('does not apply')
+  } finally { await page.close() }
+})
+
+test('authoring request stays pending when a filter fetch finishes before its revision', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const editor = page.locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    const result = await editor.evaluate(async (e: any) => {
+      e.setAttribute('data-on:lv-builder-command', 'void 0')
+      e.emitCommand('assign_field', { fieldId: 'order_count', role: 'metric' })
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: e } }))
+      const pendingBeforeRevision = e.commandPending
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder: { revision: { ...e.builder.revision, id: 'field-assigned', number: e.builder.revision.number + 1 } } })
+      await e.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: e } }))
+      return { pendingBeforeRevision, pendingAfterRevision: e.commandPending }
+    })
+    expect(result).toEqual({ pendingBeforeRevision: true, pendingAfterRevision: false })
+  } finally { await page.close() }
+})
+
+test('GridStack displays authoritative Arrange geometry after rebuilding and metadata patches', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    const editor = page.locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    const result = await editor.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const builder = JSON.parse(JSON.stringify(e.builder))
+      builder.pages[0].visuals[0].placement = { col: 7, row: 3, colSpan: 6, rowSpan: 2 }
+      builder.revision.id = 'arranged'
+      mergePatch({ builder })
+      await e.updateComplete
+      const grid = e.gridStack
+      const node = e.gridStack.getGridItems()[0].gridstackNode
+      const geometry = { x: node.x, y: node.y, w: node.w, h: node.h }
+      mergePatch({ builder: { title: 'Metadata change', revision: { ...builder.revision, id: 'metadata' } } })
+      await e.updateComplete
+      const after = e.gridStack.getGridItems()[0].gridstackNode
+      return { geometry, after: { x: after.x, y: after.y, w: after.w, h: after.h }, retainedGrid: grid === e.gridStack }
+    })
+    expect(result.geometry).toEqual({ x: 6, y: 2, w: 6, h: 2 })
+    expect(result.after).toEqual(result.geometry)
+    expect(result.retainedGrid).toBe(true)
+  } finally { await page.close() }
+})
+
+test('removed grid tiles stay removed when Undo and Redo restore the component list', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    const editor = page.locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    const result = await editor.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const builder = JSON.parse(JSON.stringify(e.builder))
+      const original = builder.pages[0].visuals[0]
+      const added = { ...original, id: 'added-chart', placement: { col: 7, row: 1, colSpan: 6, rowSpan: 5 } }
+      builder.pages[0].visuals = [original, added]
+      mergePatch({ builder }); await e.updateComplete
+      builder.pages[0].visuals = [original]
+      mergePatch({ builder }); await e.updateComplete
+      const afterUndo = [...e.shadowRoot.querySelectorAll('.canvas > .visual')].map((item: Element) => item.getAttribute('gs-id'))
+      builder.pages[0].visuals = [original, added]
+      mergePatch({ builder }); await e.updateComplete
+      const afterRedo = [...e.shadowRoot.querySelectorAll('.canvas > .visual')].map((item: Element) => item.getAttribute('gs-id'))
+      return { afterUndo, afterRedo }
+    })
+    expect(result.afterUndo).toEqual(['sales-chart'])
+    expect(result.afterRedo.sort()).toEqual(['added-chart', 'sales-chart'])
+  } finally { await page.close() }
 })

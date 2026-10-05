@@ -302,7 +302,29 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 	case *AddVisualPayload:
 		return addCanonicalVisual(value, *patch)
 	case *SetPlacementsPayload:
-		return setCanonicalPlacements(value, *patch)
+		if err := setCanonicalPlacements(value, *patch); err != nil {
+			return err
+		}
+		for _, field := range patch.ResolvedFields {
+			if err := assignCanonicalField(value, field); err != nil {
+				return err
+			}
+		}
+		if patch.FillMissingFields {
+			for _, page := range value.Spec.Pages {
+				if page.ID != patch.PageID {
+					continue
+				}
+				for _, component := range page.Components {
+					if placed, ok := component.Value.(*document.VisualDashboardPageComponent); ok {
+						visual := value.Spec.Visuals[placed.Visual]
+						completePendingPointBindings(&visual)
+						value.Spec.Visuals[placed.Visual] = visual
+					}
+				}
+			}
+		}
+		return nil
 	case *AssignFieldPayload:
 		return assignCanonicalField(value, *patch)
 	case *SetVisualTypePayload:
@@ -1058,7 +1080,12 @@ func addCanonicalFilter(value *document.DashboardDocument, patch AddFilterPayloa
 		return err
 	}
 	readerEditable := true
-	value.Spec.Filters = append(value.Spec.Filters, document.DashboardFilter{ID: id, Label: strings.TrimSpace(patch.Label), Dimension: strings.TrimSpace(patch.Dimension), Control: control, ReaderEditable: &readerEditable})
+	filter := document.DashboardFilter{ID: id, Label: strings.TrimSpace(patch.Label), Dimension: strings.TrimSpace(patch.Dimension), Control: control, ReaderEditable: &readerEditable}
+	if patch.ResolvedTargets != nil {
+		targets := append([]string(nil), patch.ResolvedTargets...)
+		filter.Targets = &targets
+	}
+	value.Spec.Filters = append(value.Spec.Filters, filter)
 	return nil
 }
 
@@ -1090,7 +1117,7 @@ func addCanonicalSlicer(value *document.DashboardDocument, patch AddSlicerPayloa
 	filterCount := len(value.Spec.Filters)
 	if err := addCanonicalFilter(value, AddFilterPayload{
 		FilterID: filterID, Label: patch.Label, Dimension: patch.Dimension,
-		Dataset: patch.Dataset, ControlType: patch.ControlType,
+		Dataset: patch.Dataset, ControlType: patch.ControlType, ResolvedTargets: patch.ResolvedTargets,
 	}); err != nil {
 		return err
 	}
@@ -3081,6 +3108,7 @@ func assignCanonicalField(value *document.DashboardDocument, patch AssignFieldPa
 	default:
 		return fmt.Errorf("%w: visual query does not accept assigned fields", ErrInvalidPayload)
 	}
+	completePendingPointBindings(&visual)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }
@@ -3145,4 +3173,20 @@ func nextCanonicalBuilderID(prefix string, start int, exists func(string) bool) 
 
 func sameRevisionToken(left, right RevisionToken) bool {
 	return left.RevisionID == right.RevisionID && left.Number == right.Number && left.ContentHash == right.ContentHash
+}
+
+// WithAssignedVisualFields resolves a prospective edit on a detached document.
+// The application uses the same field reducer as persistence before compiling
+// candidates; no preview can mutate a stored revision.
+func WithAssignedVisualFields(value document.DashboardDocument, fields []AssignFieldPayload) (document.DashboardDocument, error) {
+	clone, err := value.Clone()
+	if err != nil {
+		return document.DashboardDocument{}, err
+	}
+	for _, field := range fields {
+		if err := assignCanonicalField(&clone, field); err != nil {
+			return document.DashboardDocument{}, err
+		}
+	}
+	return clone, nil
 }

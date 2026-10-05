@@ -13,6 +13,8 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -54,6 +56,24 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 				Ref: agenttools.CatalogRef{ID: id.String(), Kind: agenttools.CatalogType(kind)},
 			})
 			if err != nil {
+				// Private drafts are not part of the active serving graph.
+				// Resolve browser references through the edit-authorized draft
+				// facade; never reuse client-provided names or model context.
+				if kind == projectgraph.KindDashboard && m.dashboardAuthoring != nil && !scope.Credential.Restricted {
+					draft, draftErr := m.dashboardAuthoring.Draft(r.Context(), authoringapplication.DraftRequest{
+						ProjectID: projectgraph.ResourceID(projectID), ActorID: scope.PrincipalID, DashboardID: authoring.DashboardID(id.String()),
+					})
+					if draftErr == nil {
+						references = append(references, agent.TurnReference{
+							Reference: agent.TurnReferenceKey{Kind: string(projectgraph.KindDashboard), ID: id.String()},
+							Name:      draft.Lifecycle.Title, Resource: agent.TurnReferenceResource{ID: projectID, Name: projectID},
+							DashboardID: id.String(), ModelID: draft.Lifecycle.SemanticModel.String(),
+							Href:    "/dashboards/" + url.PathEscape(id.String()) + "/edit",
+							Context: []string{"Private dashboard draft. Use get_dashboard_draft or read_dashboard_source to inspect the current revision before editing."},
+						})
+						continue
+					}
+				}
 				return agent.TurnContext{}, errors.New("referenced catalog resource is unknown or unauthorized")
 			}
 			references = append(references, TurnReferenceFromCatalog(item.Item, projectID))

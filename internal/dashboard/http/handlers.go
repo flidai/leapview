@@ -209,6 +209,7 @@ type Handler struct {
 	StreamNamespace            string
 	SpatialTileStreamClosed    func(Metrics, string)
 	Authoring                  AuthoringApplication
+	SavedVisuals               authoring.SavedVisualStore
 }
 
 func (h Handler) catalogWithDashboardAppearance(ctx context.Context, source dashboard.Catalog, dashboardID string) dashboard.Catalog {

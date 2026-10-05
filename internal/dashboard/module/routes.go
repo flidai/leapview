@@ -75,6 +75,9 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// target project role bundle, then source dashboard resource.
 	r.Get("/dashboards/new", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
 	r.Post("/dashboards/new", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
+	r.Get("/visuals/saved", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.SavedVisualLibrary))
+	r.Post("/visuals/saved/remove", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.UnsaveVisual))
+	r.Post("/visuals/saved", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.SaveVisual))
 	forkHandler := protectResource(
 		access.CapabilityResourceEdit,
 		dashboardhttp.ProjectObjectRefs,
@@ -91,6 +94,8 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/dashboards/{dashboard}/preview", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderPreview))
 	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderExportYAML))
 	r.Post("/dashboards/{dashboard}/draft/command", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderCommand))
+	r.Post("/dashboards/{dashboard}/draft/chat-remove-visual", protectAuthoring(access.CapabilityResourceEdit, h.RemoveChatDashboardVisual))
+	r.Post("/dashboards/{dashboard}/draft/saved-visual", protectAuthoring(access.CapabilityResourceEdit, h.AddSavedVisual))
 	// Builder filter state is a read-side exact-draft preview capability. It
 	// shares authoring authorization but has dedicated endpoints and never
 	// enters the published dashboard command/session routes.

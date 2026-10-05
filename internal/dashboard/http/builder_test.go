@@ -637,10 +637,12 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 		},
 		compilation: preview.Compilation{SemanticEvidence: preview.SemanticServingStateEvidence{Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation-4"}}},
 	}
+	fake.preview = standaloneDraftPreviewFixture(t, authoring.RevisionToken{RevisionID: "revision-2", Number: 2, ContentHash: revisionHash}, selectedPage)
+	fake.preview.SemanticEvidence.Identity.GenerationID = "generation-4"
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
 		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
-		"pageId": "overview", "action": "set_placements", "placements": []map[string]any{
+		"pageId": "overview", "action": "set_placements", "fillMissingFields": true, "placements": []map[string]any{
 			{"componentId": "orders-component", "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4},
 			{"visualId": "summary-component", "col": 7, "row": 1, "colSpan": 6, "rowSpan": 4},
 		},
@@ -655,23 +657,28 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	if fake.intentCalls != 1 || fake.executeCalls != 0 || fake.executed.SetPlacements == nil {
 		t.Fatalf("builder dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
 	}
+	if !fake.executed.SetPlacements.FillMissingFields {
+		t.Fatal("field completion flag was lost at the HTTP boundary")
+	}
 	placements := fake.executed.SetPlacements.Placements
 	if len(placements) != 2 || placements[0].ComponentID != "orders-component" || placements[0].Placement.ColumnSpan != 6 || placements[1].ComponentID != "summary-component" || placements[1].Placement.Column != 7 {
 		t.Fatalf("translated placements = %#v", placements)
 	}
-	if fake.previewCalls != 0 || fake.compileCalls != 1 {
-		t.Fatalf("layout projection calls preview=%d compile=%d, want 0/1", fake.previewCalls, fake.compileCalls)
+	if fake.previewCalls != 1 || fake.compileCalls != 0 {
+		t.Fatalf("layout projection calls preview=%d compile=%d, want 1/0", fake.previewCalls, fake.compileCalls)
 	}
 	patches := ssetest.PatchSignals(t, rec.Body.String())
-	if len(patches) != 1 {
-		t.Fatalf("patches = %#v, want one layout-only patch", patches)
+	if len(patches) != 2 {
+		t.Fatalf("patches = %#v, want a complete preview replacement", patches)
 	}
-	if _, ok := patches[0]["builderVisuals"]; ok {
-		t.Fatalf("layout-only patch replaced builder visuals: %#v", patches[0])
+	visuals := patches[1]["builderVisuals"].(map[string]any)
+	visual := visuals["orders"].(map[string]any)
+	if visual["servingStateID"] != patches[1]["runtime"].(map[string]any)["servingStateId"] {
+		t.Fatalf("resized preview identity disagrees with runtime: %#v", patches[1])
 	}
-	runtime, ok := patches[0]["runtime"].(map[string]any)
+	runtime, ok := patches[1]["runtime"].(map[string]any)
 	if !ok || runtime["servingStateId"] != "builder:draft-1:revision-2:"+revisionHash+":generation:generation-4" {
-		t.Fatalf("layout runtime = %#v", patches[0]["runtime"])
+		t.Fatalf("layout runtime = %#v", patches[1]["runtime"])
 	}
 }
 

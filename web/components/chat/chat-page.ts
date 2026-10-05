@@ -1,17 +1,25 @@
+import { submitVisualForm } from './visual-library-bridge'
+import './agent-visual-library'
+import type { VisualLibraryState } from './agent-visual-library'
 import { LitElement, css, html } from 'lit'
+import { visualizationRegistry } from '../dashboard/visualization/registry'
+import { repeat } from 'lit/directives/repeat.js'
 import { state } from 'lit/decorators.js'
-import { CircleHelp, LayoutDashboard, TrendingUp, type IconNode } from 'lucide'
-import type { AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal, ChatTranscriptItemSignal } from '../../generated/signals'
+import { Check, CircleHelp, Grid2X2, LayoutDashboard, Maximize2, Minimize2, Minus, Plus, Save, TrendingUp, X, type IconNode } from 'lucide'
+import type { ChatArtifactSignal, AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
+import { uuidv7 } from '../shared/command'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
 import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId, mergeReferences, normalizeReferenceLimit } from './reference'
 import './chat-composer'
 import './chat-list'
+import type { ChatDashboardMessage } from './dashboard-workspace'
+import { chatVisualsFromSignals } from './visual-signals'
 
 const emptyAgent: ChatSignal = {
   conversations: [],
@@ -29,6 +37,363 @@ const promptStarters: Array<{ label: string; prompt: string; icon: IconNode }> =
 
 class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
+  @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
+  @state() private dashboardPreview = false
+  @state() private selectedPreviewVisual = ''
+  @state() private builderOpen = false
+  @state() private canArrangeDashboard = false
+  @state() private fixingDashboardVisuals = false
+  @state() private fixVisualsMessage = ''
+  @state() private savingDashboard = false
+  @state() private dashboardSaveError = ''
+  @state() private savedBuilderHref = ''
+  @state() private savedDashboardArtifacts: ChatArtifactSignal[] = []
+  @state() private savedDashboardVisuals: Record<string, VisualizationEnvelope> = {}
+  @state() private dashboardCopies: Record<string, { id: string; pageId: string }> = {}
+  private pendingDashboardChange: { artifactId: string; componentId: string; remove: boolean } | null = null
+  private pendingPreviewArtifacts: string[] = []
+  private dashboardRevisionId = ''
+  private dashboardPageId = 'overview'
+  private builderNeedsRefresh = false
+  private visualCacheKey = ''
+  private visualCache: Record<string, VisualizationEnvelope> = {}
+  private visitedVisuals: string[] = []
+  private warmedRenderers = new Set<string>()
+  private savedSignature = ''
+  private pendingSaveSignature = ''
+  private saveRequestID = ''
+  private saveTimer = 0
+  private wasAgentRunning = false
+  private sidebarScroll = 0
+  private chatScroll: { top: number; autoScroll: boolean } | null = null
+
+  private get chatThread(): (HTMLElement & {
+    updateComplete: Promise<boolean>
+    captureScroll(): { top: number; autoScroll: boolean }
+    restoreScroll(position: { top: number; autoScroll: boolean }): void
+  }) | null {
+    return this.shadowRoot?.querySelector('lv-chat-thread') ?? null
+  }
+
+  private enterBuilder(): void {
+    this.sidebarScroll = this.shadowRoot?.querySelector<HTMLElement>('.preview-scroll')?.scrollTop ?? 0
+    this.chatScroll = this.chatThread?.captureScroll() ?? null
+    this.dashboardPreview = true
+    this.builderOpen = true
+    if (this.savedBuilderHref && this.builderNeedsRefresh && this.builderFrame) {
+      this.builderFrame.src = this.savedBuilderHref
+      this.builderNeedsRefresh = false
+    }
+    const url = new URL(window.location.href)
+    url.searchParams.set('preview', 'builder')
+    window.history.pushState(null, '', url)
+  }
+
+  private async restoreChatLayout(): Promise<void> {
+    await this.updateComplete
+    await this.chatThread?.updateComplete
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const scroll = this.shadowRoot?.querySelector<HTMLElement>('.preview-scroll')
+    if (scroll) scroll.scrollTop = this.sidebarScroll
+    if (this.chatScroll) this.chatThread?.restoreScroll(this.chatScroll)
+    this.shadowRoot?.querySelector<HTMLElement>('.conversation-titlebar .chat-size-toggle')?.focus({ preventScroll: true })
+  }
+
+  private readonly builderFrameName = `chat-builder-${crypto.randomUUID()}`
+
+  private readonly mutationFrameName = `chat-dashboard-mutation-${crypto.randomUUID()}`
+
+  private get mutationFrame(): HTMLIFrameElement | null {
+    return this.shadowRoot?.querySelector<HTMLIFrameElement>('.mutation-frame') ?? null
+  }
+
+  private handleMutationLoad = (): void => {
+    const frame = this.mutationFrame
+    if (!this.savingDashboard || !frame?.contentDocument || frame.contentWindow?.location.href === 'about:blank') return
+    if (frame.contentDocument.getElementById('chat-dashboard-receipt')) return
+    this.dashboardSaveError = frame.contentDocument.body?.innerText.trim().slice(0, 500) || 'The dashboard could not be updated. Please try again.'
+    this.savingDashboard = false
+    this.pendingDashboardChange = null
+    window.clearTimeout(this.saveTimer)
+  }
+
+  private get builderFrame(): HTMLIFrameElement | null {
+    return this.shadowRoot?.querySelector<HTMLIFrameElement>('.builder-frame') ?? null
+  }
+
+  private get artifactSignature(): string {
+    return JSON.stringify(this.previewArtifacts.map(artifact => artifact.id))
+  }
+
+  private get dashboardSaved(): boolean {
+    return Boolean(this.savedBuilderHref) && this.savedSignature === this.artifactSignature
+  }
+
+  private handleBuilderMessage = (event: MessageEvent<ChatDashboardMessage>): void => {
+    if (event.origin !== window.location.origin) return
+    const mutation = event.data?.type === 'lv-dashboard-mutation'
+    if (event.source !== (mutation ? this.mutationFrame : this.builderFrame)?.contentWindow) return
+    if (!mutation && this.builderNeedsRefresh) return
+    if (event.data?.type === 'lv-builder-back-to-chat') {
+      void this.closeDashboardPreview()
+      return
+    }
+    if (event.data?.type === 'lv-builder-operation-error') {
+      this.dashboardSaveError = event.data.message
+      this.savingDashboard = false
+      this.pendingDashboardChange = null
+      window.clearTimeout(this.saveTimer)
+      return
+    }
+    if (event.data?.type !== 'lv-builder-saved' && event.data?.type !== 'lv-dashboard-mutation') return
+    const href = new URL(event.data.href, window.location.href)
+    if (href.origin !== window.location.origin || !href.pathname.startsWith('/dashboards/')) return
+    const components = event.data.components
+    const copies = { ...this.dashboardCopies }
+    for (const [artifactId, copy] of Object.entries(copies)) {
+      if (!components.some(component => component.id === copy.id && component.pageId === copy.pageId)) delete copies[artifactId]
+    }
+    for (const [index, artifactId] of this.pendingPreviewArtifacts.entries()) {
+      const component = components.find(component => component.id === `visual_${index + 1}`)
+      if (component) copies[artifactId] = component
+    }
+    this.pendingPreviewArtifacts = []
+    const pending = this.pendingDashboardChange
+    const component = pending && components.find(component => component.id === pending.componentId)
+    const completed = !pending || (pending.remove ? !component : Boolean(component))
+    if (pending && completed) {
+      if (component) copies[pending.artifactId] = component
+      else delete copies[pending.artifactId]
+      this.pendingDashboardChange = null
+    }
+    this.dashboardCopies = copies
+    if (completed) {
+      window.clearTimeout(this.saveTimer)
+      this.savingDashboard = false
+      this.dashboardSaveError = ''
+    }
+    this.savedBuilderHref = href.pathname + href.search
+    this.savedSignature = this.pendingSaveSignature || this.savedSignature
+    this.dashboardRevisionId = event.data.revisionId
+    this.dashboardPageId = event.data.pageId
+    if (event.data.type === 'lv-builder-saved') {
+      this.canArrangeDashboard = event.data.canArrange === true
+      if (event.data.fixingVisuals !== undefined) this.fixingDashboardVisuals = event.data.fixingVisuals
+      if (event.data.fixMessage !== undefined) this.fixVisualsMessage = event.data.fixMessage
+      this.savedDashboardArtifacts = event.data.artifacts
+      this.savedDashboardVisuals = event.data.visuals
+    }
+    const reference = event.data.reference
+    this.references = mergeReferences([...this.references, reference])
+  }
+
+  private arrangeDashboard = (): void => {
+    if (!this.builderOpen || !this.canArrangeDashboard) return
+    this.canArrangeDashboard = false
+    this.fixingDashboardVisuals = true
+    this.fixVisualsMessage = ''
+    this.builderFrame?.contentWindow?.postMessage({ type: 'lv-arrange-dashboard-visuals' } satisfies ChatDashboardMessage, window.location.origin)
+  }
+
+  private handleBuilderLoad = (): void => {
+    const frame = this.builderFrame
+    if (!this.savingDashboard || !frame?.contentDocument || frame.contentWindow?.location.href === 'about:blank') return
+    if (frame.contentDocument.querySelector('lv-dashboard-builder')) return
+    this.dashboardSaveError = frame.contentDocument.body?.innerText.trim().slice(0, 500) || 'Dashboard could not be saved. Please try again.'
+    this.savingDashboard = false
+    window.clearTimeout(this.saveTimer)
+  }
+
+  private refreshSavedVisuals = (): void => {
+    this.builderFrame?.contentWindow?.postMessage({ type: 'lv-refresh-saved-visuals' }, window.location.origin)
+  }
+
+  private beginDashboardChange(): void {
+    this.savingDashboard = true
+    this.builderNeedsRefresh = true
+    if (this.builderFrame) this.builderFrame.src = 'about:blank'
+    this.dashboardSaveError = ''
+    window.clearTimeout(this.saveTimer)
+    this.saveTimer = window.setTimeout(() => {
+      this.savingDashboard = false
+      this.pendingDashboardChange = null
+      this.dashboardSaveError = 'The dashboard update is taking longer than expected. Please try again.'
+    }, 45000)
+  }
+
+  private addAgentVisual = async (event: CustomEvent<{ savedId: string; artifactId: string }>): Promise<void> => {
+    event.preventDefault()
+    if (this.savingDashboard || this.dashboardCopies[event.detail.artifactId]) return
+    const requestId = uuidv7()
+    this.pendingDashboardChange = {
+      artifactId: event.detail.artifactId,
+      componentId: this.savedBuilderHref ? `saved_${requestId.replaceAll('-', '')}` : 'visual_1',
+      remove: false,
+    }
+    this.beginDashboardChange()
+    await this.updateComplete
+    if (this.savedBuilderHref) {
+      const path = new URL(this.savedBuilderHref, window.location.href).pathname.replace(/\/edit$/, '/draft/saved-visual')
+      submitVisualForm(path, this.mutationFrame, {
+        savedVisualId: event.detail.savedId, idempotencyKey: requestId, chatReceipt: '1',
+        pageId: this.dashboardPageId, revisionId: this.dashboardRevisionId,
+      })
+    } else {
+      this.pendingSaveSignature = ''
+      submitVisualForm('/dashboards/new', this.mutationFrame, {
+        chatReceipt: '1', savedVisualId: event.detail.savedId, title: conversationTitle(this.agent), idempotencyKey: requestId,
+      })
+    }
+  }
+
+  private toggleDashboardVisual(artifactId: string): void {
+    if (this.savingDashboard) return
+    const copy = this.dashboardCopies[artifactId]
+    if (!copy) {
+      this.savePreviewVisual(artifactId, true)
+      return
+    }
+    this.pendingDashboardChange = { artifactId, componentId: copy.id, remove: true }
+    this.beginDashboardChange()
+    const path = new URL(this.savedBuilderHref, window.location.href).pathname.replace(/\/edit$/, '/draft/chat-remove-visual')
+    submitVisualForm(path, this.mutationFrame, {
+      chatReceipt: '1', pageId: copy.pageId, componentId: copy.id, revisionId: this.dashboardRevisionId,
+    })
+  }
+
+  private async saveDashboard(openBuilder = false): Promise<void> {
+    this.dashboardSaveError = ''
+    if (this.dashboardSaved || (openBuilder && this.savedBuilderHref)) {
+      if (openBuilder) this.enterBuilder()
+      return
+    }
+    if (this.savingDashboard) return
+    const definitions = []
+    for (const artifact of this.previewArtifacts) {
+      const item = [...(this.agent.transcript ?? [])].reverse().find(item => item.artifact?.id === artifact.id && item.status === 'complete')
+      try {
+        const input = JSON.parse(item?.argumentsJson || item?.inputJson || '')
+        if (!input.semanticModelId || !input.visual) throw new Error('Missing visual definition')
+        definitions.push({ semanticModelId: input.semanticModelId, visual: input.visual, filters: input.filters ?? [] })
+      } catch {
+        this.dashboardSaveError = 'This visual has no editable query definition. Ask the agent to recreate it before saving.'
+        return
+      }
+    }
+    if (!definitions.length) return
+    if (new Set(definitions.map(input => input.semanticModelId)).size !== 1) {
+      this.dashboardSaveError = 'To save one dashboard, its visuals must use the same semantic model.'
+      return
+    }
+    if (this.pendingSaveSignature !== this.artifactSignature) this.saveRequestID = uuidv7()
+    this.pendingSaveSignature = this.artifactSignature
+    this.pendingPreviewArtifacts = this.previewArtifacts.map(artifact => artifact.id)
+    this.builderNeedsRefresh = false
+    if (openBuilder) this.enterBuilder()
+    this.savingDashboard = true
+    await this.updateComplete
+    submitVisualForm('/dashboards/new', this.builderFrame, {
+      title: conversationTitle(this.agent),
+      chatVisuals: JSON.stringify(definitions),
+      idempotencyKey: this.saveRequestID,
+    })
+    this.saveTimer = window.setTimeout(() => {
+      if (!this.savingDashboard) return
+      this.savingDashboard = false
+      this.dashboardSaveError = 'The save is taking longer than expected. Retry to retrieve the same draft.'
+    }, 45000)
+  }
+
+
+  connectedCallback(): void {
+    super.connectedCallback()
+    this.syncPreviewLocation()
+    window.addEventListener('popstate', this.syncPreviewLocation)
+    window.addEventListener('message', this.handleBuilderMessage)
+    document.addEventListener('datastar-signal-patch', this.invalidateVisualCache)
+  }
+
+  disconnectedCallback(): void {
+    window.removeEventListener('popstate', this.syncPreviewLocation)
+    window.removeEventListener('message', this.handleBuilderMessage)
+    document.removeEventListener('datastar-signal-patch', this.invalidateVisualCache)
+    window.clearTimeout(this.saveTimer)
+    super.disconnectedCallback()
+  }
+
+  private syncPreviewLocation = (): void => {
+    const preview = new URL(window.location.href).searchParams.get('preview')
+    const wasBuilder = this.builderOpen
+    this.dashboardPreview = preview === 'dashboard' || preview === 'builder'
+    this.builderOpen = preview === 'builder' && Boolean(this.savedBuilderHref)
+    if (wasBuilder && !this.builderOpen) void this.restoreChatLayout()
+  }
+
+  private async openDashboardPreview(event?: CustomEvent<{ artifactId?: string }>): Promise<void> {
+    const fromBuilder = this.builderOpen
+    const position = fromBuilder ? this.chatScroll : this.chatThread?.captureScroll()
+    this.builderOpen = false
+    this.selectedPreviewVisual = event?.detail?.artifactId ?? this.selectedPreviewArtifact?.id ?? ''
+    this.visitedVisuals = [...this.visitedVisuals.filter(id => id !== this.selectedPreviewVisual), this.selectedPreviewVisual].slice(-3)
+    if (!this.dashboardPreview || fromBuilder) {
+      const url = new URL(window.location.href)
+      url.searchParams.set('preview', 'dashboard')
+      if (fromBuilder) window.history.replaceState(null, '', url)
+      else window.history.pushState(null, '', url)
+      this.dashboardPreview = true
+    }
+    await this.updateComplete
+    await this.chatThread?.updateComplete
+    if (position) this.chatThread?.restoreScroll(position)
+    const cards = this.shadowRoot?.querySelectorAll<HTMLElement>('[data-preview-visual]')
+    const selectedID = this.selectedPreviewArtifact?.id
+    const selected = Array.from(cards ?? []).find(card => card.dataset.previewVisual === selectedID)
+    if (selected) {
+      selected.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+      selected.focus({ preventScroll: true })
+    }
+  }
+
+  private async closeDashboardPreview(): Promise<void> {
+    this.builderOpen = false
+    this.dashboardPreview = true
+    const url = new URL(window.location.href)
+    url.searchParams.set('preview', 'dashboard')
+    window.history.replaceState(null, '', url)
+    await this.restoreChatLayout()
+  }
+
+  private async closeVisualSidebar(): Promise<void> {
+    const position = this.chatThread?.captureScroll()
+    this.dashboardPreview = false
+    const url = new URL(window.location.href)
+    url.searchParams.delete('preview')
+    window.history.replaceState(null, '', url)
+    await this.updateComplete
+    await this.chatThread?.updateComplete
+    if (position) this.chatThread?.restoreScroll(position)
+    this.shadowRoot?.querySelector<HTMLElement>('.open-preview')?.focus()
+  }
+
+  private get selectedPreviewArtifact(): ChatArtifactSignal | undefined {
+    const artifacts = this.previewArtifacts
+    return artifacts.find(artifact => artifact.id === this.selectedPreviewVisual) ?? artifacts[0]
+  }
+
+  private savePreviewVisual(artifactId: string, add: boolean): void {
+    this.dispatchEvent(new CustomEvent('lv-save-agent-visual', {
+      bubbles: true, composed: true, detail: { artifactId, add },
+    }))
+  }
+
+  private get previewArtifacts(): ChatArtifactSignal[] {
+    const artifacts = new Map<string, ChatArtifactSignal>()
+    for (const item of this.agent.transcript ?? []) {
+      if (item.artifact && item.status === 'complete') artifacts.set(item.artifact.id, item.artifact)
+    }
+    return [...artifacts.values()]
+  }
+
   @state() private references: AgentReferenceSignal[] = []
 	@state() private editMessageId = ''
 	@state() private optimisticTurn: ChatTranscriptItemSignal | null = null
@@ -64,6 +429,71 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-app);
     }
 
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .workspace { grid-template-areas: 'chat'; }
+    .body { grid-area: chat; }
+    .workspace.preview-open {
+      grid-template-columns: minmax(300px, .9fr) minmax(0, 1.1fr);
+      grid-template-areas: 'chat visuals';
+    }
+    .preview-open .thread-stack { --lv-chat-stack-width: 100%; }
+    .preview-panel {
+      grid-area: visuals; display: grid; grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0; min-height: 0; overflow: hidden; border-left: var(--lv-border-default);
+      background: var(--lv-bg-panel);
+    }
+    .preview-scroll { overflow: auto; min-height: 0; padding: 16px; overscroll-behavior: contain; }
+    .preview-panel[hidden], .builder-stage[hidden], .builder-frame[hidden] { display: none; }
+    .builder-stage { grid-area: builder; min-width: 0; min-height: 0; position: relative; }
+    .builder-frame { display: block; width: 100%; height: 100%; border: 0; }
+    .preview-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex-shrink: 0; }
+    .save-error { padding: 12px; color: var(--lv-fg-danger); font: var(--lv-type-body-compact); }
+    .preview-action:disabled { opacity: .6; cursor: default; }
+    .workspace.builder-open { grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 320px); grid-template-areas: 'builder chat'; }
+    .workspace.builder-open .body {
+      --lv-type-body: 400 14px/1.5 var(--fontStack-system);
+      --lv-chat-stack-gap: 24px;
+    }
+    .builder-open .body { border-left: var(--lv-border-default); }
+    .preview-heading { flex-wrap: wrap; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: var(--lv-border-default); }
+    .preview-heading h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font: var(--lv-type-section-title); }
+    .preview-empty { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .preview-grid { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .preview-card[hidden] { display: none; }
+    .preview-card { min-width: 0; border-radius: var(--lv-radius-default); outline: none; scroll-margin: 6px; }
+    .preview-card:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 3px; }
+    .preview-card lv-visual-artifact { height: clamp(300px, 44svh, 480px); }
+    .preview-card.kpi lv-visual-artifact { height: 180px; }
+    .preview-card.wide lv-visual-artifact { height: clamp(340px, 52svh, 560px); }
+    .preview-action {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 7px 12px; min-height: 34px; border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default); background: var(--lv-bg-panel);
+      color: var(--lv-fg-default); font: var(--lv-type-body-compact); cursor: pointer;
+    }
+    .preview-action:hover { background: var(--lv-bg-control-hover); }
+    .preview-action:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
+    .preview-action svg { width: 16px; height: 16px; }
+    .close-visuals { padding: 7px; }
+    .titlebar-start { display: flex; min-width: 0; align-items: center; gap: 16px; }
+    .titlebar-start h1 { min-width: 0; }
+
+    @media (max-width: 900px) {
+      .workspace.preview-open { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 42%) minmax(0, 1fr); grid-template-areas: 'chat' 'visuals'; }
+      .workspace.builder-open { grid-template-rows: minmax(0, 1fr) minmax(220px, 38%); grid-template-areas: 'builder' 'chat'; }
+      .preview-panel, .builder-open .body { border-left: 0; border-top: var(--lv-border-default); }
+      .preview-scroll { padding: 12px; }
+      .titlebar-start { flex-wrap: wrap; gap: 8px; }
+      .preview-heading { padding: 10px 12px; }
+    }
+
     .main.list-main {
       height: auto;
       min-height: 100svh;
@@ -75,6 +505,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       grid-template-rows: minmax(0, 1fr);
     }
 
+    .main.builder-main { grid-template-rows: minmax(0, 1fr); }
+
     .loading-state {
       display: grid;
       place-items: center;
@@ -85,7 +517,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     .conversation-titlebar {
       display: grid;
       min-width: 0;
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 16px;
       padding: 14px var(--base-size-16) var(--base-size-8);
     }
 
@@ -103,11 +537,39 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
     .body {
       display: grid;
+      grid-template-rows: minmax(0, 1fr);
       min-width: 0;
       min-height: 0;
       overflow: auto;
       background: var(--lv-bg-app);
     }
+
+    .body.with-chat-header { grid-template-rows: auto minmax(0, 1fr); }
+    .fix-result { flex-basis: 100%; margin: 0; font-size: 12px; line-height: 1.4; color: var(--lv-fg-muted); }
+    .chat-pane-header {
+      flex-wrap: wrap;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; min-height: 50px; padding: 0 12px; border-bottom: var(--lv-border-default);
+    }
+    .chat-pane-header[hidden] { display: none; }
+    .chat-pane-heading { display: flex; align-items: center; gap: 8px; font: var(--lv-type-body-compact); }
+    .arrange-dashboard { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-size: 12px; white-space: nowrap; cursor: pointer; }
+    .arrange-dashboard svg { width: 14px; height: 14px; }
+    .arrange-dashboard:disabled { opacity: .6; cursor: default; }
+    .chat-pane-heading svg { width: 16px; height: 16px; }
+    .titlebar-actions { display: flex; align-items: center; gap: 8px; }
+    .chat-size-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; flex-shrink: 0; padding: 6px;
+      border: 0; border-radius: var(--lv-radius-default); background: transparent;
+      color: var(--lv-fg-muted); cursor: pointer;
+    }
+    .chat-size-toggle svg { width: 16px; height: 16px; }
+    .chat-size-toggle:hover { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
+    .chat-size-toggle:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
+    .chat-size-toggle:disabled { opacity: .6; cursor: default; }
+
+    .list-main .workspace { overflow: visible; }
 
     .list-main .body {
       min-height: auto;
@@ -307,8 +769,21 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
   `
 
-  updated(): void {
+  updated(changed: Map<PropertyKey, unknown>): void {
+    if (changed.has('builderOpen')) {
+      this.dispatchEvent(new CustomEvent('lv-chat-workspace-change', {
+        bubbles: true, composed: true, detail: { builderOpen: this.builderOpen },
+      }))
+    }
     if (!this.hasBootstrapSignals) return
+    // Start loading only renderers required by this conversation before a click.
+    for (const envelope of Object.values(this.visuals)) {
+      if (this.warmedRenderers.has(envelope.rendererID)) continue
+      this.warmedRenderers.add(envelope.rendererID)
+      try {
+        void visualizationRegistry.load(visualizationRegistry.resolve(envelope)).catch(() => this.warmedRenderers.delete(envelope.rendererID))
+      } catch { this.warmedRenderers.delete(envelope.rendererID) }
+    }
     checkSignalContract('chat page', this.page, {
       title: 'required',
     })
@@ -320,6 +795,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		this.syncEditState()
 		this.syncOptimisticTurn()
     this.navigateFromDraft()
+    const running = Boolean(this.agent.status.running)
+    if (this.wasAgentRunning && !running && this.savedBuilderHref && !this.savingDashboard) {
+      const frame = this.builderFrame
+      if (frame?.contentWindow && frame.contentWindow.location.href !== 'about:blank') frame.contentWindow.postMessage({ type: 'lv-refresh-builder' } satisfies ChatDashboardMessage, window.location.origin)
+      else this.builderNeedsRefresh = true
+    }
+    this.wasAgentRunning = running
   }
 
 	private syncOptimisticTurn(): void {
@@ -372,8 +854,26 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     return this.signal<ChatSignal>('agent', emptyAgent)
   }
 
+  private invalidateVisualCache = (event: Event): void => {
+    const patch = (event as CustomEvent<Record<string, unknown>>).detail
+    if (patch && Object.hasOwn(patch, 'visuals')) {
+      this.visualCacheKey = ''
+      this.requestUpdate()
+    }
+  }
+
   get visuals(): Record<string, VisualizationEnvelope> {
-    return this.signal<Record<string, VisualizationEnvelope>>('visuals', {})
+    // UI-only changes do not need to clone every dataset or reapply a chart.
+    const raw = (this.signals.visuals ?? {}) as Record<string, VisualizationEnvelope>
+    const key = JSON.stringify([(this.signals.agent as ChatSignal | undefined)?.activeConversationId, Object.entries(raw).map(([id, visual]) => [
+      id, visual.schemaVersion, visual.rendererID, visual.specRevision, visual.dataRevision,
+      visual.dataState.kind, visual.dataState.generation, visual.dataState.kind === 'inline' ? null : visual.dataState, visual.status, visual.selection, visual.highlights, visual.diagnostics,
+    ])])
+    if (key !== this.visualCacheKey) {
+      this.visualCacheKey = key
+      this.visualCache = chatVisualsFromSignals(this.signal<Record<string, VisualizationEnvelope>>('visuals', {}))
+    }
+    return this.visualCache
   }
 
   get pending(): boolean {
@@ -408,11 +908,27 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const isNew = view === 'new'
     const title = conversationTitle(agent)
     return html`
-      <div class="route" @lv-chat-submit=${this.showOptimisticTurn}>
-        <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
-          ${isList || isNew ? null : this.renderConversationTitlebar(title)}
-          <div class="body">
-            ${isList ? this.renderListView(agent) : isNew ? this.renderNewView(composer, status) : this.renderConversationView(agent, status, composer)}
+      <div class="route" @lv-add-agent-visual=${this.addAgentVisual} @lv-saved-visuals-changed=${this.refreshSavedVisuals} @lv-chat-submit=${this.showOptimisticTurn} @lv-chat-dashboard-preview=${this.openDashboardPreview}>
+        <iframe class="mutation-frame" name=${this.mutationFrameName} title="Dashboard update" hidden @load=${this.handleMutationLoad}></iframe>
+        <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : '', this.builderOpen ? 'builder-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
+          ${isList || isNew || this.builderOpen ? null : this.renderConversationTitlebar(title)}
+          <div class=${`workspace${this.dashboardPreview && !isList && !isNew ? ` preview-open${this.builderOpen ? ' builder-open' : ''}` : ''}`}>
+            ${this.renderDashboardPreview(title, !isList && !isNew && this.dashboardPreview && !this.builderOpen)}
+            <section class="builder-stage" aria-label="Dashboard builder workspace" ?hidden=${!this.dashboardPreview || !this.builderOpen}>
+              ${this.dashboardSaveError ? html`<p class="save-error" role="alert">${this.dashboardSaveError}</p>` : null}
+              <iframe class="builder-frame" name=${this.builderFrameName} title="Dashboard builder" @load=${this.handleBuilderLoad} ?hidden=${Boolean(this.dashboardSaveError)}></iframe>
+            </section>
+            <div class=${`body${this.builderOpen ? ' with-chat-header' : ''}`}>
+              <div class="chat-pane-header" ?hidden=${!this.builderOpen}>
+                <span class="chat-pane-heading">${agentIcon()} Chat</span>
+                <div class="titlebar-actions">
+                  <button class="arrange-dashboard" type="button" aria-label="Fix view visuals" aria-busy=${this.fixingDashboardVisuals} title="Complete missing chart fields while keeping your positions and sizes" ?disabled=${!this.canArrangeDashboard || this.fixingDashboardVisuals} @click=${this.arrangeDashboard}>${lucideIcon(Grid2X2)} ${this.fixingDashboardVisuals ? 'Fixing…' : 'Fix view visuals'}</button>
+                  <button class="chat-size-toggle" type="button" aria-label="Expand chat" title="Expand chat" @click=${this.closeDashboardPreview}>${lucideIcon(Maximize2)}</button>
+                </div>
+                ${this.fixVisualsMessage ? html`<p class="fix-result" role="status">${this.fixVisualsMessage}</p>` : null}
+              </div>
+              ${isList ? this.renderListView(agent) : isNew ? this.renderNewView(composer, status) : this.renderConversationView(agent, status, composer)}
+            </div>
           </div>
           <lv-visual-modal></lv-visual-modal>
         </section>
@@ -423,8 +939,54 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private renderConversationTitlebar(title: string) {
     return html`
       <div class="conversation-titlebar">
-        <h1>${title}</h1>
+        <div class="titlebar-start">
+          <h1>${title}</h1>
+        </div>
+        <div class="titlebar-actions">
+          ${!this.dashboardPreview && this.previewArtifacts.length ? html`<button class="preview-action open-preview" type="button" @click=${() => this.openDashboardPreview()}>${lucideIcon(LayoutDashboard)} Visuals (${this.previewArtifacts.length})</button>` : null}
+          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" ?disabled=${this.savingDashboard} @click=${() => this.saveDashboard(true)}>${lucideIcon(Minimize2)}</button>` : null}
+        </div>
       </div>
+    `
+  }
+
+  private renderDashboardPreview(title: string, visible: boolean) {
+    const selected = this.selectedPreviewArtifact
+    // Keep at most three visited renderers mounted; only the selected one is visible.
+    const visited = new Set([...this.visitedVisuals, ...(selected ? [selected.id] : [])])
+    const artifacts = this.previewArtifacts.filter(artifact => visited.has(artifact.id))
+    const visuals = this.visuals
+    const saved = Boolean(selected && this.visualLibraryState.savedIds.includes(selected.id))
+    const saving = Boolean(this.visualLibraryState.savingId)
+    const added = Boolean(selected && this.dashboardCopies[selected.id])
+    return html`
+      <section class="preview-panel" aria-label="Dashboard preview" ?hidden=${!visible}>
+        <div class="preview-heading">
+          <h2>Visual</h2>
+          <div class="preview-actions">
+            <button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>
+            <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
+            <button class="preview-action preview-builder-action" type="button" aria-label="View in Dashboard Preview" title="View in Dashboard Preview" ?disabled=${this.savingDashboard || !artifacts.length} @click=${() => this.saveDashboard(true)}>${lucideIcon(LayoutDashboard)} Preview</button>
+            <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
+          </div>
+        </div>
+        <div class="preview-scroll">
+        ${this.visualLibraryState.error ? html`<p class="save-error" role="alert">${this.visualLibraryState.error}</p>` : null}
+        ${this.dashboardSaveError ? html`<p class="save-error" role="alert">${this.dashboardSaveError}</p>` : null}
+        <div class="preview-grid" aria-label=${title}>
+          ${this.dashboardPreview ? repeat(artifacts, artifact => artifact.id, artifact => {
+            const payload = visuals[artifact.id]
+            const kind = payload?.spec.kind ?? artifact.type
+            return html`
+              <div class=${`preview-card${kind === 'kpi' ? ' kpi' : ''}${['table', 'matrix', 'pivot'].includes(kind) ? ' wide' : ''}${this.selectedPreviewVisual === artifact.id ? ' selected' : ''}`}
+                ?hidden=${artifact.id !== selected?.id} data-preview-visual=${artifact.id} tabindex="-1" aria-label=${payload?.spec.title || artifact.summary || 'Visual'}>
+                <lv-visual-artifact eager type=${artifact.type} artifact-id=${artifact.id} .payload=${payload}></lv-visual-artifact>
+              </div>`
+          }) : null}
+        </div>
+        ${!artifacts.length ? html`<p class="preview-empty">Ask the agent to create a visual. It will appear here as soon as it is ready.</p>` : null}
+        </div>
+      </section>
     `
   }
 
@@ -465,10 +1027,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private renderConversationView(agent: ChatSignal, status: ChatSignal['status'], composer: ChatSignal['composer']) {
     return html`
       <div class="thread-stack">
-        <lv-chat-thread
+        <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${(event: CustomEvent<VisualLibraryState>) => { this.visualLibraryState = event.detail }}></lv-agent-visual-library>
+        <lv-chat-thread .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId}
           .transcript=${this.displayTranscript(agent.transcript ?? [])}
           .visuals=${this.visuals ?? {}}
           .status=${status}
+          .dashboardPreviewAvailable=${true}
+          .selectedVisualId=${this.dashboardPreview ? this.selectedPreviewArtifact?.id ?? '' : ''}
+          surface=${this.builderOpen ? 'drawer' : 'page'}
           conversation-id=${agent.activeConversationId ?? ''}
           @lv-chat-reuse=${this.reuseDraft}
         >${status.error ?? ''}</lv-chat-thread>
