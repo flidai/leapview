@@ -293,6 +293,11 @@ func discardResponse(response *http.Response) {
 	_ = response.Body.Close()
 }
 
+// The local handoff intentionally uses HTTP on 127.0.0.1 and requires a
+// non-Secure cookie. Its random URL is served only on loopback for two minutes.
+// Cookies are not port-scoped: this trusts local processes and cannot isolate
+// a hostile process serving another loopback port. Secure cannot fix that trust
+// boundary. Remote origins are rejected before any network/browser activity.
 func browserSessionCookie(client *http.Client, origin *url.URL) *http.Cookie {
 	for _, cookie := range client.Jar.Cookies(origin) {
 		if cookie.Name == localBrowserSessionCookie && cookie.Value != "" {

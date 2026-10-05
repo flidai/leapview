@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +86,37 @@ func TestLegacyUpdateRoutesAreNotRegistered(t *testing.T) {
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s status = %d, want %d body=%s", path, rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+	}
+}
+
+func TestApplicationRefreshesSecureStreamCookieBehindHTTPSProxy(t *testing.T) {
+	for _, options := range []assemblyConfig{{CookieSecure: true}, {PublicURL: "https://leapview.example"}} {
+		application := assembleRuntime(fakeMetrics{}, options)
+		backend := httptest.NewServer(application.Routes())
+		target, err := url.Parse(backend.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		original := proxy.Director
+		proxy.Director = func(r *http.Request) { original(r); r.Header.Set("X-Forwarded-Proto", "http") }
+		frontend := httptest.NewTLSServer(proxy)
+		request, err := http.NewRequest(http.MethodGet, frontend.URL+"/updates?route=login", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.AddCookie(&http.Cookie{Name: webtransport.ClientIDCookieName, Value: "retained-client"})
+		response, err := frontend.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cookies := response.Cookies()
+		response.Body.Close()
+		frontend.Close()
+		backend.Close()
+		if response.StatusCode != http.StatusOK || len(cookies) != 1 || cookies[0].Name != webtransport.ClientIDCookieName || cookies[0].Value != "retained-client" || !cookies[0].Secure {
+			t.Fatalf("configuration=%+v status=%d cookies=%+v", options, response.StatusCode, cookies)
 		}
 	}
 }

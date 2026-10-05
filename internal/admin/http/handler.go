@@ -32,7 +32,7 @@ type QueryAuditReaderProvider func() (queryaudit.Reader, error)
 type Handler struct {
 	ReadModel           ReadModel
 	Layout              func(*nethttp.Request) webpage.Provider
-	EnsureClientID      func(nethttp.ResponseWriter, *nethttp.Request) bool
+	ClientIDs           webtransport.ClientIDCookies
 	Broker              *pagestream.Broker
 	PublicationMutation func(*nethttp.Request, uisignals.AdminPublicationCommand) error
 	PersonalSettings    *personalsettings.Handler
@@ -703,7 +703,7 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 }
 
 func (h Handler) patchAndWait(w nethttp.ResponseWriter, r *nethttp.Request, patch pagestream.SignalPatch) {
-	if _, ok := webtransport.RequireClientID(w, r); !ok {
+	if _, ok := h.ClientIDs.Require(w, r); !ok {
 		return
 	}
 	updates := pagestream.NewSignalStream(w, r)
@@ -721,10 +721,7 @@ func (h Handler) layout(r *nethttp.Request) webpage.Provider {
 }
 
 func (h Handler) ensureClientID(w nethttp.ResponseWriter, r *nethttp.Request) bool {
-	if h.EnsureClientID != nil {
-		return h.EnsureClientID(w, r)
-	}
-	_, ok := webtransport.RequireClientID(w, r)
+	_, ok := h.ClientIDs.Require(w, r)
 	return ok
 }
 
