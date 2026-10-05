@@ -57,7 +57,11 @@ type sarifRun struct {
 }
 
 func validateSARIF(data []byte, category string) error {
-	if category != "/language:go" && category != "/language:javascript-typescript" {
+	queryPack := map[string]string{
+		"/language:go":                    "codeql/go-queries",
+		"/language:javascript-typescript": "codeql/javascript-queries",
+	}[category]
+	if queryPack == "" {
 		return fmt.Errorf("unsupported CodeQL category %q", category)
 	}
 	var report struct {
@@ -75,6 +79,17 @@ func validateSARIF(data []byte, category string) error {
 		where := fmt.Sprintf("SARIF run %d", runIndex+1)
 		if run.Tool.Driver.Name != "CodeQL" {
 			failures = append(failures, fmt.Errorf("%s: expected raw CodeQL output", where))
+		}
+		// The category is a workflow-supplied label, not proof of which
+		// language ran. The pinned analyzer records its actual query packs.
+		foundQueryPack := false
+		for _, extension := range run.Tool.Extensions {
+			if extension.Name == queryPack {
+				foundQueryPack = true
+			}
+		}
+		if !foundQueryPack {
+			failures = append(failures, fmt.Errorf("%s: missing language query pack %q", where, queryPack))
 		}
 		// SARIF uses the final slash-separated segment as the automation run ID.
 		id := run.AutomationDetails.ID

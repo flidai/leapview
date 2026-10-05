@@ -151,7 +151,7 @@ func TestIntegrityDetectsMutationDeletionAndNewIgnoredDependencyFiles(t *testing
 
 func healthySARIF() map[string]any {
 	return map[string]any{"version": "2.1.0", "runs": []any{map[string]any{
-		"tool":              map[string]any{"driver": map[string]any{"name": "CodeQL"}},
+		"tool":              map[string]any{"driver": map[string]any{"name": "CodeQL"}, "extensions": []any{map[string]any{"name": "codeql/go-queries"}}},
 		"automationDetails": map[string]any{"id": "/language:go/"},
 		"invocations":       []any{map[string]any{"executionSuccessful": true}},
 		"results":           []any{map[string]any{"ruleId": "go/example", "level": "error"}},
@@ -159,7 +159,7 @@ func healthySARIF() map[string]any {
 }
 
 func TestSARIFHealth(t *testing.T) {
-	for _, name := range []string{"healthy with finding", "note", "none", "warning", "error", "default warning", "configuration warning", "failed", "missing success", "no invocations", "no runs", "wrong tool", "wrong category", "bad version", "invalid level", "second run warning", "second invocation warning", "indexed descriptor", "invalid descriptor index"} {
+	for _, name := range []string{"healthy with finding", "note", "none", "warning", "error", "default warning", "configuration warning", "failed", "missing success", "no invocations", "no runs", "wrong tool", "wrong category", "missing language", "wrong language", "bad version", "invalid level", "second run warning", "second invocation warning", "indexed descriptor", "invalid descriptor index"} {
 		t.Run(name, func(t *testing.T) {
 			doc := healthySARIF()
 			runs := doc["runs"].([]any)
@@ -187,6 +187,10 @@ func TestSARIFHealth(t *testing.T) {
 				run["tool"].(map[string]any)["driver"].(map[string]any)["name"] = "GitHub Code Scanning"
 			case "wrong category":
 				run["automationDetails"] = map[string]any{"id": "/language:javascript-typescript/"}
+			case "missing language":
+				delete(run["tool"].(map[string]any), "extensions")
+			case "wrong language":
+				run["tool"].(map[string]any)["extensions"] = []any{map[string]any{"name": "codeql/javascript-queries"}}
 			case "bad version":
 				doc["version"] = "2.0.0"
 			case "second run warning":
@@ -246,11 +250,11 @@ func TestSARIFDescriptorReferencesAndDiagnosticLocations(t *testing.T) {
 		{"mismatched id", `{"index":0,"id":"different"}`, false},
 		{"negative descriptor", `{"index":-1}`, false},
 		{"missing extension", `{"index":0,"toolComponent":{"name":"missing"}}`, false},
-		{"bad component index", `{"index":0,"toolComponent":{"index":1}}`, false},
+		{"bad component index", `{"index":0,"toolComponent":{"index":2}}`, false},
 		{"bad component name", `{"index":0,"toolComponent":{"index":0,"name":"other"}}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			raw := fmt.Sprintf(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"CodeQL","notifications":[{"id":"go/extraction"}]},"extensions":[{"name":"extractor","notifications":[{"id":"go/extraction"}]}]},"automationDetails":{"id":"/language:go/"},"invocations":[{"executionSuccessful":true,"toolExecutionNotifications":[{"level":"warning","descriptor":%s,"message":{"text":"missing import"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"internal/generated.go"},"region":{"startLine":7}}}]}]}]}]}`, test.descriptor)
+			raw := fmt.Sprintf(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"CodeQL","notifications":[{"id":"go/extraction"}]},"extensions":[{"name":"extractor","notifications":[{"id":"go/extraction"}]},{"name":"codeql/go-queries"}]},"automationDetails":{"id":"/language:go/"},"invocations":[{"executionSuccessful":true,"toolExecutionNotifications":[{"level":"warning","descriptor":%s,"message":{"text":"missing import"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"internal/generated.go"},"region":{"startLine":7}}}]}]}]}]}`, test.descriptor)
 			err := validateSARIF([]byte(raw), "/language:go")
 			if err == nil {
 				t.Fatal("warning passed")
@@ -270,16 +274,36 @@ func TestSARIFDescriptorReferencesAndDiagnosticLocations(t *testing.T) {
 	}
 }
 
-func TestRawHostedJavaScriptHealthFixture(t *testing.T) {
+func TestRawHostedHealthFixtures(t *testing.T) {
+	for _, test := range []struct{ file, category string }{
+		{"javascript-raw-health.sarif", "/language:javascript-typescript"},
+		{"go-raw-health.sarif", "/language:go"},
+	} {
+		t.Run(test.file, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", test.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateSARIF(data, test.category); err != nil {
+				t.Fatal(err)
+			}
+			warning := strings.Replace(string(data), `"level": "none"`, `"level": "warning"`, 1)
+			if err := validateSARIF([]byte(warning), test.category); err == nil {
+				t.Fatal("injected warning accepted")
+			}
+		})
+	}
+}
+
+func TestSARIFRejectsRelabeledLanguage(t *testing.T) {
 	data, err := os.ReadFile("testdata/javascript-raw-health.sarif")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSARIF(data, "/language:javascript-typescript"); err != nil {
-		t.Fatal(err)
-	}
-	warning := strings.Replace(string(data), `"level": "none"`, `"level": "warning"`, 1)
-	if err := validateSARIF([]byte(warning), "/language:javascript-typescript"); err == nil {
-		t.Fatal("injected warning accepted")
+	// automationDetails is supplied by the workflow. Relabeling it must not
+	// turn JavaScript analysis into evidence that Go was analyzed.
+	relabeled := strings.Replace(string(data), "/language:javascript-typescript/", "/language:go/", 1)
+	if err := validateSARIF([]byte(relabeled), "/language:go"); err == nil {
+		t.Fatal("accepted JavaScript analysis labeled as Go")
 	}
 }

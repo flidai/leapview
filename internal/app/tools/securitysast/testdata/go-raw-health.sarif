@@ -1,0 +1,235 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "semanticVersion": "2.27.1",
+          "notifications": [
+            {
+              "id": "codeql-action/overlay-disabled",
+              "name": "codeql-action/overlay-disabled",
+              "shortDescription": {
+                "text": "Overlay analysis disabled"
+              },
+              "fullDescription": {
+                "text": "Overlay analysis disabled"
+              },
+              "defaultConfiguration": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "extensions": [
+          {
+            "name": "codeql/go-queries",
+            "semanticVersion": "1.6.11+6e9f9e38390175c41b99070a423c875f450759ca",
+            "notifications": [
+              {
+                "id": "go/diagnostics/extraction-errors",
+                "name": "go/diagnostics/extraction-errors",
+                "shortDescription": {
+                  "text": "Extraction errors"
+                },
+                "fullDescription": {
+                  "text": "List all extraction errors for files in the source code directory."
+                },
+                "defaultConfiguration": {
+                  "enabled": true
+                },
+                "properties": {
+                  "description": "List all extraction errors for files in the source code directory.",
+                  "id": "go/diagnostics/extraction-errors",
+                  "kind": "diagnostic",
+                  "name": "Extraction errors"
+                }
+              },
+              {
+                "id": "go/diagnostics/successfully-extracted-files",
+                "name": "go/diagnostics/successfully-extracted-files",
+                "shortDescription": {
+                  "text": "Extracted files"
+                },
+                "fullDescription": {
+                  "text": "List all files that were extracted."
+                },
+                "defaultConfiguration": {
+                  "enabled": true
+                },
+                "properties": {
+                  "tags": [
+                    "successfully-extracted-files"
+                  ],
+                  "description": "List all files that were extracted.",
+                  "id": "go/diagnostics/successfully-extracted-files",
+                  "kind": "diagnostic",
+                  "name": "Extracted files"
+                }
+              }
+            ]
+          },
+          {
+            "name": "codeql/go-all",
+            "semanticVersion": "7.3.2+6e9f9e38390175c41b99070a423c875f450759ca"
+          },
+          {
+            "name": "codeql/threat-models",
+            "semanticVersion": "1.0.58+6e9f9e38390175c41b99070a423c875f450759ca"
+          }
+        ]
+      },
+      "automationDetails": {
+        "id": "/language:go/"
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolExecutionNotifications": [
+            {
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "deploy/kamal-trial/fixture.go",
+                      "uriBaseId": "%SRCROOT%"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "text": ""
+              },
+              "level": "none",
+              "descriptor": {
+                "id": "go/diagnostics/successfully-extracted-files",
+                "index": 1,
+                "toolComponent": {
+                  "index": 0
+                }
+              },
+              "properties": {
+                "formattedMessage": {
+                  "text": ""
+                }
+              }
+            },
+            {
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "internal/access/postgres/internal/db/models.go",
+                      "uriBaseId": "%SRCROOT%"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "text": ""
+              },
+              "level": "none",
+              "descriptor": {
+                "id": "go/diagnostics/successfully-extracted-files",
+                "index": 1,
+                "toolComponent": {
+                  "index": 0
+                }
+              },
+              "properties": {
+                "formattedMessage": {
+                  "text": ""
+                }
+              }
+            },
+            {
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "pkg/apigen/cmd/apigen/main.go",
+                      "uriBaseId": "%SRCROOT%"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "text": ""
+              },
+              "level": "none",
+              "descriptor": {
+                "id": "go/diagnostics/successfully-extracted-files",
+                "index": 1,
+                "toolComponent": {
+                  "index": 0
+                }
+              },
+              "properties": {
+                "formattedMessage": {
+                  "text": ""
+                }
+              }
+            },
+            {
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "pkg/apigen/example/cmd/cli/gen/doc.go",
+                      "uriBaseId": "%SRCROOT%"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "text": ""
+              },
+              "level": "none",
+              "descriptor": {
+                "id": "go/diagnostics/successfully-extracted-files",
+                "index": 1,
+                "toolComponent": {
+                  "index": 0
+                }
+              },
+              "properties": {
+                "formattedMessage": {
+                  "text": ""
+                }
+              }
+            },
+            {
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "cmd/leapview/main.go",
+                      "uriBaseId": "%SRCROOT%"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "text": ""
+              },
+              "level": "none",
+              "descriptor": {
+                "id": "go/diagnostics/successfully-extracted-files",
+                "index": 1,
+                "toolComponent": {
+                  "index": 0
+                }
+              },
+              "properties": {
+                "formattedMessage": {
+                  "text": ""
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
