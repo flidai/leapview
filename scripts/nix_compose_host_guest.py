@@ -939,7 +939,7 @@ def _install_and_collect(args) -> dict:
         _record(evidence, "installer-driver.txt", (driver + "\n").encode())
         boundary_result = guest.run(
             "set -eu; file=/opt/leapview/current/leapview.env; test -s \"$file\"; "
-            "if grep -Eq '^LEAPVIEW_POSTGRES_(CONTROL|DUCKLAKE)_MIGRATOR_URL=' \"$file\"; then exit 1; fi; "
+            "if grep -Eq '^(LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL|LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL)=' \"$file\"; then exit 1; fi; "
             "printf '{\"controlMigratorURLAbsentFromServingEnvironment\":true,\"duckLakeMigratorURLAbsentFromServingEnvironment\":true}\\n'",
         )
         boundary = _json(_record(evidence, "serving-credential-boundary.json", boundary_result), "serving credential boundary")

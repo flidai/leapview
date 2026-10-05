@@ -71,12 +71,32 @@ func writeQualificationNativePostgresEnvironment(
 	if err != nil {
 		return err
 	}
-	return writePostgresServingEnvironment(
+	const readonlyURLKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"
+	const readonlyRoleKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"
+	readonlyURL, hasReadonlyURL := values[readonlyURLKey]
+	readonlyRole, hasReadonlyRole := values[readonlyRoleKey]
+	delete(values, readonlyURLKey)
+	delete(values, readonlyRoleKey)
+	if hasReadonlyURL != hasReadonlyRole {
+		return errors.New("qualification PostgreSQL readonly serving URL and role must be configured together")
+	}
+	if err := writePostgresServingEnvironment(
 		environmentPath, values,
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
-	)
+	); err != nil {
+		return err
+	}
+	if hasReadonlyURL {
+		if err := appendOrReplaceEnvFile(environmentPath, readonlyURLKey, readonlyURL); err != nil {
+			return fmt.Errorf("write qualification PostgreSQL readonly serving URL: %w", err)
+		}
+		if err := appendOrReplaceEnvFile(environmentPath, readonlyRoleKey, readonlyRole); err != nil {
+			return fmt.Errorf("write qualification PostgreSQL readonly serving role: %w", err)
+		}
+	}
+	return nil
 }
 
 // qualificationNativePostgresOperationEnvironment returns the only values

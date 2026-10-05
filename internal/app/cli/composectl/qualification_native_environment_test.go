@@ -99,6 +99,13 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 	for key, want := range serving {
 		require.Equal(t, want, values[key], key)
 	}
+	readonlyURL, err := canonicalPostgresConnectionURL(postgresConnection{
+		name: "control readonly", value: topology.ControlReadonlyURL,
+		role: qualificationNativePostgresControlReadonlyRole, database: qualificationNativePostgresControlDatabase,
+	})
+	require.NoError(t, err)
+	require.Equal(t, readonlyURL, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"])
+	require.Equal(t, qualificationNativePostgresControlReadonlyRole, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"])
 	for _, key := range []string{
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
@@ -118,6 +125,44 @@ func TestQualificationNativeEnvironmentPersistsServingKeysOnly(t *testing.T) {
 	require.Equal(t, topology.DuckLakeMigratorURL, operation["LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL"])
 	require.Equal(t, qualificationNativePostgresControlMigratorRole, operation["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"])
 	require.Equal(t, qualificationNativePostgresDuckLakeMigratorRole, operation["LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE"])
+}
+
+func TestQualificationNativeEnvironmentWritesShippedTemplateWithReadonlyTopology(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "compose", "leapview.env.example"))
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.env.example"), template, 0o644))
+	require.NoError(t, seedQualificationNativeEnvironment(root))
+
+	topology := qualificationNativeEnvironmentTopologyFixture()
+	require.NotEmpty(t, topology.ControlReadonlyURL)
+	require.NoError(t, writeQualificationNativePostgresEnvironment(filepath.Join(root, appEnvName), topology))
+
+	contents, err := os.ReadFile(filepath.Join(root, appEnvName))
+	require.NoError(t, err)
+	values := environmentValues(string(contents))
+	serving, err := qualificationNativePostgresServingEnvironment(topology)
+	require.NoError(t, err)
+	for key, want := range serving {
+		require.Equal(t, want, values[key], key)
+	}
+	readonlyURL, err := canonicalPostgresConnectionURL(postgresConnection{
+		name: "control readonly", value: topology.ControlReadonlyURL,
+		role: qualificationNativePostgresControlReadonlyRole, database: qualificationNativePostgresControlDatabase,
+	})
+	require.NoError(t, err)
+	require.Equal(t, readonlyURL, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"])
+	require.Equal(t, qualificationNativePostgresControlReadonlyRole, values["LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"])
+	require.Equal(t, "<generated-by-leapviewctl>", values["LEAPVIEW_CSRF_KEY"])
+	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
+	} {
+		_, present := values[key]
+		require.False(t, present, key)
+	}
 }
 
 func TestQualificationNativeEnvironmentRejectsAliasURLsAndRoles(t *testing.T) {
