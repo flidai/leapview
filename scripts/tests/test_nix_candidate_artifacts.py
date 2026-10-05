@@ -23,6 +23,18 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(artifacts.resolve(pages, 123, 2, 'b' * 40, 'arm64', ['qualified']), {'qualified': 15})
         self.assertEqual(artifacts.resolve(pages, 123, 2, 'b' * 40, 'amd64', ['qualified']), {'qualified': 16})
 
+    def test_site_artifact_phases_are_disjoint_from_application_phases(self):
+        phases = ['site-candidate', 'site-qualified', 'site-binding', 'site-published-qualification']
+        entries = [self.fixture('arm64', phase) for phase in phases]
+        for index, entry in enumerate(entries, start=21):
+            entry['id'] = index
+        entries.extend([self.fixture('arm64', 'candidate'), self.fixture('arm64', 'qualified'),
+                        self.fixture('arm64', 'binding')])
+        selected = artifacts.resolve([{'artifacts': entries}], 123, 2, 'b' * 40, 'arm64', phases)
+        self.assertEqual(selected, dict(zip(phases, range(21, 25))))
+        for phase, app_phase in zip(phases[:3], ['candidate', 'qualified', 'binding']):
+            self.assertNotEqual(artifacts.PREFIXES[phase], artifacts.PREFIXES[app_phase])
+
     def test_rejects_substitution_missing_or_duplicate_originals(self):
         valid = self.fixture()
         mutations = [('id', True), ('id', 0), ('expired', True), ('digest', 'unknown'),

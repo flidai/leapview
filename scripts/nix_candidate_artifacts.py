@@ -13,6 +13,10 @@ PREFIXES = {
     'candidate': 'nix-candidate',
     'qualified': 'nix-qualified',
     'binding': 'nix-candidate-binding',
+    'site-candidate': 'nix-site-candidate',
+    'site-qualified': 'nix-site-qualified',
+    'site-binding': 'nix-site-candidate-binding',
+    'site-published-qualification': 'nix-site-published-qualification',
 }
 
 
