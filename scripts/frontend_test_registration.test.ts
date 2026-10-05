@@ -138,3 +138,36 @@ test('only Bun test invocations create test path patterns', () => {
   expect(bunRunTestScripts('echo "bun run test:orphan"')).toEqual([])
   expect(bunRunTestScripts('TEST_TMP=/tmp bun run test:registered && echo "bun run test:orphan"')).toEqual(['test:registered'])
 })
+
+test('quoted and escaped shell separators do not create reachable commands', () => {
+  const orphan = 'web/components/orphan/orphan.test.ts'
+  expect(testPathPatterns(`echo "ignored && bun test ${orphan}"`)).toEqual([])
+  expect(testPathPatterns(`echo 'ignored ; bun test ${orphan}'`)).toEqual([])
+  expect(testPathPatterns(String.raw`echo "ignored \" && bun test ${orphan}"`)).toEqual([])
+  expect(testPathPatterns(String.raw`echo ignored \; bun test ${orphan}`)).toEqual([])
+  expect(testPathPatterns(`echo "quoted && text" && bun test ${orphan}`)).toEqual([orphan])
+
+  const result = auditFrontendTestRegistration({
+    taskfile: { tasks: { 'ci:lane:frontend': { cmds: [`echo "ignored && bun test ${orphan}"`] } } },
+    packageJson: { scripts: {} },
+    componentTestFiles: [orphan],
+    taskRoots: ['ci:lane:frontend'],
+  })
+  expect(result.missing).toEqual([orphan])
+})
+
+test('shell comments hide trailing test paths but quoted and escaped hashes stay literal', () => {
+  const live = 'web/components/live/live.test.ts'
+  const orphan = 'web/components/orphan/orphan.test.ts'
+  expect(testPathPatterns(`bun test ${live} # ${orphan}`)).toEqual([live])
+  expect(testPathPatterns(`echo '#' && bun test ${live}`)).toEqual([live])
+  expect(testPathPatterns(String.raw`echo \# && bun test ${live}`)).toEqual([live])
+
+  const result = auditFrontendTestRegistration({
+    taskfile: { tasks: { 'ci:lane:frontend': { cmds: [`bun test ${live} # ${orphan}`] } } },
+    packageJson: { scripts: {} },
+    componentTestFiles: [live, orphan],
+    taskRoots: ['ci:lane:frontend'],
+  })
+  expect(result.missing).toEqual([orphan])
+})

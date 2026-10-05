@@ -191,7 +191,64 @@ function taskInvocations(command, knownTaskNames, variables) {
 }
 
 function shellCommandSegments(command) {
-  return command.split(/&&|\|\||;|\n/).map((segment) => segment.trim()).filter(Boolean)
+  const segments = []
+  let current = ''
+  let quote = ''
+  let escaped = false
+  let wordStart = true
+
+  const finishSegment = () => {
+    const segment = current.trim()
+    if (segment) segments.push(segment)
+    current = ''
+    wordStart = true
+  }
+
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]
+    if (escaped) {
+      current += char
+      escaped = false
+      if (char !== '\n') wordStart = false
+      continue
+    }
+    if (char === '\\' && quote !== "'") {
+      current += char
+      escaped = true
+      continue
+    }
+    if (quote) {
+      current += char
+      if (char === quote) quote = ''
+      continue
+    }
+    if (char === '"' || char === "'") {
+      current += char
+      quote = char
+      wordStart = false
+      continue
+    }
+    if (char === '#' && wordStart) {
+      const newline = command.indexOf('\n', index)
+      if (newline < 0) break
+      index = newline - 1
+      continue
+    }
+    if (char === '\n' || char === ';') {
+      finishSegment()
+      continue
+    }
+    if ((char === '&' || char === '|') && command[index + 1] === char) {
+      finishSegment()
+      index += 1
+      continue
+    }
+    current += char
+    wordStart = /\s/.test(char)
+  }
+
+  finishSegment()
+  return segments
 }
 
 function stripEnvironment(segment) {
