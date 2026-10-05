@@ -83,7 +83,7 @@ export const filterControlStyles = css`
       top: 0;
       left: 0;
       display: none;
-      width: 240px;
+      width: 260px;
       max-width: calc(100vw - var(--base-size-16));
       max-height: 320px;
       box-sizing: border-box;
@@ -125,18 +125,20 @@ export const filterControlStyles = css`
     .dropdown-options { min-height: 0; overflow: auto; }
     .dropdown-option {
       display: grid;
-      min-height: var(--control-medium-size);
+      box-sizing: border-box;
+      min-height: 32px;
       grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: center;
       gap: var(--base-size-8);
       border-radius: var(--lv-radius-tight, var(--lv-radius-default));
       cursor: pointer;
-      padding: 0 var(--base-size-8);
+      padding: 6px 8px;
       font: var(--lv-type-body-compact);
     }
     .dropdown-option:hover { background: var(--lv-bg-control-hover); }
-    .dropdown-option input { width: auto; min-height: 0; margin: 0; }
-    .dropdown-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dropdown-option[data-selected='true'] { background: var(--lv-bg-accent-muted, var(--lv-bg-control-hover)); }
+    .dropdown-option input { width: 14px; height: 14px; min-height: 0; margin: 0; accent-color: var(--lv-accent); }
+    .dropdown-option-label { min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
     .dropdown-option-count { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .dropdown-empty { margin: 0; color: var(--lv-fg-muted); padding: var(--base-size-8); font: var(--lv-type-caption); }
     .load-more-options { width: 100%; border: 0; border-radius: var(--lv-radius-tight, var(--lv-radius-default)); background: transparent; color: var(--lv-fg-link, var(--lv-accent)); cursor: pointer; padding: var(--base-size-6) var(--base-size-8); text-align: left; font: var(--lv-type-caption); }

@@ -315,7 +315,7 @@ export class DashboardFilterLeaf extends LitElement {
         </div>` : nothing}
         <div class="dropdown-options" role="group" aria-label=${`${label} options`}>
           ${items.map((option) => html`
-            <label class="dropdown-option" data-unavailable=${String(!option.available)}>
+            <label class="dropdown-option" data-selected=${String(selected.has(filterOptionKey(option)))} data-unavailable=${String(!option.available)}>
               <input
                 type=${multiple ? 'checkbox' : 'radio'}
                 name=${this.binding?.key ?? 'filter'}
@@ -324,7 +324,7 @@ export class DashboardFilterLeaf extends LitElement {
                 ?disabled=${!option.available && !option.selected}
                 @change=${() => this.selectDropdownOption(option, multiple)}
               >
-              <span class="dropdown-option-label">${option.label}</span>
+              <span class="dropdown-option-label" title=${option.label}>${option.label}</span>
               ${option.count === undefined ? nothing : html`<span class="dropdown-option-count">${option.count}</span>`}
             </label>
           `)}
@@ -360,7 +360,7 @@ export class DashboardFilterLeaf extends LitElement {
       return
     }
     this.dropdownOpen = toggleAnchoredPopover(trigger, popover, {
-      minWidth: this.presentation?.search ? 240 : 200,
+      minWidth: 260,
     })
     if (!this.dropdownOpen) return
     this.requestOptions()

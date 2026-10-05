@@ -1638,7 +1638,7 @@ test('arrange visuals saves one balanced layout', async () => {
       await element.updateComplete
       const builder = JSON.parse(JSON.stringify(element.builder))
       const visual = builder.pages[0].visuals[0]
-      builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
+      builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, slots: [], previewError: 'Add a measure to preview.', placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
       mergePatch({ builder })
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { (window as any).arrangeCommand = event.detail }, { once: true })
@@ -3650,7 +3650,7 @@ test('preview Fix preserves authored placement and zoom through its owning paren
     await editor.evaluate(async (element: any) => {
       const builder = JSON.parse(JSON.stringify(element.builder))
       const visual = builder.pages[0].visuals[0]
-      builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
+      builder.pages[0].visuals = ['combo', 'bar', 'line'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, slots: [], previewError: 'Add a measure to preview.', placement: { col: 1, row: 1 + i * 5, colSpan: 12, rowSpan: 5 } }))
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
       mergePatch({ builder })
       element.canvasZoom = 1.25
@@ -3831,4 +3831,31 @@ test('removed grid tiles stay removed when Undo and Redo restore the component l
     expect(result.afterUndo).toEqual(['sales-chart'])
     expect(result.afterRedo.sort()).toEqual(['added-chart', 'sales-chart'])
   } finally { await page.close() }
+})
+
+
+test('Fix leaves complete filtered charts alone instead of treating loading data as missing fields', async () => {
+  const page = await browser.newPage({viewport: {width: 1440, height: 900}})
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    const result = await editor.evaluate(async (e: any) => {
+      const {mergePatch} = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const builder = JSON.parse(JSON.stringify(e.builder))
+      builder.preview.loading = true
+      builder.pages[0].visuals[0].slots = [{id:'dimension-0', kind:'dimension', fieldId:'country', label:'Country'}, {id:'metric-0', kind:'metric', fieldId:'revenue', label:'Revenue'}]
+      mergePatch({builder, builderVisuals: null})
+      await e.updateComplete
+      const before = JSON.stringify(e.builderFilterState)
+      const commands: unknown[] = []
+      e.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      e.arrangeVisuals()
+      await e.updateComplete
+      return {commands, message:e.fixVisualsMessage, unchanged:before===JSON.stringify(e.builderFilterState)}
+    })
+    expect(result.commands).toEqual([])
+    expect(result.message).toBe('Visuals are ready. Your layout is unchanged.')
+    expect(result.unchanged).toBe(true)
+  } finally {await page.close()}
 })

@@ -153,7 +153,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visuals = this.builderVisuals
     const ordered = [...(page?.visuals ?? [])].sort((a, b) => a.placement.row - b.placement.row || a.placement.col - b.placement.col)
-    const key = JSON.stringify([builder.revision, page?.id, builder.preview.loading, builder.capabilities.canEdit, this.commandPending, Boolean(this.pendingFixVisuals), this.fixVisualsMessage, ordered.map(visual => {
+    const key = JSON.stringify([builder.revision, page?.id, builder.preview.loading, builder.capabilities.canEdit, this.commandPending, this.builderFilterController.pending, Boolean(this.builderFilterCommandInFlight), Boolean(this.pendingFixVisuals), this.fixVisualsMessage, ordered.map(visual => {
       const envelope = visuals[this.visualSignalID(visual)]
       return [visual.id, envelope?.dataRevision, envelope?.specRevision, envelope?.status.kind]
     })])
@@ -163,7 +163,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     href.searchParams.set('embed', 'chat')
     if (page) href.searchParams.set('page', page.id)
     window.parent.postMessage({
-      type: 'lv-builder-saved', revisionId: builder.revision.id, fixingVisuals: Boolean(this.pendingFixVisuals), fixMessage: this.fixVisualsMessage, canArrange: Boolean(builder.capabilities.canEdit && !this.commandPending && page?.visuals.length), pageId: page?.id ?? '', href: href.pathname + href.search,
+      type: 'lv-builder-saved', revisionId: builder.revision.id, fixingVisuals: Boolean(this.pendingFixVisuals), fixMessage: this.fixVisualsMessage, canArrange: Boolean(builder.capabilities.canEdit && !this.commandPending && !this.builderFilterController.pending && !this.builderFilterCommandInFlight && page?.visuals.length), pageId: page?.id ?? '', href: href.pathname + href.search,
       reference: {
         reference: { kind: 'dashboard', id: builder.dashboardId }, name: builder.title,
         hierarchy: [], href: href.pathname + href.search, locations: [], context: ['Editable dashboard draft'],
@@ -681,12 +681,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .filter-card-preview {
       min-width: 0;
       border-radius: var(--lv-radius-default);
-      outline: var(--lv-border-width) solid transparent;
-      outline-offset: var(--base-size-2);
-    }
-
-    .filter-card-preview[data-selected='true'] {
-      outline-color: var(--lv-line-accent);
     }
 
     .filter-card-preview lv-filter-pane-card {
@@ -3005,10 +2999,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private readonly arrangeVisuals = (): void => {
     // Fix repairs missing fields using the currently authored layout. In a
     // standalone builder, Arrange remains an explicit request to repack.
+    if (this.builderFilterController.pending || this.builderFilterCommandInFlight) {
+      this.chatProjectionKey = ''
+      this.requestUpdate()
+      return
+    }
     const page = this.builder ? this.selectedPage(this.builder) : undefined
     if (this.embeddedInChat && page?.visuals.length && this.builder?.capabilities.canEdit && !this.commandPending) {
-      this.pendingFixVisuals = { pageID: page.id, visualIDs: new Set(page.visuals.filter(visual => !this.isFixedVisualReady(visual)).map(visual => visual.id)) }
+      this.pendingFixVisuals = { pageID: page.id, visualIDs: new Set(page.visuals.filter(visual => this.visualNeedsRepair(visual)).map(visual => visual.id)) }
       this.fixVisualsMessage = ''
+      if (this.pendingFixVisuals.visualIDs.size === 0) {
+        this.finishFixVisuals()
+        this.chatProjectionKey = ''
+        this.requestUpdate()
+        return
+      }
     }
     const preservedIDs = new Set(this.embeddedInChat ? page?.visuals.map(visual => visual.id) : [])
     this.applyBalancedLayout(true, true, preservedIDs)
@@ -3023,8 +3028,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.pendingFixVisuals = null
     if (error) { this.fixVisualsMessage = error; return }
     const page = this.builder?.pages.find(page => page.id === pending.pageID)
-    const remaining = page?.visuals.filter(visual => !this.isFixedVisualReady(visual)) ?? []
-    const completed = page?.visuals.filter(visual => pending.visualIDs.has(visual.id) && this.isFixedVisualReady(visual)).length ?? 0
+    const remaining = page?.visuals.filter(visual => this.visualNeedsRepair(visual)) ?? []
+    const completed = page?.visuals.filter(visual => pending.visualIDs.has(visual.id) && !this.visualNeedsRepair(visual)).length ?? 0
     const summary = completed > 0 ? `Completed ${completed} visual${completed === 1 ? '' : 's'}. ` : ''
     this.fixVisualsMessage = remaining.length > 0
       ? `${summary}${remaining.length} visual${remaining.length === 1 ? ' could not be completed automatically' : 's could not be completed automatically'}. Select ${remaining.length === 1 ? 'it' : 'them'} in the Visuals panel.`
@@ -3034,6 +3039,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private isFixedVisualReady(visual: DashboardBuilderVisualSignal): boolean {
     const preview = this.builderVisuals[this.visualSignalID(visual)]
     return Boolean(this.builder?.preview.active && !visual.previewError && preview && ['ready', 'no_data', 'partial'].includes(preview.status.kind))
+  }
+
+  private visualNeedsRepair(visual: DashboardBuilderVisualSignal): boolean {
+    return Boolean(visual.previewError?.trim()) || this.visualRequirementMessages(visual).length > 0
   }
 
   private applyBalancedLayout(recordHistory: boolean, fillMissingFields = false, preservedIDs: ReadonlySet<string> = new Set()): void {
@@ -4023,6 +4032,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         @click=${() => this.selectFilterDefinition(filter.id)}
       >
         <lv-filter-pane-card
+          .presentation=${definition.predicates.some(predicate => predicate.kind === 'set') ? { style: 'dropdown', search: true, selectAll: false, showCounts: false, showSummary: false, compact: true } : undefined}
           .definition=${definition}
           .binding=${binding}
           .expression=${expression}
