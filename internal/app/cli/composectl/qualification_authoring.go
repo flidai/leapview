@@ -493,23 +493,15 @@ func (c *Controller) runQualificationAuthoring(
 	if err != nil {
 		return report, err
 	}
-	canonicalReadContext, cancelCanonicalRead := qualificationContext(ctx, 5*time.Minute)
-	publication, deployment, err := waitQualificationCanonicalEvidence(
-		canonicalReadContext,
-		2*time.Second,
-		func(readCtx context.Context) (QualificationPublication, QualificationDeployment, error) {
-			return qualificationCanonicalPublicationEvidence(
-				readCtx,
-				apiClient,
-				options,
-				administratorToken.AccessToken,
-				candidate,
-				publication,
-				activated,
-			)
-		},
+	publication, deployment, err := qualificationCanonicalPublicationEvidence(
+		ctx,
+		apiClient,
+		options,
+		administratorToken.AccessToken,
+		candidate,
+		publication,
+		activated,
 	)
-	cancelCanonicalRead()
 	if err != nil {
 		return report, err
 	}
@@ -857,44 +849,6 @@ func qualificationCanonicalPublicationEvidence(
 		PlanID:     generation.Body.PlanId,
 		PlanDigest: generation.Body.PlanDigest, Status: string(generation.Body.Status),
 	}, nil
-}
-
-// waitQualificationCanonicalEvidence retries only read-only publication
-// verification while the target returns the same transient availability and
-// rate-limit responses handled by the publication observer. The caller bounds
-// the window with ctx; candidate identity mismatches and other failures remain
-// terminal and no publication command is repeated.
-func waitQualificationCanonicalEvidence(
-	ctx context.Context,
-	interval time.Duration,
-	read func(context.Context) (QualificationPublication, QualificationDeployment, error),
-) (QualificationPublication, QualificationDeployment, error) {
-	var publication QualificationPublication
-	var deployment QualificationDeployment
-	var lastTransient error
-	err := qualificationWait(ctx, interval, func(readCtx context.Context) (bool, error) {
-		currentPublication, currentDeployment, err := read(readCtx)
-		if err != nil {
-			if qualificationTransientDeploymentError(err) {
-				lastTransient = err
-				return false, nil
-			}
-			return false, err
-		}
-		publication = currentPublication
-		deployment = currentDeployment
-		return true, nil
-	})
-	if err != nil {
-		if lastTransient != nil && errors.Is(err, context.DeadlineExceeded) {
-			return QualificationPublication{}, QualificationDeployment{}, fmt.Errorf(
-				"canonical delivery evidence remained temporarily unavailable until its deadline: %w",
-				lastTransient,
-			)
-		}
-		return QualificationPublication{}, QualificationDeployment{}, err
-	}
-	return publication, deployment, nil
 }
 
 func qualificationPlanMatchesCandidate(plan deploymentgen.DeliveryPlanPreviewResponse, candidate QualificationCandidate) bool {
