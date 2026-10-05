@@ -392,6 +392,37 @@ func containsPinnedAction(workflow, action string) bool {
 	return true
 }
 
+func TestSecurityPolicyRuns386BoundariesOnItsLinuxRunner(t *testing.T) {
+	var workflow struct {
+		Jobs map[string]struct {
+			Runner string `yaml:"runs-on"`
+			Steps  []struct {
+				Run string            `yaml:"run"`
+				Env map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(repositoryYAML(t, ".github/workflows/security.yml")), &workflow); err != nil {
+		t.Fatal(err)
+	}
+	job := workflow.Jobs["policy-validation"]
+	if job.Runner != "ubuntu-24.04" {
+		t.Fatal("386 execution requires the Linux x86 policy runner")
+	}
+	found := false
+	for _, step := range job.Steps {
+		if step.Env["GOARCH"] == "386" && step.Env["CGO_ENABLED"] == "0" && step.Run == "go test ./pkg/duckdbsql/decode_integer.go ./pkg/duckdbsql/decode_integer_test.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("policy job must execute production decoder boundaries on 386")
+	}
+	if strings.Contains(taskDefinition(t, repositoryText(t, "Taskfile.yml"), "security:policy"), "GOARCH=386") {
+		t.Fatal("portable policy task must not require native 386 execution")
+	}
+}
+
 func TestSASTWorkflowPreparesEachWorkspaceAndRetainsFailureDiagnostics(t *testing.T) {
 	var workflow struct {
 		Jobs map[string]struct {

@@ -37,6 +37,12 @@ jobs:
       - name: Verify inventory, exceptions, updaters, and workflow contracts
         run: task security:policy
 
+      - name: Execute platform integer boundaries on 386
+        env:
+          GOARCH: "386"
+          CGO_ENABLED: "0"
+        run: go test ./pkg/duckdbsql/decode_integer.go ./pkg/duckdbsql/decode_integer_test.go
+
   dependency-validation:
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Dependency vulnerability policy
