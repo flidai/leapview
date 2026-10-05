@@ -397,6 +397,97 @@ test('protected Nix candidates isolate build, qualification and signing authorit
   }
 })
 
+test('protected Nix site candidates keep native qualification separate from site signing', () => {
+  const config = parse(readFileSync('.github/workflows/nix-site-candidate.yml', 'utf8'))
+  expect(Object.keys(config.on)).toEqual(['workflow_dispatch'])
+  expect(config.permissions).toEqual({ contents: 'read' })
+  expect(config.concurrency['cancel-in-progress']).toBe(false)
+  for (const job of Object.values(config.jobs) as any[]) {
+    expect(job.if).toContain("github.repository == 'flidai/leapview'")
+    expect(job.if).toContain("github.ref == 'refs/heads/main'")
+    for (const step of job.steps) {
+      if (step.uses?.startsWith('actions/checkout@')) expect(step.with['persist-credentials']).toBe(false)
+      if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/)
+    }
+  }
+  const { authorize, build, qualify, publish } = config.jobs
+  const final = config.jobs['qualify-published']
+  expect(build.permissions).toEqual({ contents: 'read' })
+  expect(qualify.permissions).toEqual({ contents: 'read', actions: 'read' })
+  expect(publish.permissions).toEqual({ contents: 'read', 'pull-requests': 'read', packages: 'write',
+    attestations: 'write', 'id-token': 'write', actions: 'read' })
+  expect(final.permissions).toEqual({ contents: 'read', packages: 'read', actions: 'read' })
+  expect(build.needs).toBe('authorize')
+  expect(qualify.needs).toEqual(['authorize', 'build'])
+  expect(publish.needs).toEqual(['authorize', 'qualify'])
+  expect(final.needs).toEqual(['qualify', 'publish'])
+  expect(publish.environment).toBe(authorize.environment)
+  expect(final.environment).toBeUndefined()
+  for (const job of [qualify, publish, final]) {
+    const protectedCheckout = job.steps.find((step: any) => step.with?.path === 'protected')
+    expect(protectedCheckout.with.ref).toBe('${{ github.sha }}')
+    expect(job.steps.find((step: any) => step.with?.path === 'source').with.ref)
+      .toBe('${{ inputs.source_revision }}')
+    const commands = job.steps.map((step: any) => step.run ?? '').join('\n')
+    expect(commands).not.toMatch(/\b(?:python3|bash|nix develop|nix build) source\//)
+    expect(commands).not.toContain('cd source')
+  }
+  expect(build.steps.find((step: any) => step.run?.includes('nix build')).run)
+    .toContain('.#leapview-site-image')
+  const scanner = qualify.steps.find((step: any) => step.run?.includes('check_nix_runtime_security.py'))
+  expect(scanner['working-directory']).toBe('protected')
+  expect(scanner.run).toContain('../candidate/image.tar --kind site-image')
+  expect(scanner.run).toContain('--source-revision "$SOURCE_REVISION"')
+  const go = qualify.steps.find((step: any) => step.run?.includes('nix_archive_go_evidence.py'))
+  expect(go.run).toContain('--kind site-image')
+  expect(go.run).toContain('--evidence-dir candidate/runtime/go')
+  const siteExercise = qualify.steps.findIndex((step: any) => step.run?.includes('check_nix_site_image.py'))
+  const record = qualify.steps.findIndex((step: any) => step.run?.includes('nix_candidate_publication.py record'))
+  expect(qualify.steps[siteExercise].run).toContain('--archive candidate/image.tar')
+  expect(qualify.steps[siteExercise].run).toContain('--evidence-dir candidate/runtime')
+  expect(siteExercise).toBeGreaterThan(-1)
+  expect(record).toBeGreaterThan(siteExercise)
+  for (const step of [...qualify.steps, ...publish.steps, ...final.steps]
+    .filter((entry: any) => entry.run?.includes('nix_candidate_publication.py'))) {
+    expect(step.run).toContain('--kind site-image')
+    expect(step.run).toContain('--binary-verifier "$RUNNER_TEMP/go-binary-verifier"')
+  }
+  const downloads = final.steps.filter((step: any) => step.uses?.startsWith('actions/download-artifact@'))
+  expect(downloads.map((step: any) => step.with['artifact-ids']))
+    .toEqual(['${{ steps.artifacts.outputs.site-qualified_id }}', '${{ steps.artifacts.outputs.site-binding_id }}'])
+  const publishCommands = publish.steps.map((step: any) => step.run ?? '').join('\n')
+  expect(publishCommands).not.toContain('check_nix_site_image.py')
+  expect(publishCommands).not.toContain('docker run')
+  expect(publishCommands).not.toContain('nix build')
+  const attestations = publish.steps.filter((step: any) => step.uses?.startsWith('actions/attest@'))
+  expect(attestations).toHaveLength(2)
+  for (const attestation of attestations) {
+    expect(attestation.with['subject-name']).toBe('ghcr.io/flidai/leapview-site')
+    expect(attestation.with['subject-digest']).toBe('${{ steps.publish.outputs.digest }}')
+    expect(attestation.with['push-to-registry']).toBe(true)
+    expect(attestation.with['create-storage-record']).toBe(false)
+  }
+  expect(attestations[1].with['predicate-type']).toBe('https://spdx.dev/Document/v2.3')
+  expect(attestations[1].with['predicate-path']).toBe('candidate/runtime/sbom.spdx.json')
+  const verify = final.steps.findIndex((step: any) => step.run?.includes('verify-signed'))
+  const exercise = final.steps.findIndex((step: any) => step.run?.includes('check_nix_site_image.py'))
+  const bind = final.steps.findIndex((step: any) => step.run?.includes('bind-qualified'))
+  expect(verify).toBeGreaterThan(-1)
+  expect(exercise).toBeGreaterThan(verify)
+  expect(bind).toBeGreaterThan(exercise)
+  expect(final.steps[exercise].run).toContain('--image "$IMAGE"')
+  expect(final.steps[bind].run).toContain('--signed-evidence bindings/nix-site-signed.json')
+  expect(final.steps[bind].run).toContain('--qualification-report candidate/final/site-qualification-report.json')
+  expect(final.steps[bind].env.IMAGE).toBe('${{ steps.image.outputs.image }}')
+  expect(build.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@')).with.name)
+    .toContain('nix-site-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}')
+  for (const job of [build, qualify, publish, final]) {
+    expect(job.strategy.matrix.include.map((entry: any) => [entry.arch, entry.runner]))
+      .toEqual([['amd64', 'ubuntu-24.04'], ['arm64', 'ubuntu-24.04-arm']])
+    expect(job.outputs).toBeUndefined()
+  }
+})
+
 test('protected producer preserves current-head authorization and signs the bound SPDX', () => {
   const { jobs } = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
   for (const job of [jobs.authorize, jobs.publish]) {

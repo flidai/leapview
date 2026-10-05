@@ -32,6 +32,9 @@ on:
       - 'scripts/testdata/nix/**'
       - 'scripts/check_nix_runtime_security.py'
       - 'scripts/tests/test_nix_runtime_security.py'
+      - 'scripts/check_nix_site_image.py'
+      - 'scripts/tests/test_nix_site_image.py'
+      - '.github/workflows/nix-site-candidate.yml'
       - 'scripts/nix_candidate_manifest.py'
       - 'scripts/tests/test_nix_candidate_manifest.py'
       - 'scripts/nix_oci_content.py'
@@ -62,10 +65,10 @@ on:
   workflow_dispatch:
     inputs:
       checks:
-        description: Validation lanes (pull requests always run both)
+        description: Validation lane (native discovery lanes require an explicit dispatch)
         type: choice
         default: all
-        options: [all, development, image, native-application]
+        options: [all, development, image, native-application, native-site]
       contract:
         description: Existing development contract to qualify (image lane is independent)
         type: choice
@@ -80,6 +83,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-site:
+    name: Native site image and runtime (${{ matrix.arch }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-site' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build the native standalone site image
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$MACHINE"
+          nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image -L
+          mkdir -p .tmp/native-site
+          cp --dereference result-site-image .tmp/native-site/image.tar
+      - name: Exercise the exact site image with a read-only root
+        run: |
+          python3 scripts/check_nix_site_image.py --archive .tmp/native-site/image.tar \
+            --source-root "$PWD" --evidence-dir .tmp/native-site
+      - name: Retain the image and native runtime receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-site-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/native-site/
+          if-no-files-found: error
+          retention-days: 14
+
   native-application:
     name: Native application dependency discovery (${{ matrix.arch }})
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-application' }}
@@ -394,6 +444,7 @@ jobs:
         run: >-
           nix develop --no-update-lock-file .#runtime-security -c
           python3 scripts/check_nix_runtime_security.py result-image
+          --kind application-image --source-revision "$(git rev-parse HEAD)"
           --evidence-dir .tmp/nix-runtime-security
       - name: Bind exact candidate identity and enforced runtime evidence
         run: |

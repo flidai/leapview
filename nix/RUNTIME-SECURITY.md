@@ -12,6 +12,7 @@ OCI admission, provenance, the published SPDX SBOM, or application dependency sc
 nix build --no-update-lock-file .#leapview-image --out-link result-image
 nix develop --no-update-lock-file .#runtime-security -c \
   python3 scripts/check_nix_runtime_security.py result-image \
+  --kind application-image --source-revision "$SOURCE_REVISION" \
   --evidence-dir .tmp/runtime-security-review
 ```
 
@@ -21,6 +22,36 @@ unassessed HIGH/CRITICAL runtime finding, including findings without a fix.
 `--coverage-only` is a diagnostic option that records unresolved findings without
 enforcing the vulnerability gate. The Nix candidate workflow uses default
 enforcement. `releaseReady` remains false even when this individual check passes.
+
+## Independent public-site image profile
+
+The standalone site is qualified independently from the application image. Set
+`SOURCE_REVISION` to the full 40-character candidate commit, then run:
+
+```sh
+nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image
+nix develop --no-update-lock-file .#runtime-security -c \
+  python3 scripts/check_nix_runtime_security.py result-site-image \
+  --kind site-image --source-revision "$SOURCE_REVISION" \
+  --evidence-dir .tmp/site-runtime-security
+```
+
+This profile checks the exact archive identity and hashes every file in the
+minimal root filesystem: the static `leapview-site` binary, CA bundle and map
+assets. It rejects Nix store paths, unlisted files, links, whiteouts, writable
+or privileged modes, and unexpected directories. Site package inventory has no
+application runtime package allowlist or VEX exceptions. Syft's Go-module entries
+are retained in the raw SBOM and omitted only from the Grype runtime inventory;
+the exact binary remains subject to the separate protected Go vulnerability
+scan. A fresh database and a synthetic glibc matching control still gate the
+site runtime report.
+
+The candidate binder requires `summary.json` and the exact report set, including
+`site-image-inventory.json`, and binds the full source revision, archive digest,
+platform, config digest, layer diff IDs, policy digest, scanners and database.
+This evidence does not grant release admission. Site-profile installation,
+upgrade, rollback, recovery, observation, provenance, SPDX, OCI admission and
+native qualification remain separate required gates.
 
 ## What is checked
 

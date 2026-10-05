@@ -171,6 +171,27 @@ runtime-asset fetches use the network. Their complete outputs are pinned in
 integrity checks. The final image assembly also runs without network access.
 Use a Nix installation with `sandbox = true`; the image CI job sets it explicitly.
 
+### Standalone public-site candidates
+
+From a clean committed checkout, `nix build .#leapview-site-image` produces the
+native AMD64 or ARM64 site image. Its final Go binary is CGO-disabled and has no
+dynamic interpreter or Nix store references. Documentation generation uses the
+pinned signed extension supply during the build; those extensions and the
+application runtime are not included in the site image. The shared portable Go
+SDK preparation also serves the standalone controller build.
+
+The image contains the site executable, map assets and a CA bundle, with UID/GID
+65532 and port 8081. Run it with `--read-only`. The `native-site` manual lane in
+`nix-development.yml` builds both native architectures and checks health,
+readiness, exact served release/build metadata and installation documentation.
+It retains the exact archive and a runtime receipt with `releaseAdmission: false`.
+
+The protected site candidate workflow adds independent site inventory, Go and
+vulnerability evidence, then binds publication and native runtime checks to the
+same immutable image. Site adoption is independent of application or desktop
+adoption, and still requires its affected deployment-profile installation,
+recovery and observation evidence. See [candidate evidence](CANDIDATE-EVIDENCE.md).
+
 ### Runtime compatibility
 
 The native `leapview` output uses the locked Nix runtime and runs on Nix/NixOS.
