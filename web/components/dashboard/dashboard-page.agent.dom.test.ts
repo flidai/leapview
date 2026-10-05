@@ -838,11 +838,18 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
     const explorerURL = new URL(panelState.explorerHref!, 'https://example.test')
     expect(explorerURL.pathname).toBe('/explore')
     expect(explorerURL.searchParams.get('mode')).toBe('explore')
-    expect(explorerURL.searchParams.get('semanticModel')).toBe('semantic:sales')
-    expect(explorerURL.searchParams.get('dataset')).toBe('orders')
-    expect(explorerURL.searchParams.getAll('dimension')).toEqual(['orders.country'])
-    expect(explorerURL.searchParams.getAll('metric')).toEqual(['revenue'])
-    expect(explorerURL.searchParams.get('limit')).toBe('25')
+    expect(explorerURL.searchParams.get('v')).toBe('2')
+    expect([...explorerURL.searchParams.keys()].sort()).toEqual(['mode', 'state', 'v'])
+    expect(JSON.parse(explorerURL.searchParams.get('state')!)).toEqual({
+      schemaVersion: 1,
+      modelId: 'semantic:sales',
+      datasetId: 'orders',
+      dimensions: [{ field: 'orders.country' }],
+      metrics: [{ field: 'revenue' }],
+      filters: [],
+      sort: [],
+      limit: 25,
+    })
 
     const screenshotDir = process.env.LEAPVIEW_DASHBOARD_AGENT_SCREENSHOT_DIR
     if (screenshotDir) {
