@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
+import { keyed } from 'lit/directives/keyed.js'
 import { ArrowLeft, ChevronRight, Code2, Columns3, Database, Filter, Play, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
   DataExploreCommand,
@@ -136,6 +137,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private browserWidth = 320
   @state() private browseVisibleColumns: { objectKey: string; keys: string[] } | null = null
   @state() private exploreVisibleColumns: string[] = []
+  @state() private exploreColumnWidths: Record<string, number> = {}
+  @state() private explorePresentationVersion = 0
   @state() private resultView: 'table' | 'chart' | 'pivot' | 'details' = 'table'
   @state() private chartPage?: ExplorerVisualizationPage
   @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' | 'uncertain' = 'idle'
@@ -158,6 +161,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly savedExplorationTracker = new SavedExplorationTracker({
     onBaselineChanged: (current) => {
       this.savedViewController.baselineChanged(current)
+      this.resetExplorePresentation()
     },
     onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
   })
@@ -654,6 +658,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selectedKey = this.dataExplorer.selectedKey ?? ''
     if (this.selectionController.observe(selectedKey)) {
       this.showSQL = false
+      this.resetExplorePresentation()
       requestAnimationFrame(() => {
         this.renderRoot.querySelector<HTMLElement>('.object-button.is-selected')?.scrollIntoView({ block: 'nearest' })
       })
@@ -1001,6 +1006,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private resetExplore(command: DataExploreCommand) {
+    this.resetExplorePresentation()
     this.closeFilter()
     const spec = explorationSpecFor(command)
     this.emitExploreSpec({ ...spec, dimensions: [], metrics: [], filters: [], sort: [], time: undefined, pivot: undefined, table: undefined, visualization: undefined }, { ...command, columnWidths: {} }, true)
@@ -1413,7 +1419,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       modelId: authoredSpec.modelId || object.semanticModelId || '',
       datasetId: authoredSpec.datasetId || objectDatasetID(object),
     }
-    const command = { ...authoredCommand, spec }
+    const command = { ...authoredCommand, spec, columnWidths: { ...authoredCommand.columnWidths, ...this.exploreColumnWidths } }
     const selectedSemanticModel = explore.semanticModels.find((model) => model.id === spec.modelId) ?? explore.selectedSemanticModel
     const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === spec.datasetId) ?? explore.selectedDataset
@@ -1516,13 +1522,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                       ></lv-visualization-host>
                     </div>
                   </div>`
-              : html`<lv-data-explore-table
+              : keyed(this.explorePresentationVersion, html`<lv-data-explore-table
                   .command=${command}
                   .result=${result}
                   .visibleColumns=${this.exploreVisibleColumns}
                   @lv-data-explore-table-window=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.loadExploreWindow(command, event.detail)}
-                  @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.emitExplore({ ...command, ...event.detail })}
-                ></lv-data-explore-table>`
+                  @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.exploreColumnWidths = event.detail.columnWidths ?? {}}
+                ></lv-data-explore-table>`)
               : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
         </section>
         ${renderSemanticFilterDock(spec, explore, command, this.semanticPanel === 'filters',
@@ -1557,8 +1563,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     `
   }
 
+  private resetExplorePresentation(): void {
+    this.exploreColumnWidths = {}
+    this.explorePresentationVersion += 1
+  }
+
   private selectObject(object: DataExplorerObjectSignal): void {
     this.browseVisibleColumns = null
+    this.resetExplorePresentation()
     if (window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
     this.optimisticExplore = null
     this.resultView = 'table'

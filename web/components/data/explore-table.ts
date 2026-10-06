@@ -3,7 +3,8 @@ import { property } from 'lit/decorators.js'
 import type { DataExploreCommand, DataExploreResultSignal } from '../../generated/signals'
 import { emptyDataExploreCommand, explorationResultKeyForSort, explorationSortFieldForResult, explorationSpecFor } from './data-explorer-spec'
 import '../shared/windowed-table'
-import type { WindowedTableColumn, WindowedTablePayload, WindowedTableRequest } from '../shared/windowed-table'
+import { exploreTablePresentation } from './explore-table-presentation'
+import type { WindowedTablePayload, WindowedTableRequest } from '../shared/windowed-table'
 
 const emptyResult: DataExploreResultSignal = {
   columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [],
@@ -73,17 +74,10 @@ class DataExploreTable extends LitElement {
     return {
       tableKey: `${spec.modelId ?? ''}:${spec.datasetId ?? ''}:explore`,
       title: 'Exploration results',
-      columns: (result.columns ?? []).map((column): WindowedTableColumn => ({
-        key: column.key,
-        label: column.label || column.key,
-        type: column.type,
-        align: isNumericType(column.type) ? 'right' : 'left',
-        sortable: true,
-      })),
+      ...exploreTablePresentation(spec, result.columns ?? [], command.columnWidths),
       totalRows: result.window?.totalRows ?? rows.length,
       availableRows: result.window?.availableRows ?? rows.length,
       chunkSize: result.window?.chunkSize ?? 100,
-      rowHeight: 32,
       resetVersion: result.window?.resetVersion ?? command.resetVersion ?? 0,
       sort: { key: resultSortKey, column: resultSortKey, direction: sort?.direction ?? '' },
       blocks: result.window?.blocks ?? {
@@ -140,10 +134,6 @@ class DataExploreTable extends LitElement {
       detail: { columnWidths: event.detail?.columnWidths ?? {} },
     }))
   }
-}
-
-function isNumericType(type: string | undefined): boolean {
-  return /int|decimal|double|float|number|numeric|real|bigint|smallint|sum|count|avg|min|max/i.test(type ?? '')
 }
 
 if (!customElements.get('lv-data-explore-table')) customElements.define('lv-data-explore-table', DataExploreTable)

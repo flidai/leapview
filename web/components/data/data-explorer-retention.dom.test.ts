@@ -577,6 +577,53 @@ function testDocument() {
   return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%}lv-data-explorer{display:block;min-height:720px}</style></head><body><main data-signals="{}"></main><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/data-explorer-under-test.js"></script></body></html>`
 }
 
+test('resizing semantic columns preserves the query and allows the next table window', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const object = { key: 'orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columns: [{ key: 'status', label: 'Status' }] }
+      const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 }
+      const command = { spec, requestSeq: 5, resetVersion: 2, action: 'run', columnWidths: {} }
+      const block = { start: 0, requestSeq: 5, resetVersion: 2, sort: {}, rows: [{ status: 'paid' }] }
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] }, dataExplorer: {
+        objects: [object], selectedObject: object, selectedKey: object.key,
+        command: { mode: 'explore', objectKey: object.key, explore: command },
+        explore: { command, semanticModels: [], datasets: [], fields: [{ id: 'orders.status', kind: 'dimension', label: 'Status', datasetId: 'orders', compatible: true }],
+          status: { state: 'success', requestSeq: 5, loading: false, stale: false },
+          result: { columns: object.columns, rows: block.rows, rowsReturned: 1, requestSeq: 5, durationMs: 1, truncated: true, warnings: [],
+            window: { columns: object.columns, totalRows: 2345, availableRows: 2345, chunkSize: 100, rowHeight: 32, resetVersion: 2, blocks: { a: block }, sort: {} } } },
+      } })
+      const element = document.createElement('lv-data-explorer') as any
+      element.embedded = true
+      const commands: any[] = []
+      element.addEventListener('lv-data-explorer-command', (event: CustomEvent) => commands.push(event.detail))
+      document.body.append(element)
+      for (let index = 0; index < 4; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const table = element.shadowRoot.querySelector('lv-data-explore-table') as any
+      await table.updateComplete
+      const grid = table.shadowRoot.querySelector('lv-windowed-table') as any
+      await grid.updateComplete
+      grid.dispatchEvent(new CustomEvent('lv-windowed-table-column-widths', { detail: { columnWidths: { status: 280 } }, bubbles: true, composed: true }))
+      await element.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      await table.updateComplete
+      const afterResize = { commands: commands.length, requestSeq: table.command.requestSeq, resetVersion: table.command.resetVersion, width: table.command.columnWidths.status }
+      grid.dispatchEvent(new CustomEvent('lv-windowed-table-request', { detail: { block: 'a', start: 1500, count: 100, requestSeq: 11, resetVersion: 2, sort: {} }, bubbles: true, composed: true }))
+      const requests = commands.map((value) => ({ action: value.action, start: value.explore?.window?.start }))
+      element.remove()
+      return { afterResize, requests }
+    })
+    expect(state.afterResize).toEqual({ commands: 0, requestSeq: 5, resetVersion: 2, width: 280 })
+    expect(state.requests).toEqual([{ action: 'run', start: 1500 }])
+  } finally { await page.close() }
+})
+
 test('semantic table exposes exact totals and serializes windows beyond the old cap', async () => {
   const page = await browser.newPage()
   try {

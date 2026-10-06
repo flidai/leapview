@@ -5,6 +5,8 @@ import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard/dashboard-page-test-fixtures'
 import { assertDataExplorerResponsiveDrawers } from '../../test/data-explorer-responsive'
+import { assertExploreTablePresentation } from '../../test/explore-table-presentation'
+import { assertExploreTablePresentationReset } from '../../test/explore-table-presentation-reset'
 
 let server: Server
 let baseURL = ''
@@ -47,6 +49,22 @@ afterAll(async () => {
   await browser?.close()
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
+
+test('native table clears drag widths on saved baseline and explicit presentation resets', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await assertExploreTablePresentationReset(page)
+  } finally { await page.close() }
+})
+
+test('native exploration table honors authored presentation without copying window rows', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await assertExploreTablePresentation(page)
+  } finally { await page.close() }
+})
 
 test('dashboard handoff keeps a compact return link through Explorer URL edits', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
