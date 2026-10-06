@@ -299,7 +299,7 @@ func runLocalProjectChecks(ctx context.Context, command *cobra.Command, flags do
 		return
 	}
 	if err != nil {
-		addFailProjectChecks(report, "The selected analytics source root does not compile.", "Fix the authored analytics resources and rerun leapview doctor.")
+		addFailProjectChecks(report, "The selected analytics source root does not compile.", "Run leapview validate with the same --source-root for file and field diagnostics, fix the resources, then rerun leapview doctor.")
 		return
 	}
 	report.add("project.compiler", "pass", "The analytics source root compiles.", "")

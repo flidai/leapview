@@ -4,7 +4,7 @@ The `leapview` CLI runs local services, validates and deploys projects, synchron
 
 Run `leapview` to see workflow groups and examples. Use `leapview <command> --help` for a command's arguments and flags. Help, version information, and shell completion work before Docker, a server, or credentials are configured.
 
-`leapview init my-analytics` creates a project. Change into that directory, then run `leapview dev`.
+`leapview init my-analytics` creates a project in a new directory; the destination must not already exist. Change into that directory, then run `leapview dev`.
 
 `leapview dev` manages the analytics author's local preview. Contributors changing LeapView itself use `task dev`. To run an already-configured server, explicitly use `leapview serve`; bare `leapview` displays help.
 

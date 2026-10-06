@@ -34,6 +34,8 @@ Commands with selectable result output use --format text|json. There is no --jso
 
 Results go to stdout; progress, prompts, and diagnostics go to stderr. Finite JSON output is one document. Login JSON output is newline-delimited events; development watch is an event stream, while --once emits a finite result. --no-input and JSON output disable prompts and automatic browser opening. When confirmation is required, follow the reported next action rather than piping a guessed answer.
 
+Failures without a domain result emit a JSON error diagnostic on stderr when JSON output is selected. Capture stdout and stderr separately, and check the exit status before interpreting results.
+
 Exit codes: 0 success; 1 execution, validation, authentication, or required diagnostic failure; 2 invalid invocation or command selection; 3 deployment awaiting confirmation or approval; 4 indeterminate deployment; 130 client interruption by SIGINT; 143 client interruption by SIGTERM. Successfully drained serve shutdown exits 0. A structured domain failure already written to stdout is not followed by a second result.
 
 ## Recovery
