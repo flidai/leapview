@@ -935,7 +935,7 @@ jobs:
           set -euo pipefail
           mkdir -p candidate/amd64 candidate/arm64
           for arch in amd64 arm64; do
-            if [ "$arch" = amd64 ]; then nix_output=result-compose-cli-amd64; else nix_output=result-compose-cli; fi
+            nix_output="result-compose-cli-$arch"
             package="leapview-compose-candidate-${RELEASE_RUN_ID}-${RELEASE_RUN_ATTEMPT}-linux-${arch}"
             platform="linux/$arch"
             archive="candidate/$arch/$package.tar.gz"
