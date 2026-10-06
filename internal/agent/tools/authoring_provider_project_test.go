@@ -46,7 +46,7 @@ func TestDashboardAuthoringCatalogApplicationIsAuthoritativeAndProjectIsFixed(t 
 	if err != nil || result.IsError {
 		t.Fatalf("list result=%#v err=%v", result, err)
 	}
-	value, ok := result.Content.(catalog.ListResult)
+	value, ok := result.Content.(dashboardCatalogListResult)
 	if !ok || len(value.Items) != 2 {
 		t.Fatalf("dashboard catalog=%#v", result.Content)
 	}
@@ -277,3 +277,40 @@ func (f *projectAuthoringFake) EditSource(_ context.Context, request authoringap
 }
 
 var _ DashboardAuthoring = (*projectAuthoringFake)(nil)
+
+func TestDashboardListUsesCompactMetadataWithoutDroppingItems(t *testing.T) {
+	app := &projectAuthoringFake{list: catalog.ListResult{Count: 100, InstanceCount: 100}}
+	for range 100 {
+		app.list.Items = append(app.list.Items, catalog.Dashboard{ID: "dashboard_sales", Title: "Sales", SemanticModel: "semantic:finance", DraftID: "draft-1", Description: strings.Repeat("long description ", 100), PageCount: 3})
+	}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest(), Resolve: (&projectResolverFake{}).Resolve}
+	definition := definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), ListDashboardsToolName)
+	result, err := definition.Handler.Run(t.Context(), agentcore.ToolCall{ID: "list", Arguments: json.RawMessage(`{}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("list failed: %v", err)
+	}
+	encoded, err := json.Marshal(result.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > 40_000 {
+		t.Fatalf("list includes bulky metadata: %d bytes", len(encoded))
+	}
+	var list struct {
+		Count int `json:"count"`
+		Items []struct {
+			ID            string `json:"id"`
+			DraftID       string `json:"draftId"`
+			SemanticModel string `json:"semanticModel"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(encoded, &list); err != nil {
+		t.Fatal(err)
+	}
+	if list.Count != 100 || len(list.Items) != 100 || list.Items[0].DraftID != "draft-1" || list.Items[0].SemanticModel != "semantic:finance" {
+		t.Fatalf("navigation metadata lost: %#v", list)
+	}
+	if app.list.Items[0].Description == "" {
+		t.Fatal("authoritative catalog was mutated")
+	}
+}

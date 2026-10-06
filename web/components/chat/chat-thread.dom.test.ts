@@ -709,3 +709,36 @@ test('side chat marks dashboard visuals as added and prevents another import', a
     expect(await page.getByRole('button',{name:'Add to dashboard',exact:true}).isEnabled()).toBe(true)
   } finally {await page.close()}
 })
+
+test('chat keeps retries in collapsed activity while showing the final answer', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-thread')
+      const thread = document.querySelector('lv-chat-thread') as any
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [
+        {id:'u',kind:'user',text:'Create a dashboard'},
+        {id:'t1',kind:'tool',name:'query_semantic_model',status:'error',error:'Unknown field'},
+        {id:'t2',kind:'tool',name:'query_semantic_model',status:'complete'},
+        {id:'a',kind:'assistant',text:'Your dashboard is ready.'},
+      ]
+      await thread.updateComplete
+    })
+    expect(await page.getByRole('button', { name: /Query Semantic Model/ }).count()).toBe(0)
+    expect(await page.getByText('Your dashboard is ready.', { exact: true }).isVisible()).toBe(true)
+    await page.locator('.run-activity summary').click()
+    expect(await page.getByRole('button', { name: /Query Semantic Model/ }).count()).toBe(2)
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.transcript = e.transcript.filter((item: any) => item.kind !== 'assistant')
+      await e.updateComplete
+    })
+    expect(await page.getByText('This request stopped before a final answer was ready. You can ask the agent to continue.', {exact:true}).isVisible()).toBe(true)
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.status = { enabled: true, running: false, error: 'Unable to finish this request.' }
+      await e.updateComplete
+    })
+    expect(await page.getByRole('alert').getByText('Unable to finish this request.', {exact:true}).isVisible()).toBe(true)
+  } finally { await page.close() }
+})

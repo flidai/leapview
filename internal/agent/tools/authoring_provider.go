@@ -182,7 +182,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err != nil {
 				return authoringToolError(err)
 			}
-			return agentcore.ToolResult{Content: value}
+			return agentcore.ToolResult{Content: summarizeDashboardCatalog(value)}
 		}),
 		p.definition(GetDashboardToolName, "Get one authorized dashboard's governed metadata.", "read", agentcontracts.DashboardAuthoringGetInputSchemaJSON, agentcontracts.DashboardAuthoringGetResultSchemaJSON, []string{"dashboard", "authoring", "catalog"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringGetInput

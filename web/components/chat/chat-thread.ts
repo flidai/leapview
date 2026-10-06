@@ -175,10 +175,21 @@ class ChatThread extends LitElement {
 
   private renderAgentTurn(items: ChatTranscriptItemSignal[]) {
     const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
+    const isVisual = (item: ChatTranscriptItemSignal) => item.kind === 'tool' && Boolean(item.artifact) && this.toolStatus(item) === 'complete'
+    const activity = items.filter(item => item.kind === 'tool' && !isVisual(item))
+    const running = this.status.running && items.includes(this.resolvedTranscript[this.resolvedTranscript.length - 1])
+    const noFinalAnswer = !running && !this.status.error && !items.some(item => item.kind === 'error' || isVisual(item))
+      && activity.some(item => this.toolStatus(item) === 'error')
+      && items.findLastIndex(item => item.kind === 'tool') > items.findLastIndex(item => item.kind === 'assistant' && Boolean(item.markdown || item.text))
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
-          ${items.map((item) => this.renderAgentItem(item))}
+          ${activity.length ? html`<details class="run-activity">
+            <summary>${running ? 'Working…' : 'View steps'}${lucideIcon(ChevronRight, { size: 14 })}</summary>
+            <div class="run-activity-steps">${activity.map(item => this.renderAgentItem(item))}</div>
+          </details>` : nothing}
+          ${items.filter(item => item.kind !== 'tool' || isVisual(item)).map(item => this.renderAgentItem(item))}
+          ${noFinalAnswer ? html`<p class="run-notice" role="status">This request stopped before a final answer was ready. You can ask the agent to continue.</p>` : nothing}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>

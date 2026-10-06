@@ -234,7 +234,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				if promptErr != nil {
 					return nil, promptErr
 				}
-				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", SystemPrompt: systemPrompt, Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
+				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", Limits: dashboardAgentLimits(), SystemPrompt: withDashboardFieldGuidance(systemPrompt), Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
 				if prepErr != nil {
 					return nil, prepErr
 				}
@@ -322,7 +322,8 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	}
 	prepared, err := agentcore.New(agentcore.Definition{
 		Name:              "leapview-governed",
-		SystemPrompt:      systemPrompt,
+		Limits:            dashboardAgentLimits(),
+		SystemPrompt:      withDashboardFieldGuidance(systemPrompt),
 		Model:             runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: initial,
@@ -545,7 +546,8 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 	sink := &storeEventSink{repo: s.repo, scope: input.Scope, conversationID: input.ConversationID, runID: p.RunID, onEvent: input.OnEvent}
 	def := agentcore.Definition{
 		Name:              "leapview-governed",
-		SystemPrompt:      p.systemPrompt,
+		Limits:            dashboardAgentLimits(),
+		SystemPrompt:      withDashboardFieldGuidance(p.systemPrompt),
 		Model:             p.runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: p.initial,
@@ -567,6 +569,9 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		return PromptResult{}, err
 	}
 	result, promptErr := harness.RunPreparedPrompt(executionContext, agentcore.PreparedPromptRequest{CorrelationID: input.CorrelationID})
+	if promptErr == nil {
+		promptErr = incompletePromptError(result.StopReason)
+	}
 	// A durable worker losing its lease or being shut down must leave the
 	// domain run recoverable. The queue runner intentionally retains the job;
 	// a later worker will resume it. Explicit user cancellation cancels only

@@ -185,6 +185,13 @@ export const chatThreadStyles = css`
     .copy-error { color: var(--lv-fg-danger); font: var(--lv-type-caption); padding: 8px; }
     @media (hover: none) { .user .message-actions { opacity: 1; } .message-actions button { width: 36px; height: 36px; } }
 
+    .run-activity { color: var(--lv-fg-muted); font-size: var(--lv-chat-tool-font-size, 12px); }
+    .run-activity > summary { display: flex; align-items: center; gap: 6px; width: fit-content; cursor: pointer; list-style: none; padding: 4px 0; }
+    .run-activity > summary::-webkit-details-marker { display: none; }
+    .run-activity[open] > summary svg { transform: rotate(90deg); }
+    .run-activity > summary:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; border-radius: 4px; }
+    .run-activity-steps { display: grid; gap: 8px; padding: 8px 0; }
+
     .agent-stack {
       display: grid;
       min-width: 0;
