@@ -765,8 +765,13 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PROTECTED_REVISION"
           test -z "$(git status --porcelain --untracked-files=no)"
-          nix develop --no-update-lock-file .#runtime-security -c \
-            env CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/host-first-publication-verifier" ./cmd/leapviewctl
+          # The full CLI imports build-only API, signal and SQL packages. Run
+          # their generators from this protected checkout, never from source/.
+          nix develop --no-update-lock-file -c bash -c '
+            set -euo pipefail
+            task generate
+            CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/host-first-publication-verifier" ./cmd/leapviewctl
+          '
           chmod 700 "$RUNNER_TEMP/host-first-publication-verifier"
           sha256sum -- "$RUNNER_TEMP/host-first-publication-verifier"
       - name: Verify pinned vendor image and qualify a fresh disposable guest
