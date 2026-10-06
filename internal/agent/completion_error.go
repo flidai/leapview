@@ -7,7 +7,9 @@ import (
 
 // Full dashboard source edits need more room than a short chat answer.
 // This is a ceiling and context reservation, not a minimum generation length.
-func dashboardAgentLimits() agentcore.Limits { return agentcore.Limits{ReserveOutputTokens: 16384} }
+func dashboardAgentLimits() agentcore.Limits {
+	return agentcore.Limits{ReserveOutputTokens: 16384, MaxTruncationRetries: 1}
+}
 
 func incompletePromptError(reason agentcore.StopReason) error {
 	switch reason {

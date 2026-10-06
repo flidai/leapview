@@ -178,9 +178,10 @@ class ChatThread extends LitElement {
     const isVisual = (item: ChatTranscriptItemSignal) => item.kind === 'tool' && Boolean(item.artifact) && this.toolStatus(item) === 'complete'
     const activity = items.filter(item => item.kind === 'tool' && !isVisual(item))
     const running = this.status.running && items.includes(this.resolvedTranscript[this.resolvedTranscript.length - 1])
+    const lastAnswerOrTool = [...items].reverse().find(item => item.kind === 'tool' || (item.kind === 'assistant' && Boolean(item.markdown || item.text)))
     const noFinalAnswer = !running && !this.status.error && !items.some(item => item.kind === 'error' || isVisual(item))
       && activity.some(item => this.toolStatus(item) === 'error')
-      && items.findLastIndex(item => item.kind === 'tool') > items.findLastIndex(item => item.kind === 'assistant' && Boolean(item.markdown || item.text))
+      && lastAnswerOrTool?.kind === 'tool'
     return html`
       <article class="agent-turn">
         <div class="agent-stack">

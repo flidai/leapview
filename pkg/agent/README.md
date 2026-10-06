@@ -343,6 +343,7 @@ call `RunPreparedPrompt`; do not call `PreparePrompt` again.
 Default limits are intentionally conservative:
 
 - `MaxTurns`: 16
+- `MaxTruncationRetries`: 0 (disabled). Opt in to a bounded retry after an output-limit stop. Retries consume turns, preserve completed tool results, and discard unexecuted partial calls.
 - `MaxToolCalls`: 64 per run
 - `MaxConcurrentTools`: 4 per assistant turn
 - `ToolTimeout`: 30 seconds
