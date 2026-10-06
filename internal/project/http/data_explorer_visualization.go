@@ -58,7 +58,6 @@ func ProjectDataExplorerViews(spec exploration.ExplorationSpec, result projectsi
 	if limit > 0 && int64(len(result.Rows)) > limit {
 		result.Rows = append([]map[string]any(nil), result.Rows[:limit]...)
 		result.Truncated = true
-		warnings = append(warnings, "visualization frame was bounded to the exploration row limit")
 	}
 	if result.Rows == nil {
 		result.Rows = []map[string]any{}

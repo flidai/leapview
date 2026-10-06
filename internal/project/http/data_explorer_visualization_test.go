@@ -200,8 +200,8 @@ func TestProjectDataExplorerViewsBoundsRowsAndMarksTruncation(t *testing.T) {
 	result.RequestSeq = 12
 	result.Rows = append(result.Rows, map[string]any{"status": "returned", "revenue": float64(8)})
 	views, _, warnings := ProjectDataExplorerViews(spec, result, explorerVisualizationTestFields())
-	if len(warnings) == 0 {
-		t.Fatal("bounded result did not report truncation")
+	if len(warnings) != 0 {
+		t.Fatalf("bounded frame should use completeness metadata without a redundant warning: %v", warnings)
 	}
 	tableState, ok := views["table"].DataState.Value.(*visualizationir.WindowedVisualizationDataState)
 	if !ok {
