@@ -118,6 +118,50 @@ test('homepage landmarks and controls pass accessibility checks in both themes',
   }
 }, 20000)
 
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const width of [390, 1280]) {
+    test(`documentation and search pass accessibility checks in ${colorScheme} at ${width}px`, async () => {
+      const context = await browser.newContext({ colorScheme, reducedMotion: 'reduce', viewport: { width, height: 900 } })
+      const page = await context.newPage()
+      try {
+        await page.goto(`${baseURL}/docs/introduction`)
+        await page.locator('lv-site-mermaid').first().locator('svg').waitFor({ state: 'visible' })
+        const scan = async (state: string) => {
+          const results = await new AxeBuilder({ page }).analyze()
+          expect({ state, violations: results.violations }).toEqual({ state, violations: [] })
+        }
+        await scan('documentation article')
+
+        if (width === 390) {
+          await page.getByRole('button', { name: 'Open documentation menu' }).click()
+          await page.waitForFunction(() => document.querySelector('.site-docs-layout')?.classList.contains('site-docs-drawer-open'))
+          expect(await page.locator('lv-site-docs-drawer-toggle').evaluateAll((controls) => controls.map((control) => {
+            const button = control.shadowRoot?.querySelector('button')
+            const sidebar = document.getElementById('site-docs-sidebar')
+            return button?.ariaControlsElements?.length === 1 && button.ariaControlsElements[0] === sidebar
+          }))).toEqual([true, true])
+          await scan('open documentation drawer')
+          await page.locator('lv-site-docs-drawer-toggle[placement="drawer"]').getByRole('button', { name: 'Close documentation menu' }).click()
+          await page.waitForFunction(() => !document.querySelector('.site-docs-layout')?.classList.contains('site-docs-drawer-open'))
+        }
+
+        const search = page.locator('lv-site-search')
+        await search.getByRole('button', { name: 'Search documentation' }).click()
+        await search.getByRole('dialog', { name: 'Search documentation' }).waitFor({ state: 'visible' })
+        await scan('open search dialog')
+        await search.locator('input[slot="input"]').fill('semantic relationships')
+        await search.locator('a[href="/docs/concepts/semantic-models"]').waitFor({ state: 'visible' })
+        await scan('populated search results')
+        await search.getByRole('button', { name: 'Close search' }).click()
+        await search.getByRole('dialog', { name: 'Search documentation' }).waitFor({ state: 'hidden' })
+        await scan('closed search dialog')
+      } finally {
+        await context.close()
+      }
+    }, 30_000)
+  }
+}
+
 test('homepage content aligns with the shared header and footer across screen sizes', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 900 } })
   try {

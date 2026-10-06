@@ -66,7 +66,9 @@ class SiteDocsDrawerToggle extends LitElement {
     const closeControl = this.placement === 'drawer'
     const label = closeControl || this.open ? 'Close documentation menu' : 'Open documentation menu'
     const icon = closeControl || this.open ? PanelLeftClose : PanelLeftOpen
-    return html`<button type="button" aria-label=${label} aria-controls="site-docs-sidebar" aria-expanded=${String(this.open)} @click=${this.toggleDrawer}>${lucideIcon(closeControl ? X : icon, { size: 18, strokeWidth: 2 })}</button>`
+    const sidebar = this.ownerDocument.getElementById('site-docs-sidebar')
+    // Element references can reach the parent DOM; string IDs cannot cross this shadow root.
+    return html`<button type="button" aria-label=${label} .ariaControlsElements=${sidebar ? [sidebar] : []} aria-expanded=${String(this.open)} @click=${this.toggleDrawer}>${lucideIcon(closeControl ? X : icon, { size: 18, strokeWidth: 2 })}</button>`
   }
 
   private toggleDrawer = (): void => {
