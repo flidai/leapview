@@ -293,6 +293,79 @@ func TestToolExecutionIsBoundedParallelAndOrdered(t *testing.T) {
 	}
 }
 
+func TestOrdinaryToolFailureDoesNotCancelSiblingOrStopContinuation(t *testing.T) {
+	siblingContextErr := make(chan error, 1)
+	model := &fakeModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCall{
+			{ID: "call_failure", Name: "fail", Arguments: json.RawMessage(`{}`)},
+			{ID: "call_sibling", Name: "succeed", Arguments: json.RawMessage(`{}`)},
+		}, FinishReason: FinishReasonToolCalls},
+		{Content: "continued", FinishReason: FinishReasonStop},
+	}}
+	a := mustAgent(t, Definition{
+		Name:         "test",
+		SystemPrompt: "x",
+		Model:        model,
+		// A single worker makes the cancellation assertion deterministic: the
+		// sibling starts only after the failed worker has returned.
+		Limits: Limits{MaxConcurrentTools: 1, ToolTimeout: time.Second},
+		Tools: []ToolDefinition{
+			{
+				Name:        "fail",
+				Description: "return an ordinary tool error",
+				InputSchema: json.RawMessage(`{"type":"object"}`),
+				Handler: ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) {
+					return ToolResult{}, errors.New("service unavailable")
+				}),
+			},
+			{
+				Name:        "succeed",
+				Description: "complete after the failed tool call",
+				InputSchema: json.RawMessage(`{"type":"object"}`),
+				Handler: ToolHandlerFunc(func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+					siblingContextErr <- ctx.Err()
+					return ToolResult{Content: map[string]any{"ok": true}}, nil
+				}),
+			},
+		},
+	})
+
+	if _, err := a.Prompt(context.Background(), PromptRequest{Input: "go"}); err != nil {
+		t.Fatalf("Prompt returned error: %v", err)
+	}
+	select {
+	case err := <-siblingContextErr:
+		if err != nil {
+			t.Fatalf("sibling context after ordinary failure = %v, want active", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sibling handler did not run after ordinary failure")
+	}
+
+	var toolMessages []Message
+	continued := false
+	for _, message := range a.Transcript() {
+		if message.Role == RoleTool {
+			toolMessages = append(toolMessages, message)
+		}
+		if message.Role == RoleAssistant && message.Content == "continued" {
+			continued = true
+		}
+	}
+	if len(toolMessages) != 2 {
+		t.Fatalf("tool results = %#v, want one result per requested call", toolMessages)
+	}
+	if toolMessages[0].ToolCallID != "call_failure" || !toolMessages[0].IsError || !strings.Contains(toolMessages[0].Content, "tool_execution_failed") {
+		t.Fatalf("first tool result = %#v, want ordinary failure result in request order", toolMessages[0])
+	}
+	if toolMessages[1].ToolCallID != "call_sibling" || toolMessages[1].IsError || !strings.Contains(toolMessages[1].Content, "ok: true") {
+		t.Fatalf("sibling tool result = %#v, want valid success in request order", toolMessages[1])
+	}
+	if !continued {
+		t.Fatalf("assistant did not continue after ordinary tool failure: %#v", a.Transcript())
+	}
+}
+
 func TestToolResultContentDefaultsToTOON(t *testing.T) {
 	model := &fakeModel{responses: []ModelResponse{
 		{ToolCalls: []ToolCall{{ID: "call_1", Name: "lookup", Arguments: json.RawMessage(`{}`)}}, FinishReason: FinishReasonToolCalls},
