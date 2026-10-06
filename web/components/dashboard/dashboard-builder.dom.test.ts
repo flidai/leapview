@@ -3953,3 +3953,14 @@ test('builder Back retains the originating chat across reload URLs', async () =>
     expect(new URL(page.url()).pathname).toBe('/chats/agentconv_origin')
   } finally { await page.close() }
 })
+
+test('generated dashboard links are editable immediately, including old preview links', async () => {
+ const page=await browser.newPage({viewport:{width:1100,height:820}})
+ try {
+  await page.goto(`${baseURL}/?mode=preview`)
+  const editor=page.locator('lv-dashboard-builder')
+  await editor.getByRole('button',{name:'Hide tools',exact:true}).waitFor()
+  expect(await editor.locator('#builder-tools').isVisible()).toBe(true)
+  expect(await editor.getByRole('button',{name:'Edit dashboard',exact:true}).count()).toBe(0)
+ } finally {await page.close()}
+})

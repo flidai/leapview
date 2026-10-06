@@ -133,6 +133,9 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   const repeatsColors = uniqueValueCount(categoryValues) > context.colors.data.length
   const decoration = legendDecoration(presentation.legend, context, true, presentation, categories.map((category) => ({ value: category.name, name: category.label })))
   applyProportionalLegend(decoration.legend, presentation.legendItems, categories)
+  if (isPie && presentation.legend === 'bottom' && decoration.legend) {
+    Object.assign(decoration.legend, { left: 'center', right: 'auto', width: 'auto' })
+  }
   const graphics = [...(decoration.graphic ?? []), ...(center.graphic ?? [])]
   return {
     ...decoration,

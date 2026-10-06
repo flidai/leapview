@@ -29,7 +29,6 @@ export function generatedDashboardHref(transcript: ChatTranscriptItemSignal[], r
   const url = new URL(href, 'http://local.invalid')
   url.searchParams.set('embed', 'chat')
   // The retained route verifies that this preview belongs to this creation.
-  url.searchParams.set('mode', 'preview')
   if (created) url.searchParams.set('createdBy', created.toolCallId!)
   return url.pathname + url.search
 }
