@@ -220,3 +220,19 @@ test('table paging keeps the initial chart frame within its query and generation
   expect(client.semanticViews({ ...paged, resetVersion: 4, window: { ...paged.window, start: 0 } }, result, status, views)).toEqual(views)
   expect(client.semanticViews(command, result, status, views, { generationId: 'new' })).toEqual(views)
 })
+
+test('stale or failed query status invalidates chart frames without losing valid window-loading retention', () => {
+  for (const state of ['stale', 'error', 'cancelled'] as const) {
+    const client = new DataExplorerClientState()
+    const command = { ...emptyDataExploreCommand, requestSeq: 10, resetVersion: 3 }
+    const result = { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 10, truncated: false, warnings: [] }
+    const status = { state: 'success' as const, requestSeq: 10, loading: false, stale: false }
+    const views = { chart: { dataRevision: 10 } } as any
+    expect(client.semanticViews(command, result, status, views)).toEqual(views)
+    const paged = { ...command, window: { block: 'a' as const, start: 1500, count: 100, requestSeq: 1, resetVersion: 3 }, requestSeq: 11 }
+    expect(client.semanticViews(paged, result, undefined, {})).toEqual(views)
+    expect(client.semanticViews(paged, result, { ...status, state: 'loading', requestSeq: 11, loading: true }, {})).toEqual(views)
+    expect(client.semanticViews(paged, result, { ...status, state, requestSeq: 11, stale: state === 'stale' }, {})).toEqual({})
+    expect(client.semanticViews(paged, { ...result, requestSeq: 11 }, { ...status, requestSeq: 11 }, { chart: { dataRevision: 11 } } as any)).toEqual({})
+  }
+})

@@ -116,7 +116,16 @@ export class DataExplorerClientState {
       this.semanticViewsKey = key
       this.lastSemanticViews = {}
     }
-    if (status?.state === 'success' && result.requestSeq === status.requestSeq && !result.error) {
+    const invalid = result.error || status?.error || status?.stale
+      || status?.state === 'stale' || status?.state === 'error' || status?.state === 'cancelled'
+    if (invalid) {
+      this.lastSemanticViews = {}
+      return {}
+    }
+    const successful = status?.state === 'success' && !status.loading && result.requestSeq === status.requestSeq
+    const loadingWindow = command.window && (!status || status.state === 'loading')
+    if (!successful && !loadingWindow) return {}
+    if (successful) {
       if (!command.window || (!Object.keys(this.lastSemanticViews).length && command.window.start === 0)) {
         this.lastSemanticViews = Object.fromEntries(Object.entries(views ?? {}).filter(([, envelope]) => envelope.dataRevision === result.requestSeq))
       }
