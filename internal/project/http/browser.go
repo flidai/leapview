@@ -607,7 +607,7 @@ func dataExplorerSuggestionsPatch(explorer projectsignals.DataExplorerSignal) pa
 		return nil
 	}
 	return pagestream.SignalPatch{"dataExplorer": map[string]any{
-		"explore": map[string]any{"filterSuggestions": explorer.Explore.FilterSuggestions},
+		"explore": map[string]any{"filterSuggestions": projectui.DataExploreSuggestionsPayload(explorer.Explore.FilterSuggestions)},
 	}}
 }
 

@@ -38,3 +38,53 @@ func TestSuggestionResponseOnlyPatchesItsIndependentLane(t *testing.T) {
 		t.Fatal("run responses must still publish their results")
 	}
 }
+
+func TestSuggestionResponseClearsFailureOnSuccessfulRetry(t *testing.T) {
+	suggestions := &projectsignals.DataExploreFilterSuggestionsSignal{
+		Field: "orders.status", RequestSeq: 4, SuggestionRequestSeq: 19,
+		Error: projectsignals.Pointer("suggestions unavailable"),
+	}
+	explorer := projectsignals.DataExplorerSignal{Explore: projectsignals.DataExploreSignal{
+		Command:           projectsignals.DataExploreCommand{Action: projectsignals.Pointer("configure"), FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status"}},
+		FilterSuggestions: suggestions,
+	}}
+	for _, failed := range []bool{true, false} {
+		if !failed {
+			suggestions.Error = nil
+			suggestions.SuggestionRequestSeq++
+		}
+		raw, err := json.Marshal(dataExplorerSuggestionsPatch(explorer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var patch struct {
+			DataExplorer struct {
+				Explore struct {
+					FilterSuggestions map[string]json.RawMessage `json:"filterSuggestions"`
+				} `json:"explore"`
+			} `json:"dataExplorer"`
+		}
+		if err := json.Unmarshal(raw, &patch); err != nil {
+			t.Fatal(err)
+		}
+		fields := patch.DataExplorer.Explore.FilterSuggestions
+		errorValue, present := fields["error"]
+		if !present {
+			t.Fatalf("failed=%t: recursive suggestion patch omitted error: %s", failed, raw)
+		}
+		if failed {
+			if string(errorValue) != `"suggestions unavailable"` {
+				t.Fatalf("failure error=%s", errorValue)
+			}
+		} else if string(errorValue) != "null" {
+			t.Fatalf("successful retry must clear the previous error with null: %s", raw)
+		}
+		var sequence int64
+		if err := json.Unmarshal(fields["suggestionRequestSeq"], &sequence); err != nil {
+			t.Fatal(err)
+		}
+		if sequence != suggestions.SuggestionRequestSeq || string(fields["field"]) != `"orders.status"` {
+			t.Fatalf("retry identity changed: %s", raw)
+		}
+	}
+}

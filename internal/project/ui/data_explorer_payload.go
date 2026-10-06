@@ -93,12 +93,19 @@ func DataExplorerPayload(state uisignals.DataExplorerSignal) dataExplorerWire {
 			Command:           dataExploreCommandPayload(state.Explore.Command),
 			Result:            dataExploreResultWire{state.Explore.Result, state.Explore.Result.Error, state.Explore.Result.SQL, state.Explore.Result.Plan, state.Explore.Result.Window},
 			Status:            dataExploreStatusWire{state.Explore.Status, state.Explore.Status.Error, state.Explore.Status.Message, state.Explore.Status.ProgressPercent},
+			FilterSuggestions: DataExploreSuggestionsPayload(state.Explore.FilterSuggestions),
 		},
 	}
-	if suggestions := state.Explore.FilterSuggestions; suggestions != nil {
-		wire.Explore.FilterSuggestions = &dataExploreSuggestionsWire{*suggestions, suggestions.Error}
-	}
 	return wire
+}
+
+// DataExploreSuggestionsPayload clears a previous error on successful retries
+// in both full Explorer payloads and independent suggestion signal patches.
+func DataExploreSuggestionsPayload(suggestions *uisignals.DataExploreFilterSuggestionsSignal) *dataExploreSuggestionsWire {
+	if suggestions == nil {
+		return nil
+	}
+	return &dataExploreSuggestionsWire{*suggestions, suggestions.Error}
 }
 
 // DataExplorerCommandPayload applies the same projection to the command signal.
