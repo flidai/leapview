@@ -555,6 +555,49 @@ credential state before reopening. Qualify the pinned Kamal version and adapter
 against this sequence using supported operations. Do not infer that stock
 candidate-first deployment or an undocumented Kamal hook implements it.
 
+#### Pinned Kamal adapter qualification proposal
+
+Kamal 2.12.0's [`app stop`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/app.rb#L38-L70)
+removes the proxy service before stopping the container; its
+[`app boot`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/app/boot.rb#L13-L29)
+starts and deploys the candidate before stopping the predecessor. A service's
+maintenance flag alone therefore does not implement the handoff above: removing
+the service also removes that gate. Stock deploy and rollback are not qualified
+stop-first operations for the shared home.
+
+The proposed adapter may qualify a dedicated application host whose only public
+ingress is kamal-proxy's host-port bindings. Kamal supports
+[`proxy.run.publish: false`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/configuration/proxy/run.rb#L19-L43)
+and [`kamal proxy reboot`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/proxy.rb#L96-L120)
+to recreate that proxy without published host ports. Close application work
+admission and enter service maintenance before draining admitted effects. Persist
+the unpublished configuration and reboot the proxy. Inspect actual bindings before stopping the
+predecessor. Only after graceful exit and lock release may `app boot` start the
+candidate. Verify it privately through the Docker network with worker effects
+still gated; publish the proxy ports only after all handoff checks pass. A
+compatible rollback uses the same unpublished state: stop the candidate, invoke
+Kamal rollback, verify the predecessor privately, then republish. This is a
+source-supported proposal, not an executed or accepted deployment sequence.
+
+The adapter must reject shared proxy ownership and any alternate public ingress
+unless that ingress has its own reviewed gate. In particular, the current
+[site topology](../deploy/kamal-site/topology/compose.yaml) publishes Caddy's ports
+and forwards traffic to kamal-proxy over Docker even when Kamal's own ports are
+unpublished; it does not satisfy this dedicated-host precondition. Persist phase
+and selected configuration before each proxy change. On interruption, reconcile
+actual container and listener state and remain closed; an ordinary proxy boot or
+a different configuration must not silently republish an unverified candidate.
+Qualify loss of the runner and host restart across both proxy reboots, private
+verification, rollback, and reopening, including the effect on TLS and streams.
+
+Ingress closure does not close background work. Reuse the application's existing
+workload drain and lifecycle teardown rather than introducing a second drain
+controller. The release adapter still needs an explicit startup admission contract
+that prevents candidate worker effects before verification and proves graceful
+shutdown, worker ownership and lock release. Proxy configuration tests alone do
+not establish those properties. ADR review and the combined lifecycle exercise
+remain prerequisites for adoption.
+
 For each release, record finite budgets for preflight, admission closure, draining,
 stop/lock release, candidate start, verification and reopening, plus a measured
 end-to-end interruption budget. The specification does not invent numeric service
