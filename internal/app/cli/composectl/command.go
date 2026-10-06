@@ -2,8 +2,10 @@ package composectl
 
 import (
 	"context"
+	"fmt"
 	"os"
 
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/spf13/cobra"
 )
@@ -22,16 +24,19 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	root.SetOut(controller.stdout)
 	root.SetErr(controller.stderr)
 
-	versionJSON := false
+	versionFormat := "text"
 	version := &cobra.Command{
 		Use:   "version",
 		Short: "Report the leapviewctl build identity",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return buildinfo.Write(command.OutOrStdout(), "leapviewctl", buildinfo.Current(), versionJSON)
+			if versionFormat != "text" && versionFormat != "json" {
+				return cliapi.NewUsageError(fmt.Errorf("version format must be text or json"))
+			}
+			return buildinfo.Write(command.OutOrStdout(), "leapviewctl", buildinfo.Current(), versionFormat == "json")
 		},
 	}
-	version.Flags().BoolVar(&versionJSON, "json", false, "emit machine-readable JSON")
+	version.Flags().StringVar(&versionFormat, "format", versionFormat, "output format: text or json")
 
 	initOptions := InitOptions{Environment: defaultEnvironment}
 	initialize := &cobra.Command{

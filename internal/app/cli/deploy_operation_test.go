@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,6 +134,95 @@ func TestDeployOperationRequiresExactPlanReviewBeforeExpensiveWork(t *testing.T)
 	}
 	if confirmed.PublicationStatus != "pending" || confirmed.FailureDetail != "" || strings.Contains(confirmedOutput.String(), "failureDetail") {
 		t.Fatalf("pending publication retained obsolete plan confirmation failure: descriptor=%#v output=%q", confirmed, confirmedOutput.String())
+	}
+}
+
+type deployFailingWriter struct{ err error }
+
+func (writer deployFailingWriter) Write([]byte) (int, error) { return 0, writer.err }
+
+type deployCountingReader struct{ reads int }
+
+func (reader *deployCountingReader) Read([]byte) (int, error) {
+	reader.reads++
+	return 0, io.EOF
+}
+
+type deploySignalingReader struct {
+	io.Reader
+	started chan struct{}
+	once    sync.Once
+}
+
+func (reader *deploySignalingReader) Read(buffer []byte) (int, error) {
+	reader.once.Do(func() { close(reader.started) })
+	return reader.Reader.Read(buffer)
+}
+
+func TestDeployPromptWritersFailBeforeReadingInput(t *testing.T) {
+	wantErr := errors.New("terminal output unavailable")
+	writer := deployFailingWriter{err: wantErr}
+	reader := &deployCountingReader{}
+
+	store := projectcli.NewDeploymentOperationStore(filepath.Join(t.TempDir(), "operations.json"))
+	descriptor, err := projectcli.NewDeploymentOperation("release-42", "https://target.example", "prod", "project-1", "prod", "", "candidate-sync:release-42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(descriptor); err != nil {
+		t.Fatal(err)
+	}
+	operations := projectDeployOperations{operations: store}
+	options := projectcli.DeployOptions{ConfirmationReader: reader, ConfirmationWriter: writer, Interactive: true}
+	if err := operations.interactiveDeploymentSelection(context.Background(), &options, io.Discard, "https://target.example", "project-1", "prod"); !errors.Is(err, wantErr) {
+		t.Fatalf("selection error = %v, want writer error", err)
+	}
+	if reader.reads != 0 {
+		t.Fatalf("selection read input %d times after list output failed", reader.reads)
+	}
+
+	reader.reads = 0
+	err = confirmDeploymentPlan(context.Background(), projectcli.DeployOptions{
+		Interactive: true, ConfirmationReader: reader, ConfirmationWriter: writer,
+	}, projectcli.DeploymentOperationDescriptor{PlanDigest: "sha256:plan"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("confirmation error = %v, want writer error", err)
+	}
+	if reader.reads != 0 {
+		t.Fatalf("confirmation read input %d times after prompt output failed", reader.reads)
+	}
+	if err := writeDeploymentPlanReview(writer, "text", descriptor, projectcli.DeliveryPlanResult{}); !errors.Is(err, wantErr) {
+		t.Fatalf("review-header error = %v, want writer error", err)
+	}
+}
+
+func TestReadConfirmationLineReturnsWhenContextIsCanceled(t *testing.T) {
+	pipeReader, releaseReader := io.Pipe()
+	t.Cleanup(func() { _ = releaseReader.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	reader := &deploySignalingReader{Reader: pipeReader, started: make(chan struct{})}
+	type lineResult struct {
+		line string
+		err  error
+	}
+	done := make(chan lineResult, 1)
+	go func() {
+		line, err := readConfirmationLine(ctx, reader)
+		done <- lineResult{line: line, err: err}
+	}()
+	select {
+	case <-reader.started:
+	case <-time.After(time.Second):
+		t.Fatal("confirmation reader did not block on the pipe")
+	}
+	cancel()
+	select {
+	case result := <-done:
+		if !errors.Is(result.err, context.Canceled) || result.line != "" {
+			t.Fatalf("readConfirmationLine() = %q, %v; want empty line and context.Canceled", result.line, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("confirmation input did not unblock after cancellation")
 	}
 }
 
@@ -337,13 +427,17 @@ func TestInteractiveBareSelectionDisplaysRetainedIdentityAndSelectsExactHandle(t
 		}
 	}
 	operations := projectDeployOperations{operations: store}
-	options := projectcli.DeployOptions{Interactive: true, ConfirmationReader: strings.NewReader("2\n"), ConfirmationWriter: &bytes.Buffer{}}
+	var prompts bytes.Buffer
+	options := projectcli.DeployOptions{Interactive: true, ConfirmationReader: strings.NewReader("2\n"), ConfirmationWriter: &prompts}
 	var output bytes.Buffer
 	if err := operations.interactiveDeploymentSelection(t.Context(), &options, &output, "https://target.example", "project-1", "prod"); err != nil {
 		t.Fatal(err)
 	}
-	if options.Intent != "resume" || options.OperationHandle != "release-b" || !strings.Contains(output.String(), "revision=commit-release-a") || !strings.Contains(output.String(), "revision=commit-release-b") {
-		t.Fatalf("interactive selection options=%#v output=%q", options, output.String())
+	if options.Intent != "resume" || options.OperationHandle != "release-b" || !strings.Contains(prompts.String(), "revision=commit-release-a") || !strings.Contains(prompts.String(), "revision=commit-release-b") {
+		t.Fatalf("interactive selection options=%#v prompts=%q", options, prompts.String())
+	}
+	if output.Len() != 0 {
+		t.Fatalf("interactive selection wrote prompts to result stdout: %q", output.String())
 	}
 }
 

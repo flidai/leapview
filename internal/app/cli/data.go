@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"path/filepath"
 	"strings"
 
@@ -19,7 +18,7 @@ import (
 func dataCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
 	return manageddatacli.Command(ctx, manageddatacli.Dependencies{
 		Client:                  capabilityAPIClient{},
-		HTTPClient:              http.DefaultClient,
+		HTTPClient:              defaultCLIHTTPClient,
 		LoadPlanCatalog:         loadManagedDataPlanCatalog,
 		ResolveDevelopmentInput: resolveDevelopmentInput,
 	})

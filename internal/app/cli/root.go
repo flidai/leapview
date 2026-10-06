@@ -3,7 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	accesscli "github.com/flidai/leapview/internal/access/cli"
@@ -31,8 +34,47 @@ type rootOptions struct {
 	healthcheckTimeout time.Duration
 }
 
-func Execute(ctx context.Context) error {
-	return NewCommand(ctx).ExecuteContext(ctx)
+// Run executes the public CLI, renders one failure diagnostic, and returns the
+// process exit code. Signal cancellation is allowed to unwind command lifecycle
+// handlers before its conventional status is returned.
+func Run(ctx context.Context) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	root := NewCommand(runContext)
+	signals := make(chan os.Signal, 1)
+	interrupts := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		select {
+		case received := <-signals:
+			interrupts <- received
+			cancel()
+		case <-done:
+		}
+	}()
+	command, err := root.ExecuteContextC(runContext)
+	close(done)
+	var received os.Signal
+	select {
+	case received = <-interrupts:
+	default:
+	}
+	if command == nil {
+		command = root
+	}
+	return runExitCode(command, err, received)
+}
+
+func runExitCode(command *cobra.Command, err error, received os.Signal) int {
+	if received != nil && (command == nil || command.CommandPath() != "leapview serve") {
+		return interruptExitCode(received)
+	}
+	return renderCLIError(command, err)
 }
 
 // NewCommand constructs the LeapView CLI command tree for execution and documentation.
@@ -52,6 +94,10 @@ func NewCommand(ctx context.Context) *cobra.Command {
 		},
 	}
 	root.InitDefaultVersionFlag()
+	root.PersistentFlags().Bool("no-input", false, "disable terminal prompts and automatic browser opening")
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return cliapi.NewUsageError(err)
+	})
 	authentication := applicationAuthoringAuthentication{}
 	root.AddGroup(
 		&cobra.Group{ID: "authoring", Title: "Authoring:"},
@@ -114,6 +160,18 @@ func NewCommand(ctx context.Context) *cobra.Command {
 func normalizeCommandGroups(root *cobra.Command) {
 	var visit func(*cobra.Command)
 	visit = func(command *cobra.Command) {
+		defer func() {
+			if command.Args == nil {
+				return
+			}
+			validateArgs := command.Args
+			command.Args = func(command *cobra.Command, args []string) error {
+				if err := validateArgs(command, args); err != nil {
+					return cliapi.NewUsageError(err)
+				}
+				return nil
+			}
+		}()
 		for _, child := range command.Commands() {
 			visit(child)
 		}

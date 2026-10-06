@@ -146,11 +146,16 @@ func (e *NativeEffects) waitPG(ctx context.Context, name string, schema int) err
 func (e *NativeEffects) waitApp(ctx context.Context, name, image, revision string) error {
 	deadline := time.NewTimer(3 * time.Minute)
 	defer deadline.Stop()
+	versionArgs := []string{"version", "--json"}
+	if image == e.id.Candidate {
+		versionArgs = []string{"version", "--format", "json"}
+	}
 	for {
 		info, err := e.inspect(ctx, name)
 		if err == nil && info.State.Running && info.Config.Image == image {
 			if _, err = e.docker(ctx, "exec", name, "leapview", "healthcheck"); err == nil {
-				raw, err := e.docker(ctx, "exec", name, "leapview", "version", "--json")
+				args := append([]string{"exec", name, "leapview"}, versionArgs...)
+				raw, err := e.docker(ctx, args...)
 				var version buildinfo.Identity
 				if err == nil && json.Unmarshal([]byte(raw), &version) == nil && !version.Dirty && version.Revision == revision {
 					return nil

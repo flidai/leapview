@@ -255,7 +255,7 @@ func TestReopeningAfterRebootRestartsPostgresBeforeExposingTraffic(t *testing.T)
 		if strings.Contains(call, "max(version_id)") {
 			return "28", nil
 		}
-		if strings.Contains(call, "version --json") {
+		if strings.Contains(call, "version --json") || strings.Contains(call, "version --format json") {
 			raw, _ := json.Marshal(buildinfo.Identity{Revision: e.request.PredecessorRevision})
 			return string(raw), nil
 		}
@@ -386,7 +386,7 @@ func TestNativeFailedCandidateRestoresPairedFilesAndConfiguration(t *testing.T) 
 							raw, err := os.ReadFile(filepath.Join(pgRoots[args[1]], "state"))
 							return string(raw), err
 						}
-						if strings.Contains(call, "version --json") {
+						if strings.Contains(call, "version --json") || strings.Contains(call, "version --format json") {
 							revision := e.request.PredecessorRevision
 							if images[args[1]] == e.id.Candidate {
 								revision = e.request.CandidateRevision

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -74,6 +75,84 @@ func TestCommandRunsAgentConversationWithoutApplicationProcess(t *testing.T) {
 	}
 }
 
+func TestCommandPreservesJSONResultAndReportsNoncompletedAgentRun(t *testing.T) {
+	for _, status := range []string{"failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			client := &fakeClient{}
+			client.transport.do = func(request apigenclient.Request, out any) error {
+				switch request.OperationID {
+				case agentgen.GenOperationCreateAgentConversation:
+					return json.Unmarshal([]byte(`{"id":"conv_1","createdAt":"","principalId":"principal","status":"active","title":"","updatedAt":""}`), out)
+				case agentgen.GenOperationCreateAgentRun:
+					body := `{"id":"run_1","conversationId":"conv_1","createdAt":"","principalId":"principal","status":"` + status + `","stopReason":"error","error":"execution failed"}`
+					return json.Unmarshal([]byte(body), out)
+				case agentgen.GenOperationListAgentMessages:
+					return json.Unmarshal([]byte(`{"items":[{"id":"message_1","contentText":"Partial answer","createdAt":"","role":"assistant","runId":"run_1","seq":1}],"page":{}}`), out)
+				default:
+					t.Fatalf("unexpected operation %q", request.OperationID)
+				}
+				return nil
+			}
+			command := Command(context.Background(), Dependencies{Client: client})
+			var output strings.Builder
+			command.SetOut(&output)
+			command.SilenceUsage = true
+			command.SetArgs([]string{"ask", "Question", "--format", "json", "--target", "https://example.test", "--token", "secret"})
+			err := command.Execute()
+			var reported *cliapi.ReportedError
+			if !errors.As(err, &reported) {
+				t.Fatalf("error = %v, want ReportedError", err)
+			}
+			var document struct {
+				ConversationID string `json:"conversationId"`
+				Content        string `json:"content"`
+				Run            struct {
+					Status string `json:"status"`
+				} `json:"run"`
+			}
+			decoder := json.NewDecoder(strings.NewReader(output.String()))
+			if err := decoder.Decode(&document); err != nil {
+				t.Fatalf("decode output %q: %v", output.String(), err)
+			}
+			if err := decoder.Decode(&struct{}{}); err != io.EOF {
+				t.Fatalf("output has trailing result data: err=%v output=%q", err, output.String())
+			}
+			if document.ConversationID != "conv_1" || document.Content != "Partial answer" || document.Run.Status != status {
+				t.Fatalf("result = %#v", document)
+			}
+		})
+	}
+}
+
+func TestCommandReturnsTextResultWriterFailure(t *testing.T) {
+	client := &fakeClient{}
+	client.transport.do = func(request apigenclient.Request, out any) error {
+		switch request.OperationID {
+		case agentgen.GenOperationCreateAgentConversation:
+			return json.Unmarshal([]byte(`{"id":"conv_1","createdAt":"","principalId":"principal","status":"active","title":"","updatedAt":""}`), out)
+		case agentgen.GenOperationCreateAgentRun:
+			return json.Unmarshal([]byte(`{"id":"run_1","conversationId":"conv_1","createdAt":"","principalId":"principal","status":"completed","stopReason":"complete"}`), out)
+		case agentgen.GenOperationListAgentMessages:
+			return json.Unmarshal([]byte(`{"items":[{"id":"message_1","contentText":"Answer","createdAt":"","role":"assistant","runId":"run_1","seq":1}],"page":{}}`), out)
+		default:
+			t.Fatalf("unexpected operation %q", request.OperationID)
+		}
+		return nil
+	}
+	wantErr := errors.New("stdout unavailable")
+	command := Command(context.Background(), Dependencies{Client: client})
+	command.SetOut(agentFailingWriter{err: wantErr})
+	command.SilenceUsage = true
+	command.SetArgs([]string{"ask", "Question", "--target", "https://example.test", "--token", "secret"})
+	if err := command.Execute(); !errors.Is(err, wantErr) {
+		t.Fatalf("Execute() error = %v, want writer error", err)
+	}
+}
+
+type agentFailingWriter struct{ err error }
+
+func (writer agentFailingWriter) Write([]byte) (int, error) { return 0, writer.err }
+
 func TestCommandOwnsConversationEnvelopePresentation(t *testing.T) {
 	client := &fakeClient{}
 	client.transport.do = func(request apigenclient.Request, out any) error {
@@ -85,7 +164,7 @@ func TestCommandOwnsConversationEnvelopePresentation(t *testing.T) {
 	command := Command(context.Background(), Dependencies{Client: client})
 	var output strings.Builder
 	command.SetOut(&output)
-	command.SetArgs([]string{"conversations", "--json", "--target", "https://example.test", "--token", "secret", "--limit", "7", "--page-token", "cursor"})
+	command.SetArgs([]string{"conversations", "--format", "json", "--target", "https://example.test", "--token", "secret", "--limit", "7", "--page-token", "cursor"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}

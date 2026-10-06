@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"path/filepath"
 	"strings"
 
@@ -23,7 +22,7 @@ type projectPublishOperations struct {
 
 func publishCommand(ctx context.Context) *cobra.Command {
 	client := capabilityAPIClient{
-		httpClient:        authoringRefreshingHTTPClient(http.DefaultClient),
+		httpClient:        authoringRefreshingHTTPClient(defaultCLIHTTPClient),
 		validateAuthoring: true,
 	}
 	return projectcli.PublishCommand(
@@ -46,9 +45,8 @@ func (operations projectPublishOperations) Publish(
 	if options.Format == "json" {
 		return json.NewEncoder(out).Encode(result)
 	}
-	fmt.Fprintf(out, "publication %s candidate %s generation %s status %s\n", result.PublicationID, result.CandidateID, result.GenerationID, result.Status)
-	fmt.Fprintf(out, "plan %s digest %s target-revision %d\n", result.PlanID, result.PlanDigest, result.TargetRevision)
-	return nil
+	_, err = fmt.Fprintf(out, "publication %s candidate %s generation %s status %s\nplan %s digest %s target-revision %d\n", result.PublicationID, result.CandidateID, result.GenerationID, result.Status, result.PlanID, result.PlanDigest, result.TargetRevision)
+	return err
 }
 
 func (operations projectPublishOperations) PublishResult(

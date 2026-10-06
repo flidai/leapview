@@ -306,7 +306,7 @@ func TestReleasedAuthoringQualificationContractDeclaresPendingMeasurements(t *te
 		"partial",
 		"outerChecksum",
 		"innerManifest",
-		"leapview version --json",
+		"leapview version --format json",
 		"coldUncached",
 		"coldCached",
 		"warmRestart",

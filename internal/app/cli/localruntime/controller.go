@@ -294,8 +294,9 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 		return State{}, err
 	}
 	phase := state.Phase
+	runtimeApplied := false
 	defer func() {
-		if err == nil {
+		if err == nil || runtimeApplied {
 			return
 		}
 		state.Status = statusIncomplete
@@ -408,9 +409,9 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 	if err = saveState(statePath, state); err != nil {
 		return state, err
 	}
-	fmt.Fprintf(controller.stdout, "LeapView local development is ready at %s\n", state.Network.URL)
-	fmt.Fprintf(controller.stdout, "Local authoring target: %s\n", state.Session.TargetName)
-	return state, nil
+	runtimeApplied = true
+	_, err = fmt.Fprintf(controller.stdout, "LeapView local development is ready at %s\nLocal authoring target: %s\n", state.Network.URL, state.Session.TargetName)
+	return state, err
 }
 
 func (controller *Controller) newIntent(canonicalCheckout, checkoutID, manifestDigest string) (State, error) {

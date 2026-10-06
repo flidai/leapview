@@ -171,7 +171,7 @@ func (resolver applicationOriginCredentials) ResolveName(ctx context.Context, na
 
 func authoringRefreshingHTTPClient(client *http.Client) *http.Client {
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultCLIHTTPClient
 	}
 	clone := *client
 	base := client.Transport

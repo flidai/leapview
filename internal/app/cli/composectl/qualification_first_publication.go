@@ -420,7 +420,7 @@ type qualificationImageRuntimeVersion struct {
 
 func qualificationImageRuntimeIdentity(ctx context.Context, c *Controller, image string) (qualificationImageRuntimeVersion, error) {
 	var identity qualificationImageRuntimeVersion
-	output, err := c.qualificationDocker(ctx, nil, "run", "--rm", "--entrypoint", "/usr/local/libexec/leapviewctl", image, "version", "--json")
+	output, err := c.qualificationDocker(ctx, nil, "run", "--rm", "--entrypoint", "/usr/local/libexec/leapviewctl", image, "version", "--format", "json")
 	if err != nil {
 		return identity, fmt.Errorf("read installed image runtime identity: %w", err)
 	}

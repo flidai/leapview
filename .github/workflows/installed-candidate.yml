@@ -248,7 +248,7 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          "$PACKAGE_ROOT/leapview" version --json > "$RUNNER_TEMP/authoring-version.json"
+          "$PACKAGE_ROOT/leapview" version --format json > "$RUNNER_TEMP/authoring-version.json"
           python3 - <<'PY'
           import json
           import os

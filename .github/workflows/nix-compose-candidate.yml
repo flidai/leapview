@@ -238,7 +238,7 @@ jobs:
           test "$IMAGE_REFERENCE" = "$(cat release-input/image-reference.txt)"
           test "$(printf '%s' "$IMAGE_REFERENCE" | cut -d@ -f2)" = "$IMAGE_DIGEST"
           docker pull "$IMAGE_REFERENCE"
-          docker run --rm "$IMAGE_REFERENCE" version --json > "preflight/$ARCH/image-runtime-identity.json"
+          docker run --rm "$IMAGE_REFERENCE" version --format json > "preflight/$ARCH/image-runtime-identity.json"
           cp -- "$RUNNER_TEMP/oci-admission.json" "preflight/$ARCH/oci-admission.json"
       - name: Remove temporary GHCR credentials
         if: always()
@@ -582,7 +582,7 @@ jobs:
           set -euo pipefail
           package_root="extracted-package/$PACKAGE_NAME"
           env -u GH_TOKEN -u GITHUB_TOKEN \
-            "$package_root/leapviewctl" version --json > controller-runtime-identity.json
+            "$package_root/leapviewctl" version --format json > controller-runtime-identity.json
 
       - name: Run the full installed-candidate journey
         env:

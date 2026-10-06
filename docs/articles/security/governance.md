@@ -316,7 +316,7 @@ docker buildx imagetools inspect "$image" --format '{{ json .SBOM }}' | jq -e '.
 gh attestation verify "oci://$image" --repo flidai/leapview
 docker pull "$image"
 docker image inspect "$image" --format '{{json .Config.Labels}}'
-docker run --rm "$image" version --json
+docker run --rm "$image" version --format json
 ```
 
 The attestation must name one of the trusted builder workflows above, bind the

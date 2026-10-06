@@ -198,7 +198,7 @@ checksum and compare the packaged identity with the controller:
 ```sh
 sha256sum --check ../leapview-compose-*.tar.gz.sha256
 cat release-identity.json
-./leapviewctl version --json
+./leapviewctl version --format json
 ```
 
 After pulling the immutable image reference in `image-reference.txt`, inspect
@@ -209,7 +209,7 @@ LEAPVIEW_IMAGE="$(cat image-reference.txt)"
 docker pull "$LEAPVIEW_IMAGE"
 docker image inspect "$LEAPVIEW_IMAGE" \
   --format '{{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
-docker run --rm "$LEAPVIEW_IMAGE" version --json
+docker run --rm "$LEAPVIEW_IMAGE" version --format json
 ```
 
 The `version` and `revision` values must agree with

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 )
 
@@ -43,7 +44,7 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 				return fmt.Errorf("login dependencies are unavailable")
 			}
 			if format != "text" && format != "json" {
-				return fmt.Errorf("login format must be text or json")
+				return cliapi.NewUsageError(fmt.Errorf("login format must be text or json"))
 			}
 			// Resolve and durably persist the issuer-owned project identity before
 			// contacting a target. A failed or unreachable target must not leave
@@ -66,11 +67,13 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 			}
 			encoder := json.NewEncoder(command.OutOrStdout())
 			var eventErr error
-			result, err := authentication.Login(ctx, LoginRequest{
+			loginContext, cancelLogin := context.WithCancel(ctx)
+			defer cancelLogin()
+			result, err := authentication.Login(loginContext, LoginRequest{
 				Name: profileName, Origin: metadata.Origin, InstanceID: metadata.InstanceID,
 				Environment: metadata.Environment, ProjectID: projectID,
-				Actions: access.DefaultAuthoringActions(),
-				Headless: headless,
+				Actions:  access.DefaultAuthoringActions(),
+				Headless: headless || format == "json" || cliapi.NoInput(command),
 			}, func(challenge DeviceChallenge) {
 				if format == "json" {
 					eventErr = encoder.Encode(map[string]any{
@@ -79,15 +82,18 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 						"verificationUrl": challenge.VerificationURI,
 						"userCode":        challenge.UserCode,
 					})
-					return
+				} else {
+					_, eventErr = fmt.Fprintf(command.ErrOrStderr(), "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode)
 				}
-				fmt.Fprintf(command.OutOrStdout(), "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode)
+				if eventErr != nil {
+					cancelLogin()
+				}
 			})
-			if err != nil {
-				return err
-			}
 			if eventErr != nil {
 				return fmt.Errorf("write login event: %w", eventErr)
+			}
+			if err != nil {
+				return err
 			}
 			if format == "json" {
 				return encoder.Encode(map[string]any{
@@ -98,8 +104,8 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 					"sessionId":     result.SessionID,
 				})
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Signed in to %s for project %s (session %s)\n", metadata.Origin, projectID, result.SessionID)
-			return nil
+			_, err = fmt.Fprintf(command.OutOrStdout(), "Signed in to %s for project %s (session %s)\n", metadata.Origin, projectID, result.SessionID)
+			return err
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "stable local name for this target")
@@ -121,8 +127,8 @@ func LogoutCommand(ctx context.Context, authentication AuthenticationService) *c
 			if err := authentication.Logout(ctx, strings.TrimSpace(args[0])); err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Signed out from %s\n", strings.TrimSpace(args[0]))
-			return nil
+			_, err := fmt.Fprintf(command.OutOrStdout(), "Signed out from %s\n", strings.TrimSpace(args[0]))
+			return err
 		},
 	}
 	return command

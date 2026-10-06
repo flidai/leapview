@@ -103,7 +103,7 @@ pkgs.stdenv.mkDerivation {
         PY
       ''}
     done
-    "$out/bin/leapviewctl" version --json > "$TMPDIR/runtime-identity.json"
+    "$out/bin/leapviewctl" version --format json > "$TMPDIR/runtime-identity.json"
     python3 - "$TMPDIR/runtime-identity.json" <<'PY'
     import json, pathlib, sys
     expected = {

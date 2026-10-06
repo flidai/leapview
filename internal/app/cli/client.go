@@ -28,6 +28,8 @@ type capabilityAPIClient struct {
 	validateAuthoring bool
 }
 
+var defaultCLIHTTPClient = &http.Client{Timeout: 5 * time.Minute}
+
 func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliapi.Credentials) (cliapi.Credentials, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -237,7 +239,7 @@ func (client capabilityAPIClient) Environment(ctx context.Context, credentials c
 	if err != nil {
 		return "", err
 	}
-	return targetEnvironment(ctx, http.DefaultClient, resolved.Target, resolved.Token, asserted)
+	return targetEnvironment(ctx, defaultCLIHTTPClient, resolved.Target, resolved.Token, asserted)
 }
 
 // TargetIdentity is an optional read-only preflight used by deployment
@@ -271,7 +273,7 @@ func (client capabilityAPIClient) http() *http.Client {
 	if client.httpClient != nil {
 		return client.httpClient
 	}
-	return http.DefaultClient
+	return defaultCLIHTTPClient
 }
 
 // HTTPClient exposes the already configured transport to optional local
@@ -314,19 +316,22 @@ func doJSONWithHeaders(ctx context.Context, method, endpoint, token string, head
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := defaultCLIHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	bytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: %s", method, endpoint, strings.TrimSpace(string(bytes)))
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read API response: %w", err)
 	}
-	if out == nil || len(bytes) == 0 {
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("%s %s: %s", method, endpoint, strings.TrimSpace(string(responseBody)))
+	}
+	if out == nil || len(responseBody) == 0 {
 		return nil
 	}
-	return json.Unmarshal(bytes, out)
+	return json.Unmarshal(responseBody, out)
 }
 
 func targetEnvironment(ctx context.Context, client *http.Client, target, token, asserted string) (string, error) {
@@ -357,8 +362,4 @@ func shortDigest(value string) string {
 		return value
 	}
 	return value[:12]
-}
-
-func init() {
-	http.DefaultClient.Timeout = 5 * time.Minute
 }

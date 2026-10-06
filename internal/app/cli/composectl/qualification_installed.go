@@ -835,7 +835,7 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 		)
 	}
 	runtimeOutput, err := c.qualificationDocker(
-		ctx, nil, "run", "--rm", imageReference, "version", "--json",
+		ctx, nil, "run", "--rm", imageReference, "version", "--format", "json",
 	)
 	if err != nil {
 		return err

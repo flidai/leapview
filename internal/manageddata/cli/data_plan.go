@@ -143,12 +143,12 @@ func dataPlanCommand(ctx context.Context, planner dataPlanner, dependencies Depe
 func resolveDataSelection(command *cobra.Command, dependencies Dependencies, projectRoot, developmentInput, sourceRoot, connection, from string) (dataSelection, error) {
 	if strings.TrimSpace(developmentInput) == "" {
 		if command.Flags().Changed("project-root") {
-			return dataSelection{}, fmt.Errorf("--project-root requires --development-input")
+			return dataSelection{}, cliapi.NewUsageError(fmt.Errorf("--project-root requires --development-input"))
 		}
 		return dataSelection{SourceRoot: sourceRoot, Connection: connection, From: from}, nil
 	}
 	if command.Flags().Changed("connection") || command.Flags().Changed("from") || command.Flags().Changed("source-root") {
-		return dataSelection{}, fmt.Errorf("--development-input cannot be combined with --connection, --from, or --source-root")
+		return dataSelection{}, cliapi.NewUsageError(fmt.Errorf("--development-input cannot be combined with --connection, --from, or --source-root"))
 	}
 	if dependencies.ResolveDevelopmentInput == nil {
 		return dataSelection{}, fmt.Errorf("development input resolver is required")

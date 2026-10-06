@@ -174,7 +174,7 @@ func optionalAuthoringString(value string) *string {
 
 func devCommand(ctx context.Context) *cobra.Command {
 	client := capabilityAPIClient{
-		httpClient:        authoringRefreshingHTTPClient(http.DefaultClient),
+		httpClient:        authoringRefreshingHTTPClient(defaultCLIHTTPClient),
 		validateAuthoring: true,
 	}
 	remotes := projectDevRemoteFactory{client: client, stageDevelopmentInputs: stageDeclaredDevelopmentInputs}
@@ -218,24 +218,24 @@ func dispatchLocalDevCommand(
 				return err
 			}
 			if strings.TrimSpace(target) == "" {
-				return fmt.Errorf("explicit remote --target must not be empty")
+				return cliapi.NewUsageError(fmt.Errorf("explicit remote --target must not be empty"))
 			}
 			if command.Flags().Changed("docker-context") || command.Flags().Changed("docker-host") {
-				return fmt.Errorf("Docker endpoint flags cannot be combined with remote --target")
+				return cliapi.NewUsageError(fmt.Errorf("Docker endpoint flags cannot be combined with remote --target"))
 			}
 			if command.Flags().Changed("profile-file") || command.Flags().Changed("profile") || command.Flags().Changed("allow-upstream-read") {
-				return fmt.Errorf("local profile flags cannot be combined with remote --target")
+				return cliapi.NewUsageError(fmt.Errorf("local profile flags cannot be combined with remote --target"))
 			}
 			return remoteRun(command, args)
 		}
 		for _, name := range []string{"token", "project-id", "bootstrap"} {
 			if flag := command.Flags().Lookup(name); flag != nil && command.Flags().Changed(name) {
-				return fmt.Errorf("--%s requires an explicit remote --target", name)
+				return cliapi.NewUsageError(fmt.Errorf("--%s requires an explicit remote --target", name))
 			}
 		}
 		if len(args) == 1 {
 			if flag := command.Flags().Lookup("source-root"); flag != nil && command.Flags().Changed("source-root") {
-				return fmt.Errorf("choose either --source-root or positional source root, not both")
+				return cliapi.NewUsageError(fmt.Errorf("choose either --source-root or positional source root, not both"))
 			}
 		}
 		if resolve == nil || start == nil {
@@ -291,10 +291,10 @@ func runLocalDevRuntime(
 		if err := command.Flags().Set("target", state.Session.TargetName); err != nil {
 			return err
 		}
-		local := localDevelopmentSession{profile: profile, state: state, output: command.OutOrStdout()}
+		local := localDevelopmentSession{profile: profile, state: state, output: command.ErrOrStderr()}
 		if browserRequest.OpenBrowser {
 			local.openBrowser = func(ctx context.Context) error {
-				_, cookie, err := establishLocalBrowserSession(ctx, browserRequest, http.DefaultClient)
+				_, cookie, err := establishLocalBrowserSession(ctx, browserRequest, defaultCLIHTTPClient)
 				if err != nil {
 					return err
 				}
@@ -399,7 +399,7 @@ func (factory projectDevRemoteFactory) DevelopmentSession(ctx context.Context, c
 		return nil, fmt.Errorf("local development session identity is incomplete")
 	}
 	key := developmentsession.Key{OwnerID: ownerID, CheckoutID: checkoutID, WorktreeID: checkoutID, ProjectID: projectID, TargetID: targetID, Environment: environment}
-	httpClient := http.DefaultClient
+	httpClient := defaultCLIHTTPClient
 	if provider, ok := factory.client.(interface{ HTTPClient() *http.Client }); ok && provider.HTTPClient() != nil {
 		httpClient = provider.HTTPClient()
 	}

@@ -24,7 +24,7 @@ type deploymentCLIClient struct {
 
 func newDeploymentCLIClient(client *http.Client, target, token string) *deploymentCLIClient {
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultCLIHTTPClient
 	}
 	return &deploymentCLIClient{http: client, target: strings.TrimRight(target, "/"), token: token}
 }

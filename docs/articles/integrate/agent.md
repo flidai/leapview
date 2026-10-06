@@ -111,7 +111,7 @@ leapview agent ask \
   "Which categories contributed most to revenue in the sales project?"
 ```
 
-Use `--conversation <id>` to continue an existing principal-owned conversation and `--json` for machine processing. List conversations with bounded pagination through `leapview agent conversations`. The CLI follows the asynchronous run to a terminal state.
+Use `--conversation <id>` to continue an existing principal-owned conversation and `--format json` for machine processing. List conversations with bounded pagination through `leapview agent conversations`. The CLI follows the asynchronous run to a terminal state.
 
 ## Integrate through REST
 

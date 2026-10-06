@@ -113,7 +113,7 @@ def inspect():
             raise RuntimeError('Backup target does not match application database binding')
     image = info['Config']['Image']
     if not re.fullmatch(IMAGE_RE, image): raise RuntimeError('Predecessor must use an immutable image')
-    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--json'))
+    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--format', 'json'))
     if version['dirty']: raise RuntimeError('Dirty predecessor')
     ready()
     return {'image': image, 'revision': version['revision']}
@@ -294,7 +294,7 @@ def _runtime_outcome_evidence():
     image_info = json.loads(out('docker', 'image', 'inspect', image))[0]
     if info.get('Image') != image_info.get('Id') or image not in image_info.get('RepoDigests', []):
         raise ValueError('Container content does not match its immutable image reference')
-    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--json'))
+    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--format', 'json'))
     if version.get('dirty') is not False or not re.fullmatch(r'[0-9a-f]{40}', version.get('revision', '')):
         raise ValueError('Runtime source identity is invalid')
     env = dict(v.split('=', 1) for v in info['Config']['Env'] if '=' in v)
@@ -513,7 +513,7 @@ def _main():
     if shutil.disk_usage(PROVIDER).free < 10*1024**3:
         raise RuntimeError('Insufficient free space before image pull (10 GiB reserve required)')
     run('docker', 'pull', image)
-    identity = json.loads(out('docker', 'run', '--rm', image, 'version', '--json'))
+    identity = json.loads(out('docker', 'run', '--rm', image, 'version', '--format', 'json'))
     if identity['revision'] != revision or identity['dirty']: raise RuntimeError('Image identity mismatch')
     release = stage_release(image)
     volume = out('docker', 'volume', 'inspect', VOLUME, '--format', '{{.Mountpoint}}')

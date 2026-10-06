@@ -272,7 +272,7 @@ jobs:
           IMAGE_REFERENCE: ${{ steps.assembled_admission.outputs.image }}
         run: |
           docker pull "$IMAGE_REFERENCE"
-          docker run --rm "$IMAGE_REFERENCE" version --json > runtime-identity.json
+          docker run --rm "$IMAGE_REFERENCE" version --format json > runtime-identity.json
           label_version="$(docker image inspect "$IMAGE_REFERENCE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
           label_revision="$(docker image inspect "$IMAGE_REFERENCE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
           test "$label_version" = "$EXPECTED_VERSION"
@@ -343,7 +343,7 @@ jobs:
             controller="$RUNNER_TEMP/compose-controllers/leapviewctl-$os-$arch"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="$build_ldflags" -o "$controller" ./cmd/leapviewctl
             if [ "$os/$arch" = linux/amd64 ]; then
-              "$controller" version --json > "$RUNNER_TEMP/compose-controllers/runtime-identity.json"
+              "$controller" version --format json > "$RUNNER_TEMP/compose-controllers/runtime-identity.json"
               python3 - "$RUNNER_TEMP/compose-controllers/runtime-identity.json" <<'PY'
           import json
           import sys
@@ -498,7 +498,7 @@ jobs:
           if package["applicationImage"] != expected["image"] or release["image"] != expected["image"] or runtime["leapview"]["image"] != expected["image"]:
               raise SystemExit("authoring package application image mismatch")
           PY
-          "$package_root/leapview" version --json > installed-version.json
+          "$package_root/leapview" version --format json > installed-version.json
           PACKAGE_ROOT="$package_root" python3 - <<'PY'
           import json
           import os
@@ -623,7 +623,7 @@ jobs:
         run: |
           set -euo pipefail
           docker pull "$IMAGE_REFERENCE"
-          docker run --rm "$IMAGE_REFERENCE" version --json
+          docker run --rm "$IMAGE_REFERENCE" version --format json
 
       - name: Run installed-candidate journey
         run: |

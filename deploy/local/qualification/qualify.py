@@ -1059,11 +1059,11 @@ def main(argv: list[str]) -> int:
             binary = package_root / "leapview"
             if not binary.is_file() or not os.access(binary, os.X_OK):
                 raise QualificationError("authoring package command is missing or not executable")
-            version_result = run_command("cli-version", [str(binary), "version", "--json"], raw_results, args.timeout_seconds, command_home)
+            version_result = run_command("cli-version", [str(binary), "version", "--format", "json"], raw_results, args.timeout_seconds, command_home)
             try:
                 actual_identity = json.loads(version_result["output"])
             except json.JSONDecodeError as exc:
-                raise QualificationError("authoring CLI version --json did not return JSON") from exc
+                raise QualificationError("authoring CLI version --format json did not return JSON") from exc
             for field in ("version", "revision", "buildTime", "dirty", "development"):
                 if actual_identity.get(field) != package_metadata["identity"][field]:
                     raise QualificationError(f"authoring CLI identity mismatch in {field}")

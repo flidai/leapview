@@ -166,7 +166,7 @@ func TestReleasePublishesAndQualifiesEveryAuthoringPlatform(t *testing.T) {
 	for _, required := range []string{
 		"Public authoring CLI",
 		"leapview-cli-${RELEASE_TAG}-${TARGET_OS}-${TARGET_ARCH}",
-		"$PACKAGE_ROOT/leapview\" version --json",
+		"$PACKAGE_ROOT/leapview\" version --format json",
 		"$PACKAGE_ROOT/leapview\" dev status --format json",
 	} {
 		if !strings.Contains(publicWorkflow, required) {
