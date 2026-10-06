@@ -307,6 +307,18 @@ func (r *Runtime) planOwnedArrowQueryContext(ctx context.Context, request dataqu
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
 		})
+		if err == nil && request.IncludeTotal {
+			count, countErr := planner.PlanResultCount(semanticquery.Request{
+				Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
+				Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+				Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+			})
+			if countErr != nil {
+				err = countErr
+			} else {
+				planned.countPlan = &count
+			}
+		}
 	case dataquery.KindSemanticRows:
 		if len(request.Fields) == 0 && len(request.Metrics) == 0 && request.IncludeTotal {
 			if len(request.ColumnMasks) > 0 {

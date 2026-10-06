@@ -156,10 +156,15 @@ func TestDataExplorerPayloadClearsRemovedPresentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, prefix := range []string{"command.explore.spec", "explore.command.spec"} {
-		for _, member := range []string{"visualization", "table", "pivot"} {
+		for _, member := range []string{"visualization", "table", "pivot", "mode"} {
 			if got := explorerWireValue(t, wire, prefix+"."+member); got != nil {
 				t.Errorf("%s.%s = %#v, want explicit null", prefix, member, got)
 			}
+		}
+	}
+	for _, path := range []string{"command.explore.window", "explore.command.window", "explore.result.window"} {
+		if got := explorerWireValue(t, wire, path); got != nil {
+			t.Errorf("%s = %#v, want explicit null", path, got)
 		}
 	}
 }

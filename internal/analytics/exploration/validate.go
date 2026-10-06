@@ -24,6 +24,9 @@ func ValidateShape(spec *ExplorationSpec) error {
 	if spec == nil {
 		return errors.New("exploration spec is required")
 	}
+	if err := validateQueryMode(spec); err != nil {
+		return err
+	}
 	if spec.SchemaVersion != 1 {
 		return fmt.Errorf("unsupported exploration schema version %d", spec.SchemaVersion)
 	}
@@ -466,4 +469,35 @@ func validateTable(table *ExplorationTableDisplayConfig, selected map[string]str
 		}
 	}
 	return nil
+}
+
+// IsRecords reports whether an authored exploration preserves individual rows.
+// Omitted mode retains the original aggregate behavior for saved specs and URLs.
+func IsRecords(spec ExplorationSpec) bool {
+	return spec.Mode != nil && *spec.Mode == ExplorationQueryModeRecords
+}
+
+func validateQueryMode(spec *ExplorationSpec) error {
+	if spec.Mode == nil {
+		return nil
+	}
+	switch *spec.Mode {
+	case ExplorationQueryModeAggregate:
+		return nil
+	case ExplorationQueryModeRecords:
+		if spec.DatasetID == nil || len(spec.Dimensions) == 0 {
+			return errors.New("records exploration requires a dataset and selected fields")
+		}
+		if len(spec.Metrics) != 0 || spec.Time != nil || spec.Pivot != nil {
+			return errors.New("records exploration cannot contain metrics, time grouping, or pivot")
+		}
+		for _, dimension := range spec.Dimensions {
+			if dimension.Grain != nil {
+				return errors.New("records exploration cannot group fields by time grain")
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported exploration query mode %q", *spec.Mode)
+	}
 }

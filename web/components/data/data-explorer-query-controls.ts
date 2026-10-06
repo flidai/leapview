@@ -5,9 +5,7 @@ import type { DataExploreFieldSignal, DataExploreFilterSuggestionsSignal, DataEx
 import type { ExplorationSpec } from '../../generated/exploration'
 import { lucideIcon } from '../shared/lucide-icons'
 import {
-  boundedExplorationLimit,
   emptyDataExploreCommand,
-  explorationLimitOptions,
   explorationSortFields,
   explorationTimeGrains,
   filterOperatorsForType,
@@ -275,16 +273,15 @@ export class DataExplorerQueryControls extends LitElement {
     const timeSummary = spec.time ? fieldLabel(spec.time.field, this.fields) : 'No time field'
     const sortSummary = spec.sort.length ? `${spec.sort.length} sort${spec.sort.length === 1 ? '' : 's'}` : 'No sort'
     return html`<details class="query-config" aria-label="More table options">
-      <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>${this.filtersOnly ? 'Time & sort' : 'More'}</span> <span class="config-note">${this.filtersOnly ? `${timeSummary} · ${sortSummary}` : 'Time, sort, and row limit'}</span></summary>
-      <div class="config-grid">
+      <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>${spec.mode === 'records' ? 'Sort' : this.filtersOnly ? 'Time & sort' : 'More'}</span> <span class="config-note">${spec.mode === 'records' ? sortSummary : this.filtersOnly ? `${timeSummary} · ${sortSummary}` : 'Time and sort'}</span></summary>
+      ${spec.mode !== 'records' ? html`<div class="config-grid">
         <label>Time field<select aria-label="Time field" .value=${spec.time?.field ?? ''} @change=${(event: Event) => this.changeTimeField((event.target as HTMLSelectElement).value, spec)}><option value="" .selected=${!spec.time?.field}>No time field</option>${timeFields.map((field) => {
           const unavailable = field.compatible === false && !field.rebaseDatasetId
           return html`<option value=${field.id} .selected=${field.id === spec.time?.field} ?disabled=${unavailable}>${field.label || field.id}${unavailable ? ' (unavailable)' : ''}</option>`
         })}</select></label>
         <label>Time grain<select aria-label="Time grain" .value=${spec.time?.grain ?? 'day'} ?disabled=${!spec.time} @change=${(event: Event) => this.changeTimeGrain((event.target as HTMLSelectElement).value, spec)}>${explorationTimeGrains.map((grain) => html`<option value=${grain} .selected=${grain === (spec.time?.grain ?? 'day')}>${grain}</option>`)}</select></label>
         <label>Time range<select aria-label="Time range" .value=${spec.time?.range?.kind ?? 'all'} ?disabled=${!spec.time} @change=${(event: Event) => this.changeTimeRange((event.target as HTMLSelectElement).value, spec, timeFields)}><option value="all" .selected=${(spec.time?.range?.kind ?? 'all') === 'all'}>All available</option><option value="relative" disabled .selected=${spec.time?.range?.kind === 'relative'}>Relative (not supported)</option><option value="absolute" .selected=${spec.time?.range?.kind === 'absolute'}>Absolute</option></select></label>
-        ${this.filtersOnly ? nothing : html`<label>Row limit<select aria-label="Row limit" .value=${String(spec.limit)} @change=${(event: Event) => this.emitSpec({ ...spec, limit: boundedExplorationLimit(Number((event.target as HTMLSelectElement).value)) })}>${explorationLimitOptions.map((limit) => html`<option value=${limit} .selected=${limit === spec.limit}>${limit}</option>`)}</select></label>`}
-      </div>
+      </div>` : nothing}
       ${spec.time?.range?.kind === 'relative' ? html`<p class="config-error" role="alert">${unsupportedRelativeTimeRangeMessage}</p>` : nothing}
       ${spec.time?.range?.kind === 'absolute' ? this.renderAbsoluteRange(spec.time.range, spec) : nothing}
       <div class="sort-list" aria-label="Sort order"><strong>Sort order</strong>${spec.sort.length ? spec.sort.map((sort, index) => html`<div class="sort-item"><label>Priority ${index + 1}<select aria-label=${`Sort field ${index + 1}`} .value=${sort.field} @change=${(event: Event) => this.changeSortField(index, (event.target as HTMLSelectElement).value, spec)}>${sortFields.map((field) => html`<option value=${field} .selected=${field === sort.field}>${fieldLabel(field, this.fields)}</option>`)}</select></label><label>Direction<select aria-label=${`Sort direction ${index + 1}`} .value=${sort.direction} @change=${(event: Event) => this.changeSortDirection(index, (event.target as HTMLSelectElement).value as 'asc' | 'desc', spec)}><option value="asc" .selected=${sort.direction === 'asc'}>Ascending</option><option value="desc" .selected=${sort.direction === 'desc'}>Descending</option></select></label><button type="button" class="icon-button" aria-label=${`Move sort ${index + 1} up`} ?disabled=${index === 0} @click=${() => this.emitSpec(moveExplorationSort(spec, index, -1))}>${lucideIcon(ChevronUp, { size: 14 })}</button><button type="button" class="icon-button" aria-label=${`Move sort ${index + 1} down`} ?disabled=${index === spec.sort.length - 1} @click=${() => this.emitSpec(moveExplorationSort(spec, index, 1))}>${lucideIcon(ChevronDown, { size: 14 })}</button><button type="button" class="icon-button" aria-label=${`Remove sort ${index + 1}`} @click=${() => this.emitSpec(removeExplorationSort(spec, index))}>${lucideIcon(X, { size: 14 })}</button></div>`) : html`<span class="config-note">No sort applied. Add one to order results by priority.</span>`}<button type="button" class="text-button" ?disabled=${!sortFields.some((field) => !spec.sort.some((sort) => sort.field === field))} @click=${() => this.addSort(spec)}>Add sort</button></div>

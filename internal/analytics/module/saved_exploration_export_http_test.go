@@ -159,10 +159,10 @@ func TestSavedExplorationExportRejectsTruncationSentinel(t *testing.T) {
 	request := savedExplorationHTTPRequest(http.MethodPost, "/projects/project:sales/saved-explorations/exploration-1/export", map[string]any{"format": "csv"})
 	recorder := httptest.NewRecorder()
 	handler.ExportSavedExploration(recorder, request, "project:sales", "exploration-1", analyticsgen.GenExportSavedExplorationHeaders{IfMatch: revisionETag(fixture.revision.Token())})
-	if recorder.Code != http.StatusUnprocessableEntity || strings.Contains(recorder.Header().Get("Content-Disposition"), "attachment") {
+	if recorder.Code != http.StatusRequestEntityTooLarge || strings.Contains(recorder.Header().Get("Content-Disposition"), "attachment") {
 		t.Fatalf("truncation sentinel response = %d headers=%#v body=%q", recorder.Code, recorder.Header(), recorder.Body.String())
 	}
-	if len(audit.events) != 1 || audit.events[0].ExecutionState != "export_partial" {
+	if len(audit.events) != 1 || audit.events[0].ExecutionState != "export_bounds" {
 		t.Fatalf("truncation sentinel audit = %#v", audit.events)
 	}
 }

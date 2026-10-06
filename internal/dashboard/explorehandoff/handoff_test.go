@@ -5,8 +5,6 @@ import (
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard"
-	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 )
@@ -92,7 +90,7 @@ func TestSpecForVisualFailsClosedForUnsupportedQueries(t *testing.T) {
 	}
 }
 
-func TestSpecForCompiledExecutiveSalesFailsClosedWhenPhysicalProjectionLosesCalendar(t *testing.T) {
+func TestSpecForCompiledExecutiveSalesPreservesSemanticCalendar(t *testing.T) {
 	project, err := projectcompiler.LoadSourceRoot("../../../dashboards")
 	if err != nil {
 		t.Fatalf("compile dashboards fixture: %v", err)
@@ -115,8 +113,9 @@ func TestSpecForCompiledExecutiveSalesFailsClosedWhenPhysicalProjectionLosesCale
 	if model == nil {
 		t.Fatalf("compiled semantic model %q is missing", report.SemanticModel)
 	}
-	if _, eligible := SpecForVisual(visual, model); eligible {
-		t.Fatal("ISO-calendar semantic month dimension was mapped to a physical field")
+	monthSpec, eligible := SpecForVisual(visual, model)
+	if !eligible || len(monthSpec.Dimensions) != 1 || monthSpec.Dimensions[0].Field != visual.Query.Aggregate.Dimensions[0].FieldID {
+		t.Fatalf("ISO-calendar semantic dimension identity was not preserved: %#v", monthSpec)
 	}
 
 	categoryVisual, ok := report.Visualizations["category_revenue"]
@@ -138,7 +137,7 @@ func TestSpecForCompiledExecutiveSalesFailsClosedWhenPhysicalProjectionLosesCale
 	}
 }
 
-func TestSpecForVisualRejectsHiddenMetricsAndNonPhysicalTimeSemantics(t *testing.T) {
+func TestSpecForVisualPreservesTimeSemanticsAndRejectsHiddenMetrics(t *testing.T) {
 	definition := visualizationdefinition.Definition{Query: visualizationdefinition.QueryBinding{
 		Kind: visualizationdefinition.QueryAggregate, ModelID: "semantic:sales",
 		Aggregate: &visualizationdefinition.AggregateQueryBinding{
@@ -162,8 +161,8 @@ func TestSpecForVisualRejectsHiddenMetricsAndNonPhysicalTimeSemantics(t *testing
 		Timezone: "America/Los_Angeles", Calendar: "gregorian", WeekStart: "sunday",
 		Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.ordered_at"}},
 	}
-	if _, eligible := SpecForVisual(definition, model); eligible {
-		t.Fatal("non-UTC semantic timestamp was handed off as a physical dimension")
+	if spec, eligible := SpecForVisual(definition, model); !eligible || spec.Dimensions[0].Field != "ordered_at" {
+		t.Fatalf("non-UTC semantic timestamp identity lost: %#v", spec)
 	}
 
 	model.Dimensions["ordered_at"] = semanticmodel.SemanticDimension{
@@ -171,8 +170,8 @@ func TestSpecForVisualRejectsHiddenMetricsAndNonPhysicalTimeSemantics(t *testing
 		Timezone: "UTC", Calendar: "iso8601", WeekStart: "monday",
 		Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.ordered_at"}},
 	}
-	if _, eligible := SpecForVisual(definition, model); eligible {
-		t.Fatal("ISO calendar / Monday-week semantic timestamp was handed off as a physical dimension")
+	if spec, eligible := SpecForVisual(definition, model); !eligible || spec.Dimensions[0].Field != "ordered_at" {
+		t.Fatalf("ISO calendar semantic timestamp identity lost: %#v", spec)
 	}
 
 	model.Dimensions = map[string]semanticmodel.SemanticDimension{}
@@ -190,24 +189,6 @@ func exploreHandoffModel() *semanticmodel.Model {
 		}}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{},
 		Metrics:    map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "orders"}},
-	}
-}
-
-func TestHasActiveStateFailsClosedForUnprojectedFiltersAndInteractions(t *testing.T) {
-	if !HasActiveState(dashboard.Filters{}, true) {
-		t.Fatal("missing filter state with bindings was treated as unfiltered")
-	}
-	if HasActiveState(dashboard.Filters{CompiledState: &dashboardfilter.State{AppliedControls: map[string]dashboardfilter.AppliedState{}}}, true) {
-		t.Fatal("empty compiled filter state was treated as active")
-	}
-	active := dashboardfilter.State{AppliedControls: map[string]dashboardfilter.AppliedState{
-		"region": {Expression: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionSet}},
-	}}
-	if !HasActiveState(dashboard.Filters{CompiledState: &active}, false) {
-		t.Fatal("active filter expression was treated as unfiltered")
-	}
-	if !HasActiveState(dashboard.Filters{SpatialSelections: []dashboard.SpatialInteractionSelection{{VisualID: "map"}}}, false) {
-		t.Fatal("spatial interaction was treated as unfiltered")
 	}
 }
 

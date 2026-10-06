@@ -91,12 +91,22 @@ func (h Handler) ExploreVisualization(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		stdhttp.Error(w, "dashboard session changed; reopen the dashboard before exploring", stdhttp.StatusConflict)
 		return
 	}
-	state := record.State.Filters.State
-	if explorehandoff.StateHasActiveFilters(state) || len(record.State.InteractionSelections) != 0 || len(record.State.SpatialSelections) != 0 {
+	filters := dashboard.Filters{CompiledState: &record.State.Filters.State, ActivePageID: pageID}
+	if decodeDashboardSelectionState(record.State.InteractionSelections, &filters.Selections) != nil || decodeDashboardSelectionState(record.State.SpatialSelections, &filters.SpatialSelections) != nil {
+		stdhttp.Error(w, "dashboard selections are unavailable", stdhttp.StatusConflict)
+		return
+	}
+	spec, eligible = explorehandoff.SpecForState(resolved.Definition, resolved.Model, visualID, pageID, filters)
+	if !eligible {
 		stdhttp.Error(w, "current dashboard filters or selections cannot be carried into Data Explorer", stdhttp.StatusConflict)
 		return
 	}
 
+	allowed, err = h.authorizeExplorerHandoff(r, resolved.Model, spec)
+	if err != nil || !allowed {
+		stdhttp.NotFound(w, r)
+		return
+	}
 	href, err := explorehandoff.TargetHref(h.RouteScope.BasePath, dashboardID, pageID, visualID, spec)
 	if err != nil {
 		stdhttp.Error(w, "could not create Data Explorer link", stdhttp.StatusInternalServerError)
@@ -184,7 +194,7 @@ func (h Handler) authorizeExplorerHandoffCached(r *stdhttp.Request, model *seman
 	}); err != nil {
 		return false, err
 	}
-	authorizeDimension := func(field string) error {
+	authorizeDimension := func(field, dataset string) error {
 		if _, semanticErr := model.ResolveSemanticDimension(field); semanticErr == nil {
 			return cache.authorize("dimension\x00"+modelID+"\x00"+dataset+"\x00"+field, func() error {
 				return authorizeDashboardSemanticTarget(modelContext.ctx, h.Metrics, modelID, semanticquery.SemanticAccessTarget{Dataset: dataset, Dimension: field})
@@ -195,12 +205,21 @@ func (h Handler) authorizeExplorerHandoffCached(r *stdhttp.Request, model *seman
 		})
 	}
 	for _, dimension := range spec.Dimensions {
-		if err := authorizeDimension(dimension.Field); err != nil {
+		if err := authorizeDimension(dimension.Field, dataset); err != nil {
 			return false, err
 		}
 	}
 	if spec.Time != nil {
-		if err := authorizeDimension(spec.Time.Field); err != nil {
+		if err := authorizeDimension(spec.Time.Field, dataset); err != nil {
+			return false, err
+		}
+	}
+	for _, filter := range spec.Filters {
+		filterDataset := dataset
+		if filter.DatasetID != nil {
+			filterDataset = *filter.DatasetID
+		}
+		if err := authorizeDimension(filter.Field, filterDataset); err != nil {
 			return false, err
 		}
 	}
@@ -255,9 +274,9 @@ func (h Handler) decorateExploreHrefsForAuthorizedVisuals(envelope dashboardstre
 	}
 	attach := func(visualID string, value any) any {
 		href := ""
-		visualDefinition, found := definition.Visualizations[visualID]
-		if found && authorized[visualID] && pageContainsVisual(page, visualID) && !explorehandoff.HasActiveState(event.Filters, len(definition.CompiledFilterBindings()) != 0) {
-			if _, eligible := explorehandoff.SpecForVisual(visualDefinition, model); eligible {
+		_, found := definition.Visualizations[visualID]
+		if found && authorized[visualID] && pageContainsVisual(page, visualID) {
+			if _, eligible := explorehandoff.SpecForState(definition, model, visualID, page.ID, event.Filters); eligible {
 				href, _ = explorehandoff.RouteHref(h.RouteScope.BasePath, definition.ID, page.ID, visualID, clientID, streamInstanceID)
 			}
 		}

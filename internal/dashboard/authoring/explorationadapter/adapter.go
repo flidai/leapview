@@ -15,17 +15,20 @@ import (
 
 // Options supplies the target visual used by scoped filters and the
 // semantic reverse map needed when an exploration carries dataset-qualified
-// physical field names. Dashboard queries intentionally do not have a
-// datasetId operand, so accepting such a field without a binding would lose
+// physical field names. Aggregate dashboard queries do not have a
+// dataset operand, so accepting such a field without a binding would lose
 // the dataset constraint during conversion.
 type Options struct {
-	VisualID string
+	// RecordFields maps selected exploration fields to proven physical fields
+	// on the records query dataset, independently of semantic filter bindings.
+	RecordFields map[string]string
+	VisualID     string
 	// Bindings maps an exploration field (for example orders.region) to the
 	// semantic dimension/metric identifier used by DashboardDocument. Both
 	// the qualified field and its unqualified spelling may be supplied.
 	Bindings map[string]string
-	// MetricRoots proves the compiled semantic root for a mapped metric. A
-	// DashboardQuery has no dataset operand, so a spec with DatasetID must
+	// MetricRoots proves the compiled semantic root for a mapped metric. An
+	// aggregate DashboardQuery has no dataset operand, so a spec with DatasetID must
 	// supply this evidence for every selected metric.
 	MetricRoots map[string]string
 }
@@ -61,12 +64,17 @@ func Convert(spec exploration.ExplorationSpec, options Options) (Result, error) 
 		}
 	}
 
+	if spec.Mode != nil {
+		if err := exploration.ValidateShape(&spec); err != nil {
+			return Result{}, err
+		}
+	}
 	ctx := converter{spec: spec, options: options}
 	dimensions, metrics, err := ctx.querySelections()
 	if err != nil {
 		return Result{}, err
 	}
-	if len(metrics) == 0 {
+	if len(metrics) == 0 && !exploration.IsRecords(spec) {
 		return Result{}, fmt.Errorf("exploration requires at least one metric")
 	}
 	if err := validateQueryOutputs(dimensions, metrics); err != nil {
@@ -154,6 +162,9 @@ type converter struct {
 
 func (c converter) resolve(field, role string) (string, error) {
 	field = strings.TrimSpace(field)
+	if exploration.IsRecords(c.spec) && role != "filter" {
+		return c.resolveRecordField(field)
+	}
 	if field == "" {
 		return "", fmt.Errorf("%s field is required", role)
 	}
@@ -179,6 +190,9 @@ func (c converter) dimension(value exploration.ExplorationDimensionRef) (documen
 	field, err := c.resolve(value.Field, "dimension")
 	if err != nil {
 		return document.DashboardDimensionSelection{}, err
+	}
+	if exploration.IsRecords(c.spec) {
+		return recordDimensionSelection(value, field), nil
 	}
 	selection := document.DashboardDimensionSelection{}
 	if value.Alias == nil && value.Grain == nil {

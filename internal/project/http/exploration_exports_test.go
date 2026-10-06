@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -265,6 +267,45 @@ func TestExplorationExportMapsDeniedAndPartialErrorsWithoutLeak(t *testing.T) {
 			h.ExplorationExport(recorder, httptest.NewRequest(http.MethodGet, browserExportURL(t, spec, "csv"), nil))
 			if recorder.Code != test.want {
 				t.Fatalf("response status = %d, want %d body=%q", recorder.Code, test.want, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestExplorationExportBeyondChartSampleIsCompleteOrFailsAtomically(t *testing.T) {
+	for _, count := range []int{350, 500, 501} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			spec := defaultExplorationSpec()
+			spec.ModelID = "semantic:sales"
+			spec.Limit = 10
+			spec.Dimensions = []exploration.ExplorationDimensionRef{{Field: "orders.status"}}
+			audit := &browserExportAuditRecorder{}
+			handler := &BrowserHandler{
+				SavedExplorations: browserExportServiceStub{executeSpec: func(_ context.Context, request saved.ExecuteSpecRequest) (saved.ExecuteResult, error) {
+					if request.ExportMaxRows != 500 || request.Spec.Limit != 10 {
+						t.Fatalf("export request coupled to chart sample: %#v", request)
+					}
+					rows := make([]dataquery.Row, count)
+					for i := range rows {
+						rows[i] = dataquery.Row{"status": "paid"}
+					}
+					return saved.ExecuteResult{Query: dataquery.Query{Limit: 501}, Result: dataquery.Result{Columns: []dataquery.Column{{Name: "status"}}, Rows: rows}}, nil
+				}}, ExplorationExportAuditRecorder: audit, ExplorationExportEncoder: browserTestExportEncoder,
+				ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, CurrentUser: func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+			}
+			recorder := httptest.NewRecorder()
+			handler.ExplorationExport(recorder, httptest.NewRequest(http.MethodGet, browserExportURL(t, spec, "csv")+"&maxRows=500", nil))
+			if count <= 500 {
+				if recorder.Code != http.StatusOK || strings.Count(recorder.Body.String(), "\n") != count+1 {
+					t.Fatalf("incomplete export: status=%d body=%q", recorder.Code, recorder.Body.String())
+				}
+			} else {
+				if recorder.Code != http.StatusRequestEntityTooLarge || recorder.Header().Get("Content-Disposition") != "" || !strings.Contains(recorder.Body.String(), "Add filters") || strings.Contains(recorder.Body.String(), "paid") {
+					t.Fatalf("oversized export leaked bytes or lacks recovery: %d %q", recorder.Code, recorder.Body.String())
+				}
+				if len(audit.events) != 1 || audit.events[0].ExecutionState != "export_bounds" {
+					t.Fatalf("bounds audit=%#v", audit.events)
+				}
 			}
 		})
 	}

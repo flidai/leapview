@@ -66,6 +66,9 @@ func (g *Graph) Explain() (string, error) {
 			fmt.Fprintf(&b, " sort=%v limit=%d offset=%d", value.Sort, value.Limit, value.Offset)
 		case TotalRows:
 			fmt.Fprintf(&b, " total_field=%s", value.TotalField)
+			if value.CountOnly {
+				b.WriteString(" count_only=true")
+			}
 		case BundleBranches:
 			fmt.Fprintf(&b, " branches=%v", value.Branches)
 		case SpatialEnvelope:

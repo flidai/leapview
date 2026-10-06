@@ -129,6 +129,13 @@ func TestExploreVisualizationDoesNotRedirectWhenSemanticModelIsNotProjectVisible
 }
 
 func TestExploreVisualizationLocationRestoresInAuthorizedExplorer(t *testing.T) {
+	for _, visualID := range []string{"category_revenue", "revenue_by_month"} {
+		t.Run(visualID, func(t *testing.T) { testExploreVisualizationLocationRestoresInAuthorizedExplorer(t, visualID, false) })
+		t.Run(visualID+"_filtered", func(t *testing.T) { testExploreVisualizationLocationRestoresInAuthorizedExplorer(t, visualID, true) })
+	}
+}
+
+func testExploreVisualizationLocationRestoresInAuthorizedExplorer(t *testing.T, visualID string, activeFilters bool) {
 	project, err := projectcompiler.LoadSourceRoot("../../../dashboards")
 	if err != nil {
 		t.Fatalf("compile dashboards fixture: %v", err)
@@ -137,7 +144,7 @@ func TestExploreVisualizationLocationRestoresInAuthorizedExplorer(t *testing.T) 
 	if !ok {
 		t.Fatal("compiled project omitted Executive Sales dashboard")
 	}
-	visual, ok := definition.Visualizations["category_revenue"]
+	visual, ok := definition.Visualizations[visualID]
 	if !ok {
 		t.Fatal("compiled Executive Sales omitted category_revenue visual")
 	}
@@ -160,6 +167,16 @@ func TestExploreVisualizationLocationRestoresInAuthorizedExplorer(t *testing.T) 
 	const streamID = "handoff-stream"
 	const projectID = projectgraph.ResourceID("project:test")
 	filters := definition.DefaultFilterState()
+	if activeFilters {
+		for key, binding := range definition.CompiledFilterBindings() {
+			filter := definition.FilterDefinitions[binding.Filter]
+			if filter.Field != "category" {
+				continue
+			}
+			expression := dashboardfilter.Expression{Kind: dashboardfilter.ExpressionComparison, Operator: dashboardfilter.OperatorEquals, Value: &dashboardfilter.Value{Kind: dashboardfilter.ValueString, Value: "Health"}}
+			filters.AppliedControls[key] = dashboardfilter.AppliedState{Expression: expression, ResolvedExpression: expression}
+		}
+	}
 	key := dashboardsession.Key{
 		ProjectID: projectID, PrincipalOrClient: "alice:" + clientID, DashboardID: projectgraph.ResourceID(definition.ID),
 		ServingStateID: filters.DefaultsRevision, StreamInstanceID: streamID,
@@ -198,8 +215,11 @@ func TestExploreVisualizationLocationRestoresInAuthorizedExplorer(t *testing.T) 
 	if err := json.Unmarshal([]byte(location.Query().Get("state")), &spec); err != nil {
 		t.Fatalf("decode handoff state: %v", err)
 	}
-	if spec.DatasetID == nil || *spec.DatasetID != "sales_orders" || len(spec.Dimensions) != 1 || spec.Dimensions[0].Field != "sales_orders.category" || len(spec.Sort) != 1 || spec.Sort[0].Field != "revenue" {
+	if spec.DatasetID == nil || *spec.DatasetID != "sales_orders" || len(spec.Dimensions) != 1 || len(spec.Sort) != 1 {
 		t.Fatalf("handoff state lacks Explorer field identities: %#v", spec)
+	}
+	if activeFilters && len(spec.Filters) != 1 {
+		t.Fatalf("active category filter lost: %#v", spec.Filters)
 	}
 	if err := exploration.ValidateAgainstModel(model, &spec); err != nil {
 		t.Fatalf("handoff state fails semantic model validation: %v", err)

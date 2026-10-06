@@ -201,6 +201,7 @@ export class DataExplorerQueryController {
       resetVersion: Math.max(current.resetVersion ?? 0, next.resetVersion ?? 0) + 1,
       columnWidths: next.columnWidths ?? current.columnWidths ?? {},
     }
+    delete command.window
     command.spec = explorationSpecFromCommand(command)
     // The flag is intentionally accepted for call-site readability. Debounce
     // scheduling belongs to the route because it owns its lifecycle timer.
@@ -215,6 +216,7 @@ export class DataExplorerQueryController {
     return {
       ...current,
       action: 'configure',
+      window: undefined,
       // Compatibility edits must not restore a time selection that the
       // canonical query just cleared or replaced.
       time: time ? { field: time.field, grain: time.grain, alias: time.alias } : undefined,
@@ -269,7 +271,20 @@ export class DataExplorerQueryController {
 }
 
 export function prepareExplorationRun(current: DataExploreCommand): DataExploreCommand {
-  return { ...current, action: 'run', requestSeq: (current.requestSeq ?? 0) + 1, resetVersion: (current.resetVersion ?? 0) + 1 }
+  return { ...current, window: undefined, action: 'run', requestSeq: (current.requestSeq ?? 0) + 1, resetVersion: (current.resetVersion ?? 0) + 1 }
+}
+
+/** Window sequence belongs to the table; semantic sequence orders server runs. */
+export function prepareExplorationWindow(current: DataExploreCommand, next: Partial<DataExploreCommand>): DataExploreCommand {
+  return {
+    ...current,
+    ...next,
+    action: 'run',
+    spec: next.spec ?? explorationSpecFor(current),
+    filterSuggestions: undefined,
+    requestSeq: (current.requestSeq ?? 0) + 1,
+    resetVersion: next.window?.resetVersion ?? current.resetVersion ?? 0,
+  }
 }
 
 export function prepareExplorationStop(current: DataExploreCommand): DataExploreCommand {

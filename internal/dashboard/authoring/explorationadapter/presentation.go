@@ -10,6 +10,9 @@ import (
 )
 
 func (c converter) presentation() (string, document.DashboardPresentation, error) {
+	if exploration.IsRecords(c.spec) {
+		return c.recordsPresentation()
+	}
 	if c.spec.Pivot != nil {
 		if len(c.spec.Dimensions) != 0 || len(c.spec.Metrics) != 0 {
 			return "", document.DashboardPresentation{}, fmt.Errorf("pivot exploration cannot carry top-level dimensions or metrics")

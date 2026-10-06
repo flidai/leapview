@@ -129,7 +129,7 @@ export const semanticLayoutStyles = css`
 `
 
 function semanticFieldMetadata(field: DataExploreFieldSignal): string {
-  return [field.kind === 'metric' ? 'Metric' : 'Dimension', field.type?.trim()].filter(Boolean).join(' · ')
+  return field.type?.trim() ?? ''
 }
 
 function semanticFieldDescription(field: DataExploreFieldSignal): string {
@@ -162,7 +162,7 @@ export function renderSemanticFieldPane(
       </select>
     </label>
     <input type="search" aria-label="Search semantic fields" placeholder="Search fields" .value=${search} @input=${(event: Event) => actions.search((event.target as HTMLInputElement).value)} />
-    ${(['dimension', 'metric'] as const).map((kind) => html`
+    ${(spec.mode === 'records' ? ['dimension'] as const : ['dimension', 'metric'] as const).map((kind) => html`
       <h3>${kind === 'dimension' ? 'Dimensions' : 'Metrics'}</h3>
       ${Array.from(new Set(explore.fields.filter((field) => field.kind === kind && (field.compatible !== false || field.rebaseDatasetId || selected.has(field.id))).map((field) => field.datasetId || 'Shared'))).map((group) => {
         const fields = explore.fields.filter((field) => field.kind === kind && (field.compatible !== false || field.rebaseDatasetId || selected.has(field.id)) && (field.datasetId || 'Shared') === group && (field.label + ' ' + field.id).toLowerCase().includes(search.toLowerCase()))
@@ -180,9 +180,9 @@ export function renderSemanticFieldPane(
 }
 
 export function renderSelectedFieldRows(spec: ExplorationSpec, fields: DataExploreFieldSignal[], remove: (id: string, kind: FieldKind) => void) {
-  return (['dimension', 'metric'] as const).map((kind) => html`
+  return (spec.mode === 'records' ? ['dimension'] as const : ['dimension', 'metric'] as const).map((kind) => html`
     <div class="selected-field-row">
-      <span class="query-label">${kind === 'dimension' ? 'Group by' : 'Metrics'}</span>
+      <span class="query-label">${kind === 'dimension' ? spec.mode === 'records' ? 'Fields' : 'Group by' : 'Metrics'}</span>
       <div class="selected-field-values">
         ${spec[kind === 'dimension' ? 'dimensions' : 'metrics'].length
           ? spec[kind === 'dimension' ? 'dimensions' : 'metrics'].map((field) => html`

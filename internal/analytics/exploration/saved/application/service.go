@@ -585,12 +585,21 @@ func (s *Service) Execute(ctx context.Context, request saved.ExecuteRequest) (sa
 	if operation == "" {
 		operation = "saved_exploration_execute"
 	}
+	if operation == "saved_exploration_export" {
+		query, err = explorationExportQuery(query, request.ExportMaxRows)
+		if err != nil {
+			return saved.ExecuteResult{}, err
+		}
+	}
 	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: dataquery.SurfaceSavedExploration, Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "saved_exploration", ObjectID: request.ID.String()})
 	result, err := s.executor.Execute(ctx, lease, request.ActorID, query)
 	if err != nil {
 		return saved.ExecuteResult{}, err
 	}
 	truncated := len(result.Rows) > int(spec.Limit)
+	if operation == "saved_exploration_export" {
+		truncated = len(result.Rows) >= query.Limit
+	}
 	if operation != "saved_exploration_export" && truncated {
 		result.Rows = result.Rows[:spec.Limit]
 	}
@@ -639,6 +648,12 @@ func (s *Service) ExecuteSpec(ctx context.Context, request saved.ExecuteSpecRequ
 	operation := request.Operation
 	if operation == "" {
 		operation = "saved_exploration_url_execute"
+	}
+	if operation == "saved_exploration_url_export" {
+		query, err = explorationExportQuery(query, request.ExportMaxRows)
+		if err != nil {
+			return saved.ExecuteResult{}, err
+		}
 	}
 	query = query.WithMetadata(dataquery.Metadata{ProjectID: request.ProjectID, Surface: dataquery.SurfaceSavedExploration, Operation: operation, PrincipalID: request.ActorID, RequestID: request.RequestID, CorrelationID: request.CorrelationID, ObjectType: "exploration_url", ObjectID: "url-export"})
 	result, err := s.executor.Execute(ctx, lease, request.ActorID, query)

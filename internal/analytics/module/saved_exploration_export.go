@@ -79,7 +79,7 @@ func (h savedExplorationAPIHandler) ExportSavedExploration(w http.ResponseWriter
 	result, err := executor.Execute(ctx, saved.ExecuteRequest{
 		ProjectID: projectgraph.ResourceID(project), ID: saved.ExplorationID(exploration), ActorID: actor,
 		RequestID: requestID, CorrelationID: correlationID, ExpectedRevision: expected,
-		Operation: "saved_exploration_export",
+		Operation: "saved_exploration_export", ExportMaxRows: limits.MaxRows,
 	})
 	if err != nil {
 		_ = recordSavedExplorationExportOutcome(ctx, h.config.ExportAuditRecorder, auditQuery, result.Result, format, exportOutcome(err), result.Result.BytesEstimate, err)
@@ -142,7 +142,7 @@ func (h savedExplorationAPIHandler) ExportSavedExplorationURL(w http.ResponseWri
 	auditQuery := exportAuditQuery(project, actor, requestID, correlationID, "exploration_url", "url-export")
 	result, err := executor.ExecuteSpec(ctx, saved.ExecuteSpecRequest{
 		ProjectID: projectgraph.ResourceID(project), ActorID: actor, Spec: body.Spec,
-		RequestID: requestID, CorrelationID: correlationID, Operation: "saved_exploration_url_export",
+		RequestID: requestID, CorrelationID: correlationID, Operation: "saved_exploration_url_export", ExportMaxRows: limits.MaxRows,
 	})
 	if err != nil {
 		_ = recordSavedExplorationExportOutcome(ctx, h.config.ExportAuditRecorder, auditQuery, result.Result, format, exportOutcome(err), result.Result.BytesEstimate, err)
@@ -173,12 +173,11 @@ func (h savedExplorationAPIHandler) ExportSavedExplorationURL(w http.ResponseWri
 	writeExplorationExport(w, bodyBytes, format)
 }
 
-// Query lowering asks for one row beyond the authored limit so interactive
-// callers can display a truncation indicator. Export must never turn that
-// sentinel row into a silently incomplete file.
+// Export lowering asks for one sentinel row beyond its independent budget.
+// Never turn that sentinel into a silently incomplete file.
 func rejectTruncatedExplorationResult(result saved.ExecuteResult) error {
 	if result.Query.Limit > 0 && len(result.Result.Rows) >= result.Query.Limit {
-		return explorationexport.ErrPartial
+		return &dataquery.ResultLimitError{Reason: dataquery.ResultRows, Limit: int64(result.Query.Limit - 1), Observed: int64(len(result.Result.Rows))}
 	}
 	return nil
 }
@@ -253,10 +252,10 @@ func writeSavedExplorationExportFailure(w http.ResponseWriter, r *http.Request, 
 	var limitErr *dataquery.ResultLimitError
 	switch {
 	case errors.As(err, &limitErr):
-		failure.StatusCode, failure.Code, failure.PublicDetail = http.StatusRequestEntityTooLarge, "EXPORT_LIMIT_EXCEEDED", "The exploration export exceeds its result bounds."
+		failure.StatusCode, failure.Code, failure.PublicDetail = http.StatusRequestEntityTooLarge, "EXPORT_LIMIT_EXCEEDED", "The exploration export exceeds its row or size limit. Add filters to narrow the query, then export again."
 	case errors.Is(err, explorationexport.ErrInvalidFormat):
 		failure.StatusCode, failure.Code, failure.PublicDetail = http.StatusUnsupportedMediaType, "UNSUPPORTED_EXPORT_FORMAT", "The requested export format is unsupported."
-	case errors.Is(err, explorationexport.ErrInvalidRequest):
+	case errors.Is(err, explorationexport.ErrInvalidRequest), errors.Is(err, saved.ErrExportInvalidRequest):
 		failure.StatusCode, failure.Code, failure.PublicDetail = http.StatusBadRequest, "INVALID_EXPORT_REQUEST", "The export bounds are invalid."
 	case errors.Is(err, explorationexport.ErrPartial):
 		failure.StatusCode, failure.Code, failure.PublicDetail = http.StatusUnprocessableEntity, "INCOMPLETE_EXPORT_RESULT", "The exploration result is incomplete and cannot be exported."

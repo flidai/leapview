@@ -424,7 +424,7 @@ func validatedRequestPayload(payload ExplorationSpecPayload, spec canonical.Expl
 }
 
 func authoredSpecPresent(spec canonical.ExplorationSpec) bool {
-	return spec.SchemaVersion != 0 || spec.ModelID != "" || spec.DatasetID != nil ||
+	return spec.SchemaVersion != 0 || spec.ModelID != "" || spec.DatasetID != nil || spec.Mode != nil ||
 		spec.Dimensions != nil || spec.Metrics != nil || spec.Filters != nil ||
 		spec.Time != nil || spec.Sort != nil || spec.Limit != 0 ||
 		spec.Pivot != nil || spec.Table != nil || spec.Visualization != nil

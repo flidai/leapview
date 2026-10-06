@@ -406,7 +406,7 @@ func TestExecuteExportRejectsStaleRevisionBeforePayloadRead(t *testing.T) {
 	}
 }
 
-func TestExecuteExportRetainsSentinelRowForFailClosedTruncationCheck(t *testing.T) {
+func TestExecuteExportRetainsRowsBeyondInteractiveSample(t *testing.T) {
 	repo := seededRepository(t)
 	rows := make([]dataquery.Row, 101)
 	for index := range rows {

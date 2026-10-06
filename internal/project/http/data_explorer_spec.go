@@ -88,7 +88,7 @@ func explorationSpecCanDefault(spec exploration.ExplorationSpec) bool {
 	if spec.SchemaVersion != 0 && spec.SchemaVersion != 1 {
 		return false
 	}
-	return strings.TrimSpace(spec.ModelID) == "" && spec.DatasetID == nil &&
+	return strings.TrimSpace(spec.ModelID) == "" && spec.DatasetID == nil && spec.Mode == nil &&
 		len(spec.Dimensions) == 0 && len(spec.Metrics) == 0 && len(spec.Filters) == 0 && len(spec.Sort) == 0 &&
 		spec.Time == nil && spec.Pivot == nil && spec.Table == nil && spec.Visualization == nil &&
 		(spec.Limit == 0 || spec.Limit == int32(dataExplorerDefaultLimit))
@@ -101,7 +101,7 @@ func explorationSpecCanDefault(spec exploration.ExplorationSpec) bool {
 // execution.
 func explorationSpecIsEmpty(spec exploration.ExplorationSpec) bool {
 	return (spec.SchemaVersion == 0 || spec.SchemaVersion == 1) &&
-		strings.TrimSpace(spec.ModelID) == "" && spec.DatasetID == nil &&
+		strings.TrimSpace(spec.ModelID) == "" && spec.DatasetID == nil && spec.Mode == nil &&
 		len(spec.Dimensions) == 0 && len(spec.Metrics) == 0 && len(spec.Filters) == 0 && len(spec.Sort) == 0 &&
 		spec.Time == nil && spec.Pivot == nil && spec.Table == nil && spec.Visualization == nil &&
 		spec.Limit == int32(dataExplorerDefaultLimit)

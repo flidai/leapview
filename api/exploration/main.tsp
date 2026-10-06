@@ -586,6 +586,12 @@ model GeographicExplorationVisualization extends ExplorationVisualizationConfig 
   size?: ExplorationVisualizationFieldRef;
 }
 
+/** Aggregate groups selected fields; records preserves individual source rows. */
+enum ExplorationQueryMode {
+  aggregate,
+  records,
+}
+
 /**
  * Complete authored exploration state. This is deliberately not a
  * VisualizationSpec or VisualizationEnvelope: it contains no compiled field
@@ -593,6 +599,8 @@ model GeographicExplorationVisualization extends ExplorationVisualizationConfig 
  */
 @apigen.contract(#{ kind: "exploration-spec", tags: #["exploration", "authoring", "resource"] })
 model ExplorationSpec {
+  /** Omitted means aggregate. Records preserves duplicate source rows. */
+  mode?: ExplorationQueryMode;
   schemaVersion: 1;
   modelId: ExplorationResourceID;
   datasetId?: ExplorationResourceID;

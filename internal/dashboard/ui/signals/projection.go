@@ -185,11 +185,8 @@ func AttachDashboardExploreHrefs(envelope *DashboardEnvelope, report dashboardde
 		signal.ExploreHref = nil
 		envelope.Visuals[visualID] = signal
 	}
-	if explorehandoff.HasActiveState(filters, len(report.CompiledFilterBindings()) != 0) {
-		return
-	}
 	for visualID, signal := range envelope.Visuals {
-		if _, eligible := explorehandoff.SpecForVisual(report.Visualizations[visualID], model); !eligible {
+		if _, eligible := explorehandoff.SpecForState(report, model, visualID, page.ID, filters); !eligible {
 			continue
 		}
 		href, ok := explorehandoff.RouteHref(basePath, report.ID, page.ID, visualID, clientID, streamInstanceID)

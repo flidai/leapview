@@ -14,7 +14,6 @@ import type {
   SavedExplorationStateSignal,
 } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
-import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { dataExplorerBrowserStyles } from './data-explorer-browser-styles'
 import { dataExplorerResultStyles } from './data-explorer-result-styles'
@@ -32,6 +31,7 @@ import {
   DataExplorerSelectionController,
   dataExplorerAgentSuggestions,
   prepareExplorationRun,
+  prepareExplorationWindow,
   prepareExplorationStop,
   exploreContextMatchesObject,
   fieldColumnID,
@@ -74,8 +74,6 @@ import {
   toggleExplorationField,
 } from './data-explorer-spec'
 import {
-  datasetGrainLabel,
-  fieldLabel,
   filterObjects,
   groupObjectsBySemanticModel,
   iconForLayer,
@@ -722,6 +720,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const returnPath = !this.embedded && typeof window !== 'undefined' ? dashboardReturnPath(window.location.search) : ''
     const savedExplorations = this.savedExplorations
     const activeSpec = this.activeExplorationSpec()
+    const recordsActive = semanticActive && activeSpec.mode === 'records'
     this.dashboardAppend.syncModel(activeSpec.modelId?.trim() ?? '')
     const canSaveCurrent = semanticActive && Boolean(activeSpec.modelId?.trim())
     const currentExplore = explorer.explore
@@ -756,8 +755,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           <div class="header-actions">
             ${selected ? html`
               <div class="mode-switch" role="group" aria-label="Exploration mode">
-                <button class="mode-button" type="button" aria-pressed=${String(!semanticActive)} @click=${() => this.setMode('browse')}>Rows</button>
-                <button class="mode-button" type="button" aria-pressed=${String(semanticActive)} @click=${() => this.setMode('explore')}>Analyze</button>
+                <button class="mode-button" type="button" aria-pressed=${String(!semanticActive || recordsActive)} @click=${() => recordsActive ? undefined : this.setMode('browse')}>Rows</button>
+                <button class="mode-button" type="button" aria-pressed=${String(semanticActive && !recordsActive)} @click=${() => recordsActive ? this.emitExploreSpec({ mode: 'aggregate' }) : this.setMode('explore')}>Analyze</button>
               </div>
             ` : nothing}
             ${columns.length ? html`
@@ -784,7 +783,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 </div>
               </details>
             ` : nothing}
-            ${shareVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions, Boolean(explorer.explore?.result?.truncated)) : nothing}
+            ${shareVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions) : nothing}
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
@@ -895,7 +894,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       return html`<span class="execution-state" data-state="stale" role="status">Results are stale — run to refresh</span>`
     }
     if (hasResult && currentStatus?.state === 'success' && displayedResult.requestSeq === expected && currentStatus.requestSeq === expected) {
-      return html`<span class="execution-state" data-state="success" role="status">Results up to date</span>`
+      return nothing
     }
     return html`<span class="execution-state" data-state="ready" role="status">Ready to run</span>`
   }
@@ -1138,6 +1137,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (!recoveringUnknownOutcome) this.exploreTransportFailure = null
     this.optimisticExplore = runCommand
     this.emitCommand({ action: 'run', mode: 'explore', runId: runID, explore: runCommand })
+  }
+
+  private loadExploreWindow(command: DataExploreCommand, next: Partial<DataExploreCommand>): void {
+    // Scrolling retained results must never execute an unrun query edit.
+    const explore = this.dataExplorer.explore
+    if (explore.status?.state !== 'success' || command.requestSeq !== explore.result.requestSeq) return
+    const runCommand = prepareExplorationWindow({ ...command, requestSeq: Math.max(command.requestSeq ?? 0, this.latestExploreRequestSeq) }, next)
+    this.latestExploreRequestSeq = runCommand.requestSeq
+    this.exploreTransportAction = 'run'
+    this.exploreExecutionState = 'running'
+    this.exploreTransportFailure = null
+    this.optimisticExplore = runCommand
+    this.emitCommand({ action: 'run', mode: 'explore', runId: this.clientState.nextRunID(), explore: runCommand })
   }
 
   private stopExplore(command: DataExploreCommand): void {
@@ -1406,13 +1418,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === spec.datasetId) ?? explore.selectedDataset
     const queryFields = new Set([...spec.dimensions, ...spec.metrics].map((field) => field.field))
-    const groupedFields = spec.dimensions.map((dimension) => fieldLabel(dimension.field, explore.fields))
-    if (spec.time && !spec.dimensions.some((dimension) => dimension.field === spec.time?.field)) {
-      groupedFields.push(`${fieldLabel(spec.time.field, explore.fields)} (${spec.time.grain})`)
-    }
-    const resultGrainLabel = spec.metrics.length > 0
-      ? groupedFields.length > 0 ? `Grouped by: ${groupedFields.join(', ')}` : 'Overall total'
-      : selectedDataset?.grainEntity ? `Grain: ${datasetGrainLabel(selectedDataset)}` : ''
     const rawResult = explore.result
     const result = this.clientState.semanticResult(command, rawResult, explore.status, this.page?.context)
     const hasQuery = queryFields.size > 0 || Boolean(spec.time)
@@ -1426,14 +1431,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         ? { state: 'success' as const, requestSeq: result.requestSeq, loading: false, stale: false }
         : undefined
     const exploreRunning = currentStatus?.loading === true || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running'
-    const views: Record<string, VisualizationEnvelope> = {}
-    if (currentStatus?.state === 'success' && result.requestSeq === currentStatus.requestSeq) {
-      for (const [view, envelope] of Object.entries(explore.views ?? {})) {
-        // A recursive signal patch may retain an old map key after a newer
-        // run omits that view. Never present an envelope from another run.
-        if (envelope.dataRevision === result.requestSeq) views[view] = envelope
-      }
-    }
+    const views = this.clientState.semanticViews(command, result, currentStatus, explore.views ?? {}, this.page?.context)
     const canShowChart = Boolean(views.chart)
     const canShowPivot = Boolean(views.pivot)
     const canShowDetails = currentStatus?.state === 'success' && result.requestSeq === currentStatus.requestSeq && Boolean(result.sql || result.plan)
@@ -1443,6 +1441,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       ? explorerVisualization(views[resultView]!, explorationDisplayTitle(this.savedExplorations.current, spec, explore.fields), this.chartPage)
       : undefined
     const categoryPage = resultVisualization?.categoryPage
+    const totalRows = result.window?.totalRows ?? result.rowsReturned
+    const chartState = views.chart?.dataState
+    const chartRows = chartState?.kind === 'inline' ? chartState.datasets[0]?.rows.length ?? 0 : totalRows
+    const rowSummary = result.window?.totalRowLabel === 'Unknown' ? 'Total rows unavailable'
+      : resultView === 'chart' && chartRows < totalRows
+      ? `Chart shows ${chartRows.toLocaleString()} of ${totalRows.toLocaleString()} rows`
+      : `${totalRows.toLocaleString()} total rows`
     return html`
       <div class=${`content semantic-layout${this.semanticPanel === 'filters' ? ' filters-open' : ''}`} aria-label="Data exploration">
         ${renderSemanticFieldPane(spec, explore, queryFields, this.semanticFieldSearch, {
@@ -1463,13 +1468,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             <section class="query-bar" aria-label="Table controls">
               <div class="selected-fields-heading">
                 <strong>Selected fields</strong>
-                <span class="query-summary">${queryFields.size} ${queryFields.size === 1 ? 'column' : 'columns'}</span>
                 ${this.renderExecutionState(command, rawResult, currentStatus, this.exploreExecutionState === 'uncertain' ? this.exploreTransportFailure?.message : undefined, result)}
                 <div class="query-actions">
                   ${renderSemanticFilterTrigger(spec.filters.length, this.semanticPanel === 'filters', () => this.semanticPanel = this.semanticPanel === 'filters' ? null : 'filters')}
-                  <select aria-label="Result limit" .value=${String(spec.limit)} @change=${(event: Event) => this.emitExploreSpec({ ...spec, limit: Number((event.target as HTMLSelectElement).value) }, command)}>
-                    ${Array.from(new Set([50, 100, 250, 500, 1000, spec.limit])).map((limit) => html`<option value=${limit} .selected=${limit === spec.limit}>${limit} rows</option>`)}
-                  </select>
                   ${this.exploreExecutionState === 'uncertain'
                     ? html`<button type="button" class="text-button" title="Stop the possibly running exploration" @click=${() => this.stopExplore(command)}>${lucideIcon(X, { size: 14 })} Stop</button>
                       <button type="button" class="text-button run-button" title="Run the latest query draft" ?disabled=${Boolean(runValidation.length)} @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run latest</button>`
@@ -1483,8 +1484,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             </section>
             <div class="result-meta" aria-live="polite">
               <span><strong>${selectedSemanticModel?.title ?? label(command.semanticModelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
-              ${resultGrainLabel ? html`<span>${resultGrainLabel}</span>` : nothing}
-              ${hasQuery && !rawResult.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
+              ${hasQuery && !rawResult.error ? html`<span>${resultView !== 'table' ? `${rowSummary} · ` : ''}${result.durationMs} ms</span>` : nothing}
               ${rawResult.error && this.exploreExecutionState !== 'uncertain' ? this.renderExploreFailure(rawResult.error, command) : nothing}
               ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
               ${hasQuery && (canShowChart || canShowPivot || canShowDetails) ? html`<div class="result-view-switch" role="group" aria-label="Result views">
@@ -1495,7 +1495,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               </div>` : nothing}
             </div>
             ${hasQuery
-              ? resultView === 'details' ? this.renderExploreQueryDetails(object, { ...explore, result }, command)
+              ? resultView === 'details' ? this.renderExploreQueryDetails(object, { ...explore, result })
               : resultVisualization ? html`
                   <div class=${`result-visual-layout${categoryPage ? ' paginated' : ''}`}>
                     ${categoryPage ? html`
@@ -1520,6 +1520,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   .command=${command}
                   .result=${result}
                   .visibleColumns=${this.exploreVisibleColumns}
+                  @lv-data-explore-table-window=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.loadExploreWindow(command, event.detail)}
                   @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.emitExplore({ ...command, ...event.detail })}
                 ></lv-data-explore-table>`
               : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
@@ -1543,16 +1544,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.renderRoot.querySelector('.result-visual')?.scrollTo({ top: 0 })
   }
 
-  private renderExploreQueryDetails(object: DataExplorerObjectSignal, explore: DataExploreSignal, command: DataExploreCommand) {
+  private renderExploreQueryDetails(object: DataExplorerObjectSignal, explore: DataExploreSignal) {
     const result = explore.result
     return html`
       <section class="query-view" aria-label="Query details">
-        <dl class="metadata-grid">
-          <div class="metadata-card"><dt>Query target</dt><dd>${label(command.semanticModelId)} / ${label(command.datasetId)}</dd></div>
-          <div class="metadata-card"><dt>Fields</dt><dd>${command.dimensions.length + command.metrics.length}</dd></div>
-          <div class="metadata-card"><dt>Filters</dt><dd>${command.filters.length}</dd></div>
-          <div class="metadata-card"><dt>Rows returned</dt><dd>${result.rowsReturned}</dd></div>
-        </dl>
         <h3 class="query-heading">${lucideIcon(Code2, { size: 17 })} Generated SQL</h3>
         <p class="query-copy">This is the governed query generated from the selected fields, relationships, filters, and metrics.</p>
         <lv-data-explorer-sql .sql=${result.sql ?? ''} emptyMessage="Run an exploration to generate SQL."></lv-data-explorer-sql>

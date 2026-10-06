@@ -50301,6 +50301,7 @@ paths:
                   metrics:
                     - alias: example
                       field: example
+                  mode: aggregate
                   modelId: example
                   pivot:
                     columns:
@@ -50599,6 +50600,7 @@ paths:
                 metrics:
                   - alias: example
                     field: example
+                mode: aggregate
                 modelId: example
                 pivot:
                   columns:
@@ -50993,6 +50995,7 @@ paths:
                 metrics:
                   - alias: example
                     field: example
+                mode: aggregate
                 modelId: example
                 pivot:
                   columns:
@@ -51083,6 +51086,7 @@ paths:
                   metrics:
                     - alias: example
                       field: example
+                  mode: aggregate
                   modelId: example
                   pivot:
                     columns:
@@ -51423,6 +51427,7 @@ paths:
                   metrics:
                     - alias: example
                       field: example
+                  mode: aggregate
                   modelId: example
                   pivot:
                     columns:
@@ -51721,6 +51726,7 @@ paths:
                 metrics:
                   - alias: example
                     field: example
+                mode: aggregate
                 modelId: example
                 pivot:
                   columns:
@@ -52264,6 +52270,7 @@ paths:
                   metrics:
                     - alias: example
                       field: example
+                  mode: aggregate
                   modelId: example
                   pivot:
                     columns:
@@ -82548,6 +82555,14 @@ components:
       example:
         limit: 1
         offset: 1
+    ExplorationQueryMode:
+      type: string
+      enum:
+        - aggregate
+        - records
+      description: Aggregate groups selected fields; records preserves individual
+        source rows.
+      example: aggregate
     ExplorationRelativeAnchor:
       type: string
       enum:
@@ -82609,6 +82624,10 @@ components:
         - sort
         - limit
       properties:
+        mode:
+          $ref: '#/components/schemas/ExplorationQueryMode'
+          description: Omitted means aggregate. Records preserves duplicate source
+            rows.
         schemaVersion:
           type: integer
           example: 1
@@ -82688,6 +82707,7 @@ components:
         metrics:
           - alias: example
             field: example
+        mode: aggregate
         modelId: example
         pivot:
           columns:
@@ -90270,6 +90290,7 @@ components:
           metrics:
             - alias: example
               field: example
+          mode: aggregate
           modelId: example
           pivot:
             columns:
@@ -90494,6 +90515,7 @@ components:
           metrics:
             - alias: example
               field: example
+          mode: aggregate
           modelId: example
           pivot:
             columns:
@@ -90562,6 +90584,7 @@ components:
           metrics:
             - alias: example
               field: example
+          mode: aggregate
           modelId: example
           pivot:
             columns:
@@ -90725,6 +90748,7 @@ components:
           metrics:
             - alias: example
               field: example
+          mode: aggregate
           modelId: example
           pivot:
             columns:

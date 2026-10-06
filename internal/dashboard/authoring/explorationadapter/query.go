@@ -113,6 +113,9 @@ func applyTimeDimension(value exploration.ExplorationDimensionRef, timeSelection
 }
 
 func (c converter) query(visualType string, dimensions []document.DashboardDimensionSelection, metrics []document.DashboardMetricSelection) (document.DashboardQuery, error) {
+	if exploration.IsRecords(c.spec) {
+		return c.recordsQuery(dimensions)
+	}
 	if c.spec.Pivot != nil {
 		rows := make([]document.DashboardDimensionSelection, 0, len(c.spec.Pivot.Rows)+1)
 		for _, value := range c.spec.Pivot.Rows {

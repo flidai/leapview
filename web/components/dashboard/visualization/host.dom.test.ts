@@ -995,3 +995,35 @@ test('lazy validation leaves empty hosts unloaded and retains the last valid que
     expect(accepted.snapshot).toContain('Orders')
   } finally { release(); await page.close() }
 })
+
+test('table menus receive and clear the authorized Explorer link after renderer mount', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const state = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:600px;height:400px'
+      host.envelope = (window as any).__lvSourceHosts.orders.envelope
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/orders/explore'
+      document.body.append(host)
+      await host.ensureMounted()
+      await host.updateComplete
+      const table = host.shadowRoot.querySelector('lv-report-table')
+      await table.updateComplete
+      const href = table.shadowRoot.querySelector('a[role="menuitem"]')?.getAttribute('href')
+      host.exploreHref = undefined
+      await host.updateComplete
+      await table.updateComplete
+      const cleared = !table.shadowRoot.querySelector('a[role="menuitem"]')
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/orders/explore'
+      host.actionsEnabled = false
+      await host.updateComplete
+      await table.updateComplete
+      const disabled = !table.shadowRoot.querySelector('a[role="menuitem"]')
+      host.remove()
+      return { href, cleared, disabled }
+    })
+    expect(state).toEqual({ href: '/dashboards/sales/pages/overview/visuals/orders/explore', cleared: true, disabled: true })
+  } finally { await page.close() }
+})

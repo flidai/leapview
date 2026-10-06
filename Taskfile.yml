@@ -1315,6 +1315,7 @@ tasks:
       - Taskfile.yml
       - api/apigen.yaml
       - api/typespec/**/*.tsp
+      - api/exploration/**/*.tsp
       - api/visualization/**/*.tsp
       - schemas/json/dashboard-document.schema.json
       - internal/app/tools/openapidocgen/**/*.go

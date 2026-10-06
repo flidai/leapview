@@ -1920,9 +1920,18 @@ model DataExplorerCommand {
   `visibleColumns`?: string[];
 }
 
+model DataExploreWindowCommand {
+  `block`: "all" | "a" | "b" | "c";
+  `start`: int64;
+  `count`: int64;
+  `requestSeq`: int64;
+  `resetVersion`: int64;
+}
+
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExploreCommand {
+  `window`?: DataExploreWindowCommand;
   `action`?: "configure" | "run" | "stop";
   `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
@@ -2026,6 +2035,7 @@ model DataExploreSemanticModelSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreResultSignal {
+  `window`?: DataPreviewSignal;
   `columns`: DataPreviewColumnSignal[];
   `durationMs`: int64;
   `error`?: string;

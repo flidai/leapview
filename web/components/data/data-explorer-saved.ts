@@ -513,7 +513,7 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
   `
 }
 
-export function renderExplorationShareMenu(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions, exportTruncated = false) {
+export function renderExplorationShareMenu(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions) {
   if (!state.enabled && !options.dashboardAppend) return nothing
   const currentQueryURL = options.canSaveCurrent() && options.activeSpec().modelId?.trim()
     ? dataExplorerURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand)
@@ -538,10 +538,9 @@ export function renderExplorationShareMenu(state: SavedExplorationStateSignal, o
         ${options.dashboardAppend?.() ?? nothing}
         ${currentQueryURL ? html`
           <span class="saved-exploration-sharing-label export-label">Export</span>
-          ${exportTruncated ? html`<span class="saved-exploration-export-unavailable">Increase row limit, then run to export.</span>` : html`
-            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>${lucideIcon(Download, { size: 16 })}Download CSV</a>
-            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>${lucideIcon(Download, { size: 16 })}Download Parquet</a>
-          `}
+          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>${lucideIcon(Download, { size: 16 })}Download CSV</a>
+          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>${lucideIcon(Download, { size: 16 })}Download Parquet</a>
+          <span class="saved-exploration-export-unavailable">Export complete results up to 10,000 rows and 32 MiB. Add filters for larger results.</span>
         ` : nothing}
         <span class="saved-exploration-sharing-hint">Links run live data with the viewer’s access.</span>
         ${options.shareStatus() ? html`<span role="status" aria-live="polite">${options.shareStatus()}</span>` : nothing}

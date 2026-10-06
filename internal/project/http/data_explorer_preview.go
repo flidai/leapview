@@ -400,6 +400,26 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationSemanticExplore,
 		ObjectType: "semantic_dataset", ObjectID: modelID + ":" + datasetID,
 	})
+	window := projectsignals.DataExplorerCommand{Count: dataExplorerDefaultLimit, Limit: dataExplorerDefaultLimit,
+		Block: projectsignals.Pointer("all"), RequestSeq: command.RequestSeq, ResetVersion: command.ResetVersion}
+	if command.Window != nil {
+		window.Count = max(1, min(command.Window.Count, dataExplorerMaximumLimit))
+		window.Block = projectsignals.Pointer(string(command.Window.Block))
+		window.Start = max(0, command.Window.Start)
+		window.RequestSeq, window.ResetVersion = command.Window.RequestSeq, command.Window.ResetVersion
+	}
+	start, count := window.Start, window.Count
+	blockIDs := []string{projectsignals.ValueOrZero(window.Block)}
+	if blockIDs[0] == "all" || blockIDs[0] == "" {
+		start = dataExplorerFirstBlockStart(window)
+		count *= int64(len(dataExplorerBlockIDs))
+		blockIDs = dataExplorerBlockIDs
+	}
+	query.Offset, query.Limit, query.IncludeTotal = int(start), int(count), true
+	// Chart frames retain their authored bounded sample independently of the table window.
+	if command.Window == nil || (start == 0 && len(blockIDs) == len(dataExplorerBlockIDs)) {
+		query.Limit = max(query.Limit, int(command.Spec.Limit))
+	}
 	executed, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
@@ -416,11 +436,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		return command, resultSignal
 	}
 	rows := executed.Rows
-	limit := int64(command.Spec.Limit)
-	truncated := int64(len(rows)) > limit
-	if truncated {
-		rows = rows[:limit]
-	}
+	truncated := executed.TotalRowsKnown && int64(executed.TotalRows) > start+int64(len(rows))
 	state := dataExploreStateFromSpec(command.Spec)
 	aliases := explorerQueryAliases(state.Dimensions, state.Metrics)
 	labels := explorerResultLabels(fields, aliases)
@@ -428,8 +444,34 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	for _, column := range executed.Columns {
 		columns = append(columns, projectsignals.DataPreviewColumnSignal{Key: column.Name, Label: firstExplorerNonEmpty(labels[column.Name], column.Name)})
 	}
+	if len(command.Spec.Sort) > 0 {
+		field := string(command.Spec.Sort[0].Field)
+		key := firstExplorerNonEmpty(aliases[field], field)
+		for _, selected := range append(append([]dataquery.Field{}, query.Fields...), query.Metrics...) {
+			if selected.Field == field || selected.Alias == field {
+				key = firstExplorerNonEmpty(selected.Alias, key)
+				break
+			}
+		}
+		if query.Time.Field == field {
+			key = firstExplorerNonEmpty(query.Time.Alias, key)
+		}
+		window.Sort = projectsignals.DataPreviewSortSignal{Column: projectsignals.Pointer(key), Direction: projectsignals.Pointer(string(command.Spec.Sort[0].Direction))}
+	}
+	preview := projectsignals.DataPreviewSignal{Columns: columns, Blocks: map[string]projectsignals.DataPreviewBlockSignal{},
+		ChunkSize: window.Count, RowHeight: dataExplorerRowHeight, ResetVersion: window.ResetVersion, Sort: window.Sort}
+	known := dataExplorerApplyPreviewResult(&preview, window, start, blockIDs, executed, false)
+	if !known {
+		if int64(len(rows)) < count {
+			preview.TotalRows, preview.AvailableRows = start+int64(len(rows)), start+int64(len(rows))
+			preview.TotalRowLabel = projectsignals.Pointer(fmt.Sprintf("%d", preview.TotalRows))
+		} else {
+			preview.TotalRowLabel = projectsignals.Pointer("Unknown")
+			truncated = true
+		}
+	}
 	return command, projectsignals.DataExploreResultSignal{
-		Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
+		Window: &preview, Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
 		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
 		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,
 	}

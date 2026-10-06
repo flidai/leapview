@@ -1,4 +1,4 @@
-import type { DataExploreCommand, DataExploreResultSignal, DataExploreStatusSignal } from '../../generated/signals'
+import type { DataExploreCommand, DataExploreResultSignal, DataExploreStatusSignal, DataExploreSignal } from '../../generated/signals'
 import { explorationSpecFor } from './data-explorer-spec'
 
 const suggestionSequenceByClientID = new Map<string, number>()
@@ -28,6 +28,8 @@ export class DataExplorerClientState {
   private suggestionRequestSeq = 0
   private currentRunID = ''
   private semanticResultContextKey = ''
+  private semanticViewsKey = ''
+  private lastSemanticViews: NonNullable<DataExploreSignal['views']> = {}
   private lastGoodSemanticResult: DataExploreResultSignal | null = null
 
   clientID(hydrated?: unknown): string {
@@ -99,6 +101,27 @@ export class DataExplorerClientState {
 
   clearRunID(): void {
     this.currentRunID = ''
+  }
+
+  /** Keep the initial bounded chart frame while table windows move independently. */
+  semanticViews(
+    command: DataExploreCommand,
+    result: DataExploreResultSignal,
+    status: DataExploreStatusSignal | undefined,
+    views: DataExploreSignal['views'],
+    context?: { projectId?: unknown; generationId?: unknown },
+  ): NonNullable<DataExploreSignal['views']> {
+    const key = JSON.stringify([context?.projectId, context?.generationId, explorationSpecFor(command), command.resetVersion])
+    if (key !== this.semanticViewsKey) {
+      this.semanticViewsKey = key
+      this.lastSemanticViews = {}
+    }
+    if (status?.state === 'success' && result.requestSeq === status.requestSeq && !result.error) {
+      if (!command.window || (!Object.keys(this.lastSemanticViews).length && command.window.start === 0)) {
+        this.lastSemanticViews = Object.fromEntries(Object.entries(views ?? {}).filter(([, envelope]) => envelope.dataRevision === result.requestSeq))
+      }
+    }
+    return this.lastSemanticViews
   }
 
   /** Keeps one successful result for this mounted explorer while a newer command is in flight. */

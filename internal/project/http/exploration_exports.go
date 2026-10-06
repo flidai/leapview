@@ -96,7 +96,7 @@ func (h *BrowserHandler) ExplorationExport(w stdhttp.ResponseWriter, r *stdhttp.
 	auditQuery := dataquery.Query{ProjectID: projectID, Surface: "saved_exploration", Operation: "saved_exploration_url_export", PrincipalID: principal.ID, RequestID: requestID, CorrelationID: correlationID, ObjectType: "exploration_url", ObjectID: "url-export"}
 	result, err := executor.ExecuteSpec(ctx, savedexploration.ExecuteSpecRequest{
 		ProjectID: projectID, ActorID: principal.ID, Spec: command.Spec,
-		RequestID: requestID, CorrelationID: correlationID, Operation: "saved_exploration_url_export",
+		RequestID: requestID, CorrelationID: correlationID, Operation: "saved_exploration_url_export", ExportMaxRows: limits.MaxRows,
 	})
 	if err != nil {
 		_ = recordBrowserExportOutcome(ctx, h.ExplorationExportAuditRecorder, auditQuery, result.Result, format, browserExportOutcome(err), result.Result.BytesEstimate, err)
@@ -145,11 +145,11 @@ func validateBrowserExportURLOptions(values url.Values) error {
 	return nil
 }
 
-// URL exploration lowering requests one sentinel row beyond the authored
-// limit. Reject it here so a live download cannot masquerade as complete.
+// Export lowering requests one sentinel row beyond the independent export
+// budget. Reject it before headers or bytes can imply a complete download.
 func rejectTruncatedBrowserExportResult(result savedexploration.ExecuteResult) error {
 	if result.Query.Limit > 0 && len(result.Result.Rows) >= result.Query.Limit {
-		return savedexploration.ErrExportPartial
+		return &dataquery.ResultLimitError{Reason: dataquery.ResultRows, Limit: int64(result.Query.Limit - 1), Observed: int64(len(result.Result.Rows))}
 	}
 	return nil
 }
@@ -194,7 +194,7 @@ func writeBrowserExportError(w stdhttp.ResponseWriter, r *stdhttp.Request, err e
 	var limitErr *dataquery.ResultLimitError
 	switch {
 	case errors.As(err, &limitErr):
-		stdhttp.Error(w, "export exceeds its bounds", stdhttp.StatusRequestEntityTooLarge)
+		stdhttp.Error(w, "Export exceeds its row or size limit. Add filters to narrow the query, then export again.", stdhttp.StatusRequestEntityTooLarge)
 	case errors.Is(err, savedexploration.ErrExportInvalidFormat):
 		stdhttp.Error(w, "unsupported export format", stdhttp.StatusUnsupportedMediaType)
 	case errors.Is(err, savedexploration.ErrExportInvalidRequest):
@@ -206,7 +206,7 @@ func writeBrowserExportError(w stdhttp.ResponseWriter, r *stdhttp.Request, err e
 		// outage, and do not disclose whether the URL's target exists.
 		stdhttp.NotFound(w, r)
 	case errors.Is(err, savedexploration.ErrExportPartial):
-		stdhttp.Error(w, "incomplete exploration result", stdhttp.StatusUnprocessableEntity)
+		stdhttp.Error(w, "Exploration result is incomplete. Add filters to narrow the query, then export again.", stdhttp.StatusUnprocessableEntity)
 	case errors.Is(err, savedexploration.ErrInvalid), errors.Is(err, savedexploration.ErrInvalidPayload):
 		stdhttp.Error(w, "invalid exploration", stdhttp.StatusUnprocessableEntity)
 	default:

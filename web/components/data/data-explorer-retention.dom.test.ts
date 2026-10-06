@@ -576,3 +576,37 @@ test('query controls hydrate canonical select values on their first render', asy
 function testDocument() {
   return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%}lv-data-explorer{display:block;min-height:720px}</style></head><body><main data-signals="{}"></main><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/data-explorer-under-test.js"></script></body></html>`
 }
+
+test('semantic table exposes exact totals and serializes windows beyond the old cap', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explore-table'))
+    const state = await page.evaluate(async () => {
+      const table = document.createElement('lv-data-explore-table') as any
+      const sort = { column: 'status', direction: 'asc' }
+      table.command = { spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [{ field: 'orders.status', direction: 'asc' }], limit: 1000 }, requestSeq: 5, resetVersion: 2 }
+      const block = { start: 0, requestSeq: 5, resetVersion: 2, sort, rows: [{ status: 'paid' }] }
+      table.result = { columns: [{ key: 'status', label: 'Status' }], rows: block.rows, rowsReturned: 1, requestSeq: 5, durationMs: 0, truncated: true, warnings: [], window: { columns: [], totalRows: 2345, availableRows: 2345, totalRowLabel: '2345', chunkSize: 100, rowHeight: 32, resetVersion: 2, sort, blocks: { a: block }, loading: false, stale: false } }
+      const events: any[] = []
+      table.addEventListener('lv-data-explore-table-window', (event: CustomEvent) => events.push(event.detail))
+      document.body.append(table)
+      await table.updateComplete
+      const inner = table.shadowRoot.querySelector('lv-windowed-table') as any
+      const total = inner.table.totalRows
+      const request = (id: string, start: number, requestSeq: number) => inner.dispatchEvent(new CustomEvent('lv-windowed-table-request', { detail: { block: id, start, count: 100, requestSeq, resetVersion: 2, sort }, bubbles: true, composed: true }))
+      request('a', 1500, 11)
+      request('b', 1600, 12)
+      const before = events.length
+      table.result = { ...table.result, requestSeq: 6, window: { ...table.result.window, blocks: { a: { ...block, start: 1500, requestSeq: 11 } } } }
+      await table.updateComplete
+      const after = events.map(event => event.window)
+      table.remove()
+      return { total, before, after }
+    })
+    expect(state.total).toBe(2345)
+    expect(state.before).toBe(1)
+    expect(state.after.map(window => window.start)).toEqual([1500, 1600])
+    expect(state.after.map(window => window.requestSeq)).toEqual([11, 12])
+  } finally { await page.close() }
+})

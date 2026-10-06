@@ -10,16 +10,17 @@ import (
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard"
-	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 )
 
 // SpecForVisual returns a canonical Data Explorer spec only for a standard,
-// single-query aggregate. Record/table, matrix, pivot, spatial, and statistical
-// aggregate queries cannot be represented without changing their semantics.
+// single-query aggregate or records query. Matrix, pivot, spatial, and
+// statistical aggregate queries cannot be represented faithfully.
 func SpecForVisual(definition visualizationdefinition.Definition, model *semanticmodel.Model) (exploration.ExplorationSpec, bool) {
 	query := definition.Query
+	if query.Kind == visualizationdefinition.QueryDetail {
+		return recordsSpecForVisual(definition, model)
+	}
 	if query.Kind != visualizationdefinition.QueryAggregate || query.Aggregate == nil || len(definition.SecondaryQueries) != 0 || model == nil {
 		return exploration.ExplorationSpec{}, false
 	}
@@ -143,10 +144,11 @@ func canonicalExplorerDimensionID(model *semanticmodel.Model, datasetID, fieldID
 		// The Explorer projection suppresses semantic aliases when their
 		// physical binding is present. Protected aliases also have a
 		// principal-specific projection that this model-only helper cannot
-		// prove. Do not substitute the physical ID when it would lose semantic
-		// temporal rules, and fail closed when grants could hide that ID.
+		// prove. Preserve the semantic ID when temporal rules or grants
+		// distinguish it from its underlying physical binding.
 		if semanticDimensionHasNonPhysicalTimeSemantics(semantic) || !model.AccessPolicy.Empty() {
-			return "", false
+			_, bound := semantic.Bindings[datasetID]
+			return fieldID, bound
 		}
 		binding, exists := semantic.Bindings[datasetID]
 		if !exists {
@@ -207,37 +209,9 @@ func dimensionRef(field visualizationdefinition.FieldBinding) exploration.Explor
 	return result
 }
 
-// HasActiveState reports whether the browser session contains state that the
-// Explorer spec does not carry. A missing compiled filter state is considered
-// unsafe whenever the definition has filter bindings.
-func HasActiveState(filters dashboard.Filters, hasFilterBindings bool) bool {
-	if len(filters.Selections) != 0 || len(filters.SpatialSelections) != 0 {
-		return true
-	}
-	if filters.CompiledState == nil {
-		return hasFilterBindings
-	}
-	return stateHasActiveFilters(*filters.CompiledState)
-}
-
-// StateHasActiveFilters checks both authored and resolved values: relative
-// filters can resolve to a concrete range while retaining their authored kind.
-func StateHasActiveFilters(state dashboardfilter.State) bool {
-	return stateHasActiveFilters(state)
-}
-
-func stateHasActiveFilters(state dashboardfilter.State) bool {
-	for _, applied := range state.AppliedControls {
-		if applied.Expression.Kind != dashboardfilter.ExpressionUnfiltered || applied.ResolvedExpression.Kind != dashboardfilter.ExpressionUnfiltered {
-			return true
-		}
-	}
-	return false
-}
-
 // RouteHref binds a visual handoff to the live dashboard session. The route
-// re-reads that session before redirecting, so links become unusable once
-// filters or interactions are applied.
+// re-reads that session before redirecting, so the destination always carries
+// the currently applied filters and representable interactions.
 func RouteHref(basePath, dashboardID, pageID, visualID, clientID, streamInstanceID string) (string, bool) {
 	// Candidate/preview dashboards live under a scoped route prefix, but that
 	// router intentionally does not expose the authenticated Explorer route.

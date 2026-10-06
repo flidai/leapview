@@ -94,6 +94,9 @@ func queryForModel(spec exploration.ExplorationSpec, model *semanticmodel.Model)
 	if model != nil && hasMultiRootMetric(spec, model) {
 		target = ""
 	}
+	if exploration.IsRecords(spec) {
+		return dataquery.SemanticRows(spec.ModelID, target, dimensions, nil, filters, sorts, 0, int(spec.Limit)+1, false), nil
+	}
 	query := dataquery.SemanticAggregate(spec.ModelID, target, dimensions, metrics, filters, sorts, 0, int(spec.Limit)+1)
 	if spec.Time != nil && !timeDecoratesDimension {
 		query.Time = dataquery.Time{Field: spec.Time.Field, Grain: string(spec.Time.Grain), Alias: pointerString(spec.Time.Alias)}

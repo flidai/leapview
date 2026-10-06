@@ -186,7 +186,7 @@ export class DashboardAppendController {
 
   async append(spec: ExplorationSpec): Promise<void> {
     if (this.saving) return
-    if (!this.pendingAppend && !spec.metrics.length && !spec.pivot?.metrics.length) {
+    if (!this.pendingAppend && spec.mode !== 'records' && !spec.metrics.length && !spec.pivot?.metrics.length) {
       this.status = 'Add at least one metric before adding an exploration to a dashboard.'
       this.refresh()
       return

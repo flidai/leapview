@@ -26,9 +26,10 @@ type dataExploreWire struct {
 
 type dataExploreResultWire struct {
 	uisignals.DataExploreResultSignal
-	Error *string `json:"error"`
-	SQL   *string `json:"sql"`
-	Plan  *string `json:"plan"`
+	Error  *string                      `json:"error"`
+	SQL    *string                      `json:"sql"`
+	Plan   *string                      `json:"plan"`
+	Window *uisignals.DataPreviewSignal `json:"window"`
 }
 
 type dataExploreStatusWire struct {
@@ -50,12 +51,14 @@ type dataExplorerCommandWire struct {
 
 type dataExploreCommandWire struct {
 	uisignals.DataExploreCommand
-	Spec explorationSpecWire              `json:"spec"`
-	Time *uisignals.DataExploreTimeSignal `json:"time"`
+	Spec   explorationSpecWire                 `json:"spec"`
+	Time   *uisignals.DataExploreTimeSignal    `json:"time"`
+	Window *uisignals.DataExploreWindowCommand `json:"window"`
 }
 
 type explorationSpecWire struct {
 	exploration.ExplorationSpec
+	Mode          *exploration.ExplorationQueryMode           `json:"mode"`
 	Time          *explorationTimeWire                        `json:"time"`
 	Table         *exploration.ExplorationTableDisplayConfig  `json:"table"`
 	Visualization *exploration.ExplorationVisualizationConfig `json:"visualization"`
@@ -88,7 +91,7 @@ func DataExplorerPayload(state uisignals.DataExplorerSignal) dataExplorerWire {
 		Explore: dataExploreWire{
 			DataExploreSignal: state.Explore,
 			Command:           dataExploreCommandPayload(state.Explore.Command),
-			Result:            dataExploreResultWire{state.Explore.Result, state.Explore.Result.Error, state.Explore.Result.SQL, state.Explore.Result.Plan},
+			Result:            dataExploreResultWire{state.Explore.Result, state.Explore.Result.Error, state.Explore.Result.SQL, state.Explore.Result.Plan, state.Explore.Result.Window},
 			Status:            dataExploreStatusWire{state.Explore.Status, state.Explore.Status.Error, state.Explore.Status.Message, state.Explore.Status.ProgressPercent},
 		},
 	}
@@ -113,11 +116,12 @@ func dataExploreCommandPayload(command uisignals.DataExploreCommand) dataExplore
 		DataExploreCommand: command,
 		Spec:               explorationSpecPayload(command.Spec),
 		Time:               command.Time,
+		Window:             command.Window,
 	}
 }
 
 func explorationSpecPayload(spec exploration.ExplorationSpec) explorationSpecWire {
-	wire := explorationSpecWire{ExplorationSpec: spec, Table: spec.Table, Visualization: spec.Visualization, Pivot: spec.Pivot}
+	wire := explorationSpecWire{ExplorationSpec: spec, Mode: spec.Mode, Table: spec.Table, Visualization: spec.Visualization, Pivot: spec.Pivot}
 	if spec.Time != nil {
 		wire.Time = &explorationTimeWire{
 			ExplorationTimeSelection: *spec.Time,

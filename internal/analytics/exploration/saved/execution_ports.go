@@ -11,6 +11,8 @@ import (
 // Request and correlation IDs are copied into the governed query metadata by
 // the application service; they are not part of the authored payload.
 type ExecuteRequest struct {
+	// ExportMaxRows is a transport budget, independent of the authored chart limit.
+	ExportMaxRows    int
 	ProjectID        projectgraph.ResourceID
 	ID               ExplorationID
 	ActorID          string
@@ -50,6 +52,7 @@ func (input ExecuteRequest) Validate() error {
 // ExecuteSpecRequest runs caller-authored URL state without reading a saved
 // exploration. The active viewer, not a link owner, supplies the identity.
 type ExecuteSpecRequest struct {
+	ExportMaxRows int
 	ProjectID     projectgraph.ResourceID
 	ActorID       string
 	Spec          canonical.ExplorationSpec

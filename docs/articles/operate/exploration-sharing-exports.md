@@ -23,7 +23,9 @@ If-Match: "<complete revision token>"
 
 The URL-backed API accepts the canonical `ExplorationSpec` in `POST /api/v1/projects/{project}/saved-explorations/url-export`. Both paths execute through the current viewer's policy and serving lease. They do not accept a saved ID as a shortcut to another user's working copy.
 
-Exports default to at most 10,000 rows and 32 MiB, with the same independent row and byte bounds applied during query retention and encoding. CSV preserves typed scalar text and prefixes spreadsheet-formula values (including values beginning with tab, carriage return, or newline). Files are sent only after a complete, successful, bounded result is encoded.
+Exports rerun the complete matching result from its first row, preserving the selected fields, filters, and sort order. The authored `ExplorationSpec.limit` bounds the interactive sample; it does not cap an export. The current table window and chart truncation do not disable downloads. This applies to both saved-revision and URL-backed exports.
+
+Exports default to at most 10,000 rows and 32 MiB, with the same independent row and byte bounds applied during query retention and encoding. Requests may lower these export bounds with `maxRows` and `maxBytes`. Exceeding either bound returns HTTP 413 with no attachment; add filters to narrow the query and retry. CSV preserves typed scalar text and prefixes spreadsheet-formula values (including values beginning with tab, carriage return, or newline). Files are sent only after a complete, successful, bounded result is encoded.
 
 ## Recover from a rejected export
 
@@ -37,4 +39,4 @@ Parquet preserves signed/unsigned integers, fixed-scale decimal128 values up to 
 
 ## Verify the result
 
-Open a shared link in a second account with the intended model permissions and confirm it reruns the query under that account's visible data. Download a small CSV and Parquet sample, then compare their column names and row counts with the query; a truncated query should return an error instead of a partial file.
+Open a shared link in a second account with the intended model permissions and confirm it reruns the query under that account's visible data. Download a small CSV and Parquet sample, then compare their column names and row counts with the query; a query whose complete result exceeds the export bounds should return HTTP 413 instead of a partial file.

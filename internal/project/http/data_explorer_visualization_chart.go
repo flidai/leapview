@@ -77,7 +77,7 @@ func explorerChartEnvelope(spec exploration.ExplorationSpec, base visualizationi
 	}
 	if seriesColumn.Output != "" {
 		if result.Truncated {
-			return visualizationir.VisualizationEnvelope{}, false, "chart view omitted: grouped series is truncated; increase the row limit or narrow the query"
+			return visualizationir.VisualizationEnvelope{}, false, "chart view omitted: grouped series is truncated; add filters to narrow the query"
 		}
 		seriesValues := make(map[string]struct{})
 		for _, row := range result.Rows {

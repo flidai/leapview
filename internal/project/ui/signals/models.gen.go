@@ -1038,6 +1038,7 @@ type DashboardUnfilteredExpression struct {
 }
 
 type DataExploreCommand struct {
+	Window            *DataExploreWindowCommand            `json:"window,omitempty" yaml:"window,omitempty"`
 	Action            *string                              `json:"action,omitempty" yaml:"action,omitempty"`
 	Spec              exploration.ExplorationSpec          `json:"spec" yaml:"spec"`
 	ColumnWidths      *map[string]float64                  `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
@@ -1113,6 +1114,7 @@ type DataExploreFilterValueSuggestionSignal struct {
 }
 
 type DataExploreResultSignal struct {
+	Window       *DataPreviewSignal        `json:"window,omitempty" yaml:"window,omitempty"`
 	Columns      []DataPreviewColumnSignal `json:"columns" yaml:"columns"`
 	DurationMS   int64                     `json:"durationMs" yaml:"durationMs"`
 	Error        *string                   `json:"error,omitempty" yaml:"error,omitempty"`
@@ -1165,6 +1167,14 @@ type DataExploreTimeSignal struct {
 	Alias *string `json:"alias,omitempty" yaml:"alias,omitempty"`
 	Field string  `json:"field" yaml:"field"`
 	Grain string  `json:"grain" yaml:"grain"`
+}
+
+type DataExploreWindowCommand struct {
+	Block        string `json:"block" yaml:"block"`
+	Start        int64  `json:"start" yaml:"start"`
+	Count        int64  `json:"count" yaml:"count"`
+	RequestSeq   int64  `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion int64  `json:"resetVersion" yaml:"resetVersion"`
 }
 
 type DataExplorerCommand struct {

@@ -194,3 +194,29 @@ test('visible column toggles preserve one visible fallback and reset all to defa
   expect(toggleVisibleColumns(['a'], 'b', true, ['a', 'b'])).toEqual([])
   expect(readDataExplorerAgentState(memoryStorage())).toEqual({ open: false, conversationId: '' })
 })
+
+test('table windows preserve query generation and clear on a new authored run', async () => {
+  const { prepareExplorationWindow } = await import('./data-explorer-controller')
+  const current = { ...emptyDataExploreCommand, requestSeq: 30, resetVersion: 4 }
+  const window = { block: 'b' as const, start: 1500, count: 100, requestSeq: 7, resetVersion: 4 }
+  const next = prepareExplorationWindow(current, { window })
+  expect(next.requestSeq).toBe(31)
+  expect(next.resetVersion).toBe(4)
+  expect(next.window).toEqual(window)
+  expect(prepareExplorationRun(next).window).toBeUndefined()
+  expect(new DataExplorerQueryController().exploreSpec(next, { dimensions: [] }).window).toBeUndefined()
+})
+
+test('table paging keeps the initial chart frame within its query and generation', () => {
+  const client = new DataExplorerClientState()
+  const command = { ...emptyDataExploreCommand, requestSeq: 10, resetVersion: 3 }
+  const result = { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 10, truncated: false, warnings: [] }
+  const status = { state: 'success' as const, requestSeq: 10, loading: false, stale: false }
+  const views = { chart: { dataRevision: 10 } } as any
+  expect(client.semanticViews(command, result, status, views)).toEqual(views)
+  const paged = { ...command, window: { block: 'a' as const, start: 1500, count: 100, requestSeq: 1, resetVersion: 3 }, requestSeq: 11 }
+  expect(client.semanticViews(paged, { ...result, requestSeq: 11 }, { ...status, requestSeq: 11 }, { chart: { dataRevision: 11 } } as any)).toEqual(views)
+  expect(client.semanticViews({ ...paged, resetVersion: 4 }, result, status, views)).toEqual({})
+  expect(client.semanticViews({ ...paged, resetVersion: 4, window: { ...paged.window, start: 0 } }, result, status, views)).toEqual(views)
+  expect(client.semanticViews(command, result, status, views, { generationId: 'new' })).toEqual(views)
+})

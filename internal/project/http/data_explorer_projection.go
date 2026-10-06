@@ -408,7 +408,11 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 				break
 			}
 		}
-		if duplicatePhysical {
+		// Semantic time dimensions carry calendar, timezone and week-start
+		// rules that a physical field cannot reproduce. Keep their identity
+		// available for dashboard handoffs and restored explorations.
+		semanticTime := semantic.Datatype == semanticmodel.DataTypeDate || semantic.Datatype == semanticmodel.DataTypeDateTime || semantic.Datatype == semanticmodel.DataTypeDateTimeTZ || semantic.Type == "date" || semantic.Type == "timestamp" || semantic.Type == "datetime"
+		if duplicatePhysical && !semanticTime && model.AccessPolicy.Empty() {
 			continue
 		}
 		fieldType := firstExplorerNonEmpty(string(semantic.Datatype), semantic.Type, string(binding.Physical.Datatype), binding.Physical.Type)
@@ -416,8 +420,12 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 		if !compatible {
 			reason = "Not available from " + explorerLabel(baseTable) + " because no compiled binding reaches this semantic dimension."
 		}
+		label := firstExplorerNonEmpty(semantic.Label, explorerLabel(name))
+		if duplicatePhysical && semanticTime {
+			label = explorerSemanticTimeLabel(label, semantic)
+		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
-			ID: name, Label: firstExplorerNonEmpty(semantic.Label, explorerLabel(name)), Kind: "dimension", DatasetID: boundDataset,
+			ID: name, Label: label, Kind: "dimension", DatasetID: boundDataset,
 			Description: projectsignals.Optional(semantic.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[name],
 			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
 		})
@@ -840,4 +848,31 @@ func firstExplorerNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// explorerSemanticTimeLabel distinguishes a calendar-aware dimension from its
+// physical column without collapsing their separate query identities.
+func explorerSemanticTimeLabel(label string, dimension semanticquery.CompiledSemanticDimension) string {
+	qualifiers := []string{}
+	calendar := strings.TrimSpace(dimension.Calendar)
+	switch strings.ToLower(calendar) {
+	case "iso8601":
+		qualifiers = append(qualifiers, "ISO 8601")
+	case "gregorian":
+		qualifiers = append(qualifiers, "Gregorian")
+	default:
+		if calendar != "" {
+			qualifiers = append(qualifiers, calendar)
+		}
+	}
+	if timezone := strings.TrimSpace(dimension.Timezone); timezone != "" && !strings.EqualFold(timezone, "UTC") {
+		qualifiers = append(qualifiers, timezone)
+	}
+	if weekStart := strings.TrimSpace(dimension.WeekStart); weekStart != "" && !(strings.EqualFold(calendar, "iso8601") && strings.EqualFold(weekStart, "monday")) && !strings.EqualFold(weekStart, "sunday") {
+		qualifiers = append(qualifiers, explorerLabel(weekStart)+" weeks")
+	}
+	if len(qualifiers) == 0 {
+		qualifiers = append(qualifiers, "Calendar")
+	}
+	return label + " (" + strings.Join(qualifiers, ", ") + ")"
 }

@@ -752,6 +752,13 @@ type ExplorationPivotWindow struct {
 	Limit  int32  `json:"limit" yaml:"limit"`
 }
 
+type ExplorationQueryMode string
+
+const (
+	ExplorationQueryModeAggregate ExplorationQueryMode = "aggregate"
+	ExplorationQueryModeRecords   ExplorationQueryMode = "records"
+)
+
 type ExplorationRelativeAnchor string
 
 const (
@@ -794,6 +801,7 @@ const (
 )
 
 type ExplorationSpec struct {
+	Mode          *ExplorationQueryMode           `json:"mode,omitempty" yaml:"mode,omitempty"`
 	SchemaVersion int32                           `json:"schemaVersion" yaml:"schemaVersion"`
 	ModelID       string                          `json:"modelId" yaml:"modelId"`
 	DatasetID     *string                         `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`

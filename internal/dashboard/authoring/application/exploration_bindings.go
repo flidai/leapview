@@ -20,6 +20,9 @@ func deriveExplorationAdapterOptions(spec exploration.ExplorationSpec, model *se
 	if !compiled.MatchesModel(model) {
 		return explorationadapter.Options{}, fmt.Errorf("active compiled semantic model does not match model projection")
 	}
+	if exploration.IsRecords(spec) {
+		return deriveRecordsExplorationOptions(spec, model, compiled, visualID)
+	}
 	options := explorationadapter.Options{VisualID: visualID, Bindings: map[string]string{}, MetricRoots: map[string]string{}}
 	addDimension := func(raw string) error {
 		field := strings.TrimSpace(raw)

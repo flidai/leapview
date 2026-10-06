@@ -8,6 +8,7 @@ import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
+import type { ReportTable } from '../table/report-table'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
@@ -202,6 +203,8 @@ export class VisualizationHost extends LitElement {
   }
 
   protected updated(changed: Map<PropertyKey, unknown>): void {
+    const table = this.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    if (table) table.exploreHref = this.actionsEnabled ? this.exploreHref : undefined
     if (changed.has('envelope') && this.mountRequested) this.scheduleApply()
     if ((changed.has('deferMount') || changed.has('authoring')) && !this.mountRequested) {
       if (!this.deferMount || this.authoring) this.requestMount()

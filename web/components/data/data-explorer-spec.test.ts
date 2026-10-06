@@ -366,3 +366,37 @@ test('Explorer chart pagination retains authored value bounds and caps grouped c
     expect(page.envelope.spec.axes).toEqual(source.spec.axes)
   }
 })
+
+test('records explorations append without metrics and retain the complete records spec', async () => {
+  const originalFetch = globalThis.fetch
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  let body: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    return { ok: true, json: async () => ({ dashboardId: 'dashboard:sales' }) } as Response
+  }) as typeof fetch
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { LeapViewCommand: { headers: () => ({ 'Idempotency-Key': 'records-append' }) } } })
+  try {
+    const attributes: Record<string, string> = {
+      'data-dashboard-append-operation-id': 'executeDashboardAuthoringCommand',
+      'data-dashboard-append-url': '/explore/add-to-dashboard',
+    }
+    const controller = new DashboardAppendController({ getAttribute: (name: string) => attributes[name] ?? null } as unknown as HTMLElement, () => {})
+    controller.syncModel('semantic-model:sales')
+    controller.targets = [{ id: 'dashboard:sales', title: 'Sales', semanticModel: 'semantic-model:sales', draftId: 'draft-sales', revisionToken: 'revision-sales', pages: [{ id: 'overview', title: 'Overview' }] }]
+    controller.selectedDashboardID = 'dashboard:sales'
+    controller.selectedPageID = 'overview'
+    const spec: ExplorationSpec = {
+      schemaVersion: 1, mode: 'records', modelId: 'semantic-model:sales', datasetId: 'sales_orders',
+      dimensions: [{ field: 'sales_orders.category', alias: 'category' }], metrics: [], filters: [], sort: [{ field: 'category', direction: 'desc' }], limit: 100,
+    }
+    await controller.append(spec)
+    expect(body?.spec).toEqual(spec)
+    expect(controller.status).toBe('Exploration added as an independent tile.')
+    expect(controller.successDashboardURL).toBe('/dashboards/dashboard%3Asales/edit?draft=draft-sales')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
+})

@@ -1420,14 +1420,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return principal.ID
 				},
 				AuthorizeListResource: func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error) {
-					if capability != access.CapabilityResourceRead || resource.Kind() != projectgraph.KindDashboard {
-						return false, nil
-					}
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
 						return false, err
 					}
-					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, access.ActionDashboardRead)
+					return authorizeDashboardListResource(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, resource, capability)
 				},
 				AuthorizeTypedDashboardAction: func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, bool, error) {
 					if action == "" {

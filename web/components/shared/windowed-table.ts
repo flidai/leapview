@@ -1043,7 +1043,7 @@ class WindowedTable extends LitElement {
     const firstIndex = Math.min(availableRows - 1, Math.max(0, Math.floor(this.viewportTop / table.rowHeight)))
     const visibleRows = Math.max(1, Math.ceil((this.viewportHeight || table.rowHeight) / table.rowHeight))
     const lastIndex = Math.min(availableRows, firstIndex + visibleRows)
-    return `${(firstIndex + 1).toLocaleString()}-${lastIndex.toLocaleString()} of ${table.totalRows.toLocaleString()}`
+    return `${(firstIndex + 1).toLocaleString()}-${lastIndex.toLocaleString()} of ${table.totalLabel === 'Unknown' ? 'unknown' : table.totalRows.toLocaleString()}`
   }
 }
 
