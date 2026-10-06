@@ -34,10 +34,10 @@ func (l *recordingLifecycle) PrepareFirstInstall(_ context.Context, options comp
 	return l.prepareErr
 }
 
-func (l *recordingLifecycle) InitializeFirstInstall(_ context.Context, options composectl.InitOptions, controlMigratorURL string) error {
+func (l *recordingLifecycle) InitializeFirstInstall(_ context.Context, options composectl.InitOptions, bootstrap composectl.FirstInstallOptions) error {
 	l.events = append(l.events, "initialize")
 	l.initialize = append(l.initialize, options)
-	l.controlURL = controlMigratorURL
+	l.controlURL = bootstrap.Postgres.ControlMigratorURL
 	return l.initializeErr
 }
 
@@ -281,6 +281,30 @@ func TestOperatorBootstrapRejectsCaseFoldedDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestOperatorBootstrapAcceptsBundledPostgresWithReviewedPoolInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operator-bootstrap.json")
+	writeOperatorConfig(t, path)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var document map[string]any
+	require.NoError(t, json.Unmarshal(contents, &document))
+	document["postgresProfile"] = "bundled"
+	postgres := document["postgres"].(map[string]any)
+	for _, key := range []string{
+		"controlUrl", "controlMigratorUrl", "controlMaintenanceUrl",
+		"duckLakeUrl", "duckLakeMaintenanceUrl", "duckLakeMigratorUrl",
+	} {
+		delete(postgres, key)
+	}
+	contents, err = json.Marshal(document)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, contents, 0o600))
+
+	_, options, err := readAndValidateOperatorBootstrap(path)
+	require.NoError(t, err)
+	require.NoError(t, options.Validate(), "bundled mode retains the caller-reviewed physical-pool identity and evidence")
+}
+
 func TestInstallRejectsInvalidConfigurationBeforeMutation(t *testing.T) {
 	paths := testPaths(t)
 	writeTestPayload(t, paths.Payload)
@@ -427,7 +451,7 @@ func writeOperatorConfig(t *testing.T, path string) {
 	})
 	require.NoError(t, err)
 	operator := OperatorBootstrap{
-		SchemaVersion: 1,
+		SchemaVersion: 1, PostgresProfile: composectl.FirstInstallPostgresExternal,
 		Postgres: composectl.FirstInstallPostgres{
 			ControlURL:             "postgres://leapview_control_runtime:control-runtime-secret@db.example/leapview_control?sslmode=verify-full",
 			ControlMigratorURL:     "postgres://leapview_control_migrator:control-migrator-secret@db.example/leapview_control?sslmode=verify-full",

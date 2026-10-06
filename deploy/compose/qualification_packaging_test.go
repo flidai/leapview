@@ -152,8 +152,10 @@ func TestQualificationBundleValidatorBehavior(t *testing.T) {
 func writeQualificationBundleFixture(t *testing.T) string {
 	t.Helper()
 	bundle := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(bundle, "qualification"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, directory := range []string{"qualification", "postgres"} {
+		if err := os.MkdirAll(filepath.Join(bundle, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	files := map[string]struct {
 		contents string
@@ -162,6 +164,10 @@ func writeQualificationBundleFixture(t *testing.T) string {
 		"compose.yaml": {
 			contents: "services:\n  leapview:\n    image: example/leapview\n",
 			mode:     0o600,
+		},
+		"compose.postgres.yaml": {
+			contents: "services:\n  postgres:\n    image: postgres:18-alpine\n    volumes:\n      - leapview-postgres-data:/var/lib/postgresql\n      - type: bind\n        target: /run/leapview-postgres/bundled-init.sh\n    environment:\n      LEAPVIEW_POSTGRES_SECRET_DIR: /var/lib/postgresql/18/leapview-secrets\nnetworks:\n  postgres-private:\n    internal: true\n",
+			mode:     0o644,
 		},
 		"compose.https.yaml": {
 			contents: "services:\n  caddy:\n    image: example/caddy\n",
@@ -189,6 +195,14 @@ func writeQualificationBundleFixture(t *testing.T) string {
 		},
 		"qualification/postgres-init.sh": {
 			contents: "#!/usr/bin/env bash\nCREATE ROLE leapview_control_owner;\nCREATE ROLE leapview_ducklake_owner;\nCREATE DATABASE leapview;\n",
+			mode:     0o755,
+		},
+		"postgres/bundled-entrypoint.sh": {
+			contents: "#!/bin/sh\n",
+			mode:     0o755,
+		},
+		"postgres/bundled-init.sh": {
+			contents: "#!/bin/sh\nPGSSLMODE=verify-full\n",
 			mode:     0o755,
 		},
 		"qualification/validate-bundle.sh": {

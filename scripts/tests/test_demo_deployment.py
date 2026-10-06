@@ -300,13 +300,19 @@ class StagingTests(unittest.TestCase):
         self.release = self.root/'releases'/('sha256-'+'a'*64)
         self.release.mkdir(parents=True)
         self.payload = {name: b'packaged content' for name in
-                        ['compose.yaml', 'compose.https.yaml', 'compose.first-install-bootstrap.yaml',
+                        ['compose.yaml', 'compose.postgres.yaml', 'compose.https.yaml', 'compose.first-install-bootstrap.yaml',
                          'Caddyfile', 'Caddyfile.first-install-bootstrap', 'first-install.env',
                          'deployment.env.example', 'leapview.env.example',
-                         'leapviewctl', 'leapviewctl-wrapper']}
+                         'leapviewctl', 'leapviewctl-wrapper',
+                         'postgres/bundled-entrypoint.sh', 'postgres/bundled-init.sh']}
         for name, data in self.payload.items():
-            (self.release/name).write_bytes(data)
-            (self.root/name).symlink_to('current/'+name)
+            release_path = self.release/name
+            release_path.parent.mkdir(parents=True, exist_ok=True)
+            release_path.write_bytes(data)
+            link_path = self.root/name
+            link_path.parent.mkdir(parents=True, exist_ok=True)
+            link_target = os.path.relpath(self.root/'current'/name, link_path.parent)
+            link_path.symlink_to(link_target)
         (self.root/'current').symlink_to('releases/'+self.release.name)
 
     def copy(self, *args):
@@ -355,7 +361,8 @@ class StagingTests(unittest.TestCase):
         before = {name: (self.release/name).stat() for name in self.payload}
         self.add_auxiliary_payload()
         self.assertEqual(self.stage(), self.release)
-        self.assertEqual({entry.name for entry in self.release.iterdir()}, set(before))
+        released_files = {str(path.relative_to(self.release)) for path in self.release.rglob('*') if path.is_file()}
+        self.assertEqual(released_files, set(before))
         for name, previous in before.items():
             current = (self.release/name).stat()
             self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
@@ -366,9 +373,11 @@ class StagingTests(unittest.TestCase):
         self.add_auxiliary_payload()
         self.image = 'ghcr.io/flidai/leapview@sha256:'+'b'*64
         staged = self.stage()
-        self.assertEqual({entry.name for entry in staged.iterdir()}, runtime_files)
+        staged_files = {str(path.relative_to(staged)) for path in staged.rglob('*') if path.is_file()}
+        self.assertEqual(staged_files, runtime_files)
         for name in runtime_files:
-            expected = 0o700 if name in ('leapviewctl', 'leapviewctl-wrapper') else 0o600
+            expected = (0o700 if name in ('leapviewctl', 'leapviewctl-wrapper') else
+                        0o644 if name.startswith('postgres/') else 0o600)
             self.assertEqual((staged/name).stat().st_mode & 0o777, expected)
 
     def test_legacy_complete_payload_is_accepted_without_rewriting(self):

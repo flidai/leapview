@@ -136,6 +136,13 @@ func composeArguments(root string, args ...string) ([]string, error) {
 		"--env-file", filepath.Join(root, deploymentEnvName),
 		"--file", filepath.Join(root, "compose.yaml"),
 	}
+	bundledPostgres, err := bundledPostgresSelected(root)
+	if err != nil {
+		return nil, err
+	}
+	if bundledPostgres {
+		result = append(result, "--file", filepath.Join(root, "compose.postgres.yaml"))
+	}
 	if https == "1" {
 		result = append(result, "--file", filepath.Join(root, "compose.https.yaml"))
 	}

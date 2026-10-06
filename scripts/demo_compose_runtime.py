@@ -32,6 +32,7 @@ RUNTIME_PAYLOAD_MODES = {
     'leapviewctl': 0o700,
     'leapviewctl-wrapper': 0o700,
     'compose.yaml': 0o600,
+    'compose.postgres.yaml': 0o600,
     'compose.https.yaml': 0o600,
     'compose.first-install-bootstrap.yaml': 0o600,
     'Caddyfile.first-install-bootstrap': 0o600,
@@ -39,6 +40,8 @@ RUNTIME_PAYLOAD_MODES = {
     'Caddyfile': 0o600,
     'deployment.env.example': 0o600,
     'leapview.env.example': 0o600,
+    'postgres/bundled-entrypoint.sh': 0o644,
+    'postgres/bundled-init.sh': 0o644,
 }
 
 def replace_installation_image(data, old, new):
@@ -414,7 +417,8 @@ def stage_release(image):
                 mode = entry.lstat().st_mode
                 if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                     raise RuntimeError('Deployment payload contains a link or special file; operator review required')
-                entries[str(entry.relative_to(path))] = None if stat.S_ISDIR(mode) else entry.read_bytes()
+                if stat.S_ISREG(mode):
+                    entries[str(entry.relative_to(path))] = entry.read_bytes()
             return entries
 
         complete = contents(packaged)
@@ -422,7 +426,9 @@ def stage_release(image):
             raise RuntimeError('Required runtime payload file is missing or empty')
         runtime = {name: complete[name] for name in RUNTIME_PAYLOAD_MODES}
         # Seed defaults belong to the candidate, not the installed topology.
-        for name in ['compose.yaml', 'compose.https.yaml', 'Caddyfile', 'deployment.env.example']:
+        for name in ['compose.yaml', 'compose.postgres.yaml', 'compose.https.yaml',
+                     'postgres/bundled-entrypoint.sh', 'postgres/bundled-init.sh',
+                     'Caddyfile', 'deployment.env.example']:
             if runtime[name] != (ROOT/name).read_bytes():
                 raise RuntimeError('Deployment payload changed; reviewed host upgrade required: '+name)
         if release.exists() or release.is_symlink():
@@ -435,8 +441,10 @@ def stage_release(image):
             staged = Path(directory)/'generation'
             staged.mkdir(mode=0o700)
             for name, mode in RUNTIME_PAYLOAD_MODES.items():
-                (staged/name).write_bytes(runtime[name])
-                (staged/name).chmod(mode)
+                path = staged/name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(runtime[name])
+                path.chmod(mode)
             staged.rename(release)
     return release
 

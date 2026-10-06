@@ -5,7 +5,43 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
+
+func qualificationNativeFirstInstallOptions(
+	topology *qualificationNativePostgresTopology,
+	artifacts physicalPoolBootstrapArtifacts,
+) (FirstInstallOptions, error) {
+	if err := validateQualificationNativePostgresEnvironmentTopology(topology); err != nil {
+		return FirstInstallOptions{}, err
+	}
+	if err := validatePhysicalPoolBootstrapArtifacts(artifacts); err != nil {
+		return FirstInstallOptions{}, err
+	}
+	options := FirstInstallOptions{
+		Profile: FirstInstallPostgresExternal,
+		Postgres: FirstInstallPostgres{
+			ControlURL:             topology.ControlURL,
+			ControlMigratorURL:     topology.ControlMigratorURL,
+			ControlMaintenanceURL:  topology.ControlMaintenanceURL,
+			DuckLakeURL:            topology.DuckLakeURL,
+			DuckLakeMaintenanceURL: topology.DuckLakeMaintenanceURL,
+			DuckLakeMigratorURL:    topology.DuckLakeMigratorURL,
+		},
+		PhysicalPool: FirstInstallPhysicalPool{
+			Pool: artifacts.Pool,
+			Evidence: physicalpool.EvidenceArtifact{
+				SchemaVersion: physicalpool.EvidenceArtifactSchemaVersion,
+				Evidence:      artifacts.Evidence,
+			},
+		},
+	}
+	if err := options.Validate(); err != nil {
+		return FirstInstallOptions{}, err
+	}
+	return options, nil
+}
 
 // seedQualificationNativeEnvironment copies the packaged application
 // environment example into the qualification bundle. Compose resolves

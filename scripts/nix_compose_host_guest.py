@@ -1096,6 +1096,7 @@ def _qualification_operator_config(pool_output: bytes, urls: dict[str, str]) -> 
         raise HostGuestError("image-generated physical-pool qualification output has an unsupported schema")
     operator = {
         "schemaVersion": 1,
+        "postgresProfile": "external",
         "postgres": urls,
         "physicalPool": {"pool": artifacts["pool"], "evidence": artifacts["evidence"]},
     }

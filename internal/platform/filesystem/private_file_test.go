@@ -28,6 +28,15 @@ func TestWritePrivateFileAtomicRoundTripsWithPrivatePermissions(t *testing.T) {
 	}
 }
 
+func TestWritePrivateFileAtomicOnceDoesNotReplaceExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	require.NoError(t, WritePrivateFileAtomicOnce(path, []byte("first"), PrivateFileMode))
+	require.ErrorIs(t, WritePrivateFileAtomicOnce(path, []byte("replacement"), PrivateFileMode), os.ErrExist)
+	contents, err := ReadPrivateFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "first", string(contents), "retry must preserve the first durable secret")
+}
+
 func TestReadPrivateFileRejectsBroadPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {

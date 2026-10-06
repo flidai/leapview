@@ -17,12 +17,13 @@ const OperatorBootstrapSchemaVersion = 1
 
 const maxOperatorBootstrapBytes = 1 << 20
 
-// OperatorBootstrap is a private first-install input containing the provider's
-// production PostgreSQL connections and canonical pool/evidence artifacts.
+// OperatorBootstrap is the private first-install input selecting a PostgreSQL
+// adapter and carrying canonical pool/evidence artifacts.
 type OperatorBootstrap struct {
-	SchemaVersion int                                 `json:"schemaVersion"`
-	Postgres      composectl.FirstInstallPostgres     `json:"postgres"`
-	PhysicalPool  composectl.FirstInstallPhysicalPool `json:"physicalPool"`
+	SchemaVersion   int                                 `json:"schemaVersion"`
+	PostgresProfile string                              `json:"postgresProfile"`
+	Postgres        composectl.FirstInstallPostgres     `json:"postgres"`
+	PhysicalPool    composectl.FirstInstallPhysicalPool `json:"physicalPool"`
 }
 
 func readAndValidateOperatorBootstrap(path string) (OperatorBootstrap, composectl.FirstInstallOptions, error) {
@@ -58,7 +59,9 @@ func readAndValidateOperatorBootstrap(path string) (OperatorBootstrap, composect
 	if bootstrap.SchemaVersion != OperatorBootstrapSchemaVersion {
 		return OperatorBootstrap{}, composectl.FirstInstallOptions{}, fmt.Errorf("unsupported operator bootstrap schemaVersion %d", bootstrap.SchemaVersion)
 	}
-	options := composectl.FirstInstallOptions{Postgres: bootstrap.Postgres, PhysicalPool: bootstrap.PhysicalPool}
+	options := composectl.FirstInstallOptions{
+		Profile: bootstrap.PostgresProfile, Postgres: bootstrap.Postgres, PhysicalPool: bootstrap.PhysicalPool,
+	}
 	if err := options.Validate(); err != nil {
 		return OperatorBootstrap{}, composectl.FirstInstallOptions{}, fmt.Errorf("validate operator bootstrap configuration: %w", err)
 	}

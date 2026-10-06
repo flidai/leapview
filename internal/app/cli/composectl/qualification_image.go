@@ -394,12 +394,16 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
+	firstInstall, err := qualificationNativeFirstInstallOptions(nativeTopology, artifacts)
+	if err != nil {
+		return err
+	}
 	if err := instanceController.InitializeFirstInstall(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
 		Image:       imageReference,
-	}, nativeTopology.ControlMigratorURL); err != nil {
+	}, firstInstall); err != nil {
 		return err
 	}
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "instance initialization"); err != nil {

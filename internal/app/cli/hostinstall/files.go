@@ -30,10 +30,19 @@ var legacyPayloadFiles = []payloadFile{
 	{Source: "leapviewctl-wrapper", Target: func(paths Paths) string { return filepath.Join(paths.SystemBin, "leapviewctl") }, Mode: 0o700},
 }
 
-var requiredPayloadFiles = append([]payloadFile{}, legacyPayloadFiles...)
+// bundledPostgresPayloadFiles extend the current host payload. Keep them out
+// of legacyPayloadFiles because the exact pinned revision 019 predecessor did
+// not ship the optional PostgreSQL adapter.
+var bundledPostgresPayloadFiles = []payloadFile{
+	{Source: "compose.postgres.yaml", Target: func(paths Paths) string { return filepath.Join(paths.Root, "compose.postgres.yaml") }, Mode: 0o600},
+	{Source: "postgres/bundled-entrypoint.sh", Target: func(paths Paths) string { return filepath.Join(paths.Root, "postgres", "bundled-entrypoint.sh") }, Mode: 0o644},
+	{Source: "postgres/bundled-init.sh", Target: func(paths Paths) string { return filepath.Join(paths.Root, "postgres", "bundled-init.sh") }, Mode: 0o644},
+}
+
+var requiredPayloadFiles = append(append([]payloadFile{}, legacyPayloadFiles...), bundledPostgresPayloadFiles...)
 
 func payloadFiles(payload map[string][]byte) ([]payloadFile, error) {
-	for _, file := range legacyPayloadFiles {
+	for _, file := range requiredPayloadFiles {
 		if len(payload[file.Source]) == 0 {
 			return nil, fmt.Errorf("deployment payload %s is missing or empty", file.Source)
 		}
@@ -228,6 +237,16 @@ func syncPath(path string) error {
 
 func readPayload(directory string) (map[string][]byte, error) {
 	contents := make(map[string][]byte, len(requiredPayloadFiles))
+	for _, file := range requiredPayloadFiles {
+		if err := readPayloadFile(directory, file, contents); err != nil {
+			return nil, err
+		}
+	}
+	return contents, nil
+}
+
+func readRevision019Payload(directory string) (map[string][]byte, error) {
+	contents := make(map[string][]byte, len(legacyPayloadFiles))
 	for _, file := range legacyPayloadFiles {
 		if err := readPayloadFile(directory, file, contents); err != nil {
 			return nil, err

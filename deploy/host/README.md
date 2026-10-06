@@ -38,12 +38,13 @@ First install requires a separate root-private file at
 `/run/leapview/operator-bootstrap.json`, mode `0600`. It is never part of
 Terraform variables, state, cloud-init, or provider user data. Deliver it over
 the operator's private secret channel after the host is prepared. Its schema
-uses six provider-created PostgreSQL URLs and the canonical physical-pool
-identity and evidence artifact types:
+selects an explicit PostgreSQL profile and always includes the canonical
+physical-pool identity and evidence artifact types. The external profile is:
 
 ```jsonc
 {
   "schemaVersion": 1,
+  "postgresProfile": "external",
   "postgres": {
     "controlUrl": "postgres://leapview_control_runtime:<secret>@<provider-host>/leapview_control?sslmode=verify-full",
     "controlMigratorUrl": "postgres://leapview_control_migrator:<secret>@<provider-host>/leapview_control?sslmode=verify-full",
@@ -69,6 +70,32 @@ Use a trusted system CA or `sslrootcert`; LeapView does not require a
 deployment-specific certificate path. Pool evidence must be reviewed conformance
 evidence matching the pool's compatibility tuple, with no credentials or raw
 observations in the artifact.
+
+To select the optional bundled PostgreSQL Compose adapter, replace the
+`postgresProfile` and `postgres` fields with:
+
+```json
+"postgresProfile": "bundled",
+"postgres": {}
+```
+
+Keep the complete `physicalPool` object unchanged; the adapter does not invent
+or approve pool evidence. It starts the pinned PostgreSQL 18 service before the
+first-install dry-run, generates private credentials and TLS material once
+under `/opt/leapview/.postgres-secrets`, then provisions separate runtime,
+migrator, and maintenance roles. The serving app receives only the public CA
+certificate. The selected profile is persisted and cannot be switched by
+editing Compose environment variables. A retry with the same operator input
+reconciles roles and databases even when PostgreSQL initialized its volume
+before an earlier step stopped.
+
+The bundled service has persistent local storage and no host-published port.
+It is single-node PostgreSQL; this adapter does not provide HA, automated
+backup/PITR, database-version upgrades, or certificate rotation. Protect the
+PostgreSQL volume and matching `.postgres-secrets` together in operator
+recovery procedures. Do not delete either to recover an interrupted install;
+a missing or inconsistent credential set fails closed rather than replacing
+keys or passwords.
 
 On Ubuntu or Debian, after private delivery, run:
 

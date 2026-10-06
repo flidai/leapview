@@ -38,7 +38,7 @@ type Paths struct {
 
 type Lifecycle interface {
 	PrepareFirstInstall(context.Context, composectl.FirstInstallOptions) error
-	InitializeFirstInstall(context.Context, composectl.InitOptions, string) error
+	InitializeFirstInstall(context.Context, composectl.InitOptions, composectl.FirstInstallOptions) error
 	ApplyFirstInstall(context.Context, composectl.FirstInstallOptions) error
 	StartFirstInstallBootstrap(context.Context) error
 	Start(context.Context) error
@@ -150,9 +150,8 @@ func (i *Installer) Install(ctx context.Context) error {
 		return fmt.Errorf("bootstrap configuration does not match the installed instance; use leapviewctl lifecycle commands for changes")
 	}
 	var operatorOptions composectl.FirstInstallOptions
-	var operatorConfig OperatorBootstrap
 	if installed == nil {
-		operatorConfig, operatorOptions, err = readAndValidateOperatorBootstrap(i.paths.OperatorConfig)
+		_, operatorOptions, err = readAndValidateOperatorBootstrap(i.paths.OperatorConfig)
 		if err != nil {
 			return err
 		}
@@ -183,7 +182,7 @@ func (i *Installer) Install(ctx context.Context) error {
 			AdminEmail: normalized.AdminEmail, Domain: normalized.Domain,
 			Environment: normalized.Environment, Image: normalized.Image,
 			NoHTTPS: !*config.HTTPS,
-		}, operatorConfig.Postgres.ControlMigratorURL); err != nil {
+		}, operatorOptions); err != nil {
 			return fmt.Errorf("initialize LeapView: %w", err)
 		}
 		if err := lifecycle.ApplyFirstInstall(ctx, operatorOptions); err != nil {

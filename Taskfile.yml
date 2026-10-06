@@ -295,12 +295,15 @@ tasks:
       - ./scripts/postgres-dev.sh check
 
   test:qualification:native-postgres:
-    desc: Run the required container-backed native PostgreSQL 18 qualification contract
+    desc: Run native PostgreSQL topology and bundled first-install retry contracts
     env:
       LEAPVIEW_TEST_CONTAINERS: "1"
+      LEAPVIEW_TEST_BUNDLED_POSTGRES_DOCKER: "1"
     cmds:
       - task: generate
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
+      - go test ./internal/app/cli/composectl -run '^TestBundledPostgresPrepareSeedsAppEnvBeforeCompose$' -count=1 -v
+      - go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerResumesProvisioningAndPreservesVolume$' -count=1 -v
 
   test:qualification:demo-host-recovery:
     desc: Run isolated host recovery and migration-boundary qualification with synthetic disposable fixtures
