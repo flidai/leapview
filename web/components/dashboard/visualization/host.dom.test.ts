@@ -625,19 +625,58 @@ test('eager invalid and unknown-renderer envelopes remain visible errors', async
 
 test('pending renderer loads reject stale mount promises after detach and reattach', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const startedAt = Date.now()
+  const lifecycle: Array<{ elapsedMs: number; phase: string; event: string; detail?: unknown }> = []
+  let phase = 'page-created'
+  let omittedLifecycleEvents = 0
+  const record = (event: string, detail?: unknown) => {
+    if (lifecycle.length === 40) {
+      lifecycle.shift()
+      omittedLifecycleEvents++
+    }
+    lifecycle.push({ elapsedMs: Date.now() - startedAt, phase, event, ...(detail === undefined ? {} : { detail }) })
+  }
+  const mark = (next: string) => {
+    phase = next
+    record('phase')
+  }
+  const diagnosticPathKind = (value: string): string => {
+    try {
+      const url = new URL(value)
+      if (url.origin !== baseURL) return 'external'
+      if (url.pathname === '/') return 'document'
+      if (url.pathname.startsWith('/chunks/echarts-')) return 'echarts-renderer-chunk'
+      if (url.pathname.startsWith('/static/vendor/')) return 'vendor-asset'
+      if (url.pathname.endsWith('.js')) return 'script'
+      if (url.pathname.endsWith('.css')) return 'stylesheet'
+      return 'other'
+    } catch { return 'other' }
+  }
+  page.on('framenavigated', (frame) => record('frame-navigated', { mainFrame: frame === page.mainFrame(), path: diagnosticPathKind(frame.url()) }))
+  page.on('framedetached', (frame) => record('frame-detached', { mainFrame: frame === page.mainFrame(), path: diagnosticPathKind(frame.url()) }))
+  page.on('pageerror', (error) => record('page-error', { name: error.name }))
+  page.on('crash', () => record('page-crash'))
+  page.on('requestfailed', (request) => record('request-failed', { resourceType: request.resourceType(), method: request.method(), path: diagnosticPathKind(request.url()) }))
+  const onBrowserDisconnected = () => record('browser-disconnected')
+  browser.on('disconnected', onBrowserDisconnected)
   let releaseRenderer!: () => void
   let rendererRequested!: () => void
   const rendererBlocked = new Promise<void>((resolve) => { releaseRenderer = resolve })
   const rendererRequest = new Promise<void>((resolve) => { rendererRequested = resolve })
   try {
+    mark('route-setup')
     await page.route('**/chunks/echarts-*.js', async (route) => {
+      record('renderer-route-hit')
       rendererRequested()
       await rendererBlocked
       await route.continue()
     })
+    mark('navigation-started')
     await page.goto(baseURL)
+    mark('host-bootstrap-wait')
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
+    mark('fixture-hosts-created')
     await page.evaluate(() => {
       const source = (window as any).__lvSourceHosts.orders_chart
       const deferred = document.createElement('lv-visualization-host') as any
@@ -649,6 +688,7 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       ;(window as any).__lvMountRace = { deferred, transient, envelopes }
       document.body.append(deferred, transient)
     })
+    mark('lazy-validator-wait')
     // Keep the fixture hosts reachable while their lazy validator and Lit
     // updates settle, before starting the renderer-load race under test.
     await page.waitForFunction(() => {
@@ -657,6 +697,8 @@ test('pending renderer loads reject stale mount promises after detach and reatta
         host.envelope === envelopes[index] && !host.pendingEnvelopeValidation && host.hasUpdated && !host.isUpdatePending,
       )
     })
+    mark('lazy-validator-ready')
+    mark('initial-mount-started')
     await page.evaluate(() => {
       const { deferred, transient } = (window as any).__lvMountRace
       const transientMount = transient.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
@@ -665,13 +707,16 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       stale.then(() => { race.staleSettled = true })
       ;(window as any).__lvMountRace = { deferred, race }
     })
+    mark('renderer-request-wait')
     await rendererRequest
+    mark('blocked-mounts-wait')
     // Establish that both hosts reached the blocked renderer load, rather than
     // detaching a host that is still validating its envelope.
     await page.waitForFunction(() => {
       const { deferred, race } = (window as any).__lvMountRace
       return Boolean(deferred.controller && deferred.pendingApply && race.transient.controller && race.transient.pendingApply)
     })
+    mark('detach-reattach-started')
     await page.evaluate(async () => {
       const { deferred, race } = (window as any).__lvMountRace
       race.transientController = race.transient.controller
@@ -686,9 +731,12 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       race.fresh = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       race.reattached = true
     })
+    mark('pre-release-state-read')
     const beforeRelease = await page.evaluate(() => (window as any).__lvMountRace.race.staleSettled)
     expect(beforeRelease).toBe(false)
+    mark('renderer-release')
     releaseRenderer()
+    mark('final-state-read')
     const result = await page.evaluate(async () => {
       const { deferred, race } = (window as any).__lvMountRace
       return {
@@ -706,9 +754,14 @@ test('pending renderer loads reject stale mount promises after detach and reatta
     expect(result.fresh).toBe('resolved')
     expect(result.mounted).toBeGreaterThan(0)
     expect(result.controller).toBe(true)
+    mark('assertions-complete')
+  } catch (error) {
+    console.error('[visualization-host lifecycle]', JSON.stringify({ phase, events: lifecycle, omittedLifecycleEvents }))
+    throw error
   } finally {
     releaseRenderer?.()
     await page.close()
+    browser.off('disconnected', onBrowserDisconnected)
   }
 })
 
