@@ -798,19 +798,6 @@ func durationMillis(duration time.Duration) int64 {
 	return 1
 }
 
-func bundleOutputColumns(bundle semanticquery.BundlePlan, id string) []string {
-	for _, branch := range bundle.Branches {
-		if branch.ID == id {
-			columns := make([]string, len(branch.Columns))
-			for i, column := range branch.Columns {
-				columns[i] = column.Output
-			}
-			return columns
-		}
-	}
-	return nil
-}
-
 type physicalStatementCounterContextKey struct{}
 
 func withPhysicalStatementCounter(ctx context.Context) (context.Context, *atomic.Int64) {
@@ -1284,6 +1271,7 @@ func dataQueryFields(fields []dataquery.Field) []semanticquery.Field {
 		out = append(out, semanticquery.Field{
 			Field: field.Field,
 			Alias: field.Alias,
+			Grain: field.Grain,
 		})
 	}
 	return out

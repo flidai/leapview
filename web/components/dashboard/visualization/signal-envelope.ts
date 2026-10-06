@@ -66,6 +66,7 @@ export class DashboardVisualizationSignalDecoder {
       filterRevision: _filterRevision,
       interactionRevision: _interactionRevision,
       consumerIdentity: _consumerIdentity,
+      exploreHref: _exploreHref,
       ...envelope
     } = signal
     const fingerprint = JSON.stringify(envelope)

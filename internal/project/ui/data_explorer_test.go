@@ -1,8 +1,8 @@
 package ui
 
 import (
+	"encoding/json"
 	"net/url"
-	"reflect"
 	"testing"
 
 	catalog "github.com/flidai/leapview/internal/project/navigation"
@@ -17,14 +17,18 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	}}}
 	page := uisignals.DataExplorerPageSignal{Context: uisignals.DataExplorerContextSignal{Active: true, Environment: "production", GenerationID: "generation-1", ProjectID: "sales"}}
 	signals := DataExplorerBootstrapSignalsWithAgent(catalogFixture(), page, explorer, DataExplorerAgentBootstrap{})
-	context, ok := signals["agentContext"].(uisignals.AgentContextSignal)
-	if !ok {
-		t.Fatalf("agent context = %#v", signals["agentContext"])
+	rawContext, err := json.Marshal(signals["agentContext"])
+	if err != nil {
+		t.Fatalf("marshal agent context: %v", err)
+	}
+	var context uisignals.AgentContextSignal
+	if err := json.Unmarshal(rawContext, &context); err != nil {
+		t.Fatalf("decode agent context: %v", err)
 	}
 	if context.Surface != "data" || context.ModelID != "commerce" || uisignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)
 	}
-	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Metrics[0] != "order_count" {
+	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Metrics[0].Field != "order_count" {
 		t.Fatalf("agent exploration = %#v", context.Exploration)
 	}
 	if signals["agent"] == nil || signals["agentVisuals"] == nil {
@@ -33,7 +37,7 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 }
 
 func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
-	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), ClientID: uisignals.Optional("explorer-tab-1"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
 		SemanticModelID: uisignals.Pointer("semantic:sales"), DatasetID: uisignals.Pointer("orders"),
 		Dimensions: []string{"orders.month"}, Metrics: []string{"revenue"},
 		Filters: []uisignals.DataExploreFilterSignal{{Field: "orders.state", Operator: "equals", Values: []string{"paid"}}},
@@ -46,17 +50,45 @@ func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := updates.Query()
-	if values.Get("route") != "data" || values.Get("surface") != "explore" || values.Get("mode") != "explore" || values.Get("v") != "1" {
+	if values.Get("route") != "data" || values.Get("surface") != "explore" || values.Get("mode") != "explore" || values.Get("v") != "2" {
 		t.Fatalf("routing values = %#v", values)
 	}
-	if !reflect.DeepEqual(values["dimension"], []string{"orders.month"}) || !reflect.DeepEqual(values["metric"], []string{"revenue"}) || values.Get("limit") != "250" {
-		t.Fatalf("exploration values = %#v", values)
+	if values.Get("clientId") != "explorer-tab-1" {
+		t.Fatalf("updates client identity = %q, want %q", values.Get("clientId"), "explorer-tab-1")
 	}
-	if values.Get("semanticModel") != "semantic:sales" || values.Has("model") {
-		t.Fatalf("semantic model values = %#v", values)
+	var spec map[string]any
+	if err := json.Unmarshal([]byte(values.Get("state")), &spec); err != nil {
+		t.Fatalf("state = %q: %v", values.Get("state"), err)
+	}
+	if spec["modelId"] != "semantic:sales" || spec["limit"] != float64(250) || values.Has("semanticModel") || values.Has("dimension") {
+		t.Fatalf("canonical exploration values = %#v / %#v", values, spec)
 	}
 	if values.Has("requestSeq") || values.Has("resetVersion") {
 		t.Fatalf("runtime state leaked into updates URL: %#v", values)
+	}
+}
+
+func TestDataExplorerUpdatesURLPreservesBrowseFilters(t *testing.T) {
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("browse"), ObjectKey: uisignals.Pointer("model:zip"), Explore: &uisignals.DataExploreCommand{
+		SemanticModelID: uisignals.Pointer("semantic-model:visuals"), DatasetID: uisignals.Pointer("zip_geolocations"),
+		Dimensions: []string{}, Metrics: []string{}, Filters: []uisignals.DataExploreFilterSignal{{Field: "zip_geolocations.state", Operator: "equals", Values: []string{"SP"}}},
+		Sort: []uisignals.DataExploreSortSignal{}, Limit: 100,
+	}}
+	values, err := url.Parse(dataExplorerUpdatesURL(command))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := values.Query()
+	if query.Get("object") != "model:zip" || query.Get("mode") != "browse" || query.Get("v") != "2" {
+		t.Fatalf("browse update URL = %#v", query)
+	}
+	var spec map[string]any
+	if err := json.Unmarshal([]byte(query.Get("state")), &spec); err != nil {
+		t.Fatal(err)
+	}
+	filters, ok := spec["filters"].([]any)
+	if !ok || len(filters) != 1 {
+		t.Fatalf("browse filters lost from update URL: %#v", spec)
 	}
 }
 

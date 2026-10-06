@@ -4,6 +4,8 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { exampleDetails, exampleChromeStyles } from './example-chrome'
+import { prepareExplorationWindow } from '../web/components/data/data-explorer-controller'
+import { explorationSpecFromCommand } from '../web/components/data/data-explorer-spec'
 import type { DataExploreCommand, DataExplorerCommand } from '../web/generated/signals'
 import type { EntityListItem } from '../web/components/shared/entity-list'
 import type { WindowedTablePayload, WindowedTableRequest } from '../web/components/shared/windowed-table'
@@ -22,7 +24,7 @@ const docs: Record<string, { tag: string; source: string; properties: string; ev
   windowed: { tag: 'lv-windowed-table', source: 'web/components/shared/windowed-table.ts', properties: 'table { columns, blocks, totalRows, chunkSize, resetVersion, sort, visibleColumns, columnWidths } · compact', events: 'lv-windowed-table-request · lv-windowed-table-columns · lv-windowed-table-column-widths', note: 'Scroll through 1,000 deterministic rows. The local adapter fills the three block slots, honors sort and reset versions, and preserves column visibility and widths.' },
   'entity-list': { tag: 'lv-entity-list', source: 'web/components/shared/entity-list.ts', properties: 'items · columns · filters · clientFilter · groupBy · compact · mobileCards · rowAction', events: 'lv-entity-list-query · lv-entity-list-favorite-toggle · lv-entity-list-pin-toggle · lv-entity-list-row-action', note: 'Search, category filtering, sorting, and group collapse use production behavior. Favorites, pins, refresh, and inspection update local fixture state.' },
   'data-preview': { tag: 'lv-data-preview-table', source: 'web/components/data/preview-table.ts', properties: 'preview: DataPreviewSignal · command: DataExplorerCommand', events: 'lv-data-preview-table-command { block, start, count, requestSeq, resetVersion, sort, visibleColumns, columnWidths }', note: 'The production data-browser wrapper forwards window requests to the local fixture. Error recovery through Retry or Reset view also stays local.' },
-  'data-explore': { tag: 'lv-data-explore-table', source: 'web/components/data/explore-table.ts', properties: 'result: DataExploreResultSignal · command: DataExploreCommand · visibleColumns', events: 'lv-data-explore-table-command { sort } or { columnWidths }', note: 'The production exploration wrapper shows 75 result rows. Header sorting produces a command that reorders the local result and advances its request version.' },
+  'data-explore': { tag: 'lv-data-explore-table', source: 'web/components/data/explore-table.ts', properties: 'result: DataExploreResultSignal · command: DataExploreCommand · visibleColumns', events: 'lv-data-explore-table-window { window, spec? } · lv-data-explore-table-command { columnWidths }', note: 'The production exploration wrapper shows 75 result rows. Header sorting uses the production window command; the local adapter reorders rows and acknowledges block and query sequences.' },
 }
 
 export class PlaygroundTables extends LitElement {
@@ -153,11 +155,19 @@ export class PlaygroundTables extends LitElement {
   private onExplore = (event: CustomEvent<Partial<DataExploreCommand>>) => {
     this.log(event.type, event.detail)
     const sorted = Boolean(event.detail.sort)
-    this.exploreCommand = {
+    const command = {
       ...this.exploreCommand, ...event.detail,
       requestSeq: this.exploreCommand.requestSeq + (sorted ? 1 : 0),
       resetVersion: this.exploreCommand.resetVersion + (sorted ? 1 : 0),
     }
+    this.exploreCommand = { ...command, spec: explorationSpecFromCommand(command) }
+  }
+
+  private onExploreWindow = (event: CustomEvent<Partial<DataExploreCommand>>) => {
+    this.log(event.type, event.detail)
+    const command = prepareExplorationWindow(this.exploreCommand, event.detail)
+    // Mirror the server's compatibility projection from the canonical spec.
+    this.exploreCommand = { ...command, sort: command.spec.sort.map(sort => ({ ...sort })) }
   }
 
   private onEntity = (event: CustomEvent<{ item?: EntityListItem; action?: string; query?: string; filter?: string }>) => {
@@ -186,7 +196,7 @@ export class PlaygroundTables extends LitElement {
       case 'windowed': return html`<lv-windowed-table .table=${this.table} ?compact=${this.compact} @lv-windowed-table-request=${this.onWindow} @lv-windowed-table-columns=${this.onColumns} @lv-windowed-table-column-widths=${this.onWidths}></lv-windowed-table>`
       case 'entity-list': return html`<lv-entity-list .items=${this.entities} .columns=${entityColumns} .filters=${[{ id: 'all', label: 'All categories' }, { id: 'commerce', label: 'Commerce' }, { id: 'finance', label: 'Finance' }]} list-label="Dashboards" search-placeholder="Search dashboards" empty-text="No dashboards in this fixture." client-filter ?compact=${this.compact} ?mobile-cards=${this.mobileCards} .groupBy=${this.grouped ? 'group' : ''} group-icon="folder" row-action="inspect" @lv-entity-list-query=${this.onEntity} @lv-entity-list-favorite-toggle=${this.onEntity} @lv-entity-list-pin-toggle=${this.onEntity} @lv-entity-list-row-action=${this.onEntity}></lv-entity-list>`
       case 'data-preview': return html`<lv-data-preview-table .preview=${previewFixture(this.table)} .command=${this.previewCommand} @lv-data-preview-table-command=${this.onPreview}></lv-data-preview-table>`
-      case 'data-explore': return html`<lv-data-explore-table .result=${exploreFixture(this.exploreCommand, this.status, this.truncated)} .command=${this.exploreCommand} @lv-data-explore-table-command=${this.onExplore}></lv-data-explore-table>`
+      case 'data-explore': return html`<lv-data-explore-table .result=${exploreFixture(this.exploreCommand, this.status, this.truncated)} .command=${this.exploreCommand} @lv-data-explore-table-command=${this.onExplore} @lv-data-explore-table-window=${this.onExploreWindow}></lv-data-explore-table>`
       default: return html`<p>Choose a table from the navigation.</p>`
     }
   }

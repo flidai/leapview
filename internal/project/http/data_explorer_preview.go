@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -97,6 +99,10 @@ func normalizeDataExplorerCommand(command projectsignals.DataExplorerCommand) pr
 }
 
 func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand) projectsignals.DataPreviewSignal {
+	return dataExplorerPreviewWithFilters(ctx, executor, projectID, object, command, nil)
+}
+
+func dataExplorerPreviewWithFilters(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, filters []dataquery.Filter) projectsignals.DataPreviewSignal {
 	command = normalizeDataExplorerCommand(command)
 	columns := explorerPreviewColumns(object)
 	command.Sort = dataExplorerSortForObjectColumns(command.Sort, columns)
@@ -104,6 +110,10 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 		Columns: columns, Blocks: emptyDataExplorerBlocks(command), ChunkSize: command.Count,
 		RowHeight: dataExplorerRowHeight, ResetVersion: command.ResetVersion, Sort: command.Sort,
 		TotalRowLabel: object.RowCountLabel,
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		preview.Stale = true
+		return preview
 	}
 	if executor == nil {
 		preview.Error = projectsignals.Pointer("data preview execution is unavailable")
@@ -120,13 +130,17 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 		// then split the rows into the table's existing block protocol.
 		count *= int64(len(blockIDs))
 	}
-	query, err := dataExplorerPreviewQuery(projectID, object, command, columns, start, count, true)
+	query, err := dataExplorerPreviewQuery(projectID, object, command, columns, filters, start, count, true)
 	if err != nil {
 		preview.Error = projectsignals.Pointer(err.Error())
 		return preview
 	}
 	result, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			preview.Stale = true
+			return preview
+		}
 		var limit *dataquery.ResultLimitError
 		if len(blockIDs) > 1 && ctx.Err() == nil && errors.As(err, &limit) {
 			// A configured budget can admit each block while rejecting their
@@ -160,6 +174,10 @@ func dataExplorerPreviewBlocks(ctx context.Context, executor DataQueryExecutor, 
 		query.Offset, query.Limit, query.IncludeTotal = int(start), int(command.Count), index == 0
 		result, err := executor.ExecuteDataQuery(ctx, query)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+				preview.Stale = true
+				return preview
+			}
 			preview.Error = projectsignals.Pointer(err.Error())
 			return preview
 		}
@@ -206,7 +224,7 @@ func dataExplorerApplyPreviewResult(preview *projectsignals.DataPreviewSignal, c
 	return totalKnown
 }
 
-func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, columns []projectsignals.DataPreviewColumnSignal, start, count int64, includeTotal bool) (dataquery.Query, error) {
+func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, columns []projectsignals.DataPreviewColumnSignal, filters []dataquery.Filter, start, count int64, includeTotal bool) (dataquery.Query, error) {
 	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(object.SemanticModelID))
 	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(object.DatasetID))
 	if object.Layer != "model" {
@@ -226,6 +244,16 @@ func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projects
 		sortSpec = append(sortSpec, dataquery.Sort{Field: column, Direction: projectsignals.ValueOrZero(command.Sort.Direction)})
 	}
 	query := dataquery.ModelRows(semanticModelID, datasetID, columnNames, sortSpec, int(start), int(count), includeTotal)
+	if len(filters) > 0 {
+		fields := make([]dataquery.Field, 0, len(columnNames))
+		for _, column := range columnNames {
+			fields = append(fields, dataquery.Field{Field: datasetID + "." + column, Alias: column})
+		}
+		for index := range sortSpec {
+			sortSpec[index].Field = datasetID + "." + sortSpec[index].Field
+		}
+		query = dataquery.SemanticRows(semanticModelID, datasetID, fields, nil, filters, sortSpec, int(start), int(count), includeTotal)
+	}
 	return query.WithMetadata(dataquery.Metadata{
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationPreviewWindow,
 		ObjectType: object.Layer, ObjectID: object.ResourceID,
@@ -305,95 +333,145 @@ func dataExplorerRows(rows []dataquery.Row) []map[string]any {
 	return out
 }
 
-func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, lowerer exploration.QueryLowerer, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model, compiled *semanticquery.CompiledModel) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+	command = dataExploreCommandWithCanonicalSpec(command)
+	command.Spec = normalizeExplorationSpec(command.Spec)
 	resultSignal := projectsignals.DataExploreResultSignal{
 		Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}, RequestSeq: command.RequestSeq,
 	}
-	if command.Limit <= 0 {
-		command.Limit = dataExplorerDefaultLimit
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return command, resultSignal
 	}
-	if command.Limit > dataExplorerMaximumLimit {
-		command.Limit = dataExplorerMaximumLimit
+	if explorationSpecIsEmpty(command.Spec) {
+		return command, resultSignal
+	}
+	if err := exploration.ValidateAgainstModel(model, &command.Spec); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
 	}
 	fieldByID := make(map[string]projectsignals.DataExploreFieldSignal, len(fields))
 	for _, field := range fields {
 		fieldByID[field.ID] = field
 	}
-	command.Dimensions = validExplorerFields(command.Dimensions, "dimension", fieldByID)
-	command.Metrics = validExplorerFields(command.Metrics, "metric", fieldByID)
-	command.Filters = validExplorerFilters(command.Filters, fieldByID)
-	command.Sort = validExplorerSort(command.Sort, command)
-	if len(command.Dimensions) == 0 && len(command.Metrics) == 0 && command.Time == nil {
+	for _, selected := range command.Spec.Dimensions {
+		field, ok := fieldByID[selected.Field]
+		if !ok || field.Kind != "dimension" || !field.Compatible {
+			resultSignal.Error = projectsignals.Pointer(fmt.Sprintf("invalid exploration command: dimension %q is unavailable", selected.Field))
+			return command, resultSignal
+		}
+	}
+	for _, selected := range command.Spec.Metrics {
+		field, ok := fieldByID[selected.Field]
+		if !ok || field.Kind != "metric" || !field.Compatible {
+			resultSignal.Error = projectsignals.Pointer(fmt.Sprintf("invalid exploration command: metric %q is unavailable", selected.Field))
+			return command, resultSignal
+		}
+	}
+	for index, filter := range command.Spec.Filters {
+		field, ok := fieldByID[filter.Field]
+		if !ok || field.Kind != "dimension" || !field.Compatible {
+			resultSignal.Error = projectsignals.Pointer(fmt.Sprintf("invalid exploration command: filter %d field %q is unavailable", index+1, filter.Field))
+			return command, resultSignal
+		}
+	}
+	if err := validateExplorerFilterDatasets(command.Spec, fieldByID, compiled); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
+	}
+	if len(command.Spec.Dimensions) == 0 && len(command.Spec.Metrics) == 0 && command.Spec.Time == nil {
 		return command, resultSignal
 	}
 	if executor == nil {
 		resultSignal.Error = projectsignals.Pointer("governed exploration execution is unavailable")
 		return command, resultSignal
 	}
-	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.SemanticModelID))
-	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
-	clearTarget := explorerCommandHasMultiRootMetric(command.Metrics, fieldByID)
-	if semanticModelID == "" || datasetID == "" {
-		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
+	if lowerer == nil {
+		resultSignal.Error = projectsignals.Pointer("governed exploration query lowering is unavailable")
 		return command, resultSignal
 	}
-	aliases := explorerQueryAliases(command.Dimensions, command.Metrics)
-	dimensions := make([]dataquery.Field, 0, len(command.Dimensions))
-	for _, field := range command.Dimensions {
-		dimensions = append(dimensions, dataquery.Field{Field: field, Alias: aliases[field]})
-	}
-	metrics := make([]dataquery.Field, 0, len(command.Metrics))
-	for _, field := range command.Metrics {
-		metrics = append(metrics, dataquery.Field{Field: field, Alias: aliases[field]})
-	}
-	filters := make([]dataquery.Filter, 0, len(command.Filters))
-	for _, filter := range command.Filters {
-		values := make([]any, 0, len(filter.Values))
-		for _, value := range filter.Values {
-			values = append(values, value)
-		}
-		filters = append(filters, dataquery.Filter{Field: filter.Field, Dataset: projectsignals.ValueOrZero(filter.DatasetID), Operator: filter.Operator, Values: values})
-	}
-	sortSpec := make([]dataquery.Sort, 0, len(command.Sort))
-	for _, sortSignal := range command.Sort {
-		sortSpec = append(sortSpec, dataquery.Sort{Field: sortSignal.Field, Direction: sortSignal.Direction})
-	}
-	// A metric with multiple physical roots is not owned by the selected
-	// browser dataset. Leave the target unscoped so the governed planner can
-	// infer all metric datasets and validate the selected qualified dimensions.
-	queryTarget := datasetID
-	if clearTarget {
-		queryTarget = ""
-	}
-	query := dataquery.SemanticAggregate(semanticModelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(command.Limit)+1)
-	if command.Time != nil {
-		query.Time = dataquery.Time{Field: command.Time.Field, Grain: command.Time.Grain, Alias: projectsignals.ValueOrZero(command.Time.Alias)}
-	}
-	query = query.WithMetadata(dataquery.Metadata{
-		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationSemanticExplore,
-		ObjectType: "semantic_dataset", ObjectID: semanticModelID + ":" + datasetID,
-	})
-	executed, err := executor.ExecuteDataQuery(ctx, query)
+	query, err := lowerer.QueryForModel(command.Spec, model)
 	if err != nil {
 		resultSignal.Error = projectsignals.Pointer(err.Error())
 		return command, resultSignal
 	}
+	modelID := strings.TrimSpace(command.Spec.ModelID)
+	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.Spec.DatasetID))
+	query = query.WithMetadata(dataquery.Metadata{
+		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationSemanticExplore,
+		ObjectType: "semantic_dataset", ObjectID: modelID + ":" + datasetID,
+	})
+	window := projectsignals.DataExplorerCommand{Count: dataExplorerDefaultLimit, Limit: dataExplorerDefaultLimit,
+		Block: projectsignals.Pointer("all"), RequestSeq: command.RequestSeq, ResetVersion: command.ResetVersion}
+	if command.Window != nil {
+		window.Count = max(1, min(command.Window.Count, dataExplorerMaximumLimit))
+		window.Block = projectsignals.Pointer(string(command.Window.Block))
+		window.Start = max(0, command.Window.Start)
+		window.RequestSeq, window.ResetVersion = command.Window.RequestSeq, command.Window.ResetVersion
+	}
+	start, count := window.Start, window.Count
+	blockIDs := []string{projectsignals.ValueOrZero(window.Block)}
+	if blockIDs[0] == "all" || blockIDs[0] == "" {
+		start = dataExplorerFirstBlockStart(window)
+		count *= int64(len(dataExplorerBlockIDs))
+		blockIDs = dataExplorerBlockIDs
+	}
+	query.Offset, query.Limit, query.IncludeTotal = int(start), int(count), true
+	// Chart frames retain their authored bounded sample independently of the table window.
+	if command.Window == nil || (start == 0 && len(blockIDs) == len(dataExplorerBlockIDs)) {
+		query.Limit = max(query.Limit, int(command.Spec.Limit))
+	}
+	executed, err := executor.ExecuteDataQuery(ctx, query)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			return command, resultSignal
+		}
+		resultSignal.Error = projectsignals.Pointer(err.Error())
+		return command, resultSignal
+	}
 	if strings.TrimSpace(executed.Error) != "" {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return command, resultSignal
+		}
 		resultSignal.Error = projectsignals.Pointer(executed.Error)
 		return command, resultSignal
 	}
 	rows := executed.Rows
-	truncated := int64(len(rows)) > command.Limit
-	if truncated {
-		rows = rows[:command.Limit]
-	}
+	truncated := executed.TotalRowsKnown && int64(executed.TotalRows) > start+int64(len(rows))
+	state := dataExploreStateFromSpec(command.Spec)
+	aliases := explorerQueryAliases(state.Dimensions, state.Metrics)
 	labels := explorerResultLabels(fields, aliases)
 	columns := make([]projectsignals.DataPreviewColumnSignal, 0, len(executed.Columns))
 	for _, column := range executed.Columns {
 		columns = append(columns, projectsignals.DataPreviewColumnSignal{Key: column.Name, Label: firstExplorerNonEmpty(labels[column.Name], column.Name)})
 	}
+	if len(command.Spec.Sort) > 0 {
+		field := string(command.Spec.Sort[0].Field)
+		key := firstExplorerNonEmpty(aliases[field], field)
+		for _, selected := range append(append([]dataquery.Field{}, query.Fields...), query.Metrics...) {
+			if selected.Field == field || selected.Alias == field {
+				key = firstExplorerNonEmpty(selected.Alias, key)
+				break
+			}
+		}
+		if query.Time.Field == field {
+			key = firstExplorerNonEmpty(query.Time.Alias, key)
+		}
+		window.Sort = projectsignals.DataPreviewSortSignal{Column: projectsignals.Pointer(key), Direction: projectsignals.Pointer(string(command.Spec.Sort[0].Direction))}
+	}
+	preview := projectsignals.DataPreviewSignal{Columns: columns, Blocks: map[string]projectsignals.DataPreviewBlockSignal{},
+		ChunkSize: window.Count, RowHeight: dataExplorerRowHeight, ResetVersion: window.ResetVersion, Sort: window.Sort}
+	known := dataExplorerApplyPreviewResult(&preview, window, start, blockIDs, executed, false)
+	if !known {
+		if int64(len(rows)) < count {
+			preview.TotalRows, preview.AvailableRows = start+int64(len(rows)), start+int64(len(rows))
+			preview.TotalRowLabel = projectsignals.Pointer(fmt.Sprintf("%d", preview.TotalRows))
+		} else {
+			preview.TotalRowLabel = projectsignals.Pointer("Unknown")
+			truncated = true
+		}
+	}
 	return command, projectsignals.DataExploreResultSignal{
-		Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
+		Window: &preview, Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
 		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
 		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,
 	}

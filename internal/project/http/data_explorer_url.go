@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
@@ -30,13 +31,18 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 		stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
-	if _, saved := values["saved"]; saved {
+	if _, saved := values["saved"]; saved && len(values["state"]) == 0 {
 		return h.withSavedExplorationURL(w, r, executeQuery)
 	}
 	command := projectsignals.DataExplorerCommand{
 		ObjectKey: projectsignals.Optional(strings.TrimSpace(values.Get("object"))),
 		Mode:      projectsignals.Optional(strings.TrimSpace(values.Get("mode"))),
 		Limit:     dataExplorerDefaultLimit, Count: dataExplorerDefaultLimit, Block: projectsignals.Pointer("all"),
+	}
+	if r.URL.Path == "/updates" {
+		if clientID := strings.TrimSpace(values.Get("clientId")); clientID != "" {
+			command.ClientID = projectsignals.Optional(clientID)
+		}
 	}
 	if projectsignals.ValueOrZero(command.Mode) == "explore" {
 		explore, err := dataExploreCommandFromQuery(values)
@@ -45,13 +51,43 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 		}
 		command.Explore = &explore
+	} else if strings.TrimSpace(values.Get("state")) != "" {
+		if strings.TrimSpace(values.Get("object")) == "" {
+			stdhttp.Error(w, "row filters require a selected object", stdhttp.StatusBadRequest)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+		explore, err := dataExploreCommandFromQuery(values)
+		if err != nil || len(explore.Spec.Filters) == 0 {
+			stdhttp.Error(w, "invalid row filter URL state", stdhttp.StatusBadRequest)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+		command.Explore = &explore
 	}
 	return h.dataExplorerSignalsForRestoredCommand(w, r, command, executeQuery)
 }
 
 const dataExploreURLVersion = "1"
+const dataExploreCanonicalURLVersion = "2"
 
 func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreCommand, error) {
+	if version := strings.TrimSpace(values.Get("v")); version == dataExploreCanonicalURLVersion {
+		if len(values["state"]) != 1 || strings.TrimSpace(values.Get("state")) == "" {
+			return projectsignals.DataExploreCommand{}, errors.New("version 2 explore URLs require exactly one state parameter")
+		}
+		for _, key := range []string{"semanticModel", "dataset", "dimension", "metric", "filter", "sort", "time", "limit"} {
+			if _, present := values[key]; present {
+				return projectsignals.DataExploreCommand{}, fmt.Errorf("version 2 state cannot be combined with legacy parameter %q", key)
+			}
+		}
+		var spec exploration.ExplorationSpec
+		if err := decodeDataExploreURLValue(values.Get("state"), &spec); err != nil {
+			return projectsignals.DataExploreCommand{}, fmt.Errorf("state: %w", err)
+		}
+		if err := exploration.ValidateShape(&spec); err != nil {
+			return projectsignals.DataExploreCommand{}, fmt.Errorf("state: %w", err)
+		}
+		return dataExploreCommandWithCanonicalSpec(projectsignals.DataExploreCommand{Spec: spec}), nil
+	}
 	command := projectsignals.DataExploreCommand{
 		Dimensions: append([]string{}, values["dimension"]...),
 		Metrics:    append([]string{}, values["metric"]...),
@@ -130,7 +166,7 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		}
 		command.Limit = limit
 	}
-	return command, nil
+	return dataExploreCommandWithCanonicalSpec(command), nil
 }
 
 func decodeDataExploreURLValue(value string, target any) error {
@@ -187,7 +223,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 	for _, field := range projection.Fields {
 		fieldByID[field.ID] = field
 	}
-	filterDatasets := restoredFilterDatasetParticipation(command, projection, model, fieldByID)
+	filterDatasets := restoredFilterDatasetParticipation(command, projection, compiled, fieldByID)
 	seenFields := make(map[string]string, len(command.Dimensions)+len(command.Metrics))
 	for _, fieldID := range command.Dimensions {
 		if err := validateRestoredExploreField(fieldID, "dimension", fieldByID); err != nil {
@@ -212,7 +248,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		if err != nil {
 			return fmt.Errorf("filter %d: %w", index+1, err)
 		}
-		if err := validateRestoredExploreFilter(index, filter); err != nil {
+		if err := validateRestoredExploreFilter(index, filter, command.Spec); err != nil {
 			return err
 		}
 		if filter.DatasetID == nil || strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID)) == "" {
@@ -264,7 +300,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 // effective query base. A normal query has one participating base. When a
 // selected metric spans multiple roots, the semantic executor clears the
 // dataset target and the complete recursive root union is the safe scope.
-func restoredFilterDatasetParticipation(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, fields map[string]projectsignals.DataExploreFieldSignal) map[string]bool {
+func restoredFilterDatasetParticipation(command projectsignals.DataExploreCommand, projection DataExplorerProjection, compiled *semanticquery.CompiledModel, fields map[string]projectsignals.DataExploreFieldSignal) map[string]bool {
 	participating := map[string]bool{}
 	effectiveDataset := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.DatasetID))
 	if !explorerCommandHasMultiRootMetric(command.Metrics, fields) {
@@ -274,14 +310,14 @@ func restoredFilterDatasetParticipation(command projectsignals.DataExploreComman
 		return participating
 	}
 	for _, metric := range command.Metrics {
-		for _, root := range explorerMetricRootDatasets(model, metric) {
+		for _, root := range explorerMetricRootDatasets(compiled, metric) {
 			participating[root] = true
 		}
 	}
 	return participating
 }
 
-func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreFilterSignal) error {
+func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreFilterSignal, spec exploration.ExplorationSpec) error {
 	operator := strings.TrimSpace(filter.Operator)
 	valueCount := len(filter.Values)
 	requiresOne := false
@@ -295,6 +331,11 @@ func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreF
 		}
 	case "is_null", "is_not_null":
 		requiresZero = true
+	case "range", "relative_period", "unfiltered":
+		requiresZero = true
+		if index >= len(spec.Filters) || !canonicalFilterMatchesSignal(spec.Filters[index], filter, operator) {
+			return fmt.Errorf("filter %d operator %q requires canonical version 2 state; update or remove the stale filter", index+1, operator)
+		}
 	default:
 		return fmt.Errorf("filter %d uses unsupported operator %q; choose a supported filter operator", index+1, filter.Operator)
 	}
@@ -305,6 +346,25 @@ func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreF
 		return fmt.Errorf("filter %d operator %q does not accept values; update or remove the stale filter", index+1, operator)
 	}
 	return nil
+}
+
+func canonicalFilterMatchesSignal(filter exploration.ExplorationFilter, signal projectsignals.DataExploreFilterSignal, kind string) bool {
+	if filter.Field != signal.Field || projectsignals.ValueOrZero(filter.DatasetID) != projectsignals.ValueOrZero(signal.DatasetID) {
+		return false
+	}
+	if filter.Expression.Value == nil {
+		return false
+	}
+	switch filter.Expression.Value.(type) {
+	case *exploration.RangeExplorationFilterExpression:
+		return kind == "range"
+	case *exploration.RelativePeriodExplorationFilterExpression:
+		return kind == "relative_period"
+	case *exploration.UnfilteredExplorationFilterExpression:
+		return kind == "unfiltered"
+	default:
+		return false
+	}
 }
 
 // restoredCompiledSemanticTimeGrain mirrors planner resolution: only a

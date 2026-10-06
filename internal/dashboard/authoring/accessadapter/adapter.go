@@ -59,6 +59,12 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 	if err := request.ProjectID.Validate(); err != nil {
 		return fmt.Errorf("%w: project id: %v", ErrInvalid, err)
 	}
+	if request.Target == service.AuthorizationTargetSemanticModel {
+		if request.Action != authoring.AuthorizationActionView {
+			return fmt.Errorf("%w: semantic-model authorization requires view action", ErrInvalid)
+		}
+		return a.authorizeSemanticDependency(ctx, actorID, request.ProjectID, request.SemanticModel)
+	}
 	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
 	}

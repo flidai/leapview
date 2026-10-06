@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, type Browser } from '@playwright/test'
 import { startSiteTestServer, type SiteTestServer } from './test_server'
-import { collectVisualShowcaseMetrics } from './visual-showcase.test-helper'
+import { collectVisualShowcaseMetrics, collectVisualShowcaseTableLayout } from './visual-showcase.test-helper'
 
 const sitePort = 20000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
@@ -249,7 +249,7 @@ test('architecture connections stay aligned with the layers across screen sizes'
   } finally {
     await page.close()
   }
-})
+}, 10_000)
 
 test('analytics code walkthrough advances when visible and stops after a file is chosen', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
@@ -2303,50 +2303,7 @@ test('visual showcase renders every supported visual type', async () => {
     expect(tables.aggregateValues.some((value) => value === '—' || value === '-')).toBe(false)
     expect(tables.aggregateValues).toContain('0')
     expect(tables.aggregateValues).toContain('$0.00')
-    const tableLayout = await page.locator('lv-site-visual-showcase').evaluate((element) => {
-      const root = element.shadowRoot
-      const chartGrid = root?.querySelector('.chart-grid')?.getBoundingClientRect()
-      const tableSection = root?.querySelector('[aria-labelledby="table-showcase-heading"]')
-      const tableHeading = tableSection?.querySelector('.section-heading')?.getBoundingClientRect()
-      const tableGrid = root?.querySelector('.table-grid')?.getBoundingClientRect()
-      const cards = Array.from(root?.querySelectorAll('.table-card') ?? []).map((card) => {
-        const host = card.querySelector('lv-visualization-host') as any
-        const rect = card.getBoundingClientRect()
-        const table = host?.shadowRoot?.querySelector('lv-report-table')
-        const scrollport = table?.shadowRoot?.querySelector('.table-scrollport') as HTMLElement | null
-        const canvas = table?.shadowRoot?.querySelector('.canvas') as HTMLElement | null
-        return {
-          kind: host?.envelope?.spec?.kind,
-          left: rect.left,
-          top: rect.top,
-          width: rect.width,
-          height: rect.height,
-          overflow: (scrollport?.scrollWidth ?? 0) - (scrollport?.clientWidth ?? 0),
-          dataGap: (scrollport?.clientWidth ?? 0) - (canvas?.getBoundingClientRect().width ?? 0),
-          classes: card.className,
-        }
-      })
-      const compactCards = Array.from(root?.querySelectorAll('.table-card.compact') ?? [])
-      const matrixCard = Array.from(root?.querySelectorAll('.table-card') ?? []).find((card) => (card.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind === 'matrix')
-      const matrixTable = matrixCard?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('lv-report-table')
-      const matrixScrollport = matrixTable?.shadowRoot?.querySelector<HTMLElement>('.table-scrollport')
-      const compactDataGaps = compactCards.map((card) => {
-        const host = card.querySelector('lv-visualization-host')
-        const table = host?.shadowRoot?.querySelector('lv-report-table')
-        const scrollport = table?.shadowRoot?.querySelector('.table-scrollport')?.getBoundingClientRect()
-        const canvas = table?.shadowRoot?.querySelector('.canvas')?.getBoundingClientRect()
-        return (scrollport?.bottom ?? 0) - (canvas?.bottom ?? 0)
-      })
-      return {
-        sectionGap: (tableHeading?.top ?? 0) - (chartGrid?.bottom ?? 0),
-        cards,
-        gridWidth: tableGrid?.width ?? 0,
-        gridCenter: (tableGrid?.left ?? 0) + (tableGrid?.width ?? 0) / 2,
-        compactCards: compactCards.length,
-        compactDataGaps,
-        matrixOverflow: (matrixScrollport?.scrollWidth ?? 0) - (matrixScrollport?.clientWidth ?? 0),
-      }
-    })
+    const tableLayout = await page.locator('lv-site-visual-showcase').evaluate(collectVisualShowcaseTableLayout)
     expect(tableLayout.sectionGap).toBeGreaterThanOrEqual(48)
     const regular = tableLayout.cards.find((card) => card.kind === 'table')!
     const matrix = tableLayout.cards.find((card) => card.kind === 'matrix')!

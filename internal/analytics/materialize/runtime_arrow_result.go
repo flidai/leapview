@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/flidai/leapview/internal/analytics/arrowdecode"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -306,6 +307,18 @@ func (r *Runtime) planOwnedArrowQueryContext(ctx context.Context, request dataqu
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
 		})
+		if err == nil && request.IncludeTotal {
+			count, countErr := planner.PlanResultCount(semanticquery.Request{
+				Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
+				Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+				Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+			})
+			if countErr != nil {
+				err = countErr
+			} else {
+				planned.countPlan = &count
+			}
+		}
 	case dataquery.KindSemanticRows:
 		if len(request.Fields) == 0 && len(request.Metrics) == 0 && request.IncludeTotal {
 			if len(request.ColumnMasks) > 0 {
@@ -490,17 +503,17 @@ func decodeArrowQueryResult(request dataquery.Query, lease *arrowresult.Lease, m
 			delete(row, transportTotalColumn)
 		}
 	}
-	columns := make([]string, 0)
+	columns := make([]dataquery.Column, 0)
 	if schema := lease.Schema(); schema != nil && !countOnly {
 		for _, field := range schema.Fields() {
 			if field.Name != transportTotalColumn {
-				columns = append(columns, field.Name)
+				columns = append(columns, dataQueryArrowColumn(field))
 			}
 		}
 	}
 	result := summary
 	result.SQL = metadata.SQL
-	result.Columns = dataquery.ColumnsFromNames(columns)
+	result.Columns = columns
 	result.Rows = make([]dataquery.Row, len(rows))
 	for index := range rows {
 		result.Rows[index] = dataquery.Row(rows[index])
@@ -516,4 +529,15 @@ func decodeArrowQueryResult(request dataquery.Query, lease *arrowresult.Lease, m
 		result.Status = dataquery.StatusSuccess
 	}
 	return result, nil
+}
+
+// dataQueryArrowColumn copies physical decimal metadata before the Arrow lease
+// is released. Row values remain canonical fixed-point strings.
+func dataQueryArrowColumn(field arrow.Field) dataquery.Column {
+	column := dataquery.Column{Name: field.Name}
+	if decimal, ok := field.Type.(arrow.DecimalType); ok {
+		column.DecimalPrecision = decimal.GetPrecision()
+		column.DecimalScale = decimal.GetScale()
+	}
+	return column
 }

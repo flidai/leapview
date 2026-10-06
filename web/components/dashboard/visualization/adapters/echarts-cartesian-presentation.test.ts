@@ -273,7 +273,7 @@ test('ECharts formats histogram bounds and omits raw helper columns from default
 
 function cartesianPresentationFixture(mark: string): VisualizationEnvelope {
   return {
-    schemaVersion: 9,
+    schemaVersion: 14,
     visualID: mark,
     rendererID: 'echarts',
     specRevision: 'sha256:cartesian-presentation',

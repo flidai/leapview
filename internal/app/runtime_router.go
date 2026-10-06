@@ -107,6 +107,8 @@ type capabilityRoutes struct {
 
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
+	savedExplorationService        analyticsmodule.SavedExplorationService
+	savedExplorationRepository     analyticsmodule.SavedExplorationRepository
 	credentialDraftAPI             credentialmodule.CredentialDraftAPIGenConfig
 	profileApplications            connectionbinding.ProfileApplicationStore
 	developmentSessions            developmentsessionmodule.Store
@@ -333,21 +335,23 @@ type capabilityAssemblyInputs struct {
 	// AgentPersistence is the graph-owned native agent authority. The router
 	// passes it through opaquely to agentmodule.Build; production must provide
 	// the complete native authority.
-	AgentPersistence    *agentmodule.Persistence
-	AccessModule        *accessmodule.Module
-	Agent               *agentmodule.Service
-	ManagedDataModule   *manageddatamodule.Module
-	AnalyticsModule     *analyticsmodule.Module
-	CredentialDraftAPI  credentialmodule.CredentialDraftAPIGenConfig
-	ProfileApplications connectionbinding.ProfileApplicationStore
-	DevelopmentSessions developmentsessionmodule.Store
-	Authoring           *dashboardmodule.AuthoringApplication
-	DashboardAssets     dashboardmodule.Assets
-	Product             *adminmodule.ProductService
-	ProductStatus       adminmodule.ProductStatus
-	ProjectCatalog      *projectcatalog.Service
-	ProjectGraph        projecthttp.GraphReader
-	SavedExplorations   projectmodule.SavedExplorationStore
+	AgentPersistence           *agentmodule.Persistence
+	AccessModule               *accessmodule.Module
+	Agent                      *agentmodule.Service
+	ManagedDataModule          *manageddatamodule.Module
+	AnalyticsModule            *analyticsmodule.Module
+	SavedExplorationService    analyticsmodule.SavedExplorationService
+	SavedExplorationRepository analyticsmodule.SavedExplorationRepository
+	CredentialDraftAPI         credentialmodule.CredentialDraftAPIGenConfig
+	ProfileApplications        connectionbinding.ProfileApplicationStore
+	DevelopmentSessions        developmentsessionmodule.Store
+	Authoring                  *dashboardmodule.AuthoringApplication
+	DashboardAssets            dashboardmodule.Assets
+	Product                    *adminmodule.ProductService
+	ProductStatus              adminmodule.ProductStatus
+	ProjectCatalog             *projectcatalog.Service
+	ProjectGraph               projecthttp.GraphReader
+	SavedExplorations          projectmodule.SavedExplorationStore
 }
 
 type workflowAssemblyInputs struct {
@@ -775,6 +779,8 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
+	runtime.savedExplorationService = capabilities.SavedExplorationService
+	runtime.savedExplorationRepository = capabilities.SavedExplorationRepository
 	runtime.credentialDraftAPI = capabilities.CredentialDraftAPI
 	runtime.profileApplications = capabilities.ProfileApplications
 	runtime.developmentSessions = capabilities.DevelopmentSessions
@@ -845,10 +851,11 @@ func buildApplicationSurfaces(
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		ClientIDs: policy.clientIDs,
 		Graph:     capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
-		SavedExplorations:       capabilities.SavedExplorations,
+		LegacySavedExplorations: capabilities.SavedExplorations,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
-		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
+		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, ExplorationQueryLowerer: analyticsmodule.NewExplorationQueryLowerer(), Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,
+		DashboardAuthoring: routes.dashboardAuthoring, DashboardAppendCommand: routes.dashboardModule.DashboardAuthoringCommandBinding(),
 		DashboardPopularity: func(ctx context.Context, dashboardCount int) (map[string]string, error) {
 			if routes.dashboardModule == nil {
 				return nil, nil
@@ -1235,6 +1242,23 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 		}
 	}
+	savedAuditRecorder, _ := persistence.accessRepo.(access.CanonicalAuditRecorder)
+	savedWiring, err := configureSavedExploration(savedExplorationWiringInputs{
+		accessModule: routes.accessModule, auth: platform.auth, assets: platform.assets,
+		resolveProjectID: runtime.resolveProjectID, instanceID: storage.instanceID, publicURL: storage.publicURL,
+		runtime: runtime.runtimeHostModule, admitter: runtime.workloads, analyticsModule: runtime.analyticsModule,
+		savedExplorationService: runtime.savedExplorationService, repository: runtime.savedExplorationRepository,
+		auditRecorder: savedAuditRecorder, projectBrowser: routes.projectBrowser, ctx: ctx,
+	})
+	if err != nil {
+		return err
+	}
+	routes.accessModule = savedWiring.accessModule
+	runtime.savedExplorationService = savedWiring.savedExplorationService
+	if routes.projectBrowser != nil && runtime.savedExplorationService != nil && runtime.analyticsModule != nil {
+		routes.projectBrowser.ExplorationExportAuditRecorder = runtime.analyticsModule.QueryAuditRecorder()
+		routes.projectBrowser.ExplorationExportEncoder = analyticsmodule.EncodeExplorationExport
+	}
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
@@ -1251,6 +1275,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 		},
 		DevelopmentProfiles: developmentProfileAPI,
+		SavedExplorations:   savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth),
+	}
+	if runtime.analyticsModule != nil {
+		analyticsAPI.SavedExplorations.ExportAuditRecorder = runtime.analyticsModule.QueryAuditRecorder()
 	}
 	credentialAPI := runtime.credentialDraftAPI
 	credentialAPI.Environment = runtimeConfig.DefaultEnvironment
@@ -1392,14 +1420,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return principal.ID
 				},
 				AuthorizeListResource: func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error) {
-					if capability != access.CapabilityResourceRead || resource.Kind() != projectgraph.KindDashboard {
-						return false, nil
-					}
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
 						return false, err
 					}
-					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, access.ActionDashboardRead)
+					return authorizeDashboardListResource(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, resource, capability)
 				},
 				AuthorizeTypedDashboardAction: func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, bool, error) {
 					if action == "" {
@@ -2106,7 +2131,16 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}); err != nil {
 		return fmt.Errorf("validate generated command dependencies: %w", err)
 	}
-	platform.apiProtocol.SetReplayAuthorize(apiGenAuthorizer.AuthorizeReplay)
+	savedReplayConfig := analyticsAPI.SavedExplorations
+	platform.apiProtocol.SetReplayAuthorize(func(r *http.Request) bool {
+		if analyticsmodule.IsSavedExplorationMutationRequest(r) {
+			if !apiGenAuthorizer.AuthorizeReplay(r) {
+				return false
+			}
+			return analyticsmodule.AuthorizeSavedExplorationMutationReplay(savedReplayConfig, r)
+		}
+		return apiGenAuthorizer.AuthorizeReplay(r)
+	})
 	appResponder := apiprotocol.TransportErrorResponder{Logger: platform.logger}
 	appAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return apigenapi.DispatchAPIGenOperation(operationID, apiDispatcher, appResponder, w, r)

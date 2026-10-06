@@ -197,3 +197,27 @@ func validRequest() service.AuthorizationRequest {
 		Target: service.AuthorizationTargetProjectDashboard, Action: authoring.AuthorizationActionView,
 	}
 }
+
+func TestSemanticModelAuthorizationChecksExactTypedReadResource(t *testing.T) {
+	request := service.AuthorizationRequest{
+		ActorID: "actor", ProjectID: "project", SemanticModel: "semantic-model",
+		Target: service.AuthorizationTargetSemanticModel, Action: authoring.AuthorizationActionView,
+	}
+	for _, typed := range []bool{true, false} {
+		policy := &authorizationPolicy{resourceAllowed: map[access.Action]bool{access.ActionSemanticRead: true}}
+		if !typed {
+			policy.untypedAction = access.ActionSemanticRead
+		}
+		err := policy.adapter(t).Authorize(t.Context(), request)
+		if typed && err != nil {
+			t.Fatal(err)
+		}
+		if !typed && !errors.Is(err, access.ErrForbidden) {
+			t.Fatalf("untyped semantic read = %v, want forbidden", err)
+		}
+		if len(policy.calls) != 1 || policy.calls[0].kind != "resource" || policy.calls[0].resource.Kind() != graph.KindSemanticModel ||
+			policy.calls[0].resource.CanonicalID() != "semantic-model" || policy.calls[0].action != access.ActionSemanticRead {
+			t.Fatalf("semantic-model authorization calls = %#v", policy.calls)
+		}
+	}
+}

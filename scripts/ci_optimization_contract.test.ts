@@ -93,6 +93,7 @@ test('APIGen generation cache keys include the TypeSpec library and package inpu
     'desktop-discovery:generate',
     'ui-signals:generate',
     'visualization-ir:generate',
+    'exploration-contracts:generate',
     'dashboard-contracts:generate',
     'pipeline-contracts:generate',
   ]

@@ -35,7 +35,7 @@ func semanticPermissionActionWithContext(ctx context.Context, request dataquery.
 		return "", ErrDataQueryPermissionRequirementUnavailable
 	}
 	switch request.Surface {
-	case dataquery.SurfaceAPI, dataquery.SurfaceAgent, dataquery.SurfaceCLI, dataquery.SurfaceDataExplorer:
+	case dataquery.SurfaceAPI, dataquery.SurfaceAgent, dataquery.SurfaceCLI, dataquery.SurfaceDataExplorer, dataquery.SurfaceSavedExploration:
 		return access.ActionSemanticQuery, nil
 	default:
 		return "", ErrDataQueryPermissionRequirementUnavailable

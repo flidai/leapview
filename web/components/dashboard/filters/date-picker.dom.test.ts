@@ -203,6 +203,104 @@ test('relative period displays the same normalized count that it commits', async
   }
 })
 
+for (const operator of ['is_null', 'is_not_null'] as const) {
+  test(`null-only ${operator} filters clear and reapply their allowed predicate without a value`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+      await page.evaluate(async allowed => {
+        const leaf = document.createElement('lv-filter-leaf') as any
+        leaf.definition = {
+          id: 'amount', label: 'Amount', field: 'amount', valueKind: 'decimal',
+          predicates: [{ kind: 'null_check', operators: [allowed] }], options: { kind: 'none', limit: 0, values: [] },
+          timezone: 'UTC', calendar: 'gregorian', weekStart: 'sunday',
+        }
+        leaf.binding = {
+          key: 'amount', id: 'amount', filter: 'amount', scope: 'report', default: { kind: 'null_check', operator: allowed },
+          selectionMode: 'multiple', maxSelectedValues: 0, readerEditable: true,
+          paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+        }
+        leaf.expression = leaf.binding.default
+        leaf.showClearAction = true
+        leaf.mutations = []
+        leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => {
+          leaf.mutations.push(event.detail.expression)
+          leaf.expression = event.detail.expression
+        })
+        document.body.append(leaf)
+        await leaf.updateComplete
+      }, operator)
+      const select = page.getByRole('combobox', { name: 'Amount blank values' })
+      expect(await select.inputValue()).toBe(operator)
+      expect(await select.locator('option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))).toEqual(['', operator])
+      expect(await page.locator('lv-filter-leaf input').count()).toBe(0)
+      await page.getByRole('button', { name: 'Clear Amount', exact: true }).click()
+      expect(await select.inputValue()).toBe('')
+      await select.selectOption(operator)
+      await select.selectOption('')
+      await select.selectOption(operator)
+      expect(await page.locator('lv-filter-leaf').evaluate((leaf: any) => leaf.mutations)).toEqual([
+        { kind: 'unfiltered' }, { kind: 'null_check', operator },
+        { kind: 'unfiltered' }, { kind: 'null_check', operator },
+      ])
+      await page.locator('lv-filter-leaf').evaluate(async (leaf: any) => { leaf.stale = true; await leaf.updateComplete })
+      expect(await select.isDisabled()).toBe(true)
+      await page.locator('lv-filter-leaf').evaluate(async (leaf: any) => { leaf.stale = false; leaf.binding = { ...leaf.binding, readerEditable: false }; await leaf.updateComplete })
+      expect(await select.isDisabled()).toBe(true)
+    } finally {
+      await page.close()
+    }
+  })
+}
+
+for (const operator of ['equals', 'not_equals'] as const) {
+  test(`decimal ${operator} controls retain their typed predicate when reapplied and edited`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+      await page.evaluate(async allowed => {
+        const leaf = document.createElement('lv-filter-leaf') as any
+        leaf.definition = {
+          id: 'amount', label: 'Amount', field: 'amount', valueKind: 'decimal',
+          predicates: [{ kind: 'comparison', operators: [allowed] }], options: { kind: 'none', limit: 0, values: [] },
+          timezone: 'UTC', calendar: 'gregorian', weekStart: 'sunday',
+        }
+        leaf.binding = {
+          key: 'amount', id: 'amount', filter: 'amount', scope: 'report', default: { kind: 'comparison', operator: allowed, value: { kind: 'decimal', value: '10.25' } },
+          selectionMode: 'multiple', maxSelectedValues: 0, readerEditable: true,
+          paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+        }
+        leaf.expression = leaf.binding.default
+        leaf.showClearAction = true
+        leaf.mutations = []
+        leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => {
+          leaf.mutations.push(event.detail.expression)
+          leaf.expression = event.detail.expression
+        })
+        document.body.append(leaf)
+        await leaf.updateComplete
+      }, operator)
+      const input = page.getByRole('spinbutton')
+      expect(await input.inputValue()).toBe('10.25')
+      expect(await input.getAttribute('step')).toBe('any')
+      await page.getByRole('button', { name: 'Clear Amount', exact: true }).click()
+      await input.fill('20.5')
+      await input.press('Tab')
+      await input.fill('30.75')
+      await input.press('Tab')
+      expect(await page.locator('lv-filter-leaf').evaluate((leaf: any) => leaf.mutations)).toEqual([
+        { kind: 'unfiltered' },
+        { kind: 'comparison', operator, value: { kind: 'decimal', value: '20.5' } },
+        { kind: 'comparison', operator, value: { kind: 'decimal', value: '30.75' } },
+      ])
+    } finally {
+      await page.close()
+    }
+  })
+}
+
 test('open multi-select refreshes invalidated choices so another value can be selected', async () => {
   const page = await browser.newPage()
   try {

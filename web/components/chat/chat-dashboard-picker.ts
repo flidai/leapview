@@ -3,7 +3,7 @@ import { property, state } from 'lit/decorators.js'
 import { LayoutDashboard, Plus, X } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 
-import { uuidv7 } from '../shared/command'
+import { uuidv7 } from '../shared/command-identity'
 import { addChatVisualToDashboard, listChatDashboards, type ChatDashboardDestination, type ChatDashboardResult, type ChatDashboardChoice } from './chat-dashboard-api'
 
 export class ChatDashboardPicker extends LitElement {

@@ -800,6 +800,8 @@ type TotalRows struct {
 	NodeMeta
 	Input      string `json:"input"`
 	TotalField string `json:"total_field"`
+	// CountOnly returns one scalar count of the complete projected result.
+	CountOnly bool `json:"count_only,omitempty"`
 }
 
 func (TotalRows) Kind() Kind         { return KindTotalRows }

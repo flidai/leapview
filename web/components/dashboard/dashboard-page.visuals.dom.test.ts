@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
-import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
+import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -18,6 +18,33 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
       throw new Error(`${id}: ${JSON.stringify((validateVisualizationEnvelope as typeof validateVisualizationEnvelope & { errors?: unknown }).errors)}`)
     }
   }
+})
+
+test('dashboard handoff is a visual-menu action only in the app presentation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const href = '/dashboards/executive-sales/pages/overview/visuals/orders_chart/explore'
+      mergePatch({ visuals: { orders_chart: { exploreHref: href } } })
+      await dashboard.updateComplete
+      const host = () => (dashboard.shadowRoot as ShadowRoot).querySelector('[data-visual-id="orders_chart"] lv-visualization-host') as any
+      await host().updateComplete
+      const appHref = (host().shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('.visual-options a[role="menuitem"]')?.getAttribute('href')
+      dashboard.presentation = 'public'
+      await dashboard.updateComplete
+      await host().updateComplete
+      const publicLink = (host().shadowRoot as ShadowRoot).querySelector('.visual-options a[role="menuitem"]')
+      dashboard.presentation = 'embed'
+      await dashboard.updateComplete
+      await host().updateComplete
+      const embedLink = (host().shadowRoot as ShadowRoot).querySelector('.visual-options a[role="menuitem"]')
+      return { appHref, publicLink: Boolean(publicLink), embedLink: Boolean(embedLink) }
+    })
+    expect(result).toEqual({ appHref: '/dashboards/executive-sales/pages/overview/visuals/orders_chart/explore', publicLink: false, embedLink: false })
+  } finally { await page.close() }
 })
 
 beforeAll(async () => {
@@ -605,6 +632,59 @@ test('visualization actions keep touch targets and spacing when a report is scal
   } finally { await page.close() }
 })
 
+test('an open visual menu escapes its card clipping layer and raises only its frame', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const first = hosts.find((host) => host.envelope?.visualID === 'orders_kpi')
+      const second = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
+      const firstFrame = first.closest('lv-dashboard-visual-frame') as HTMLElement
+      const secondFrame = second.closest('lv-dashboard-visual-frame') as HTMLElement
+      const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLElement
+      const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLElement
+      const firstMenu = firstOptions.querySelector<HTMLElement>('.menu')!
+      const secondMenu = secondOptions.querySelector<HTMLElement>('.menu')!
+      // Native popover toggle events are queued separately from animation
+      // frames. Observe those events before inspecting their frame effects.
+      const toggled = (menu: HTMLElement) => new Promise<void>((resolve) => {
+        menu.addEventListener('toggle', () => resolve(), { once: true })
+      })
+      const firstOpened = toggled(firstMenu)
+      firstOptions.querySelector<HTMLElement>('.options-trigger')!.click()
+      await firstOpened
+      const firstZIndex = Number.parseInt(getComputedStyle(firstFrame).zIndex, 10)
+      const secondZIndex = Number.parseInt(getComputedStyle(secondFrame).zIndex, 10)
+      const firstOpen = {
+        frameMarked: firstFrame.hasAttribute('data-visual-options-open'),
+        frameOverflow: getComputedStyle(firstFrame).overflow,
+        innerOverflow: getComputedStyle(firstFrame.shadowRoot!.querySelector<HTMLElement>('.frame')!).overflow,
+        raised: Number.isFinite(firstZIndex) && (!Number.isFinite(secondZIndex) || firstZIndex > secondZIndex),
+      }
+
+      const firstClosed = toggled(firstMenu)
+      const secondOpened = toggled(secondMenu)
+      secondOptions.querySelector<HTMLElement>('.options-trigger')!.click()
+      await Promise.all([firstClosed, secondOpened])
+      return {
+        firstOpen,
+        onlySecondRaised: !firstFrame.hasAttribute('data-visual-options-open')
+          && secondFrame.hasAttribute('data-visual-options-open')
+          && !firstMenu.matches(':popover-open')
+          && secondMenu.matches(':popover-open'),
+      }
+    })
+    expect(state).toEqual({
+      firstOpen: { frameMarked: true, frameOverflow: 'visible', innerOverflow: 'visible', raised: true },
+      onlySecondRaised: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 for (const start of [50, 950]) {
   test(`table scrolling loads missing rows at ${start} and completes at the browse boundary`, async () => {
     const page = await browser.newPage()
@@ -666,12 +746,12 @@ test('phone headers keep page actions below the title and default table values r
     expect(result.actionsBelowTitle).toBe(true)
     expect(result.defaultWidths.length).toBeGreaterThan(0)
     expect(Math.min(...result.defaultWidths)).toBeGreaterThanOrEqual(168)
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ page: { pages: ['overview', 'statement', 'liquidity', 'drivers'].map((id, index) => ({
         id, title: id, href: `/dashboards/executive-sales/pages/${id}`, active: index === 0,
       })) } })
-    })
+    }))
     await page.locator('.mobile-page-menu summary').click()
     // Exercise hit testing: chart/table stacking must not intercept the last option.
     await page.locator('.mobile-page-menu a').last().click({ trial: true })

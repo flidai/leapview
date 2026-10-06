@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
+	"github.com/flidai/leapview/internal/analytics/exploration"
 	"github.com/flidai/leapview/internal/dashboard"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -144,6 +145,8 @@ func TestTurnContextsPassTypedTokenPairsToCanonicalResourceResolver(t *testing.T
 		t.Fatal(err)
 	}
 
+	datasetID := "orders"
+	dataSpec := &exploration.ExplorationSpec{SchemaVersion: 1, ModelID: modelID.String(), DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
 	called := map[projectgraph.Kind]bool{}
 	module := &Module{
 		projectID: projectID,
@@ -162,7 +165,7 @@ func TestTurnContextsPassTypedTokenPairsToCanonicalResourceResolver(t *testing.T
 		kind        projectgraph.Kind
 	}{
 		{name: "dashboard", permissions: []access.PermissionPair{dashboardRead}, candidate: agent.TurnContext{Surface: "dashboard", DashboardID: dashboardID.String(), PageID: "overview"}, kind: projectgraph.KindDashboard},
-		{name: "data", permissions: semanticPermissions, candidate: agent.TurnContext{Surface: "data", ModelID: modelID.String(), DatasetID: "orders"}, kind: projectgraph.KindSemanticModel},
+		{name: "data", permissions: semanticPermissions, candidate: agent.TurnContext{Surface: "data", ModelID: modelID.String(), DatasetID: datasetID, Exploration: dataSpec}, kind: projectgraph.KindSemanticModel},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			called[test.kind] = false

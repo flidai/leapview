@@ -1,21 +1,42 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property } from 'lit/decorators.js'
 import type { DataExploreCommand, DataExploreResultSignal } from '../../generated/signals'
+import { emptyDataExploreCommand, explorationResultKeyForSort, explorationSortFieldForResult, explorationSpecFor } from './data-explorer-spec'
 import '../shared/windowed-table'
-import type { WindowedTableColumn, WindowedTablePayload, WindowedTableRequest } from '../shared/windowed-table'
-
-const emptyCommand: DataExploreCommand = {
-  dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0,
-}
+import { exploreTablePresentation } from './explore-table-presentation'
+import type { WindowedTablePayload, WindowedTableRequest } from '../shared/windowed-table'
 
 const emptyResult: DataExploreResultSignal = {
   columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [],
 }
 
 class DataExploreTable extends LitElement {
-  @property({ attribute: false }) command: DataExploreCommand = emptyCommand
+  @property({ attribute: false }) command: DataExploreCommand = emptyDataExploreCommand
   @property({ attribute: false }) result: DataExploreResultSignal = emptyResult
   @property({ attribute: false }) visibleColumns: string[] = []
+
+  private pendingWindows: WindowedTableRequest[] = []
+  private activeWindow?: WindowedTableRequest
+
+  protected updated(changed: PropertyValues): void {
+    if (changed.has('command') && this.activeWindow && (this.command.action === 'stop' || this.command.resetVersion !== this.activeWindow.resetVersion)) {
+      this.activeWindow = undefined
+      this.pendingWindows = []
+    }
+    if (!changed.has('result') || !this.activeWindow) return
+    const response = this.result.window
+    const acknowledged = response && Object.values(response.blocks).some(block =>
+      block.requestSeq === this.activeWindow?.requestSeq && block.resetVersion === this.activeWindow?.resetVersion)
+    if (acknowledged || this.result.error) {
+      this.activeWindow = undefined
+      if (this.result.error) this.pendingWindows = []
+      const next = this.pendingWindows.shift()
+      if (next) this.dispatchWindow(next)
+    } else if (response && response.resetVersion !== this.activeWindow.resetVersion) {
+      this.activeWindow = undefined
+      this.pendingWindows = []
+    }
+  }
 
   static styles = css`
     :host {
@@ -36,61 +57,72 @@ class DataExploreTable extends LitElement {
     return html`<lv-windowed-table
       compact
       .table=${this.tablePayload()}
-      @lv-windowed-table-request=${this.forwardSort}
+      @lv-windowed-table-request=${this.forwardWindow}
       @lv-windowed-table-column-widths=${this.forwardColumnWidths}
     ></lv-windowed-table>`
   }
 
   private tablePayload(): WindowedTablePayload {
-    const command = this.command ?? emptyCommand
+    const command = this.command ?? emptyDataExploreCommand
+    const spec = explorationSpecFor(command)
     const result = this.result ?? emptyResult
-    const sort = command.sort?.[0]
+    const sort = spec.sort?.[0]
+    const resultSortKey = sort
+      ? explorationResultKeyForSort(spec, sort.field, (result.columns ?? []).map((column) => column.key)) ?? sort.field
+      : ''
     const rows = result.rows ?? []
     return {
-      tableKey: `${command.semanticModelId ?? ''}:${command.datasetId ?? ''}:explore`,
+      tableKey: `${spec.modelId ?? ''}:${spec.datasetId ?? ''}:explore`,
       title: 'Exploration results',
-      columns: (result.columns ?? []).map((column): WindowedTableColumn => ({
-        key: column.key,
-        label: column.label || column.key,
-        type: column.type,
-        align: isNumericType(column.type) ? 'right' : 'left',
-        sortable: true,
-      })),
-      totalRows: rows.length,
-      availableRows: rows.length,
-      chunkSize: Math.max(command.limit || 100, 1),
-      rowHeight: 32,
-      resetVersion: command.resetVersion ?? 0,
-      sort: { key: sort?.field ?? '', column: sort?.field ?? '', direction: sort?.direction ?? '' },
-      blocks: {
+      ...exploreTablePresentation(spec, result.columns ?? [], command.columnWidths),
+      totalRows: result.window?.totalRows ?? rows.length,
+      availableRows: result.window?.availableRows ?? rows.length,
+      chunkSize: result.window?.chunkSize ?? 100,
+      resetVersion: result.window?.resetVersion ?? command.resetVersion ?? 0,
+      sort: { key: resultSortKey, column: resultSortKey, direction: sort?.direction ?? '' },
+      blocks: result.window?.blocks ?? {
         a: {
           start: 0,
           requestSeq: result.requestSeq ?? command.requestSeq ?? 0,
           resetVersion: command.resetVersion ?? 0,
-          sort: { key: sort?.field ?? '', column: sort?.field ?? '', direction: sort?.direction ?? '' },
+          sort: { key: resultSortKey, column: resultSortKey, direction: sort?.direction ?? '' },
           rows,
         },
       },
       error: result.error,
       visibleColumns: this.visibleColumns,
       columnWidths: command.columnWidths ?? {},
-      totalLabel: result.truncated ? `${rows.length}+ rows` : `${rows.length} rows`,
+      totalLabel: result.window?.totalRowLabel ?? (result.truncated ? `${rows.length}+ rows` : `${rows.length} rows`),
     }
   }
 
-  private forwardSort = (event: CustomEvent<WindowedTableRequest>): void => {
+  private forwardWindow = (event: CustomEvent<WindowedTableRequest>): void => {
     event.stopPropagation()
     const request = event.detail
-    if (request.start > 0) return
-    const field = request.sort.key ?? request.sort.column ?? ''
+    if (request.block === 'all') this.pendingWindows = []
+    if (this.activeWindow) {
+      this.pendingWindows.push(request)
+      return
+    }
+    this.dispatchWindow(request)
+  }
+
+  private dispatchWindow(request: WindowedTableRequest): void {
+    this.activeWindow = request
+    const resultKey = request.sort.key ?? request.sort.column ?? ''
     const direction = request.sort.direction
-    const current = this.command.sort?.[0]
-    if (!field || (direction !== 'asc' && direction !== 'desc')) return
-    if (current?.field === field && current.direction === direction) return
-    this.dispatchEvent(new CustomEvent('lv-data-explore-table-command', {
+    const spec = explorationSpecFor(this.command)
+    const field = explorationSortFieldForResult(spec, resultKey)
+    const current = spec.sort?.[0]
+    const sortChanged = field && (direction === 'asc' || direction === 'desc')
+      && (current?.field !== field || current.direction !== direction)
+    this.dispatchEvent(new CustomEvent('lv-data-explore-table-window', {
       bubbles: true,
       composed: true,
-      detail: { sort: [{ field, direction }] },
+      detail: {
+        window: { block: request.block, start: request.start, count: request.count, requestSeq: request.requestSeq, resetVersion: request.resetVersion },
+        ...(sortChanged ? { spec: { ...spec, sort: [{ field, direction }] } } : {}),
+      } satisfies Partial<DataExploreCommand>,
     }))
   }
 
@@ -102,10 +134,6 @@ class DataExploreTable extends LitElement {
       detail: { columnWidths: event.detail?.columnWidths ?? {} },
     }))
   }
-}
-
-function isNumericType(type: string | undefined): boolean {
-  return /int|decimal|double|float|number|numeric|real|bigint|smallint|sum|count|avg|min|max/i.test(type ?? '')
 }
 
 if (!customElements.get('lv-data-explore-table')) customElements.define('lv-data-explore-table', DataExploreTable)

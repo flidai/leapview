@@ -441,7 +441,7 @@ function axisConfiguration(id: 'x' | 'primary_y' | 'secondary_y', scale: 'linear
 
 function cartesianFixture(): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: 'line', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'line', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'line', mark: 'line',
       datasets: [{ id: 'primary', fields: [
