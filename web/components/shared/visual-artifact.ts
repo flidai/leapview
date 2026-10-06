@@ -26,7 +26,7 @@ class VisualArtifact extends LitElement {
       display: flex;
       flex-direction: column;
       width: 100%;
-      height: 100%;
+      height: var(--lv-visual-height, 100%);
       min-width: 0;
       overflow: hidden;
       border: var(--lv-border-default);

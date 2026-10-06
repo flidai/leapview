@@ -81,6 +81,18 @@ export class VisualModal extends LitElement {
       background: var(--lv-chart-surface);
     }
 
+    .focus-dialog.tabular {
+      height: auto;
+      min-height: 0;
+    }
+
+    :host([tabular-focus]) .focus-slot,
+    :host([tabular-focus]) ::slotted([slot='focus-visual']) {
+      height: auto;
+      --lv-visual-height: auto;
+      --lv-table-max-body-height: max(80px, calc(100dvh - 180px));
+    }
+
     header {
       display: flex;
       min-width: 0;
@@ -283,7 +295,7 @@ export class VisualModal extends LitElement {
   private renderFocusDialog(detail: VisualActionDetail) {
     return html`
       <div class="backdrop" @click=${this.closeFromBackdrop}>
-        <section class="dialog focus-dialog" role="dialog" aria-modal="true" aria-label=${detail.title}>
+        <section class=${`dialog focus-dialog${detail.visualType === 'table' ? ' tabular' : ''}`} role="dialog" aria-modal="true" aria-label=${detail.title}>
           <button class="close focus-close" type="button" aria-label="Close visual modal" @click=${this.close}>${lucideIcon(X)}</button>
           <div class="focus-slot"><slot name="focus-visual"></slot></div>
         </section>
@@ -377,6 +389,7 @@ export class VisualModal extends LitElement {
     const focusToRestore = this.deepActiveElement()
     this.restoreFocusedVisual(false)
     this.restoreFocusTo = focusToRestore
+    this.toggleAttribute('tabular-focus', detail.visualType === 'table')
     this.detail = detail
     this.mode = 'focus'
     this.focusSource = source
@@ -395,6 +408,7 @@ export class VisualModal extends LitElement {
     const focusToRestore = this.restoreFocusTo
     if (this.focusMount) restoreVisualFocus(this.focusMount)
     this.focusMount = null
+    this.removeAttribute('tabular-focus')
     this.focusSource = null
     this.restoreFocusTo = null
     if (restoreFocus && focusToRestore?.isConnected) {

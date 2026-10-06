@@ -616,7 +616,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     .preview-card:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 3px; }
     .preview-card lv-visual-artifact { height: clamp(300px, 44svh, 480px); }
     .preview-card.kpi lv-visual-artifact { height: 180px; }
-    .preview-card.wide lv-visual-artifact { height: clamp(340px, 52svh, 560px); }
+    .preview-card.wide lv-visual-artifact {
+      height: auto;
+      --lv-visual-height: auto;
+      --lv-table-max-body-height: min(52svh, 560px);
+    }
     .preview-action {
       display: inline-flex; align-items: center; justify-content: center; gap: 8px;
       padding: 7px 12px; min-height: 34px; border: var(--lv-border-default);

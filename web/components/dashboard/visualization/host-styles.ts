@@ -1,7 +1,7 @@
 import { css } from 'lit'
 
 export const visualizationHostStyles = css`
-  :host, .surface { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
+  :host, .surface { display: block; width: 100%; height: var(--lv-visual-height, 100%); min-width: 0; min-height: 0; }
   :host {
     --lv-visual-inverse-scale: var(--report-canvas-inverse-scale, calc(1 / var(--builder-canvas-scale, 1)));
     --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, var(--base-size-24)))) * var(--lv-visual-inverse-scale));
@@ -14,7 +14,7 @@ export const visualizationHostStyles = css`
   .surface { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
   .surface.headerless { grid-template-rows: minmax(0, 1fr); }
   .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
-  .renderer { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+  .renderer { display: block; width: 100%; height: var(--lv-visual-height, 100%); min-width: 0; min-height: 0; overflow: hidden; }
   /* Map data is a secondary, space-intensive disclosure. Keep compact map
      cards focused on the map and expose the disclosure in visual focus mode. */
   :host(:not([slot='focus-visual'])) [data-map-data-table] { display: none !important; }
