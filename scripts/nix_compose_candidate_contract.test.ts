@@ -544,3 +544,36 @@ test('signer comparison accepts the original build binding and rejects extracted
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('Compose assembly reads both named Nix output links before packaging', () => {
+  const build = composeCandidateWorkflow.jobs['build-bundles']
+  const assemble = build.steps.find((step: any) => step.name === 'Assemble and verify with protected tools')
+  const packaging = assemble.run.indexOf('python3 scripts/package_compose_bundle.py')
+  expect(packaging).toBeGreaterThan(0)
+  const root = mkdtempSync(join(tmpdir(), 'compose-nix-output-links-'))
+  try {
+    // Nix appends a non-default output name to --out-link. The arm64
+    // derivation therefore produces result-compose-cli-arm64, not the prefix.
+    for (const arch of ['amd64', 'arm64']) {
+      const output = join(root, `result-compose-cli-${arch}`)
+      mkdirSync(output)
+      writeFileSync(join(output, 'controller-build-identity.json'), JSON.stringify({ platform: `linux/${arch}` }))
+      writeFileSync(join(output, 'static-compatibility.json'), JSON.stringify({ architecture: arch }))
+    }
+    const result = spawnSync('bash', ['-c', assemble.run.slice(0, packaging) + '\ndone\n'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, RELEASE_RUN_ID: '123', RELEASE_RUN_ATTEMPT: '1' },
+    })
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    for (const arch of ['amd64', 'arm64']) {
+      expect(JSON.parse(readFileSync(join(root, 'candidate', arch, 'controller-build-identity.json'), 'utf8')))
+        .toEqual({ platform: `linux/${arch}` })
+      expect(JSON.parse(readFileSync(join(root, 'candidate', arch, 'static-compatibility.json'), 'utf8')))
+        .toEqual({ architecture: arch })
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
