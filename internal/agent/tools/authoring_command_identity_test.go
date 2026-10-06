@@ -9,6 +9,7 @@ import (
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/google/uuid"
 )
@@ -56,5 +57,53 @@ func TestDashboardAuthoringToolCallIdentityIsNativeAndReplayStable(t *testing.T)
 	scope.ConversationID = "another-conversation"
 	if run(scope) == first {
 		t.Fatal("command identity collided across conversations")
+	}
+}
+
+func (f *commandIdentityAuthoring) Create(ctx context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+	f.create = request
+	f.audit, _ = dashboardauthoring.AuditIntentFromContext(ctx)
+	return authoringservice.Result{}, nil
+}
+
+func TestDashboardDraftCreationSuppliesTransactionalAudit(t *testing.T) {
+	app := &commandIdentityAuthoring{}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest(), Resolve: (&projectResolverFake{}).Resolve}
+	scope := Scope{PrincipalID: "principal", ConversationID: "conversation"}
+	call := agentcore.ToolCall{ID: "model_create_call", Arguments: json.RawMessage(`{"title":"Finance overview","semanticModelId":"semantic_sales"}`)}
+	result, err := definitionByName(provider.Definitions(scope), CreateDashboardDraftToolName).Handler.Run(t.Context(), call)
+	if err != nil || result.IsError {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	id, err := uuid.Parse(app.audit.EventID)
+	if err != nil || id.Version() != 7 || app.audit.Operation != "createDashboardAuthoringDraft" || app.audit.ActorID != scope.PrincipalID {
+		t.Fatalf("missing native creation audit: %#v", app.audit)
+	}
+	if app.create.IdempotencyKey != call.ID || app.create.ToolCallID != call.ID || app.create.ConversationID != scope.ConversationID {
+		t.Fatalf("creation replay/provenance changed: %#v", app.create)
+	}
+}
+
+func (f *commandIdentityAuthoring) Fork(ctx context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+	f.fork = request
+	f.audit, _ = dashboardauthoring.AuditIntentFromContext(ctx)
+	return authoringservice.Result{}, nil
+}
+
+func TestDashboardForkSuppliesTransactionalAudit(t *testing.T) {
+	app := &commandIdentityAuthoring{}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest(), Resolve: (&projectResolverFake{}).Resolve}
+	scope := Scope{PrincipalID: "principal", ConversationID: "conversation"}
+	call := agentcore.ToolCall{ID: "model_fork_call", Arguments: json.RawMessage(`{"sourceKind":"project","sourceDashboardId":"dashboard_sales","title":"Finance overview"}`)}
+	result, err := definitionByName(provider.Definitions(scope), ForkDashboardToolName).Handler.Run(t.Context(), call)
+	if err != nil || result.IsError {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	id, err := uuid.Parse(app.audit.EventID)
+	if err != nil || id.Version() != 7 || app.audit.Operation != "forkDashboardAuthoringDraft" || app.audit.ActorID != scope.PrincipalID {
+		t.Fatalf("missing fork audit: %#v", app.audit)
+	}
+	if app.fork.IdempotencyKey != call.ID || app.fork.ToolCallID != call.ID || app.fork.ConversationID != scope.ConversationID {
+		t.Fatalf("fork provenance changed: %#v", app.fork)
 	}
 }

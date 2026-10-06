@@ -1,3 +1,4 @@
+import { generatedDashboardHref } from './generated-dashboard'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { savedVisualComponentId, savedVisualSourceId } from './dashboard-membership'
 import { submitVisualForm } from './visual-library-bridge'
@@ -70,6 +71,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private visualCache: Record<string, VisualizationEnvelope> = {}
   private visitedVisuals: string[] = []
   private warmedRenderers = new Set<string>()
+  private dashboardGenerationRun = ''
+  private completedDashboardGenerationRun = ''
   private savedSignature = ''
   private pendingSaveSignature = ''
   private saveRequestID = ''
@@ -98,6 +101,34 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const url = new URL(window.location.href)
     url.searchParams.set('preview', 'builder')
     window.history.pushState(window.history.state, '', url)
+  }
+
+  private async openGeneratedDashboard(href: string): Promise<void> {
+    this.dashboardSaveError = ''
+    this.builderNeedsRefresh = false
+    this.pendingDashboardChange = null
+    this.pendingDashboardPageId = ''
+    this.savedBuilderHref = ''
+    this.restoredBuilderHref = undefined
+    this.savedDashboardArtifacts = []
+    this.savedDashboardVisuals = {}
+    this.dashboardCopies = {}
+    this.dashboardCopyLinks = {}
+    this.dashboardPageId = ''
+    this.selectedPreviewVisual = ''
+    this.savingDashboard = true
+    const url = new URL(window.location.href)
+    url.searchParams.delete('dashboard')
+    window.history.replaceState(window.history.state, '', url)
+    this.enterBuilder()
+    await this.updateComplete
+    if (this.builderFrame) this.builderFrame.src = href
+    window.clearTimeout(this.saveTimer)
+    this.saveTimer = window.setTimeout(() => {
+      if (!this.savingDashboard) return
+      this.savingDashboard = false
+      this.dashboardSaveError = 'The dashboard is taking longer to open. Use its Open in Builder link to retry.'
+    }, 45000)
   }
 
   private async restoreChatLayout(): Promise<void> {
@@ -913,6 +944,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		this.syncOptimisticTurn()
     this.navigateFromDraft()
     const running = Boolean(this.agent.status.running)
+    const runId = this.agent.status.runId || latestAcceptedRunId(this.agent.transcript ?? [])
+    if (running && runId) this.dashboardGenerationRun = runId
+    if (!running && this.dashboardGenerationRun && this.dashboardGenerationRun !== this.completedDashboardGenerationRun) {
+      const completedRun = this.dashboardGenerationRun
+      const href = generatedDashboardHref(this.agent.transcript ?? [], completedRun, this.agent.activeConversationId ?? '')
+      if (href) this.completedDashboardGenerationRun = completedRun
+      if (href) void this.openGeneratedDashboard(href)
+    }
     if (this.wasAgentRunning && !running && this.savedBuilderHref && !this.savingDashboard) {
       const frame = this.builderFrame
       if (frame?.contentWindow && frame.contentWindow.location.href !== 'about:blank') frame.contentWindow.postMessage({ type: 'lv-refresh-builder' } satisfies ChatDashboardMessage, window.location.origin)

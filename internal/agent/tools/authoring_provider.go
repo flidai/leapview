@@ -314,6 +314,10 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if !ok {
 				return result
 			}
+			ctx, auditErr := dashboardToolCreationContext(ctx, scope, project, "createDashboardAuthoringDraft")
+			if auditErr != nil {
+				return authoringToolError(auditErr)
+			}
 			value, err := p.Application.Create(ctx, authoringservice.CreateRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID)), Title: input.Title, Slug: input.Slug, SemanticModel: semanticModel, Visibility: dashboardauthoring.VisibilityPrivate, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
 			if err != nil {
 				return authoringToolError(err)
@@ -369,6 +373,10 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				}
 				sourceID = dashboardauthoring.DashboardID(resolved.String())
 			}
+			ctx, auditErr := dashboardToolCreationContext(ctx, scope, project, "forkDashboardAuthoringDraft")
+			if auditErr != nil {
+				return authoringToolError(auditErr)
+			}
 			value, err := p.Application.Fork(ctx, sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, ProjectID: project, DashboardID: sourceID}, TargetProjectID: project, ActorID: scope.PrincipalID, Title: input.Title, Slug: input.Slug, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
 			if err != nil {
 				return authoringToolError(err)
@@ -392,7 +400,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err != nil {
 				return authoringToolError(err)
 			}
-			return agentcore.ToolResult{Content: value}
+			return agentcore.ToolResult{Content: value, ModelContent: dashboardPreviewModelResult(input, value)}
 		}),
 		p.definition(ExportDashboardYAMLToolName, "Export an authorized authored dashboard source as canonical project YAML.", "read", agentcontracts.DashboardAuthoringExportInputSchemaJSON, agentcontracts.DashboardAuthoringExportResultSchemaJSON, []string{"dashboard", "authoring", "export"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringExportInput
@@ -532,6 +540,35 @@ func dashboardToolMutationContext(ctx context.Context, scope Scope, project proj
 		capability = access.CapabilityResourceManage
 	}
 	return dashboardauthoring.WithAuditIntent(ctx, access.AuditIntent{EventID: string(command.ID), Source: "dashboard.authoring", Operation: contract.OperationID, ActorID: scope.PrincipalID, PrincipalID: scope.PrincipalID, Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: command.DashboardID.String(), Capability: capability, Outcome: "success", MetadataJSON: metadata}), nil
+}
+
+// Creation allocates dashboard/draft IDs in the transaction. The repository
+// fills those identities and replays the original committed audit record when
+// the tool-call idempotency key is retried.
+func dashboardToolCreationContext(ctx context.Context, scope Scope, project projectgraph.ResourceID, operation string) (context.Context, error) {
+	contract, ok := dashboardgen.GetAPIGenCommandRuntimeContract(operation)
+	if !ok {
+		return ctx, fmt.Errorf("dashboard creation contract is unavailable")
+	}
+	payload := dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{OperationId: operation, ProjectId: project.String(), DashboardId: "pending-dashboard", DraftId: "pending-draft", Origin: string(dashboardauthoring.OriginAgent)}
+	var metadata string
+	var err error
+	switch operation {
+	case "createDashboardAuthoringDraft":
+		metadata, err = dashboardgen.EncodeGenCreateDashboardAuthoringDraftAuditPayload(payload)
+	case "forkDashboardAuthoringDraft":
+		metadata, err = dashboardgen.EncodeGenForkDashboardAuthoringDraftAuditPayload(payload)
+	default:
+		return ctx, fmt.Errorf("unsupported creation operation %q", operation)
+	}
+	if err != nil {
+		return ctx, err
+	}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return ctx, err
+	}
+	return dashboardauthoring.WithAuditIntent(ctx, access.AuditIntent{EventID: id.String(), Source: "dashboard.authoring", Operation: operation, ActorID: scope.PrincipalID, PrincipalID: scope.PrincipalID, Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: "pending-dashboard", Capability: access.CapabilityResourceEdit, Outcome: "success", MetadataJSON: metadata}), nil
 }
 
 func authoredDashboardID(raw string) (dashboardauthoring.DashboardID, agentcore.ToolResult, bool) {

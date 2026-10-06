@@ -137,3 +137,17 @@ func (f fakeDocumentation) Search(ctx context.Context, request productdocs.Searc
 func (f fakeDocumentation) Read(ctx context.Context, request productdocs.ReadRequest) (productdocs.ReadResult, error) {
 	return f.read(ctx, request)
 }
+
+func TestDocsSearchEmptyResultMatchesOutputContract(t *testing.T) {
+	provider := DocsProvider{Documentation: fakeDocumentation{search: func(_ context.Context, request productdocs.SearchRequest) (productdocs.SearchResult, error) {
+		return productdocs.SearchResult{Query: request.Query}, nil
+	}}}
+	catalog, err := agentcore.NewToolCatalog(provider.Definitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := catalog.Execute(t.Context(), agentcore.ToolCall{ID: "empty", Name: DocsSearchToolName, Arguments: json.RawMessage(`{"query":"no matching document"}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("empty search rejected: %#v %v", result, err)
+	}
+}

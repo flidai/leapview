@@ -67,6 +67,9 @@ func (p DocsProvider) search(ctx context.Context, arguments json.RawMessage) age
 	if err != nil {
 		return documentationToolError("docs_search_failed", err)
 	}
+	if result.Matches == nil {
+		result.Matches = []productdocs.Reference{}
+	}
 	return agentcore.ToolResult{Content: result}
 }
 

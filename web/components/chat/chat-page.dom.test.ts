@@ -1079,3 +1079,37 @@ test('side agent exposes dashboard-authored visuals in the individual side view'
   expect(await chat.evaluate((e: any)=>({builderOpen:e.builderOpen,page:e.dashboardPageId}))).toEqual({builderOpen:true,page:'pies'})
  } finally {await page.close()}
 })
+
+for (const terminalError of ['', 'The final reply exceeded the conversation limit.']) test(`a live full-dashboard run opens its successful preview automatically and only once (${terminalError || 'success'})`, async () => {
+ const page=await browser.newPage()
+ try {
+  await page.route('**/chats/*/actions/*/open?*', route=>route.fulfill({contentType:'text/html',body:'<lv-dashboard-builder>Generated dashboard</lv-dashboard-builder>'}))
+  await page.goto(baseURL)
+  const chat=page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async (e:any)=>{
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{status:{enabled:true,running:true,runId:'full-build'}}})
+   await e.updateComplete
+  })
+  await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).dashboardGenerationRun==='full-build')
+  // Terminal status may arrive before the last transcript projection.
+  await chat.evaluate(async (e:any, error:string)=>{
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{status:{enabled:true,running:false,runId:'full-build',error}}})
+   await e.updateComplete
+  }, terminalError)
+  expect(await chat.evaluate((e:any)=>e.builderOpen)).toBe(false)
+  await chat.evaluate(async (e:any)=>{
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{transcript:['create_dashboard_draft','edit_dashboard_source','preview_dashboard_draft'].map(name=>({id:name,kind:'tool',name,runId:'full-build',toolCallId:name,status:'complete'}))}})
+   await e.updateComplete
+  })
+  await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).builderOpen)
+  await page.frameLocator('.builder-frame').getByText('Generated dashboard').waitFor()
+  expect(await chat.locator('.builder-frame').getAttribute('src')).toContain('embed=chat')
+  await page.getByRole('button',{name:'Expand chat',exact:true}).click()
+  await chat.evaluate(async (e:any)=>{e.requestUpdate();await e.updateComplete})
+  expect(await chat.evaluate((e:any)=>e.builderOpen)).toBe(false)
+ }finally{await page.close()}
+})

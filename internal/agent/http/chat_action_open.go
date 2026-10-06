@@ -146,7 +146,7 @@ func (h *Handler) ChatActionOpen(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.NotFound(w, r)
 		return
 	}
-	if r.URL.Query().Get("createdBy") != "" && len(result.VisualErrors) > 0 {
+	if (r.URL.Query().Get("createdBy") != "" || r.URL.Query().Get("mode") == "preview") && len(result.VisualErrors) > 0 {
 		nethttp.NotFound(w, r)
 		return
 	}
