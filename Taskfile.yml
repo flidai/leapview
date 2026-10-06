@@ -1021,6 +1021,7 @@ tasks:
       - ui-signals:generate
     method: checksum
     sources:
+      - internal/platform/clidoc/**/*.go
       - Taskfile.yml
       - internal/app/cli/**/*.go
       - internal/admin/cli/**/*.go

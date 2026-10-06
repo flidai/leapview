@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/app/cli"
+	"github.com/flidai/leapview/internal/platform/clidoc"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -28,41 +29,10 @@ type document struct {
 }
 
 const (
-	effectAnnotation       = "leapview.dev/effect"
-	confirmationAnnotation = "leapview.dev/confirmation"
-	helpGroupAnnotation    = "leapview.dev/help-group"
+	effectAnnotation       = clidoc.EffectAnnotation
+	confirmationAnnotation = clidoc.ConfirmationAnnotation
+	helpGroupAnnotation    = clidoc.HelpGroupAnnotation
 )
-
-type machineManifest struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	Commands      []machineCommand `json:"commands"`
-}
-
-type machineCommand struct {
-	ID               string          `json:"id"`
-	Path             []string        `json:"path"`
-	Title            string          `json:"title"`
-	Summary          string          `json:"summary"`
-	Description      string          `json:"description"`
-	Usage            string          `json:"usage"`
-	Runnable         bool            `json:"runnable"`
-	Effect           string          `json:"effect"`
-	Confirmation     string          `json:"confirmation"`
-	Arguments        []string        `json:"arguments"`
-	Options          []machineOption `json:"options"`
-	InheritedOptions []machineOption `json:"inheritedOptions"`
-	Examples         []string        `json:"examples"`
-	Subcommands      []string        `json:"subcommands"`
-}
-
-type machineOption struct {
-	Name        string `json:"name"`
-	Shorthand   string `json:"shorthand,omitempty"`
-	Type        string `json:"type"`
-	Default     string `json:"default"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
-}
 
 func main() {
 	out := flag.String("out", "docs/reference/cli", "generated Markdown output directory")
@@ -74,6 +44,10 @@ func main() {
 }
 
 func generate(root *cobra.Command, out string) error {
+	manifest, err := clidoc.Build(root)
+	if err != nil {
+		return err
+	}
 	if err := os.RemoveAll(out); err != nil {
 		return err
 	}
@@ -81,31 +55,6 @@ func generate(root *cobra.Command, out string) error {
 		return err
 	}
 	items := []document{}
-	commands := []machineCommand{}
-	var visit func(*cobra.Command, []string) error
-	visit = func(command *cobra.Command, path []string) error {
-		if command.Hidden {
-			return nil
-		}
-		if command != root {
-			slug := strings.Join(path, "-")
-			item := document{Slug: slug, Title: "leapview " + strings.Join(path, " "), Summary: command.Short}
-			machine, err := machineCommandFrom(command, path, item)
-			if err != nil {
-				return err
-			}
-			commands = append(commands, machine)
-		}
-		for _, child := range sortedVisibleChildren(command) {
-			if err := visit(child, append(path, child.Name())); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := visit(root, nil); err != nil {
-		return err
-	}
 	for _, command := range sortedVisibleChildren(root) {
 		item := document{Slug: command.Name(), Title: "leapview " + command.Name(), Summary: command.Short}
 		items = append(items, item)
@@ -121,7 +70,7 @@ func generate(root *cobra.Command, out string) error {
 	if err := os.WriteFile(filepath.Join(out, "catalog.json"), append(encoded, '\n'), 0o644); err != nil {
 		return err
 	}
-	machineEncoded, err := json.MarshalIndent(machineManifest{SchemaVersion: 1, Commands: commands}, "", "  ")
+	machineEncoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -135,95 +84,10 @@ func generate(root *cobra.Command, out string) error {
 	for _, item := range items {
 		index.WriteString(fmt.Sprintf("- [%s](/docs/cli/%s): %s\n", item.Title, item.Slug, item.Summary))
 	}
+	writeHeading(&index, 2, "Root command")
+	writeCommandDescription(&index, root)
+	writeCommandDetails(&index, root, "root", 3)
 	return os.WriteFile(filepath.Join(out, "index.md"), []byte(index.String()), 0o644)
-}
-
-func machineCommandFrom(command *cobra.Command, path []string, item document) (machineCommand, error) {
-	effect, confirmation := "none", "never"
-	runnable := documentedRunnable(command)
-	if runnable {
-		effect = command.Annotations[effectAnnotation]
-		if effect == "" {
-			return machineCommand{}, fmt.Errorf("command %q is runnable but missing %s annotation", command.CommandPath(), effectAnnotation)
-		}
-		confirmation = command.Annotations[confirmationAnnotation]
-		if confirmation == "" {
-			confirmation = defaultConfirmation(effect)
-		}
-	}
-	description := strings.TrimSpace(command.Long)
-	if description == "" {
-		description = command.Short
-	}
-	children := visibleChildren(command)
-	subcommands := make([]string, 0, len(children))
-	for _, child := range children {
-		subcommands = append(subcommands, strings.Join(append(append([]string(nil), path...), child.Name()), "-"))
-	}
-	examples := []string{}
-	for _, line := range strings.Split(strings.TrimSpace(command.Example), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			examples = append(examples, line)
-		}
-	}
-	return machineCommand{
-		ID:               item.Slug,
-		Path:             append([]string(nil), path...),
-		Title:            item.Title,
-		Summary:          item.Summary,
-		Description:      description,
-		Usage:            command.UseLine(),
-		Runnable:         runnable,
-		Effect:           effect,
-		Confirmation:     confirmation,
-		Arguments:        commandArguments(command.Use),
-		Options:          machineOptions(command.LocalFlags()),
-		InheritedOptions: machineOptions(command.InheritedFlags()),
-		Examples:         examples,
-		Subcommands:      subcommands,
-	}, nil
-}
-
-func documentedRunnable(command *cobra.Command) bool {
-	return command.Runnable() && command.Annotations[helpGroupAnnotation] != "true"
-}
-
-func defaultConfirmation(effect string) string {
-	switch effect {
-	case "destructive":
-		return "required"
-	case "write", "idempotent-write":
-		return "conditional"
-	default:
-		return "never"
-	}
-}
-
-func commandArguments(use string) []string {
-	fields := strings.Fields(use)
-	arguments := []string{}
-	for _, field := range fields[1:] {
-		if (strings.HasPrefix(field, "<") && strings.HasSuffix(field, ">")) ||
-			(strings.HasPrefix(field, "[") && strings.HasSuffix(field, "]")) {
-			arguments = append(arguments, strings.Trim(field, "<>[]"))
-		}
-	}
-	return arguments
-}
-
-func machineOptions(flags *pflag.FlagSet) []machineOption {
-	options := []machineOption{}
-	flags.VisitAll(func(flag *pflag.Flag) {
-		options = append(options, machineOption{
-			Name:        flag.Name,
-			Shorthand:   flag.Shorthand,
-			Type:        flag.Value.Type(),
-			Default:     flag.DefValue,
-			Description: flag.Usage,
-			Required:    len(flag.Annotations[cobra.BashCompOneRequiredFlag]) > 0,
-		})
-	})
-	return options
 }
 
 func renderCommandFamily(command *cobra.Command, item document) string {
@@ -254,7 +118,7 @@ func writeCommandDescription(out *strings.Builder, command *cobra.Command) {
 func writeCommandDetails(out *strings.Builder, command *cobra.Command, id string, headingLevel int) {
 	writeHeading(out, headingLevel, "Usage")
 	out.WriteString("\n```sh\n" + command.UseLine() + "\n```\n")
-	if documentedRunnable(command) {
+	if clidoc.Runnable(command) {
 		writeHeading(out, headingLevel, "Behavior")
 		out.WriteString("\n| Side effect | Confirmation |\n| --- | --- |\n")
 		out.WriteString("| `" + command.Annotations[effectAnnotation] + "` | `" + command.Annotations[confirmationAnnotation] + "` |\n")
@@ -306,6 +170,9 @@ func writeFlags(out *strings.Builder, heading string, flags *pflag.FlagSet, head
 	writeHeading(out, headingLevel, heading)
 	out.WriteString("\n| Flag | Type | Default | Description |\n| --- | --- | --- | --- |\n")
 	flags.VisitAll(func(value *pflag.Flag) {
+		if value.Hidden {
+			return
+		}
 		name := "`--" + value.Name + "`"
 		if value.Shorthand != "" {
 			name = "`-" + value.Shorthand + "`, " + name

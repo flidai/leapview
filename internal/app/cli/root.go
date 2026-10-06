@@ -16,6 +16,7 @@ import (
 )
 
 type rootOptions struct {
+	agentGuidance      bool
 	addr               string
 	production         bool
 	environment        string
@@ -90,10 +91,14 @@ func NewCommand(ctx context.Context) *cobra.Command {
 		SilenceUsage:  true,
 		Version:       buildinfo.Current().Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.agentGuidance {
+				return writeAgentGuidance(cmd)
+			}
 			return cmd.Help()
 		},
 	}
 	root.InitDefaultVersionFlag()
+	root.Flags().BoolVar(&opts.agentGuidance, "llms", false, "print offline agent guidance and the public command catalog")
 	root.PersistentFlags().Bool("no-input", false, "disable terminal prompts and automatic browser opening")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return cliapi.NewUsageError(err)

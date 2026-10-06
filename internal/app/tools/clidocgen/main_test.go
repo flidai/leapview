@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/platform/clidoc"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +27,7 @@ func TestGenerateWritesVersionedMachineManifest(t *testing.T) {
 	}
 	deploy.Flags().Bool("apply", false, "Apply the deployment")
 	root.PersistentFlags().String("target", "", "LeapView server URL")
+	root.Flags().Bool("llms", false, "Print agent guidance")
 	root.AddCommand(deploy)
 
 	out := t.TempDir()
@@ -37,17 +39,17 @@ func TestGenerateWritesVersionedMachineManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read machine manifest: %v", err)
 	}
-	var manifest machineManifest
+	var manifest clidoc.Manifest
 	if err := json.Unmarshal(contents, &manifest); err != nil {
 		t.Fatalf("decode machine manifest: %v", err)
 	}
-	if got, want := manifest.SchemaVersion, 1; got != want {
+	if got, want := manifest.SchemaVersion, clidoc.SchemaVersion; got != want {
 		t.Fatalf("schema version = %d, want %d", got, want)
 	}
-	if got, want := len(manifest.Commands), 1; got != want {
+	if got, want := len(manifest.Commands), 2; got != want {
 		t.Fatalf("commands = %d, want %d", got, want)
 	}
-	command := manifest.Commands[0]
+	command := manifest.Commands[1]
 	if command.ID != "deploy" || !strings.HasPrefix(command.Usage, "leapview deploy <project>") {
 		t.Errorf("command identity = %#v", command)
 	}
@@ -75,15 +77,33 @@ func TestGenerateWritesVersionedMachineManifest(t *testing.T) {
 			t.Errorf("generated article missing %q:\n%s", want, article)
 		}
 	}
+	index, err := os.ReadFile(filepath.Join(out, "index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Root command", "`--llms`", "`--target`", "/docs/cli/commands/root.json"} {
+		if !strings.Contains(string(index), want) {
+			t.Errorf("root reference missing %q", want)
+		}
+	}
 }
 
 func TestGenerateRejectsRunnableCommandWithoutSafetyMetadata(t *testing.T) {
 	root := &cobra.Command{Use: "leapview"}
 	root.AddCommand(&cobra.Command{Use: "mutate", Run: func(*cobra.Command, []string) {}})
 
-	err := generate(root, t.TempDir())
+	out := t.TempDir()
+	previous := filepath.Join(out, "index.md")
+	if err := os.WriteFile(previous, []byte("previous valid reference"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := generate(root, out)
 	if err == nil || err.Error() != `command "leapview mutate" is runnable but missing leapview.dev/effect annotation` {
 		t.Fatalf("generate error = %v", err)
+	}
+	contents, readErr := os.ReadFile(previous)
+	if readErr != nil || string(contents) != "previous valid reference" {
+		t.Fatalf("failed catalog generation destroyed previous docs: %q, error %v", contents, readErr)
 	}
 }
 
@@ -129,11 +149,11 @@ func TestGenerateTreatsRuntimeHelpGroupAsDocumentationOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var manifest machineManifest
+	var manifest clidoc.Manifest
 	if err := json.Unmarshal(contents, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Commands) != 2 || manifest.Commands[0].Runnable {
+	if len(manifest.Commands) != 3 || manifest.Commands[1].Runnable {
 		t.Fatalf("help-only group manifest entry = %#v", manifest.Commands)
 	}
 }
@@ -218,11 +238,11 @@ func TestGenerateGroupsSubcommandsOnTopLevelCommandPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var manifest machineManifest
+	var manifest clidoc.Manifest
 	if err := json.Unmarshal(manifestContents, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(manifest.Commands), 3; got != want {
+	if got, want := len(manifest.Commands), 4; got != want {
 		t.Fatalf("machine commands = %d, want %d", got, want)
 	}
 }
