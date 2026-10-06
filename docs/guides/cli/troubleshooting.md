@@ -53,4 +53,4 @@ For guided `deploy`, retain the reported operation handle. Exit 3 means confirma
 
 ## Find command-specific help
 
-Use `leapview <command> --help` for syntax at the terminal and the [generated CLI reference](/docs/cli/reference) for complete flags and subcommands. Continue with [Authentication](/docs/cli/authentication), [Targets and environments](/docs/cli/targets), or [Develop, review, and publish](/docs/cli/validate-deploy) according to the failing stage.
+Use `leapview <command> --help` for syntax at the terminal and the [generated CLI reference](/docs/cli/reference) for complete flags and subcommands. `leapview --llms` prints offline agent guidance from the same command catalog. Continue with [Authentication](/docs/cli/authentication), [Targets and environments](/docs/cli/targets), or [Develop, review, and publish](/docs/cli/validate-deploy) according to the failing stage.

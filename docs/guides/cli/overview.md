@@ -10,7 +10,7 @@ Run `leapview` to see workflow groups and examples. Use `leapview <command> --he
 
 Generate shell completion with `leapview completion bash`, `zsh`, `fish`, or `powershell`, then install the script using your shell's completion instructions. Completing saved target names and API operation names requires no target connection.
 
-Run `leapview doctor` to inspect local authoring prerequisites, or add an explicit `--target` to inspect a remote instance.
+Run `leapview doctor` to inspect local authoring prerequisites, or add an explicit `--target` to inspect a remote instance. Use `leapview --llms` for offline agent guidance covering commands, effects, output, and recovery.
 
 ## Set up access
 
