@@ -91,6 +91,15 @@ or certificate rotation. Those remain operator recovery and maintenance work.
 Run the isolated Docker regression locally with
 `LEAPVIEW_TEST_BUNDLED_POSTGRES_DOCKER=1 go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerResumesProvisioningAndPreservesVolume$' -count=1 -v`;
 the hosted `task test:qualification:native-postgres` lane runs the same check.
+That lane also runs `TestBundledPostgresColdSnapshotRestoreQualification` on
+Linux. It stops the bundled service, snapshots its named PostgreSQL volume with
+the matching Compose root, restores that same cold point, and verifies rows in
+both databases over `verify-full` TLS. It checks target mismatch, tampered
+credentials, and a missing password against the existing snapshot and bootstrap
+contracts. Run it locally through `task test:qualification:native-postgres`
+with a rootful Docker Engine; non-root runs need passwordless `sudo` to preserve
+the named volume's PostgreSQL ownership. This is a bounded bundled-profile
+regression, not an operator backup workflow or a general recovery guarantee.
 
 HTTPS is enabled by default through the Caddy overlay. Initialization derives
 `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain
