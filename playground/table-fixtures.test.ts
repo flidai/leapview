@@ -61,3 +61,36 @@ test('exploration sort returns ordered results with the requested response seque
   expect(values).toEqual([...values].sort((a, b) => b - a))
   expect(exploreFixture(command, 'error').error).toBeTruthy()
 })
+
+
+test('preview fixtures explicitly distinguish loading from settled current results', () => {
+  for (const state of ['populated', 'empty', 'loading', 'error'] as const) {
+    const preview = previewFixture(windowedFixture(state))
+    expect(preview.loading).toBe(state === 'loading')
+    expect(preview.stale).toBe(false)
+  }
+})
+
+test('exploration fixtures initialize canonical selections for result-table sorting', () => {
+  const command = exploreCommand()
+  expect(command.spec).toEqual({
+    schemaVersion: 1, modelId: 'playground-sales', datasetId: 'orders',
+    dimensions: command.dimensions.map(field => ({ field })),
+    metrics: command.metrics.map(field => ({ field })),
+    filters: [], sort: [], limit: 75,
+  })
+})
+
+test('exploration windows acknowledge table sequence independently of semantic sequence', () => {
+  const command = {
+    ...exploreCommand(), requestSeq: 40, resetVersion: 3,
+    sort: [{ field: 'revenue', direction: 'desc' as const }],
+    window: { block: 'all' as const, start: 50, count: 25, requestSeq: 8, resetVersion: 3 },
+  }
+  const result = exploreFixture(command)
+  expect(result.requestSeq).toBe(40)
+  expect(result.window?.totalRows).toBe(75)
+  expect(result.window?.blocks.b?.rows).toEqual(result.rows.slice(50, 75))
+  expect(result.window?.blocks.b).toMatchObject({ start: 50, requestSeq: 8, resetVersion: 3, sort: { column: 'revenue', direction: 'desc' } })
+  expect(result.window?.blocks.c).toMatchObject({ start: 75, requestSeq: 8, resetVersion: 3, rows: [] })
+})

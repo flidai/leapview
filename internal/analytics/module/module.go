@@ -27,6 +27,7 @@ type CredentialMode string
 // reads and writes. The alias keeps application composition on the module
 // surface while preserving the capability-owned contract.
 type QueryAuditStore = queryaudit.Store
+type QueryAuditRecorder = queryaudit.Recorder
 
 // QueryGovernor is the analytics-module surface for governed execution. It is
 // re-exported here so application composition does not depend on a capability

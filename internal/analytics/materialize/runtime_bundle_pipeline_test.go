@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -260,4 +264,58 @@ func (governor *canceledResultGovernor) GovernDataQuery(_ context.Context, reque
 func primeBundleBranch(runtime *Runtime, branch dataquery.BundleRequest) error {
 	_, err := runtime.ExecuteDataQuery(context.Background(), branch.Query)
 	return err
+}
+
+func TestBundleDecimalMetadataSurvivesMissAndCacheHit(t *testing.T) {
+	database := &decimalBundleDatabase{}
+	runtime := bundleCacheRuntime(t, database)
+	defer runtime.CloseView()
+	for _, outcome := range []string{dataquery.CacheMiss, dataquery.CacheHit} {
+		result, err := runtime.ExecuteDataQueryBundle(context.Background(), bundleCacheRequests())
+		require.NoError(t, err)
+		require.Len(t, result.Results, 2)
+		for _, branch := range result.Results {
+			require.Equal(t, outcome, branch.CacheOutcome)
+			require.Equal(t, []dataquery.Column{{Name: "value", DecimalPrecision: 38, DecimalScale: 4}}, branch.Columns)
+			require.Equal(t, []dataquery.Row{{"value": "12345678901234567890.1234"}}, branch.Rows)
+		}
+	}
+	require.Equal(t, int32(1), database.queries.Load())
+}
+
+type decimalBundleDatabase struct {
+	bundleCountingDatabase
+}
+
+func (d *decimalBundleDatabase) QueryArrow(_ context.Context, plan semanticquery.Plan, sink arrowquery.Sink) error {
+	d.queries.Add(1)
+	fields := make([]arrow.Field, len(plan.Columns))
+	for index, name := range plan.Columns {
+		fields[index] = arrow.Field{Name: name, Type: &arrow.Decimal128Type{Precision: 38, Scale: 4}}
+		if name == semanticquery.BundleBranchColumn {
+			fields[index].Type = arrow.PrimitiveTypes.Int64
+		}
+	}
+	schema := arrow.NewSchema(fields, nil)
+	builder := array.NewRecordBuilder(memory.DefaultAllocator, schema)
+	defer builder.Release()
+	value, err := decimal128.FromString("12345678901234567890.1234", 38, 4)
+	if err != nil {
+		return err
+	}
+	for ordinal := int64(0); ordinal < 2; ordinal++ {
+		for index, name := range plan.Columns {
+			if name == semanticquery.BundleBranchColumn {
+				builder.Field(index).(*array.Int64Builder).Append(ordinal)
+			} else {
+				builder.Field(index).(*array.Decimal128Builder).Append(value)
+			}
+		}
+	}
+	record := builder.NewRecordBatch()
+	defer record.Release()
+	if err := sink.WriteSchema(schema); err != nil {
+		return err
+	}
+	return sink.WriteRecord(record)
 }

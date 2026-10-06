@@ -246,3 +246,22 @@ func dashboardSemanticConsumptionQuery(modelID string) dataquery.Query {
 		Target:    "orders",
 	}
 }
+
+func TestSavedExplorationsRequireArbitrarySemanticQueryAuthority(t *testing.T) {
+	_, _, semantic, _, _ := canonicalGraph(t)
+	request := dashboardSemanticConsumptionQuery(semantic.CanonicalID())
+	request.Surface = dataquery.SurfaceSavedExploration
+	request.Operation = "saved_exploration_export"
+	action, err := semanticPermissionAction(request)
+	if err != nil || action != access.ActionSemanticQuery {
+		t.Fatalf("saved exploration action = %q, %v", action, err)
+	}
+	consumeOnly := canonicalSnapshot(t, []struct {
+		id         string
+		resource   access.ResourceRef
+		capability access.Capability
+	}{{"consume", semantic, access.CapabilityResourceUse}}, nil)
+	if _, _, err := canonicalMetricsWithSnapshot(t, consumeOnly, nil).GovernDataQuery(context.Background(), request); !IsDenied(err) {
+		t.Fatalf("consume-only saved exploration = %v, want denial", err)
+	}
+}

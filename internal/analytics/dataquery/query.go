@@ -123,6 +123,7 @@ type SpatialMetadata struct {
 type Field struct {
 	Field string
 	Alias string
+	Grain string
 	// Kind preserves the semantic member kind when a field is carried outside
 	// its original dimensions/metrics collection (for example, into a
 	// count-only authorization projection). An empty kind is retained for
@@ -204,6 +205,11 @@ type ColumnMask struct {
 
 type Column struct {
 	Name string
+	// DecimalPrecision and DecimalScale preserve the physical result schema
+	// independently of the canonical string representation used in Rows.
+	// A zero precision means no decimal type metadata is available.
+	DecimalPrecision int32
+	DecimalScale     int32
 }
 
 type Row map[string]any
@@ -270,12 +276,13 @@ func (e *BundleBranchError) Error() string {
 func (e *BundleBranchError) Unwrap() error { return e.Err }
 
 const (
-	SurfaceDashboard       = "dashboard"
-	SurfaceAPI             = "api"
-	SurfaceAgent           = "agent"
-	SurfaceCLI             = "cli"
-	SurfaceDataExplorer    = "data_explorer"
-	SurfacePublicDashboard = "public_dashboard"
+	SurfaceDashboard        = "dashboard"
+	SurfaceAPI              = "api"
+	SurfaceAgent            = "agent"
+	SurfaceCLI              = "cli"
+	SurfaceDataExplorer     = "data_explorer"
+	SurfaceSavedExploration = "saved_exploration"
+	SurfacePublicDashboard  = "public_dashboard"
 
 	OperationDashboardAggregate         = "dashboard_aggregate"
 	OperationDashboardRows              = "dashboard_rows"
@@ -292,10 +299,11 @@ const (
 	// authored draft. A draft is a new query shape, even though its compiled
 	// report uses the dashboard execution surface; authorization therefore
 	// requires semantic.query (and its semantic.consume prerequisite).
-	OperationDashboardDraftPreview = "dashboard_draft_preview"
-	OperationAgentQuery            = "agent_query"
-	OperationPreviewWindow         = "preview_window"
-	OperationSemanticExplore       = "semantic_explore"
+	OperationDashboardDraftPreview        = "dashboard_draft_preview"
+	OperationAgentQuery                   = "agent_query"
+	OperationPreviewWindow                = "preview_window"
+	OperationSemanticExplore              = "semantic_explore"
+	OperationDataExploreFilterSuggestions = "data_explore_filter_suggestions"
 
 	StatusSuccess  = "success"
 	StatusError    = "error"

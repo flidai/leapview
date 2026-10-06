@@ -185,8 +185,17 @@ func TestDataExplorerPreviewDoesNotRetryUnrelatedFailureOrCancellation(t *testin
 				executor.cancel = cancel
 			}
 			preview := dataExplorerPreview(ctx, executor, "project:test", performancePreviewObject(), projectsignals.DataExplorerCommand{Count: 100, Block: projectsignals.Pointer("all")})
-			if preview.Error == nil || len(executor.queries) != 1 {
+			if len(executor.queries) != 1 {
 				t.Fatalf("unexpected retry=%#v/%#v", preview, executor.queries)
+			}
+			// Cancellation invalidates the preview without presenting an error;
+			// unrelated execution failures remain visible and never trigger fallback.
+			if canceled {
+				if !preview.Stale || preview.Error != nil {
+					t.Fatalf("canceled preview = %#v, want stale without error", preview)
+				}
+			} else if preview.Error == nil || preview.Stale {
+				t.Fatalf("failed preview = %#v, want visible error without stale state", preview)
 			}
 		})
 	}

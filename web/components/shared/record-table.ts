@@ -31,6 +31,7 @@ import {
 } from '@tanstack/lit-table'
 import { lucideIcon } from './lucide-icons'
 import { assetPresentation } from './asset-presentation'
+import { recordTableDataStyles } from './record-table-data-styles'
 import './code-block'
 
 type RecordCellTone = 'default' | 'accent' | 'success' | 'attention' | 'danger' | 'muted'
@@ -95,7 +96,7 @@ type NormalizedRecordTable = Omit<Required<RecordTablePayload>, 'columnSelector'
   columnSelector: Required<RecordColumnSelector>
 }
 
-type RecordTableVariant = 'minimal' | 'primary' | 'compact'
+type RecordTableVariant = 'minimal' | 'primary' | 'compact' | 'data'
 
 const recordTableFeatures = tableFeatures({ rowSortingFeature, sortedRowModel: createSortedRowModel() })
 
@@ -250,7 +251,10 @@ class RecordTable extends LitElement {
         aria-label="Scrollable table"
         tabindex="0"
       >
-        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
+        <table class=${[
+          'record-table',
+          columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : '',
+        ].filter(Boolean).join(' ')} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
           <thead>
             <tr>
               ${columns.map((column) => {
@@ -995,6 +999,8 @@ const recordTableStyles = `
     padding: var(--base-size-4) var(--base-size-8);
   }
 
+  ${recordTableDataStyles}
+
   lv-record-table .variant-primary .record-table tbody tr {
     min-height: 3rem;
   }
@@ -1002,6 +1008,18 @@ const recordTableStyles = `
   lv-record-table .record-table th.is-right,
   lv-record-table .record-table td.is-right {
     text-align: right;
+  }
+
+  lv-record-table .record-table th.is-right .record-table-sort {
+    justify-content: flex-end;
+  }
+
+  lv-record-table .record-table th.is-right .record-table-sort > span:first-child {
+    order: 2;
+  }
+
+  lv-record-table .record-table th.is-right .record-table-sort-indicator {
+    order: 1;
   }
 
   lv-record-table .record-table th.is-center,

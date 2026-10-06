@@ -17,9 +17,14 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	savedexploration "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboardauthoringcatalog "github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -199,31 +204,38 @@ type BrowserHandler struct {
 	RunMonitor         RunMonitorReader
 	// ReadPipelineIntents supplies request-stage queue entries. They are never
 	// projected as immutable execution runs.
-	ReadPipelineIntents      func(context.Context, refreshrun.ReadScope) ([]PipelineWaitingIntent, error)
-	RunDetailReader          RunDetailReader
-	RunPublicationReader     RunPublicationReader
-	RunEventReader           RunEventReader
-	PipelineChanges          *pagestream.Broker
-	PipelineChangesStreamID  string
-	PhysicalCatalog          PhysicalCatalogReader
-	SourceSchemas            SourceSchemaReader
-	ProjectDefinitionReader  ProjectDefinitionReader
-	DashboardAppearances     DashboardAppearanceStore
-	SavedExplorations        projectview.SavedExplorationStore
-	DashboardCatalog         DashboardCatalogReader
-	DashboardPopularity      func(context.Context, int) (map[string]string, error)
-	QueryExecutor            DataQueryExecutor
-	Catalog                  CatalogAuthorizer
-	SearchCatalog            ProductSearchCatalog
-	PrincipalDisplayReader   PrincipalDisplayReader
-	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
-	Environment              string
-	TargetID                 string
-	ConnectionAdministration connectionadmin.Administration
-	ConnectionCommands       projectui.ConnectionCommandBindings
-	PipelineRunCommand       uicommand.Binding
-	PipelineCancelCommand    uicommand.Binding
-	RunPipeline              func(context.Context, string, string, string, string) error
+	ReadPipelineIntents            func(context.Context, refreshrun.ReadScope) ([]PipelineWaitingIntent, error)
+	RunDetailReader                RunDetailReader
+	RunPublicationReader           RunPublicationReader
+	RunEventReader                 RunEventReader
+	PipelineChanges                *pagestream.Broker
+	PipelineChangesStreamID        string
+	PhysicalCatalog                PhysicalCatalogReader
+	SourceSchemas                  SourceSchemaReader
+	ProjectDefinitionReader        ProjectDefinitionReader
+	DashboardAppearances           DashboardAppearanceStore
+	LegacySavedExplorations        projectview.SavedExplorationStore
+	DashboardCatalog               DashboardCatalogReader
+	DashboardPopularity            func(context.Context, int) (map[string]string, error)
+	QueryExecutor                  DataQueryExecutor
+	Catalog                        CatalogAuthorizer
+	SearchCatalog                  ProductSearchCatalog
+	PrincipalDisplayReader         PrincipalDisplayReader
+	ResolveProjectID               func(context.Context) (projectgraph.ResourceID, error)
+	Environment                    string
+	TargetID                       string
+	ConnectionAdministration       connectionadmin.Administration
+	ConnectionCommands             projectui.ConnectionCommandBindings
+	PipelineRunCommand             uicommand.Binding
+	PipelineCancelCommand          uicommand.Binding
+	RunPipeline                    func(context.Context, string, string, string, string) error
+	SavedExplorations              SavedExplorationService
+	DashboardAuthoring             *dashboardauthoring.Application
+	DashboardAppendCommand         uicommand.Binding
+	ExplorationQueryLowerer        exploration.QueryLowerer
+	ExplorationExportAuditRecorder queryaudit.Recorder
+	ExplorationExportEncoder       func(context.Context, dataquery.Result, savedexploration.ExportFormat, savedexploration.ExportLimits) ([]byte, error)
+	SavedExplorationCommands       SavedExplorationCommandBindings
 	// CancelPipeline receives both the pipeline and run identifiers from the
 	// command. Implementations must verify that the run belongs to that
 	// pipeline before mutating it; keeping the pipeline ID in this callback
@@ -240,20 +252,20 @@ type BrowserHandler struct {
 	// AuthorizeCreateDashboard evaluates the project-root edit capability used
 	// to expose the browser's new-draft affordance. The catalog remains usable
 	// for read-only principals when this decision is denied.
-	AuthorizeCreateDashboard func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
-	AuthorizeDashboard       func(*stdhttp.Request, string, access.Capability) (bool, error)
-	AuthorizeConnection      func(*stdhttp.Request, string, access.Capability) (bool, error)
-	BeginConnectionCommand   func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	BeginPipelineCommand     func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	MutationMiddleware       func(stdhttp.Handler) stdhttp.Handler
-	Layout                   func(*stdhttp.Request) webpage.Provider
-	CSRFToken                func(*stdhttp.Request) string
-	CurrentUser              func(*stdhttp.Request) (Principal, bool)
-	// CurrentCredential carries the request's API credential when the browser
-	// route was authenticated with a bearer token. Browser sessions leave this
-	// unset and continue through the durable snapshot capability path.
-	CurrentCredential func(*stdhttp.Request) (access.APICredential, bool)
-	Authenticate      func(stdhttp.Handler) stdhttp.Handler
+	AuthorizeCreateDashboard       func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	AuthorizeDashboard             func(*stdhttp.Request, string, access.Capability) (bool, error)
+	AuthorizeConnection            func(*stdhttp.Request, string, access.Capability) (bool, error)
+	BeginConnectionCommand         func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginPipelineCommand           func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginSavedExplorationCommand   func(context.Context, SavedExplorationCommandInvocation) (context.Context, error)
+	ExecuteSavedExplorationCommand func(context.Context, SavedExplorationCommandInvocation, func(context.Context) error) error
+	MutationMiddleware             func(stdhttp.Handler) stdhttp.Handler
+	Layout                         func(*stdhttp.Request) webpage.Provider
+	CSRFToken                      func(*stdhttp.Request) string
+	CurrentUser                    func(*stdhttp.Request) (Principal, bool)
+	Authenticate                   func(stdhttp.Handler) stdhttp.Handler
+	dataExplorerLifecycle          dataExplorerLifecycle
+	CurrentCredential              func(*stdhttp.Request) (access.APICredential, bool)
 }
 
 type browserReadContextKey struct{}
@@ -316,9 +328,15 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/", wrap(h.Insights))
 	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
+	r.Get("/explore/dashboard-targets", wrap(h.ExplorationDashboardTargets))
+	r.Get("/explore/dashboard-targets/{dashboard}", wrap(h.ExplorationDashboardTarget))
+	r.Post("/explore/add-to-dashboard", wrapMutation(h.AppendExplorationToDashboard))
+	r.Get("/explore/export", wrap(h.ExplorationExport))
 	r.Get("/explore/saved", wrap(h.ListSavedExplorations))
 	r.Post("/explore/saved", wrapMutation(h.CreateSavedExploration))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
+	r.Get("/explore/saved/{exploration}", wrap(h.SavedExplorationReopen))
+	r.Post("/explore/saved/command", wrapMutation(h.SavedExplorationCommand))
 	r.Get("/sources", wrap(h.Sources))
 	r.Get("/sources/{asset}/{section}", wrap(h.SourceAsset))
 	r.Get("/models", wrap(h.Models))
@@ -525,7 +543,21 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
-	writeDocument(w, projectui.DataExplorerPage(catalog, page, explorer, h.csrf(r), h.layout(r)))
+	if strings.TrimSpace(projectsignals.ValueOrZero(explorer.Command.ClientID)) == "" {
+		explorer.Command.ClientID = projectsignals.Optional("explorer-" + uuid.NewString())
+	}
+	savedState := h.savedExplorationStateForBrowser(r, r.URL.Query().Get("saved"), savedExplorationIncludeArchived(r))
+	savedState.Commands = projectui.DataExplorerSavedExplorationCommandBindings{
+		Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
+		Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
+	}
+	dashboard := projectui.DataExplorerDashboardBootstrap{}
+	if h.DashboardAuthoring != nil && h.DashboardAppendCommand.OperationID() != "" {
+		dashboard = projectui.DataExplorerDashboardBootstrap{
+			TargetsURL: "/explore/dashboard-targets", AppendURL: "/explore/add-to-dashboard", Command: h.DashboardAppendCommand,
+		}
+	}
+	writeDocument(w, projectui.DataExplorerPageWithSavedExplorationsAndDashboard(catalog, page, explorer, savedState, dashboard, h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -540,18 +572,43 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
 		return
 	}
+	if !h.hasDataExplorerClientIdentity(r, signals.Command) {
+		stdhttp.Error(w, "data explorer client identity is required", stdhttp.StatusBadRequest)
+		return
+	}
 	page, explorer, ok := h.dataExplorerSignalsForCommand(w, r, signals.Command)
 	if !ok {
 		return
 	}
+	unlock, current := h.dataExplorerResponseLease(r, explorer.Command)
+	if !current {
+		return
+	}
+	defer unlock()
 	_ = pagestream.PatchResponse(w, r, dataExplorerSignalPatch(page, explorer))
 }
 
 func dataExplorerSignalPatch(page projectsignals.DataExplorerPageSignal, explorer projectsignals.DataExplorerSignal) pagestream.SignalPatch {
-	return pagestream.SignalPatch{
-		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
-		"agentContext": projectui.DataExplorerAgentContext(page, explorer),
+	if patch := dataExplorerSuggestionsPatch(explorer); patch != nil {
+		return patch
 	}
+	return pagestream.SignalPatch{
+		"page": page, "dataExplorer": projectui.DataExplorerPayload(explorer), "dataExplorerCommand": projectui.DataExplorerCommandPayload(explorer.Command),
+		"agentContext": projectui.DataExplorerAgentContextPayload(projectui.DataExplorerAgentContext(page, explorer)),
+	}
+}
+
+// Suggestions belong to an independent request lane. Replacing the semantic
+// command, status, or result here would invalidate a completed chart (or a run
+// still in flight) even though the query itself has not changed.
+func dataExplorerSuggestionsPatch(explorer projectsignals.DataExplorerSignal) pagestream.SignalPatch {
+	command := explorer.Explore.Command
+	if command.Action == nil || *command.Action != "configure" || command.FilterSuggestions == nil {
+		return nil
+	}
+	return pagestream.SignalPatch{"dataExplorer": map[string]any{
+		"explore": map[string]any{"filterSuggestions": projectui.DataExploreSuggestionsPayload(explorer.Explore.FilterSuggestions)},
+	}}
 }
 
 func (h *BrowserHandler) ModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -575,6 +632,10 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
 		return
 	}
+	if !h.hasDataExplorerClientIdentity(r, signals.Command) {
+		stdhttp.Error(w, "data explorer client identity is required", stdhttp.StatusBadRequest)
+		return
+	}
 	_, explorer, asset, ok := h.dataExplorerSignalsForAssetCommand(w, r, chi.URLParam(r, "asset"), signals.Command)
 	if !ok {
 		return
@@ -583,8 +644,17 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		stdhttp.NotFound(w, r)
 		return
 	}
+	unlock, current := h.dataExplorerResponseLease(r, explorer.Command)
+	if !current {
+		return
+	}
+	defer unlock()
+	if patch := dataExplorerSuggestionsPatch(explorer); patch != nil {
+		_ = pagestream.PatchResponse(w, r, patch)
+		return
+	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-		"dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
+		"dataExplorer": projectui.DataExplorerPayload(explorer), "dataExplorerCommand": projectui.DataExplorerCommandPayload(explorer.Command),
 	})
 }
 
@@ -903,6 +973,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		defer unsubscribe()
 	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
+	var dataExplorerBootstrapCommand *projectsignals.DataExplorerCommand
 	switch route {
 	case "catalog":
 		catalog, options, err := h.dashboardCatalogPage(r, r.URL.Query().Get("q"))
@@ -918,7 +989,13 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if !ok {
 				return
 			}
-			patch = projectui.DataExplorerBootstrapSignals(h.navigationCatalog(r), page, explorer, h.layout(r))
+			dataExplorerBootstrapCommand = &explorer.Command
+			savedState := h.savedExplorationStateForBrowser(r, r.URL.Query().Get("saved"), savedExplorationIncludeArchived(r))
+			savedState.Commands = projectui.DataExplorerSavedExplorationCommandBindings{
+				Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
+				Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
+			}
+			patch = projectui.DataExplorerBootstrapSignalsWithSavedExplorations(h.navigationCatalog(r), page, explorer, savedState, h.layout(r))
 		} else if surface == "asset" {
 			if assetPatch, ok := h.assetBootstrap(w, r); ok {
 				patch = assetPatch
@@ -964,6 +1041,25 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	// Live refreshes must re-read the graph after bootstrap, including any
 	// serving generation activated while this SSE request remains open.
 	r = streamRequest
+	if dataExplorerBootstrapCommand != nil && strings.TrimSpace(projectsignals.ValueOrZero(dataExplorerBootstrapCommand.ClientID)) != "" {
+		if _, err := h.ClientIDs.Ensure(w, r); err != nil {
+			return
+		}
+		stream := pagestream.NewSignalStream(w, r)
+		release, current := h.dataExplorerResponseLease(r, *dataExplorerBootstrapCommand)
+		var err error
+		if current {
+			err = stream.Patch(pagestream.SignalPatch(patch))
+		}
+		if release != nil {
+			release()
+		}
+		if err != nil {
+			return
+		}
+		stream.Wait(r.Context())
+		return
+	}
 	if livePipeline && wake != nil {
 		h.ClientIDs.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {
 			return h.livePipelinePage(r)
@@ -1121,8 +1217,8 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 			if !explorerOK {
 				return nil, false
 			}
-			patch["dataExplorer"] = explorer
-			patch["dataExplorerCommand"] = explorer.Command
+			patch["dataExplorer"] = projectui.DataExplorerPayload(explorer)
+			patch["dataExplorerCommand"] = projectui.DataExplorerCommandPayload(explorer.Command)
 		}
 		return patch, true
 	}
@@ -1982,102 +2078,6 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 
 func (h *BrowserHandler) dataExplorerSignalsForRestoredCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, executeQuery, true)
-}
-
-func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, strictURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
-	command = normalizeDataExplorerCommand(command)
-	project := h.navigationCatalog(r).Project
-	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
-	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
-	if command.Explore != nil {
-		exploreCommand = *command.Explore
-	}
-	if value := strings.TrimSpace(r.URL.Query().Get("semanticModel")); value != "" && exploreCommand.SemanticModelID == nil {
-		exploreCommand.SemanticModelID = projectsignals.Optional(value)
-	}
-	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" && exploreCommand.DatasetID == nil {
-		exploreCommand.DatasetID = projectsignals.Optional(value)
-	}
-	command.Explore = &exploreCommand
-	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight}}
-	_, assets, _, ok := h.assets(w, r)
-	if !ok {
-		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-	}
-	if h == nil || h.ProjectDefinitionReader == nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-	}
-	definition, compiledModels, err := h.projectDefinitionSnapshot(r.Context())
-	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-	}
-	consumers := dataExplorerSemanticConsumers(r.Context(), h.QueryExecutor, definition)
-	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, consumers)
-	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
-		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.SemanticModelID))
-		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[semanticModelID], compiledModels); err != nil {
-			stdhttp.Error(w, "invalid exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
-			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-		}
-	}
-	explorer.Objects = projection.Objects
-	explorer.Explore.SemanticModels = projection.SemanticModels
-	explorer.Explore.SelectedSemanticModel = projection.SelectedSemanticModel
-	explorer.Explore.Datasets = projection.Datasets
-	explorer.Explore.SelectedDataset = projection.SelectedDataset
-	explorer.Explore.Fields = projection.Fields
-	exploreCommand = projection.Command
-	explorer.Explore.Command = exploreCommand
-	explorer.Command.Explore = &exploreCommand
-	if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
-		projectID, err := h.boundProject(r.Context())
-		if err != nil {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-		}
-		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(r.Context(), h.QueryExecutor, projectID, exploreCommand, explorer.Explore.Fields)
-		explorer.Explore.Result.Warnings = append(explorer.Explore.Result.Warnings, projection.Warnings...)
-		explorer.Explore.Command = exploreCommand
-		explorer.Command.Explore = &exploreCommand
-	}
-	page.Context.ObjectCount = int64(len(explorer.Objects))
-
-	requestedObject := strings.TrimSpace(projectsignals.ValueOrZero(command.ObjectKey))
-	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
-		requestedObject = ""
-		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.SemanticModelID))
-		datasetID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.DatasetID))
-		for _, object := range explorer.Objects {
-			if object.Layer == "model" && projectsignals.ValueOrZero(object.SemanticModelID) == semanticModelID && projectsignals.ValueOrZero(object.DatasetID) == datasetID {
-				requestedObject = object.Key
-				break
-			}
-		}
-	}
-	if requestedObject != "" {
-		for index := range explorer.Objects {
-			object := explorer.Objects[index]
-			if object.Key != requestedObject && object.ResourceID != requestedObject && projectsignals.ValueOrZero(object.AssetID) != requestedObject {
-				continue
-			}
-			explorer.Command.ObjectKey = projectsignals.Optional(object.Key)
-			explorer.SelectedKey = projectsignals.Optional(object.Key)
-			explorer.SelectedObject = &object
-			page.SelectedObject = projectsignals.Optional(object.Key)
-			projectID, err := h.boundProject(r.Context())
-			if err != nil {
-				stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-				return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-			}
-			if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" {
-				explorer.Preview = dataExplorerPreview(r.Context(), h.QueryExecutor, projectID, object, explorer.Command)
-			}
-			break
-		}
-	}
-	return page, explorer, true
 }
 
 func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, assetID string, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, projectview.DevelopAssetView, bool) {

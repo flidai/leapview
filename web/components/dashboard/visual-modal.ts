@@ -42,6 +42,7 @@ export class VisualModal extends LitElement {
   private focusClose: HTMLButtonElement | null = null
   private restoreFocusTo: HTMLElement | null = null
   private actionEventTarget: Node | null = null
+  private noticeTimer: number | undefined
 
   static styles = css`
     :host {
@@ -70,6 +71,20 @@ export class VisualModal extends LitElement {
     .dialog[open] { display: grid; }
     .dialog::backdrop { background: var(--lv-modal-backdrop); }
     .focus-dialog::backdrop { background: var(--lv-bg-page); }
+
+    .data-dialog.is-single,
+    .data-dialog.is-compact {
+      width: min(30rem, calc(100% - 56px));
+    }
+
+    .data-dialog.is-medium {
+      width: min(54rem, calc(100% - 56px));
+    }
+
+    .data-dialog.is-compact lv-record-table .record-table {
+      margin-inline: 0;
+      table-layout: auto;
+    }
 
     .focus-dialog {
       width: min(1420px, calc(100% - 56px));
@@ -235,6 +250,8 @@ export class VisualModal extends LitElement {
   disconnectedCallback(): void {
     this.actionEventTarget?.removeEventListener('lv-visual-action', this.handleVisualAction as EventListener, { capture: true })
     this.actionEventTarget = null
+    window.clearTimeout(this.noticeTimer)
+    this.noticeTimer = undefined
     this.renderRoot.querySelector<HTMLDialogElement>('dialog')?.close()
     this.restoreFocusedVisual(false)
     super.disconnectedCallback()
@@ -250,7 +267,7 @@ export class VisualModal extends LitElement {
   private renderDialog(detail: VisualActionDetail, mode: ModalMode) {
     if (mode === 'focus') return this.renderFocusDialog(detail)
     return html`
-      <dialog class="dialog" role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
+      <dialog class=${`dialog data-dialog ${this.dataDialogSize(detail.columns.length)}`} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
           <header>
             <div class="title">
               <p class="eyebrow">Show data · ${detail.visualType}</p>
@@ -291,6 +308,7 @@ export class VisualModal extends LitElement {
   private renderData(detail: VisualActionDetail) {
     const columns = detail.columns ?? []
     const rows = detail.rows ?? []
+    const compactColumns = columns.length === 2
     if (columns.length === 0 || rows.length === 0) return html`
       <div class="data-shell">
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
@@ -302,6 +320,7 @@ export class VisualModal extends LitElement {
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
         <div class="data-scroll">
           <lv-record-table
+            variant="data"
             .table=${{
               columns: columns.map((column) => ({
                 id: column.key,
@@ -310,12 +329,21 @@ export class VisualModal extends LitElement {
               })),
               rows,
               empty: 'No visual data',
-              minWidth: `${Math.max(columns.length * 160, 520)}px`,
+              width: compactColumns ? '100%' : '',
+              minWidth: compactColumns ? '100%' : columns.length > 4 ? `${columns.length * 160}px` : '0',
+              density: 'tight',
             }}
           ></lv-record-table>
         </div>
       </div>
     `
+  }
+
+  private dataDialogSize(columnCount: number): string {
+    if (columnCount <= 1) return 'is-single'
+    if (columnCount <= 2) return 'is-compact'
+    if (columnCount <= 4) return 'is-medium'
+    return 'is-wide'
   }
 
   private handleVisualAction = (event: CustomEvent<VisualActionDetail>): void => {
@@ -491,9 +519,11 @@ export class VisualModal extends LitElement {
   }
 
   private flash(message: string): void {
+    window.clearTimeout(this.noticeTimer)
     this.notice = message
-    window.setTimeout(() => {
-      if (this.notice === message) this.notice = ''
+    this.noticeTimer = window.setTimeout(() => {
+      this.notice = ''
+      this.noticeTimer = undefined
     }, 1800)
   }
 }

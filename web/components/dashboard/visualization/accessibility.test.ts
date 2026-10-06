@@ -7,7 +7,7 @@ import { visualDataToDelimited } from '../visual-modal-actions'
 
 function fixture(rows: unknown[][], completeness: 'complete' | 'partial' | 'truncated' | 'empty' = rows.length === 0 ? 'empty' : 'complete'): VisualizationEnvelope {
   return {
-    schemaVersion: 9,
+    schemaVersion: 14,
     visualID: 'orders',
     rendererID: 'echarts',
     specRevision: 'sha256:accessibility',

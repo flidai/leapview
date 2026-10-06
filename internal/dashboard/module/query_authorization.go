@@ -2,12 +2,19 @@ package module
 
 import (
 	"context"
+	"errors"
 
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 )
+
+// IsQueryAuthorizationDenied keeps the dashboard-owned authorization error
+// vocabulary behind the module surface used by process composition.
+func IsQueryAuthorizationDenied(err error) bool {
+	return err != nil && (queryauthz.IsDenied(err) || errors.Is(err, access.ErrForbidden))
+}
 
 type QueryPrincipal struct {
 	ID        string

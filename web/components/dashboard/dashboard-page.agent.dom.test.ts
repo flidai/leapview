@@ -46,11 +46,11 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: 'Ask' } } })
-    })
-    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    }))
+    const result = await evaluateAcrossContextTurnover(page, () => page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
       const trigger = root.querySelector('.agent-toggle') as HTMLButtonElement
@@ -69,7 +69,7 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
       drawer.open = false
       await drawer.updateComplete
       return { composerFocused, focusReturned: root.activeElement === trigger }
-    })
+    }))
     expect(result).toEqual({ composerFocused: true, focusReturned: true })
   } finally { await page.close() }
 })
@@ -838,11 +838,18 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
     const explorerURL = new URL(panelState.explorerHref!, 'https://example.test')
     expect(explorerURL.pathname).toBe('/explore')
     expect(explorerURL.searchParams.get('mode')).toBe('explore')
-    expect(explorerURL.searchParams.get('semanticModel')).toBe('semantic:sales')
-    expect(explorerURL.searchParams.get('dataset')).toBe('orders')
-    expect(explorerURL.searchParams.getAll('dimension')).toEqual(['orders.country'])
-    expect(explorerURL.searchParams.getAll('metric')).toEqual(['revenue'])
-    expect(explorerURL.searchParams.get('limit')).toBe('25')
+    expect(explorerURL.searchParams.get('v')).toBe('2')
+    expect([...explorerURL.searchParams.keys()].sort()).toEqual(['mode', 'state', 'v'])
+    expect(JSON.parse(explorerURL.searchParams.get('state')!)).toEqual({
+      schemaVersion: 1,
+      modelId: 'semantic:sales',
+      datasetId: 'orders',
+      dimensions: [{ field: 'orders.country' }],
+      metrics: [{ field: 'revenue' }],
+      filters: [],
+      sort: [],
+      limit: 25,
+    })
 
     const screenshotDir = process.env.LEAPVIEW_DASHBOARD_AGENT_SCREENSHOT_DIR
     if (screenshotDir) {

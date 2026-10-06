@@ -7,6 +7,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 )
 
@@ -76,6 +77,45 @@ func TestReportPageHeaderDetailUsesThePageTitleWithoutItsNavigationOrdinal(t *te
 
 	if got := ReportPageHeaderDetail(page); got != "Overview" {
 		t.Fatalf("header detail = %q, want page title without navigation ordinal", got)
+	}
+}
+
+func TestAttachDashboardExploreHrefsOnlyProjectsEligibleUnfilteredAppVisuals(t *testing.T) {
+	page := dashboard.Page{ID: "overview"}
+	visual := visualizationdefinition.Definition{
+		ID: "revenue",
+		Query: visualizationdefinition.QueryBinding{
+			Kind: visualizationdefinition.QueryAggregate, ModelID: "semantic:sales", DatasetID: "primary",
+			Aggregate: &visualizationdefinition.AggregateQueryBinding{
+				TableID:    "orders",
+				Dimensions: []visualizationdefinition.FieldBinding{},
+				Metrics:    []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "revenue"}},
+				Limit:      100,
+			},
+		},
+	}
+	report := dashboarddefinition.Definition{ID: "dash", Visualizations: map[string]visualizationdefinition.Definition{"revenue": visual}}
+	envelope := DashboardEnvelope{Visuals: map[string]DashboardVisualizationSignal{"revenue": {VisualID: "revenue"}}}
+	filters := dashboard.Filters{CompiledState: &dashboardfilter.State{AppliedControls: map[string]dashboardfilter.AppliedState{}}}
+
+	model := &semanticmodel.Model{
+		Tables:  map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"revenue": {}}}},
+		Metrics: map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "orders"}},
+	}
+	AttachDashboardExploreHrefs(&envelope, report, model, page, filters, "", "dash-client", "stream-7")
+	href := envelope.Visuals["revenue"].ExploreHref
+	if href == nil || *href != "/dashboards/dash/pages/overview/visuals/revenue/explore?clientId=dash-client&streamInstanceId=stream-7" {
+		t.Fatalf("exploreHref = %v", href)
+	}
+	AttachDashboardExploreHrefs(&envelope, report, model, page, filters, "/candidates/candidate-1/projects/project-1", "dash-client", "stream-7")
+	if got := envelope.Visuals["revenue"].ExploreHref; got != nil {
+		t.Fatalf("candidate preview projected exploreHref = %q", *got)
+	}
+
+	filters.Selections = []dashboard.InteractionSelection{{ID: "selection-1"}}
+	AttachDashboardExploreHrefs(&envelope, report, model, page, filters, "", "dash-client", "stream-7")
+	if got := envelope.Visuals["revenue"].ExploreHref; got != nil {
+		t.Fatalf("active interaction left exploreHref = %q", *got)
 	}
 }
 

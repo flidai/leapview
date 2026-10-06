@@ -3,125 +3,706 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
-	projectview "github.com/flidai/leapview/internal/project"
+	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	saved "github.com/flidai/leapview/internal/analytics/exploration/saved"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/go-chi/chi/v5"
 )
 
-type savedExplorationTestStore struct {
-	scope   projectview.SavedExplorationScope
-	items   map[string]projectview.SavedExplorationRecord
-	created int
+type savedExplorationBrowserServiceStub struct {
+	createErr                                              error
+	listErr                                                error
+	items                                                  []saved.Lifecycle
+	reopen                                                 saved.ReopenResult
+	reopenErr                                              error
+	reopenRequests                                         *[]saved.ReopenRequest
+	updateErr, duplicateErr, archiveErr                    error
+	updateResult, duplicateResult, archiveResult           saved.MutationResult
+	createCalls, updateCalls, duplicateCalls, archiveCalls *int
+	listRequests                                           *[]saved.ListRequest
+	authorizeReplayCalls                                   *int
+	authorizeReplay                                        bool
 }
 
-func (s *savedExplorationTestStore) CreateSavedExploration(_ context.Context, scope projectview.SavedExplorationScope, id, title, commandJSON string) (projectview.SavedExplorationRecord, error) {
-	s.scope = scope
-	s.created++
-	if s.items == nil {
-		s.items = map[string]projectview.SavedExplorationRecord{}
+func (s savedExplorationBrowserServiceStub) AuthorizeMutationReplay(context.Context, saved.MutationReplayAuthorizationRequest) (bool, error) {
+	if s.authorizeReplayCalls != nil {
+		(*s.authorizeReplayCalls)++
 	}
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	item := projectview.SavedExplorationRecord{ID: id, Title: title, CommandJSON: commandJSON, CreatedAt: now, UpdatedAt: now}
-	s.items[id] = item
-	return item, nil
+	return s.authorizeReplay, nil
 }
 
-func (s *savedExplorationTestStore) ListSavedExplorations(_ context.Context, scope projectview.SavedExplorationScope) ([]projectview.SavedExplorationRecord, error) {
-	if scope != s.scope {
-		return []projectview.SavedExplorationRecord{}, nil
+func (s savedExplorationBrowserServiceStub) Create(context.Context, saved.CreateRequest) (saved.MutationResult, error) {
+	if s.createCalls != nil {
+		(*s.createCalls)++
 	}
-	items := make([]projectview.SavedExplorationRecord, 0, len(s.items))
-	for _, item := range s.items {
-		items = append(items, item)
-	}
-	return items, nil
+	return saved.MutationResult{}, s.createErr
 }
 
-func (s *savedExplorationTestStore) GetSavedExploration(_ context.Context, scope projectview.SavedExplorationScope, id string) (projectview.SavedExplorationRecord, error) {
-	item, ok := s.items[id]
-	if !ok || scope != s.scope {
-		return projectview.SavedExplorationRecord{}, projectview.ErrSavedExplorationNotFound
+func (s savedExplorationBrowserServiceStub) UpdateVersion(context.Context, saved.UpdateVersionRequest) (saved.MutationResult, error) {
+	if s.updateCalls != nil {
+		(*s.updateCalls)++
 	}
-	return item, nil
+	if s.updateErr != nil {
+		return saved.MutationResult{}, s.updateErr
+	}
+	if s.updateResult.Lifecycle.ID == "" && !s.updateResult.Replayed {
+		return saved.MutationResult{}, errors.New("unexpected update")
+	}
+	return s.updateResult, nil
 }
 
-func TestCreateSavedExplorationStoresScopedGovernedCommandWithoutExecutingRows(t *testing.T) {
-	h, executor := newDataExplorerURLTestHandler(t)
-	h.CurrentUser = func(*http.Request) (Principal, bool) { return Principal{ID: "principal:alice", DevBypass: true}, true }
-	store := &savedExplorationTestStore{}
-	h.SavedExplorations = store
-	body := `{"title":"  Revenue by status  ","explorerUrl":"/explore?v=1&mode=explore&semanticModel=semantic%3Asales&dataset=orders&dimension=orders.status&metric=revenue"}`
+func (s savedExplorationBrowserServiceStub) Duplicate(context.Context, saved.DuplicateRequest) (saved.MutationResult, error) {
+	if s.duplicateCalls != nil {
+		(*s.duplicateCalls)++
+	}
+	if s.duplicateErr != nil {
+		return saved.MutationResult{}, s.duplicateErr
+	}
+	if s.duplicateResult.Lifecycle.ID == "" && !s.duplicateResult.Replayed {
+		return saved.MutationResult{}, errors.New("unexpected duplicate")
+	}
+	return s.duplicateResult, nil
+}
+
+func (s savedExplorationBrowserServiceStub) List(_ context.Context, request saved.ListRequest) ([]saved.Lifecycle, error) {
+	if s.listRequests != nil {
+		*s.listRequests = append(*s.listRequests, request)
+	}
+	return s.items, s.listErr
+}
+
+func (s savedExplorationBrowserServiceStub) Archive(context.Context, saved.ArchiveRequest) (saved.MutationResult, error) {
+	if s.archiveCalls != nil {
+		(*s.archiveCalls)++
+	}
+	if s.archiveErr != nil {
+		return saved.MutationResult{}, s.archiveErr
+	}
+	if s.archiveResult.Lifecycle.ID == "" && !s.archiveResult.Replayed {
+		return saved.MutationResult{}, errors.New("unexpected archive")
+	}
+	return s.archiveResult, nil
+}
+
+func (s savedExplorationBrowserServiceStub) Reopen(_ context.Context, request saved.ReopenRequest) (saved.ReopenResult, error) {
+	if s.reopenRequests != nil {
+		*s.reopenRequests = append(*s.reopenRequests, request)
+	}
+	return s.reopen, s.reopenErr
+}
+
+func TestSavedExplorationCommandRequiresGeneratedExecutorCompletion(t *testing.T) {
+	executed := false
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{createErr: errors.New("injected create failure")},
+		SavedExplorationCommands: SavedExplorationCommandBindings{
+			Create: analyticsgen.GenUIActionCreateSavedExploration(),
+		},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:      func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+		BeginSavedExplorationCommand: func(ctx context.Context, invocation SavedExplorationCommandInvocation) (context.Context, error) {
+			if invocation.IdempotencyKey != "ui:saved-create-1" || invocation.Revision != (saved.RevisionToken{}) {
+				t.Fatalf("invocation = %#v", invocation)
+			}
+			return ctx, nil
+		},
+		ExecuteSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation, transaction func(context.Context) error) error {
+			executed = true
+			return transaction(ctx)
+		},
+	}
+	body := `{"savedExplorations":{"command":{"action":"create","title":"Orders","slug":"orders","visibility":"private","spec":{"schemaVersion":1,"modelId":"model:orders","datasetId":"orders","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}}}}`
+	request := httptest.NewRequest(http.MethodPost, "/explore/saved/command", strings.NewReader(body))
+	request.Header.Set("X-Request-ID", "saved-create-1")
+	request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionCreateSavedExploration().OperationID())
 	recorder := httptest.NewRecorder()
-	h.CreateSavedExploration(recorder, httptest.NewRequest(http.MethodPost, "/explore/saved", strings.NewReader(body)))
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("save status = %d, want 201: %s", recorder.Code, recorder.Body.String())
+	h.SavedExplorationCommand(recorder, request)
+	if !executed {
+		t.Fatal("saved command did not run the generated executor callback")
 	}
-	if store.created != 1 {
-		t.Fatalf("created rows = %d, want 1", store.created)
+	if strings.Contains(recorder.Body.String(), "Saved exploration saved.") {
+		t.Fatalf("failed transaction emitted success: %q", recorder.Body.String())
 	}
-	if store.scope.ProjectID != projectgraph.ResourceID("project:test") || store.scope.Environment != "dev" || store.scope.PrincipalID != "principal:alice" {
-		t.Fatalf("server-bound scope = %#v", store.scope)
-	}
-	if executor.calls != 0 {
-		t.Fatalf("saving executed %d analytical queries, want 0", executor.calls)
-	}
-	var response struct {
-		Item savedExplorationResponse `json:"item"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Item.Title != "Revenue by status" || response.Item.ID == "" || response.Item.Href != savedExplorationHref(response.Item.ID) {
-		t.Fatalf("save response item = %#v", response.Item)
-	}
-	var stored projectsignals.DataExploreCommand
-	if err := json.Unmarshal([]byte(store.items[response.Item.ID].CommandJSON), &stored); err != nil {
-		t.Fatal(err)
-	}
-	if projectsignals.ValueOrZero(stored.SemanticModelID) != "semantic:sales" || projectsignals.ValueOrZero(stored.DatasetID) != "orders" || len(stored.Dimensions) != 1 || stored.Dimensions[0] != "orders.status" || len(stored.Metrics) != 1 || stored.Metrics[0] != "revenue" {
-		t.Fatalf("stored query command = %#v", stored)
-	}
-
-	recorder = httptest.NewRecorder()
-	pageURL := "/explore?saved=" + response.Item.ID
-	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, pageURL, nil), false)
-	if !ok {
-		t.Fatalf("saved exploration did not restore: status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if projectsignals.ValueOrZero(explorer.Explore.Command.SemanticModelID) != "semantic:sales" || projectsignals.ValueOrZero(explorer.Explore.Command.DatasetID) != "orders" || len(explorer.Explore.Command.Dimensions) != 1 || explorer.Explore.Command.Dimensions[0] != "orders.status" {
-		t.Fatalf("restored query command = %#v", explorer.Explore.Command)
-	}
-	if executor.calls != 0 {
-		t.Fatalf("opening the saved item executed %d analytical queries, want 0", executor.calls)
-	}
-	recorder = httptest.NewRecorder()
-	_, _, ok = h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, pageURL, nil), true)
-	if !ok || executor.calls != 1 {
-		t.Fatalf("saved item updates = ok:%v queries:%d status:%d, want one governed query", ok, executor.calls, recorder.Code)
+	if !strings.Contains(recorder.Body.String(), "Saved exploration operation is forbidden.") && !strings.Contains(recorder.Body.String(), "The saved exploration command is invalid.") {
+		t.Fatalf("failure response did not fail closed: %q", recorder.Body.String())
 	}
 }
 
-func TestSavedExplorationRejectsExternalURLAndCrossScopeOpen(t *testing.T) {
-	for _, value := range []string{"https://evil.invalid/explore?mode=explore", "/explore?mode=explore&unexpected=x", "/explore?mode=browse"} {
-		if _, err := savedExplorationCommandFromURL(value); err == nil {
-			t.Errorf("accepted invalid saved URL %q", value)
+func TestSavedExplorationCommandExecutorMustInvokeTransaction(t *testing.T) {
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{createErr: nil},
+		SavedExplorationCommands: SavedExplorationCommandBindings{
+			Create: analyticsgen.GenUIActionCreateSavedExploration(),
+		},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:      func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+		BeginSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation) (context.Context, error) {
+			return ctx, nil
+		},
+		ExecuteSavedExplorationCommand: func(context.Context, SavedExplorationCommandInvocation, func(context.Context) error) error {
+			return nil
+		},
+	}
+	body := `{"savedExplorations":{"command":{"action":"create","title":"Orders","slug":"orders","visibility":"private","spec":{"schemaVersion":1,"modelId":"model:orders","datasetId":"orders","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}}}}`
+	request := httptest.NewRequest(http.MethodPost, "/explore/saved/command", strings.NewReader(body))
+	request.Header.Set("X-Request-ID", "saved-create-no-callback")
+	request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionCreateSavedExploration().OperationID())
+	recorder := httptest.NewRecorder()
+	h.SavedExplorationCommand(recorder, request)
+	if strings.Contains(recorder.Body.String(), "Saved exploration saved.") {
+		t.Fatalf("executor that skipped transaction emitted success: %q", recorder.Body.String())
+	}
+}
+
+func TestSavedBrowserFallbackSlugRejectsSourcePunctuation(t *testing.T) {
+	got := savedBrowserUniqueSlug("Copy of exploration:abc:def", "exploration-abc123")
+	if got != "copy-of-exploration-abc-def-abc123" {
+		t.Fatalf("fallback slug = %q", got)
+	}
+	if err := (saved.ExplorationID("exploration:abc:def")).Validate(); err != nil {
+		t.Fatalf("fixture source ID became invalid: %v", err)
+	}
+}
+
+func TestSavedBrowserCommandSlugPreservesExplicitValuesAndBoundsFallback(t *testing.T) {
+	valid := "custom-slug"
+	if got := savedBrowserCommandSlug(&valid, "ignored", "exploration-id"); got != valid {
+		t.Fatalf("explicit valid slug = %q, want %q", got, valid)
+	}
+	empty := ""
+	if got := savedBrowserCommandSlug(&empty, "Orders", "exploration-id"); got != empty {
+		t.Fatalf("explicit empty slug = %q, want empty value", got)
+	}
+	malformed := "Bad Slug/with punctuation"
+	if got := savedBrowserCommandSlug(&malformed, "Orders", "exploration-id"); got != malformed {
+		t.Fatalf("explicit malformed slug = %q, want unchanged %q", got, malformed)
+	}
+	generated := savedBrowserCommandSlug(nil, "Orders", "exploration-id")
+	if generated != "orders-id" {
+		t.Fatalf("omitted slug = %q, want bounded unique fallback", generated)
+	}
+	longTitle := strings.Repeat("A", saved.MaxTitleLength)
+	generated = savedBrowserCommandSlug(nil, longTitle, "exploration-0123456789abcdef0123456789abcdef")
+	if len(generated) == 0 || len(generated) > saved.MaxSlugLength {
+		t.Fatalf("max-title fallback length = %d, want 1-%d", len(generated), saved.MaxSlugLength)
+	}
+}
+
+func TestSavedExplorationBrowserStateRetainsListAndSelection(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	lifecycle := saved.Lifecycle{
+		ProjectID: "project:test", ID: "exploration:orders", OwnerPrincipalID: "principal:test",
+		Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, Status: saved.StatusActive,
+		SemanticModelID: "model:orders", CreatedAt: now, UpdatedAt: now,
+		CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+	}
+	spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "model:orders", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	var reopenRequests []saved.ReopenRequest
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}, reopen: saved.ReopenResult{Lifecycle: lifecycle, Revision: lifecycle.CurrentRevision, Spec: spec}, reopenRequests: &reopenRequests},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	request := httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:orders", nil)
+	state := h.savedExplorationStateForBrowser(request, "exploration:orders", false)
+	if !state.State.Enabled || len(state.State.List.Items) != 1 || state.State.List.SelectedID == nil || *state.State.List.SelectedID != lifecycle.ID.String() || state.State.Current == nil {
+		t.Fatalf("saved browser state = %#v, want retained list/current selection", state.State)
+	}
+	if !state.State.Current.Detached || state.State.Current.Spec == nil || state.State.Current.Spec.Limit != spec.Limit {
+		t.Fatalf("selected current = %#v, want hydrated detached baseline", state.State.Current)
+	}
+	if len(reopenRequests) != 1 || reopenRequests[0] != (saved.ReopenRequest{ProjectID: "project:test", ID: lifecycle.ID, ActorID: "principal:test"}) {
+		t.Fatalf("reopen requests = %#v, want one actor/project scoped authorized read", reopenRequests)
+	}
+	if got := request.URL.Query().Get("saved"); got != lifecycle.ID.String() {
+		t.Fatalf("selected URL identity changed during hydration: %q", got)
+	}
+}
+
+func TestSavedExplorationBrowserStatePreservesURLDraftAgainstAuthorizedBaseline(t *testing.T) {
+	h, _ := newDataExplorerURLTestHandler(t)
+	const selectedID saved.ExplorationID = "exploration:orders"
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	lifecycle := saved.Lifecycle{
+		ProjectID: "project:test", ID: selectedID, OwnerPrincipalID: "principal:test",
+		Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, Status: saved.StatusActive,
+		SemanticModelID: "semantic:sales", CreatedAt: now, UpdatedAt: now,
+		CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 4, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+	}
+	baseline := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	draft := baseline
+	draft.Limit = 50
+	h.SavedExplorations = savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}, reopen: saved.ReopenResult{Lifecycle: lifecycle, Revision: lifecycle.CurrentRevision, Spec: baseline}}
+	h.CurrentUser = func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test", DevBypass: true}, true }
+	encodedDraft, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"mode": {"explore"}, "v": {"2"}, "state": {string(encodedDraft)}, "saved": {selectedID.String()}}
+	request := httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil)
+	rawQuery := request.URL.RawQuery
+	page, explorer, ok := h.dataExplorerSignalsForURL(httptest.NewRecorder(), request, false)
+	if !ok || page.Kind != projectsignals.RouteKindData {
+		t.Fatal("URL draft failed to restore")
+	}
+	state := h.savedExplorationStateForBrowser(request, request.URL.Query().Get("saved"), false).State
+	if explorer.Command.Explore == nil || explorer.Command.Explore.Spec.Limit != draft.Limit {
+		t.Fatalf("restored URL command = %#v, want limit %d", explorer.Command.Explore, draft.Limit)
+	}
+	if state.Current == nil || !state.Current.Detached || state.Current.Spec == nil || state.Current.Spec.Limit != baseline.Limit {
+		t.Fatalf("saved current = %#v, want persisted limit %d as dirty-tracking baseline", state.Current, baseline.Limit)
+	}
+	if request.URL.RawQuery != rawQuery || request.URL.Query().Get("state") != string(encodedDraft) {
+		t.Fatal("baseline hydration changed the URL draft")
+	}
+}
+
+func TestSavedExplorationBrowserStateDoesNotHydrateUnlistedOrFilteredArchivedIDs(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	archived := saved.Lifecycle{
+		ProjectID: "project:test", ID: "exploration:archived", OwnerPrincipalID: "principal:test",
+		Title: "Archived", Slug: "archived", Visibility: saved.VisibilityPrivate, Status: saved.StatusArchived,
+		SemanticModelID: "model:orders", CreatedAt: now, UpdatedAt: now,
+		CurrentRevision: saved.RevisionMetadata{ID: "revision:archived", Number: 2, ContentHash: "sha256:" + strings.Repeat("b", 64)},
+	}
+	spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "model:orders", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	var reopenRequests []saved.ReopenRequest
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{items: []saved.Lifecycle{archived}, reopen: saved.ReopenResult{Lifecycle: archived, Revision: archived.CurrentRevision, Spec: spec}, reopenRequests: &reopenRequests},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	filtered := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:archived", nil), archived.ID.String(), false).State
+	if len(filtered.List.Items) != 0 || filtered.Current != nil || len(reopenRequests) != 0 {
+		t.Fatalf("archived selection without includeArchived = %#v; reopen requests = %#v", filtered, reopenRequests)
+	}
+	included := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:archived&includeArchived=true", nil), archived.ID.String(), true).State
+	if len(included.List.Items) != 1 || included.Current == nil || included.Current.Status != string(saved.StatusArchived) || !included.List.IncludeArchived {
+		t.Fatalf("explicit archived selection = %#v, want archived baseline available", included)
+	}
+	if len(reopenRequests) != 1 || reopenRequests[0].ID != archived.ID {
+		t.Fatalf("reopen requests = %#v, want only explicitly listed archived identity", reopenRequests)
+	}
+	h.SavedExplorations = savedExplorationBrowserServiceStub{reopen: saved.ReopenResult{Lifecycle: archived, Revision: archived.CurrentRevision, Spec: spec}, reopenRequests: &reopenRequests}
+	unlisted := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:unlisted", nil), "exploration:unlisted", true).State
+	if unlisted.List.SelectedID != nil || unlisted.Current != nil || len(reopenRequests) != 1 {
+		t.Fatalf("unlisted selection = %#v; reopen requests = %#v, want no selection or authored read", unlisted, reopenRequests)
+	}
+}
+
+func TestSavedExplorationBrowserStateKeepsBaselineUnavailableWhenReopenFails(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	lifecycle := saved.Lifecycle{
+		ProjectID: "project:test", ID: "exploration:orders", OwnerPrincipalID: "principal:test",
+		Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, Status: saved.StatusActive,
+		SemanticModelID: "model:orders", CreatedAt: now, UpdatedAt: now,
+		CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+	}
+	var reopenRequests []saved.ReopenRequest
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}, reopenErr: errors.New("revision unavailable"), reopenRequests: &reopenRequests},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	state := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore?saved=exploration:orders", nil), lifecycle.ID.String(), false).State
+	if state.List.SelectedID == nil || *state.List.SelectedID != lifecycle.ID.String() || state.Current == nil || state.Current.Detached || state.Current.Spec != nil {
+		t.Fatalf("current fallback = %#v, want metadata only without an authorized readable baseline", state.Current)
+	}
+	if state.Save.State != "error" || state.Save.Message == nil || *state.Save.Message != "The saved exploration version is temporarily unavailable." {
+		t.Fatalf("save state = %#v, want safe baseline-read failure", state.Save)
+	}
+	if len(reopenRequests) != 1 || reopenRequests[0].ActorID != "principal:test" || reopenRequests[0].ProjectID != "project:test" {
+		t.Fatalf("reopen requests = %#v, want principal and project scoped read", reopenRequests)
+	}
+}
+
+func TestSavedExplorationBrowserStateFailsClosedOnListError(t *testing.T) {
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{listErr: errors.New("database unavailable")},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	state := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore", nil), "", false)
+	if state.State.Save.State != "error" || state.State.Save.Message == nil || *state.State.Save.Message != "Saved explorations are temporarily unavailable." || state.State.List.Items == nil {
+		t.Fatalf("list error state = %#v, want safe explicit error", state.State)
+	}
+}
+
+func TestSavedExplorationBrowserStateFailsClosedOnProjectResolutionError(t *testing.T) {
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "", errors.New("project unavailable") },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	state := h.savedExplorationStateForBrowser(httptest.NewRequest(http.MethodGet, "/explore", nil), "", false)
+	if state.State.Save.State != "error" || state.State.Save.Message == nil || *state.State.Save.Message != "Saved explorations are temporarily unavailable." {
+		t.Fatalf("project resolution error state = %#v, want safe explicit error", state.State)
+	}
+}
+
+func TestSavedCommandTargetUsesExplicitCanonicalFields(t *testing.T) {
+	h := &BrowserHandler{}
+	if _, err := h.savedCommandTarget(projectsignals.SavedExplorationCommandSignal{Action: "update"}); !errors.Is(err, saved.ErrInvalid) {
+		t.Fatalf("missing update target error = %v", err)
+	}
+	target, err := h.savedCommandTarget(projectsignals.SavedExplorationCommandSignal{Action: "duplicate", SourceExplorationID: projectsignals.Optional("exploration:abc:def")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "exploration:abc:def" {
+		t.Fatalf("duplicate target = %q", target)
+	}
+}
+
+func TestSavedExplorationBrowserIfMatchGuardsMutation(t *testing.T) {
+	token := saved.RevisionToken{RevisionID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)}
+	mismatch := token
+	mismatch.Number++
+	for _, test := range []struct {
+		action string
+	}{
+		{action: "update"}, {action: "duplicate"}, {action: "archive"},
+	} {
+		t.Run(test.action, func(t *testing.T) {
+			for _, variant := range []struct {
+				name       string
+				header     string
+				wantBegin  int
+				wantMutate int
+			}{
+				{name: "missing", wantBegin: 0, wantMutate: 0},
+				{name: "mismatched", header: savedRevisionJSON(t, mismatch), wantBegin: 0, wantMutate: 0},
+				{name: "matching", header: savedRevisionJSON(t, token), wantBegin: 1, wantMutate: 1},
+			} {
+				t.Run(variant.name, func(t *testing.T) {
+					var beginCalls, executeCalls, mutationCalls int
+					service := &savedExplorationBrowserServiceStub{
+						updateErr: errors.New("update reached"), duplicateErr: errors.New("duplicate reached"), archiveErr: errors.New("archive reached"),
+						updateCalls: &mutationCalls, duplicateCalls: &mutationCalls, archiveCalls: &mutationCalls,
+					}
+					h := savedMutationBrowserHandler(test.action, service, &beginCalls, &executeCalls)
+					request := savedMutationBrowserRequest(t, test.action, token, variant.header)
+					response := httptest.NewRecorder()
+					h.SavedExplorationCommand(response, request)
+					if beginCalls != variant.wantBegin || executeCalls != variant.wantBegin || mutationCalls != variant.wantMutate {
+						t.Fatalf("calls begin=%d execute=%d mutate=%d, want %d/%d/%d; body=%q", beginCalls, executeCalls, mutationCalls, variant.wantBegin, variant.wantBegin, variant.wantMutate, response.Body.String())
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSavedExplorationBrowserIfMatchGuardsMutationReplay(t *testing.T) {
+	token := saved.RevisionToken{RevisionID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)}
+	mismatch := token
+	mismatch.ContentHash = "sha256:" + strings.Repeat("b", 64)
+	for _, test := range []struct {
+		action string
+	}{
+		{action: "update"}, {action: "duplicate"}, {action: "archive"}, {action: "create"},
+	} {
+		t.Run(test.action, func(t *testing.T) {
+			for _, variant := range []struct {
+				name       string
+				header     string
+				wantReplay bool
+				callReplay bool
+				wantMutate int
+			}{
+				{name: "missing ledger", header: savedRevisionJSON(t, token), wantReplay: false, callReplay: true, wantMutate: 0},
+				{name: "mismatched", header: savedRevisionJSON(t, mismatch), wantReplay: false, wantMutate: 0},
+				{name: "matching", header: savedRevisionJSON(t, token), wantReplay: true, callReplay: true, wantMutate: 0},
+			} {
+				t.Run(variant.name, func(t *testing.T) {
+					var mutationCalls, authorizeReplayCalls int
+					service := &savedExplorationBrowserServiceStub{
+						createCalls: &mutationCalls,
+						updateCalls: &mutationCalls, duplicateCalls: &mutationCalls, archiveCalls: &mutationCalls,
+						authorizeReplayCalls: &authorizeReplayCalls, authorizeReplay: variant.wantReplay,
+					}
+					h := savedMutationBrowserHandler(test.action, service, nil, nil)
+					request := savedMutationBrowserRequest(t, test.action, token, variant.header)
+					wantAuthorizeReplayCalls := 0
+					if variant.callReplay || test.action == "create" {
+						wantAuthorizeReplayCalls = 1
+					}
+					if got := h.AuthorizeCreatorMutationReplay(request); got != variant.wantReplay || mutationCalls != 0 || authorizeReplayCalls != wantAuthorizeReplayCalls {
+						t.Fatalf("replay authorized=%t mutate=%d authorizeReplay=%d, want %t/%d/%d", got, mutationCalls, authorizeReplayCalls, variant.wantReplay, 0, wantAuthorizeReplayCalls)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSavedExplorationArchiveResponseKeepsArchivedMetadata(t *testing.T) {
+	projectID := projectgraph.ResourceID("project:test")
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	identity, err := projectgraph.NewServingIdentity(projectID, "production", "generation-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := saved.RevisionMetadata{ID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64), CreatedAt: now, CreatedBy: "principal:test", ServingIdentity: identity}
+	archivedAt := now.Add(time.Minute)
+	lifecycle := saved.Lifecycle{
+		ProjectID: projectID, ID: "exploration:orders", OwnerPrincipalID: "principal:test", Title: "Orders", Slug: "orders",
+		Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Status: saved.StatusArchived,
+		CreatedAt: now, UpdatedAt: archivedAt, ArchivedAt: &archivedAt, CurrentRevision: metadata,
+	}
+	fingerprint, err := saved.CanonicalFingerprint(struct{ ID string }{ID: lifecycle.ID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := saved.NewMutationEvidence("principal:test", saved.MutationActionArchive, "ui:archive-1", fingerprint, "archive-1", "archive-1", archivedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := saved.MutationResult{Lifecycle: lifecycle, AppliedRevision: metadata.Token(), ConcurrencyRevision: metadata.Token(), Evidence: evidence}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("archive result fixture: %v", err)
+	}
+	var listRequests []saved.ListRequest
+	var archiveCalls int
+	service := &savedExplorationBrowserServiceStub{items: []saved.Lifecycle{lifecycle}, archiveResult: result, archiveCalls: &archiveCalls, listRequests: &listRequests}
+	var beginCalls, executeCalls int
+	h := savedMutationBrowserHandler("archive", service, &beginCalls, &executeCalls)
+	request := savedMutationBrowserRequest(t, "archive", metadata.Token(), savedRevisionJSON(t, metadata.Token()))
+	response := httptest.NewRecorder()
+	h.SavedExplorationCommand(response, request)
+	if archiveCalls != 1 || beginCalls != 1 || executeCalls != 1 {
+		t.Fatalf("archive calls archive=%d begin=%d execute=%d", archiveCalls, beginCalls, executeCalls)
+	}
+	if len(listRequests) != 1 || !listRequests[0].IncludeArchived {
+		t.Fatalf("archive list requests = %#v, want one explicit archived-inclusive read", listRequests)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `"includeArchived":true`) || !strings.Contains(body, `"selectedId":"exploration:orders"`) || !strings.Contains(body, `"status":"archived"`) {
+		t.Fatalf("archive response omitted archived metadata: %q", body)
+	}
+	_, encoded, ok := strings.Cut(body, "data: signals ")
+	if !ok {
+		t.Fatalf("archive response omitted its signal patch: %q", body)
+	}
+	type specClear struct {
+		Spec json.RawMessage `json:"spec"`
+	}
+	var patch struct {
+		SavedExplorations struct {
+			Current specClear `json:"current"`
+			Command specClear `json:"command"`
+		} `json:"savedExplorations"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(encoded)), &patch); err != nil {
+		t.Fatal(err)
+	}
+	// Explicit nulls remove stale client specs; no browser-authored query may
+	// be accepted as the archived revision's authoritative content.
+	if string(patch.SavedExplorations.Current.Spec) != "null" || string(patch.SavedExplorations.Command.Spec) != "null" {
+		t.Fatalf("archive response did not clear unverified browser specs: %q", body)
+	}
+}
+
+func savedRevisionJSON(t *testing.T, token saved.RevisionToken) string {
+	t.Helper()
+	encoded, err := json.Marshal(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func savedMutationBrowserRequest(t *testing.T, action string, token saved.RevisionToken, ifMatch string) *http.Request {
+	t.Helper()
+	revision := savedRevisionJSON(t, token)
+	var body string
+	switch action {
+	case "create":
+		body = `{"savedExplorations":{"command":{"action":"create","title":"Orders","visibility":"private","spec":{"schemaVersion":1,"modelId":"model:orders","datasetId":"orders","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}}}}`
+	case "update":
+		body = `{"savedExplorations":{"command":{"action":"update","explorationId":"exploration:orders","title":"Orders","slug":"orders","visibility":"private","spec":{"schemaVersion":1,"modelId":"model:orders","datasetId":"orders","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100},"expectedRevision":` + revision + `}}}`
+	case "duplicate":
+		body = `{"savedExplorations":{"command":{"action":"duplicate","sourceExplorationId":"exploration:orders","title":"Copy","slug":"copy","visibility":"private","expectedSourceRevision":` + revision + `}}}`
+	case "archive":
+		body = `{"savedExplorations":{"command":{"action":"archive","explorationId":"exploration:orders","expectedRevision":` + revision + `}}}`
+	default:
+		t.Fatalf("unsupported saved mutation action %q", action)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/explore/saved/command", strings.NewReader(body))
+	request.Header.Set("X-Request-ID", "saved-"+action+"-1")
+	switch action {
+	case "create":
+		request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionCreateSavedExploration().OperationID())
+	case "update":
+		request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionUpdateSavedExploration().OperationID())
+	case "duplicate":
+		request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionDuplicateSavedExploration().OperationID())
+	case "archive":
+		request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionArchiveSavedExploration().OperationID())
+	}
+	if ifMatch != "" {
+		request.Header.Set("If-Match", ifMatch)
+	}
+	return request
+}
+
+func savedMutationBrowserHandler(action string, service SavedExplorationService, beginCalls, executeCalls *int) *BrowserHandler {
+	h := &BrowserHandler{
+		SavedExplorations: service, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser: func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+		BeginSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation) (context.Context, error) {
+			if beginCalls != nil {
+				(*beginCalls)++
+			}
+			return ctx, nil
+		},
+		ExecuteSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation, transaction func(context.Context) error) error {
+			if executeCalls != nil {
+				(*executeCalls)++
+			}
+			return transaction(ctx)
+		},
+	}
+	switch action {
+	case "create":
+		h.SavedExplorationCommands.Create = analyticsgen.GenUIActionCreateSavedExploration()
+	case "update":
+		h.SavedExplorationCommands.Update = analyticsgen.GenUIActionUpdateSavedExploration()
+	case "duplicate":
+		h.SavedExplorationCommands.Duplicate = analyticsgen.GenUIActionDuplicateSavedExploration()
+	case "archive":
+		h.SavedExplorationCommands.Archive = analyticsgen.GenUIActionArchiveSavedExploration()
+	}
+	return h
+}
+
+func TestSavedExplorationReopenLeavesIncompatibleWorkingCopiesUnexecuted(t *testing.T) {
+	const projectID = projectgraph.ResourceID("project:test")
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString}}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		// This field was removed from the active model. Reopen must still return
+		// the detached authored copy so the user can repair it before saving.
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.removed"}}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	token := saved.RevisionMetadata{ID: "revision:orders", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64), CreatedAt: now, CreatedBy: "principal:test"}
+	makeLifecycle := func(id saved.ExplorationID, status saved.Status) saved.Lifecycle {
+		lifecycle := saved.Lifecycle{ProjectID: projectID, ID: id, OwnerPrincipalID: "principal:test", Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Status: status, CreatedAt: now, UpdatedAt: now, CurrentRevision: token}
+		if status == saved.StatusArchived {
+			archived := now.Add(time.Minute)
+			lifecycle.ArchivedAt = &archived
+		}
+		return lifecycle
+	}
+	query := &browserDataQueryStub{}
+	service := savedExplorationBrowserServiceStub{items: []saved.Lifecycle{makeLifecycle("exploration:active", saved.StatusActive)}, reopen: saved.ReopenResult{Lifecycle: makeLifecycle("exploration:active", saved.StatusActive), Spec: spec}}
+	h := &BrowserHandler{
+		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
+			{ID: "source:orders", ProjectID: projectID, ServingStateID: "state", Type: "source", Key: "orders", Title: "Orders source", PayloadJSON: `{}`},
+			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
+			{ID: "semantic:sales", ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
+		}}},
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{Models: map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]}, SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}}}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}},
+		QueryExecutor:           query, ExplorationQueryLowerer: testDataExplorerQueryLowerer, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test", DevBypass: true}, true },
+		SavedExplorations: &service,
+	}
+	reopenRequest := func(id string) *http.Request {
+		route := chi.NewRouteContext()
+		route.URLParams.Add("exploration", id)
+		request := httptest.NewRequest(http.MethodGet, "/explore/saved/"+id, nil)
+		return request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	}
+	activeResponse := httptest.NewRecorder()
+	h.SavedExplorationReopen(activeResponse, reopenRequest("exploration:active"))
+	if activeResponse.Code != http.StatusOK || query.calls != 0 {
+		// The removed field is rejected by the non-strict execution signal
+		// boundary before a governed query is sent, while the handoff remains
+		// successful and editable.
+		t.Fatalf("active reopen status=%d query calls=%d body=%q, want detached repair handoff without execution", activeResponse.Code, query.calls, activeResponse.Body.String())
+	}
+	for _, want := range []string{"orders.removed", `"revisionId":"revision:orders"`, `"number":1`, `"contentHash":"sha256:`} {
+		if !strings.Contains(activeResponse.Body.String(), want) {
+			t.Fatalf("active reopen body=%q, want incompatible authored field and exact CAS token (%s)", activeResponse.Body.String(), want)
 		}
 	}
-	h, _ := newDataExplorerURLTestHandler(t)
-	h.CurrentUser = func(*http.Request) (Principal, bool) { return Principal{ID: "principal:bob", DevBypass: true}, true }
-	store := &savedExplorationTestStore{scope: projectview.SavedExplorationScope{ProjectID: "project:test", Environment: "dev", PrincipalID: "principal:alice"}, items: map[string]projectview.SavedExplorationRecord{
-		"00000000-0000-7000-8000-000000000001": {ID: "00000000-0000-7000-8000-000000000001", Title: "Private", CommandJSON: `{"semanticModelId":"semantic:sales","datasetId":"orders","dimensions":["orders.status"],"metrics":[],"filters":[],"sort":[],"limit":100,"requestSeq":0,"resetVersion":0}`},
+
+	query.calls = 0
+	service.reopen = saved.ReopenResult{Lifecycle: makeLifecycle("exploration:active", saved.StatusActive), Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
 	}}
-	h.SavedExplorations = store
-	recorder := httptest.NewRecorder()
-	_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/explore?saved=00000000-0000-7000-8000-000000000001", nil), false)
-	if ok || recorder.Code != http.StatusNotFound {
-		t.Fatalf("cross-owner restore = ok:%v status:%d body:%s, want 404", ok, recorder.Code, recorder.Body.String())
+	compatibleResponse := httptest.NewRecorder()
+	h.SavedExplorationReopen(compatibleResponse, reopenRequest("exploration:active"))
+	if compatibleResponse.Code != http.StatusOK || query.calls != 1 {
+		t.Fatalf("compatible active reopen status=%d query calls=%d body=%q, want one governed execution", compatibleResponse.Code, query.calls, compatibleResponse.Body.String())
+	}
+
+	query.calls = 0
+	archived := makeLifecycle("exploration:archived", saved.StatusArchived)
+	service.items = []saved.Lifecycle{archived}
+	service.reopen = saved.ReopenResult{Lifecycle: archived, Spec: spec}
+	archivedResponse := httptest.NewRecorder()
+	h.SavedExplorationReopen(archivedResponse, reopenRequest("exploration:archived"))
+	if archivedResponse.Code != http.StatusOK || query.calls != 0 {
+		t.Fatalf("archived reopen status=%d query calls=%d body=%q, want no execution", archivedResponse.Code, query.calls, archivedResponse.Body.String())
+	}
+}
+
+func TestSavedExplorationNavigationRedirectsToAuthorizedCanonicalState(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	lifecycle := saved.Lifecycle{
+		ProjectID: "project:test", ID: "exploration:orders", OwnerPrincipalID: "principal:test",
+		Title: "Orders", Slug: "orders", Visibility: saved.VisibilityPrivate, SemanticModelID: "semantic:sales", Status: saved.StatusActive,
+		CreatedAt: now, UpdatedAt: now, CurrentRevision: saved.RevisionMetadata{ID: "revision:orders", Number: 3, ContentHash: "sha256:" + strings.Repeat("a", 64), CreatedAt: now, CreatedBy: "principal:test"},
+	}
+	spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	h := &BrowserHandler{
+		SavedExplorations: savedExplorationBrowserServiceStub{reopen: saved.ReopenResult{Lifecycle: lifecycle, Spec: spec}},
+		ResolveProjectID:  func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:       func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
+	}
+	route := chi.NewRouteContext()
+	route.URLParams.Add("exploration", "exploration:orders")
+	request := httptest.NewRequest(http.MethodGet, "/explore/saved/exploration:orders?navigation=true", nil)
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	response := httptest.NewRecorder()
+	h.SavedExplorationReopen(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("navigation status=%d body=%q, want redirect", response.Code, response.Body.String())
+	}
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location.Path != "/explore" || location.Query().Get("saved") != "exploration:orders" || location.Query().Get("mode") != "explore" || location.Query().Get("state") == "" {
+		t.Fatalf("canonical navigation location=%q, want saved identity and state", response.Header().Get("Location"))
 	}
 }

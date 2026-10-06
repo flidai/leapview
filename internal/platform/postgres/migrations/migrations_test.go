@@ -42,6 +42,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"045_refresh_manual_intent.sql", "046_connection_upload_permission.sql", "047_saved_explorations.sql",
 		"048_credential_draft_storage.sql", "049_instance_customer_owner.sql", "050_credential_validation_receipts.sql",
 		"051_credential_activation_preparation.sql", "052_credential_activation_abort.sql", "053_credential_activation_switching.sql", "054_credential_activation_commit.sql", "055_compound_snapshot_grants.sql",
+		"056_saved_explorations.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
@@ -759,5 +760,32 @@ func TestVerifyGooseFailsClosedOnFreshDatabase(t *testing.T) {
 	}
 	if version != 0 {
 		t.Fatalf("fresh Goose version row = %d, want 0", version)
+	}
+}
+
+func TestSavedExplorationMigrationIsForwardOnlyAndAudited(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "056_saved_explorations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"CREATE SCHEMA IF NOT EXISTS saved_exploration",
+		"saved_exploration.saved_explorations",
+		"saved_exploration.saved_exploration_revisions",
+		"saved_exploration.saved_exploration_operations",
+		"GRANT SELECT, INSERT, UPDATE ON saved_exploration.saved_explorations TO leapview_control_runtime",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("saved exploration migration missing %q", required)
+		}
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") || strings.Contains(strings.ToUpper(down), "DROP SCHEMA") {
+		t.Error("saved exploration migration Down must refuse instead of deleting durable revisions")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("saved exploration migration must restore the migrator role")
 	}
 }
