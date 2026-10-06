@@ -155,6 +155,7 @@ class ComposeBundleAssemblerTests(unittest.TestCase):
                 "leapviewctl-wrapper": "deploy/host/files/leapviewctl-wrapper",
                 "bootstrap-linux.sh": "deploy/host/bootstrap-linux.sh",
                 "Caddyfile": "deploy/compose/Caddyfile",
+                "compose.postgres.yaml": "deploy/compose/compose.postgres.yaml",
                 "compose.https.yaml": "deploy/compose/compose.https.yaml",
                 "compose.first-install-bootstrap.yaml": "deploy/compose/compose.first-install-bootstrap.yaml",
                 "Caddyfile.first-install-bootstrap": "deploy/compose/Caddyfile.first-install-bootstrap",
@@ -172,7 +173,7 @@ class ComposeBundleAssemblerTests(unittest.TestCase):
             self.assertEqual(runtime_package["leapview"]["image"], IMAGE)
             self.assertEqual(runtime_package["leapview"]["revision"], REVISION)
 
-            executable = {"leapviewctl", "leapviewctl-wrapper", "bootstrap-linux.sh", "qualification/postgres-init.sh", "local-runtime/postgres-init.sh"}
+            executable = {"leapviewctl", "leapviewctl-wrapper", "bootstrap-linux.sh", "qualification/postgres-init.sh", "local-runtime/postgres-init.sh", "postgres/bundled-entrypoint.sh", "postgres/bundled-init.sh"}
             for path in package_root.rglob("*"):
                 if path.is_dir():
                     self.assertEqual(path.stat().st_mode & 0o777, 0o755, path.relative_to(package_root))
@@ -319,6 +320,7 @@ class ComposeBundleAssemblerTests(unittest.TestCase):
                 (source / relative).mkdir(parents=True, exist_ok=True)
             for relative in (
                 "deploy/compose/compose.yaml",
+                "deploy/compose/compose.postgres.yaml",
                 "deploy/compose/compose.https.yaml",
                 "deploy/compose/compose.first-install-bootstrap.yaml",
                 "deploy/compose/Caddyfile",
@@ -339,6 +341,7 @@ class ComposeBundleAssemblerTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / relative, target)
             shutil.copytree(ROOT / "deploy/compose/qualification", source / "deploy/compose/qualification")
+            shutil.copytree(ROOT / "deploy/compose/postgres", source / "deploy/compose/postgres")
             caddy = source / "deploy/compose/Caddyfile"
             caddy.write_text("example.invalid {\n  respond ok\n}\n")
             (source / "deploy/compose/qualification").chmod(0o755)

@@ -116,6 +116,7 @@ class ControllerEvidenceTests(unittest.TestCase):
     def _create_source_checkout(self):
         files = [
             "deploy/compose/compose.yaml",
+            "deploy/compose/compose.postgres.yaml",
             "deploy/compose/compose.https.yaml",
             "deploy/compose/compose.first-install-bootstrap.yaml",
             "deploy/compose/Caddyfile.first-install-bootstrap",
@@ -125,6 +126,8 @@ class ControllerEvidenceTests(unittest.TestCase):
             "deploy/compose/QUALIFICATION.md",
             "deploy/compose/leapview.env.example",
             "deploy/compose/deployment.env.example",
+            "deploy/compose/postgres/bundled-entrypoint.sh",
+            "deploy/compose/postgres/bundled-init.sh",
             "deploy/host/files/leapviewctl-wrapper",
             "deploy/host/bootstrap-linux.sh",
             "deploy/local/compose.yaml",

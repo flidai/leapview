@@ -117,6 +117,44 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 	}
 }
 
+func TestBundledPostgresComposeProfileIsExplicitAndPrivate(t *testing.T) {
+	compose := read(t, "compose.postgres.yaml")
+	for _, required := range []string{
+		"leapview-postgres-data:/var/lib/postgresql",
+		"postgres-private:",
+		"internal: true",
+		"source: ./.postgres-secrets/server.key",
+		"target: /run/leapview-postgres-secrets/server.key",
+		"source: ./.postgres-secrets/ca.crt",
+		"target: /run/leapview-postgres-secrets/ca.crt",
+		"source: ./postgres/bundled-entrypoint.sh",
+		"target: /run/leapview-postgres/bundled-entrypoint.sh",
+		"target: /docker-entrypoint-initdb.d/10-leapview-roles.sh",
+		"target: /run/leapview-postgres/bundled-init.sh",
+		"LEAPVIEW_POSTGRES_SECRET_DIR: /var/lib/postgresql/18/leapview-secrets",
+	} {
+		if !strings.Contains(compose, required) {
+			t.Errorf("compose.yaml missing bundled PostgreSQL contract %q", required)
+		}
+	}
+	initializer := read(t, "postgres/bundled-init.sh")
+	if !strings.Contains(initializer, "PGSSLMODE=verify-full") {
+		t.Fatal("bundled PostgreSQL retries must verify the server certificate and hostname")
+	}
+	postgres, _, present := strings.Cut(compose, "  postgres:\n")
+	if !present {
+		t.Fatal("compose.yaml has no optional postgres service")
+	}
+	postgres, _, _ = strings.Cut(postgres, "\nvolumes:")
+	if strings.Contains(postgres, "ports:") || strings.Contains(postgres, "expose:") {
+		t.Fatal("bundled PostgreSQL must not publish or expose a port")
+	}
+	if strings.Contains(postgres, "./.postgres-secrets:/run/leapview-postgres-secrets:ro") ||
+		strings.Contains(postgres, "ca.key") {
+		t.Fatal("the PostgreSQL container must receive only explicit serving files, never the CA signing key")
+	}
+}
+
 func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 	root := filepath.Join("..", "..")
 	dockerfile := read(t, filepath.Join(root, "Dockerfile"))

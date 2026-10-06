@@ -38,12 +38,15 @@ require_mode() {
 
 for required_path in \
   compose.yaml \
+  compose.postgres.yaml \
   compose.https.yaml \
   compose.first-install-bootstrap.yaml \
   Caddyfile \
   Caddyfile.first-install-bootstrap \
   first-install.env \
   leapview.env.example \
+  postgres/bundled-entrypoint.sh \
+  postgres/bundled-init.sh \
   qualification/postgres-init.sh \
   qualification/validate-bundle.sh; do
   require_regular_file "$required_path"
@@ -51,6 +54,9 @@ done
 bundle_validator_path=$(realpath -- "$bundle_root/qualification/validate-bundle.sh")
 
 require_mode qualification/postgres-init.sh 755
+require_mode postgres/bundled-entrypoint.sh 755
+require_mode postgres/bundled-init.sh 755
+require_mode compose.postgres.yaml 644
 require_mode Caddyfile 644
 require_mode Caddyfile.first-install-bootstrap 644
 require_mode compose.first-install-bootstrap.yaml 644
@@ -58,6 +64,25 @@ require_mode first-install.env 644
 require_mode qualification/validate-bundle.sh 755
 
 [[ -s "$bundle_root/compose.https.yaml" ]] || fail "compose.https.yaml is empty"
+grep -qF 'internal: true' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL network must be internal'
+grep -qF 'leapview-postgres-data:/var/lib/postgresql' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL must persist its cluster volume'
+grep -qF 'LEAPVIEW_POSTGRES_SECRET_DIR: /var/lib/postgresql/18/leapview-secrets' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL must keep host credentials outside PGDATA'
+grep -qF 'target: /run/leapview-postgres/bundled-init.sh' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL must mount its retryable provisioner'
+if sed -n '/^  postgres:/,/^volumes:/p' "$bundle_root/compose.postgres.yaml" | grep -Eq '^    (ports|expose):'; then
+  fail 'bundled PostgreSQL must not publish or expose a port'
+fi
+if grep -qF 'ca.key' "$bundle_root/compose.postgres.yaml"; then
+  fail 'the PostgreSQL service must not receive the host-only CA signing key'
+fi
+grep -qiF 'sslmode=verify-full' "$bundle_root/postgres/bundled-init.sh" ||
+  fail 'retryable provisioning must verify the PostgreSQL server certificate and hostname'
+if grep -Eq 'POSTGRES_PASSWORD[^_A-Z].*:-|POSTGRES_PASSWORD:-|leapview-local-' "$bundle_root/compose.postgres.yaml" "$bundle_root/postgres/bundled-entrypoint.sh" "$bundle_root/postgres/bundled-init.sh"; then
+  fail 'bundled PostgreSQL must not define default credentials'
+fi
 grep -qF 'reverse_proxy leapview:8080' "$bundle_root/Caddyfile" ||
   fail 'Caddyfile does not proxy to leapview:8080'
 grep -qF 'tls internal' "$bundle_root/Caddyfile.first-install-bootstrap" ||
@@ -92,6 +117,7 @@ while IFS= read -r -d '' path; do
   fi
 done < <(
   find "$bundle_root/compose.yaml" "$bundle_root/compose.https.yaml" \
+    "$bundle_root/compose.postgres.yaml" "$bundle_root/postgres" \
     "$bundle_root/compose.first-install-bootstrap.yaml" "$bundle_root/Caddyfile.first-install-bootstrap" \
     "$bundle_root/first-install.env" \
     "$bundle_root/leapview.env.example" "$bundle_root/qualification" \

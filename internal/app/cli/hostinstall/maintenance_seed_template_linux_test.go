@@ -26,6 +26,16 @@ func TestNativeUpgradeStagesSeedTemplateWithoutChangingInstalledConfiguration(t 
 				require.NoError(t, err)
 				require.NoError(t, os.WriteFile(filepath.Join(effects.root, name), contents, 0o600))
 			}
+			for _, name := range []string{"compose.postgres.yaml", "postgres/bundled-entrypoint.sh", "postgres/bundled-init.sh"} {
+				contents, err := os.ReadFile(filepath.Join("../../../../deploy/compose", name))
+				require.NoError(t, err)
+				path := filepath.Join(fixture, name)
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+				require.NoError(t, os.WriteFile(path, contents, 0o600))
+				installedPath := filepath.Join(effects.root, name)
+				require.NoError(t, os.MkdirAll(filepath.Dir(installedPath), 0o700))
+				require.NoError(t, os.WriteFile(installedPath, contents, 0o600))
+			}
 			if scenario == "different seed" {
 				require.NoError(t, os.WriteFile(filepath.Join(effects.root, "leapview.env.example"), []byte("different first-install defaults\n"), 0o600))
 			}

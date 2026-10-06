@@ -21,7 +21,9 @@ func TestHostAndDemoReleaseStagingInteroperate(t *testing.T) {
 	payload := testPayload("fixture-")
 	fixture := t.TempDir()
 	for name, data := range payload {
-		require.NoError(t, os.WriteFile(filepath.Join(fixture, name), data, 0600))
+		path := filepath.Join(fixture, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+		require.NoError(t, os.WriteFile(path, data, 0600))
 	}
 	require.NoError(t, os.Mkdir(filepath.Join(fixture, "qualification"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(fixture, "qualification", "browser.mjs"), []byte("qualification helper"), 0600))
@@ -62,9 +64,26 @@ runtime.stage_release(sys.argv[5])
 	require.NoError(t, validateGeneration(secondDirectory, payload))
 	_, err = stageGeneration(paths, second, payload)
 	require.NoError(t, err, "Go must accept an image-only deployment generation")
-	entries, err := os.ReadDir(secondDirectory)
-	require.NoError(t, err)
-	require.Len(t, entries, len(requiredPayloadFiles))
+	var stagedFiles []string
+	require.NoError(t, filepath.WalkDir(secondDirectory, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(secondDirectory, path)
+		if err != nil {
+			return err
+		}
+		stagedFiles = append(stagedFiles, relative)
+		return nil
+	}))
+	var requiredFiles []string
+	for _, file := range requiredPayloadFiles {
+		requiredFiles = append(requiredFiles, file.Source)
+	}
+	require.ElementsMatch(t, requiredFiles, stagedFiles)
 	active, err := os.Readlink(filepath.Join(paths.Root, "current"))
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join("releases", generation), active)

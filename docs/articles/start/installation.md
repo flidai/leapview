@@ -6,8 +6,10 @@ and the [analytics development workflow](https://github.com/flidai/leapview/blob
 The CLI provisions its checkout-scoped local runtime through Docker.
 
 For self-hosting, use the version-matched Compose operations package below.
-A server instance requires external PostgreSQL control and DuckLake databases
-and configured managed-object storage; its local volume is not a complete
+A server instance requires PostgreSQL control and DuckLake databases plus
+configured managed-object storage; the direct Compose flow uses an external
+provider, while the Linux host installer also offers an explicitly selected
+single-node bundled PostgreSQL profile. Its local volumes are not a complete
 recovery copy. Changing LeapView itself uses the separate
 [contributor workflow](https://github.com/flidai/leapview/blob/main/docs/articles/contributing/repository.md).
 
@@ -40,8 +42,8 @@ that will run `leapviewctl`:
 ## Before you begin
 
 Install Docker Engine and Docker Compose. A public instance also needs a DNS
-name, HTTPS, durable secret storage, PostgreSQL, and provider-native recovery
-storage.
+name, HTTPS, durable secret storage, a selected PostgreSQL profile, and
+provider-native recovery storage.
 
 ## Choose an installation
 
@@ -130,9 +132,12 @@ the separately managed secret configuration.
 
 Initialization treats `--domain` as the canonical public hostname and derives `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain from it. It also generates production secrets, creates the persistent volume, validates the resulting production configuration, and atomically creates a forced-change local administrator plus a restricted publisher token. `first-login` prints and deletes that one-time credential file.
 
-The Compose bundle does not include PostgreSQL. Initialization preserves the
-operator-supplied PostgreSQL and delivery-pool settings and fails with the
-missing variable name when the clean-slate production contract is incomplete.
+Direct Compose initialization uses PostgreSQL URLs and pool settings supplied
+in `leapview.env` and fails with the missing variable name when the clean-slate
+production contract is incomplete. The host installer may instead select the
+bundled profile in its private operator bootstrap input; the [self-hosting guide](/docs/guides/operate/self-hosting)
+describes its retry behavior and recovery limits. Both paths use the same
+delivery-pool admission and require reviewed physical-pool identity/evidence.
 The pool-bootstrap dry run precedes initialization only to derive identities;
 the applying run follows initialization because it verifies the newly applied
 control baseline. Do not store the operation-only DuckLake migrator credential

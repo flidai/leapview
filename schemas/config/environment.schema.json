@@ -3299,6 +3299,12 @@
       "x-lifecycle": "internal",
       "x-scope": "browser test setup"
     },
+    "LEAPVIEW_POSTGRES_BOOTSTRAP_HOST": {
+      "description": "TLS-verified PostgreSQL service hostname supplied to the idempotent host bootstrap retry; the bundled deployment uses `postgres`.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "bundled PostgreSQL role reconciliation"
+    },
     "LEAPVIEW_POSTGRES_BOOTSTRAP_PASSWORD": {
       "description": "Disposable bootstrap credential for the loopback-only development PostgreSQL container.",
       "type": "string",
@@ -3659,6 +3665,12 @@
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_SECRET_DIR": {
+      "description": "Persistent in-volume directory containing the bundled PostgreSQL bootstrap credentials and TLS material; set by the private PostgreSQL Compose service.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "bundled PostgreSQL container bootstrap"
     },
     "LEAPVIEW_POSTGRES_TEST_MODE": {
       "description": "Enable the isolated disposable PostgreSQL test-harness mode.",

@@ -219,6 +219,39 @@ test('Compose evidence verifier tests run in core and hosted Nix CI when helper 
   expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
 })
 
+test('fresh-host verifier generates protected Go inputs before its static build', () => {
+  const step = composeCandidateWorkflow.jobs['host-qualification'].steps.find((item: any) =>
+    item.name === 'Build the protected first-publication verifier')
+  const root = mkdtempSync(join(tmpdir(), 'nix-compose-protected-build-'))
+  const bin = join(root, 'bin')
+  mkdirSync(bin)
+  const executable = (name: string, script: string) =>
+    writeFileSync(join(bin, name), '#!/bin/sh\nset -eu\n' + script, { mode: 0o755 })
+  try {
+    executable('git', 'case "$*" in "rev-parse HEAD") printf "%s\\n" "$FIXTURE_REVISION";; "status --porcelain --untracked-files=no") :;; *) exit 91;; esac\n')
+    executable('nix', 'test "$1" = develop; shift; test "$1" = --no-update-lock-file; shift; test "$1" = -c; shift; exec "$@"\n')
+    executable('task', 'test "$PWD" = "$FIXTURE_ROOT"; test "$*" = generate; test "${FAIL_GENERATION:-0}" = 0; touch generated-inputs\n')
+    executable('go', 'test "$PWD" = "$FIXTURE_ROOT"; test -f generated-inputs; test "$CGO_ENABLED" = 0; test "$*" = "build -trimpath -o $RUNNER_TEMP/host-first-publication-verifier ./cmd/leapviewctl"; printf "protected verifier\\n" > "$RUNNER_TEMP/host-first-publication-verifier"\n')
+    const run = (extra: Record<string, string> = {}) => spawnSync('bash', ['-c', step.run], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env, PATH: bin + ':' + process.env.PATH, RUNNER_TEMP: root,
+        FIXTURE_ROOT: root, FIXTURE_REVISION: 'a'.repeat(40), PROTECTED_REVISION: 'a'.repeat(40), ...extra,
+      },
+    })
+    const result = run()
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(readFileSync(join(root, 'host-first-publication-verifier'), 'utf8')).toBe('protected verifier\n')
+    rmSync(join(root, 'generated-inputs'))
+    rmSync(join(root, 'host-first-publication-verifier'))
+    expect(run({ FAIL_GENERATION: '1' }).status).not.toBe(0)
+    expect(run({ PROTECTED_REVISION: 'b'.repeat(40) }).status).not.toBe(0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('fresh-host first publication uses a protected verifier and protected authoring assets', () => {
   const host = composeCandidateWorkflow.jobs['host-qualification']
   const buildVerifier = host.steps.find((step: any) => step.name?.includes('Build the protected first-publication verifier'))

@@ -9,7 +9,9 @@ operations binary for the archive's operating system and architecture.
 ```sh
 cp deployment.env.example deployment.env
 cp leapview.env.example leapview.env
-# Configure the external PostgreSQL URLs and roles in leapview.env.
+# Configure external PostgreSQL URLs and roles in leapview.env for direct
+# Compose initialization. Host first-install can instead select the bundled
+# PostgreSQL adapter through operator-bootstrap.json; see below.
 # Initialize credential encryption, then configure the chatbot in Agent Settings.
 # Keep all deployment secrets out of source control.
 # Run pool bootstrap without --apply; the database-free result contains the
@@ -23,7 +25,7 @@ cp leapview.env.example leapview.env
 ```
 
 Set the released `LEAPVIEW_IMAGE` digest before initialization. Production
-requires provider-owned PostgreSQL control and DuckLake URLs, distinct
+direct Compose initialization uses provider-owned PostgreSQL control and DuckLake URLs, distinct
 migrator/runtime/maintenance roles, and the exact target delivery pool ID and
 compatibility digest. Edit those values in `leapview.env`; initialization
 preserves them and fails with the missing variable name when they are absent.
@@ -50,8 +52,47 @@ pool/evidence pair only after `init`, because durable admission verifies the
 control baseline created during initialization. Inject the DuckLake migrator
 URL only into that apply command through the target secret manager; ordinary
 serving must not receive it.
-LeapView does not provision a PostgreSQL container in this bundle. HTTPS is
-enabled by default through the Caddy overlay. Initialization derives
+Direct `leapviewctl init` remains the external-provider path. The host
+installer can explicitly select the bundled profile in
+`/run/leapview/operator-bootstrap.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "postgresProfile": "bundled",
+  "postgres": {},
+  "physicalPool": {
+    "pool": { /* full canonical physicalpool.PoolIdentity object */ },
+    "evidence": { /* full canonical physicalpool.EvidenceArtifact object */ }
+  }
+}
+```
+
+The physical-pool identity and evidence remain operator-supplied and reviewed.
+During host install, LeapView starts the PostgreSQL 18 Compose service before
+the existing pool dry-run, then runs the same initialization and apply steps
+as the external profile. Passwords and server TLS keys are persisted in
+root-private files under `/opt/leapview/.postgres-secrets`; the Compose service
+receives individual password and server TLS files, while the application gets
+only the read-only CA certificate. Connections use the Compose service hostname
+`postgres`, a certificate for that hostname, and `sslmode=verify-full`. The
+database uses an internal Compose network with no published port and a
+persistent named volume.
+
+The profile is fixed by a private install marker. Host install retries reuse
+the same secrets and rerun idempotent role/database/schema reconciliation, so
+an interruption after `initdb` does not strand an initialized but unprovisioned
+volume. Retry with the same operator JSON and keep the PostgreSQL volume and
+`.postgres-secrets` together. If either is missing or inconsistent, the
+adapter fails closed; it never silently replaces passwords or keys. Restore a
+matching volume and secret set from the same recovery point. This optional
+single-node service does not add automated backup/PITR, HA, database upgrades,
+or certificate rotation. Those remain operator recovery and maintenance work.
+Run the isolated Docker regression locally with
+`LEAPVIEW_TEST_BUNDLED_POSTGRES_DOCKER=1 go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerResumesProvisioningAndPreservesVolume$' -count=1 -v`;
+the hosted `task test:qualification:native-postgres` lane runs the same check.
+
+HTTPS is enabled by default through the Caddy overlay. Initialization derives
 `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain
 from the validated `--domain` hostname. Use `--no-https` only when a trusted
 external HTTPS proxy fronts the localhost-bound application port; it disables

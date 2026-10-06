@@ -448,13 +448,22 @@ func (e *NativeEffects) stage(ctx context.Context) error {
 		return err
 	}
 	installed := map[string][]byte{}
-	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
+	installedFiles := []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"}
+	historicalRevision019 := e.id.Predecessor == revision019PredecessorImage
+	if !historicalRevision019 {
+		installedFiles = append(installedFiles, "compose.postgres.yaml", "postgres/bundled-entrypoint.sh", "postgres/bundled-init.sh")
+	}
+	for _, name := range installedFiles {
 		installed[name], err = os.ReadFile(filepath.Join(e.root, name))
 		if err != nil {
 			return err
 		}
 	}
-	if err := validateMaintenancePayloadTransition(installed, predecessor, payload); err != nil {
+	validateTransition := validateMaintenancePayloadTransition
+	if historicalRevision019 {
+		validateTransition = validateRevision019MaintenancePayloadTransition
+	}
+	if err := validateTransition(installed, predecessor, payload); err != nil {
 		return err
 	}
 	_, err = stageGeneration(InstalledPaths(e.root), e.id.Candidate, payload)

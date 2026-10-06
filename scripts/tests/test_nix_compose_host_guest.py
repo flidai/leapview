@@ -951,6 +951,7 @@ class FirstInstallGuestFixtureTests(unittest.TestCase):
         }).encode() + b"\n"
         operator = json.loads(host_guest._qualification_operator_config(generated, urls))
         self.assertEqual(operator["schemaVersion"], 1)
+        self.assertEqual(operator["postgresProfile"], "external")
         self.assertEqual(operator["postgres"], urls)
         self.assertEqual(operator["physicalPool"]["pool"], {"pool_id": "image-produced"})
         self.assertEqual(operator["physicalPool"]["evidence"], {"schema_version": 1, "evidence": {"checks": []}})
