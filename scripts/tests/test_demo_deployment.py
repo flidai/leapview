@@ -300,7 +300,8 @@ class StagingTests(unittest.TestCase):
         self.release = self.root/'releases'/('sha256-'+'a'*64)
         self.release.mkdir(parents=True)
         self.payload = {name: b'packaged content' for name in
-                        ['compose.yaml', 'compose.https.yaml', 'Caddyfile',
+                        ['compose.yaml', 'compose.https.yaml', 'compose.first-install-bootstrap.yaml',
+                         'Caddyfile', 'Caddyfile.first-install-bootstrap', 'first-install.env',
                          'deployment.env.example', 'leapview.env.example',
                          'leapviewctl', 'leapviewctl-wrapper']}
         for name, data in self.payload.items():
@@ -467,5 +468,23 @@ class RuntimePinTests(unittest.TestCase):
                  patch.object(record,'read_contract',return_value={'permissionProfile':'legacy-capabilities/v1'}):
                 record.resolve()
             self.assertIn('revision='+'a'*40,pathlib.Path(output.name).read_text())
+
+
+
+class InstallationMarkerTests(unittest.TestCase):
+    def test_image_change_preserves_public_phase_and_updates_generation(self):
+        runtime = load('demo_compose_runtime')
+        old = 'ghcr.io/flidai/leapview@sha256:' + 'a' * 64
+        new = 'ghcr.io/flidai/leapview@sha256:' + 'b' * 64
+        marker = {'image': old, 'bootstrapPhase': 'public',
+                  'generation': 'sha256-'+'a'*64, 'targetId': 'target'}
+        updated = json.loads(runtime.replace_installation_image(json.dumps(marker).encode(), old, new))
+        self.assertEqual(updated, dict(marker, image=new, generation='sha256-'+'b'*64))
+        for field, value in [('bootstrapPhase', 'private-bootstrap'),
+                             ('bootstrapPhase', None), ('generation', 'foreign'), ('image', new)]:
+            with self.subTest(field=field, value=value):
+                invalid = dict(marker, **{field: value})
+                with self.assertRaisesRegex(ValueError, 'public installation marker'):
+                    runtime.replace_installation_image(json.dumps(invalid).encode(), old, new)
 
 if __name__ == '__main__': unittest.main()

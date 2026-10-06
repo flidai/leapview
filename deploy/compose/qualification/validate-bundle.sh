@@ -39,7 +39,10 @@ require_mode() {
 for required_path in \
   compose.yaml \
   compose.https.yaml \
+  compose.first-install-bootstrap.yaml \
   Caddyfile \
+  Caddyfile.first-install-bootstrap \
+  first-install.env \
   leapview.env.example \
   qualification/postgres-init.sh \
   qualification/validate-bundle.sh; do
@@ -49,11 +52,26 @@ bundle_validator_path=$(realpath -- "$bundle_root/qualification/validate-bundle.
 
 require_mode qualification/postgres-init.sh 755
 require_mode Caddyfile 644
+require_mode Caddyfile.first-install-bootstrap 644
+require_mode compose.first-install-bootstrap.yaml 644
+require_mode first-install.env 644
 require_mode qualification/validate-bundle.sh 755
 
 [[ -s "$bundle_root/compose.https.yaml" ]] || fail "compose.https.yaml is empty"
 grep -qF 'reverse_proxy leapview:8080' "$bundle_root/Caddyfile" ||
   fail 'Caddyfile does not proxy to leapview:8080'
+grep -qF 'tls internal' "$bundle_root/Caddyfile.first-install-bootstrap" ||
+  fail 'first-install Caddyfile does not use its private internal CA'
+grep -qF 'condition: service_started' "$bundle_root/compose.first-install-bootstrap.yaml" ||
+  fail 'first-install Compose overlay does not use liveness-independent startup ordering'
+grep -qFx 'COMPOSE_APP_BIND=127.0.0.1:8080' "$bundle_root/first-install.env" ||
+  fail 'first-install application bind is not loopback-only'
+grep -qFx 'CADDY_HTTP_BIND=127.0.0.1:80' "$bundle_root/first-install.env" ||
+  fail 'first-install HTTP proxy bind is not loopback-only'
+grep -qFx 'CADDY_HTTPS_BIND=127.0.0.1:443' "$bundle_root/first-install.env" ||
+  fail 'first-install HTTPS proxy bind is not loopback-only'
+grep -qFx 'CADDY_HTTPS_UDP_BIND=127.0.0.1:443' "$bundle_root/first-install.env" ||
+  fail 'first-install HTTPS/UDP proxy bind is not loopback-only'
 grep -qFx 'LEAPVIEW_POSTGRES_REQUIRE_TLS=true' "$bundle_root/leapview.env.example" ||
   fail 'leapview.env.example must require PostgreSQL TLS'
 grep -qF 'CREATE ROLE leapview_control_owner' "$bundle_root/qualification/postgres-init.sh" ||
@@ -74,6 +92,8 @@ while IFS= read -r -d '' path; do
   fi
 done < <(
   find "$bundle_root/compose.yaml" "$bundle_root/compose.https.yaml" \
+    "$bundle_root/compose.first-install-bootstrap.yaml" "$bundle_root/Caddyfile.first-install-bootstrap" \
+    "$bundle_root/first-install.env" \
     "$bundle_root/leapview.env.example" "$bundle_root/qualification" \
     -type f -print0
 )

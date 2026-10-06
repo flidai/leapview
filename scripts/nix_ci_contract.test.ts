@@ -19,6 +19,11 @@ test('protected controller and Compose adversarial checks run in local and hoste
     expect(workflow.on.pull_request.paths).toContain(`scripts/${script}.py`)
     expect(workflow.on.pull_request.paths).toContain(`scripts/tests/test_${script}.py`)
   }
+  const authorizationTest = 'python3 -m unittest discover -s scripts/tests -p test_nix_candidate_authorization.py'
+  expect(readFileSync('Taskfile.yml', 'utf8')).toContain(authorizationTest)
+  expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(authorizationTest))).toBe(true)
+  expect(workflow.on.pull_request.paths).toContain('scripts/nix_candidate_authorization.py')
+  expect(workflow.on.pull_request.paths).toContain('scripts/tests/test_nix_candidate_authorization.py')
   expect(readFileSync('Taskfile.yml', 'utf8')).toContain('bun test scripts/nix_compose_candidate_contract.test.ts')
   expect(workflow.on.pull_request.paths).toContain('scripts/nix_compose_candidate_contract.test.ts')
   expect(workflow.on.pull_request.paths).toContain('.github/workflows/nix-compose-candidate.yml')
@@ -367,6 +372,7 @@ test('protected Nix candidates isolate build, qualification and signing authorit
     }
   }
   const { authorize, build, qualify, publish } = config.jobs
+  expect(authorize.steps.some((step: any) => step.run?.includes('nix_candidate_authorization.py'))).toBe(true)
   expect(build.permissions).toEqual({ contents: 'read' })
   expect(qualify.permissions).toEqual({ contents: 'read', actions: 'read' })
   expect(build.needs).toBe('authorize')
@@ -390,11 +396,117 @@ test('protected Nix candidates isolate build, qualification and signing authorit
     .toContain('protected/scripts/check_nix_image.sh candidate/image.tar trusted-app')
   expect(publish.steps.find((s: any) => s.uses?.startsWith('actions/download-artifact@')).with['artifact-ids'])
     .toBe('${{ steps.artifacts.outputs.qualified_id }}')
+  const reauthorize = publish.steps.findIndex((step: any) => step.run?.includes('nix_candidate_authorization.py'))
+  const registryLogin = publish.steps.findIndex((step: any) => step.uses?.startsWith('docker/login-action@'))
+  expect(reauthorize).toBeGreaterThan(-1)
+  expect(registryLogin).toBeGreaterThan(reauthorize)
   for (const job of [build, qualify, publish]) {
     expect(job.strategy.matrix.include.map((entry: any) => [entry.arch, entry.runner]))
       .toEqual([['amd64', 'ubuntu-24.04'], ['arm64', 'ubuntu-24.04-arm']])
     expect(job.outputs).toBeUndefined()
   }
+})
+
+test('protected app and controller workflow shells authorize dispatch snapshots and recheck PR heads', () => {
+  const appWorkflow = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
+  const cliWorkflow = parse(readFileSync('.github/workflows/nix-cli-candidate.yml', 'utf8'))
+  const appAuthorize = appWorkflow.jobs.authorize.steps.find((step: any) =>
+    step.run?.includes('nix_candidate_authorization.py'))
+  const appReauthorize = appWorkflow.jobs.publish.steps.find((step: any) =>
+    step.name?.includes('Reauthorize') && step.run?.includes('nix_candidate_authorization.py'))
+  const cliAuthorize = cliWorkflow.jobs.authorize.steps.find((step: any) =>
+    step.run?.includes('nix_candidate_authorization.py'))
+  const cliReauthorize = cliWorkflow.jobs.publish.steps.find((step: any) =>
+    step.name?.includes('Reauthorize') && step.run?.includes('nix_candidate_authorization.py'))
+  expect(appAuthorize).toBeDefined()
+  expect(appReauthorize).toBeDefined()
+  expect(cliAuthorize).toBeDefined()
+  expect(cliReauthorize).toBeDefined()
+
+  const root = mkdtempSync(join(tmpdir(), 'nix-candidate-authorization-'))
+  try {
+    const protectedRoot = join(root, 'protected')
+    const sourceRoot = join(root, 'source')
+    const scriptRoot = join(protectedRoot, 'scripts')
+    const binRoot = join(root, 'bin')
+    const runnerTemp = join(root, 'runner-temp')
+    mkdirSync(scriptRoot, { recursive: true })
+    mkdirSync(binRoot)
+    mkdirSync(runnerTemp)
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stdout + result.stderr)
+      return result.stdout.trim()
+    }
+    const initRepo = (path: string, subject: string) => {
+      mkdirSync(path, { recursive: true })
+      git('init', '--quiet', path)
+      git('-C', path, '-c', 'user.name=Qualification test', '-c', 'user.email=test@example.invalid',
+        'commit', '--allow-empty', '--quiet', '-m', subject)
+      return git('-C', path, 'rev-parse', 'HEAD')
+    }
+    const protectedSha = initRepo(protectedRoot, 'protected main snapshot')
+    copyFileSync(resolve('scripts/nix_candidate_authorization.py'),
+      join(scriptRoot, 'nix_candidate_authorization.py'))
+    git('clone', '--quiet', protectedRoot, sourceRoot)
+    const advancedMain = join(root, 'advanced-main')
+    git('clone', '--quiet', protectedRoot, advancedMain)
+    git('-C', advancedMain, '-c', 'user.name=Qualification test', '-c', 'user.email=test@example.invalid',
+      'commit', '--allow-empty', '--quiet', '-m', 'main advances during native qualification')
+    const gh = join(binRoot, 'gh')
+    writeFileSync(gh, '#!/bin/sh\nif [ "$FAKE_GH_MODE" = "fail" ]; then exit 97; fi\ncat "$FAKE_GH_RESPONSE"\n',
+      { mode: 0o755 })
+    const response = join(root, 'pull-requests.json')
+    const runGuard = (command: string, sourceSha: string, mode: string) => spawnSync('bash', ['-c', command], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${binRoot}:${process.env.PATH ?? ''}`,
+        GITHUB_REPOSITORY: 'flidai/leapview',
+        GITHUB_EVENT_NAME: 'workflow_dispatch',
+        GITHUB_REF: 'refs/heads/main',
+        GITHUB_SHA: protectedSha,
+        RUNNER_TEMP: runnerTemp,
+        GH_TOKEN: 'fixture-token',
+        SOURCE_REVISION: sourceSha,
+        FAKE_GH_MODE: mode,
+        FAKE_GH_RESPONSE: response,
+      },
+    })
+
+    writeFileSync(response, '[]\n')
+    const appMainResult = runGuard(appAuthorize.run, protectedSha, 'fail')
+    if (appMainResult.status !== 0) throw new Error(appMainResult.stdout + appMainResult.stderr)
+    expect(appMainResult.stdout).toContain('"sourceAuthority": "dispatched-main"')
+    const appMainReauthorization = runGuard(appReauthorize.run, protectedSha, 'fail')
+    if (appMainReauthorization.status !== 0) {
+      throw new Error(appMainReauthorization.stdout + appMainReauthorization.stderr)
+    }
+    expect(appMainReauthorization.stdout).toContain('"sourceAuthority": "dispatched-main"')
+
+    const mainResult = runGuard(cliAuthorize.run, protectedSha, 'fail')
+    if (mainResult.status !== 0) throw new Error(mainResult.stdout + mainResult.stderr)
+    expect(mainResult.stdout).toContain('"sourceAuthority": "dispatched-main"')
+    const mainReauthorization = runGuard(cliReauthorize.run, protectedSha, 'fail')
+    if (mainReauthorization.status !== 0) throw new Error(mainReauthorization.stdout + mainReauthorization.stderr)
+    expect(mainReauthorization.stdout).toContain('"sourceAuthority": "dispatched-main"')
+
+    git('-C', sourceRoot, '-c', 'user.name=Qualification test', '-c', 'user.email=test@example.invalid',
+      'commit', '--allow-empty', '--quiet', '-m', 'open PR head')
+    const prSha = git('-C', sourceRoot, 'rev-parse', 'HEAD')
+    const openPr = [{ state: 'open', base: { ref: 'main' }, head: { sha: prSha } }]
+    writeFileSync(response, `${JSON.stringify(openPr)}\n`)
+    const currentPrResult = runGuard(cliAuthorize.run, prSha, 'respond')
+    if (currentPrResult.status !== 0) throw new Error(currentPrResult.stdout + currentPrResult.stderr)
+    expect(currentPrResult.stdout).toContain('"sourceAuthority": "open-pr-head"')
+
+    const movedPr = [{ state: 'open', base: { ref: 'main' }, head: { sha: 'f'.repeat(40) } }]
+    writeFileSync(response, `${JSON.stringify(movedPr)}\n`)
+    const movedResult = runGuard(cliReauthorize.run, prSha, 'respond')
+    expect(movedResult.status).not.toBe(0)
+    expect(movedResult.stderr).toContain('source must be one exact open pull-request head')
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
 test('protected Nix site candidates keep native qualification separate from site signing', () => {
@@ -411,6 +523,7 @@ test('protected Nix site candidates keep native qualification separate from site
     }
   }
   const { authorize, build, qualify, publish } = config.jobs
+  expect(authorize.steps.some((step: any) => step.run?.includes('nix_candidate_authorization.py'))).toBe(true)
   const final = config.jobs['qualify-published']
   expect(build.permissions).toEqual({ contents: 'read' })
   expect(qualify.permissions).toEqual({ contents: 'read', actions: 'read' })
@@ -456,6 +569,10 @@ test('protected Nix site candidates keep native qualification separate from site
   expect(downloads.map((step: any) => step.with['artifact-ids']))
     .toEqual(['${{ steps.artifacts.outputs.site-qualified_id }}', '${{ steps.artifacts.outputs.site-binding_id }}'])
   const publishCommands = publish.steps.map((step: any) => step.run ?? '').join('\n')
+  const reauthorize = publish.steps.findIndex((step: any) => step.run?.includes('nix_candidate_authorization.py'))
+  const registryLogin = publish.steps.findIndex((step: any) => step.uses?.startsWith('docker/login-action@'))
+  expect(reauthorize).toBeGreaterThan(-1)
+  expect(registryLogin).toBeGreaterThan(reauthorize)
   expect(publishCommands).not.toContain('check_nix_site_image.py')
   expect(publishCommands).not.toContain('docker run')
   expect(publishCommands).not.toContain('nix build')
@@ -519,6 +636,8 @@ test('native and protected Desktop qualification bind the exact Ubuntu 22.04 Deb
   const protectedWorkflow = parse(readFileSync('.github/workflows/nix-desktop-candidate.yml', 'utf8'))
   expect(protectedWorkflow.permissions).toEqual({ contents: 'read' })
   expect(protectedWorkflow.jobs.publish).toBeUndefined()
+  expect(protectedWorkflow.jobs.authorize.steps.some((step: any) =>
+    step.run?.includes('nix_candidate_authorization.py'))).toBe(true)
   expect(protectedWorkflow.jobs.build.steps.find((step: any) => step.uses?.startsWith('cachix/install-nix-action@')).with.extra_nix_config)
     .toContain('sandbox-fallback = false')
   const qualify = protectedWorkflow.jobs.qualify
@@ -539,10 +658,10 @@ test('native and protected Desktop qualification bind the exact Ubuntu 22.04 Deb
 test('protected producer preserves current-head authorization and signs the bound SPDX', () => {
   const { jobs } = parse(readFileSync('.github/workflows/nix-candidate.yml', 'utf8'))
   for (const job of [jobs.authorize, jobs.publish]) {
-    const guard = job.steps.find((s: any) => s.run?.includes('/pulls'))
-    expect(guard.run).toContain('.base.ref == "main" and .state == "open" and .head.sha == $revision')
-    expect(guard.run).toContain('length == 1')
-    expect(guard.run).toContain('^[0-9a-f]{40}$')
+    const guard = job.steps.find((s: any) => s.run?.includes('nix_candidate_authorization.py'))
+    expect(guard.run).toContain('if [[ "$SOURCE_REVISION" == "$GITHUB_SHA" ]]')
+    expect(guard.run).toContain('--event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF"')
+    expect(guard.run).toContain('--source-root source --protected-root protected')
   }
   const steps = jobs.publish.steps
   const publication = steps.findIndex((s: any) => s.id === 'publish')
@@ -716,9 +835,10 @@ test('protected Nix controller candidates keep build, qualification, signing, an
   expect(authorize.environment).toBe('leapview-ephemeral-qualification')
   expect(authorize.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' })
   const authorization = authorize.steps.find((step: any) => step.run?.includes('/pulls'))
-  expect(authorization.run).toContain('^[0-9a-f]{40}$')
-  expect(authorization.run).toContain('.base.ref == "main" and .state == "open" and .head.sha == $revision')
-  expect(authorization.run).toContain('length == 1')
+  expect(authorization.run).toContain('if [[ "$SOURCE_REVISION" == "$GITHUB_SHA" ]]')
+  expect(authorization.run).toContain('--event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF"')
+  expect(authorization.run).toContain('--source-root source --protected-root protected')
+  expect(authorization.run).toContain('protected/scripts/nix_candidate_authorization.py')
 
   expect(build.needs).toBe('authorize')
   expect(build.outputs.artifact_id).toBe('${{ steps.archive.outputs.artifact-id }}')
@@ -771,6 +891,10 @@ test('protected Nix controller candidates keep build, qualification, signing, an
   expect(publish.permissions).toEqual({
     contents: 'read', 'pull-requests': 'read', attestations: 'write', 'id-token': 'write',
   })
+  const reauthorize = publish.steps.findIndex((step: any) => step.run?.includes('nix_candidate_authorization.py'))
+  const firstAttestation = publish.steps.findIndex((step: any) => step.uses?.startsWith('actions/attest@'))
+  expect(reauthorize).toBeGreaterThan(-1)
+  expect(firstAttestation).toBeGreaterThan(reauthorize)
   const protectedCheckout = publish.steps.find((step: any) => step.with?.path === 'protected')
   const sourceCheckout = publish.steps.find((step: any) => step.with?.path === 'source')
   expect(protectedCheckout.with.ref).toBe('${{ github.sha }}')

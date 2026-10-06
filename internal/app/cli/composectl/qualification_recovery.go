@@ -434,13 +434,14 @@ func (c *Controller) runQualificationRecovery(
 	if err := c.armQualificationActivationBarrier(ctx, options.ContainerID, workDir); err != nil {
 		return report, err
 	}
-	if err := approveQualificationPublication(
+	if _, err := approveQualificationPublication(
 		ctx,
 		client,
-		qualificationAuthoringOptions{Target: apiRoot, ProjectID: options.ProjectID},
+		qualificationAuthoringOptions{Target: apiRoot, ProjectID: options.ProjectID, Environment: explicitQualificationEnvironment},
 		options.PublisherToken,
 		options.RecoveryControlToken,
 		pendingPublication,
+		options.ReviewerPrincipalID,
 		options.ComposeProject+"-recovery",
 	); err != nil {
 		return report, err

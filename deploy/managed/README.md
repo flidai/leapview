@@ -242,6 +242,28 @@ therefore needs a restricted bootstrap phase, followed by canonical project/data
 publication and a switch to `/readyz`. A private rehearsal can temporarily use
 `/healthz`; do not treat that liveness response as serving readiness.
 
+The installed host records a private-bootstrap phase before starting persistent
+services. With managed HTTPS, LeapView stays bound to loopback and Caddy serves
+the canonical host with its internal CA on loopback ports. Use an SSH tunnel and
+trust that CA for private setup; the canonical public URL and secure-cookie
+identity remain unchanged. The installed `activate-first-install` command
+requires direct `/readyz` HTTP 200 before it applies the public Caddyfile, then
+rechecks Docker health and `/readyz` before recording the public phase. A failed
+activation restores the private Compose configuration. Ordinary `start` calls
+with a pending marker reapply the private configuration. Compose
+activation and marker replacement are sequential, not atomic: an abrupt stop
+after Caddy switches to public configuration but before the public marker is
+durable can leave Docker restarting that configuration until the next `start`
+reconciles the pending marker. This window occurs only after direct `/readyz`
+returned 200. When using an external HTTPS proxy, LeapView remains loopback-bound;
+its operator must keep the external route disabled until activation.
+
+The protected fresh-host qualification covers the bounded external-PostgreSQL
+journey: distinct reviewer nomination, independent approval, first publication
+and a loopback `/readyz` 503-to-200 transition. A rebuilt candidate and hosted
+guest run are still required to verify the new private-to-public proxy transition.
+This slice does not qualify the full enterprise lifecycle.
+
 Every managed application revision mounts the same `LEAPVIEW_HOME`.
 [`serve`](../../internal/app/cli/serve.go) acquires the exclusive
 [`.instance.lock`](../../internal/platform/locking/lock.go) before building or
@@ -292,9 +314,9 @@ The [takeover review and completion plan](completion-plan.md) maps the remaining
 work to the broader Nix roadmap and distinguishes existing rehearsal evidence
 from qualification still required.
 
-- Resolve the first-reviewer credential issuance blocker recorded in the
-  [application rehearsal](rehearsal-application-2026-09-28.md), then qualify a
-  protected first publication and `/readyz`-gated releases.
+- Extend the bounded installed-host first-publication slice to full managed
+  acceptance: qualify public traffic gating, exact target/project/environment
+  and policy binding, reviewer failure cases, and `/readyz`-gated releases.
 - Canonical PostgreSQL role/bootstrap and physical-pool admission adapter, with
   operation-only credentials and no default passwords.
 - Kamal lifecycle integration and immutable artifact verification; migration,

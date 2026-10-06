@@ -8,6 +8,7 @@
   "exclude": [
     "web/**/*.test.ts",
     "web/**/*.dom.test.ts",
+    "web/**/*.test-fixture.ts",
     "web/benchmarks/**"
   ]
 }

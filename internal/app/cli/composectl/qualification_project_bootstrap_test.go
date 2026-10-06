@@ -21,7 +21,7 @@ func TestBootstrapQualificationProjectUsesExplicitIssuerAndEnvironmentToken(t *t
     }`)}
 
 	result, err := bootstrapQualificationProject(
-		t.Context(), container, "http://localhost:8080/", "claim-secret",
+		t.Context(), container, "http://localhost:8080/", "claim-secret", explicitQualificationEnvironment,
 	)
 	require.NoError(t, err)
 	require.Equal(t, "publisher-secret", result.PublisherToken)
@@ -51,7 +51,7 @@ func TestBootstrapQualificationProjectRejectsMismatchedIdentity(t *testing.T) {
         "publisherTokenExpiresAt": "` + time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano) + `"
     }`)}
 
-	_, err := bootstrapQualificationProject(t.Context(), container, "http://localhost:8080", "publisher-secret")
+	_, err := bootstrapQualificationProject(t.Context(), container, "http://localhost:8080", "publisher-secret", explicitQualificationEnvironment)
 	require.ErrorContains(t, err, "identity does not match")
 	require.NotContains(t, strings.ToLower(err.Error()), "publisher-secret")
 }
@@ -68,7 +68,7 @@ func TestBootstrapQualificationProjectRejectsMismatchedEnvironment(t *testing.T)
         "publisherTokenExpiresAt": "` + time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano) + `"
     }`)}
 
-	_, err := bootstrapQualificationProject(t.Context(), container, "http://localhost:8080", "publisher-secret")
+	_, err := bootstrapQualificationProject(t.Context(), container, "http://localhost:8080", "publisher-secret", explicitQualificationEnvironment)
 	require.ErrorContains(t, err, "environment does not match")
 }
 

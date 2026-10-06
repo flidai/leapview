@@ -15,8 +15,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/ociref"
 )
 
 func TestMigrationIntentRejectsStaleWrongAndPrematureJournals(t *testing.T) {
@@ -74,6 +76,78 @@ func nativeEffectsFixture(t *testing.T) *NativeEffects {
 		}
 	}
 	return &NativeEffects{relay: func(context.Context, string, string) (string, func(), error) { return "", func() {}, nil }, original: nativeOriginal{App: dockerInspection{Name: nativeApp}, Caddy: dockerInspection{Name: nativeCaddy}}, root: root, provider: provider, operation: operation, id: id, request: r}
+}
+
+func TestNativeCandidateMarkerCarriesExactRevision019Binding(t *testing.T) {
+	root := t.TempDir()
+	legacy := Config{SchemaVersion: 1, Domain: "dash.example.com", AdminEmail: "admin@example.com",
+		Environment: "prod", Image: revision019PredecessorImage, HTTPS: boolPointer(true)}
+	writeConfig(t, filepath.Join(root, installMarkerName), legacy)
+	binding := revision019Binding{SchemaVersion: 1, Image: revision019PredecessorImage,
+		TargetID: "instance-a", LegacyConfig: legacy}
+	bindingJSON, err := json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := securefs.WritePrivateFileAtomic(filepath.Join(root, revision019BindingName), bindingJSON); err != nil {
+		t.Fatal(err)
+	}
+	rawLegacy, err := securefs.ReadPrivateFile(filepath.Join(root, installMarkerName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("c", 64)
+	marker, err := candidatePublicMarker(root, candidate)
+	if err != nil {
+		t.Fatalf("bound predecessor was rejected: %v", err)
+	}
+	ref, err := ociref.ParseImmutable(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marker.BootstrapPhase != installationstate.PhasePublic || marker.Generation != ref.Generation ||
+		marker.Image != candidate || marker.TargetID != binding.TargetID || marker.Domain != legacy.Domain {
+		t.Fatalf("candidate marker lost validated installation identity: %+v", marker)
+	}
+	gotLegacy, err := securefs.ReadPrivateFile(filepath.Join(root, installMarkerName))
+	if err != nil || string(gotLegacy) != string(rawLegacy) {
+		t.Fatal("candidate marker derivation changed the retained predecessor config")
+	}
+	if err := installationstate.WriteMarker(root, marker); err != nil {
+		t.Fatal(err)
+	}
+	got, present, err := installationstate.ReadMarker(root)
+	if err != nil || !present || got.BootstrapPhase != marker.BootstrapPhase || got.Generation != marker.Generation || !configsEqual(got.Config, marker.Config) {
+		t.Fatalf("candidate marker did not persist as current contract: %+v, %v", got, err)
+	}
+
+	// A changed provisioned binding in the saved source must stop candidate
+	// marker derivation before ExposeCandidate can restart or expose services.
+	operation := t.TempDir()
+	saved := filepath.Join(operation, "original-config")
+	if err := securefs.EnsurePrivateDir(saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := securefs.WritePrivateFileAtomic(filepath.Join(saved, installMarkerName), rawLegacy); err != nil {
+		t.Fatal(err)
+	}
+	binding.LegacyConfig.Domain = "foreign.example.com"
+	bindingJSON, err = json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := securefs.WritePrivateFileAtomic(filepath.Join(saved, revision019BindingName), bindingJSON); err != nil {
+		t.Fatal(err)
+	}
+	e := nativeEffectsFixture(t)
+	e.operation = operation
+	e.execute = func(context.Context, ...string) (string, error) {
+		t.Fatal("candidate runtime mutated before saved target binding validation")
+		return "", nil
+	}
+	if err := e.ExposeCandidate(context.Background(), e.id); err == nil {
+		t.Fatal("accepted changed saved target binding")
+	}
 }
 func TestPrivateTrafficConfigurationCannotExposePublicBindings(t *testing.T) {
 	e := nativeEffectsFixture(t)

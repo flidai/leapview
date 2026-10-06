@@ -2,7 +2,7 @@ package hostinstall
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
@@ -22,15 +23,7 @@ const (
 	operatorBootstrapConfig = "/run/leapview/operator-bootstrap.json"
 )
 
-type Config struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Domain        string `json:"domain"`
-	AdminEmail    string `json:"adminEmail"`
-	Environment   string `json:"environment"`
-	Image         string `json:"image"`
-	TargetID      string `json:"targetId,omitempty"`
-	HTTPS         *bool  `json:"https"`
-}
+type Config = installationstate.Config
 
 type Paths struct {
 	Payload        string
@@ -47,6 +40,7 @@ type Lifecycle interface {
 	PrepareFirstInstall(context.Context, composectl.FirstInstallOptions) error
 	InitializeFirstInstall(context.Context, composectl.InitOptions, string) error
 	ApplyFirstInstall(context.Context, composectl.FirstInstallOptions) error
+	StartFirstInstallBootstrap(context.Context) error
 	Start(context.Context) error
 }
 
@@ -152,7 +146,7 @@ func (i *Installer) Install(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if installed != nil && !configsEqual(*installed, config) {
+	if installed != nil && !configsEqual(installed.Config, config) {
 		return fmt.Errorf("bootstrap configuration does not match the installed instance; use leapviewctl lifecycle commands for changes")
 	}
 	var operatorOptions composectl.FirstInstallOptions
@@ -195,17 +189,26 @@ func (i *Installer) Install(ctx context.Context) error {
 		if err := lifecycle.ApplyFirstInstall(ctx, operatorOptions); err != nil {
 			return fmt.Errorf("apply production delivery-pool bootstrap: %w", err)
 		}
+		marker, err := installationstate.NewMarker(config, installationstate.PhasePrivate)
+		if err != nil {
+			return err
+		}
+		if marker.Generation != generation {
+			return errors.New("host installation marker generation differs from staged generation")
+		}
+		if err := installationstate.WriteMarker(i.paths.Root, marker); err != nil {
+			return fmt.Errorf("write private-bootstrap installation marker: %w", err)
+		}
+		if err := lifecycle.StartFirstInstallBootstrap(ctx); err != nil {
+			return fmt.Errorf("start LeapView in private first-install bootstrap: %w", err)
+		}
+		return nil
+	}
+	if err := installationstate.VerifyCurrent(i.paths.Root, *installed, normalized.Image); err != nil {
+		return err
 	}
 	if err := lifecycle.Start(ctx); err != nil {
 		return fmt.Errorf("start LeapView: %w", err)
-	}
-	marker, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-	marker = append(marker, '\n')
-	if err := securefs.WritePrivateFileAtomic(filepath.Join(i.paths.Root, installMarkerName), marker); err != nil {
-		return fmt.Errorf("write host installation marker: %w", err)
 	}
 	return nil
 }

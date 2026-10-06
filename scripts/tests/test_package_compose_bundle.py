@@ -156,6 +156,9 @@ class ComposeBundleAssemblerTests(unittest.TestCase):
                 "bootstrap-linux.sh": "deploy/host/bootstrap-linux.sh",
                 "Caddyfile": "deploy/compose/Caddyfile",
                 "compose.https.yaml": "deploy/compose/compose.https.yaml",
+                "compose.first-install-bootstrap.yaml": "deploy/compose/compose.first-install-bootstrap.yaml",
+                "Caddyfile.first-install-bootstrap": "deploy/compose/Caddyfile.first-install-bootstrap",
+                "first-install.env": "deploy/compose/first-install.env",
                 "local-runtime/compose.yaml": "deploy/local/compose.yaml",
                 "local-runtime/runtime-package.schema.json": "deploy/local/runtime-package.schema.json",
             }.items():
@@ -317,7 +320,10 @@ class ComposeBundleAssemblerTests(unittest.TestCase):
             for relative in (
                 "deploy/compose/compose.yaml",
                 "deploy/compose/compose.https.yaml",
+                "deploy/compose/compose.first-install-bootstrap.yaml",
                 "deploy/compose/Caddyfile",
+                "deploy/compose/Caddyfile.first-install-bootstrap",
+                "deploy/compose/first-install.env",
                 "deploy/compose/README.md",
                 "deploy/compose/QUALIFICATION.md",
                 "deploy/compose/deployment.env.example",
