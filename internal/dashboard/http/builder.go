@@ -79,11 +79,16 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}
 	}
+	returnChat := builderReturnChat(r)
+	backHref := "/"
+	if returnChat != "" {
+		backHref = "/chats/" + url.PathEscape(returnChat)
+	}
 	if err := ui.DashboardBuilderPage(envelope, csrfToken, ui.DashboardBuilderActionBindings{
-		BackHref:          "/",
-		PreviewHref:       dashboardBuilderPreviewPath(dashboardID, builder),
+		BackHref:          backHref,
+		PreviewHref:       withBuilderReturnChat(dashboardBuilderPreviewPath(dashboardID, builder), returnChat),
 		ExportYAMLHref:    dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/export.yaml"),
-		PageBaseHref:      dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"),
+		PageBaseHref:      withBuilderReturnChat(dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"), returnChat),
 		CommandPath:       dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/command"),
 		CommandBinding:    dashboardBuilderCommandBinding,
 		FilterCommandPath: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter"),
@@ -694,7 +699,7 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		backValues := url.Values{}
 		backValues.Set("draft", string(request.DraftID))
 		backValues.Set("page", request.PageID)
-		backHref := dashboardBuilderBasePath(dashboardID) + "/edit?" + backValues.Encode()
+		backHref := withBuilderReturnChat(dashboardBuilderBasePath(dashboardID)+"/edit?"+backValues.Encode(), builderReturnChat(r))
 		var providers []webpage.Provider
 		if h.Layout != nil {
 			providers = []webpage.Provider{h.Layout(r)}
@@ -748,7 +753,7 @@ func (h Handler) writeDashboardBuilderPreviewRevisionChanged(w nethttp.ResponseW
 	backValues := url.Values{}
 	backValues.Set("draft", string(request.DraftID))
 	backValues.Set("page", request.PageID)
-	backHref := dashboardBuilderBasePath(dashboardID) + "/edit?" + backValues.Encode()
+	backHref := withBuilderReturnChat(dashboardBuilderBasePath(dashboardID)+"/edit?"+backValues.Encode(), builderReturnChat(r))
 	var providers []webpage.Provider
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}

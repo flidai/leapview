@@ -1415,3 +1415,32 @@ func TestDashboardBuilderCommandRepreviewsAuthoritativeRevision(t *testing.T) {
 		t.Fatalf("preview request = %#v", fake.previewReq)
 	}
 }
+
+func TestDashboardBuilderReturnsToOriginatingChat(t *testing.T) {
+	for _, tc := range []struct{ name, query, referrer, chat string }{
+		{"chat link", "", "http://example.com/chats/agentconv_origin?preview=dashboard", "agentconv_origin"},
+		{"reload or page change", "&returnChat=agentconv_origin", "", "agentconv_origin"},
+		{"external referrer", "", "https://other.example/chats/agentconv_origin", ""},
+		{"invalid return", "&returnChat=..%2F..%2Foutside", "", ""},
+		{"catalog", "", "http://example.com/dashboards", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+			req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/edit?page=details"+tc.query, nil)
+			req.Header.Set("Referer", tc.referrer)
+			rec := httptest.NewRecorder()
+			handler.DashboardBuilder(rec, withBuilderURLParams(req, "sales", "revenue"))
+			want := "/"
+			if tc.chat != "" {
+				want = "/chats/" + tc.chat
+			}
+			if rec.Code != nethttp.StatusOK || !strings.Contains(rec.Body.String(), `back-href="`+want+`"`) {
+				t.Fatalf("builder did not retain return destination %q (status %d)", want, rec.Code)
+			}
+			if tc.chat != "" && !strings.Contains(rec.Body.String(), `page-base-href="/dashboards/revenue/edit?draft=draft-1&amp;returnChat=`+tc.chat+`"`) {
+				t.Fatal("page navigation lost originating chat")
+			}
+		})
+	}
+}

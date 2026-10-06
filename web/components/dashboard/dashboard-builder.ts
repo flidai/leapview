@@ -2724,6 +2724,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   updated(): void {
+    // Persist the server-validated chat origin so reload keeps the same Back target.
+    if (this.backHref.startsWith('/chats/')) {
+      const current = new URL(window.location.href)
+      const conversation = this.backHref.slice('/chats/'.length)
+      if (current.searchParams.get('returnChat') !== conversation) {
+        current.searchParams.set('returnChat', conversation)
+        window.history.replaceState(window.history.state, '', current)
+      }
+    }
     const builder = this.builder
     const agentRunning = Boolean(this.signal<{ status?: { running?: boolean } }>('agent', {}).status?.running)
     if (this.wasAgentRunning && !agentRunning) this.refreshBuilderSignals()
@@ -3320,7 +3329,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
-        ${this.embeddedInChat ? nothing : this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboards">Back</a>` : html`<span class="back" aria-label="Back to dashboards">Back</span>`}
+        ${this.embeddedInChat ? nothing : this.backHref ? html`<a class="back" href=${this.backHref} aria-label=${this.backHref.startsWith('/chats/') ? 'Back to chat' : 'Back to dashboards'}>Back</a>` : html`<span class="back" aria-label="Back to dashboards">Back</span>`}
         <div class="appearance-control">
           <button
             type="button"

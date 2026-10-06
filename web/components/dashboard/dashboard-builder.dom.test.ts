@@ -3936,3 +3936,20 @@ test('Add filter stays inside its pane with light searchable rows and keyboard s
     expect(await page.getByRole('button',{name:'Add filter',exact:true}).getAttribute('aria-expanded')).toBe('false')
   } finally {await page.close()}
 })
+
+test('builder Back retains the originating chat across reload URLs', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      element.backHref = '/chats/agentconv_origin'
+      await element.updateComplete
+    })
+    expect(new URL(page.url()).searchParams.get('returnChat')).toBe('agentconv_origin')
+    const back = page.getByRole('link', { name: 'Back to chat', exact: true })
+    expect(await back.getAttribute('href')).toBe('/chats/agentconv_origin')
+    await back.click()
+    expect(new URL(page.url()).pathname).toBe('/chats/agentconv_origin')
+  } finally { await page.close() }
+})
