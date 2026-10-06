@@ -278,7 +278,7 @@ func TestCoalesceArrowReturnsIndependentLeasesAndReleasesFlightHold(t *testing.T
 	second.lease.Release()
 }
 
-func TestCoalesceArrowCanceledWaiterDoesNotLeakOrCancelLiveWaiter(t *testing.T) {
+func TestCoalesceArrowCanceledOwnerRetriesForLiveWaiterWithoutLeak(t *testing.T) {
 	allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer allocator.AssertSize(t, 0)
 	pool, _ := New(testLimits())
@@ -327,6 +327,71 @@ func TestCoalesceArrowCanceledWaiterDoesNotLeakOrCancelLiveWaiter(t *testing.T) 
 		t.Fatalf("live lease = %#v", lease)
 	}
 	lease.Release()
+}
+
+func TestCoalesceArrowCanceledWaiterPreservesLiveOwnerLease(t *testing.T) {
+	allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer allocator.AssertSize(t, 0)
+	scope := NewExecutionScope()
+	defer scope.Close()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	ownerDone := make(chan *ArrowFlightLease, 1)
+	ownerErr := make(chan error, 1)
+	var executions atomic.Int32
+	go func() {
+		lease, _, err := scope.CoalesceArrow(context.Background(), "key", func(context.Context) (ArrowFlightValue, error) {
+			executions.Add(1)
+			close(started)
+			<-release
+			result := testArrowResult(t, allocator, "owner")
+			base, acquireErr := result.Acquire()
+			result.Release()
+			return ArrowFlightValue{Data: base}, acquireErr
+		})
+		ownerDone <- lease
+		ownerErr <- err
+	}()
+	<-started
+
+	waiterContext, cancelWaiter := context.WithCancel(context.Background())
+	waiterDone := make(chan error, 1)
+	go func() {
+		lease, _, err := scope.CoalesceArrow(waiterContext, "key", func(context.Context) (ArrowFlightValue, error) {
+			executions.Add(1)
+			return ArrowFlightValue{}, errors.New("canceled waiter unexpectedly became an owner")
+		})
+		if lease != nil {
+			lease.Release()
+		}
+		waiterDone <- err
+	}()
+	waitForArrowFlightWaiters(t, scope, "key", 2)
+	cancelWaiter()
+	if err := <-waiterDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiter error = %v, want cancellation", err)
+	}
+
+	close(release)
+	if err := <-ownerErr; err != nil {
+		t.Fatalf("live owner error = %v", err)
+	}
+	lease := <-ownerDone
+	if lease == nil {
+		t.Fatal("live owner did not receive an Arrow lease")
+	}
+	rows, err := arrowdecode.DecodeRows(lease.Data())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["value"]; got != "owner" {
+		t.Fatalf("owner lease value = %#v, want %q", got, "owner")
+	}
+	lease.Release()
+	if got := executions.Load(); got != 1 {
+		t.Fatalf("physical executions = %d, want 1", got)
+	}
 }
 
 func waitForArrowFlightWaiters(t *testing.T, scope *ExecutionScope, key string, want int) {
