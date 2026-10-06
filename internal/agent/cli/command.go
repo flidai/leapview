@@ -38,7 +38,7 @@ func Command(ctx context.Context, dependencies Dependencies) *cobra.Command {
 	values := &options{}
 	parent := &cobra.Command{Use: "agent", Short: "Use the LeapView governed BI agent"}
 	ask := &cobra.Command{
-		Use:   "ask [question]",
+		Use:   "ask <question>",
 		Short: "Ask the LeapView agent a question",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

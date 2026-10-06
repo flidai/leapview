@@ -1024,6 +1024,11 @@ tasks:
       - Taskfile.yml
       - internal/app/cli/**/*.go
       - internal/admin/cli/**/*.go
+      - internal/access/cli/**/*.go
+      - internal/agent/cli/**/*.go
+      - internal/dashboard/cli/**/*.go
+      - internal/manageddata/cli/**/*.go
+      - internal/project/cli/**/*.go
       - internal/app/tools/clidocgen/**/*.go
     generates:
       - docs/reference/cli/catalog.json

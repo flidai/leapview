@@ -44,7 +44,11 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	}
 	targetSelector := strings.TrimSpace(options.Credentials.Target)
 	if targetSelector == "" {
-		targetSelector = strings.TrimSpace(config.MustLoad().Target)
+		cfg, err := config.Load()
+		if err != nil {
+			return projectcli.DeliveryPlanResult{}, err
+		}
+		targetSelector = strings.TrimSpace(cfg.Target)
 	}
 	credentials, err := operations.client.Resolve(ctx, options.Credentials)
 	if err != nil {
