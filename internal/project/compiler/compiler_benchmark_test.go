@@ -201,9 +201,9 @@ func compileSourceRootModelSQL(sources, models []string) string {
 	if len(refs) == 0 {
 		return "SELECT 1 AS id"
 	}
-	query := "SELECT " + refs[0] + ".id FROM " + refs[0]
-	for _, ref := range refs[1:] {
-		query += " JOIN " + ref + " USING (id)"
+	query := "SELECT r0.id FROM " + refs[0] + " AS r0"
+	for index, ref := range refs[1:] {
+		query += fmt.Sprintf(" JOIN %s AS r%d USING (id)", ref, index+1)
 	}
 	return query
 }
