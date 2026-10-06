@@ -16,7 +16,10 @@
       "local-runtime/runtime-package.json",
       "leapview version --format json"
     ],
-    "requiredCommands": ["init", "dev", "plan", "build", "publish", "deploy"]
+    "requiredCommands": ["init", "dev", "plan", "build", "publish", "deploy", "doctor", "completion"],
+    "offlineDiscovery": ["leapview", "leapview --llms"],
+    "rootHelp": "public workflow groups and authoring examples",
+    "diagnosticSmoke": "leapview doctor --format json --timeout 10s; a consistent failed-prerequisite report may exit 1; no created CLI state"
   },
   "lifecycle": {
     "optIn": true,

@@ -28,8 +28,12 @@ outer archive checksum, safe archive members, the
 inner `SHA256SUMS` manifest, `authoring-package.json`,
 `release-identity.json`, `image-reference.txt`, `runtime-package.json`, and
 the executable's `leapview version --format json` identity. It also checks the
-read-only command surfaces (`init`, `dev`, `plan`, `build`, `publish`, and
-`deploy`) through their help output. The existing release `authoring-cli` job
+help surfaces (`init`, `dev`, `plan`, `build`, `publish`, `deploy`, `doctor`, and
+`completion`) through their help output. Bare root help must include workflow
+groups and authoring examples; `--llms` must return offline guidance. Local
+`doctor --format json` must return a complete report with consistent checks and
+exit status (0 for pass/warn, 1 for failed prerequisites). These checks run in
+the isolated command home without creating CLI state. The existing release `authoring-cli` job
 remains a separate build/provenance gate and is not replaced by this lane.
 
 ## Optional local lifecycle

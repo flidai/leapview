@@ -6,7 +6,7 @@ Project: [LeapView CLI Usability, Diagnostics &amp; Agent Guidance](https://line
 Lead: Ganesh Kambli
 Target: 13 October 2026
 
-This document preserves the reviewed plan from the planning discussion. Creating the project does not imply code implementation, release qualification, or usability acceptance has completed.
+Implementation was approved on 6 October 2026. The project is In Progress, led by Ganesh Kambli, and all five implementation issues are assigned to him. The linked issues carry their current delivery status. The acceptance gates below remain separate from code implementation and PR review.
 
 ## 1. Objective and decisions
 
@@ -179,7 +179,7 @@ Use red-green-refactor for features and fixes.
 
 Prepare generated dependencies, run focused CLI/domain tests, documentation checks, task generated:check, and task ci. Run existing Docker/authoring qualification for lifecycle changes.
 
-Run two observed usability sessions: a new author and a teammate using a fresh checkout. Both must discover help, diagnose a seeded prerequisite issue, run the sample, repair an invalid edit, and distinguish pending approval from active deployment without maintainer intervention.
+Run two independent agent usability trials, as requested by Ganesh during implementation: one approaches the CLI as a new author and one uses a fresh checkout. Both must discover help, diagnose a seeded prerequisite issue, attempt the sample, repair an invalid edit, and distinguish pending approval from active deployment using the CLI’s own guidance. Record observed outcomes, friction, and any unavailable release/runtime prerequisites. These are agent trials, not human sessions; human sessions are no longer a completion requirement for this project.
 
 Planning-time verification:
 
@@ -202,7 +202,7 @@ Planning-time verification:
 | False missing-timeout claim | Preserve existing timeout while removing global mutation. |
 | Code mistaken for release proof | Require exact artifact/platform evidence and retain unresolved gates. |
 
-Completion requires passing tests/CI, accurate generated docs, migrated callers, two successful usability sessions, and recorded qualification results. Unavailable release prerequisites stay explicitly unresolved in existing conformance evidence; source-level tests cannot close those gates.
+Completion requires passing tests/CI, accurate generated docs, migrated callers, two recorded independent agent usability trials, and recorded qualification results. Unavailable release prerequisites stay explicitly unresolved in existing conformance evidence; source-level tests cannot close those gates.
 
 ## Implementation issues
 
@@ -212,4 +212,44 @@ Completion requires passing tests/CI, accurate generated docs, migrated callers,
 4. [FAI-1132: Generate offline --llms guidance from the shared CLI catalog](https://linear.app/flid/issue/FAI-1132/generate-offline-llms-guidance-from-the-shared-cli-catalog)
 5. [FAI-1133: Qualify the CLI workflow and finish documentation and caller migration](https://linear.app/flid/issue/FAI-1133/qualify-the-cli-workflow-and-finish-documentation-and-caller-migration)
 
-Issues begin in Todo and are linked in delivery order. Project lead ownership does not automatically assign every implementation issue.
+Issues are assigned to Ganesh Kambli and linked in delivery order. Code is delivered as five dependent PRs, with independent automated review and the repository’s required CI, security, and merge-queue checks.
+
+
+## 6. Implementation review and evidence
+
+The approved implementation uses existing Cobra commands, domain error/result types, local-runtime parsing, and release qualification. It adds no dependencies or legacy aliases. The website manifest and offline guidance share one pure command catalog; schema 2 replaces the previous manifest contract in all consumers.
+
+Independent review found and corrected these problems:
+
+* Contributor launchers still started the server through bare `leapview`; initial launch, restart, and Air now invoke `serve`, with maintained launcher tests updated.
+* Interactive deployment could wait indefinitely after cancellation. Prompt reads now stop waiting on context cancellation, and missing headless intent is rejected before credential resolution.
+* Hosted historical-transition qualification found that the client interruption boundary changed graceful server shutdown to exit 143. The boundary now preserves `serve`'s actual outcome: successful shutdown exits 0 and shutdown errors remain failures; interrupted client commands retain 130/143. The regression reproduced the old failure before passing, and existing real signal subprocess tests also passed. The flag-migration contract assertion is included in the same PR as the new flag.
+* Progress and result writers ignored failures. A failed write now returns an error; a successfully persisted local runtime remains applied even if its readiness message cannot be written.
+* Validation and agent failures could emit a second diagnostic or return success. Reported domain results now preserve failure status without duplicate output.
+* Runtime-package identity checks did not verify asset contents. Doctor now checks the four runtime assets against the installed package’s adjacent `SHA256SUMS`, rejecting missing, duplicate, malformed, unsafe, or mismatched entries.
+* Compilation does not accept a context. Doctor stops waiting at its deadline using a bounded worker; the read-only compiler can finish after that deadline. Making compilation itself cancellable remains the documented improvement if this ceiling matters.
+* Archive qualification originally checked too little discovery content. It now requires grouped help, authoring examples, offline guidance, a complete doctor JSON report, consistent failure status, and no created CLI state.
+* A migrated Python caller lost indentation; parsing and the affected qualification tests caught it and the indentation was restored.
+
+Observed checks are recorded below and in the final PRs. A successful source test or local candidate archive smoke is not public release evidence. Local `task ci` encountered an unavailable shared Docker bridge while provisioning its disposable PostgreSQL topology; required hosted checks must pass before merging.
+
+The requested independent agent usability trials are complete and recorded below. Remaining acceptance work requires exact public archive/platform qualification and the existing lifecycle/preview/measurement evidence. Do not mark the project or FAI-1133 complete until those required observations are recorded. Agent trial results must be identified as agent observations, with environment blockers stated rather than treated as successful journeys.
+
+
+### Delivery and verification
+
+| Slice | Pull request |
+| --- | --- |
+| A: discovery | [#875](https://github.com/flidai/leapview/pull/875) |
+| B: output/errors/interaction | [#878](https://github.com/flidai/leapview/pull/878) |
+| C: read-only doctor | [#879](https://github.com/flidai/leapview/pull/879) |
+| D: shared catalog and offline guidance | [#880](https://github.com/flidai/leapview/pull/880) |
+| E: qualification and trial corrections | [#881](https://github.com/flidai/leapview/pull/881) |
+
+Native GitHub stack 882 preserves this order and targets main. Each PR has its own review; required CI/security checks and the normal merge queue govern delivery.
+
+Passed locally after rebasing onto main: the full app CLI, local runtime, project initialization, project/access/agent/managed-data CLI, CLI API, shared catalog, generator, website HTTP, and archive-harness suites (12 packages). Generated snapshots, documentation checks, and quality-budget checks passed. Current caller tests passed: 20 Python publication tests (one skip), 17 Python qualification tests, and 35 Bun caller/launcher contracts. Focused checks passed again after the trial corrections. `task ci` reached its required PostgreSQL baseline test and failed because the shared Docker bridge is missing; this infrastructure failure is not waived.
+
+Both requested independent agent trials are recorded in [the usability evidence](reviews/cli-agent-usability.md). They discovered the workflow, initialized and validated the sample, repaired invalid authored YAML, and interpreted pending versus active delivery from guidance. Actual preview and target delivery were unavailable. Review corrected the init directory precondition, explained JSON diagnostic streams explicitly, pointed doctor failures to validation, and moved archive state snapshots before every executable probe, including version/help.
+
+Keep FAI-1133 and the project In Progress while exact public archive/platform and existing lifecycle/preview/measurement qualification remain outstanding. Do not replace those observations with source tests or agent interpretations of deployment guidance.

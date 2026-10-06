@@ -23,7 +23,31 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 	root := repositoryRoot(t)
 	binary := filepath.Join(t.TempDir(), "leapview")
 	version := `{"version":"1.2.3","revision":"` + strings.Repeat("a", 40) + `","buildTime":"2026-09-15T12:00:00Z","dirty":false,"development":false}`
-	requireWriteFile(t, binary, "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' '"+version+"'; elif [ \"$2\" = --help ]; then case \"$1\" in init) printf '%s\\n' 'Usage:' '  leapview init [flags]' 'credentials: {\"username\":\"demo\",\"password\":\"qualification-secret\"} https://user:url-secret@example.test/?token=query-secret' \"env-probe=${QUALIFICATION_UNSAFE:-unset}\";; dev) printf '%s\\n' 'Usage: leapview dev [flags]';; plan) printf '%s\\n' 'Usage: leapview plan [flags]';; build) printf '%s\\n' 'Usage: leapview build [flags]';; publish) printf '%s\\n' 'Usage: leapview publish [flags]';; deploy) printf '%s\\n' 'Usage: leapview deploy [flags]';; esac; fi\nexit 0\n", 0o755)
+	doctorReport := `{"schemaVersion":1,"status":"fail","checks":[{"id":"local.identity","status":"pass","summary":"Identity verified."},{"id":"local.platform","status":"pass","summary":"Platform supported."},{"id":"local.runtime_package","status":"pass","summary":"Runtime package verified."},{"id":"local.docker_endpoint","status":"fail","summary":"Docker unavailable."},{"id":"local.docker_compose","status":"skip","summary":"Endpoint unavailable."},{"id":"local.runtime_state","status":"skip","summary":"Prerequisites unavailable."},{"id":"project.compiler","status":"skip","summary":"No project."},{"id":"project.profile","status":"skip","summary":"No project."},{"id":"project.credentials","status":"skip","summary":"No project."}],"summary":"1 required check(s) failed."}`
+	rootHelp := `printf '%s\n' 'Usage: leapview [command]' 'Examples:' 'leapview init ./analytics' 'cd ./analytics && leapview dev' 'leapview validate' 'leapview help deploy' 'Authoring:' 'Delivery:' 'Data and Query:' 'Access:' 'Operations:' 'Reference:'`
+	script := `#!/bin/sh
+if [ "$1" = version ]; then
+  if [ "$2" = --format ] && [ "$3" = json ]; then
+    printf '%s\n' '` + version + `'
+  else
+    exit 42
+  fi
+elif [ "$1" = --llms ]; then
+  printf '%s\n' '# LeapView CLI agent guide' 'Binary version: 1.2.3'
+elif [ "$2" = --help ]; then
+  printf '%s\n' "Usage: leapview $1 [flags]"
+  if [ "$1" = init ]; then
+    printf '%s\n' 'credentials: {"username":"demo","password":"qualification-secret"} https://user:url-secret@example.test/?token=query-secret' "env-probe=${QUALIFICATION_UNSAFE:-unset}"
+  fi
+elif [ "$1" = doctor ]; then
+  printf '%s\n' '` + doctorReport + `'
+  exit 1
+elif [ "$#" = 0 ]; then
+  ` + rootHelp + `
+fi
+exit 0
+`
+	requireWriteFile(t, binary, script, 0o755)
 	output := t.TempDir()
 	packageCommand := exec.Command(filepath.Join(root, "scripts", "package-authoring-cli.sh"), binary, output, runtime.GOOS, runtime.GOARCH)
 	packageCommand.Dir = root
@@ -71,6 +95,21 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "password=") || strings.Contains(string(encoded), "Authorization: Bearer") {
 		t.Fatal("qualification evidence contains an unredacted credential-shaped value")
+	}
+	rawResults, ok := evidence["rawResults"].([]any)
+	if !ok {
+		t.Fatalf("qualification rawResults = %#v, want command records", evidence["rawResults"])
+	}
+	var doctorRecord map[string]any
+	for _, item := range rawResults {
+		record, ok := item.(map[string]any)
+		if ok && record["name"] == "cli-doctor" {
+			doctorRecord = record
+			break
+		}
+	}
+	if doctorRecord == nil || doctorRecord["exitCode"] != float64(1) || doctorRecord["status"] != "failed" {
+		t.Fatalf("qualification doctor result = %#v, want retained exit-1 failure", doctorRecord)
 	}
 	validateQualificationEvidenceSchema(t, root, evidence)
 
@@ -250,7 +289,7 @@ if "QUALIFICATION_UNSAFE" in environment:
 	}
 }
 
-func TestReleasedAuthoringQualificationRejectsMissingOrWrongCommandHelp(t *testing.T) {
+func TestReleasedAuthoringQualificationRejectsInvalidOfflineSurfaces(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("authoring archives support Linux and macOS")
 	}
@@ -259,16 +298,48 @@ func TestReleasedAuthoringQualificationRejectsMissingOrWrongCommandHelp(t *testi
 	}
 	root := repositoryRoot(t)
 	version := `{"version":"1.2.3","revision":"` + strings.Repeat("a", 40) + `","buildTime":"2026-09-15T12:00:00Z","dirty":false,"development":false}`
+	doctorReport := `{"schemaVersion":1,"status":"fail","checks":[{"id":"local.identity","status":"pass","summary":"Identity verified."},{"id":"local.platform","status":"pass","summary":"Platform supported."},{"id":"local.runtime_package","status":"pass","summary":"Runtime package verified."},{"id":"local.docker_endpoint","status":"fail","summary":"Docker unavailable."},{"id":"local.docker_compose","status":"skip","summary":"Endpoint unavailable."},{"id":"local.runtime_state","status":"skip","summary":"Prerequisites unavailable."},{"id":"project.compiler","status":"skip","summary":"No project."},{"id":"project.profile","status":"skip","summary":"No project."},{"id":"project.credentials","status":"skip","summary":"No project."}],"summary":"1 required check(s) failed."}`
+	rootHelp := `printf '%s\n' 'Usage: leapview [command]' 'Examples:' 'leapview init ./analytics' 'cd ./analytics && leapview dev' 'leapview validate' 'leapview help deploy' 'Authoring:' 'Delivery:' 'Data and Query:' 'Access:' 'Operations:' 'Reference:'`
 	for _, test := range []struct {
-		name string
-		help string
+		name         string
+		help         string
+		rootHelp     string
+		guidance     string
+		doctorOutput string
+		doctorExit   string
+		failure      string
 	}{
-		{name: "missing help", help: ":"},
-		{name: "root help instead of command help", help: "printf '%s\\n' 'Usage: leapview [command]'"},
+		{name: "missing help", help: ":", failure: "cli-help-init"},
+		{name: "root help instead of command help", help: `printf '%s\n' 'Usage: leapview [command]'`, failure: "cli-help-init"},
+		{name: "command help creates local state", help: `printf '%s\n' "Usage: leapview $1 [flags]"; touch "$HOME/.config/unexpected-state"`, failure: "created local CLI state"},
+		{name: "root help missing a public group", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, rootHelp: strings.Replace(rootHelp, "'Authoring:' ", "", 1), failure: "grouped discovery content"},
+		{name: "root help missing authoring example", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, rootHelp: strings.Replace(rootHelp, "'leapview validate' ", "", 1), failure: "grouped discovery content"},
+		{name: "missing agent guidance", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, guidance: ":", failure: "cli-agent-guidance"},
+		{name: "discovery creates local state", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, guidance: `printf '%s\n' '# LeapView CLI agent guide'; touch "$HOME/.config/unexpected-state"`, failure: "created local CLI state"},
+		{name: "doctor malformed JSON", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, doctorOutput: "not-json", failure: "complete JSON report"},
+		{name: "doctor false success", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, doctorOutput: doctorReport, doctorExit: "0", failure: "exit status disagrees"},
+		{name: "doctor invalid exit code", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, doctorOutput: doctorReport, doctorExit: "2", failure: "outside the documented 0/1"},
+		{name: "doctor missing a required local check", help: `printf '%s\n' "Usage: leapview $1 [flags]"`, doctorOutput: strings.Replace(doctorReport, `,{"id":"project.credentials","status":"skip","summary":"No project."}`, "", 1), failure: "omitted required local check IDs"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			binary := filepath.Join(t.TempDir(), "leapview")
-			script := "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' '" + version + "'; elif [ \"$2\" = --help ]; then " + test.help + "; fi\nexit 0\n"
+			rootOutput := test.rootHelp
+			if rootOutput == "" {
+				rootOutput = rootHelp
+			}
+			doctorOutput := test.doctorOutput
+			if doctorOutput == "" {
+				doctorOutput = doctorReport
+			}
+			doctorExit := test.doctorExit
+			if doctorExit == "" {
+				doctorExit = "1"
+			}
+			guidance := test.guidance
+			if guidance == "" {
+				guidance = "printf '%s\\n' '# LeapView CLI agent guide'"
+			}
+			script := "#!/bin/sh\nif [ \"$1\" = version ]; then if [ \"$2\" = --format ] && [ \"$3\" = json ]; then printf '%s\\n' '" + version + "'; else exit 42; fi; elif [ \"$2\" = --help ]; then " + test.help + "; elif [ \"$1\" = --llms ]; then " + guidance + "; elif [ \"$1\" = doctor ]; then printf '%s\\n' '" + doctorOutput + "'; exit " + doctorExit + "; elif [ \"$#\" = 0 ]; then " + rootOutput + "; fi\nexit 0\n"
 			requireWriteFile(t, binary, script, 0o755)
 			output := t.TempDir()
 			packageCommand := exec.Command(filepath.Join(root, "scripts", "package-authoring-cli.sh"), binary, output, runtime.GOOS, runtime.GOARCH)
@@ -290,7 +361,7 @@ func TestReleasedAuthoringQualificationRejectsMissingOrWrongCommandHelp(t *testi
 			qualify := exec.Command(filepath.Join(root, "deploy", "local", "qualification", "qualify.sh"), "--archive", archive, "--required", "--evidence-dir", evidenceDir)
 			qualify.Dir = root
 			combined, err = qualify.CombinedOutput()
-			if err == nil || !strings.Contains(string(combined), "cli-help-init") {
+			if err == nil || !strings.Contains(string(combined), test.failure) {
 				t.Fatalf("unrecognized command help unexpectedly passed: %v\n%s", err, combined)
 			}
 		})
