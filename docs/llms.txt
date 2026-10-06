@@ -168,12 +168,14 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation
 - [leapview bootstrap-project](/docs/cli/bootstrap-project): Bootstrap a target with this deployment authority's ProjectUID
 - [leapview build](/docs/cli/build): Build and seal a target-owned delivery plan
+- [leapview completion](/docs/cli/completion): Generate the autocompletion script for the specified shell
 - [leapview config](/docs/cli/config): Inspect and validate process-global configuration
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards
 - [leapview data](/docs/cli/data): Manage project-global data revisions
 - [leapview deploy](/docs/cli/deploy): Review and deliver an exact target-owned deployment operation
 - [leapview dev](/docs/cli/dev): Watch analytics sources and update the local app or a private target candidate
 - [leapview healthcheck](/docs/cli/healthcheck): Check the local LeapView readiness endpoint
+- [leapview help](/docs/cli/help): Help about any command
 - [leapview init](/docs/cli/init): Create a portable analytics project with reproducible sample data
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials

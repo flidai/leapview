@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -28,7 +29,10 @@ type capabilityAPIClient struct {
 }
 
 func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliapi.Credentials) (cliapi.Credentials, error) {
-	cfg := config.MustLoad()
+	cfg, err := config.Load()
+	if err != nil {
+		return cliapi.Credentials{}, err
+	}
 	target := strings.TrimRight(strings.TrimSpace(credentials.Target), "/")
 	if target == "" {
 		target = strings.TrimRight(strings.TrimSpace(cfg.Target), "/")
@@ -341,7 +345,11 @@ func targetEnvironment(ctx context.Context, client *http.Client, target, token, 
 }
 
 func clientConfigPath() string {
-	return config.MustLoad().ClientConfigPath()
+	home := os.Getenv("LEAPVIEW_HOME")
+	if home == "" {
+		home = ".leapview"
+	}
+	return (config.Config{CLIConfig: os.Getenv("LEAPVIEW_CLI_CONFIG"), HomeDir: home}).ClientConfigPath()
 }
 
 func shortDigest(value string) string {

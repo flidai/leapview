@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	accesscli "github.com/flidai/leapview/internal/access/cli"
@@ -39,58 +41,94 @@ func NewCommand(ctx context.Context) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "leapview",
 		Short:         "LeapView BI-as-code server and deployment CLI",
+		Long:          "LeapView compiles governed dashboards from source and serves them through a BI platform. Use the CLI to author projects, plan and deliver changes, explore data, manage access, and operate the server. Running leapview without a subcommand prints grouped help.",
+		Example:       "  leapview init ./analytics\n  cd ./analytics && leapview dev\n  leapview validate\n  leapview help deploy",
+		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       buildinfo.Current().Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.environment = ""
-			return runServe(ctx, opts)
+			return cmd.Help()
 		},
 	}
-	root.AddCommand(serveCommand(ctx, opts))
-	root.AddCommand(versionCommand())
-	root.AddCommand(initCommand())
-	root.AddCommand(devCommand(ctx))
-	root.AddCommand(publishCommand(ctx))
-	root.AddCommand(buildCommand(ctx))
-	root.AddCommand(rollbackCommand(ctx))
-	root.AddCommand(deployCommand(ctx, opts))
-	root.AddCommand(validateCommand(ctx, opts))
-	root.AddCommand(planCommand(ctx, opts))
-	root.AddCommand(schemaCommand(opts))
-	root.AddCommand(configCommand())
-	root.AddCommand(dataCommand(ctx, opts))
-	root.AddCommand(apiCommand(ctx, opts))
-	root.AddCommand(agentCommand(ctx, opts))
-	root.AddCommand(searchCommand(ctx, opts))
-	root.AddCommand(dashboardsCommand(ctx, opts))
-	root.AddCommand(semanticModelsCommand(ctx, opts))
-	root.AddCommand(semanticModelOssieCommand(ctx))
+	root.InitDefaultVersionFlag()
 	authentication := applicationAuthoringAuthentication{}
-	root.AddCommand(accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}, applicationProjectIdentity{profiles: cliapi.NewProfileStore(clientConfigPath())}))
-	root.AddCommand(accesscli.LogoutCommand(ctx, authentication))
-	root.AddCommand(bootstrapProjectCommand(ctx, opts))
-	root.AddCommand(acknowledgeProjectClaimPublisherCommand(ctx, opts))
-	root.AddCommand(adminCommand(ctx, opts))
-	root.AddCommand(healthcheckCommand(ctx, opts))
+	root.AddGroup(
+		&cobra.Group{ID: "authoring", Title: "Authoring:"},
+		&cobra.Group{ID: "delivery", Title: "Delivery:"},
+		&cobra.Group{ID: "dataquery", Title: "Data and Query:"},
+		&cobra.Group{ID: "access", Title: "Access:"},
+		&cobra.Group{ID: "operations", Title: "Operations:"},
+		&cobra.Group{ID: "reference", Title: "Reference:"},
+	)
+	root.SetHelpCommandGroupID("reference")
+	root.SetCompletionCommandGroupID("reference")
+	addGroup := func(id string, commands ...*cobra.Command) {
+		for _, command := range commands {
+			command.GroupID = id
+			root.AddCommand(command)
+		}
+	}
+	addGroup("operations", serveCommand(ctx, opts), configCommand(), healthcheckCommand(ctx, opts), adminCommand(ctx, opts))
+	addGroup("authoring", initCommand(), devCommand(ctx), validateCommand(ctx, opts), semanticModelOssieCommand(ctx))
+	addGroup("delivery", publishCommand(ctx), buildCommand(ctx), rollbackCommand(ctx), deployCommand(ctx, opts), planCommand(ctx, opts))
+	addGroup("dataquery", dataCommand(ctx, opts), apiCommand(ctx, opts), agentCommand(ctx, opts), searchCommand(ctx, opts), dashboardsCommand(ctx, opts), semanticModelsCommand(ctx, opts))
+	addGroup("access", accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}, applicationProjectIdentity{profiles: cliapi.NewProfileStore(clientConfigPath())}), accesscli.LogoutCommand(ctx, authentication), bootstrapProjectCommand(ctx, opts), acknowledgeProjectClaimPublisherCommand(ctx, opts))
+	addGroup("reference", versionCommand(), schemaCommand(opts))
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	var initializeHelpFlags func(*cobra.Command)
+	initializeHelpFlags = func(command *cobra.Command) {
+		if command.Hidden {
+			return
+		}
+		command.InitDefaultHelpFlag()
+		for _, child := range command.Commands() {
+			initializeHelpFlags(child)
+		}
+	}
+	initializeHelpFlags(root)
+	if help, _, err := root.Find([]string{"help"}); err == nil {
+		help.Args = func(_ *cobra.Command, args []string) error {
+			_, remaining, err := root.Find(args)
+			if err != nil {
+				return err
+			}
+			if len(remaining) > 0 {
+				return fmt.Errorf("unknown help topic %q; run leapview help for available commands", strings.Join(args, " "))
+			}
+			return nil
+		}
+	}
 	normalizeCommandGroups(root)
+	registerCLICompletions(root)
 	annotateCommandDocumentation(root)
 	return root
 }
 
-// normalizeCommandGroups gives every help-only command group the same
-// execution contract: no arguments are accepted, and invoking the group with
-// no subcommand prints its help. Without a RunE Cobra treats an unknown
-// nested argument as a help request and exits successfully, which makes
-// `leapview admin nope` disagree with the root command's invalid-subcommand
-// behavior.
+// normalizeCommandGroups gives runnable commands explicit positional
+// validators and makes help-only groups print their help when invoked alone.
+// Without a RunE Cobra treats an unknown nested argument as a help request
+// and exits successfully, which makes `leapview admin nope` disagree with the
+// root command's invalid-subcommand behavior.
 func normalizeCommandGroups(root *cobra.Command) {
 	var visit func(*cobra.Command)
 	visit = func(command *cobra.Command) {
 		for _, child := range command.Commands() {
 			visit(child)
 		}
-		if command == root || len(command.Commands()) == 0 || command.Runnable() {
+		if command == root || command.Name() == "help" {
+			return
+		}
+		if command.Runnable() && command.Args == nil {
+			switch command.CommandPath() {
+			case "leapview validate", "leapview semantic-model ossie import", "leapview semantic-model ossie export":
+				command.Args = cobra.MaximumNArgs(1)
+			default:
+				command.Args = cobra.NoArgs
+			}
+		}
+		if len(command.Commands()) == 0 || command.Runnable() {
 			return
 		}
 		command.Args = cobra.NoArgs

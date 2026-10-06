@@ -1,6 +1,11 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"strings"
+
+	"github.com/flidai/leapview/internal/platform/cliapi"
+	"github.com/spf13/cobra"
+)
 
 const (
 	documentationEffectAnnotation       = "leapview.dev/effect"
@@ -30,8 +35,82 @@ func annotateCommandDocumentation(root *cobra.Command) {
 	visit(root)
 }
 
+func registerCLICompletions(root *cobra.Command) {
+	var visit func(*cobra.Command)
+	visit = func(command *cobra.Command) {
+		if command.Flags().Lookup("target") != nil {
+			_ = command.RegisterFlagCompletionFunc("target", completeLocalTargets)
+		}
+		if command.Flags().Lookup("format") != nil {
+			_ = command.RegisterFlagCompletionFunc("format", completeFormats(command.CommandPath()))
+		}
+		switch command.CommandPath() {
+		case "leapview api call", "leapview api describe":
+			command.ValidArgsFunction = completeAPIOperations
+		case "leapview logout":
+			command.ValidArgsFunction = completeLocalTargets
+		}
+		for _, child := range command.Commands() {
+			visit(child)
+		}
+	}
+	visit(root)
+}
+
+func completeLocalTargets(_ *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
+	names, err := cliapi.NewProfileStore(clientConfigPath()).ProfileNames()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	matches := make([]string, 0, len(names))
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			matches = append(matches, name)
+		}
+	}
+	return matches, cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeAPIOperations(_ *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
+	contracts := sortedAPIOperationContracts()
+	operations := make([]string, 0, len(contracts))
+	for _, contract := range contracts {
+		if strings.HasPrefix(contract.OperationID, prefix) {
+			operations = append(operations, contract.OperationID)
+		}
+	}
+	return operations, cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeFormats(commandPath string) cobra.CompletionFunc {
+	formats := []string{"text", "json"}
+	switch commandPath {
+	case "leapview admin initialize":
+		formats = []string{"json"}
+	case "leapview semantic-model ossie export":
+		formats = []string{"json", "yaml"}
+	case "leapview schema export":
+		formats = []string{"json-schema"}
+	}
+	return func(_ *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
+		matches := make([]string, 0, len(formats))
+		for _, format := range formats {
+			if strings.HasPrefix(format, prefix) {
+				matches = append(matches, format)
+			}
+		}
+		return matches, cobra.ShellCompDirectiveNoFileComp
+	}
+}
+
 var documentedCommandSafety = map[string]commandSafety{
-	"leapview":                                     {effect: "local-write", confirmation: "never"},
+	"leapview":                                     {effect: "read", confirmation: "never"},
+	"leapview completion":                          {effect: "read", confirmation: "never"},
+	"leapview completion bash":                     {effect: "read", confirmation: "never"},
+	"leapview completion fish":                     {effect: "read", confirmation: "never"},
+	"leapview completion powershell":               {effect: "read", confirmation: "never"},
+	"leapview completion zsh":                      {effect: "read", confirmation: "never"},
+	"leapview help":                                {effect: "read", confirmation: "never"},
 	"leapview admin initialize":                    {effect: "write", confirmation: "never"},
 	"leapview admin maintenance":                   {effect: "destructive", confirmation: "conditional"},
 	"leapview admin delivery pool bootstrap":       {effect: "write", confirmation: "required"},

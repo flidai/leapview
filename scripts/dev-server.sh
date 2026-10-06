@@ -713,7 +713,7 @@ start() {
     air -c .air.toml >> "$LOG_FILE" 2>&1 &
   else
     go build -tags=duckdb_arrow -o "$TMP_DIR/leapview-dev" ./cmd/leapview
-    "$TMP_DIR/leapview-dev" >> "$LOG_FILE" 2>&1 &
+    "$TMP_DIR/leapview-dev" serve >> "$LOG_FILE" 2>&1 &
   fi
   local pid="$!"
 
@@ -738,7 +738,7 @@ start() {
     if [[ "$runner" == "air" ]]; then
       air -c .air.toml >> "$LOG_FILE" 2>&1 &
     else
-      "$TMP_DIR/leapview-dev" >> "$LOG_FILE" 2>&1 &
+      "$TMP_DIR/leapview-dev" serve >> "$LOG_FILE" 2>&1 &
     fi
     pid="$!"
     if ! wait_ready "$port" "$pid"; then

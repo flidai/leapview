@@ -147,14 +147,17 @@ test('development publication can seed a healthy server before a project is acti
 })
 
 test('managed development waits for the published Project before handing over the UI', async () => {
-  const [server, taskfile] = await Promise.all([
+  const [server, taskfile, air] = await Promise.all([
     readFile('scripts/dev-server.sh', 'utf8'),
     readFile('Taskfile.yml', 'utf8'),
+    readFile('.air.toml', 'utf8'),
   ])
 
   expect(server).toContain('.checks.runtime == "ok"')
   expect(server).toContain('wait_active_project "$port" || return 1')
   expect(taskfile).toContain('      - ./scripts/dev-server.sh start')
+  expect(server.match(/"\$TMP_DIR\/leapview-dev" serve >> "\$LOG_FILE"/g)).toHaveLength(2)
+  expect(air).toContain('entrypoint = ["./.tmp/air/leapview", "serve"]')
 })
 
 test('maintained headless workflows use the managed PostgreSQL dev lifecycle', async () => {

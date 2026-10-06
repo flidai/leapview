@@ -2,6 +2,14 @@
 
 The `leapview` CLI runs local services, validates and deploys projects, synchronizes managed data, performs administration, and exposes generated API operations. Choose a task-oriented guide for workflow and the generated command pages for exact syntax.
 
+Run `leapview` to see workflow groups and examples. Use `leapview <command> --help` for a command's arguments and flags. Help, version information, and shell completion work before Docker, a server, or credentials are configured.
+
+`leapview init my-analytics` creates a project. Change into that directory, then run `leapview dev`.
+
+`leapview dev` manages the analytics author's local preview. Contributors changing LeapView itself use `task dev`. To run an already-configured server, explicitly use `leapview serve`; bare `leapview` displays help.
+
+Generate shell completion with `leapview completion bash`, `zsh`, `fish`, or `powershell`, then install the script using your shell's completion instructions. Completing saved target names and API operation names requires no target connection.
+
 ## Set up access
 
 - [Install and authenticate the CLI](/docs/cli/authentication).
