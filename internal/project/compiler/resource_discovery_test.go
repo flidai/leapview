@@ -105,6 +105,19 @@ func TestDiscoverAuthoredResourcesRejectsWrongAPIVersionButAllowsFragments(t *te
 	}
 }
 
+func TestLoadSourceRootRejectsUnenvelopedYAMLOutsideDashboardDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeDiscoveryFiles(t, root, map[string]string{
+		"models/orders.yaml":                "name: orders\nspec: {}\n",
+		"dashboards/fragments/visuals.yaml": "visuals: []\n",
+	})
+
+	_, err := LoadSourceRoot(root)
+	if err == nil || !strings.Contains(err.Error(), "models/orders.yaml") || !strings.Contains(err.Error(), "Model resource envelope") {
+		t.Fatalf("LoadSourceRoot() error = %v, want unenveloped Model YAML rejected with an envelope diagnostic", err)
+	}
+}
+
 func TestDiscoverAuthoredResourcesRejectsEscapingSymlink(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "connections"), 0o755); err != nil {
