@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
@@ -15,8 +16,36 @@ import (
 
 type failingAPIGenTransport struct{ err error }
 
+type responseReadFailure struct{ err error }
+
+func (reader responseReadFailure) Read([]byte) (int, error) { return 0, reader.err }
+func (responseReadFailure) Close() error                    { return nil }
+
 func (transport failingAPIGenTransport) DoAPIGen(context.Context, apigenclient.Request, any) (apigenclient.Response, error) {
 	return apigenclient.Response{}, transport.err
+}
+
+func TestDoJSONPropagatesResponseBodyReadFailure(t *testing.T) {
+	wantErr := errors.New("response stream failed")
+	if defaultCLIHTTPClient.Timeout != 5*time.Minute {
+		t.Fatalf("owned CLI HTTP timeout = %s, want 5m", defaultCLIHTTPClient.Timeout)
+	}
+	previousGlobalTimeout := http.DefaultClient.Timeout
+	http.DefaultClient.Timeout = 17 * time.Second
+	defer func() { http.DefaultClient.Timeout = previousGlobalTimeout }()
+	previousClient := defaultCLIHTTPClient
+	defaultCLIHTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: make(http.Header), Body: responseReadFailure{err: wantErr}, Request: request,
+		}, nil
+	})}
+	defer func() { defaultCLIHTTPClient = previousClient }()
+	if err := doJSON(context.Background(), http.MethodGet, "https://example.test/api", "", nil, nil); !errors.Is(err, wantErr) {
+		t.Fatalf("doJSON error = %v, want response body read error", err)
+	}
+	if http.DefaultClient.Timeout != 17*time.Second {
+		t.Fatalf("global HTTP client timeout was changed to %s", http.DefaultClient.Timeout)
+	}
 }
 
 func TestFinalizeReleaseGeneratedClientReturnsDeclaredFailure(t *testing.T) {

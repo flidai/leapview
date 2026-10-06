@@ -218,7 +218,7 @@ jobs:
           immutable_image="${IMAGE_REFERENCE}"
           [[ "${immutable_image}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
           task image:qualify:production IMAGE="${immutable_image}"
-          identity="$(docker run --rm "${immutable_image}" version --json)"
+          identity="$(docker run --rm "${immutable_image}" version --format json)"
           jq -e \
             --arg version "${IMAGE_VERSION}" \
             --arg revision "${IMAGE_REVISION}" \

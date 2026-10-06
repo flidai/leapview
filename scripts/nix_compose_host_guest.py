@@ -1539,7 +1539,7 @@ def _install_and_collect(args) -> dict:
             raise HostGuestError("transferred Nix controller differs from the verified Compose archive")
         _record(evidence, "nix-controller-sha256.txt", (nix_controller_sha + "\n").encode())
         nix_runtime_data = _record(evidence, "nix-controller-runtime.json", guest.run(
-            shlex.quote(paths["controller"]) + " version --json",
+            shlex.quote(paths["controller"]) + " version --format json",
         ))
         nix_runtime = _runtime_identity(nix_runtime_data, release_identity, "leapviewctl", "Nix controller runtime identity")
         _record(evidence, "nix-controller-help.txt", guest.run(shlex.quote(paths["controller"]) + " host --help"))
@@ -1811,7 +1811,7 @@ def _install_and_collect(args) -> dict:
         if installed_sha != payload_sha:
             raise HostGuestError("installed controller bytes differ from the OCI deployment payload")
         app_runtime_data = _record(evidence, "installed-controller-runtime.json", guest.run(
-            "LEAPVIEWCTL_ROOT=/opt/leapview /opt/leapview/current/leapviewctl version --json",
+            "LEAPVIEWCTL_ROOT=/opt/leapview /opt/leapview/current/leapviewctl version --format json",
         ))
         app_runtime = _runtime_identity(app_runtime_data, release_identity, "leapviewctl", "installed OCI controller runtime identity")
         first_publication_report, protected_verifier = _run_first_publication_qualification(

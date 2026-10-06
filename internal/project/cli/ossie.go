@@ -11,6 +11,7 @@ import (
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	configschema "github.com/flidai/leapview/internal/project/schema"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -36,11 +37,11 @@ func OssieCommand(ctx context.Context) *cobra.Command {
 		Short: "Import an Ossie document as a native SemanticModel resource",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
-				return fmt.Errorf("semantic-model ossie import accepts at most one input file")
+				return cliapi.NewUsageError(fmt.Errorf("semantic-model ossie import accepts at most one input file"))
 			}
 			if len(args) == 1 {
 				if cmd.Flags().Changed("in") {
-					return fmt.Errorf("choose either --in or the positional Ossie file")
+					return cliapi.NewUsageError(fmt.Errorf("choose either --in or the positional Ossie file"))
 				}
 				opts.input = args[0]
 			}
@@ -55,11 +56,11 @@ func OssieCommand(ctx context.Context) *cobra.Command {
 		Short: "Export a compiled SemanticModel as pinned Ossie",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
-				return fmt.Errorf("semantic-model ossie export accepts at most one semantic-model reference")
+				return cliapi.NewUsageError(fmt.Errorf("semantic-model ossie export accepts at most one semantic-model reference"))
 			}
 			if len(args) == 1 {
 				if cmd.Flags().Changed("semantic-model") {
-					return fmt.Errorf("choose either --semantic-model or the positional semantic-model reference")
+					return cliapi.NewUsageError(fmt.Errorf("choose either --semantic-model or the positional semantic-model reference"))
 				}
 				opts.semanticModel = args[0]
 			}
@@ -140,7 +141,7 @@ func runOssieExport(ctx context.Context, opts *ossieOptions, output io.Writer) e
 		return err
 	}
 	if strings.TrimSpace(opts.semanticModel) == "" {
-		return fmt.Errorf("semantic-model reference is required")
+		return cliapi.NewUsageError(fmt.Errorf("semantic-model reference is required"))
 	}
 	var (
 		data []byte
@@ -152,7 +153,7 @@ func runOssieExport(ctx context.Context, opts *ossieOptions, output io.Writer) e
 	case "yaml", "yml":
 		data, err = projectcompiler.ExportOssieYAML(opts.sourceRoot, opts.semanticModel)
 	default:
-		return fmt.Errorf("unsupported Ossie output format %q", opts.format)
+		return cliapi.NewUsageError(fmt.Errorf("unsupported Ossie output format %q", opts.format))
 	}
 	if err != nil {
 		return err

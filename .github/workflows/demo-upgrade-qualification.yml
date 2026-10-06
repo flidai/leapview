@@ -127,7 +127,7 @@ jobs:
           SOURCE_REVISION: ${{ inputs.candidate_revision || github.sha }}
         run: |
           set -euo pipefail
-          docker run --rm leapview:historical-transition-local version --json \
+          docker run --rm leapview:historical-transition-local version --format json \
             | jq -e --arg revision "${SOURCE_REVISION}" '.revision == $revision and .dirty == false' >/dev/null
 
       - name: Admit the exact final candidate image

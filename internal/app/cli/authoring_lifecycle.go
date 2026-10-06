@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/app/cli/localdocker"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 )
 
@@ -59,16 +61,28 @@ func newLocalRuntimeControllerForProfileWithDeferredBrowser(endpoint localdocker
 				*deferred = request
 				request.OpenBrowser = false
 			}
-			return establishLocalAuthoringSessions(ctx, request, command.OutOrStdout())
+			return establishLocalAuthoringSessions(ctx, request, command.ErrOrStderr())
 		},
 		ResetSessions: resetLocalAuthoringSessions,
-		Stdout:        command.OutOrStdout(), DevelopmentCredentials: credentials, DevelopmentProfile: profile,
+		Stdout:        command.ErrOrStderr(), DevelopmentCredentials: credentials, DevelopmentProfile: profile,
 	})
 }
 
 func localDevOpenBrowser(command *cobra.Command) (bool, error) {
 	if command == nil {
 		return false, errors.New("local development command is required")
+	}
+	if cliapi.NoInput(command) {
+		return false, nil
+	}
+	if command.Flags().Lookup("format") != nil {
+		format, err := command.Flags().GetString("format")
+		if err != nil {
+			return false, err
+		}
+		if format == "json" {
+			return false, nil
+		}
 	}
 	if command.Flags().Lookup("no-browser") == nil {
 		return true, nil
@@ -142,8 +156,7 @@ func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, fac
 			if format == "json" {
 				return json.NewEncoder(command.OutOrStdout()).Encode(status)
 			}
-			writeLocalRuntimeStatus(command, status)
-			return nil
+			return writeLocalRuntimeStatus(command, status)
 		},
 	}
 	selection.bind(command)
@@ -152,11 +165,11 @@ func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, fac
 }
 
 func readApplicationDevelopmentProfileStatus(ctx context.Context, status localruntime.LifecycleStatus) (*localruntime.DevelopmentProfileStatus, error) {
-	authority, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	authority, err := defaultAuthoringAuthenticator(defaultCLIHTTPClient)
 	if err != nil {
 		return nil, err
 	}
-	return readDevelopmentProfileStatusWith(ctx, status, authority, http.DefaultClient)
+	return readDevelopmentProfileStatusWith(ctx, status, authority, defaultCLIHTTPClient)
 }
 
 func readDevelopmentProfileStatusWith(ctx context.Context, status localruntime.LifecycleStatus, authority authoringCredentialResolver, client *http.Client) (*localruntime.DevelopmentProfileStatus, error) {
@@ -200,11 +213,12 @@ func optionalLocalStatusString(value *string) string {
 	return *value
 }
 
-func writeLocalRuntimeStatus(command *cobra.Command, status localruntime.LifecycleStatus) {
-	out := command.OutOrStdout()
+func writeLocalRuntimeStatus(command *cobra.Command, status localruntime.LifecycleStatus) error {
+	out := &strings.Builder{}
 	if !status.Exists {
 		fmt.Fprintf(out, "No local runtime exists for checkout %s (%s).\n", status.CheckoutRoot, status.CheckoutID)
-		return
+		_, err := io.WriteString(command.OutOrStdout(), out.String())
+		return err
 	}
 	fmt.Fprintf(out, "Checkout: %s\n", status.CheckoutRoot)
 	fmt.Fprintf(out, "Runtime: %s (%s, phase %s)\n", status.ComposeProject, status.RuntimeStatus, status.Phase)
@@ -235,12 +249,15 @@ func writeLocalRuntimeStatus(command *cobra.Command, status localruntime.Lifecyc
 	}
 	if len(status.Attachments) == 0 {
 		fmt.Fprintln(out, "Attachments: none")
-		return
+		_, err := io.WriteString(command.OutOrStdout(), out.String())
+		return err
 	}
 	fmt.Fprintf(out, "Attachments: %d\n", len(status.Attachments))
 	for _, attachment := range status.Attachments {
 		fmt.Fprintf(out, "- %s pid=%d heartbeat=%s\n", attachment.ID, attachment.PID, attachment.HeartbeatAt.UTC().Format("2006-01-02T15:04:05.000000000Z"))
 	}
+	_, err := io.WriteString(command.OutOrStdout(), out.String())
+	return err
 }
 
 func localDevLogsCommand(ctx context.Context, resolve localDockerResolver, factory localRuntimeControllerFactory) *cobra.Command {
@@ -285,8 +302,8 @@ func localDevStopCommand(ctx context.Context, resolve localDockerResolver, facto
 			if err := controller.Stop(ctx); err != nil {
 				return err
 			}
-			fmt.Fprintln(command.OutOrStdout(), "Stopped this checkout's local services; persistent data was retained.")
-			return nil
+			_, err = fmt.Fprintln(command.OutOrStdout(), "Stopped this checkout's local services; persistent data was retained.")
+			return err
 		},
 	}
 	selection.bind(command)
@@ -310,7 +327,9 @@ func localDevResetCommand(ctx context.Context, resolve localDockerResolver, fact
 				if err != nil {
 					return err
 				}
-				writeResetPlan(command, plan)
+				if err := writeResetPlan(command, plan); err != nil {
+					return err
+				}
 				return fmt.Errorf("reset requires --confirm %s", plan.Confirmation)
 			}
 			if confirmation != strings.TrimSpace(confirmation) {
@@ -319,8 +338,8 @@ func localDevResetCommand(ctx context.Context, resolve localDockerResolver, fact
 			if err := controller.Reset(ctx, confirmation); err != nil {
 				return err
 			}
-			fmt.Fprintln(command.OutOrStdout(), "Removed the confirmed local runtime and persistent state for this checkout.")
-			return nil
+			_, err = fmt.Fprintln(command.OutOrStdout(), "Removed the confirmed local runtime and persistent state for this checkout.")
+			return err
 		},
 	}
 	selection.bind(command)
@@ -328,8 +347,8 @@ func localDevResetCommand(ctx context.Context, resolve localDockerResolver, fact
 	return command
 }
 
-func writeResetPlan(command *cobra.Command, plan localruntime.ResetPlan) {
-	out := command.OutOrStdout()
+func writeResetPlan(command *cobra.Command, plan localruntime.ResetPlan) error {
+	out := &strings.Builder{}
 	fmt.Fprintf(out, "Checkout to reset: %s\n", plan.CheckoutRoot)
 	fmt.Fprintf(out, "Checkout identity: %s\n", plan.CheckoutID)
 	if len(plan.Resources) == 0 {
@@ -341,4 +360,6 @@ func writeResetPlan(command *cobra.Command, plan localruntime.ResetPlan) {
 		}
 	}
 	fmt.Fprintf(out, "Exact confirmation: %s\n", plan.Confirmation)
+	_, err := io.WriteString(command.OutOrStdout(), out.String())
+	return err
 }

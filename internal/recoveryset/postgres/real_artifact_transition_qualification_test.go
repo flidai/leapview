@@ -178,7 +178,7 @@ func TestFAI518RealPredecessorCandidateTransitionQualification(t *testing.T) {
 				if err != nil {
 					return out, err
 				}
-				identity, err := realArtifactRuntimeIdentity(ctx, image)
+				identity, err := realArtifactRuntimeIdentity(ctx, image, []string{"--format", "json"})
 				if err != nil {
 					return out, err
 				}
@@ -324,7 +324,7 @@ func realPredecessorDB(t *testing.T, image, revision string) (*pgxpool.Pool, *sq
 	if err := command.Run(); err != nil {
 		t.Fatalf("execute predecessor initialization from %s: %v: %s", image, err, strings.TrimSpace(stderr.String()))
 	}
-	identity, err := realArtifactRuntimeIdentity(t.Context(), image)
+	identity, err := realArtifactRuntimeIdentity(t.Context(), image, []string{"--json"})
 	if err != nil || identity.Revision != revision || identity.Dirty || identity.Development {
 		t.Fatalf("executed predecessor identity = %#v, error = %v; want clean revision %s", identity, err, revision)
 	}
@@ -339,8 +339,8 @@ func realPredecessorDB(t *testing.T, image, revision string) (*pgxpool.Pool, *sq
 	return pool, migratorDB, identity, adminID
 }
 
-func realArtifactRuntimeIdentity(ctx context.Context, image string) (realCandidateVersion, error) {
-	command := exec.CommandContext(ctx, "docker", "run", "--rm", image, "version", "--json")
+func realArtifactRuntimeIdentity(ctx context.Context, image string, versionArguments []string) (realCandidateVersion, error) {
+	command := exec.CommandContext(ctx, "docker", append([]string{"run", "--rm", image, "version"}, versionArguments...)...)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()
@@ -402,7 +402,7 @@ func verifiedRealArtifactAdmission(t *testing.T, image, revision, evidenceDir, r
 	if evidence.VulnerabilityPolicy.SHA256 != strings.TrimPrefix(policyRef, "sha256:") {
 		t.Fatalf("live OCI admission policy hash = %q, want %q", evidence.VulnerabilityPolicy.SHA256, policyRef)
 	}
-	runtime, err := realArtifactRuntimeIdentity(t.Context(), image)
+	runtime, err := realArtifactRuntimeIdentity(t.Context(), image, []string{"--format", "json"})
 	if err != nil {
 		t.Fatal(err)
 	}

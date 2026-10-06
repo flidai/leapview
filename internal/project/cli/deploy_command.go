@@ -61,7 +61,7 @@ func DeployCommand(ctx context.Context, client cliapi.Client, operations DeployO
 				return writeDeploySelectionCommandError(command, values.Format, "OPERATION_INTENT_REQUIRED", "--operation requires explicit --new or --resume in noninteractive mode")
 			}
 			if values.Format != "text" && values.Format != "json" {
-				return fmt.Errorf("deploy format must be text or json")
+				return cliapi.NewUsageError(fmt.Errorf("deploy format must be text or json"))
 			}
 			switch {
 			case command.Flags().Changed("new"):
@@ -72,9 +72,17 @@ func DeployCommand(ctx context.Context, client cliapi.Client, operations DeployO
 				values.Intent = ""
 			}
 			values.ConfirmationReader = command.InOrStdin()
-			values.ConfirmationWriter = command.OutOrStdout()
-			values.Interactive = values.Format != "json" && deployInputIsTerminal(values.ConfirmationReader) && (values.Intent == "" || (values.Intent == "resume" && values.OperationHandle == ""))
+			values.ConfirmationWriter = command.ErrOrStderr()
+			values.Interactive = values.Format != "json" && !cliapi.NoInput(command) && deployPromptIsAvailable(values.ConfirmationReader, values.ConfirmationWriter) && (values.Intent == "" || (values.Intent == "resume" && values.OperationHandle == ""))
 			values.TargetSelector = values.Credentials.Target
+			if !values.Interactive {
+				switch {
+				case values.Intent == "":
+					return writeDeploySelectionCommandError(command, values.Format, "NONINTERACTIVE_INTENT_REQUIRED", "headless deploy requires --new or --resume --operation <handle>")
+				case values.Intent == "resume" && values.OperationHandle == "":
+					return writeDeploySelectionCommandError(command, values.Format, "OPERATION_HANDLE_REQUIRED", "headless --resume requires --operation <handle>")
+				}
+			}
 			credentials, err := client.Resolve(ctx, values.Credentials)
 			if err != nil {
 				return err
@@ -96,17 +104,18 @@ func DeployCommand(ctx context.Context, client cliapi.Client, operations DeployO
 	return command
 }
 
-func deployInputIsTerminal(reader io.Reader) bool {
-	file, ok := reader.(*os.File)
-	return ok && term.IsTerminal(int(file.Fd()))
+func deployPromptIsAvailable(reader io.Reader, writer io.Writer) bool {
+	input, inputOK := reader.(*os.File)
+	output, outputOK := writer.(*os.File)
+	return inputOK && outputOK && term.IsTerminal(int(input.Fd())) && term.IsTerminal(int(output.Fd()))
 }
 
 func writeDeploySelectionCommandError(command *cobra.Command, format, code, detail string) error {
 	if format != "json" {
-		return fmt.Errorf("deployment operation selection failed (%s): %s", code, detail)
+		return cliapi.NewUsageError(fmt.Errorf("deployment operation selection failed (%s): %s", code, detail))
 	}
 	if err := WriteDeploymentSelectionError(command.OutOrStdout(), format, code, "", detail); err != nil {
 		return err
 	}
-	return &DeploymentSelectionError{SchemaVersion: 1, Code: code, Detail: detail}
+	return cliapi.NewReportedError(cliapi.NewUsageError(&DeploymentSelectionError{SchemaVersion: 1, Code: code, Detail: detail}))
 }

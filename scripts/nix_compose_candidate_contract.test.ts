@@ -130,7 +130,7 @@ test('Compose image preflight is credentialed only for image admission and prece
   const preflightRuntime = preflight.steps.findIndex((step: any) => step.name?.includes('actual release image runtime'))
   const preflightUpload = preflight.steps.findIndex((step: any) => step.name?.includes('immutable pre-execution'))
   expect(preflightRuntime).toBeLessThan(preflightUpload)
-  expect(preflight.steps[preflightRuntime].run).toContain('docker run --rm \"$IMAGE_REFERENCE\" version --json')
+  expect(preflight.steps[preflightRuntime].run).toContain('docker run --rm \"$IMAGE_REFERENCE\" version --format json')
   expect(preflight.steps.some((step: any) => step.run?.includes('leapviewctl'))).toBe(false)
   expect(preflight.steps.some((step: any) => step.run?.includes('installed-candidate'))).toBe(false)
   const preflightDiagnostics = preflight.steps.find((step: any) => step.name?.includes('admission diagnostics'))

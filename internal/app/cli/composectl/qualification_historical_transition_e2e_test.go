@@ -473,7 +473,7 @@ func validateHistoricalTransitionImageIdentity(ctx context.Context, options qual
 	if qualificationHistoricalLocalImagePattern.MatchString(options.CandidateImage) && strings.TrimSpace(string(imageID)) != options.CandidateImage {
 		return errors.New("local historical transition candidate image ID does not resolve to the supplied immutable image")
 	}
-	version := exec.CommandContext(ctx, "docker", "run", "--rm", options.CandidateImage, "version", "--json")
+	version := exec.CommandContext(ctx, "docker", "run", "--rm", options.CandidateImage, "version", "--format", "json")
 	output, err := version.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("read candidate image build identity: %w (%s)", err, strings.TrimSpace(string(output)))

@@ -1,20 +1,26 @@
 package cli
 
 import (
+	"fmt"
+
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/spf13/cobra"
 )
 
 func versionCommand() *cobra.Command {
-	var jsonOutput bool
+	format := "text"
 	command := &cobra.Command{
 		Use:   "version",
 		Short: "Report the LeapView build identity",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return buildinfo.Write(command.OutOrStdout(), "leapview", buildinfo.Current(), jsonOutput)
+			if format != "text" && format != "json" {
+				return cliapi.NewUsageError(fmt.Errorf("version format must be text or json"))
+			}
+			return buildinfo.Write(command.OutOrStdout(), "leapview", buildinfo.Current(), format == "json")
 		},
 	}
-	command.Flags().BoolVar(&jsonOutput, "json", false, "emit machine-readable JSON")
+	command.Flags().StringVar(&format, "format", format, "output format: text or json")
 	return command
 }

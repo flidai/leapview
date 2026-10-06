@@ -43,7 +43,7 @@ type deploymentTargetIdentityReader interface {
 }
 
 func deployCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
-	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(http.DefaultClient), validateAuthoring: true}
+	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(defaultCLIHTTPClient), validateAuthoring: true}
 	checkpoints := projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())
 	operationStore := projectcli.NewDeploymentOperationStore(deploymentOperationPath())
 	return projectcli.DeployCommand(ctx, client, projectDeployOperations{
@@ -267,7 +267,7 @@ func (operations projectDeployOperations) deployWithOperation(ctx context.Contex
 				return reviewErr
 			}
 		}
-		if confirmationErr := confirmDeploymentPlan(options, descriptor); confirmationErr != nil {
+		if confirmationErr := confirmDeploymentPlan(ctx, options, descriptor); confirmationErr != nil {
 			return operations.markErrorAndReport(descriptor, projectcli.DeploymentOperationPendingApproval, "provide --confirm-plan with the exact retained plan digest, then resume this handle", confirmationErr, out, options.Format)
 		}
 	}
@@ -374,21 +374,30 @@ func (operations projectDeployOperations) interactiveDeploymentSelection(ctx con
 		options.Intent = "new"
 		return nil
 	}
+	writer := options.ConfirmationWriter
+	if writer == nil {
+		writer = out
+	}
 	if len(retained) > 0 {
-		fmt.Fprintln(out, "retained deployment operations:")
+		if _, err := fmt.Fprintln(writer, "retained deployment operations:"); err != nil {
+			return err
+		}
 		for index, candidate := range retained {
-			fmt.Fprintf(out, "%d) %s target=%s project=%s environment=%s source=%s revision=%s created=%s outcome=%s\n", index+1, candidate.Handle, candidate.TargetID, candidate.ProjectID, candidate.Environment, candidate.SourceDigest, candidate.SourceRevision, candidate.CreatedAt, candidate.Outcome)
+			if _, err := fmt.Fprintf(writer, "%d) %s target=%s project=%s environment=%s source=%s revision=%s created=%s outcome=%s\n", index+1, candidate.Handle, candidate.TargetID, candidate.ProjectID, candidate.Environment, candidate.SourceDigest, candidate.SourceRevision, candidate.CreatedAt, candidate.Outcome); err != nil {
+				return err
+			}
 		}
 	}
 	if options.ConfirmationReader == nil {
 		return deploymentSelectionFailure(*options, out, "OPERATION_SELECTION_REQUIRED", "", "interactive operation selection requires a terminal input")
 	}
-	writer := options.ConfirmationWriter
-	if writer == nil {
-		writer = out
+	if _, err := fmt.Fprint(writer, "select an operation number to resume, or n for a new operation: "); err != nil {
+		return err
 	}
-	fmt.Fprint(writer, "select an operation number to resume, or n for a new operation: ")
-	line, readErr := bufio.NewReader(options.ConfirmationReader).ReadString('\n')
+	line, readErr := readConfirmationLine(ctx, options.ConfirmationReader)
+	if readErr != nil && ctx.Err() != nil {
+		return readErr
+	}
 	if readErr != nil && strings.TrimSpace(line) == "" {
 		return deploymentSelectionFailure(*options, out, "OPERATION_SELECTION_REQUIRED", "", "no operation selection was provided")
 	}
@@ -410,11 +419,13 @@ func writeDeploymentPlanReview(out io.Writer, format string, descriptor projectc
 	if strings.TrimSpace(format) == "json" {
 		return nil
 	}
-	fmt.Fprintf(out, "plan-review operation %s target %s environment %s source %s plan %s digest %s\n", descriptor.Handle, descriptor.TargetID, descriptor.Environment, descriptor.SourceDigest, descriptor.PlanID, descriptor.PlanDigest)
+	if _, err := fmt.Fprintf(out, "plan-review operation %s target %s environment %s source %s plan %s digest %s\n", descriptor.Handle, descriptor.TargetID, descriptor.Environment, descriptor.SourceDigest, descriptor.PlanID, descriptor.PlanDigest); err != nil {
+		return err
+	}
 	return projectcli.WriteDeliveryPlanResult(out, "text", plan)
 }
 
-func confirmDeploymentPlan(options projectcli.DeployOptions, descriptor projectcli.DeploymentOperationDescriptor) error {
+func confirmDeploymentPlan(ctx context.Context, options projectcli.DeployOptions, descriptor projectcli.DeploymentOperationDescriptor) error {
 	expected := strings.TrimSpace(descriptor.PlanDigest)
 	if expected == "" {
 		return fmt.Errorf("retained plan has no plan digest")
@@ -422,15 +433,46 @@ func confirmDeploymentPlan(options projectcli.DeployOptions, descriptor projectc
 	provided := strings.TrimSpace(options.ConfirmPlan)
 	if provided == "" && options.Interactive && strings.TrimSpace(options.Format) != "json" && options.ConfirmationReader != nil {
 		if options.ConfirmationWriter != nil {
-			fmt.Fprintf(options.ConfirmationWriter, "confirm exact plan digest %s: ", expected)
+			if _, err := fmt.Fprintf(options.ConfirmationWriter, "confirm exact plan digest %s: ", expected); err != nil {
+				return fmt.Errorf("write plan confirmation prompt: %w", err)
+			}
 		}
-		line, _ := bufio.NewReader(options.ConfirmationReader).ReadString('\n')
+		line, err := readConfirmationLine(ctx, options.ConfirmationReader)
+		if err != nil && ctx.Err() != nil {
+			return err
+		}
 		provided = strings.TrimSpace(line)
 	}
 	if provided != expected {
 		return fmt.Errorf("exact plan confirmation is required; expected retained plan digest %s", expected)
 	}
 	return nil
+}
+
+func readConfirmationLine(ctx context.Context, reader io.Reader) (string, error) {
+	if reader == nil {
+		return "", errors.New("confirmation input is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	type lineResult struct {
+		line string
+		err  error
+	}
+	result := make(chan lineResult, 1)
+	// ponytail: cancellation stops waiting but cannot interrupt caller-owned input.
+	// Use a context-aware reader if prompts are reused in a long-lived process.
+	go func() {
+		line, err := bufio.NewReader(reader).ReadString('\n')
+		result <- lineResult{line: line, err: err}
+	}()
+	select {
+	case read := <-result:
+		return read.line, read.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (operations projectDeployOperations) currentTime() time.Time {
@@ -593,7 +635,7 @@ func (operations projectDeployOperations) reportOperation(descriptor projectcli.
 	if result.Outcome == projectcli.DeploymentOperationActive {
 		return nil
 	}
-	return &projectcli.DeploymentStatusError{Result: result}
+	return cliapi.NewReportedError(&projectcli.DeploymentStatusError{Result: result})
 }
 
 func nextActionForOutcome(outcome projectcli.DeploymentOperationOutcome) string {
@@ -631,7 +673,13 @@ func deploymentSelectionFailure(options projectcli.DeployOptions, out io.Writer,
 	if err := projectcli.WriteDeploymentSelectionError(out, format, code, handle, detail); err != nil {
 		return err
 	}
-	return &projectcli.DeploymentSelectionError{SchemaVersion: 1, Code: code, Handle: strings.TrimSpace(handle), Detail: strings.TrimSpace(detail)}
+	selection := &projectcli.DeploymentSelectionError{SchemaVersion: 1, Code: code, Handle: strings.TrimSpace(handle), Detail: strings.TrimSpace(detail)}
+	switch code {
+	case "CONFLICTING_INTENT_FLAGS", "OPERATION_INTENT_REQUIRED", "NONINTERACTIVE_INTENT_REQUIRED", "OPERATION_HANDLE_REQUIRED", "OPERATION_SELECTION_REQUIRED", "INVALID_OPERATION_SELECTION":
+		return cliapi.NewReportedError(cliapi.NewUsageError(selection))
+	default:
+		return cliapi.NewReportedError(selection)
+	}
 }
 
 func (operations projectDeployOperations) captureOperationSource(ctx context.Context, sourceRoot, projectID, candidateKey string) (projectdevloop.Snapshot, error) {

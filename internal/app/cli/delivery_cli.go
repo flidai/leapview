@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -19,12 +18,12 @@ import (
 )
 
 func buildCommand(ctx context.Context) *cobra.Command {
-	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(http.DefaultClient), validateAuthoring: true}
+	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(defaultCLIHTTPClient), validateAuthoring: true}
 	return projectcli.DeliveryBuildCommand(ctx, projectDeliveryBuildOperations{client: client, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())})
 }
 
 func rollbackCommand(ctx context.Context) *cobra.Command {
-	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(http.DefaultClient), validateAuthoring: true}
+	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(defaultCLIHTTPClient), validateAuthoring: true}
 	return projectcli.DeliveryRollbackCommand(ctx, projectDeliveryRollbackOperations{client: client, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())})
 }
 

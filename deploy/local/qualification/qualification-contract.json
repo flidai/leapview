@@ -14,7 +14,7 @@
       "release-identity.json",
       "image-reference.txt",
       "local-runtime/runtime-package.json",
-      "leapview version --json"
+      "leapview version --format json"
     ],
     "requiredCommands": ["init", "dev", "plan", "build", "publish", "deploy"]
   },

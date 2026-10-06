@@ -124,7 +124,7 @@ func localSessionHTTPClient(base *http.Client) (*http.Client, error) {
 		return nil, fmt.Errorf("create local session cookie jar: %w", err)
 	}
 	if base == nil {
-		base = http.DefaultClient
+		base = defaultCLIHTTPClient
 	}
 	client := *base
 	client.Jar = jar

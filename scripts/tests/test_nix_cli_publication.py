@@ -193,7 +193,7 @@ class CliPublicationTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0)
             if self.runtime_mode == 'timeout':
                 raise subprocess.TimeoutExpired(args, 45)
-            if args[-2:] == ['version', '--json']:
+            if args[-3:] == ['version', '--format', 'json']:
                 runtime = dict(self.runtime_identity)
                 if self.runtime_mode == 'wrong-revision':
                     runtime['revision'] = 'f' * 40

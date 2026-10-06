@@ -54,8 +54,8 @@ func runHealthcheck(ctx context.Context, opts *rootOptions, out io.Writer) error
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("readiness endpoint returned status %d", resp.StatusCode)
 	}
-	fmt.Fprintln(out, "ready")
-	return nil
+	_, err = fmt.Fprintln(out, "ready")
+	return err
 }
 
 func healthcheckURL(opts *rootOptions) string {

@@ -364,7 +364,7 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if _, err = e.docker(ctx, "pull", id.Candidate); err != nil {
 		return err
 	}
-	raw, err = e.docker(ctx, "run", "--rm", id.Candidate, "version", "--json")
+	raw, err = e.docker(ctx, "run", "--rm", id.Candidate, "version", "--format", "json")
 	if err != nil {
 		return err
 	}

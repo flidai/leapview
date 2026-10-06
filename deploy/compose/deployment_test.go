@@ -179,7 +179,7 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 		t.Fatal("standard Compose must not expose extension supply selection as authored env")
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	for _, required := range []string{"Verify target-native runtime entrypoint", `docker run --rm "$IMAGE_REFERENCE" version --json`, "Run installed-candidate journey"} {
+	for _, required := range []string{"Verify target-native runtime entrypoint", `docker run --rm "$IMAGE_REFERENCE" version --format json`, "Run installed-candidate journey"} {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release qualification missing distroless runtime contract %q", required)
 		}
@@ -611,11 +611,11 @@ func TestReleaseIdentityContract(t *testing.T) {
 		"BUILD_DIRTY=false",
 		"BUILD_RELEASE=",
 		"release-identity.json",
-		`"$controller" version --json`,
+		`"$controller" version --format json`,
 		"python3 scripts/package_compose_bundle.py record-build-identity",
 		"python3 scripts/package_compose_bundle.py assemble",
 		"Verify published runtime identity",
-		`docker run --rm "$IMAGE_REFERENCE" version --json`,
+		`docker run --rm "$IMAGE_REFERENCE" version --format json`,
 	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing build identity contract %q", required)
@@ -629,7 +629,7 @@ func TestReleaseIdentityContract(t *testing.T) {
 		document := read(t, name)
 		for _, required := range []string{
 			"release-identity.json",
-			"leapviewctl version --json",
+			"leapviewctl version --format json",
 			"org.opencontainers.image.version",
 			"/api/v1/capabilities",
 		} {

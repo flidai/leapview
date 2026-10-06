@@ -50,7 +50,7 @@ func stageDeclaredDevelopmentInputs(ctx context.Context, credentials cliapi.Cred
 		Output:      local.output,
 	}, developmentInputStagingDependencies{
 		list: developmentinput.Names, resolve: resolveDevelopmentInput,
-		plan: planner.Plan, sync: manageddatacli.RunSync, httpClient: http.DefaultClient,
+		plan: planner.Plan, sync: manageddatacli.RunSync, httpClient: defaultCLIHTTPClient,
 	})
 }
 
@@ -131,7 +131,7 @@ func stageDeclaredDevelopmentInputsWithDependencies(
 	}
 	httpClient := dependencies.httpClient
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = defaultCLIHTTPClient
 	}
 	for _, input := range planned {
 		revisionID := input.plan.Manifest.RevisionID()

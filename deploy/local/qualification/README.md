@@ -27,7 +27,7 @@ When an exact public authoring archive is available, the harness verifies the
 outer archive checksum, safe archive members, the
 inner `SHA256SUMS` manifest, `authoring-package.json`,
 `release-identity.json`, `image-reference.txt`, `runtime-package.json`, and
-the executable's `leapview version --json` identity. It also checks the
+the executable's `leapview version --format json` identity. It also checks the
 read-only command surfaces (`init`, `dev`, `plan`, `build`, `publish`, and
 `deploy`) through their help output. The existing release `authoring-cli` job
 remains a separate build/provenance gate and is not replaced by this lane.
