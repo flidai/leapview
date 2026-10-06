@@ -229,19 +229,20 @@ test('fresh-host verifier generates protected Go inputs before its static build'
     writeFileSync(join(bin, name), '#!/bin/sh\nset -eu\n' + script, { mode: 0o755 })
   try {
     executable('git', 'case "$*" in "rev-parse HEAD") printf "%s\\n" "$FIXTURE_REVISION";; "status --porcelain --untracked-files=no") :;; *) exit 91;; esac\n')
-    executable('nix', 'test "$1" = develop; shift; test "$1" = --no-update-lock-file; shift; test "$1" = -c; shift; exec "$@"\n')
-    executable('task', 'test "$PWD" = "$FIXTURE_ROOT"; test "$*" = generate; test "${FAIL_GENERATION:-0}" = 0; touch generated-inputs\n')
-    executable('go', 'test "$PWD" = "$FIXTURE_ROOT"; test -f generated-inputs; test "$CGO_ENABLED" = 0; test "$*" = "build -trimpath -o $RUNNER_TEMP/host-first-publication-verifier ./cmd/leapviewctl"; printf "protected verifier\\n" > "$RUNNER_TEMP/host-first-publication-verifier"\n')
+    executable('nix', 'test "$1" = develop; shift; test "$1" = --no-update-lock-file; shift; test "$1" = .#host-verifier; shift; test "$1" = -c; shift; exec "$@"\n')
+    executable('task', 'test "$PWD" = "$FIXTURE_ROOT"; test "$*" = generate; test "${FAIL_GENERATION:-0}" = 0; printf "generate\\n" >> "$EVENTS"; touch generated-inputs\n')
+    executable('go', 'test "$PWD" = "$FIXTURE_ROOT"; test -f generated-inputs; test "$CGO_ENABLED" = 0; test "$*" = "build -trimpath -o $RUNNER_TEMP/host-first-publication-verifier ./cmd/leapviewctl"; printf "build\\n" >> "$EVENTS"; printf "protected verifier\\n" > "$RUNNER_TEMP/host-first-publication-verifier"\n')
     const run = (extra: Record<string, string> = {}) => spawnSync('bash', ['-c', step.run], {
       cwd: root,
       encoding: 'utf8',
       env: {
-        ...process.env, PATH: bin + ':' + process.env.PATH, RUNNER_TEMP: root,
+        ...process.env, PATH: bin + ':' + process.env.PATH, RUNNER_TEMP: root, EVENTS: join(root, 'events'),
         FIXTURE_ROOT: root, FIXTURE_REVISION: 'a'.repeat(40), PROTECTED_REVISION: 'a'.repeat(40), ...extra,
       },
     })
     const result = run()
     expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(readFileSync(join(root, 'events'), 'utf8')).toBe('generate\nbuild\n')
     expect(readFileSync(join(root, 'host-first-publication-verifier'), 'utf8')).toBe('protected verifier\n')
     rmSync(join(root, 'generated-inputs'))
     rmSync(join(root, 'host-first-publication-verifier'))
@@ -259,6 +260,7 @@ test('fresh-host first publication uses a protected verifier and protected autho
   expect(buildVerifier).toBeDefined()
   expect(buildVerifier.run).toContain('git rev-parse HEAD')
   expect(buildVerifier.run).toContain('$PROTECTED_REVISION')
+  expect(buildVerifier.run).toContain('nix develop --no-update-lock-file .#host-verifier -c')
   expect(buildVerifier.run).toContain('CGO_ENABLED=0')
   expect(buildVerifier.run).toContain('./cmd/leapviewctl')
   expect(host.steps.indexOf(buildVerifier)).toBeLessThan(host.steps.indexOf(qualifyGuest))
