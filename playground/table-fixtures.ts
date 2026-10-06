@@ -96,9 +96,14 @@ export function exploreCommand(): DataExploreCommand {
 export function exploreFixture(command: DataExploreCommand, state: TableState = 'populated', truncated = false): DataExploreResultSignal {
   const sort = command.sort[0]
   const rows = state === 'empty' || state === 'error' ? [] : sortedTableRows(tableRows(75), { key: sort?.field, direction: sort?.direction })
+  const request = command.window ?? { block: 'all', start: 0, count: 100, requestSeq: command.requestSeq, resetVersion: command.resetVersion }
+  const table = answerWindow({
+    tableKey: 'playground-exploration', columns: tableColumns, totalRows: rows.length,
+    availableRows: rows.length, chunkSize: request.count, rowHeight: 32, blocks: {},
+  }, rows, { ...request, sort: { key: sort?.field, column: sort?.field, direction: sort?.direction } })
   return {
     columns: tableColumns.map(({ key, label, type }) => ({ key, label, type })), rows,
-    rowsReturned: rows.length, durationMs: 18, requestSeq: command.requestSeq,
+    window: previewFixture(table), rowsReturned: rows.length, durationMs: 18, requestSeq: command.requestSeq,
     truncated, warnings: [], sql: 'SELECT id, customer, region, revenue, ordered_at, fulfilled FROM orders LIMIT 75',
     error: state === 'error' ? 'The exploration fixture returned an example error.' : '',
   }

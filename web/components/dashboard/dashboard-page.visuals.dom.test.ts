@@ -645,10 +645,16 @@ test('an open visual menu escapes its card clipping layer and raises only its fr
       const secondFrame = second.closest('lv-dashboard-visual-frame') as HTMLElement
       const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLElement
       const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLElement
-      const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-
+      const firstMenu = firstOptions.querySelector<HTMLElement>('.menu')!
+      const secondMenu = secondOptions.querySelector<HTMLElement>('.menu')!
+      // Native popover toggle events are queued separately from animation
+      // frames. Observe those events before inspecting their frame effects.
+      const toggled = (menu: HTMLElement) => new Promise<void>((resolve) => {
+        menu.addEventListener('toggle', () => resolve(), { once: true })
+      })
+      const firstOpened = toggled(firstMenu)
       firstOptions.querySelector<HTMLElement>('.options-trigger')!.click()
-      await settle()
+      await firstOpened
       const firstZIndex = Number.parseInt(getComputedStyle(firstFrame).zIndex, 10)
       const secondZIndex = Number.parseInt(getComputedStyle(secondFrame).zIndex, 10)
       const firstOpen = {
@@ -658,14 +664,16 @@ test('an open visual menu escapes its card clipping layer and raises only its fr
         raised: Number.isFinite(firstZIndex) && (!Number.isFinite(secondZIndex) || firstZIndex > secondZIndex),
       }
 
+      const firstClosed = toggled(firstMenu)
+      const secondOpened = toggled(secondMenu)
       secondOptions.querySelector<HTMLElement>('.options-trigger')!.click()
-      await settle()
+      await Promise.all([firstClosed, secondOpened])
       return {
         firstOpen,
         onlySecondRaised: !firstFrame.hasAttribute('data-visual-options-open')
           && secondFrame.hasAttribute('data-visual-options-open')
-          && !firstOptions.querySelector('.menu')!.matches(':popover-open')
-          && secondOptions.querySelector('.menu')!.matches(':popover-open'),
+          && !firstMenu.matches(':popover-open')
+          && secondMenu.matches(':popover-open'),
       }
     })
     expect(state).toEqual({

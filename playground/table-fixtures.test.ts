@@ -80,3 +80,17 @@ test('exploration fixtures initialize canonical selections for result-table sort
     filters: [], sort: [], limit: 75,
   })
 })
+
+test('exploration windows acknowledge table sequence independently of semantic sequence', () => {
+  const command = {
+    ...exploreCommand(), requestSeq: 40, resetVersion: 3,
+    sort: [{ field: 'revenue', direction: 'desc' as const }],
+    window: { block: 'all' as const, start: 50, count: 25, requestSeq: 8, resetVersion: 3 },
+  }
+  const result = exploreFixture(command)
+  expect(result.requestSeq).toBe(40)
+  expect(result.window?.totalRows).toBe(75)
+  expect(result.window?.blocks.b?.rows).toEqual(result.rows.slice(50, 75))
+  expect(result.window?.blocks.b).toMatchObject({ start: 50, requestSeq: 8, resetVersion: 3, sort: { column: 'revenue', direction: 'desc' } })
+  expect(result.window?.blocks.c).toMatchObject({ start: 75, requestSeq: 8, resetVersion: 3, rows: [] })
+})
