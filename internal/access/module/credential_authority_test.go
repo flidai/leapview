@@ -64,6 +64,50 @@ func TestCredentialAuthorityRecheckerReloadsBrowserSessionRevocation(t *testing.
 	}
 }
 
+func TestCredentialAuthorityRecheckerRejectsExpiredOrInvalidExpiry(t *testing.T) {
+	pair := credentialAuthorityTestPair(t, access.ActionConnectionManage)
+	now := time.Now().UTC()
+
+	token := access.APIToken{
+		ID: "token-1", PrincipalID: "principal-1", TokenFingerprint: "fingerprint-1",
+		PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{pair},
+	}
+	ctx := WithAPICredential(context.Background(), access.APICredential{
+		Principal: access.Principal{ID: token.PrincipalID},
+		Token:     token,
+	})
+	tokenReader := &credentialAuthorityTokenReader{token: token}
+	checkToken := CredentialAuthorityRechecker(tokenReader, nil)
+	for _, expiry := range []string{
+		now.Add(-time.Second).Format(time.RFC3339Nano),
+		"not-a-timestamp",
+	} {
+		tokenReader.token.ExpiresAt = expiry
+		if err := checkToken(ctx, token.PrincipalID, pair); !errors.Is(err, access.ErrForbidden) {
+			t.Errorf("API token expiry %q = %v, want forbidden", expiry, err)
+		}
+	}
+
+	session := access.Session{
+		ID: "session-1", PrincipalID: "principal-1", TokenFingerprint: "fingerprint-1",
+	}
+	sessionCtx := withSessionCredentialEvidence(context.Background(), access.CredentialEvidence{
+		Class: "session", ID: session.ID, Fingerprint: session.TokenFingerprint,
+		PrincipalID: session.PrincipalID,
+	})
+	sessionReader := &credentialAuthoritySessionReader{session: session}
+	checkSession := CredentialAuthorityRechecker(nil, sessionReader)
+	for _, expiry := range []string{
+		now.Add(-time.Second).Format(time.RFC3339Nano),
+		"not-a-timestamp",
+	} {
+		sessionReader.session.ExpiresAt = expiry
+		if err := checkSession(sessionCtx, session.PrincipalID, pair); !errors.Is(err, access.ErrForbidden) {
+			t.Errorf("browser session expiry %q = %v, want forbidden", expiry, err)
+		}
+	}
+}
+
 func TestCredentialAuthorityRecheckerFailsClosedWithoutCurrentEvidence(t *testing.T) {
 	pair := credentialAuthorityTestPair(t, access.ActionConnectionManage)
 	check := CredentialAuthorityRechecker(nil, nil)
