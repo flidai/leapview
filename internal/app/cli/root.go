@@ -115,7 +115,7 @@ func NewCommand(ctx context.Context) *cobra.Command {
 			root.AddCommand(command)
 		}
 	}
-	addGroup("operations", serveCommand(ctx, opts), configCommand(), healthcheckCommand(ctx, opts), adminCommand(ctx, opts))
+	addGroup("operations", serveCommand(ctx, opts), configCommand(), healthcheckCommand(ctx, opts), doctorCommand(ctx), adminCommand(ctx, opts))
 	addGroup("authoring", initCommand(), devCommand(ctx), validateCommand(ctx, opts), semanticModelOssieCommand(ctx))
 	addGroup("delivery", publishCommand(ctx), buildCommand(ctx), rollbackCommand(ctx), deployCommand(ctx, opts), planCommand(ctx, opts))
 	addGroup("dataquery", dataCommand(ctx, opts), apiCommand(ctx, opts), agentCommand(ctx, opts), searchCommand(ctx, opts), dashboardsCommand(ctx, opts), semanticModelsCommand(ctx, opts))

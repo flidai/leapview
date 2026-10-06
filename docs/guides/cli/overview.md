@@ -10,6 +10,8 @@ Run `leapview` to see workflow groups and examples. Use `leapview <command> --he
 
 Generate shell completion with `leapview completion bash`, `zsh`, `fish`, or `powershell`, then install the script using your shell's completion instructions. Completing saved target names and API operation names requires no target connection.
 
+Run `leapview doctor` to inspect local authoring prerequisites, or add an explicit `--target` to inspect a remote instance.
+
 ## Set up access
 
 - [Install and authenticate the CLI](/docs/cli/authentication).
