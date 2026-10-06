@@ -638,20 +638,27 @@ test('pending renderer loads reject stale mount promises after detach and reatta
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
-    await page.evaluate(async () => {
+    await page.evaluate(() => {
       const source = (window as any).__lvSourceHosts.orders_chart
       const deferred = document.createElement('lv-visualization-host') as any
-      deferred.deferMount = true
-      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
-      document.body.append(deferred)
-      await deferred.updateComplete
       const transient = document.createElement('lv-visualization-host') as any
-      transient.deferMount = true
-      transient.envelope = JSON.parse(JSON.stringify(source.envelope))
-      document.body.append(transient)
-      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
-      while (transient.pendingEnvelopeValidation) await transient.pendingEnvelopeValidation
-      await Promise.all([deferred.updateComplete, transient.updateComplete])
+      const envelopes = [structuredClone(source.envelope), structuredClone(source.envelope)]
+      deferred.deferMount = transient.deferMount = true
+      deferred.envelope = envelopes[0]
+      transient.envelope = envelopes[1]
+      ;(window as any).__lvMountRace = { deferred, transient, envelopes }
+      document.body.append(deferred, transient)
+    })
+    // Keep the fixture hosts reachable while their lazy validator and Lit
+    // updates settle, before starting the renderer-load race under test.
+    await page.waitForFunction(() => {
+      const { deferred, transient, envelopes } = (window as any).__lvMountRace
+      return [deferred, transient].every((host, index) =>
+        host.envelope === envelopes[index] && !host.pendingEnvelopeValidation && host.hasUpdated && !host.isUpdatePending,
+      )
+    })
+    await page.evaluate(() => {
+      const { deferred, transient } = (window as any).__lvMountRace
       const transientMount = transient.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       const stale = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       const race = { stale, staleSettled: false, transientMount, transientController: transient.controller, transient, fresh: Promise.resolve('pending'), reattached: false }
