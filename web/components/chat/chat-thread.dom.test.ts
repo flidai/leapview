@@ -550,7 +550,7 @@ test('chat thread expands completed steps with an elapsed label while keeping an
   await page.close()
 })
 
-test('chat thread keeps visual context inside Worked while leaving the chart card visible', async () => {
+test('visual replies keep a summary and every chart visible while details stay collapsed', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   const thread = page.locator('lv-chat-thread')
@@ -559,16 +559,20 @@ test('chat thread keeps visual context inside Worked while leaving the chart car
     element.transcript = [
       { id: 'u1', kind: 'user', text: 'Show revenue by state', createdAt: '2026-09-28T10:00:00Z' },
       { id: 't1', kind: 'tool', name: 'query_visual', status: 'complete', createdAt: '2026-09-28T10:00:02Z', artifact: { type: 'bar', id: 'revenue-by-state', summary: 'Revenue by State' } },
-      { id: 'a1', kind: 'assistant', markdown: '### Underlying values\n\n| State | Revenue |\n| --- | ---: |\n| SP | 5,998,226.96 |\n\nData freshness: current.', createdAt: '2026-09-28T10:00:14Z' },
+      { id: 't2', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'pie', id: 'revenue-mix', summary: 'Revenue mix' } },
+      { id: 'a1', kind: 'assistant', markdown: 'Created revenue by state and revenue mix.\n\n| State | Revenue |\n| --- | ---: |\n| SP | 5,998,226.96 |\n\nData freshness: current.', createdAt: '2026-09-28T10:00:14Z' },
     ]
     await element.updateComplete
   })
   const details = thread.locator('.run-steps')
   expect(await details.locator('summary').textContent()).toContain('Worked for 14s')
-  expect(await thread.locator('lv-visual-artifact').isVisible()).toBe(true)
-  expect(await thread.locator('.agent-markdown').isVisible()).toBe(false)
+  expect(await thread.locator('lv-visual-artifact').count()).toBe(2)
+  for (const card of await thread.locator('lv-visual-artifact').all()) expect(await card.isVisible()).toBe(true)
+  expect(await page.getByText('Created revenue by state and revenue mix.', {exact:true}).first().isVisible()).toBe(true)
+  expect(await details.locator('.agent-markdown').isVisible()).toBe(false)
   expect(await details.locator('.agent-markdown').count()).toBe(1)
   await details.locator('summary').click()
+  expect(await thread.locator('.dashboard-summary').isVisible()).toBe(false)
   expect(await details.locator('.agent-markdown').isVisible()).toBe(true)
   expect(await details.locator('.agent-markdown').evaluate((node: any) => node.value)).toContain('Data freshness: current.')
   await page.close()
@@ -698,7 +702,7 @@ test('chat thread hides failed tool lookups once the turn produces a visual', as
       visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
     }
   })
-  expect(state).toEqual({ topLevelErrors: 0, workedErrors: [], numberedSteps: 0, toolLabels: false, visual: true })
+  expect(state).toEqual({ topLevelErrors: 0, workedErrors: [], numberedSteps: 0, toolLabels: undefined, visual: true })
   await page.close()
 })
 

@@ -583,6 +583,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       if (href) this.completedDashboardGenerationRun = completedRun
       if (href) void this.openGeneratedDashboard(href)
     }
+    // Reopened dashboard replies have no query_visual receipts. Reuse the
+    // authorized builder stream to load their cards and existing membership,
+    // while keeping the conversation visible and without another AI request.
+    if (!running && !this.dashboardPreview && !this.savedBuilderHref && !this.restoredBuilderHref) {
+      const preview = [...this.agent.transcript ?? []].reverse().find(item => item.name === 'preview_dashboard_draft' && item.status === 'complete' && !item.error)
+      const href = generatedDashboardHref(this.agent.transcript ?? [], preview?.runId ?? '', this.agent.activeConversationId ?? '')
+      if (href) this.restoredBuilderHref = href
+    }
     if (this.wasAgentRunning && !running && this.savedBuilderHref && !this.savingDashboard) {
       const frame = this.builderFrame
       if (frame?.contentWindow && frame.contentWindow.location.href !== 'about:blank') frame.contentWindow.postMessage({ type: 'lv-refresh-builder' } satisfies ChatDashboardMessage, window.location.origin)
@@ -805,7 +813,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             return html`
               <div class=${`preview-card${kind === 'kpi' ? ' kpi' : ''}${['table', 'matrix', 'pivot'].includes(kind) ? ' wide' : ''}${this.selectedPreviewVisual === artifact.id ? ' selected' : ''}`}
                 ?hidden=${artifact.id !== selected?.id} data-preview-visual=${artifact.id} tabindex="-1" aria-label=${payload?.spec.title || artifact.summary || 'Visual'}>
-                <lv-visual-artifact eager type=${artifact.type} artifact-id=${artifact.id} .payload=${payload}></lv-visual-artifact>
+                ${payload ? html`<lv-visual-artifact eager type=${artifact.type} artifact-id=${artifact.id} .payload=${payload}></lv-visual-artifact>` : html`<p class="preview-empty" role="status">Loading visual…</p>`}
               </div>`
           }) : null}
         </div>
