@@ -26,8 +26,9 @@ type cleanupFunc func(context.Context) error
 // Application is the complete process-facing surface. Construction details
 // stay behind the private lifecycle owner instead of leaking a service graph.
 type Application struct {
-	handler   http.Handler
-	lifecycle *applicationLifecycleOwner
+	maintenance *maintenanceAdmission
+	handler     http.Handler
+	lifecycle   *applicationLifecycleOwner
 }
 
 type applicationLifecycleOwner struct {

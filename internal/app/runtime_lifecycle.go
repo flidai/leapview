@@ -12,9 +12,10 @@ import (
 // runtimeLifecycle adapts process-owned workers and health signaling to
 // Application without retaining construction resources or HTTP routing.
 type runtimeLifecycle struct {
-	workers   Lifecycle
-	analytics *analyticsmodule.Module
-	workloads interface {
+	deferredWorkers bool
+	workers         Lifecycle
+	analytics       *analyticsmodule.Module
+	workloads       interface {
 		Close()
 		Drain(context.Context) error
 	}
@@ -34,7 +35,7 @@ func (l *runtimeLifecycle) Start(ctx context.Context) error {
 	if l == nil {
 		return errors.New("runtime is not initialized")
 	}
-	if l.workers != nil {
+	if l.workers != nil && !l.deferredWorkers {
 		if err := l.workers.Start(ctx); err != nil {
 			return err
 		}
@@ -86,4 +87,11 @@ func (l *runtimeLifecycle) Fatal() <-chan error {
 		return nil
 	}
 	return l.fatal
+}
+
+func (l *runtimeLifecycle) startPreparedWorkers(ctx context.Context) error {
+	if l == nil || l.workers == nil || !l.deferredWorkers {
+		return errors.New("prepared workers unavailable")
+	}
+	return l.workers.Start(ctx)
 }
