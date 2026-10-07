@@ -39,14 +39,14 @@ def prepare_private_var(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("predecessor-image", "candidate-image", "proxy-image", "tools", "bundle-root", "docker-package", "evidence-dir"):
+    for name in ("predecessor-image", "candidate-image", "proxy-image", "tools", "bundle-root", "docker-package", "controller", "evidence-dir"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--namespace-parent", type=json.loads, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise SystemExit("root required; fixture creates isolated namespaces")
     evidence_dir = args.evidence_dir.resolve()
-    validate_visible_paths((Path(__file__).resolve(), evidence_dir, args.tools, args.docker_package, *(getattr(args, key + "_image") for key in ("predecessor", "candidate", "proxy"))))
+    validate_visible_paths((Path(__file__).resolve(), evidence_dir, args.tools, args.docker_package, args.controller, *(getattr(args, key + "_image") for key in ("predecessor", "candidate", "proxy"))))
     if args.bundle_root.resolve().is_relative_to("/var"):
         raise SystemExit("bundle cache must remain outside fixture-hidden /var")
     evidence_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -60,6 +60,7 @@ def main():
     os.environ["PATH"] = str(args.tools.resolve() / "bin") + ":" + ":".join(str(Path(p).resolve()) for p in os.environ["PATH"].split(":"))
     docker_bin = str(args.docker_package.resolve() / "bin/docker")
     dockerd_bin = str(args.docker_package.resolve() / "bin/dockerd")
+    controller_bin = str(args.controller.resolve())
     registry_bin = str(args.tools.resolve() / "bin/registry")
     archives = {key: getattr(args, key + "_image").resolve() for key in ("predecessor", "candidate", "proxy")}
     kamal_source = Path(__file__).resolve().parents[2] / "kamal"
@@ -162,6 +163,7 @@ def main():
     def public(path="/readyz", *extra, check=True):
         return run("ip", "netns", "exec", "public", "curl", "--noproxy", "*", "--silent", "--show-error", "--fail", "--connect-timeout", "2", "--max-time", "10", "--cacert", "/root/tls.crt", "--resolve", "managed.fixture.invalid:443:198.18.0.1", *extra, "https://managed.fixture.invalid" + path, check=check)
     try:
+        evidence["controllerSHA256"] = hashlib.sha256(Path(controller_bin).read_bytes()).hexdigest()
         # Fail immediately with the daemon's diagnostic, rather than polling a
         # listener for a minute when the runner lacks an OpenSSH prerequisite.
         run(shutil.which("sshd"), "-t", "-f", "/root/sshd_config")
@@ -207,6 +209,82 @@ def main():
         def control(kind, action):
             body = json.dumps({"revision": ("a" if kind == "predecessor" else "b") * 40, "operation": "sha256:" + "c" * 64})
             return run("curl", "--silent", "--show-error", "--fail", "--unix-socket", "/var/lib/leapview/home/maintenance.sock", "-X", "POST", "-d", body, "http://maintenance/" + action)
+        def qualify_capacity():
+            # Exercise the shipped controller against this real private daemon.
+            # No release request or artifact-admission record is manufactured.
+            journal = Path("/var/lib/leapviewctl")
+            journal.mkdir(mode=0o700)
+            docker_root = docker("info", "--format", "{{.DockerRootDir}}").stdout.strip()
+            assert docker_root == "/var/lib/docker"
+            paths = ["/var/lib/leapview/home", str(journal), docker_root]
+            assert len({os.stat(path).st_dev for path in paths}) == 1
+            reserve = {"freeBytes": 1048576, "freeInodes": 10}
+            profile = {
+                "version": 1, "target": "transport-fixture", "root": str(root),
+                "stateRoot": str(journal), "home": paths[0],
+                "socket": paths[0] + "/maintenance.sock", "service": "leapview",
+                "hostname": "managed.fixture.invalid", "proxyImage": references["proxy"],
+                "admissionRoot": "/var/lib/leapview-admission",
+                "capacity": {"dockerRootDir": docker_root, "home": dict(reserve),
+                             "stateRoot": dict(reserve), "docker": dict(reserve)},
+            }
+            profile_path = root / "capacity-profile.json"
+            command = [controller_bin, "host", "managed-release", "capacity", "--profile", str(profile_path)]
+            predecessor_name = "leapview-web-" + "a" * 40
+            before = json.loads(docker("inspect", predecessor_name).stdout)[0]
+            gate_before = gate.read_bytes()
+
+            def diagnostic():
+                profile_path.write_text(json.dumps(profile))
+                profile_path.chmod(0o600)
+                result = run(*command, env=env, check=False, timeout=30)
+                report = json.loads(result.stdout)
+                assert isinstance(report["passed"], bool)
+                return result, report
+
+            def unchanged_predecessor():
+                assert list(journal.iterdir()) == [], "read-only capacity check mutated the journal"
+                assert gate.read_bytes() == gate_before, "capacity check changed ingress"
+                after = json.loads(docker("inspect", predecessor_name).stdout)[0]
+                assert (after["Id"], after["State"]["StartedAt"]) == (before["Id"], before["State"]["StartedAt"])
+                assert after["State"]["Running"] and public().stdout == "a" * 40
+
+            healthy_result, healthy = diagnostic()
+            assert healthy_result.returncode == 0 and healthy["passed"], healthy
+            assert len(healthy["filesystems"]) == 1, healthy
+            measured = healthy["filesystems"][0]
+            assert {item["path"] for item in measured["paths"]} == set(paths), measured
+            assert {item["role"] for item in measured["paths"]} == {"home", "stateRoot", "docker"}, measured
+            assert measured["device"] == "linux-device:" + str(os.stat(paths[0]).st_dev), measured
+            assert measured["requiredBytes"] == 3 * reserve["freeBytes"], measured
+            assert measured["requiredInodes"] == 3 * reserve["freeInodes"], measured
+            actual = os.statvfs(paths[0])
+            assert 0 < measured["freeBytes"] <= actual.f_blocks * actual.f_frsize
+            assert 0 < measured["freeInodes"] <= actual.f_files
+            unchanged_predecessor()
+            # Exceed the entire filesystem, so concurrent daemon bookkeeping
+            # cannot turn this deterministic rejection into a successful check.
+            profile["capacity"]["docker"]["freeBytes"] = actual.f_blocks * actual.f_frsize + 1
+            rejected_result, rejected = diagnostic()
+            assert rejected_result.returncode != 0 and not rejected["passed"], rejected
+            assert "insufficient free capacity" in rejected.get("error", ""), rejected
+            assert rejected["filesystems"][0]["requiredBytes"] > rejected["filesystems"][0]["freeBytes"]
+            unchanged_predecessor()
+            profile["capacity"]["docker"] = dict(reserve, freeInodes=actual.f_files + 1)
+            inode_result, inode_rejected = diagnostic()
+            assert inode_result.returncode != 0 and not inode_rejected["passed"], inode_rejected
+            assert "insufficient free capacity" in inode_rejected.get("error", ""), inode_rejected
+            assert inode_rejected["filesystems"][0]["requiredInodes"] > inode_rejected["filesystems"][0]["freeInodes"]
+            unchanged_predecessor()
+            profile["capacity"]["docker"] = dict(reserve)
+            profile["capacity"]["dockerRootDir"] = "/var/lib/mismatched-docker"
+            mismatch_result, mismatch = diagnostic()
+            assert mismatch_result.returncode != 0 and not mismatch["passed"], mismatch
+            assert "Docker data root differs" in mismatch.get("error", ""), mismatch
+            unchanged_predecessor()
+            evidence["capacity"] = {"healthy": healthy, "bytesRejected": rejected,
+                                    "inodesRejected": inode_rejected, "dockerRootMismatch": mismatch,
+                                    "predecessorUnchanged": True}
         set_gate(False)
         kamal("predecessor", "proxy", "reboot", "--confirmed")
         for index, kind in enumerate(("predecessor", "candidate", "predecessor")):
@@ -218,6 +296,8 @@ def main():
             kamal(kind, "proxy", "reboot", "--confirmed")
             wait(lambda: public(check=False).returncode == 0)
             assert public().stdout == ("a" if kind == "predecessor" else "b") * 40
+            if index == 0:
+                qualify_capacity()
             stream = subprocess.Popen(["ip", "netns", "exec", "public", "curl", "--noproxy", "*", "--silent", "--show-error", "--fail", "--no-buffer", "--max-time", "90", "--cacert", "/root/tls.crt", "--resolve", "managed.fixture.invalid:443:198.18.0.1", "https://managed.fixture.invalid/updates"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             assert select.select([stream.stdout], [], [], 10)[0], "proxy buffered the fixture SSE frame"
             assert stream.stdout.readline() == "event: transport-fixture\n"
@@ -237,7 +317,7 @@ def main():
             kamal(kind, "app", "stop")
             stopped = json.loads(docker("inspect", "leapview-web-" + ("a" if kind == "predecessor" else "b") * 40).stdout)[0]
             assert not stopped["State"]["Running"] and stopped["State"]["ExitCode"] == 0
-        evidence.update(passed=True, images=references, kamalVersion="2.12.0", proxyVersion="v0.9.2", assertions=["private-ingress", "verified-custom-tls", "proxy-route-reboot", "offline-candidate-and-predecessor-boot", "acknowledged-file-write-preserved", "stream-frame-and-close", "clean-stop"], archiveSHA256={k: hashlib.sha256(v.read_bytes()).hexdigest() for k, v in archives.items()})
+        evidence.update(passed=True, images=references, kamalVersion="2.12.0", proxyVersion="v0.9.2", assertions=["private-ingress", "verified-custom-tls", "proxy-route-reboot", "offline-candidate-and-predecessor-boot", "acknowledged-file-write-preserved", "stream-frame-and-close", "clean-stop", "real-filesystem-capacity", "capacity-rejection-preserves-predecessor"], archiveSHA256={k: hashlib.sha256(v.read_bytes()).hexdigest() for k, v in archives.items()})
     finally:
         if stream and stream.poll() is None:
             stream.terminate()
