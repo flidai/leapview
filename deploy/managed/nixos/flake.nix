@@ -75,6 +75,7 @@
         boot-test = import ./tests/boot.nix {
           inherit pkgs;
           modules = self.nixosModules;
+          deployRs = deploy-rs;
         };
       };
       formatter.${system} = pkgs.nixfmt;

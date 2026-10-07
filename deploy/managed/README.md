@@ -72,15 +72,27 @@ behavior. The [application and guest-boot follow-up](rehearsal-application-2026-
 records the subsequent real Kamal and emulated NixOS tests.
 
 An optional, slower integration test (`task managed:hosts:boot-test`) boots
-isolated app/database/outsider guests:
+isolated app/database/outsider/operator guests:
 
 ```sh
 nix build path:./deploy/managed/nixos#boot-test --no-link -L
 ```
 
 It tests TLS, public proxy ingress, private-interface filtering, bypass-port
-denial, firewall reload/restart, Docker restart and persistence across guest
-reboots. KVM is optional; software emulation is much slower. The emulated fixture
+denial, firewall reload/restart, Docker restart and persistence across baseline
+guest reboots. A disposable controller then uses the locked deploy-rs client
+to update both installed host roles over SSH with pinned host keys. The test
+injects a failed application activation and withholds database activation
+confirmation to exercise autoRollback and magicRollback. It checks the active
+system and persistent profile, application files, database rows, SSH access,
+Docker ingress and verified database TLS after updates and recovery.
+
+The test uses generated fixture TLS and upstream public test SSH keys only.
+It never contacts a provider or imports private inventory. QEMU reboots from its
+test image, so the reboot checks establish baseline persistence; the update and
+rollback assertions establish running-system and profile recovery, not firmware
+selection of an updated boot generation or recovery from actual network loss.
+KVM is optional; software emulation is much slower. The emulated fixture
 starts containerd separately to avoid dockerd's short internal startup deadline.
 It does not exercise Disko, firmware boot or Hetzner networking.
 
