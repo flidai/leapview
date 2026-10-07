@@ -461,7 +461,23 @@ model GroupMemberAuditPayload {
   memberPrincipalId: string;
 }
 
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+@apigen.auditSchema(#{ schemaVersion: 2, retention: "security" })
+@example(#{
+  operationId: "createGrant",
+  resourceId: "connection:sample",
+  resourceKind: ResourceKind.connection,
+  environment: "dev",
+  subjectId: "principal:author",
+  subjectType: "principal",
+  capability: "",
+  permissionProfile: "leapview.permissions/v1",
+  permissions: #[#{
+    action: PermissionAction.connectionUpload,
+    profile: PermissionCatalogProfile.v1,
+    target: #{ scope: PermissionScope.resource, projectId: "project:analytics", resourceKind: ResourceKind.connection, resourceId: "connection:sample" },
+  }],
+  surface: "api",
+})
 model GrantAuditPayload {
   @apigen.auditInternal
   operationId: string;
@@ -476,7 +492,13 @@ model GrantAuditPayload {
   @apigen.auditPublic
   subjectType: string;
   @apigen.auditPublic
-  capability: Capability;
+  /** Empty for typed grants; legacy grants retain the exact validated capability. */
+  capability: string;
+  @apigen.auditPublic
+  /** Empty for legacy grants; typed grants retain the native permission profile. */
+  permissionProfile: string;
+  @apigen.auditInternal
+  permissions: PermissionPair[];
   @apigen.auditPublic
   surface: string;
 }
@@ -623,10 +645,31 @@ model GrantAdminEnvelopeAuditPayload {
 alias GrantAdminEnvelopeCreated = CreatedJson<GrantAdminEnvelopeResponse>;
 alias GrantAdminEnvelopeRevoked = OkJson<GrantAdminEnvelopeResponse>;
 
-/** Mutable target policy intent; publication activates its graph-bound grants. */
-model TargetGrantCreateRequest extends GrantRequest {
+/** Mutable target policy intent; publication activates its graph-bound grants. Supply either a legacy capability or a native permission profile with exact action-target pairs, never both. */
+@example(#{
+  id: "sample-fixture-upload",
+  resourceKind: ResourceKind.connection,
+  resourceId: "connection:sample",
+  subjectType: "principal",
+  subjectId: "principal:author",
+  permissionProfile: PermissionCatalogProfile.v1,
+  permissions: #[#{
+    action: PermissionAction.connectionUpload,
+    profile: PermissionCatalogProfile.v1,
+    target: #{ scope: PermissionScope.resource, projectId: "project:analytics", resourceKind: ResourceKind.connection, resourceId: "connection:sample" },
+  }],
+  expectedRevision: 3,
+})
+model TargetGrantCreateRequest {
   id: string;
   name?: string;
+  resourceKind: ResourceKind;
+  resourceId: ResourceId;
+  subjectType: string;
+  subjectId: string;
+  capability?: Capability;
+  permissionProfile?: PermissionCatalogProfile;
+  permissions?: PermissionPair[];
   expectedRevision: int64;
 }
 
