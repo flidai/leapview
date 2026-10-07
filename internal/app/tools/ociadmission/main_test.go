@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,7 +79,7 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := liveTools(t)
 			env := testEnv(map[string]string{
-				"PATH": bin + ":/usr/bin:/bin", "GH_TOKEN": "fixture-token",
+				"PATH": bin, "GH_TOKEN": "fixture-token",
 				"GITHUB_REPOSITORY": repositoryIdentity, "OCI_TEST_MODE": tc.mode,
 			})
 			var output bytes.Buffer
@@ -202,7 +203,7 @@ func TestLiveVulnerabilityReport(t *testing.T) {
 				reportPath = t.TempDir()
 			}
 			env := testEnv(map[string]string{
-				"PATH": bin + ":/usr/bin:/bin", "GH_TOKEN": "fixture-token",
+				"PATH": bin, "GH_TOKEN": "fixture-token",
 				"GITHUB_REPOSITORY": repositoryIdentity, "OCI_TEST_MODE": tc.mode,
 				"GITHUB_OUTPUT": githubOutput,
 			})
@@ -492,6 +493,17 @@ func testEnv(values map[string]string) []string {
 func liveTools(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	mkdir, err := exec.LookPath("mkdir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkdir, err = filepath.Abs(mkdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(mkdir, filepath.Join(dir, "mkdir")); err != nil {
+		t.Fatal(err)
+	}
 	writeTool(t, filepath.Join(dir, "gh"), "#!/bin/sh\nset -eu\nif [ \"$3\" = --help ]; then exit 0; fi\nrepository='https://github.com/"+repositoryIdentity+"'\nworkflow='https://github.com/"+testWorkflow+"@refs/heads/main'\nrevision='"+testRevision+"'\n[ \"$OCI_TEST_MODE\" = wrong-repository ] && repository='https://github.com/attacker/example'\n[ \"$OCI_TEST_MODE\" = wrong-workflow ] && workflow='https://github.com/flidai/leapview/.github/workflows/untrusted.yml@refs/heads/main'\n[ \"$OCI_TEST_MODE\" = wrong-revision ] && revision='ffffffffffffffffffffffffffffffffffffffff'\nprintf '[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryURI\":\"%s\",\"buildSignerURI\":\"%s\",\"sourceRepositoryDigest\":\"%s\"}}}}]\\n' \"$repository\" \"$workflow\" \"$revision\"\n")
 	writeTool(t, filepath.Join(dir, "docker"), "#!/bin/sh\nset -eu\ncase \"$*\" in\n  *'imagetools inspect'*)\n    [ \"$OCI_TEST_MODE\" = missing-sbom ] && printf '{}\\n' || printf '{\"SPDX\":{\"SPDXID\":\"SPDXRef-DOCUMENT\"}}\\n';;\n  *) exit 64;;\nesac\n")
 	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\ncache_dir=''\naction=''\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --cache-dir) cache_dir=$2; shift 2;;\n    version|image) action=$1; shift; break;;\n    *) shift;;\n  esac\ndone\nif [ \"$action\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\ncase \" $* \" in *' --platform linux/arm64 '*) ;; *) printf 'target platform was not explicit\\n' >&2; exit 71;; esac\nmkdir -p \"$cache_dir/db\" \"$cache_dir/java-db\"\nprintf '{\"Version\":2,\"UpdatedAt\":\"2026-09-30T12:00:00Z\",\"NextUpdate\":\"2026-10-01T12:00:00Z\",\"DownloadedAt\":\"2026-09-30T12:01:00Z\"}\\n' > \"$cache_dir/db/metadata.json\"\nprintf '{\"Version\":1,\"UpdatedAt\":\"2026-09-30T12:00:00Z\",\"NextUpdate\":\"2026-10-01T12:00:00Z\",\"DownloadedAt\":\"2026-09-30T12:01:00Z\"}\\n' > \"$cache_dir/java-db/metadata.json\"\nif [ \"$OCI_TEST_MODE\" = unavailable ]; then printf 'registry unavailable with token %s\\n' \"$GH_TOKEN\" >&2; exit 70; fi\ncase \"$OCI_TEST_MODE\" in\n  malformed) printf '{broken\\n';;\n  multiple) printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\",\"PkgName\":\"openssl\",\"InstalledVersion\":\"3.0.1\",\"FixedVersion\":\"3.0.2\",\"Severity\":\"HIGH\"},{\"VulnerabilityID\":\"CVE-2026-0002\",\"PkgName\":\"curl\",\"InstalledVersion\":\"8.1.0\",\"FixedVersion\":\"8.1.1\",\"Severity\":\"MEDIUM\"}]}]}\\n';;\n  vulnerable) printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n';;\n  *) printf '{\"Results\":[]}\\n';;\nesac\n")
