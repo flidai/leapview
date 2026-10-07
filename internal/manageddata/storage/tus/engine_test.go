@@ -99,6 +99,67 @@ func TestEngineCreateResumeWriteAndFinalize(t *testing.T) {
 	}
 }
 
+func TestEngineRecreatedResumePreservesPartialOffsetAndFinalizes(t *testing.T) {
+	engine, blobs, uploadRoot := newEngine(t)
+	body := []byte("resumable upload content")
+	expected := blobFor(body)
+	metadata := map[string]string{"filename": "orders.csv"}
+	created, err := engine.Create(t.Context(), storage.CreateUpload{
+		ID: "upload-recreated", Size: int64(len(body)), Metadata: metadata,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial := body[:9]
+	written, err := engine.WriteChunk(t.Context(), created.ID, 0, bytes.NewReader(partial))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written.Offset != int64(len(partial)) {
+		t.Fatalf("WriteChunk() offset = %d, want %d", written.Offset, len(partial))
+	}
+
+	// A new engine over the same file store must recover the persisted upload state.
+	restarted, err := managedtus.New(uploadRoot, blobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := restarted.Resume(t.Context(), created.ID)
+	if err != nil {
+		t.Fatalf("Resume() after engine recreation = %v", err)
+	}
+	if resumed.Offset != int64(len(partial)) || resumed.Size != int64(len(body)) || resumed.Metadata["filename"] != metadata["filename"] {
+		t.Fatalf("Resume() after engine recreation = %#v", resumed)
+	}
+	if _, err := restarted.WriteChunk(t.Context(), resumed.ID, resumed.Offset, bytes.NewReader(body[len(partial):])); err != nil {
+		t.Fatalf("WriteChunk() after engine recreation = %v", err)
+	}
+	finalized, err := restarted.Finalize(t.Context(), created.ID, expected)
+	if err != nil {
+		t.Fatalf("Finalize() after engine recreation = %v", err)
+	}
+	reader, err := blobs.Open(t.Context(), finalized.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read = %v, close = %v", readErr, closeErr)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("finalized content = %q, want %q", got, body)
+	}
+	if err := restarted.Abort(t.Context(), created.ID); err != nil {
+		t.Fatalf("cleanup finalized upload = %v", err)
+	}
+	for _, suffix := range []string{"", ".info"} {
+		if _, statErr := os.Stat(filepath.Join(uploadRoot, created.ID+suffix)); !os.IsNotExist(statErr) {
+			t.Fatalf("finalized staging %q remains: %v", suffix, statErr)
+		}
+	}
+}
+
 func TestEngineRejectsInvalidRequestsAndAbortIsIdempotent(t *testing.T) {
 	engine, _, _ := newEngine(t)
 	if _, err := engine.Create(t.Context(), storage.CreateUpload{ID: "../escape", Size: 1}); !errors.Is(err, storage.ErrInvalid) {

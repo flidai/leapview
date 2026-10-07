@@ -34,6 +34,13 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('Nix source-generation inputs select their consumer builds', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  for (const input of ['scripts/generate_build_sources.sh', 'scripts/time_build_phase.sh']) {
+    expect(workflow.on.pull_request.paths.some((pattern: string) => new Bun.Glob(pattern).match(input))).toBe(true)
+  }
+})
+
 test('orchestration archive manifest checks run in the CI contract lane', () => {
   const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_orchestration_cache.py'], { encoding: 'utf8' })
   if (result.status !== 0) throw new Error(result.stdout + result.stderr)
@@ -959,6 +966,21 @@ test('Nix development evaluates the native ARM runtime-security shell without bu
     .toBe('test "$(nix eval --raw --no-update-lock-file .#devShells.aarch64-linux.runtime-security.system)" = aarch64-linux')
   expect(armShell).toBe(flakeCheck + 1)
   expect(armShell).toBeLessThan(format)
+})
+
+test('Nix development evaluates both native host-verifier shells and generation tools', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  const steps = workflow.jobs.development.steps
+  const verifierShell = steps.findIndex((step: any) => step.name === 'Check both native host-verifier shells')
+  const format = steps.findIndex((step: any) => step.name === 'Check formatting')
+  expect(steps[verifierShell].run).toContain("('x86_64-linux', 'aarch64-linux')")
+  expect(steps[verifierShell].run).toContain("f'{shell}.system'")
+  expect(steps[verifierShell].run).toContain("f'{shell}.nativeBuildInputs'")
+  for (const tool of ['go-', 'bun-', 'go1.26.7', 'nodejs-', 'go-task-']) {
+    expect(steps[verifierShell].run).toContain(tool)
+  }
+  expect(verifierShell).toBeGreaterThan(steps.findIndex((step: any) => step.name === 'Check the native ARM runtime-security shell'))
+  expect(verifierShell).toBeLessThan(format)
 })
 
 test('image qualification rejects fixture tags and checks native platform before the Docker image ID probe', () => {

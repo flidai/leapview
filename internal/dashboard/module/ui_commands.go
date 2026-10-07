@@ -12,3 +12,9 @@ func (*Module) PublicationCommandBindings() map[string]uicommand.Binding {
 		"rotate":  dashboardgen.GenUIActionRotateDashboardPublication(),
 	}
 }
+
+// DashboardAuthoringCommandBinding identifies the generated operation used by
+// browser workflows that append an independently authored dashboard revision.
+func (*Module) DashboardAuthoringCommandBinding() uicommand.Binding {
+	return dashboardgen.GenUIActionExecuteDashboardAuthoringCommand()
+}

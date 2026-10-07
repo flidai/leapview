@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flidai/leapview/internal/app/cli/managedmaintenance"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -72,6 +73,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	addRecoveryAdmissionCommand(ctx, host)
 	addUpgradeCommand(ctx, host, options)
 	addMaintenanceCommands(ctx, host, options)
+	host.AddCommand(managedmaintenance.Command(ctx))
 	return host
 }
 

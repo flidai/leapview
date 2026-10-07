@@ -248,6 +248,21 @@ func TestToolSchemasRequireProviderPortableSubset(t *testing.T) {
 			want:   "const",
 		},
 		{
+			name:   "maxItems",
+			schema: json.RawMessage(`{"type":"object","properties":{"values":{"type":"array","maxItems":3}}}`),
+			want:   "maxItems",
+		},
+		{
+			name:   "minItems",
+			schema: json.RawMessage(`{"type":"object","properties":{"values":{"type":"array","minItems":1}}}`),
+			want:   "minItems",
+		},
+		{
+			name:   "minProperties",
+			schema: json.RawMessage(`{"type":"object","properties":{"values":{"type":"object","minProperties":1}}}`),
+			want:   "minProperties",
+		},
+		{
 			name:   "format",
 			schema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string","format":"date"}}}`),
 			want:   "format",

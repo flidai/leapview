@@ -54,6 +54,19 @@ func TestSemanticDatasetRuntimeDoesNotDualRead(t *testing.T) {
 			}
 		}
 	}
+	projectionPath := filepath.Join(root, "internal/project/http/data_explorer_projection.go")
+	projectionData, err := os.ReadFile(projectionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		"model.Tables", "model.Datasets", "model.Dimensions", "model.Relationships", "model.Filters", "model.Metrics",
+		"model.ResolveMetric(", "model.ResolveDimension(", "model.SafeRelationshipPath(",
+	} {
+		if strings.Contains(string(projectionData), forbidden) {
+			t.Errorf("internal/project/http/data_explorer_projection.go reads authored semantic model through %q; use activation-owned compiled facts", forbidden)
+		}
+	}
 	for _, relative := range files {
 		matches, err := filepath.Glob(filepath.Join(root, relative, "*.go"))
 		if err != nil {

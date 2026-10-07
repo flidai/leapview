@@ -121,7 +121,7 @@ func (r NativeRequest) Identity() (Identity, error) {
 	if err := r.Profile.Validate(); err != nil {
 		return Identity{}, err
 	}
-	mode, pending, err := classifySources(p.SourceBefore, p.SourceAfter)
+	mode, pending, err := releasecontract.ClassifySources(p.SourceBefore, p.SourceAfter)
 	if err != nil {
 		return Identity{}, err
 	}

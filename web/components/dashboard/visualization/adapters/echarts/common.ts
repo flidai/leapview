@@ -99,6 +99,9 @@ export function baseOption(envelope: VisualizationEnvelope, context: RendererCon
   const dataSummary = labelAccessibilitySummary(envelope, context)
   return {
     animation: false,
+    // Temporal labels use UTC below; generate ticks in the same timezone so
+    // browser-local midnight cannot appear as the previous calendar day.
+    useUTC: true,
     aria: { enabled: true, description: [description, dataSummary, completenessAccessibilitySummary(envelope)].filter(Boolean).join(' ') },
     backgroundColor: 'transparent',
     color: [...context.colors.data],

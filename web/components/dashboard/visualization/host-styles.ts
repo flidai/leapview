@@ -263,7 +263,8 @@ export const visualizationHostStyles = css`
     padding: var(--base-size-4);
   }
   .visual-options .menu:popover-open { display: grid; }
-  .visual-options .menu button {
+  .visual-options .menu button,
+  .visual-options .menu a {
     display: flex;
     align-items: center;
     gap: var(--base-size-8);
@@ -278,9 +279,12 @@ export const visualizationHostStyles = css`
     font: var(--lv-type-caption);
     font-weight: var(--base-text-weight-medium);
     text-align: left;
+    text-decoration: none;
   }
   .visual-options .menu button:hover,
-  .visual-options .menu button:focus-visible {
+  .visual-options .menu button:focus-visible,
+  .visual-options .menu a:hover,
+  .visual-options .menu a:focus-visible {
     border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
     background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
     outline: var(--focus-outline, var(--lv-border-default));

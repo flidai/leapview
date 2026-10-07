@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/app/cli/installationstate"
-	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
 
@@ -150,9 +149,8 @@ func (e *NativeEffects) waitApp(ctx context.Context, name, image, revision strin
 		info, err := e.inspect(ctx, name)
 		if err == nil && info.State.Running && info.Config.Image == image {
 			if _, err = e.docker(ctx, "exec", name, "leapview", "healthcheck"); err == nil {
-				raw, err := e.docker(ctx, "exec", name, "leapview", "version", "--json")
-				var version buildinfo.Identity
-				if err == nil && json.Unmarshal([]byte(raw), &version) == nil && !version.Dirty && version.Revision == revision {
+				version, err := e.appVersion(ctx, name)
+				if err == nil && version.Revision == revision {
 					return nil
 				}
 			}
@@ -592,7 +590,7 @@ func (e *NativeEffects) ExposeCandidate(ctx context.Context, id Identity) error 
 	if id != e.id {
 		return ErrIdentity
 	}
-	marker, err := candidatePublicMarker(filepath.Join(e.operation, "original-config"), id.Candidate)
+	marker, err := nativeCandidatePublicMarker(filepath.Join(e.operation, "original-config"), e.request)
 	if err != nil {
 		return err
 	}

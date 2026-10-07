@@ -1,9 +1,13 @@
 import json
+import subprocess
+import os
+import shutil
 from pathlib import Path
 import sys
 import urllib.parse
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -115,6 +119,7 @@ class HostGuestReceiptTests(unittest.TestCase):
         self._write("postgres-image-repo-digests.json", json.dumps(["postgres@sha256:" + "8" * 64]).encode() + b"\n")
         self._write("postgres-image-id.txt", (self.postgres_fixture["imageID"] + "\n").encode())
         self._write("postgres-image-platform.txt", b"linux/amd64\n")
+        self._write("postgres-init-bundle-sha256.txt", (self.postgres_fixture["initScriptSHA256"] + "\n").encode())
         self._write("postgres-compose-network-labels.txt", b"leapview default\n")
         self._write("postgres-compose-state-volume-labels.txt", b"leapview leapview-state\n")
         self._write("pool-probe-state-volume-owner.txt", b"999:999:999:999:755\n")
@@ -603,6 +608,11 @@ class HostGuestReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(host_guest.HostGuestError, "postgres-image-id.txt"):
             host_guest._validate_receipt(invalid, self.evidence)
 
+        invalid = json.loads(json.dumps(receipt))
+        invalid["guest"]["postgresFixture"]["initScriptSHA256"] = "sha256:" + "9" * 64
+        with self.assertRaisesRegex(host_guest.HostGuestError, "postgres-init-bundle-sha256.txt"):
+            host_guest._validate_receipt(invalid, self.evidence)
+
         order_path = self.evidence / "pool-probe-order.json"
         original = order_path.read_bytes()
         order = json.loads(original)
@@ -911,6 +921,149 @@ class HostGuestReceiptTests(unittest.TestCase):
 
 
 class FirstInstallGuestFixtureTests(unittest.TestCase):
+    def test_postgres_init_transfer_rejects_changed_bytes(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                data = kwargs.get("input_bytes")
+                return subprocess.run(
+                    ["bash", "-c", command], input=data + b"# changed\n" if data else None,
+                    check=True, capture_output=True,
+                ).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "verified-init.sh"
+            source.write_text("#!/bin/sh\nexit 0\n")
+            with self.assertRaisesRegex(host_guest.HostGuestError, "differs from the verified Compose archive"):
+                host_guest._transfer_postgres_init(Guest(), root, source, str(root / "guest-init.sh"))
+
+    def test_pool_fixture_uses_verified_bundle_init_without_oci_fixture(self):
+        class PreparedFixture(Exception):
+            pass
+
+        class Guest:
+            def run(self, command, **kwargs):
+                if command.startswith("cat ") and command.endswith("/leapview.env.example"):
+                    raise PreparedFixture()
+                return subprocess.run(
+                    ["bash", "-c", command], input=kwargs.get("input_bytes"),
+                    check=True, capture_output=True,
+                ).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = root / "oci-payload"
+            payload.mkdir()
+            (payload / "compose.yaml").write_text("services: {}\n")
+            bundle_init = root / "verified-bundle/qualification/postgres-init.sh"
+            bundle_init.parent.mkdir(parents=True)
+            source = (ROOT / "deploy/postgres/init.sh").read_bytes()
+            bundle_init.write_bytes(source)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            with self.assertRaises(PreparedFixture):
+                host_guest._prepare_pool_fixture(
+                    Guest(), evidence, args=SimpleNamespace(source_root=ROOT),
+                    paths={"root": str(root), "payload": str(payload)}, docker_env="",
+                    host_config={}, nonce="3" * 32, candidate_image_id="sha256:" + "4" * 64,
+                    postgres_init=bundle_init,
+                )
+            transferred = root / "postgres-fixture/postgres-init.sh"
+            self.assertEqual(transferred.read_bytes(), source)
+            self.assertEqual(transferred.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(
+                (evidence / "postgres-init-bundle-sha256.txt").read_text().strip(), host_guest._digest(source),
+            )
+            self.assertFalse((payload / "qualification/postgres-init.sh").exists())
+
+    def test_prerequisite_timeout_retains_progress_and_rejects_success(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                return subprocess.run(["bash", "-c", command], check=True, capture_output=True).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "download failed \\(124\\)"):
+                host_guest._guest_prerequisite(
+                    Guest(), evidence, "download", "printf 'layer downloaded\\n'; sleep 30", timeout=1,
+                )
+            self.assertEqual((evidence / "prerequisite-download.log").read_bytes(), b"layer downloaded\n")
+            self.assertEqual((evidence / "prerequisite-download-exit-code.txt").read_bytes(), b"124\n")
+
+    def test_openssl_setup_skips_apt_when_available_and_propagates_install_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            shell = shutil.which("bash")
+            openssl = fixture / "openssl"
+            openssl.write_text(f"#!{shell}\nprintf 'OpenSSL fixture\\n'\n")
+            openssl.chmod(0o755)
+            apt = fixture / "apt-get"
+            apt.write_text(f"#!{shell}\nexit 99\n")
+            apt.chmod(0o755)
+            command = host_guest._openssl_setup_command()
+            environment = dict(os.environ, PATH=str(fixture))
+            present = subprocess.run([shell, "-c", command], env=environment, capture_output=True)
+            self.assertEqual(present.returncode, 0)
+            self.assertEqual(present.stdout, b"OpenSSL fixture\n")
+            openssl.unlink()
+            missing = subprocess.run([shell, "-c", command], env=environment, capture_output=True)
+            self.assertEqual(missing.returncode, 99)
+
+    def test_incomplete_image_pull_cannot_produce_identity_evidence(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                if "docker pull" not in command:
+                    raise AssertionError("image inspection must not follow a failed pull")
+                return b"124\nlayer: Download complete\n"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "candidate-image-pull failed \\(124\\)"):
+                host_guest._pull_payload(
+                    Guest(), evidence, image_reference=IMAGE, docker_env="DOCKER_CONFIG=/tmp/empty",
+                    payload_path="/tmp/payload", nonce="3" * 32,
+                )
+            self.assertEqual(
+                (evidence / "prerequisite-candidate-image-pull.log").read_bytes(), b"layer: Download complete\n",
+            )
+            self.assertFalse((evidence / "oci-repo-digests.json").exists())
+            self.assertFalse((evidence / "oci-image-id.txt").exists())
+
+    def test_prerequisite_failure_retains_bounded_diagnostics_and_stops_setup(self):
+        commands = []
+
+        class Guest:
+            def run(self, command, **kwargs):
+                commands.append(command)
+                if "apt-get install" in command:
+                    return b"100\nE: Not enough free space in /var/cache/apt/archives/\n"
+                return b"0\npackage index updated\n"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "apt-install failed \\(100\\)"):
+                host_guest._guest_package_setup(Guest(), "debian13", evidence=evidence)
+            self.assertEqual(len(commands), 2)
+            self.assertIn(b"Not enough free space", (evidence / "prerequisite-apt-install.log").read_bytes())
+            self.assertEqual((evidence / "prerequisite-apt-install-exit-code.txt").read_bytes(), b"100\n")
+
+    def test_prerequisite_probe_keeps_exit_status_and_bounds_output(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                return subprocess.run(["bash", "-c", command], check=True, capture_output=True).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "fixture failed \\(7\\)"):
+                host_guest._guest_prerequisite(
+                    Guest(), evidence, "fixture", "printf 'failure on stderr\\n' >&2; exit 7", timeout=10,
+                )
+            self.assertEqual((evidence / "prerequisite-fixture.log").read_bytes(), b"failure on stderr\n")
+            host_guest._guest_prerequisite(
+                Guest(), evidence, "large", "head -c 100000 /dev/zero", timeout=10,
+            )
+            self.assertEqual((evidence / "prerequisite-large.log").stat().st_size, 65536)
+
     def test_probe_credentials_and_urls_are_private_and_role_specific(self):
         credentials = host_guest._postgres_fixture_credentials()
         self.assertEqual(set(credentials), set(host_guest.POSTGRES_PASSWORD_KEYS))
@@ -951,6 +1104,7 @@ class FirstInstallGuestFixtureTests(unittest.TestCase):
         }).encode() + b"\n"
         operator = json.loads(host_guest._qualification_operator_config(generated, urls))
         self.assertEqual(operator["schemaVersion"], 1)
+        self.assertEqual(operator["postgresProfile"], "external")
         self.assertEqual(operator["postgres"], urls)
         self.assertEqual(operator["physicalPool"]["pool"], {"pool_id": "image-produced"})
         self.assertEqual(operator["physicalPool"]["evidence"], {"schema_version": 1, "evidence": {"checks": []}})

@@ -6,6 +6,7 @@ import visualizationir "github.com/flidai/leapview/internal/dashboard/visualizat
 // a visualization envelope.
 type VisualizationSignal struct {
 	SchemaVersion       int32                                               `json:"schemaVersion"`
+	ExploreHref         string                                              `json:"exploreHref"`
 	VisualID            string                                              `json:"visualID"`
 	RendererID          string                                              `json:"rendererID"`
 	SpecRevision        string                                              `json:"specRevision"`

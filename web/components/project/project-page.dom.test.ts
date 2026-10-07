@@ -1461,6 +1461,65 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
   }
 })
 
+test('connection configuration submits edited endpoint and credential references with the current revision', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=connection-admin`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const command = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const administration = element.shadowRoot?.querySelector('lv-connection-administration') as any
+      await administration?.updateComplete
+      let detail: unknown = null
+      administration.addEventListener('lv-connection-administration-save', (event: CustomEvent) => {
+        detail = event.detail
+      }, { once: true })
+
+      const configure = Array.from(administration.shadowRoot?.querySelectorAll('button') ?? [])
+        .find((button: any) => button.textContent?.trim() === 'Configure') as HTMLButtonElement | undefined
+      configure?.click()
+      await administration.updateComplete
+
+      const form = administration.shadowRoot?.querySelector('form') as HTMLFormElement
+      const authenticationMode = form.querySelector('[name="authenticationMode"]') as HTMLSelectElement
+      authenticationMode.value = 'external_bundle'
+      authenticationMode.dispatchEvent(new Event('change', { bubbles: true }))
+      await administration.updateComplete
+
+      for (const [name, value] of [
+        ['host', 'warehouse.example.test'],
+        ['database', 'analytics'],
+        ['credentialProjectId', 'project:secrets'],
+        ['credentialEnvironment', 'production'],
+        ['secretPath', '/connections/warehouse'],
+        ['secretKey', 'primary'],
+      ]) {
+        const input = administration.shadowRoot?.querySelector(`[name="${name}"]`) as HTMLInputElement
+        input.value = value
+      }
+      ;(administration.shadowRoot?.querySelector('form') as HTMLFormElement).requestSubmit()
+      return detail
+    })
+
+    expect(command).toEqual(expect.objectContaining({
+      action: 'create',
+      assetId: 'conn',
+      expectedRevision: 1,
+      logicalConnection: 'warehouse',
+      authenticationMode: 'external_bundle',
+      host: 'warehouse.example.test',
+      database: 'analytics',
+      credentialProjectId: 'project:secrets',
+      credentialEnvironment: 'production',
+      secretPath: '/connections/warehouse',
+      secretKey: 'primary',
+      surface: 'detail',
+    }))
+  } finally {
+    await page.close()
+  }
+})
+
 test('connection terminal command failure keeps the drawer state and offers reload guidance', async () => {
   const page = await browser.newPage()
   try {

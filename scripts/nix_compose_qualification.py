@@ -1207,7 +1207,7 @@ def main():
         qualification.add_argument("--platform", choices=sorted(PLATFORMS), required=True)
         qualification.add_argument("--admission-evidence", type=Path, required=True)
         qualification.add_argument("--controller-runtime-identity", type=Path, required=True)
-        qualification.add_argument("--runtime-identity", type=Path, required=True, help="actual installed app image version --json output")
+        qualification.add_argument("--runtime-identity", type=Path, required=True, help="actual installed app image version --format json output")
         qualification.add_argument("--qualification-report", type=Path, required=True)
         qualification.add_argument("--qualification-evidence-dir", type=Path, required=True)
         qualification.add_argument("--controller-evidence-dir", type=Path, required=True)

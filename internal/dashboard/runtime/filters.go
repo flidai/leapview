@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
@@ -395,4 +396,10 @@ func tableForField(field string) string {
 
 func isGridQuery(kind visualizationdefinition.QueryKind) bool {
 	return kind == visualizationdefinition.QueryDetail || kind == visualizationdefinition.QueryMatrix || kind == visualizationdefinition.QueryPivot
+}
+
+// QueryFiltersForVisual resolves the same scoped, applied predicates used by
+// dashboard execution, so consumers can preserve query semantics on handoff.
+func QueryFiltersForVisual(model *semanticmodel.Model, definition *dashboarddefinition.Definition, filters dashboard.Filters, visualID string) ([]reportdef.QueryFilter, error) {
+	return (&FilterService{}).semanticFilters(context.Background(), &modelRuntime{model: model}, definition, filters, "visual", visualID)
 }

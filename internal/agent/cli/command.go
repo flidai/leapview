@@ -28,17 +28,17 @@ type options struct {
 	target       string
 	token        string
 	conversation string
-	jsonOutput   bool
+	format       string
 	pagination   cliapi.PaginationOptions
 }
 
 // Command constructs the Agent command tree without depending on application
 // globals or process startup.
 func Command(ctx context.Context, dependencies Dependencies) *cobra.Command {
-	values := &options{}
+	values := &options{format: "text"}
 	parent := &cobra.Command{Use: "agent", Short: "Use the LeapView governed BI agent"}
 	ask := &cobra.Command{
-		Use:   "ask [question]",
+		Use:   "ask <question>",
 		Short: "Ask the LeapView agent a question",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,21 +48,21 @@ func Command(ctx context.Context, dependencies Dependencies) *cobra.Command {
 	ask.Flags().StringVar(&values.target, "target", "", "LeapView server URL")
 	ask.Flags().StringVar(&values.token, "token", "", "API token")
 	ask.Flags().StringVar(&values.conversation, "conversation", "", "existing agent conversation id")
-	ask.Flags().BoolVar(&values.jsonOutput, "json", false, "print JSON response")
+	ask.Flags().StringVar(&values.format, "format", values.format, "output format: text or json")
 
 	conversations := &cobra.Command{
 		Use:   "conversations",
 		Short: "List agent conversations",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := values.pagination.Validate(cmd); err != nil {
-				return err
+				return cliapi.NewUsageError(err)
 			}
 			return runConversations(ctx, dependencies.Client, values, cmd.OutOrStdout())
 		},
 	}
 	conversations.Flags().StringVar(&values.target, "target", "", "LeapView server URL")
 	conversations.Flags().StringVar(&values.token, "token", "", "API token")
-	conversations.Flags().BoolVar(&values.jsonOutput, "json", false, "print JSON response")
+	conversations.Flags().StringVar(&values.format, "format", values.format, "output format: text or json")
 	values.pagination.AddFlags(conversations)
 
 	tools := &cobra.Command{
@@ -79,6 +79,9 @@ func Command(ctx context.Context, dependencies Dependencies) *cobra.Command {
 }
 
 func runAsk(ctx context.Context, client cliapi.Client, values *options, question string, out io.Writer) error {
+	if values.format != "text" && values.format != "json" {
+		return cliapi.NewUsageError(fmt.Errorf("agent ask format must be text or json"))
+	}
 	if client == nil {
 		return fmt.Errorf("agent CLI API client is required")
 	}
@@ -153,13 +156,23 @@ func runAsk(ctx context.Context, client cliapi.Client, values *options, question
 			content = stringValue(message.ContentText)
 		}
 	}
-	if values.jsonOutput {
-		return json.NewEncoder(out).Encode(map[string]any{"conversationId": conversationID, "run": run, "content": content})
+	if values.format == "json" {
+		if err := json.NewEncoder(out).Encode(map[string]any{"conversationId": conversationID, "run": run, "content": content}); err != nil {
+			return err
+		}
+		if run.Status != "completed" {
+			return cliapi.NewReportedError(fmt.Errorf("agent run ended with status %s: %s", run.Status, stringValue(run.Error)))
+		}
+		return nil
 	}
-	fmt.Fprintln(out, content)
-	fmt.Fprintf(out, "\nconversation=%s run=%s stop=%s\n", conversationID, run.Id, stringValue(run.StopReason))
+	if _, err := fmt.Fprintln(out, content); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "\nconversation=%s run=%s stop=%s\n", conversationID, run.Id, stringValue(run.StopReason)); err != nil {
+		return err
+	}
 	if run.Status != "completed" {
-		return fmt.Errorf("agent run ended with status %s: %s", run.Status, stringValue(run.Error))
+		return cliapi.NewReportedError(fmt.Errorf("agent run ended with status %s: %s", run.Status, stringValue(run.Error)))
 	}
 	return nil
 }
@@ -179,6 +192,9 @@ func generatedAgentProblemError(operation string, problem apigenclient.ProblemDe
 }
 
 func runConversations(ctx context.Context, client cliapi.Client, values *options, out io.Writer) error {
+	if values.format != "text" && values.format != "json" {
+		return cliapi.NewUsageError(fmt.Errorf("agent conversations format must be text or json"))
+	}
 	if client == nil {
 		return fmt.Errorf("agent CLI API client is required")
 	}
@@ -195,7 +211,7 @@ func runConversations(ctx context.Context, client cliapi.Client, values *options
 	if err != nil {
 		return err
 	}
-	if values.jsonOutput {
+	if values.format == "json" {
 		return json.NewEncoder(out).Encode(response.Body.Items)
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)

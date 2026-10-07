@@ -543,6 +543,14 @@ func TestSASTShellBuildPreservesTracingAndPropagatesCommandFailures(t *testing.T
 	if runtime.GOOS == "windows" {
 		t.Skip("Linux SAST runner contract")
 	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bash, err = filepath.Abs(bash)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var document struct {
 		Jobs map[string]struct {
 			Steps []struct{ Name, Run, Shell string } `yaml:"steps"`
@@ -577,15 +585,15 @@ func TestSASTShellBuildPreservesTracingAndPropagatesCommandFailures(t *testing.T
 				}
 			}
 			write("modules", root+"\x00"+nested+"\x00", 0600)
-			write("securitysast", "#!/bin/bash\ncat \"$TEST_MODULES\"\n", 0700)
-			write("go", `#!/bin/bash
+			write("securitysast", "#!"+bash+"\ncat \"$TEST_MODULES\"\n", 0700)
+			write("go", "#!"+bash+"\n"+`
 printf '%s: %s\n' "$PWD" "$*" >> "$TEST_CALLS"
 count=$(wc -l < "$TEST_CALLS")
 if [ "$count" -eq "$TEST_FAIL" ]; then exit 23; fi
 `, 0700)
 			write("build.sh", script, 0600)
 			calls := filepath.Join(root, "calls")
-			cmd := exec.Command("/bin/bash", "--noprofile", "--norc", "-eo", "pipefail", filepath.Join(root, "build.sh"))
+			cmd := exec.Command(bash, "--noprofile", "--norc", "-eo", "pipefail", filepath.Join(root, "build.sh"))
 			cmd.Env = append(os.Environ(), "RUNNER_TEMP="+root, "PATH="+root+":"+os.Getenv("PATH"), "TEST_MODULES="+filepath.Join(root, "modules"), "TEST_CALLS="+calls, fmt.Sprintf("TEST_FAIL=%d", failAt))
 			output, err := cmd.CombinedOutput()
 			if (err == nil) != (failAt == 0) {

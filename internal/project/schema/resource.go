@@ -18,6 +18,7 @@ import (
 	"cuelang.org/go/cue"
 	cuecontext "cuelang.org/go/cue/cuecontext"
 	cueerrors "cuelang.org/go/cue/errors"
+	cueformat "cuelang.org/go/cue/format"
 	cuejsonschema "cuelang.org/go/encoding/jsonschema"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
@@ -329,21 +330,70 @@ func validateGeneratedCUE(kind Kind, value any) error {
 	return validateGeneratedCUEAt(kind, "", nil, value)
 }
 
-func validateGeneratedCUEAt(kind Kind, filename string, root *yaml.Node, value any) error {
-	ctx := cuecontext.New()
+type generatedCUESourceCache struct {
+	once    sync.Once
+	content []byte
+	err     error
+}
+
+// Keep only immutable formatted source in this cache. CUE contexts, values,
+// and syntax trees belong to one validation and are never shared across calls.
+var (
+	generatedConnectionCUESource generatedCUESourceCache
+	generatedSourceCUESource     generatedCUESourceCache
+	generatedModelCUESource      generatedCUESourceCache
+	generatedSemanticCUESource   generatedCUESourceCache
+)
+
+func generatedCUESourceForKind(kind Kind) ([]byte, error) {
+	var cache *generatedCUESourceCache
+	switch kind {
+	case KindConnection:
+		cache = &generatedConnectionCUESource
+	case KindSource:
+		cache = &generatedSourceCUESource
+	case KindModel:
+		cache = &generatedModelCUESource
+	case KindSemanticModel:
+		cache = &generatedSemanticCUESource
+	default:
+		return nil, fmt.Errorf("generated schema is not available for %s", kind)
+	}
+
+	cache.once.Do(func() {
+		cache.content, cache.err = buildGeneratedCUESource(kind)
+	})
+	return bytes.Clone(cache.content), cache.err
+}
+
+func buildGeneratedCUESource(kind Kind) ([]byte, error) {
 	schemaJSON, err := generatedJSONSchema(kind)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	ctx := cuecontext.New()
 	schemaValue := ctx.CompileBytes(schemaJSON, cue.Filename("generated-"+strings.ToLower(string(kind))+".schema.json"))
 	if err := schemaValue.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	file, err := cuejsonschema.Extract(schemaValue, &cuejsonschema.Config{ID: "https://leapview.dev/schemas/" + strings.ToLower(string(kind)) + ".schema.json"})
 	if err != nil {
+		return nil, err
+	}
+	content, err := cueformat.Node(file, cueformat.Simplify())
+	if err != nil {
+		return nil, err
+	}
+	return append(bytes.TrimSpace(content), '\n'), nil
+}
+
+func validateGeneratedCUEAt(kind Kind, filename string, root *yaml.Node, value any) error {
+	source, err := generatedCUESourceForKind(kind)
+	if err != nil {
 		return err
 	}
-	imported := ctx.BuildFile(file)
+	ctx := cuecontext.New()
+	imported := ctx.CompileBytes(source, cue.Filename("generated-"+strings.ToLower(string(kind))+".schema.json"))
 	if err := imported.Err(); err != nil {
 		return err
 	}

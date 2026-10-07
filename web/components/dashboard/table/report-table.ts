@@ -126,6 +126,7 @@ function columnVisibilityHandler(column: any, fallback: (checked: boolean) => vo
 export class ReportTable extends LitElement {
   static properties = {
     tableId: { attribute: 'table-id' },
+    exploreHref: { attribute: false },
     table: { attribute: 'table', converter: tableConverter },
     selectedCellKey: { state: true },
     viewportTop: { state: true },
@@ -138,6 +139,7 @@ export class ReportTable extends LitElement {
   }
 
   declare tableId: string
+  declare exploreHref?: string
   declare table: TableSignal
   declare private selectedCellKey: string
   declare private viewportTop: number
@@ -329,7 +331,7 @@ export class ReportTable extends LitElement {
       padding: var(--base-size-4);
     }
 
-    .menu button {
+    .menu button, .menu a {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
@@ -343,6 +345,7 @@ export class ReportTable extends LitElement {
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-medium);
       text-align: left;
+      text-decoration: none;
     }
 
     .menu svg {
@@ -356,8 +359,8 @@ export class ReportTable extends LitElement {
       stroke-width: 2;
     }
 
-    .menu button:hover,
-    .menu button:focus-visible {
+    .menu button:hover, .menu a:hover,
+    .menu button:focus-visible, .menu a:focus-visible {
       border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
       background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-control-hover)));
       outline: var(--focus-outline, var(--lv-border-default));
@@ -1659,6 +1662,7 @@ export class ReportTable extends LitElement {
               <summary aria-label="Visual options" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
               <div class="menu" role="menu">
                 <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
+                ${this.exploreHref ? html`<a role="menuitem" href=${this.exploreHref}>${visualMenuIcon('explore')}<span>Explore</span></a>` : null}
                 <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
                 <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
                 <button type="button" role="menuitem" ?disabled=${!hasSelection} @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>

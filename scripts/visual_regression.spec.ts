@@ -42,7 +42,11 @@ for (const state of states) {
           await openStableDashboard(page, new URL(state.path, baseURL!).toString(), state.heading)
           // The footer lays out independently of the visualization hosts.
           await expect(page.locator('lv-report-footer').locator('footer')).toBeInViewport({ ratio: 1 })
-          const screenshot = await page.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' })
+          const screenshot = await page.screenshot({
+            animations: 'disabled', caret: 'hide', scale: 'css',
+            // Development tooling is independently qualified and is not dashboard content.
+            style: 'datastar-inspector { visibility: hidden !important; }',
+          })
           const isDenseDesktopTable = viewport.name === 'desktop' && state.name === 'visual-showcase-tables'
           const isDesktop = viewport.name === 'desktop'
           expect(screenshot).toMatchSnapshot(`${state.name}-${viewport.name}-${mode}.png`, {
@@ -91,5 +95,10 @@ async function openStableDashboard(page: Page, url: string, heading: string): Pr
       throw new Error('Inter Variable did not finish loading before visual capture')
     }
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    // Preserve live success/error/loading state while making the refresh timestamp reproducible.
+    const footer = dashboard.shadowRoot.querySelector('lv-report-footer') as any
+    if (!footer?.status.lastUpdated) throw new Error('Dashboard footer has no successful refresh timestamp')
+    footer.status = { ...footer.status, lastUpdated: '2026-09-13T11:13:00.000Z' }
+    await footer.updateComplete
   })
 }

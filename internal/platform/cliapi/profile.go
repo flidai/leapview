@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -197,6 +198,20 @@ func (store *ProfileStore) ProfilesByOrigin(origin string) ([]NamedTargetProfile
 		}
 	}
 	return profiles, nil
+}
+
+// ProfileNames returns the saved target aliases in stable display order.
+func (store *ProfileStore) ProfileNames() ([]string, error) {
+	document, err := store.load()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(document.Targets))
+	for name := range document.Targets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (store *ProfileStore) Put(name string, profile TargetProfile) error {

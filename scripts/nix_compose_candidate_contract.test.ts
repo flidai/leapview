@@ -130,7 +130,7 @@ test('Compose image preflight is credentialed only for image admission and prece
   const preflightRuntime = preflight.steps.findIndex((step: any) => step.name?.includes('actual release image runtime'))
   const preflightUpload = preflight.steps.findIndex((step: any) => step.name?.includes('immutable pre-execution'))
   expect(preflightRuntime).toBeLessThan(preflightUpload)
-  expect(preflight.steps[preflightRuntime].run).toContain('docker run --rm \"$IMAGE_REFERENCE\" version --json')
+  expect(preflight.steps[preflightRuntime].run).toContain('docker run --rm \"$IMAGE_REFERENCE\" version --format json')
   expect(preflight.steps.some((step: any) => step.run?.includes('leapviewctl'))).toBe(false)
   expect(preflight.steps.some((step: any) => step.run?.includes('installed-candidate'))).toBe(false)
   const preflightDiagnostics = preflight.steps.find((step: any) => step.name?.includes('admission diagnostics'))
@@ -219,6 +219,40 @@ test('Compose evidence verifier tests run in core and hosted Nix CI when helper 
   expect(workflow.jobs.image.steps.some((step: any) => step.run?.includes(command))).toBe(true)
 })
 
+test('fresh-host verifier generates protected Go inputs before its static build', () => {
+  const step = composeCandidateWorkflow.jobs['host-qualification'].steps.find((item: any) =>
+    item.name === 'Build the protected first-publication verifier')
+  const root = mkdtempSync(join(tmpdir(), 'nix-compose-protected-build-'))
+  const bin = join(root, 'bin')
+  mkdirSync(bin)
+  const executable = (name: string, script: string) =>
+    writeFileSync(join(bin, name), '#!/bin/sh\nset -eu\n' + script, { mode: 0o755 })
+  try {
+    executable('git', 'case "$*" in "rev-parse HEAD") printf "%s\\n" "$FIXTURE_REVISION";; "status --porcelain --untracked-files=no") :;; *) exit 91;; esac\n')
+    executable('nix', 'test "$1" = develop; shift; test "$1" = --no-update-lock-file; shift; test "$1" = .#host-verifier; shift; test "$1" = -c; shift; exec "$@"\n')
+    executable('task', 'test "$PWD" = "$FIXTURE_ROOT"; test "$*" = generate; test "${FAIL_GENERATION:-0}" = 0; printf "generate\\n" >> "$EVENTS"; touch generated-inputs\n')
+    executable('go', 'test "$PWD" = "$FIXTURE_ROOT"; test -f generated-inputs; test "$CGO_ENABLED" = 0; test "$*" = "build -trimpath -o $RUNNER_TEMP/host-first-publication-verifier ./cmd/leapviewctl"; printf "build\\n" >> "$EVENTS"; printf "protected verifier\\n" > "$RUNNER_TEMP/host-first-publication-verifier"\n')
+    const run = (extra: Record<string, string> = {}) => spawnSync('bash', ['-c', step.run], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env, PATH: bin + ':' + process.env.PATH, RUNNER_TEMP: root, EVENTS: join(root, 'events'),
+        FIXTURE_ROOT: root, FIXTURE_REVISION: 'a'.repeat(40), PROTECTED_REVISION: 'a'.repeat(40), ...extra,
+      },
+    })
+    const result = run()
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(readFileSync(join(root, 'events'), 'utf8')).toBe('generate\nbuild\n')
+    expect(readFileSync(join(root, 'host-first-publication-verifier'), 'utf8')).toBe('protected verifier\n')
+    rmSync(join(root, 'generated-inputs'))
+    rmSync(join(root, 'host-first-publication-verifier'))
+    expect(run({ FAIL_GENERATION: '1' }).status).not.toBe(0)
+    expect(run({ PROTECTED_REVISION: 'b'.repeat(40) }).status).not.toBe(0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('fresh-host first publication uses a protected verifier and protected authoring assets', () => {
   const host = composeCandidateWorkflow.jobs['host-qualification']
   const buildVerifier = host.steps.find((step: any) => step.name?.includes('Build the protected first-publication verifier'))
@@ -226,6 +260,7 @@ test('fresh-host first publication uses a protected verifier and protected autho
   expect(buildVerifier).toBeDefined()
   expect(buildVerifier.run).toContain('git rev-parse HEAD')
   expect(buildVerifier.run).toContain('$PROTECTED_REVISION')
+  expect(buildVerifier.run).toContain('nix develop --no-update-lock-file .#host-verifier -c')
   expect(buildVerifier.run).toContain('CGO_ENABLED=0')
   expect(buildVerifier.run).toContain('./cmd/leapviewctl')
   expect(host.steps.indexOf(buildVerifier)).toBeLessThan(host.steps.indexOf(qualifyGuest))
@@ -540,6 +575,39 @@ test('signer comparison accepts the original build binding and rejects extracted
 
     writeFileSync(join(root, 'qualified/amd64/bundle-binding.json'), extractedBinding)
     expect(execute().status).not.toBe(0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Compose assembly reads both named Nix output links before packaging', () => {
+  const build = composeCandidateWorkflow.jobs['build-bundles']
+  const assemble = build.steps.find((step: any) => step.name === 'Assemble and verify with protected tools')
+  const packaging = assemble.run.indexOf('python3 scripts/package_compose_bundle.py')
+  expect(packaging).toBeGreaterThan(0)
+  const root = mkdtempSync(join(tmpdir(), 'compose-nix-output-links-'))
+  try {
+    // Nix appends a non-default output name to --out-link. The arm64
+    // derivation therefore produces result-compose-cli-arm64, not the prefix.
+    for (const arch of ['amd64', 'arm64']) {
+      const output = join(root, `result-compose-cli-${arch}`)
+      mkdirSync(output)
+      writeFileSync(join(output, 'controller-build-identity.json'), JSON.stringify({ platform: `linux/${arch}` }))
+      writeFileSync(join(output, 'static-compatibility.json'), JSON.stringify({ architecture: arch }))
+    }
+    const result = spawnSync('bash', ['-c', assemble.run.slice(0, packaging) + '\ndone\n'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, RELEASE_RUN_ID: '123', RELEASE_RUN_ATTEMPT: '1' },
+    })
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    for (const arch of ['amd64', 'arm64']) {
+      expect(JSON.parse(readFileSync(join(root, 'candidate', arch, 'controller-build-identity.json'), 'utf8')))
+        .toEqual({ platform: `linux/${arch}` })
+      expect(JSON.parse(readFileSync(join(root, 'candidate', arch, 'static-compatibility.json'), 'utf8')))
+        .toEqual({ architecture: arch })
+    }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

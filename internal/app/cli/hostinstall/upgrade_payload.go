@@ -59,5 +59,13 @@ func extractCandidatePayload(ctx context.Context, dockerBin, image string, stder
 	if _, err := run("cp", container+":/usr/local/share/leapview/deployment/.", directory); err != nil {
 		return nil, err
 	}
-	return readPayload(directory)
+	payload, err := readPayload(directory)
+	if err == nil || !legacyMaintenancePayloadImage(image) {
+		return payload, err
+	}
+	return readLegacyPayload(directory)
+}
+
+func legacyMaintenancePayloadImage(image string) bool {
+	return image == revision019PredecessorImage || image == legacyPublicImage
 }

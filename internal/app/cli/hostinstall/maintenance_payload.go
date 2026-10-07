@@ -13,7 +13,26 @@ import (
 // the candidate must use the current product command. All other topology and
 // healthcheck settings remain equal before any capture or migration begins.
 func validateMaintenancePayloadTransition(installed, predecessor, candidate map[string][]byte) error {
-	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
+	if err := validateMaintenanceBasePayloadTransition(installed, predecessor, candidate); err != nil {
+		return err
+	}
+	for _, name := range []string{
+		"compose.postgres.yaml", "postgres/bundled-entrypoint.sh", "postgres/bundled-init.sh",
+	} {
+		if len(predecessor[name]) == 0 || len(candidate[name]) == 0 || !bytes.Equal(installed[name], predecessor[name]) {
+			return fmt.Errorf("installed deployment differs from predecessor payload: %s", name)
+		}
+		if !bytes.Equal(predecessor[name], candidate[name]) {
+			return fmt.Errorf("deployment topology changed: %s", name)
+		}
+	}
+	return nil
+}
+
+func validateMaintenanceBasePayloadTransition(installed, predecessor, candidate map[string][]byte) error {
+	for _, name := range []string{
+		"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example",
+	} {
 		if len(predecessor[name]) == 0 || len(candidate[name]) == 0 || !bytes.Equal(installed[name], predecessor[name]) {
 			return fmt.Errorf("installed deployment differs from predecessor payload: %s", name)
 		}
@@ -26,6 +45,23 @@ func validateMaintenancePayloadTransition(installed, predecessor, candidate map[
 		}
 	}
 	return nil
+}
+
+// validateLegacyMaintenancePayloadTransition is limited to the exact
+// pinned historical images that predate the optional bundled PostgreSQL
+// payload. It verifies the old installed topology and admits the adapter files
+// as new immutable candidate payload only on those predecessor transitions.
+func validateLegacyMaintenancePayloadTransition(installed, predecessor, candidate map[string][]byte) error {
+	for _, name := range []string{"compose.postgres.yaml", "postgres/bundled-entrypoint.sh", "postgres/bundled-init.sh"} {
+		if len(installed[name]) != 0 || len(predecessor[name]) != 0 || len(candidate[name]) == 0 {
+			return fmt.Errorf("historical PostgreSQL adapter payload is invalid: %s", name)
+		}
+	}
+	return validateMaintenanceBasePayloadTransition(
+		installed,
+		predecessor,
+		candidate,
+	)
 }
 
 func validateMaintenanceCompose(predecessor, candidate []byte) error {

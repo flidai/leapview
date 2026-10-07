@@ -232,7 +232,7 @@ def inspect_live(image, revision, expected_schema, *, root=ROOT, provider=PROVID
     if (container.get('Image') != image_info.get('Id') or
             image not in image_info.get('RepoDigests', [])):
         raise ValueError('Running container content does not match its immutable image reference')
-    runtime = json.loads(output('docker', 'exec', APP, 'leapview', 'version', '--json'))
+    runtime = json.loads(output('docker', 'exec', APP, 'leapview', 'version', '--format', 'json'))
     if runtime.get('revision') != revision or runtime.get('dirty') is not False:
         raise ValueError('Running application source differs from the qualified revision')
     payload = _image_payload(image, run=run, output=output)

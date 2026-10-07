@@ -16,6 +16,7 @@ import {
 } from "../../../../../desktop/src/security/remote-window.mjs";
 import { startProofLifecycle } from "./proof-lifecycle.mjs";
 import { writeJSONAtomic } from "./result-file.mjs";
+import { createStorageOperationDiagnostics } from "./storage-diagnostics.mjs";
 
 app.enableSandbox();
 
@@ -34,9 +35,11 @@ const result = {
   phase: "bootstrap",
   manifestVersion: null,
   observations: [],
+  storageDiagnostics: [],
   checks: [],
   decisions: [],
 };
+const storageDiagnostics = createStorageOperationDiagnostics(result);
 
 await startProofLifecycle({
   app,
@@ -253,39 +256,61 @@ async function observeStorageIsolation(first, second, observations) {
   const databaseName = "leapview-desktop-proof";
   const cacheName = "leapview-desktop-proof";
   const cookieName = "leapview-desktop-proof";
-  await load(first.window, `${proofOrigin}/attack/storage.cross-profile`);
-  assert.equal(await execute(first.window, `localStorage.getItem(${JSON.stringify(key)})`), "present");
-  await seedPartitionState(first, "first", {
+  await storageOperation("first.load-marker-page", () =>
+    load(first.window, `${proofOrigin}/attack/storage.cross-profile`));
+  await storageOperation("first.read-marker", async () =>
+    assert.equal(
+      await execute(first.window, `localStorage.getItem(${JSON.stringify(key)})`),
+      "present",
+    ));
+  await seedPartitionState(first, "first", "first", {
     databaseName,
     cacheName,
     cookieName,
   });
 
-  await load(second.window, `${proofOrigin}/`);
-  assert.equal(await execute(second.window, `localStorage.getItem(${JSON.stringify(key)})`), null);
+  await storageOperation("second.load-empty-profile", () =>
+    load(second.window, `${proofOrigin}/`));
+  await storageOperation("second.read-marker", async () =>
+    assert.equal(
+      await execute(second.window, `localStorage.getItem(${JSON.stringify(key)})`),
+      null,
+    ));
   await assertPartitionStateMissing(second, {
+    profile: "second",
     databaseName,
     cacheName,
     cookieName,
   });
-  await seedPartitionState(second, "second", {
+  await seedPartitionState(second, "second", "second", {
     databaseName,
     cacheName,
     cookieName,
   });
 
-  await first.remoteSession.clearStorageData();
-  await first.remoteSession.clearCache();
-  await first.remoteSession.clearAuthCache();
-  first.remoteSession.flushStorageData();
-  await load(first.window, `${proofOrigin}/`);
-  assert.equal(await execute(first.window, `localStorage.getItem(${JSON.stringify(key)})`), null);
+  await storageOperation("first.clear-storage-data", () =>
+    first.remoteSession.clearStorageData());
+  await storageOperation("first.clear-cache", () =>
+    first.remoteSession.clearCache());
+  await storageOperation("first.clear-auth-cache", () =>
+    first.remoteSession.clearAuthCache());
+  storageDiagnostics.runSync("first.flush-storage-data", () =>
+    first.remoteSession.flushStorageData());
+  await storageOperation("first.load-after-clear", () =>
+    load(first.window, `${proofOrigin}/`));
+  await storageOperation("first.read-marker-after-clear", async () =>
+    assert.equal(
+      await execute(first.window, `localStorage.getItem(${JSON.stringify(key)})`),
+      null,
+    ));
   await assertPartitionStateMissing(first, {
+    profile: "first",
     databaseName,
     cacheName,
     cookieName,
   });
   await assertPartitionState(second, "second", {
+    profile: "second",
     databaseName,
     cacheName,
     cookieName,
@@ -296,59 +321,64 @@ async function observeStorageIsolation(first, second, observations) {
 async function seedPartitionState(
   target,
   value,
+  profile,
   { databaseName, cacheName, cookieName },
 ) {
-  await target.remoteSession.cookies.set({
-    url: proofOrigin,
-    name: cookieName,
-    value,
-    sameSite: "lax",
-  });
-  await execute(target.window, `(async () => {
-    localStorage.setItem(${JSON.stringify("leapview.desktop.partition-value")}, ${JSON.stringify(value)});
-    await new Promise((resolve, reject) => {
-      const request = indexedDB.open(${JSON.stringify(databaseName)}, 1);
-      request.onupgradeneeded = () => request.result.createObjectStore("proof");
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        const transaction = request.result.transaction("proof", "readwrite");
-        transaction.objectStore("proof").put(${JSON.stringify(value)}, "value");
-        transaction.oncomplete = () => {
-          request.result.close();
-          resolve();
+  await storageOperation(`${profile}.seed-cookie`, () =>
+    target.remoteSession.cookies.set({
+      url: proofOrigin,
+      name: cookieName,
+      value,
+      sameSite: "lax",
+    }));
+  await storageOperation(`${profile}.seed-renderer-state`, () =>
+    execute(target.window, `(async () => {
+      localStorage.setItem(${JSON.stringify("leapview.desktop.partition-value")}, ${JSON.stringify(value)});
+      await new Promise((resolve, reject) => {
+        const request = indexedDB.open(${JSON.stringify(databaseName)}, 1);
+        request.onupgradeneeded = () => request.result.createObjectStore("proof");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const transaction = request.result.transaction("proof", "readwrite");
+          transaction.objectStore("proof").put(${JSON.stringify(value)}, "value");
+          transaction.oncomplete = () => {
+            request.result.close();
+            resolve();
+          };
+          transaction.onerror = () => reject(transaction.error);
         };
-        transaction.onerror = () => reject(transaction.error);
-      };
-    });
-    const cache = await caches.open(${JSON.stringify(cacheName)});
-    await cache.put("/__harness/cache-proof", new Response(${JSON.stringify(value)}));
-    await navigator.serviceWorker.register("/__harness/service-worker.js");
-  })()`, true);
+      });
+      const cache = await caches.open(${JSON.stringify(cacheName)});
+      await cache.put("/__harness/cache-proof", new Response(${JSON.stringify(value)}));
+      await navigator.serviceWorker.register("/__harness/service-worker.js");
+    })()`, true));
 }
 
 async function assertPartitionState(
   target,
   expected,
-  { databaseName, cacheName, cookieName },
+  { profile, databaseName, cacheName, cookieName },
 ) {
-  const cookies = await target.remoteSession.cookies.get({
-    url: proofOrigin,
-    name: cookieName,
-  });
+  const cookies = await storageOperation(`${profile}.read-cookie`, () =>
+    target.remoteSession.cookies.get({
+      url: proofOrigin,
+      name: cookieName,
+    }));
   assert.equal(cookies[0]?.value ?? null, expected);
-  const state = await execute(target.window, `(async () => {
-    const local = localStorage.getItem(${JSON.stringify("leapview.desktop.partition-value")});
-    const databases = await indexedDB.databases();
-    const cache = await caches.open(${JSON.stringify(cacheName)});
-    const response = await cache.match("/__harness/cache-proof");
-    const registrations = await navigator.serviceWorker.getRegistrations();
-    return {
-      local,
-      database: databases.some((database) => database.name === ${JSON.stringify(databaseName)}),
-      cache: response === undefined ? null : await response.text(),
-      serviceWorkers: registrations.length,
-    };
-  })()`, true);
+  const state = await storageOperation(`${profile}.read-renderer-state`, () =>
+    execute(target.window, `(async () => {
+      const local = localStorage.getItem(${JSON.stringify("leapview.desktop.partition-value")});
+      const databases = await indexedDB.databases();
+      const cache = await caches.open(${JSON.stringify(cacheName)});
+      const response = await cache.match("/__harness/cache-proof");
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      return {
+        local,
+        database: databases.some((database) => database.name === ${JSON.stringify(databaseName)}),
+        cache: response === undefined ? null : await response.text(),
+        serviceWorkers: registrations.length,
+      };
+    })()`, true));
   assert.equal(state.local, expected);
   assert.equal(state.database, expected !== null);
   assert.equal(state.cache, expected);
@@ -442,7 +472,12 @@ function recordDecision(decision) {
 }
 
 async function writeResult() {
+  storageDiagnostics.updateActive();
   await writeJSONAtomic(resultPath, result);
+}
+
+function storageOperation(label, operation) {
+  return storageDiagnostics.run(label, operation);
 }
 
 function delay(milliseconds) {

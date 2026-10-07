@@ -5,6 +5,8 @@ import { ArrowDown, ArrowUp, Columns3 } from 'lucide'
 import { type ColumnResizeDrag, resizeClientX, resizeGuideX, resizePlaneScaleX, resizedColumnWidth } from './column-resize'
 import { lucideIcon } from './lucide-icons'
 import { virtualRowRange } from './table-window'
+import type { VisualizationFormat } from '../../generated/visualization'
+import { cellLabel, defaultColumnWidth, renderCell } from './windowed-table-presentation'
 
 export type WindowedTableBlockID = 'a' | 'b' | 'c'
 export type WindowedTableSort = {
@@ -21,6 +23,7 @@ export type WindowedTableColumn = {
   width?: number
   minWidth?: number
   sortable?: boolean
+  format?: VisualizationFormat
 }
 
 export type WindowedTableBlock = {
@@ -39,9 +42,15 @@ export type WindowedTablePayload = {
   availableRows?: number
   chunkSize?: number
   rowHeight?: number
+  showHeader?: boolean
+  striped?: boolean
+  fillWidth?: boolean
   resetVersion?: number
   sort?: WindowedTableSort
   blocks?: Partial<Record<WindowedTableBlockID, WindowedTableBlock>>
+  loading?: boolean
+  progressPercent?: number
+  stale?: boolean
   loadingBlock?: string
   error?: string
   visibleColumns?: string[]
@@ -91,8 +100,14 @@ const emptyTable: Required<WindowedTablePayload> = {
   availableRows: 0,
   chunkSize: defaultChunkSize,
   rowHeight: defaultRowHeight,
+  showHeader: true,
+  striped: true,
+  fillWidth: true,
   resetVersion: 0,
   sort: defaultSort,
+  loading: false,
+  progressPercent: Number.NaN,
+  stale: false,
   blocks: emptyBlocks(),
   loadingBlock: '',
   error: '',
@@ -115,8 +130,14 @@ function normalizeTable(value: WindowedTablePayload | null | undefined): Require
     availableRows: positiveNumber(value?.availableRows, totalRows),
     chunkSize,
     rowHeight: positiveNumber(value?.rowHeight, defaultRowHeight),
+    showHeader: value?.showHeader !== false,
+    striped: value?.striped !== false,
+    fillWidth: value?.fillWidth !== false,
     resetVersion,
     sort,
+    loading: value?.loading === true,
+    progressPercent: boundedProgress(value?.progressPercent),
+    stale: value?.stale === true,
     blocks: {
       a: normalizeBlock(value?.blocks?.a, 0, sort, resetVersion),
       b: normalizeBlock(value?.blocks?.b, chunkSize, sort, resetVersion),
@@ -143,6 +164,11 @@ function normalizeBlock(block: WindowedTableBlock | undefined, fallbackStart: nu
 function positiveNumber(value: unknown, fallback: number): number {
   const next = Number(value)
   return Number.isFinite(next) && next >= 0 ? next : fallback
+}
+
+function boundedProgress(value: unknown): number {
+  const next = Number(value)
+  return Number.isFinite(next) ? Math.min(100, Math.max(0, next)) : Number.NaN
 }
 
 function isRecord(value: unknown): value is Record<string, number> {
@@ -468,7 +494,7 @@ class WindowedTable extends LitElement {
       background: var(--lv-bg-app);
     }
 
-    .row:nth-child(even) {
+    .row.striped {
       background: color-mix(in srgb, var(--lv-table-stripe, var(--lv-bg-panel-muted)), var(--lv-bg-app) 74%);
     }
 
@@ -630,13 +656,15 @@ class WindowedTable extends LitElement {
     const tableWidth = Math.max(760, this.viewportWidth, widths.reduce((sum, width) => sum + width, 0))
     const visibleRows = this.visibleRows(table)
     const rowRange = this.rowRangeText(table)
-    const loading = Boolean(table.loadingBlock) || this.visibleLoading(table)
+    const loading = table.loading || Boolean(table.loadingBlock) || this.visibleLoading(table)
     const sort = normalizeSort(table.sort)
+    const progress = Number.isFinite(table.progressPercent) ? ` ${Math.round(table.progressPercent)}%` : ''
+    const stale = table.stale ? ' · stale' : ''
 
     return html`
-      <section class="shell">
+      <section class="shell" aria-busy=${String(loading)}>
         <div class="toolbar">
-          <span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>
+          <span><strong>${rowRange}</strong>${loading ? ` · loading${progress}` : ''}${stale}</span>
           <details class="options">
             <summary title="Choose visible columns" aria-label="Choose visible columns">
               ${lucideIcon(Columns3, { size: 15 })}<span>Columns</span><span aria-hidden="true">${columns.length}/${table.columns.length}</span>
@@ -668,11 +696,11 @@ class WindowedTable extends LitElement {
             <div class="scrollport" role="region" aria-label=${`Scrollable ${table.title || 'data'} table`} tabindex="0" ${ref(this.viewportRef)} @scroll=${this.handleScroll}>
               <div
                 class="plane"
-                role="table" aria-label=${table.title || 'Data'} aria-rowcount=${Math.max(table.totalRows, availableRows) + 1}
+                role="table" aria-label=${table.title || 'Data'} aria-rowcount=${Math.max(table.totalRows, availableRows) + (table.showHeader ? 1 : 0)}
                 style=${`--lv-windowed-table-columns:${widths.map((width) => `${width}px`).join(' ')};--lv-windowed-table-width:${tableWidth}px;--lv-windowed-row-height:${table.rowHeight}px`}
               >
                 ${this.resizeGuide >= 0 ? html`<span class="resize-guide" style=${`--lv-windowed-resize-guide-x:${this.resizeGuide}px`}></span>` : nothing}
-                <div class="head" role="row" aria-rowindex="1">
+                ${table.showHeader ? html`<div class="head" role="row" aria-rowindex="1">
                   ${columns.map((column) => html`
                     <div class=${`header-cell ${column.align === 'right' ? 'right' : ''}`} role="columnheader" aria-sort=${sort.key === column.key ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
                       <button type="button" title=${column.label || column.key} ?disabled=${column.sortable === false} @click=${() => this.sortColumn(table, column)}>
@@ -686,11 +714,11 @@ class WindowedTable extends LitElement {
                       ></span>
                     </div>
                   `)}
-                </div>
+                </div>` : nothing}
                 <div class="canvas" role="rowgroup" style=${`height:${Math.max(table.rowHeight, availableRows * table.rowHeight)}px`}>
                   ${visibleRows.map((slot) => slot.row
                     ? html`
-                      <div class="row" role="row" aria-rowindex=${slot.index + 2} style=${`top:${slot.index * table.rowHeight}px`}>
+                      <div class=${`row ${table.striped && slot.index % 2 === 1 ? 'striped' : ''}`} role="row" aria-rowindex=${slot.index + (table.showHeader ? 2 : 1)} style=${`top:${slot.index * table.rowHeight}px`}>
                         ${columns.map((column) => html`
                           <div class=${`cell ${column.align === 'right' ? 'right' : ''}`} role="cell" title=${slot.row?.[column.key] == null || slot.row?.[column.key] === '' ? 'No value' : cellLabel(slot.row?.[column.key], column)}>
                             ${renderCell(slot.row?.[column.key], column)}
@@ -699,7 +727,7 @@ class WindowedTable extends LitElement {
                       </div>
                     `
                     : html`
-                      <div class="row" role="row" aria-rowindex=${slot.index + 2} aria-busy="true" style=${`top:${slot.index * table.rowHeight}px`}>
+                      <div class=${`row ${table.striped && slot.index % 2 === 1 ? 'striped' : ''}`} role="row" aria-rowindex=${slot.index + (table.showHeader ? 2 : 1)} aria-busy="true" style=${`top:${slot.index * table.rowHeight}px`}>
                         ${columns.map((column) => html`<div class=${`cell ${column.align === 'right' ? 'right' : ''}`} role="cell"><span class="skeleton"></span></div>`)}
                       </div>
                     `)}
@@ -711,7 +739,7 @@ class WindowedTable extends LitElement {
         ${!table.error && (availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
         <div class="footer">
           ${this.compact
-            ? html`<span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>`
+            ? html`<span><strong>${rowRange}</strong>${loading ? ` · loading${progress}` : ''}${stale}</span>`
             : html`
               <span>${table.totalLabel || `${table.totalRows.toLocaleString()} rows`}</span>
               <span>${columns.length} visible · ${table.columns.length} total columns</span>
@@ -937,7 +965,7 @@ class WindowedTable extends LitElement {
 
   private displayColumnWidths(table: Required<WindowedTablePayload>, columns: WindowedTableColumn[]): number[] {
     const widths = columns.map((column) => this.columnWidth(table, column))
-    if (!widths.length) return widths
+    if (!widths.length || !table.fillWidth) return widths
     const availableWidth = Math.max(760, this.viewportWidth)
     const currentWidth = widths.reduce((sum, width) => sum + width, 0)
     if (currentWidth >= availableWidth) return widths
@@ -1040,48 +1068,14 @@ class WindowedTable extends LitElement {
     const firstIndex = Math.min(availableRows - 1, Math.max(0, Math.floor(this.viewportTop / table.rowHeight)))
     const visibleRows = Math.max(1, Math.ceil((this.viewportHeight || table.rowHeight) / table.rowHeight))
     const lastIndex = Math.min(availableRows, firstIndex + visibleRows)
-    return `${(firstIndex + 1).toLocaleString()}-${lastIndex.toLocaleString()} of ${table.totalRows.toLocaleString()}`
+    return `${(firstIndex + 1).toLocaleString()}-${lastIndex.toLocaleString()} of ${table.totalLabel === 'Unknown' ? 'unknown' : table.totalRows.toLocaleString()}`
   }
-}
-
-function defaultColumnWidth(column: WindowedTableColumn, blocks: Required<WindowedTablePayload>['blocks']): number {
-  if (Number.isFinite(column.width) && Number(column.width) > 0) return Number(column.width)
-  if (isTemporalColumn(column)) {
-    // Reserve enough room for the full displayed timestamp, including precision and offset.
-    const lengths = Object.values(blocks).flatMap(block => block?.rows.map(row => cellLabel(row[column.key], column).length) ?? [])
-    return Math.max(168, (Math.max(20, ...lengths) * 9) + 24)
-  }
-  if (column.align === 'right') return 128
-  if (column.key.length > 24) return 240
-  return 168
 }
 
 function sortMarker(sort: WindowedTableSort, column: string) {
   const normalized = normalizeSort(sort)
   if (normalized.key !== column) return ''
   return lucideIcon(normalized.direction === 'desc' ? ArrowDown : ArrowUp, { size: 12, strokeWidth: 2 })
-}
-
-function renderCell(value: unknown, column: WindowedTableColumn) {
-  const text = cellLabel(value, column)
-  if (value == null || value === '') return html`<span class="muted" aria-label="No value">-</span>`
-  if (typeof value === 'number') return html`<span>${text}</span>`
-  return html`<code>${text}</code>`
-}
-
-function isTemporalColumn(column: WindowedTableColumn): boolean {
-  return /^(date|datetime|timestamp|timestamptz)(?:\b|_)/i.test(column.type || '')
-}
-
-function cellLabel(value: unknown, column: WindowedTableColumn): string {
-  if (value == null || value === '') return '-'
-  if (typeof value === 'string' && isTemporalColumn(column)) {
-    // Keep the source date order, time, precision and timezone; only separate
-    // ISO date and time for readability.
-    return value.replace(/^(\d{4}-\d{2}-\d{2})T(?=\d{2}:\d{2}:\d{2})/, '$1 ')
-  }
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
 }
 
 if (!customElements.get('lv-windowed-table')) customElements.define('lv-windowed-table', WindowedTable)

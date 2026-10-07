@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
 
 let server: Server
@@ -360,6 +360,84 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
   }
 })
 
+test('Explore appears only when a trusted dashboard link is supplied', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const state = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.envelope = (window as any).__lvSourceHosts.orders_chart.envelope
+      document.body.append(host)
+      await host.updateComplete
+      const before = host.shadowRoot.querySelector('.visual-options a[role="menuitem"]')
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/revenue/explore'
+      await host.updateComplete
+      const link = host.shadowRoot.querySelector('.visual-options a[role="menuitem"]') as HTMLAnchorElement | null
+      const result = { before: Boolean(before), text: link?.textContent?.trim(), href: link?.getAttribute('href') }
+      host.remove()
+      return result
+    })
+    expect(state).toEqual({ before: false, text: 'Explore', href: '/dashboards/sales/pages/overview/visuals/revenue/explore' })
+  } finally { await page.close() }
+})
+
+test('visual option popovers are exclusive, keyboard navigable, and dismiss on Escape or outside input', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
+    // Standalone hosts need the layout tokens normally supplied by the page shell.
+    await page.addStyleTag({ content: ':root { --zIndex-sticky: 100; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-16: 16px; --base-size-24: 24px; } lv-visualization-host { display: block; width: 360px; height: 160px; margin: 24px; }' })
+    await page.evaluate(async () => {
+      const envelope = structuredClone((window as any).__lvSourceHosts.orders_kpi.envelope)
+      const first = document.createElement('lv-visualization-host') as any
+      const second = document.createElement('lv-visualization-host') as any
+      first.id = 'first-options-host'
+      second.id = 'second-options-host'
+      first.envelope = envelope
+      first.exploreHref = '/dashboards/sales/pages/overview/visuals/revenue/explore'
+      second.envelope = { ...structuredClone(envelope), visualID: 'orders_kpi_second' }
+      document.body.append(first, second)
+      await Promise.all([first.updateComplete, second.updateComplete])
+    })
+    const first = page.locator('#first-options-host')
+    const second = page.locator('#second-options-host')
+    const firstMenu = first.getByRole('menu')
+    const secondMenu = second.getByRole('menu')
+    await first.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).toBeVisible()
+    await browserExpect(first).toHaveAttribute('visual-options-open', '')
+    const bounds = await firstMenu.boundingBox()
+    expect(bounds!.width).toBeLessThanOrEqual(220)
+    expect(bounds!.x).toBeGreaterThanOrEqual(0)
+    await browserExpect(first.getByRole('menuitem', { name: 'Show data', exact: true })).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await browserExpect(first.getByRole('menuitem', { name: 'Explore', exact: true })).toBeFocused()
+    await browserExpect(first.getByRole('menuitem', { name: 'Explore', exact: true })).toHaveAttribute('href', '/dashboards/sales/pages/overview/visuals/revenue/explore')
+    await page.keyboard.press('End')
+    await browserExpect(first.getByRole('menuitem', { name: 'Export CSV', exact: true })).toBeFocused()
+
+    await second.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).not.toBeVisible()
+    await browserExpect(first).not.toHaveAttribute('visual-options-open')
+    await browserExpect(secondMenu).toBeVisible()
+    await browserExpect(second).toHaveAttribute('visual-options-open', '')
+    await page.keyboard.press('Escape')
+    await browserExpect(secondMenu).not.toBeVisible()
+    await browserExpect(second).not.toHaveAttribute('visual-options-open')
+    await browserExpect(second.getByRole('button', { name: 'Visual options', exact: true })).toBeFocused()
+
+    await first.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).toBeVisible()
+    await page.mouse.click(1, 1)
+    await browserExpect(firstMenu).not.toBeVisible()
+    await browserExpect(first).not.toHaveAttribute('visual-options-open')
+  } finally {
+    await page.close()
+  }
+})
+
 test('queued signals are announced only after their own renderer apply completes', async () => {
   const page = await browser.newPage()
   try {
@@ -547,46 +625,98 @@ test('eager invalid and unknown-renderer envelopes remain visible errors', async
 
 test('pending renderer loads reject stale mount promises after detach and reattach', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const startedAt = Date.now()
+  const lifecycle: Array<{ elapsedMs: number; phase: string; event: string; detail?: unknown }> = []
+  let phase = 'page-created'
+  let omittedLifecycleEvents = 0
+  const record = (event: string, detail?: unknown) => {
+    if (lifecycle.length === 40) {
+      lifecycle.shift()
+      omittedLifecycleEvents++
+    }
+    lifecycle.push({ elapsedMs: Date.now() - startedAt, phase, event, ...(detail === undefined ? {} : { detail }) })
+  }
+  const mark = (next: string) => {
+    phase = next
+    record('phase')
+  }
+  const diagnosticPathKind = (value: string): string => {
+    try {
+      const url = new URL(value)
+      if (url.origin !== baseURL) return 'external'
+      if (url.pathname === '/') return 'document'
+      if (url.pathname.startsWith('/chunks/echarts-')) return 'echarts-renderer-chunk'
+      if (url.pathname.startsWith('/static/vendor/')) return 'vendor-asset'
+      if (url.pathname.endsWith('.js')) return 'script'
+      if (url.pathname.endsWith('.css')) return 'stylesheet'
+      return 'other'
+    } catch { return 'other' }
+  }
+  page.on('framenavigated', (frame) => record('frame-navigated', { mainFrame: frame === page.mainFrame(), path: diagnosticPathKind(frame.url()) }))
+  page.on('framedetached', (frame) => record('frame-detached', { mainFrame: frame === page.mainFrame(), path: diagnosticPathKind(frame.url()) }))
+  page.on('pageerror', (error) => record('page-error', { name: error.name }))
+  page.on('crash', () => record('page-crash'))
+  page.on('requestfailed', (request) => record('request-failed', { resourceType: request.resourceType(), method: request.method(), path: diagnosticPathKind(request.url()) }))
+  const onBrowserDisconnected = () => record('browser-disconnected')
+  browser.on('disconnected', onBrowserDisconnected)
   let releaseRenderer!: () => void
   let rendererRequested!: () => void
   const rendererBlocked = new Promise<void>((resolve) => { releaseRenderer = resolve })
   const rendererRequest = new Promise<void>((resolve) => { rendererRequested = resolve })
   try {
+    mark('route-setup')
     await page.route('**/chunks/echarts-*.js', async (route) => {
+      record('renderer-route-hit')
       rendererRequested()
       await rendererBlocked
       await route.continue()
     })
+    mark('navigation-started')
     await page.goto(baseURL)
+    mark('host-bootstrap-wait')
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
-    await page.evaluate(async () => {
+    mark('fixture-hosts-created')
+    await page.evaluate(() => {
       const source = (window as any).__lvSourceHosts.orders_chart
       const deferred = document.createElement('lv-visualization-host') as any
-      deferred.deferMount = true
-      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
-      document.body.append(deferred)
-      await deferred.updateComplete
       const transient = document.createElement('lv-visualization-host') as any
-      transient.deferMount = true
-      transient.envelope = JSON.parse(JSON.stringify(source.envelope))
-      document.body.append(transient)
-      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
-      while (transient.pendingEnvelopeValidation) await transient.pendingEnvelopeValidation
-      await Promise.all([deferred.updateComplete, transient.updateComplete])
+      const envelopes = [structuredClone(source.envelope), structuredClone(source.envelope)]
+      deferred.deferMount = transient.deferMount = true
+      deferred.envelope = envelopes[0]
+      transient.envelope = envelopes[1]
+      ;(window as any).__lvMountRace = { deferred, transient, envelopes }
+      document.body.append(deferred, transient)
+    })
+    mark('lazy-validator-wait')
+    // Keep the fixture hosts reachable while their lazy validator and Lit
+    // updates settle, before starting the renderer-load race under test.
+    await page.waitForFunction(() => {
+      const { deferred, transient, envelopes } = (window as any).__lvMountRace
+      return [deferred, transient].every((host, index) =>
+        host.envelope === envelopes[index] && !host.pendingEnvelopeValidation && host.hasUpdated && !host.isUpdatePending,
+      )
+    })
+    mark('lazy-validator-ready')
+    mark('initial-mount-started')
+    await page.evaluate(() => {
+      const { deferred, transient } = (window as any).__lvMountRace
       const transientMount = transient.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       const stale = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       const race = { stale, staleSettled: false, transientMount, transientController: transient.controller, transient, fresh: Promise.resolve('pending'), reattached: false }
       stale.then(() => { race.staleSettled = true })
       ;(window as any).__lvMountRace = { deferred, race }
     })
+    mark('renderer-request-wait')
     await rendererRequest
+    mark('blocked-mounts-wait')
     // Establish that both hosts reached the blocked renderer load, rather than
     // detaching a host that is still validating its envelope.
     await page.waitForFunction(() => {
       const { deferred, race } = (window as any).__lvMountRace
       return Boolean(deferred.controller && deferred.pendingApply && race.transient.controller && race.transient.pendingApply)
     })
+    mark('detach-reattach-started')
     await page.evaluate(async () => {
       const { deferred, race } = (window as any).__lvMountRace
       race.transientController = race.transient.controller
@@ -601,9 +731,12 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       race.fresh = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       race.reattached = true
     })
+    mark('pre-release-state-read')
     const beforeRelease = await page.evaluate(() => (window as any).__lvMountRace.race.staleSettled)
     expect(beforeRelease).toBe(false)
+    mark('renderer-release')
     releaseRenderer()
+    mark('final-state-read')
     const result = await page.evaluate(async () => {
       const { deferred, race } = (window as any).__lvMountRace
       return {
@@ -621,9 +754,14 @@ test('pending renderer loads reject stale mount promises after detach and reatta
     expect(result.fresh).toBe('resolved')
     expect(result.mounted).toBeGreaterThan(0)
     expect(result.controller).toBe(true)
+    mark('assertions-complete')
+  } catch (error) {
+    console.error('[visualization-host lifecycle]', JSON.stringify({ phase, events: lifecycle, omittedLifecycleEvents }))
+    throw error
   } finally {
     releaseRenderer?.()
     await page.close()
+    browser.off('disconnected', onBrowserDisconnected)
   }
 })
 
@@ -916,4 +1054,36 @@ test('lazy validation leaves empty hosts unloaded and retains the last valid que
     expect(accepted.kind).toBe('kpi')
     expect(accepted.snapshot).toContain('Orders')
   } finally { release(); await page.close() }
+})
+
+test('table menus receive and clear the authorized Explorer link after renderer mount', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const state = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:600px;height:400px'
+      host.envelope = (window as any).__lvSourceHosts.orders.envelope
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/orders/explore'
+      document.body.append(host)
+      await host.ensureMounted()
+      await host.updateComplete
+      const table = host.shadowRoot.querySelector('lv-report-table')
+      await table.updateComplete
+      const href = table.shadowRoot.querySelector('a[role="menuitem"]')?.getAttribute('href')
+      host.exploreHref = undefined
+      await host.updateComplete
+      await table.updateComplete
+      const cleared = !table.shadowRoot.querySelector('a[role="menuitem"]')
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/orders/explore'
+      host.actionsEnabled = false
+      await host.updateComplete
+      await table.updateComplete
+      const disabled = !table.shadowRoot.querySelector('a[role="menuitem"]')
+      host.remove()
+      return { href, cleared, disabled }
+    })
+    expect(state).toEqual({ href: '/dashboards/sales/pages/overview/visuals/orders/explore', cleared: true, disabled: true })
+  } finally { await page.close() }
 })

@@ -776,7 +776,7 @@ func TestVerifyQualificationRuntimeIdentityBindsBundleImage(t *testing.T) {
 		t.Context(), imageReference, evidenceDir,
 	))
 	require.Len(t, executor.requests, 1)
-	require.Equal(t, []string{"run", "--rm", imageReference, "version", "--json"}, executor.requests[0].Arguments)
+	require.Equal(t, []string{"run", "--rm", imageReference, "version", "--format", "json"}, executor.requests[0].Arguments)
 	contents, err := os.ReadFile(filepath.Join(evidenceDir, "runtime-identity.json"))
 	require.NoError(t, err)
 	require.Equal(t, runtimeIdentity, string(contents))

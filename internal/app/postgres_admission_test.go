@@ -221,6 +221,7 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	}
 	defer controlAdmin.Close(context.Background())
 	runtimeName := pgx.Identifier{runtime.Name}.Sanitize()
+	t.Run("managed preparation and SQL work admission", func(t *testing.T) { assertMaintenanceSQLPreparation(t, lifecycle, control.AdminURL(), runtimeName) })
 	if _, err := controlAdmin.Exec(t.Context(), "REVOKE SELECT ON recovery.recovery_set FROM "+runtimeName); err != nil {
 		t.Fatalf("revoke runtime recovery privilege: %v", err)
 	}

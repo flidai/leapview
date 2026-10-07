@@ -29,12 +29,13 @@ let
     ln -s ${assets.maps} "$out/app/.data/map-assets"
     cp -R ${assets.extensions} "$out/usr/local/share/leapview/extensions"
     mkdir -p "$out/usr/local/share/leapview/deployment"
-    cp -R ${application}/share/leapview/deploy/compose/{compose.yaml,compose.https.yaml,compose.first-install-bootstrap.yaml,Caddyfile,Caddyfile.first-install-bootstrap,first-install.env,deployment.env.example,leapview.env.example,README.md,QUALIFICATION.md,qualification} "$out/usr/local/share/leapview/deployment/"
+    cp -R ${application}/share/leapview/deploy/compose/{compose.yaml,compose.postgres.yaml,compose.https.yaml,compose.first-install-bootstrap.yaml,Caddyfile,Caddyfile.first-install-bootstrap,first-install.env,deployment.env.example,leapview.env.example,README.md,QUALIFICATION.md,qualification,postgres} "$out/usr/local/share/leapview/deployment/"
     cp -R ${application}/share/leapview/deploy/host/files/. "$out/usr/local/share/leapview/deployment/"
     cp ${portable}/bin/leapviewctl "$out/usr/local/share/leapview/deployment/leapviewctl"
     chmod -R u+w "$out/usr/local/share/leapview/deployment"
     chmod 0500 "$out/usr/local/share/leapview/deployment/"{leapviewctl,leapviewctl-wrapper}
-    chmod 0400 "$out/usr/local/share/leapview/deployment/"{compose.yaml,compose.https.yaml,compose.first-install-bootstrap.yaml,Caddyfile,Caddyfile.first-install-bootstrap,first-install.env,deployment.env.example,leapview.env.example,README.md,QUALIFICATION.md,qualification/*}
+    chmod 0400 "$out/usr/local/share/leapview/deployment/"{compose.yaml,compose.postgres.yaml,compose.https.yaml,compose.first-install-bootstrap.yaml,Caddyfile,Caddyfile.first-install-bootstrap,first-install.env,deployment.env.example,leapview.env.example,README.md,QUALIFICATION.md,qualification/*}
+    chmod 0444 "$out/usr/local/share/leapview/deployment/postgres/"*.sh
     find "$out/usr/local/share/leapview/extensions" -type d -exec chmod 0555 {} +
     find "$out/usr/local/share/leapview/extensions" -type f -exec chmod 0444 {} +
   '';
@@ -60,7 +61,8 @@ pkgs.dockerTools.buildLayeredImage {
     chown -hR 0:0 ./app ./bin ./${loaderDir} ./sbin ./etc ./usr ./var ./tmp
     chown -h 0:0 ./busybox
     chmod 0500 ./usr/local/share/leapview/deployment/{leapviewctl,leapviewctl-wrapper}
-    chmod 0400 ./usr/local/share/leapview/deployment/{compose.yaml,compose.https.yaml,compose.first-install-bootstrap.yaml,Caddyfile,Caddyfile.first-install-bootstrap,first-install.env,deployment.env.example,leapview.env.example,README.md,QUALIFICATION.md,qualification/*}
+    chmod 0400 ./usr/local/share/leapview/deployment/{compose.yaml,compose.postgres.yaml,compose.https.yaml,compose.first-install-bootstrap.yaml,Caddyfile,Caddyfile.first-install-bootstrap,first-install.env,deployment.env.example,leapview.env.example,README.md,QUALIFICATION.md,qualification/*}
+    chmod 0444 ./usr/local/share/leapview/deployment/postgres/*.sh
     find ./usr/local/share/leapview/extensions -type d -exec chmod 0555 {} +
     find ./usr/local/share/leapview/extensions -type f -exec chmod 0444 {} +
     chown -R 999:999 ./var/lib/leapview ./app

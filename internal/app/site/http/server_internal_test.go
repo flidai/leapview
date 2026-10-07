@@ -1140,7 +1140,7 @@ func TestSiteServesMachineDocumentationArtifacts(t *testing.T) {
 		contains    []string
 	}{
 		{path: "/llms.txt", contentType: "text/plain", contains: []string{"# LeapView", "/mcp", "/docs/cli/manifest.json", "/docs/api/operations.json"}},
-		{path: "/docs/cli/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"id": "publish"`, `"effect": "write"`}},
+		{path: "/docs/cli/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 2`, `"id": "root"`, `"id": "publish"`, `"effect": "write"`, `"output": {`}},
 		{path: "/docs/agent-tools/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"name": "catalog_search"`, `"inputSchema": {`, `"outputSchema": {`}},
 		{path: "/docs/agent-tools/tools/catalog_search.json", contentType: "application/json", contains: []string{`"name": "catalog_search"`, `"privilege": "RESOURCE_READ"`, `"readOnlyHint": true`}},
 		{path: "/docs/agent-tools/tools/catalog_search.md", contentType: "text/markdown", contains: []string{"# `catalog_search`", "## Input schema", "## Output schema"}},
@@ -1207,6 +1207,20 @@ func TestSiteCLIReferenceGroupsSubcommandsAndRedirectsLeafPages(t *testing.T) {
 	if got, want := legacy.Header.Get("Location"), "/docs/cli/semantic-models#query"; got != want {
 		t.Errorf("legacy leaf location = %q, want %q", got, want)
 	}
+}
+
+func TestDocumentationCatalogAcceptsItsDocumentedDefaultLimit(t *testing.T) {
+	_, implicit, err := docsCatalogTool(t.Context(), nil, docsCatalogInput{})
+	require.NoError(t, err)
+	if len(implicit.Items) != 100 {
+		t.Fatalf("default catalog size = %d, want 100", len(implicit.Items))
+	}
+	_, explicit, err := docsCatalogTool(t.Context(), nil, docsCatalogInput{Limit: 100})
+	require.NoError(t, err)
+	require.Equal(t, implicit, explicit)
+	_, capped, err := docsCatalogTool(t.Context(), nil, docsCatalogInput{Limit: 1000})
+	require.NoError(t, err)
+	require.Equal(t, implicit, capped)
 }
 
 func TestSiteDocumentationMCPTools(t *testing.T) {

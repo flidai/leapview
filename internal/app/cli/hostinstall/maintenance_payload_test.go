@@ -19,6 +19,8 @@ func TestMaintenancePayloadTransition(t *testing.T) {
 	payload := func(compose string) map[string][]byte {
 		return map[string][]byte{
 			"compose.yaml": []byte(compose), "compose.https.yaml": []byte("proxy"),
+			"compose.postgres.yaml":          []byte("postgres overlay"),
+			"postgres/bundled-entrypoint.sh": []byte("entrypoint"), "postgres/bundled-init.sh": []byte("initializer"),
 			"Caddyfile": []byte("caddy"), "deployment.env.example": []byte("settings"),
 		}
 	}
@@ -64,5 +66,38 @@ func TestMaintenancePayloadTransition(t *testing.T) {
 				t.Fatalf("error = %v, want error %v", err, tc.wantError)
 			}
 		})
+	}
+}
+
+func TestRevision019MaintenancePayloadTransitionAdmitsBundledAdapterOnce(t *testing.T) {
+	compose, err := os.ReadFile("../../../../deploy/compose/compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := string(compose)
+	previous := strings.Replace(current, "[CMD, /usr/local/bin/leapview, healthcheck]", "[CMD, leapview, healthcheck]", 1)
+	if previous == current {
+		t.Fatal("fixture did not model the exact predecessor healthcheck")
+	}
+	payload := func(compose string) map[string][]byte {
+		return map[string][]byte{
+			"compose.yaml": []byte(compose), "compose.https.yaml": []byte("proxy"),
+			"Caddyfile": []byte("caddy"), "deployment.env.example": []byte("settings"),
+		}
+	}
+	installed, predecessor, candidate := payload(previous), payload(previous), payload(current)
+	for name, contents := range map[string][]byte{
+		"compose.postgres.yaml":          []byte("bundled topology"),
+		"postgres/bundled-entrypoint.sh": []byte("entrypoint"),
+		"postgres/bundled-init.sh":       []byte("initializer"),
+	} {
+		candidate[name] = contents
+	}
+	if err := validateLegacyMaintenancePayloadTransition(installed, predecessor, candidate); err != nil {
+		t.Fatalf("exact revision 019 transition rejected: %v", err)
+	}
+	delete(candidate, "postgres/bundled-init.sh")
+	if err := validateLegacyMaintenancePayloadTransition(installed, predecessor, candidate); err == nil {
+		t.Fatal("revision 019 transition accepted an incomplete bundled adapter payload")
 	}
 }

@@ -71,8 +71,8 @@ func WriteDeploymentSelectionError(out io.Writer, format, code, handle, detail s
 	if format == "json" {
 		return json.NewEncoder(out).Encode(selection)
 	}
-	fmt.Fprintf(out, "selection-error %s %s\n", selection.Code, selection.Detail)
-	return nil
+	_, err := fmt.Fprintf(out, "selection-error %s %s\n", selection.Code, selection.Detail)
+	return err
 }
 
 // DeploymentOperationResult is the stable structured deployment result. An
@@ -190,7 +190,7 @@ func RunPublish(
 		return fmt.Errorf("Project publish operations are required")
 	}
 	if options.Format != "text" && options.Format != "json" {
-		return fmt.Errorf("publish format must be text or json")
+		return cliapi.NewUsageError(fmt.Errorf("publish format must be text or json"))
 	}
 	if strings.TrimSpace(options.CandidateID) == "" {
 		return fmt.Errorf("candidate id is required; run build and publish its sealed candidate")

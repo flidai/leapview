@@ -37,12 +37,14 @@ Provisioning renders the provider-neutral Ubuntu host bootstrap with the
 domain, administrator email, target identity, environment, and immutable image
 digest. Cloud-init runs only `leapview-bootstrap prepare-host`, which installs
 Docker Compose and host prerequisites. After the host is ready, privately
-deliver `/run/leapview/operator-bootstrap.json` with provider-created external
-PostgreSQL URLs and reviewed physical-pool identity/evidence, then run
+deliver `/run/leapview/operator-bootstrap.json` with an explicit external or
+bundled PostgreSQL profile and reviewed physical-pool identity/evidence, then run
 `sudo /usr/local/sbin/leapview-bootstrap install`. Never put database
 credentials in Terraform variables, user data, or state. The operator input
 remains available for retry and should be removed explicitly after successful
-installation. The Hetzner module contains no separate Compose, initialization,
+installation. The bundled option runs the private PostgreSQL Compose service;
+its durable state and generated credentials live on the host, outside
+Terraform. The Hetzner module contains no separate Compose, initialization,
 backup-retention, upgrade, or rollback implementation.
 
 When `domain` is empty, the deployment uses an HTTPS `sslip.io` hostname. That

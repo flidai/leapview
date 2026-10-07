@@ -1,0 +1,396 @@
+# Deployment stack research: minimize custom infrastructure code
+
+Date: 2026-09-25
+
+Last revised: 2026-10-05
+
+Status: research supporting selected proposal; no production profile is qualified
+
+Governing proposal: [ADR-0028](../0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md)
+
+Scope clarification after this research: self-hosting prioritizes a straightforward
+Compose installation; operator deployments prioritize reuse and robustness. The
+ADR now proposes Kamal on one dedicated application VPS per customer on European
+Hetzner infrastructure, plus a separate customer PostgreSQL VPS operated by
+LeapView with NixOS and pgBackRest. Local SSD holds analytical files.
+Derived data is explicitly rebuildable where complete source replay is supported.
+Off-host recovery protects irreplaceable managed customer state through the selected
+Hetzner Object Storage backup destination; S3 is outside the analytical serving path.
+Restart-based rollback and a measured, bounded maintenance interruption are
+proposed; a warm retained release is no longer required. Customer-owned
+infrastructure remains a future option. The proposed stateful v1 contract changes
+the earlier candidate-overlap gate and remains subject to ADR review and
+qualification.
+The alternatives below remain research context, not additional v1 support promises.
+
+## Evaluation objective
+
+Minimize the infrastructure software and operational procedures LeapView must
+maintain over time. Count controller code, integration code, cluster operations,
+recovery procedures, provider dependence, and qualification cost together.
+Fewer named tools alone does not establish a simpler system.
+
+The public Compose installation remains supported. Managed hosting uses dedicated
+customer environments, with the same application images and public operational
+contracts. V1 has single-host application availability. Higher availability is a
+separately qualified topology when service obligations require it. Host replacement
+now includes analytical rebuild from sources or an optional consistent backup.
+
+## Findings and recommendation
+
+### Final evaluation and agreed target
+
+The 2026-09-28 review confirms the core target in ADR-0028: public Compose and an
+operated NixOS/Kamal application VPS with a separate self-operated PostgreSQL VPS.
+No core platform replacement is required. The final refinements are:
+
+| Area | Decision |
+|---|---|
+| Host security | Separate NixOS vulnerability review and input-update process from Trivy image scanning |
+| Proxy/network integration | Explicit SSE settings, continuous monitoring and external Docker/firewall exposure checks |
+| Recovery | pgBackRest for PostgreSQL; Restic for irreplaceable local files where present; independent key recovery; analytical rebuild where qualified |
+| Backup isolation | Enforce customer-scoped credentials and decide Object Lock before bucket creation; test retention/restore compatibility |
+| Observability | Better Stack with explicit instrumentation, scoped collection and bounded buffers; broad mounts/privileged eBPF require justification |
+| Release handoff | Prove serialized ownership, local path/catalog compatibility, publication fencing, cleanup and recovery across supported release pairs |
+| Pipeline orchestration | Retain River as baseline while the separate River/DBOS evaluation measures simplification |
+
+The next milestone is a complete deployment exercise: provision, deploy, upgrade,
+rollback, reboot and replace each host, restore authoritative state and rebuild
+analytics. These findings select architecture; they do not supply test evidence.
+
+Sources: [Trivy coverage](https://trivy.dev/docs/latest/coverage/os/),
+[Nixpkgs security](https://tracker.security.nixos.org/),
+[Kamal proxy](https://kamal-deploy.org/docs/configuration/proxy/),
+[Docker networking/firewalls](https://docs.docker.com/engine/network/packet-filtering-firewalls/),
+[Restic](https://restic.readthedocs.io/en/stable/),
+[Hetzner credential scope](https://docs.hetzner.com/storage/object-storage/overview/),
+[Object Lock](https://docs.hetzner.com/storage/object-storage/faq/buckets-objects/),
+[Better Stack collector](https://betterstack.com/docs/logs/collector/).
+
+### Selected target supporting stack
+
+The target now selects NixOS and OpenTofu for managed hosts, nixos-anywhere/disko
+for fresh installation and deploy-rs for configuration activation;
+GitHub Actions/GHCR and Trivy for release production; Better Stack for monitoring,
+logs, on-call and status pages; Tailscale for private operator/deployment access;
+and Postmark for transactional email. Cloudflare is the supported optional edge.
+These selections replace open vendor shortlists; concrete configurations and plans
+still need the companion qualification evidence. Public Compose remains independent
+of these hosted operational accounts, with configurable SMTP and portable telemetry.
+
+GitHub Environments/Secrets delivers customer-scoped deployment and bootstrap
+secrets to Kamal and host automation. Customer credentials belong in
+application-encrypted PostgreSQL records managed through UI/API/bootstrap, with
+a separately provisioned per-deployment keyring and independent key recovery.
+No runtime GitHub lookup or required Infisical service is part of the target.
+A focused product ADR will define credential formats, rotation and activation.
+
+Official sources supporting these choices:
+
+- [Better Stack services and plans](https://betterstack.com/pricing): consolidation
+  of telemetry and incident operations; assess usage, retention and required access features.
+- [Tailscale workload federation](https://tailscale.com/docs/features/workload-identity-federation):
+  temporary CI access can use GitHub identity instead of a static access secret.
+- [GitHub environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+  and [Kamal environment handling](https://kamal-deploy.org/docs/configuration/environment-variables/):
+  environment protections depend on the GitHub plan; Kamal writes secret files on
+  the target host, so secret injection must not be described as RAM-only.
+- [Cloudflare origin TLS](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)
+  and [localization](https://developers.cloudflare.com/data-localization/): qualify
+  both TLS hops and plaintext processing; regional controls are a separate decision.
+- [Trivy image scanning](https://trivy.dev/docs/latest/target/container_image/)
+  and [Postmark SMTP](https://postmarkapp.com/developer/user-guide/send-email-with-smtp):
+  reuse image assessment and email delivery rather than building those services.
+- [OWASP cryptographic storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html):
+  use established authenticated encryption and explicit key lifecycle/recovery.
+
+### NixOS selection after host lifecycle review
+
+NixOS replaces the earlier Ubuntu/Ansible proposal for managed application and
+PostgreSQL hosts. Reusable modules and locked inputs make host configuration and
+package changes reviewable; deploy-rs provides established activation machinery.
+OpenTofu continues to own provider resources, nixos-anywhere/disko install fresh
+hosts, and Kamal owns application containers and proxy releases. Public Compose
+users do not need NixOS. This selection does not add a custom host controller.
+
+Qualification must cover activation and reboot recovery, PostgreSQL data-format
+compatibility, persistent mounts, secret files outside the Nix store, generation
+retention and patch cadence. System rollback does not restore mutable data.
+See the governing ADR and qualification specification for acceptance criteria.
+
+Sources: [NixOS manual](https://nixos.org/manual/nixos/stable/),
+[nixos-anywhere](https://github.com/nix-community/nixos-anywhere),
+[disko](https://github.com/nix-community/disko),
+[deploy-rs](https://github.com/serokell/deploy-rs).
+
+### Deployment mechanisms
+
+Prefer established deployment controllers over implementing a LeapView controller
+for slots, replica replacement, promotion, monitoring, traffic switching, and
+rollback. Qualify one managed deployment path and publish its configuration.
+Do not commit to supporting every candidate below.
+
+| Candidate | Existing machinery reused | Remaining cost or limitation | Research conclusion |
+|---|---|---|---|
+| Stock Kamal | Remote container deployment, image management and health-gated proxy switching | Its ordinary candidate-first sequence can overlap processes; the shared-home v1 handoff must stop and confirm the old owner before candidate start. Host lifecycle remains ours. No hook or callback capability is assumed. | Selected as the proposed deployment base, subject to a separately qualified adapter/operating sequence and restart-based rollback |
+| Docker Swarm + Traefik | Service reconciliation, replica replacement, configurable rolling updates and failure rollback, dynamic ingress | Cluster/quorum and host operations remain ours; no built-in retained full blue/green release contract | Lightweight candidate if rolling replacement meets the service objectives |
+| Managed Kubernetes + Argo Rollouts | Managed node/control-plane lifecycle plus standard rollout controllers | Provider cost and qualification, Kubernetes configuration, controller upgrades and application integration | Deferred alternative if future requirements justify advanced release analysis |
+| Self-managed K3s + Argo Rollouts | Standard rollout controllers and Kubernetes APIs | We own cluster upgrades, networking, datastore recovery and failure response | Portable alternative, but does not remove cluster operations |
+| Uncloud | Compose-oriented deployment, networking and Caddy integration | Failed updates can leave mixed versions; unhealthy containers are removed from routing without automatic health-triggered restart/rollback after deployment | Revisit after core release requirements are satisfied; not the leading candidate |
+| Coolify / Dokploy | Operator UI/API and deployment management | Underlying deployment semantics and edition boundaries still matter | Useful administration products; not sufficient grounds to select a release engine |
+| Komodo / Semaphore UI | Existing interfaces for server operations or running automation | Another privileged service to operate; not an application recovery authority | Optional replacements for a future custom operations dashboard |
+
+Kamal's [documented deployment commands](https://kamal-deploy.org/docs/commands/deploy/)
+provide image and proxy lifecycle operations, but their ordinary candidate-first
+release behavior is not suitable evidence for a shared-home stop-first handoff.
+The pinned Kamal version and deployment adapter must demonstrate the required
+sequence using supported operations; this research assumes no undocumented hooks.
+Swarm supports
+[service rollback and update monitoring](https://docs.docker.com/engine/swarm/services/),
+but [stack deployment uses the legacy Compose v3 format](https://docs.docker.com/engine/swarm/stack-deploy/).
+Reusing Compose concepts does not mean the existing file works unchanged.
+Swarm [manager quorum](https://docs.docker.com/engine/swarm/admin_guide/) and K3s
+[embedded-etcd HA](https://docs.k3s.io/datastore/ha-embedded) both require explicit
+failure-domain design; the latter requires at least three server nodes.
+[Traefik's Swarm integration](https://doc.traefik.io/traefik/expose/swarm/advanced/)
+supplies routing configuration; certificate renewal and ingress availability still
+need qualification on the chosen topology.
+
+### Why the revised requirements favor Kamal
+
+The previous Kubernetes recommendation depended on warm retained releases and
+native post-promotion analysis. Accepting restart-based rollback removes those
+requirements. Kamal reuses image, proxy and remote deployment machinery while
+avoiding a Kubernetes lifecycle and managed-cluster provider dependency for each
+customer. It does not by itself implement the newly proposed serialized application
+handoff.
+
+The documented [rollback](https://kamal-deploy.org/docs/commands/rollback/) uses
+an earlier image; local pruning and artifact/configuration retention must match
+the supported window. The [proxy health check](https://kamal-deploy.org/docs/configuration/proxy/)
+ends after deployment, so continuous off-host monitoring and operator response
+remain necessary. Qualify SSE buffering, timeouts, uploads and drain behavior.
+The application `serve` path acquires an exclusive `.instance.lock` under
+`LEAPVIEW_HOME` before application build/start; managed application revisions mount
+that same home. Workers start before the listener, and `/readyz` checks an active
+runtime lease. The candidate-first Kamal default can therefore conflict with the
+current single-owner runtime boundary. The proposed managed v1 sequence closes
+admission, drains, stops and confirms the predecessor/lock release, then starts and
+verifies one candidate before reopening. See the [qualification
+specification](deployment-profile-qualification.md); this proposal remains
+unqualified and does not imply current adapter support.
+
+Host and PostgreSQL maintenance stay with us. The separate database VPS holds
+control state while local SSD serves analytical outputs. Rebuilding a host must preserve authoritative
+customer writes and republish analytical data from retained sources into a fresh
+catalog/directory. Source availability and rebuild time affect recovery. Managed
+backups protect irreplaceable state; they need not include every materialization.
+
+### Self-operated PostgreSQL: selected v1 approach
+
+Accepting restore-time downtime makes a single primary with off-host backups a
+credible option. Database operation and availability topology are separate choices:
+a managed database can also have no standby. The selected approach is one separate
+PostgreSQL VPS per customer, with reviewed NixOS modules for lifecycle configuration
+and pgBackRest for physical backups, WAL archiving, retention and PITR.
+nixos-anywhere and disko provide fresh-host installation. No custom database controller, standby, Redis or default
+PgBouncer service is required. Connection pooling must preserve session advisory
+locks used by LeapView; transaction pooling is not a universal default.
+
+| Candidate | Reuse | Trade-off and conclusion |
+|---|---|---|
+| NixOS + pgBackRest | Declarative host configuration and established database recovery tools | Selected; we own integration, patching, alerts, restore exercises and incident response |
+| Ubuntu LTS + Ansible + pgBackRest | Broad role ecosystem and familiar mutable hosts | Superseded option; prefer NixOS generations and shared modules for the managed baseline |
+| Pigsty | Integrated PostgreSQL lifecycle, backup and observability | Researched alternative; even the documented slim profile requires Patroni and etcd |
+| Autobase | PostgreSQL deployment, upgrade and recovery automation | Broader alternative; distinguish automation licensing from commercial console features |
+| Ubicloud PostgreSQL | Provider-operated database lifecycle and backups, optional standbys | Researched alternative, not a selected v1 dependency; adds a database vendor and requires provider/network/recovery qualification |
+
+Sources: [PostgreSQL Ansible role](https://github.com/geerlingguy/ansible-role-postgresql),
+[pgBackRest](https://pgbackrest.org/user-guide.html),
+[Pigsty slim profile](https://pigsty.io/docs/setup/slim/),
+[Autobase](https://github.com/autobase-tech/autobase), and
+[Ubicloud availability options](https://www.ubicloud.com/docs/managed-postgresql/high-availability).
+These sources identify reusable mechanisms, not approved versions/configurations.
+
+Minor updates and host reboots need controlled maintenance and overdue-patch
+reporting. Major upgrades use native tools and rehearsed recovery. In particular,
+[`pg_upgrade --link`](https://www.postgresql.org/docs/17/pgupgrade.html) does not
+leave a safe old cluster after the new one starts. Preserve independent recovery
+copies and define the rollback boundary before admitting new writes. Upgrade and
+restore times must be measured; backups do not imply zero data loss or automatic
+failover. Qualification includes failed archival and primary loss, not only happy
+path installation. PostgreSQL PITR still needs LeapView job and DuckLake recovery
+validation.
+
+The choice strengthens portability to customer-owned infrastructure and removes
+an additional database-service administrator. It does not remove the infrastructure
+supplier or establish exclusive data access. Supplier, key, telemetry, backup and
+operator access boundaries remain explicit. Customer-owned deployment support is
+future scope; v1 evidence covers the chosen Hetzner deployment only.
+
+Latency is an evidence question. Ubicloud documents a Falkenstein region and
+public PostgreSQL endpoints with firewall controls; private connectivity described
+for Ubicloud resources must not be assumed to join our Hetzner Cloud network.
+If revisited, compare representative LeapView requests, catalog publication and
+River operations using warm TLS connections and p95/p99 under load. No benchmark
+or conclusion that managed PostgreSQL is inherently slower is established here.
+See [regions](https://www.ubicloud.com/docs/about/regions),
+[connections](https://www.ubicloud.com/docs/managed-postgresql/connection) and
+[backup export/recovery](https://www.ubicloud.com/docs/managed-postgresql/backup-and-restore).
+
+### Local analytical storage and replaceable pipeline outputs
+
+[DuckLake supports local filesystem data](https://ducklake.select/docs/stable/duckdb/usage/choosing_storage)
+with a PostgreSQL catalog. Local reads remove remote object requests; benchmark
+representative cold/warm dashboards, concurrent refresh and disk pressure before
+claiming a performance improvement. Existing filesystem adapters provide a base,
+not production qualification.
+
+The proposal distinguishes storage location from data ownership. Full-source
+materializations may be rebuilt; sole-copy uploads and non-replayable incremental
+history cannot be discarded. Fresh catalog/file generations provide a recovery
+boundary after corruption. Retain ordinary snapshots for normal refresh, and use
+existing pool identities, durable jobs and serving publication for recovery.
+No custom DuckLake metadata repair engine is proposed.
+
+Default Compose needs no S3, Grafana or backup account. Operators can configure
+those integrations. Managed service operations require monitoring and protection
+of irreplaceable state. Optional analytical backups can shorten rebuild downtime;
+if present, their catalog and files must form a consistent recovery set. The
+companion specification defines the required evidence for both paths.
+
+### Argo Rollouts for a future stricter release profile
+
+[Argo Rollouts blue/green](https://argoproj.github.io/argo-rollouts/features/bluegreen/)
+already models active/preview services, promotion analysis, rollback after failed
+post-promotion analysis, and delayed scale-down of old replicas. These are the
+generic mechanisms a custom warm-slot adapter would otherwise need to own.
+
+Configure the observation and retention windows together. The documented default
+scale-down delay is short; explicit delays interact with post-promotion analysis.
+Verify the selected controller version under an injected late failure. Service
+selector changes also do not migrate existing SSE connections. Release overlap,
+traffic draining and application compatibility still need proof.
+
+Our application checks can run as a standard
+[analysis Job](https://argoproj.github.io/argo-rollouts/analysis/job/). LeapView
+returns bounded results and a meaningful exit status; Argo handles progression.
+Do not duplicate the rollout state machine inside LeapView. Migration execution
+must remain explicitly ordered, idempotent and independently authorized; merely
+placing it in a Job does not provide those properties.
+
+If fleet reconciliation becomes necessary,
+[Argo CD ApplicationSets](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators/)
+can generate applications from customer configuration and cluster inventory.
+That is a candidate replacement for a custom fleet reconciler. It is separate
+from Argo Rollouts and need not be introduced in the first proof. Retain explicit
+per-customer version promotion; a shared template change must not accidentally
+upgrade every customer. Central deployment credentials remain a fleet-wide
+security boundary.
+
+### Managed Kubernetes on Hetzner is a distinct option
+
+These services were researched for the earlier warm-release proposal. They are
+not prerequisites or selected providers for the Kamal v1 profile:
+
+- [Syself Autopilot](https://syself.com/docs/hetzner/apalla/concepts/overview)
+  documents clusters in the customer's Hetzner account and managed node OS,
+  replacement and upgrades. Its [FAQ](https://syself.com/docs/hetzner/apalla/support/faq)
+  describes separate management and workload clusters. Verify supported recovery,
+  failure domains, access scope, maintenance control and service terms.
+- [Cloudfleet](https://cloudfleet.ai/docs/introduction/getting-started/) documents
+  automatic worker provisioning in the customer's Hetzner account. Verify control
+  plane location, node lifecycle responsibilities, failure behavior and exit path.
+- [Ubicloud Kubernetes](https://www.ubicloud.com/use-cases/ubicloud-kubernetes)
+  is hosted on Hetzner infrastructure, but its page still describes preview
+  availability. Its infrastructure/account arrangement must not be confused with
+  provisioning into our existing Hetzner account. Confirm production availability
+  and support before treating it as an enterprise candidate.
+
+These are third-party services, not Hetzner Cloud's own managed Kubernetes
+offering. Procurement and technical qualification remain open. Keep application
+packaging standard and public if a future Kubernetes profile is adopted.
+
+Provider-owned node lifecycle should replace our host provisioning and patching
+automation for those nodes. Do not run our host and infrastructure reconciliation
+against resources simultaneously owned by the provider's controllers. OpenTofu
+can still manage resources outside that ownership boundary.
+
+### Smaller platforms and administration tools
+
+[Uncloud](https://uncloud.run/docs/guides/deployments/rolling-deployments/)
+documents per-container rollback rather than whole-deployment rollback. This is
+material when more than one release is partially deployed.
+[Coolify](https://coolify.io/docs/applications/deployments/rolling-updates)
+explicitly excludes plain Compose applications from its application rolling-update
+sequence. [Dokploy Enterprise](https://docs.dokploy.com/docs/core/enterprise)
+includes audit logs and additional identity/access features; assess the edition
+we would actually operate.
+
+[Komodo](https://komo.do/docs/intro) provides server, Compose/Swarm and procedure
+management. [Semaphore UI](https://semaphoreui.com/) provides a UI/API for existing
+automation tools. Choose one only when it removes concrete operator work. Neither
+needs to be installed into every customer environment.
+
+## Additional infrastructure code to avoid
+
+- **Proxy discovery and certificate controllers:** use the selected platform's
+  standard edge. Compose uses optional Caddy; managed Kamal uses kamal-proxy.
+  Avoid multiple release-routing owners.
+- **PostgreSQL backup engines:** use the selected native
+  [pgBackRest](https://pgbackrest.org/user-guide.html) recovery engine.
+  LeapView should invoke supported operations and validate the recovered state.
+- **Monitoring storage and incident tooling:** use portable telemetry with the
+  selected Better Stack service. A separate Grafana backend is optional.
+- **A second recovery scheduler:** preserve the PostgreSQL/River recovery
+  occurrence and evidence contracts. Kubernetes Jobs or external CI can execute
+  a claimed scenario without becoming another authority for its identity.
+- **A general platform API:** adopt a deployment UI or GitOps controller when
+  needed before creating a LeapView-specific server inventory and reconciler.
+
+Managed cluster recovery is separate from data recovery.
+[Syself's recovery documentation](https://syself.com/docs/hetzner/apalla/concepts/operations/backup-and-disaster-recovery)
+explicitly assigns application data protection to the customer and describes
+rebuilding workload-cluster configuration from declared state. Inventory and
+recover secrets and runtime-created resources that Git cannot recreate. No
+cluster service or volume snapshot establishes a coordinated PostgreSQL,
+DuckLake and object recovery point by itself.
+
+## What remains application engineering
+
+LeapView owns schema/catalog compatibility, credential and authorization
+boundaries, job fencing and idempotency, readiness and shutdown, SSE reconnection,
+recovery-point consistency, object retention rules, and representative correctness
+checks. Standard tools consume these interfaces. Only adapters, public declarative
+configuration, and application-specific checks should be added where they suffice.
+
+The UBDR project remains the home for release/recovery correctness and evidence.
+Replacing deployment mechanics must preserve that evidence contract and requalify
+the new path. A prior successful Compose qualification does not qualify Kamal.
+Conversely, a new platform is not a reason to replace completed recovery ledger
+and provider-handoff work.
+
+## Implementation qualification
+
+Qualify Kamal first against the revised restart-based rollback contract. The
+selected managed shape is one application VPS plus one self-operated PostgreSQL
+VPS per customer, with local SSD analytical storage, pgBackRest database recovery
+and Restic for irreplaceable local files. Keep Compose for self-hosters.
+Reopen platform selection only if measured product behavior or service obligations reveal a concrete gap;
+do not rebuild Argo-style warm retention and analysis around Kamal.
+
+For the selected path, record:
+
+1. Product-independent controller/host code removed and new integration code added.
+2. Manual steps for onboarding, upgrades, failures, certificate renewal and rebuild.
+3. Idle per-customer cost, peak maintenance/recovery capacity, and central operating cost.
+4. Exact-version upgrade; failure before and after the handoff; rollback after
+   writes; node loss; management outage; and fresh-environment restoration outcomes.
+5. Customer isolation, operator access, provider exit and independent self-hosting.
+6. Remaining ownership for OS, Docker, Kamal/proxy, monitoring and data services.
+
+Record qualification of the agreed target from these results; revisit a choice
+only if evidence demonstrates an unmet requirement. Retire replaced
+mechanisms only after equivalent application guarantees and recovery evidence are
+demonstrated.
+This research ran no deployment, benchmark, failover or restore exercise.

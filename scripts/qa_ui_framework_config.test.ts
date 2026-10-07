@@ -147,14 +147,17 @@ test('development publication can seed a healthy server before a project is acti
 })
 
 test('managed development waits for the published Project before handing over the UI', async () => {
-  const [server, taskfile] = await Promise.all([
+  const [server, taskfile, air] = await Promise.all([
     readFile('scripts/dev-server.sh', 'utf8'),
     readFile('Taskfile.yml', 'utf8'),
+    readFile('.air.toml', 'utf8'),
   ])
 
   expect(server).toContain('.checks.runtime == "ok"')
   expect(server).toContain('wait_active_project "$port" || return 1')
   expect(taskfile).toContain('      - ./scripts/dev-server.sh start')
+  expect(server.match(/"\$TMP_DIR\/leapview-dev" serve >> "\$LOG_FILE"/g)).toHaveLength(2)
+  expect(air).toContain('entrypoint = ["./.tmp/air/leapview", "serve"]')
 })
 
 test('maintained headless workflows use the managed PostgreSQL dev lifecycle', async () => {
@@ -273,7 +276,10 @@ test('visual regression QA covers stable representative states, themes, and view
   expect(source).toContain("const modes = ['light', 'dark'] as const")
   expect(source).toContain("document.fonts.load('400 16px \"Inter Variable\"'")
   expect(source).toContain("document.fonts.load('600 16px \"Inter Variable\"'")
-  expect(source).toContain("page.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' })")
+  expect(source).toContain("page.screenshot({")
+  expect(source).toContain("animations: 'disabled', caret: 'hide', scale: 'css'")
+  expect(source).toContain("style: 'datastar-inspector { visibility: hidden !important; }'")
+  expect(source).toContain("footer.status = { ...footer.status, lastUpdated: '2026-09-13T11:13:00.000Z' }")
   expect(source).toContain("expect(screenshot).toMatchSnapshot")
   expect(source).toContain('isDenseDesktopTable ? 0.009 : isDesktop ? 0.003 : 0.001')
   expect(source).toContain('threshold: isDesktop ? 0.5 : 0.2')

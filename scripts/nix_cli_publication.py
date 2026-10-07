@@ -52,7 +52,7 @@ ROOT_REPORTS = (*REPORTS, 'candidate-manifest.json', 'qualification.json', 'go')
 PROBE_HOST_REPORTS = ('static.json', *HOST_REPORTS)
 ARCH_MACHINE = {'amd64': 'x86_64', 'arm64': 'aarch64'}
 RUNTIME_COMMANDS = (
-    (('version', '--json'), 'runtime-version.json'),
+    (('version', '--format', 'json'), 'runtime-version.json'),
     (('--help',), 'runtime-help.txt'),
     (('host', '--help'), 'runtime-host-help.txt'),
 )

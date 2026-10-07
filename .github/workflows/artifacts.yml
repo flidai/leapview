@@ -57,7 +57,7 @@ jobs:
     name: Build production image
     needs: [authorize-candidate]
     if: >-
-      ${{ always() && github.repository == 'flidai/leapview' &&
+      ${{ !cancelled() && github.repository == 'flidai/leapview' &&
           ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
            (github.event_name == 'workflow_dispatch' && needs.authorize-candidate.result == 'success')) }}
     runs-on: ubuntu-24.04
@@ -147,7 +147,7 @@ jobs:
   qualify-production-image:
     name: Qualify production image
     needs: build-production-image
-    if: ${{ always() && needs.build-production-image.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}
     runs-on: ubuntu-24.04
     # The release gate now includes the policy-driven performance and repeated
     # native-refresh phase. Its bounded phase budgets total 115 minutes before
@@ -218,7 +218,7 @@ jobs:
           immutable_image="${IMAGE_REFERENCE}"
           [[ "${immutable_image}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
           task image:qualify:production IMAGE="${immutable_image}"
-          identity="$(docker run --rm "${immutable_image}" version --json)"
+          identity="$(docker run --rm "${immutable_image}" version --format json)"
           jq -e \
             --arg version "${IMAGE_VERSION}" \
             --arg revision "${IMAGE_REVISION}" \
@@ -242,7 +242,7 @@ jobs:
   qualify-historical-transition:
     name: Qualify schema-32 predecessor transition against exact image
     needs: build-production-image
-    if: ${{ always() && needs.build-production-image.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}
     uses: ./.github/workflows/demo-upgrade-qualification.yml
     with:
       candidate_image: ghcr.io/flidai/leapview@${{ needs.build-production-image.outputs.digest }}
@@ -256,7 +256,7 @@ jobs:
   record-production-image-qualification:
     name: Record exact production image and historical transition
     needs: [build-production-image, qualify-production-image, qualify-historical-transition]
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

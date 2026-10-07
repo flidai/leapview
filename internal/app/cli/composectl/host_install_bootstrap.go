@@ -10,9 +10,9 @@ import (
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
 
-// FirstInstallPostgres carries the provider-created PostgreSQL URLs required
-// to initialize a production Compose instance. Migrator URLs are operation
-// inputs and are never written to leapview.env.
+// FirstInstallPostgres carries external PostgreSQL URLs for production Compose
+// initialization. Migrator URLs are operation inputs and are never written to
+// leapview.env.
 type FirstInstallPostgres struct {
 	ControlURL             string `json:"controlUrl"`
 	ControlMigratorURL     string `json:"controlMigratorUrl"`
@@ -28,21 +28,36 @@ type FirstInstallPhysicalPool struct {
 }
 
 type FirstInstallOptions struct {
+	Profile      string
 	Postgres     FirstInstallPostgres
 	PhysicalPool FirstInstallPhysicalPool
 }
 
+const (
+	FirstInstallPostgresExternal = "external"
+	FirstInstallPostgresBundled  = "bundled"
+)
+
 func (options FirstInstallOptions) Validate() error {
-	connections := []postgresConnection{
-		{"control runtime", options.Postgres.ControlURL, postgresControlRuntimeRole, postgresControlDatabase},
-		{"control migrator", options.Postgres.ControlMigratorURL, postgresControlMigratorRole, postgresControlDatabase},
-		{"control maintenance", options.Postgres.ControlMaintenanceURL, postgresControlMaintenanceRole, postgresControlDatabase},
-		{"DuckLake runtime", options.Postgres.DuckLakeURL, postgresDuckLakeRuntimeRole, postgresDuckLakeDatabase},
-		{"DuckLake maintenance", options.Postgres.DuckLakeMaintenanceURL, postgresDuckLakeMaintenanceRole, postgresDuckLakeDatabase},
-		{"DuckLake migrator", options.Postgres.DuckLakeMigratorURL, postgresDuckLakeMigratorRole, postgresDuckLakeDatabase},
-	}
-	if err := validateDistinctPostgresConnections(connections); err != nil {
-		return fmt.Errorf("validate first-install PostgreSQL connections: %w", err)
+	switch options.Profile {
+	case FirstInstallPostgresExternal:
+		connections := []postgresConnection{
+			{"control runtime", options.Postgres.ControlURL, postgresControlRuntimeRole, postgresControlDatabase},
+			{"control migrator", options.Postgres.ControlMigratorURL, postgresControlMigratorRole, postgresControlDatabase},
+			{"control maintenance", options.Postgres.ControlMaintenanceURL, postgresControlMaintenanceRole, postgresControlDatabase},
+			{"DuckLake runtime", options.Postgres.DuckLakeURL, postgresDuckLakeRuntimeRole, postgresDuckLakeDatabase},
+			{"DuckLake maintenance", options.Postgres.DuckLakeMaintenanceURL, postgresDuckLakeMaintenanceRole, postgresDuckLakeDatabase},
+			{"DuckLake migrator", options.Postgres.DuckLakeMigratorURL, postgresDuckLakeMigratorRole, postgresDuckLakeDatabase},
+		}
+		if err := validateDistinctPostgresConnections(connections); err != nil {
+			return fmt.Errorf("validate first-install PostgreSQL connections: %w", err)
+		}
+	case FirstInstallPostgresBundled:
+		if options.Postgres != (FirstInstallPostgres{}) {
+			return errors.New("bundled PostgreSQL profile must not contain provider connection URLs")
+		}
+	default:
+		return fmt.Errorf("first-install PostgreSQL profile must be %q or %q", FirstInstallPostgresExternal, FirstInstallPostgresBundled)
 	}
 	if err := options.PhysicalPool.Pool.Validate(); err != nil {
 		return fmt.Errorf("validate first-install physical-pool identity: %w", err)
@@ -72,6 +87,10 @@ func (c *Controller) PrepareFirstInstall(ctx context.Context, options FirstInsta
 	if err := options.Validate(); err != nil {
 		return err
 	}
+	postgres := options.Postgres
+	if err := selectPostgresProfile(c.root, options.Profile); err != nil {
+		return err
+	}
 	if err := c.ensureDeploymentEnvironment(); err != nil {
 		return err
 	}
@@ -84,9 +103,18 @@ func (c *Controller) PrepareFirstInstall(ctx context.Context, options FirstInsta
 			return err
 		}
 	}
+	if options.Profile == FirstInstallPostgresBundled {
+		var err error
+		postgres, err = c.ensureBundledPostgres(ctx)
+		if err != nil {
+			return fmt.Errorf("prepare bundled PostgreSQL: %w", err)
+		}
+	} else if err := rejectBundledPostgresSelection(c.root); err != nil {
+		return err
+	}
 	servingEnvironment, err := postgresServingEnvironment(
-		options.Postgres.ControlURL, options.Postgres.ControlMaintenanceURL,
-		options.Postgres.DuckLakeURL, options.Postgres.DuckLakeMaintenanceURL,
+		postgres.ControlURL, postgres.ControlMaintenanceURL,
+		postgres.DuckLakeURL, postgres.DuckLakeMaintenanceURL,
 	)
 	if err != nil {
 		return err
@@ -129,9 +157,22 @@ func (c *Controller) PrepareFirstInstall(ctx context.Context, options FirstInsta
 
 // InitializeFirstInstall supplies the control migrator only to the one-shot
 // initializer process. The URL is absent from the serving environment file.
-func (c *Controller) InitializeFirstInstall(ctx context.Context, options InitOptions, controlMigratorURL string) error {
+func (c *Controller) InitializeFirstInstall(ctx context.Context, options InitOptions, bootstrap FirstInstallOptions) error {
 	if c == nil {
 		return errors.New("controller is required")
+	}
+	if err := bootstrap.Validate(); err != nil {
+		return err
+	}
+	controlMigratorURL := bootstrap.Postgres.ControlMigratorURL
+	if bootstrap.Profile == FirstInstallPostgresBundled {
+		postgres, err := c.ensureBundledPostgres(ctx)
+		if err != nil {
+			return fmt.Errorf("prepare bundled PostgreSQL for control initialization: %w", err)
+		}
+		controlMigratorURL = postgres.ControlMigratorURL
+	} else if err := rejectBundledPostgresSelection(c.root); err != nil {
+		return err
 	}
 	controlMigratorURL = strings.TrimSpace(controlMigratorURL)
 	controlMigratorURL, err := canonicalPostgresConnectionURL(postgresConnection{
@@ -156,6 +197,16 @@ func (c *Controller) ApplyFirstInstall(ctx context.Context, options FirstInstall
 	if err := options.Validate(); err != nil {
 		return err
 	}
+	postgres := options.Postgres
+	if options.Profile == FirstInstallPostgresBundled {
+		var err error
+		postgres, err = c.ensureBundledPostgres(ctx)
+		if err != nil {
+			return fmt.Errorf("prepare bundled PostgreSQL for delivery-pool apply: %w", err)
+		}
+	} else if err := rejectBundledPostgresSelection(c.root); err != nil {
+		return err
+	}
 	artifacts, err := physicalPoolBootstrapArtifactsFromInput(
 		filepath.Join(c.root, ".host-install-physical-pool"),
 		options.PhysicalPool.Pool,
@@ -167,7 +218,7 @@ func (c *Controller) ApplyFirstInstall(ctx context.Context, options FirstInstall
 	if err := writePhysicalPoolBootstrapArtifacts(artifacts); err != nil {
 		return err
 	}
-	operationEnvironment, err := options.Postgres.operationEnvironment()
+	operationEnvironment, err := postgres.operationEnvironment()
 	if err != nil {
 		return err
 	}

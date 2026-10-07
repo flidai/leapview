@@ -12,21 +12,24 @@ import (
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/securestore"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeLocalSessionAuthority struct {
-	profile             cliapi.TargetProfile
-	profileErr          error
-	resolveErr          error
-	loginRequest        accesscli.LoginRequest
-	loginCalls          int
-	notified            bool
-	reboundOrigin       string
-	deletedProfile      *cliapi.TargetProfile
-	deletedAccount      string
-	deleteCredentialErr error
-	deleteProfileErr    error
+	profile              cliapi.TargetProfile
+	profileErr           error
+	resolveErr           error
+	scopeErr             error
+	loginRequest         accesscli.LoginRequest
+	loginCalls           int
+	notified             bool
+	loginContextCanceled bool
+	reboundOrigin        string
+	deletedProfile       *cliapi.TargetProfile
+	deletedAccount       string
+	deleteCredentialErr  error
+	deleteProfileErr     error
 }
 
 func (authority *fakeLocalSessionAuthority) Profile(string) (cliapi.TargetProfile, error) {
@@ -37,6 +40,10 @@ func (authority *fakeLocalSessionAuthority) Resolve(context.Context, string) (ac
 	return accesscli.ResolvedCredential{SessionID: "session-retained"}, authority.resolveErr
 }
 
+func (authority *fakeLocalSessionAuthority) CheckBootstrapScope(context.Context, accesscli.ResolvedCredential) error {
+	return authority.scopeErr
+}
+
 func (authority *fakeLocalSessionAuthority) RebindLoopbackOrigin(_ string, expected cliapi.TargetProfile, origin string) error {
 	authority.profile = expected
 	authority.profile.Origin = origin
@@ -44,13 +51,18 @@ func (authority *fakeLocalSessionAuthority) RebindLoopbackOrigin(_ string, expec
 	return nil
 }
 
-func (authority *fakeLocalSessionAuthority) Login(_ context.Context, request accesscli.LoginRequest, notify func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error) {
+func (authority *fakeLocalSessionAuthority) Login(ctx context.Context, request accesscli.LoginRequest, notify func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error) {
 	authority.loginCalls++
 	authority.loginRequest = request
 	notify(accesscli.DeviceChallenge{UserCode: "ABCD-EFGH", VerificationURI: request.Origin + "/device"})
 	authority.notified = true
+	authority.loginContextCanceled = ctx.Err() != nil
 	return accesscli.LoginResult{SessionID: "session-local"}, nil
 }
+
+type localSessionFailingWriter struct{ err error }
+
+func (writer localSessionFailingWriter) Write([]byte) (int, error) { return 0, writer.err }
 
 func (authority *fakeLocalSessionAuthority) DeleteProfile(_ string, expected cliapi.TargetProfile) error {
 	if authority.deleteProfileErr != nil {
@@ -80,8 +92,59 @@ func TestEstablishLocalAuthoringSessionsUsesNormalScopedDeviceAuthority(t *testi
 	require.Equal(t, request.InstanceID, authority.loginRequest.InstanceID)
 	require.Equal(t, request.ProjectID, authority.loginRequest.ProjectID)
 	require.False(t, authority.loginRequest.Headless)
-	require.Equal(t, access.DefaultAuthoringActions(), authority.loginRequest.Actions)
+	project := projectgraph.ResourceID(request.ProjectID)
+	permissions, err := access.ProjectPermissionPairsForActions(project, authority.loginRequest.Actions)
+	require.NoError(t, err)
+	scope, err := access.NewAuthoringScope(request.InstanceID, project, permissions)
+	require.NoError(t, err)
+	for _, action := range []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage, access.ActionProjectSettingsRead, access.ActionProjectSettingsUpdate} {
+		pair, pairErr := access.NewProjectPermissionPair(action, project)
+		require.NoError(t, pairErr)
+		require.NoError(t, scope.AuthorizePairs(request.InstanceID, request.ProjectID, []access.PermissionPair{pair}))
+		require.Error(t, scope.AuthorizePairs("foreign-instance", request.ProjectID, []access.PermissionPair{pair}))
+		require.Error(t, scope.AuthorizePairs(request.InstanceID, "foreign-project", []access.PermissionPair{pair}))
+		require.NotContains(t, access.DefaultAuthoringActions(), action, "remote login defaults must remain unchanged")
+	}
+	require.ElementsMatch(t, append(access.DefaultAuthoringActions(), access.ActionProjectAccessRead, access.ActionProjectAccessManage, access.ActionProjectSettingsRead, access.ActionProjectSettingsUpdate), authority.loginRequest.Actions)
 	require.Contains(t, output.String(), "ABCD-EFGH")
+}
+
+func TestEstablishLocalAuthoringSessionsRenewsInsufficientRetainedScope(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	authority := &fakeLocalSessionAuthority{
+		profile:  cliapi.TargetProfile{Origin: request.Origin, InstanceID: request.InstanceID, Environment: request.Environment, ProjectID: request.ProjectID},
+		scopeErr: access.ErrAuthoringScopeDenied,
+	}
+	result, err := establishLocalAuthoringSessionsWith(t.Context(), authority, request, io.Discard)
+	require.NoError(t, err)
+	require.Equal(t, "session-local", result.SessionID)
+	require.Equal(t, 1, authority.loginCalls)
+	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectAccessRead)
+	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectAccessManage)
+	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectSettingsRead)
+	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectSettingsUpdate)
+}
+
+func TestEstablishLocalAuthoringSessionsPreservesCredentialOnScopeInspectionFailure(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	wantErr := errors.New("target unavailable")
+	authority := &fakeLocalSessionAuthority{
+		profile:  cliapi.TargetProfile{Origin: request.Origin, InstanceID: request.InstanceID, Environment: request.Environment, ProjectID: request.ProjectID},
+		scopeErr: wantErr,
+	}
+	_, err := establishLocalAuthoringSessionsWith(t.Context(), authority, request, io.Discard)
+	require.ErrorIs(t, err, wantErr)
+	require.Zero(t, authority.loginCalls)
+}
+
+func TestEstablishLocalAuthoringSessionsCancelsOnChallengeWriteFailure(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	authority := &fakeLocalSessionAuthority{profileErr: cliapi.ErrProfileNotFound, resolveErr: errors.New("not signed in")}
+	wantErr := errors.New("stderr unavailable")
+	_, err := establishLocalAuthoringSessionsWith(t.Context(), authority, request, localSessionFailingWriter{err: wantErr})
+	require.ErrorIs(t, err, wantErr)
+	require.True(t, authority.loginContextCanceled)
+	require.Equal(t, 1, authority.loginCalls)
 }
 
 func TestEstablishLocalAuthoringSessionsReusesExactCredential(t *testing.T) {

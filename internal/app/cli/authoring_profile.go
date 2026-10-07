@@ -32,7 +32,7 @@ func reportLocalDevelopmentProfile(command *cobra.Command, profile localDevelopm
 	if command == nil {
 		return errors.New("local development command is required")
 	}
-	var out io.Writer = command.OutOrStdout()
+	var out io.Writer = command.ErrOrStderr()
 	if _, err := fmt.Fprintf(out, "Development profile %s from %s\n", profile.Profile.ProfileName, profile.Profile.File); err != nil {
 		return err
 	}

@@ -46,6 +46,7 @@ import {
   type RecordRow,
   type RecordStatusIcon,
 } from './record-table-cells'
+import { recordTableDataStyles } from './record-table-data-styles'
 import './code-block'
 
 type RecordAction = {
@@ -78,7 +79,7 @@ type NormalizedRecordTable = Omit<Required<RecordTablePayload>, 'columnSelector'
   columnSelector: Required<RecordColumnSelector>
 }
 
-type RecordTableVariant = 'minimal' | 'primary' | 'compact'
+type RecordTableVariant = 'minimal' | 'primary' | 'compact' | 'data'
 
 const recordTableFeatures = tableFeatures({ rowSortingFeature, sortedRowModel: createSortedRowModel() })
 
@@ -169,7 +170,10 @@ class RecordTable extends LitElement {
         aria-label="Scrollable table"
         tabindex="0"
       >
-        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
+        <table class=${[
+          'record-table',
+          columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : '',
+        ].filter(Boolean).join(' ')} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
           <thead>
             <tr>
               ${columns.map((column) => {
@@ -914,6 +918,8 @@ const recordTableStyles = `
   lv-record-table .density-tight .record-table td {
     padding: var(--base-size-4) var(--base-size-8);
   }
+
+  ${recordTableDataStyles}
 
   lv-record-table .variant-primary .record-table tbody tr {
     min-height: 3rem;

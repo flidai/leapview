@@ -43,3 +43,44 @@ exit 1
 	require.NoError(t, err)
 	require.Equal(t, string(log), string(logAfter), "mutable references must not reach Docker")
 }
+
+func TestSixFilePayloadRequiresAnExactHistoricalImageAndCompleteLegacyFiles(t *testing.T) {
+	for _, test := range []struct {
+		name, image, missing string
+		allowed              bool
+	}{
+		{"revision 019", revision019PredecessorImage, "", true},
+		{"legacy public", legacyPublicImage, "", true},
+		{"ordinary image", "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64), "", false},
+		{"incomplete legacy", legacyPublicImage, "compose.yaml", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			fixture := filepath.Join(root, "payload")
+			writeTestPayload(t, fixture)
+			for _, file := range additionalPayloadFiles {
+				require.NoError(t, os.Remove(filepath.Join(fixture, file.Source)))
+			}
+			if test.missing != "" {
+				require.NoError(t, os.Remove(filepath.Join(fixture, test.missing)))
+			}
+			t.Setenv("LEAPVIEW_TEST_UPGRADE_PAYLOAD", fixture)
+			docker := filepath.Join(root, "docker")
+			require.NoError(t, os.WriteFile(docker, []byte(`#!/bin/sh
+case "$1" in
+  pull|rm) exit 0 ;;
+  create) echo candidate-container ;;
+  cp) cp -R "$LEAPVIEW_TEST_UPGRADE_PAYLOAD/." "$3" ;;
+  *) exit 1 ;;
+esac
+`), 0o700))
+			payload, err := extractCandidatePayload(t.Context(), docker, test.image, os.Stderr)
+			if !test.allowed {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, payload, 6)
+		})
+	}
+}

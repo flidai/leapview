@@ -83,14 +83,20 @@ func (runner osRunner) Run(ctx context.Context, environment []string, arguments 
 }
 
 func New(options Options) (*Controller, error) {
+	return newController(options, true)
+}
+
+func newController(options Options, requireAuthorities bool) (*Controller, error) {
 	if options.Endpoint == nil {
 		return nil, errors.New("verified local Docker endpoint is required")
 	}
-	if options.EstablishSessions == nil {
-		return nil, errors.New("local CLI/browser session authority is required")
-	}
-	if options.ResolveProjectAuthority == nil {
-		return nil, errors.New("issuer-owned Project identity authority is required")
+	if requireAuthorities {
+		if options.EstablishSessions == nil {
+			return nil, errors.New("local CLI/browser session authority is required")
+		}
+		if options.ResolveProjectAuthority == nil {
+			return nil, errors.New("issuer-owned Project identity authority is required")
+		}
 	}
 	if err := validateDevelopmentProfileIdentity(options.DevelopmentProfile); err != nil {
 		return nil, err
@@ -294,8 +300,9 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 		return State{}, err
 	}
 	phase := state.Phase
+	runtimeApplied := false
 	defer func() {
-		if err == nil {
+		if err == nil || runtimeApplied {
 			return
 		}
 		state.Status = statusIncomplete
@@ -408,9 +415,9 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 	if err = saveState(statePath, state); err != nil {
 		return state, err
 	}
-	fmt.Fprintf(controller.stdout, "LeapView local development is ready at %s\n", state.Network.URL)
-	fmt.Fprintf(controller.stdout, "Local authoring target: %s\n", state.Session.TargetName)
-	return state, nil
+	runtimeApplied = true
+	_, err = fmt.Fprintf(controller.stdout, "LeapView local development is ready at %s\nLocal authoring target: %s\n", state.Network.URL, state.Session.TargetName)
+	return state, err
 }
 
 func (controller *Controller) newIntent(canonicalCheckout, checkoutID, manifestDigest string) (State, error) {

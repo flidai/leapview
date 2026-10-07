@@ -10,7 +10,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -503,29 +502,6 @@ func (c *client) getJSON(ctx context.Context, endpoint string, destination any) 
 		return err
 	}
 	return json.Unmarshal(data, destination)
-}
-
-func (c *client) get(ctx context.Context, endpoint string) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("Authorization", "Bearer "+c.token)
-	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	response, err := c.http.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s returned %s: %s", endpoint, response.Status, strings.TrimSpace(string(data)))
-	}
-	return data, nil
 }
 
 func decodePlanArchive(data []byte) (platformci.Plan, error) {

@@ -194,7 +194,7 @@ func TestMainArtifactBundlesExactHistoricalTransitionReceiptAtRoot(t *testing.T)
 		t.Fatal("main image artifacts must qualify the exact published digest against the historical predecessor")
 	}
 	record := workflow.Jobs["record-production-image-qualification"]
-	if !slices.Contains(qualificationNeeds(record.Needs), "qualify-production-image") || !slices.Contains(qualificationNeeds(record.Needs), "qualify-historical-transition") || record.If != "${{ always() }}" {
+	if !slices.Contains(qualificationNeeds(record.Needs), "qualify-production-image") || !slices.Contains(qualificationNeeds(record.Needs), "qualify-historical-transition") || record.If != "${{ !cancelled() }}" {
 		t.Fatal("the qualification receipt must require both exact-image qualification contracts")
 	}
 	var checksBoth, downloadsTransition, bindsRunAttempt, bundlesRootTransition bool

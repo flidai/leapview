@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	manageddatacli "github.com/flidai/leapview/internal/manageddata/cli"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -30,6 +31,7 @@ type developmentInputStagingDependencies struct {
 	list       func(string) ([]string, error)
 	resolve    func(string, string) (manageddatacli.DevelopmentInput, error)
 	plan       func(context.Context, localplan.Request) (localplan.Result, error)
+	grants     func(context.Context, []plannedDevelopmentInput) error
 	sync       func(context.Context, manageddatacli.SyncRequest) error
 	httpClient *http.Client
 }
@@ -50,7 +52,19 @@ func stageDeclaredDevelopmentInputs(ctx context.Context, credentials cliapi.Cred
 		Output:      local.output,
 	}, developmentInputStagingDependencies{
 		list: developmentinput.Names, resolve: resolveDevelopmentInput,
-		plan: planner.Plan, sync: manageddatacli.RunSync, httpClient: http.DefaultClient,
+		plan: planner.Plan, sync: syncDeclaredDevelopmentInput, httpClient: defaultCLIHTTPClient,
+		grants: func(ctx context.Context, inputs []plannedDevelopmentInput) error {
+			client := accessgen.NewGenClient(capabilityAPITransport{target: local.state.Network.URL, token: credentials.Token, client: defaultCLIHTTPClient})
+			principal, err := client.GetCurrentPrincipal(ctx, accessgen.GenGetCurrentPrincipalClientRequest{})
+			if err != nil {
+				return fmt.Errorf("resolve declared input owner: %w", err)
+			}
+			connections := make([]string, len(inputs))
+			for index, input := range inputs {
+				connections[index] = input.plan.Connection
+			}
+			return ensureDeclaredDevelopmentInputGrants(ctx, client, local.state.Authority.InstanceID, local.state.Authority.ProjectUID, local.state.Authority.Environment, strings.TrimSpace(principal.Body.Id), connections, local.stageInputGrant)
+		},
 	})
 }
 
@@ -125,13 +139,21 @@ func stageDeclaredDevelopmentInputsWithDependencies(
 		}
 		planned = append(planned, plannedDevelopmentInput{name: name, selection: selection, plan: plan})
 	}
+	if len(planned) > 0 {
+		if dependencies.grants == nil {
+			return "", errors.New("declared development input grant verification is not configured")
+		}
+		if err := dependencies.grants(ctx, planned); err != nil {
+			return "", fmt.Errorf("authorize declared development inputs: %w", err)
+		}
+	}
 	output := target.Output
 	if output == nil {
 		output = io.Discard
 	}
 	httpClient := dependencies.httpClient
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = defaultCLIHTTPClient
 	}
 	for _, input := range planned {
 		revisionID := input.plan.Manifest.RevisionID()

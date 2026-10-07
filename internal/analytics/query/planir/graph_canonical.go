@@ -237,7 +237,8 @@ func canonicalData(node Node) (json.RawMessage, error) {
 		value = struct {
 			Input      string `json:"input"`
 			TotalField string `json:"total_field"`
-		}{n.Input, n.TotalField}
+			CountOnly  bool   `json:"count_only,omitempty"`
+		}{n.Input, n.TotalField, n.CountOnly}
 	case BundleBranches:
 		value = struct {
 			Branches []BundleBranch `json:"branches"`

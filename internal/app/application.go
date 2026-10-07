@@ -31,8 +31,9 @@ type Application struct {
 }
 
 type applicationLifecycleOwner struct {
-	components []Lifecycle
-	cleanup    []cleanupFunc
+	maintenance *maintenanceAdmission
+	components  []Lifecycle
+	cleanup     []cleanupFunc
 	*applicationCoordinator
 	cleanupOnce sync.Once
 	fatal       chan error

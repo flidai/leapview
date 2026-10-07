@@ -360,6 +360,7 @@ def _assert_real_parent_chain(root: Path, path: Path, label: str) -> None:
 def _asset_inventory(source_root: Path) -> dict[PurePosixPath, tuple[Path, os.stat_result]]:
     fixed = {
         "compose.yaml": "deploy/compose/compose.yaml",
+        "compose.postgres.yaml": "deploy/compose/compose.postgres.yaml",
         "compose.https.yaml": "deploy/compose/compose.https.yaml",
         "compose.first-install-bootstrap.yaml": "deploy/compose/compose.first-install-bootstrap.yaml",
         "Caddyfile": "deploy/compose/Caddyfile",
@@ -387,6 +388,15 @@ def _asset_inventory(source_root: Path) -> dict[PurePosixPath, tuple[Path, os.st
     for path, info in _tree_inventory(qualification, "canonical qualification tree").items():
         relative = path.relative_to(qualification)
         destination = PurePosixPath("qualification") / PurePosixPath(relative.as_posix())
+        if destination in files:
+            raise BundleError(f"duplicate package path: {destination}")
+        files[destination] = (path, info)
+
+    postgres = source_root / "deploy/compose/postgres"
+    _assert_real_parent_chain(source_root, postgres / "bundled-entrypoint.sh", "canonical bundled PostgreSQL tree")
+    for path, info in _tree_inventory(postgres, "canonical bundled PostgreSQL tree").items():
+        relative = path.relative_to(postgres)
+        destination = PurePosixPath("postgres") / PurePosixPath(relative.as_posix())
         if destination in files:
             raise BundleError(f"duplicate package path: {destination}")
         files[destination] = (path, info)

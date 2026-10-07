@@ -24,7 +24,9 @@ permissions:
   attestations: read
 
 concurrency:
-  group: demo-upgrade-qualification-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Main pushes and PR-image dispatches share the caller's main ref. Keep
+  # distinct immutable artifacts independent while deduplicating each image.
+  group: demo-upgrade-qualification-${{ github.workflow }}-${{ inputs.candidate_image || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -127,7 +129,7 @@ jobs:
           SOURCE_REVISION: ${{ inputs.candidate_revision || github.sha }}
         run: |
           set -euo pipefail
-          docker run --rm leapview:historical-transition-local version --json \
+          docker run --rm leapview:historical-transition-local version --format json \
             | jq -e --arg revision "${SOURCE_REVISION}" '.revision == $revision and .dirty == false' >/dev/null
 
       - name: Admit the exact final candidate image

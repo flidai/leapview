@@ -18,6 +18,7 @@ type persistentSnapshotLease struct {
 	servingStateID servingstate.ID
 	snapshotID     int64
 	cancel         context.CancelFunc
+	health         *runtimeLeaseHealth
 	enqueue        func(snapshotLeaseReleaseTask) error
 	once           sync.Once
 	err            error
@@ -31,6 +32,9 @@ func (l *persistentSnapshotLease) Close() error {
 		if l.cancel != nil {
 			l.cancel()
 		}
+		// The heartbeat may already have stopped at terminal expiry. Clear its
+		// owned health at teardown, and reject any renewal that returns late.
+		l.health.close()
 		if l.enqueue != nil {
 			l.err = l.enqueue(snapshotLeaseReleaseTask{repo: l.repo, leaseID: l.id, servingStateID: l.servingStateID, snapshotID: l.snapshotID})
 		} else {
@@ -50,10 +54,11 @@ func (m *Manager) createPersistentLease(ctx context.Context, id servingstate.ID,
 		return nil, err
 	}
 	heartbeatCtx, cancel := context.WithCancel(context.Background())
-	go m.heartbeatLease(heartbeatCtx, repo, leaseID, expiresAt)
-	return &persistentSnapshotLease{repo: repo, id: leaseID, servingStateID: id, snapshotID: snapshotID, cancel: cancel, enqueue: m.releaseQueue.enqueue}, nil
+	health := &runtimeLeaseHealth{manager: m}
+	go m.heartbeatLease(heartbeatCtx, repo, leaseID, health, expiresAt)
+	return &persistentSnapshotLease{repo: repo, id: leaseID, servingStateID: id, snapshotID: snapshotID, cancel: cancel, health: health, enqueue: m.releaseQueue.enqueue}, nil
 }
-func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseRepository, id string, confirmedExpiry ...time.Time) {
+func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseRepository, id string, health *runtimeLeaseHealth, confirmedExpiry ...time.Time) {
 	interval := m.leaseTTL / 2
 	if interval <= 0 {
 		interval = time.Minute
@@ -72,7 +77,7 @@ func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseReposito
 	for {
 		select {
 		case <-ctx.Done():
-			m.setLeaseRenewalError(id, nil)
+			health.update(nil)
 			return
 		case <-timer.C:
 			expires := time.Now().UTC().Add(m.leaseTTL)
@@ -84,8 +89,7 @@ func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseReposito
 			}
 			if err == nil {
 				deadline = expires
-				m.setLeaseRenewalError(id, nil)
-				if m.onLeaseRenewalFailure != nil {
+				if health.update(nil) && m.onLeaseRenewalFailure != nil {
 					m.onLeaseRenewalFailure(nil)
 				}
 				timer.Reset(interval)
@@ -106,8 +110,7 @@ func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseReposito
 				timer.Reset(retry)
 				continue
 			}
-			m.setLeaseRenewalError(id, err)
-			if m.onLeaseRenewalFailure != nil {
+			if health.update(err) && m.onLeaseRenewalFailure != nil {
 				m.onLeaseRenewalFailure(err)
 			}
 			return

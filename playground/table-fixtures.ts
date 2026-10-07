@@ -1,3 +1,4 @@
+import { emptyDataExploreCommand, explorationSpecFromCommand } from '../web/components/data/data-explorer-spec'
 import type { DataExploreCommand, DataExploreResultSignal, DataExplorerCommand, DataPreviewSignal, RecordTableSignal } from '../web/generated/signals'
 import type { EntityListColumn, EntityListItem } from '../web/components/shared/entity-list'
 import type { WindowedTableBlockID, WindowedTableColumn, WindowedTablePayload, WindowedTableRequest, WindowedTableSort } from '../web/components/shared/windowed-table'
@@ -83,20 +84,26 @@ export function previewFixture(table: WindowedTablePayload): DataPreviewSignal {
     chunkSize: table.chunkSize ?? 50, rowHeight: table.rowHeight ?? 34, resetVersion: table.resetVersion ?? 0,
     sort: { column: table.sort?.key || table.sort?.column || '', direction: table.sort?.direction || '' },
     blocks, totalRowLabel: String(table.totalRows ?? 0), loadingBlock: table.loadingBlock, error: table.error,
-    sql: 'SELECT * FROM orders',
+    sql: 'SELECT * FROM orders', loading: Boolean(table.loadingBlock), stale: false,
   }
 }
 
 export function exploreCommand(): DataExploreCommand {
-  return { semanticModelId: 'playground-sales', datasetId: 'orders', dimensions: ['id', 'customer', 'region', 'ordered_at', 'fulfilled'], metrics: ['revenue'], filters: [], sort: [], limit: 75, requestSeq: 0, resetVersion: 0, columnWidths: {} }
+  const command: DataExploreCommand = { ...emptyDataExploreCommand, semanticModelId: 'playground-sales', datasetId: 'orders', dimensions: ['id', 'customer', 'region', 'ordered_at', 'fulfilled'], metrics: ['revenue'], filters: [], sort: [], limit: 75, requestSeq: 0, resetVersion: 0, columnWidths: {} }
+  return { ...command, spec: explorationSpecFromCommand(command) }
 }
 
 export function exploreFixture(command: DataExploreCommand, state: TableState = 'populated', truncated = false): DataExploreResultSignal {
   const sort = command.sort[0]
   const rows = state === 'empty' || state === 'error' ? [] : sortedTableRows(tableRows(75), { key: sort?.field, direction: sort?.direction })
+  const request = command.window ?? { block: 'all', start: 0, count: 100, requestSeq: command.requestSeq, resetVersion: command.resetVersion }
+  const table = answerWindow({
+    tableKey: 'playground-exploration', columns: tableColumns, totalRows: rows.length,
+    availableRows: rows.length, chunkSize: request.count, rowHeight: 32, blocks: {},
+  }, rows, { ...request, sort: { key: sort?.field, column: sort?.field, direction: sort?.direction } })
   return {
     columns: tableColumns.map(({ key, label, type }) => ({ key, label, type })), rows,
-    rowsReturned: rows.length, durationMs: 18, requestSeq: command.requestSeq,
+    window: previewFixture(table), rowsReturned: rows.length, durationMs: 18, requestSeq: command.requestSeq,
     truncated, warnings: [], sql: 'SELECT id, customer, region, revenue, ordered_at, fulfilled FROM orders LIMIT 75',
     error: state === 'error' ? 'The exploration fixture returned an example error.' : '',
   }

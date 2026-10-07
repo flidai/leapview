@@ -12,6 +12,7 @@ import (
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/project/devloop"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -221,12 +222,31 @@ func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *test
 		open        func(string) error
 		wantCalls   int
 		wantWarning string
+		wantJSON    bool
+		noInput     bool
 	}{
 		{
 			name: "explicit headless",
 			args: []string{"--no-browser"},
 			open: func(string) error {
 				t.Fatal("headless dev opened a browser")
+				return nil
+			},
+		},
+		{
+			name: "json forces headless",
+			args: []string{"--format", "json"},
+			open: func(string) error {
+				t.Fatal("JSON dev opened a browser")
+				return nil
+			},
+			wantJSON: true,
+		},
+		{
+			name:    "no input forces headless",
+			noInput: true,
+			open: func(string) error {
+				t.Fatal("--no-input dev opened a browser")
 				return nil
 			},
 		},
@@ -258,18 +278,35 @@ func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *test
 			var output, errOutput strings.Builder
 			command.SetOut(&output)
 			command.SetErr(&errOutput)
-			command.SetArgs(append([]string{
+			args := append([]string{
 				"--once",
 				"--source-root", projectPath,
 				"--target", "prod",
-			}, test.args...))
-			if err := command.Execute(); err != nil {
+			}, test.args...)
+			executor := command
+			if test.noInput {
+				root := &cobra.Command{Use: "leapview"}
+				root.PersistentFlags().Bool("no-input", false, "")
+				root.AddCommand(command)
+				executor = root
+				args = append([]string{"dev", "--no-input"}, args...)
+			}
+			executor.SetArgs(args)
+			if err := executor.Execute(); err != nil {
 				t.Fatal(err)
 			}
 			if calls != test.wantCalls {
 				t.Fatalf("browser calls = %d, want %d", calls, test.wantCalls)
 			}
-			if !strings.Contains(output.String(), "preview https://prod.example.com/candidates/cand_1") {
+			if test.wantJSON {
+				var result DevResult
+				if err := json.Unmarshal([]byte(output.String()), &result); err != nil {
+					t.Fatalf("JSON result = %q: %v", output.String(), err)
+				}
+				if result.PreviewURL != "https://prod.example.com/candidates/cand_1" {
+					t.Fatalf("JSON preview URL = %q", result.PreviewURL)
+				}
+			} else if !strings.Contains(output.String(), "preview https://prod.example.com/candidates/cand_1") {
 				t.Fatalf("output = %q", output.String())
 			}
 			if !strings.Contains(errOutput.String(), test.wantWarning) {

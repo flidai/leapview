@@ -170,7 +170,7 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if id != e.id {
 		return ErrIdentity
 	}
-	installed, err := readNativeInstallation(e.root)
+	installed, err := readNativeUpgradeInstallation(e.root, e.request)
 	if err != nil {
 		return err
 	}
@@ -327,12 +327,11 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if _, err := migrationTLSMounts(migrator, app, map[string]string{volumes["home"]: volumes["home"]}); err != nil {
 		return err
 	}
-	raw, err := e.docker(ctx, "exec", e.app(), "leapview", "version", "--json")
+	version, err := e.appVersion(ctx, e.app())
 	if err != nil {
 		return err
 	}
-	var version buildinfo.Identity
-	if err = json.Unmarshal([]byte(raw), &version); err != nil || version.Dirty || version.Revision != e.request.PredecessorRevision {
+	if version.Revision != e.request.PredecessorRevision {
 		return errors.New("predecessor source identity mismatch")
 	}
 	// Native cold copies cannot include unobserved external storage roots.
@@ -364,7 +363,7 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if _, err = e.docker(ctx, "pull", id.Candidate); err != nil {
 		return err
 	}
-	raw, err = e.docker(ctx, "run", "--rm", id.Candidate, "version", "--json")
+	raw, err := e.docker(ctx, "run", "--rm", id.Candidate, "version", "--format", "json")
 	if err != nil {
 		return err
 	}
@@ -390,7 +389,7 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 			return err
 		}
 	}
-	if installed.Marker == nil {
+	if len(installed.LegacyBinding) > 0 {
 		if err = securefs.WritePrivateFileAtomic(filepath.Join(configDir, revision019BindingName), installed.LegacyBinding); err != nil {
 			return err
 		}
@@ -448,17 +447,35 @@ func (e *NativeEffects) stage(ctx context.Context) error {
 		return err
 	}
 	installed := map[string][]byte{}
-	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
+	installedFiles := []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"}
+	historicalPayload := legacyMaintenancePayloadImage(e.id.Predecessor)
+	if !historicalPayload {
+		installedFiles = append(installedFiles, "compose.postgres.yaml", "postgres/bundled-entrypoint.sh", "postgres/bundled-init.sh")
+	}
+	for _, name := range installedFiles {
 		installed[name], err = os.ReadFile(filepath.Join(e.root, name))
 		if err != nil {
 			return err
 		}
 	}
-	if err := validateMaintenancePayloadTransition(installed, predecessor, payload); err != nil {
+	validateTransition := validateMaintenancePayloadTransition
+	if historicalPayload {
+		validateTransition = validateLegacyMaintenancePayloadTransition
+	}
+	if err := validateTransition(installed, predecessor, payload); err != nil {
 		return err
 	}
 	_, err = stageGeneration(InstalledPaths(e.root), e.id.Candidate, payload)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add stable references for files absent from historical installers. They
+	// become available on cutover, without changing the active generation or
+	// replacing the controller that currently guards the maintenance journal.
+	if historicalPayload {
+		return ensureLegacyPayloadLinks(InstalledPaths(e.root))
+	}
+	return nil
 }
 func setDeploymentValue(data []byte, key, value string) ([]byte, error) {
 	if strings.ContainsAny(value, "\r\n") {

@@ -626,6 +626,15 @@ func validateNode(node Node, nodes map[string]Node) error {
 		if !ok {
 			return fmt.Errorf("input %q must be a SortLimit", n.Input)
 		}
+		if n.CountOnly {
+			if n.FilterPhase != FilterPhasePostAggregate || len(n.AvailableMetrics) != 0 || len(n.AvailableFields) != 1 || n.AvailableFields[0] != (Field{Name: n.TotalField, Type: "integer"}) || len(n.OutputGrain.Fields) != 0 {
+				return fmt.Errorf("result count requires one integer field at scalar grain")
+			}
+			if sortInput.Limit != 0 || sortInput.Offset != 0 {
+				return fmt.Errorf("result count input must not be paginated")
+			}
+			break
+		}
 		inputMeta := sortInput.Meta()
 		if err := validateTotalRowsSortInput(sortInput); err != nil {
 			return err

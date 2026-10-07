@@ -66,3 +66,49 @@ export function collectVisualShowcaseMetrics(element: HTMLElement) {
     }
   })
 }
+
+
+export function collectVisualShowcaseTableLayout(element: HTMLElement) {
+  const root = element.shadowRoot
+  const chartGrid = root?.querySelector('.chart-grid')?.getBoundingClientRect()
+  const tableSection = root?.querySelector('[aria-labelledby="table-showcase-heading"]')
+  const tableHeading = tableSection?.querySelector('.section-heading')?.getBoundingClientRect()
+  const tableGrid = root?.querySelector('.table-grid')?.getBoundingClientRect()
+  const cards = Array.from(root?.querySelectorAll('.table-card') ?? []).map((card) => {
+    const host = card.querySelector('lv-visualization-host') as any
+    const rect = card.getBoundingClientRect()
+    const table = host?.shadowRoot?.querySelector('lv-report-table')
+    const scrollport = table?.shadowRoot?.querySelector('.table-scrollport') as HTMLElement | null
+    const canvas = table?.shadowRoot?.querySelector('.canvas') as HTMLElement | null
+    return {
+      kind: host?.envelope?.spec?.kind,
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      overflow: (scrollport?.scrollWidth ?? 0) - (scrollport?.clientWidth ?? 0),
+      dataGap: (scrollport?.clientWidth ?? 0) - (canvas?.getBoundingClientRect().width ?? 0),
+      classes: card.className,
+    }
+  })
+  const compactCards = Array.from(root?.querySelectorAll('.table-card.compact') ?? [])
+  const matrixCard = Array.from(root?.querySelectorAll('.table-card') ?? []).find((card) => (card.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind === 'matrix')
+  const matrixTable = matrixCard?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('lv-report-table')
+  const matrixScrollport = matrixTable?.shadowRoot?.querySelector<HTMLElement>('.table-scrollport')
+  const compactDataGaps = compactCards.map((card) => {
+    const host = card.querySelector('lv-visualization-host')
+    const table = host?.shadowRoot?.querySelector('lv-report-table')
+    const scrollport = table?.shadowRoot?.querySelector('.table-scrollport')?.getBoundingClientRect()
+    const canvas = table?.shadowRoot?.querySelector('.canvas')?.getBoundingClientRect()
+    return (scrollport?.bottom ?? 0) - (canvas?.bottom ?? 0)
+  })
+  return {
+    sectionGap: (tableHeading?.top ?? 0) - (chartGrid?.bottom ?? 0),
+    cards,
+    gridWidth: tableGrid?.width ?? 0,
+    gridCenter: (tableGrid?.left ?? 0) + (tableGrid?.width ?? 0) / 2,
+    compactCards: compactCards.length,
+    compactDataGaps,
+    matrixOverflow: (matrixScrollport?.scrollWidth ?? 0) - (matrixScrollport?.clientWidth ?? 0),
+  }
+}

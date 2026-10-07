@@ -96,6 +96,7 @@ class GuestLauncherTests(unittest.TestCase):
         self.processes.clear()
         userdata_seen = []
         collector_calls = []
+        self.overlay_sizes = []
         self.collector_guest_reset = None
 
         def fake_run(command, **kwargs):
@@ -106,7 +107,9 @@ class GuestLauncherTests(unittest.TestCase):
             if tool == "qemu-img" and command[1:3] == ["info", "--output=json"]:
                 return subprocess.CompletedProcess(command, 0, b'{"format":"qcow2","virtual-size":8589934592}\n', b"")
             if tool == "qemu-img" and command[1] == "create":
-                Path(command[-1]).write_bytes(b"overlay")
+                overlay = command[command.index("-b") + 2]
+                self.overlay_sizes.append(command[command.index("-b") + 3:])
+                Path(overlay).write_bytes(b"overlay")
                 return subprocess.CompletedProcess(command, 0, b"", b"")
             if tool == "ssh-keygen":
                 key_path = Path(command[command.index("-f") + 1])
@@ -121,7 +124,11 @@ class GuestLauncherTests(unittest.TestCase):
                 output.write_bytes(b"mock cidata iso")
                 return subprocess.CompletedProcess(command, 0, b"", b"")
             if command[0] == "ssh":
-                return subprocess.CompletedProcess(command, 0 if ready else 255, b"", b"")
+                if ready == "schema-error":
+                    return subprocess.CompletedProcess(command, 2, b"", b"")
+                if ready is False:
+                    return subprocess.CompletedProcess(command, 255, b"", b"Connection timed out during banner exchange\n")
+                return subprocess.CompletedProcess(command, 0, b"", b"")
             if "--install-mode" in command:
                 collector_calls.append((command, kwargs))
                 guest = self.processes[-1]
@@ -214,6 +221,16 @@ class GuestLauncherTests(unittest.TestCase):
         self.assertEqual(lifecycle["launcherReceiptSHA256"], launcher._digest(self.launcher_receipt.read_bytes()))
         self.assertEqual(lifecycle["guestReceiptSHA256"], launcher._file_digest(self.output_dir / "host-guest-receipt.json"))
 
+    def test_guest_has_space_for_installed_images_without_mutating_vendor_image(self):
+        original = self.image.read_bytes()
+        _, error, user_data, _, _ = self._run_launch()
+        self.assertIsNone(error)
+        self.assertEqual(self.overlay_sizes, [["40G"]])
+        cloud_config = json.loads(user_data[0].split(b"\n", 1)[1])
+        self.assertTrue(cloud_config["resize_rootfs"])
+        self.assertEqual(cloud_config["growpart"]["devices"], ["/"])
+        self.assertEqual(self.image.read_bytes(), original)
+
     def test_collector_failure_still_kills_qemu_and_removes_temporary_guest(self):
         receipt, error, _, _, _ = self._run_launch(collector_exit=7)
         self.assertIsNone(receipt)
@@ -231,12 +248,28 @@ class GuestLauncherTests(unittest.TestCase):
         receipt, error, _, collector_calls, _ = self._run_launch(ready=False)
         self.assertIsNone(receipt)
         self.assertRegex(str(error), "readiness timed out")
+        self.assertRegex(str(error), r"SSH readiness command exited 255")
         self.assertEqual(collector_calls, [])
         lifecycle = json.loads(self.lifecycle_receipt.read_text())
         self.assertEqual(lifecycle["failurePhase"], "readiness")
         self.assertIsNone(lifecycle["launcherReceiptSHA256"])
         self.assertTrue(lifecycle["qemuTerminated"])
         self.assertTrue(lifecycle["tempDirectoryRemoved"])
+
+    def test_readiness_error_reports_guest_command_exit_code(self):
+        receipt, error, _, collector_calls, _ = self._run_launch(ready="schema-error")
+        self.assertIsNone(receipt)
+        self.assertRegex(str(error), r"SSH readiness command exited 2")
+        self.assertEqual(collector_calls, [])
+
+    def test_cloud_config_uses_only_ed25519_host_key_generation(self):
+        config = launcher._cloud_config(
+            client_public_key=b"ssh-ed25519 AAAAclient client",
+            host_private_key=b"-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----\n",
+            host_public_key=b"ssh-ed25519 AAAAhost host",
+            manifest_bytes=b"{}\n",
+        ).split(b"\n", 1)[1]
+        self.assertEqual(json.loads(config)["ssh_genkeytypes"], ["ed25519"])
 
     def test_wrong_image_digest_fails_before_tools_or_qemu(self):
         self.args = self._args(expected_digest="0" * 64)

@@ -488,27 +488,47 @@ func WriteDeploymentOperationResult(out io.Writer, format string, result Deploym
 	if format == "json" {
 		return json.NewEncoder(out).Encode(result)
 	}
-	fmt.Fprintf(out, "operation %s target %s environment %s outcome %s\n", result.Handle, result.TargetID, result.Environment, result.Outcome)
+	write := func(format string, values ...any) error {
+		_, err := fmt.Fprintf(out, format, values...)
+		return err
+	}
+	if err := write("operation %s target %s environment %s outcome %s\n", result.Handle, result.TargetID, result.Environment, result.Outcome); err != nil {
+		return err
+	}
 	if result.ProjectID != "" {
-		fmt.Fprintf(out, "project %s\n", result.ProjectID)
+		if err := write("project %s\n", result.ProjectID); err != nil {
+			return err
+		}
 	}
 	if result.SourceDigest != "" {
-		fmt.Fprintf(out, "source %s\n", result.SourceDigest)
+		if err := write("source %s\n", result.SourceDigest); err != nil {
+			return err
+		}
 	}
 	if result.PlanID != "" {
-		fmt.Fprintf(out, "plan %s digest %s\n", result.PlanID, result.PlanDigest)
+		if err := write("plan %s digest %s\n", result.PlanID, result.PlanDigest); err != nil {
+			return err
+		}
 	}
 	if result.BuildID != "" {
-		fmt.Fprintf(out, "build %s revision %d candidate %s candidate-revision %d seal %s\n", result.BuildID, result.BuildRevision, result.CandidateID, result.CandidateRevision, result.SealID)
+		if err := write("build %s revision %d candidate %s candidate-revision %d seal %s\n", result.BuildID, result.BuildRevision, result.CandidateID, result.CandidateRevision, result.SealID); err != nil {
+			return err
+		}
 	}
 	if result.PublicationID != "" {
-		fmt.Fprintf(out, "publication %s generation %s status %s\n", result.PublicationID, result.GenerationID, result.PublicationStatus)
+		if err := write("publication %s generation %s status %s\n", result.PublicationID, result.GenerationID, result.PublicationStatus); err != nil {
+			return err
+		}
 	}
 	if result.FailureDetail != "" {
-		fmt.Fprintf(out, "failure %s: %s\n", result.FailureCode, result.FailureDetail)
+		if err := write("failure %s: %s\n", result.FailureCode, result.FailureDetail); err != nil {
+			return err
+		}
 	}
 	if result.NextAction != "" {
-		fmt.Fprintf(out, "next-action %s\n", result.NextAction)
+		if err := write("next-action %s\n", result.NextAction); err != nil {
+			return err
+		}
 	}
 	return nil
 }

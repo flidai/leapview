@@ -142,7 +142,7 @@ run_agent_scenario() {
     return 0
   fi
 
-  if ! output="$("$BIN" agent ask "$question" --target "$TARGET" --token "$TOKEN" --json)"; then
+  if ! output="$("$BIN" agent ask "$question" --target "$TARGET" --token "$TOKEN" --format json)"; then
     python3 -c 'import json,sys; open(sys.argv[2], "a").write(json.dumps({"scenario":sys.argv[1],"runFailed":True,"stopReason":"command_failed","expected":sys.argv[3].split(","),"calls":[],"validationErrors":["agent command failed"]},separators=(",",":"))+"\n")' "$label" "$TRANSCRIPT_PATH" "$expected_tools"
     echo "$label: agent command failed" >&2
     return 0

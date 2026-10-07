@@ -4,14 +4,20 @@ Troubleshoot from the narrowest local check outward. Preserve the exact command,
 
 ## Validate the local environment
 
-Check process-wide production requirements, then compile the project without contacting a target:
+Inspect local authoring prerequisites, then compile the project without contacting a target:
 
 ```sh
-leapview config validate --production
+leapview doctor
 leapview validate --source-root dashboards
 ```
 
 Validation diagnostics identify the source file and invalid field or reference. Fix the earliest root diagnostic first; later missing-resource messages may be consequences of it. If behavior differs in CI, compare the project revision, working directory, generated files, environment variables, and CLI version.
+
+Doctor checks the installed runtime package, local Docker endpoint, Compose, project, profile, credential shape, and existing runtime state. It does not start containers, pull images, repair state, create locks, connect to source databases, or create deployment plans. Outside an analytics project, implicit project checks skip. Select a source or profile explicitly to diagnose a missing or invalid path. A skipped check remains unverified.
+
+Use `leapview doctor --format json` for an ordered report. Required failures exit 1; warnings and skipped checks alone exit 0. Each failed check gives a next action. The overall time budget defaults to 30 seconds and can be reduced with `--timeout`; external probes take at most five seconds each.
+
+For production server configuration, use `leapview config validate --production` separately. That command checks server requirements, while doctor checks the authoring workflow.
 
 ## Check server readiness
 
@@ -27,15 +33,15 @@ A connection or TLS error points to DNS, certificates, proxies, or network polic
 
 ## Check target identity and authentication
 
-Confirm the scheme, hostname, expected environment, and project. Saved credentials are keyed by the exact target URL. Run a read-only plan with explicit boundaries:
+Confirm the scheme, hostname, expected environment, and project. Inspect readiness and public identity with an explicit target:
 
 ```sh
-leapview plan \
-  --source-root dashboards \
-  --target https://dash.example.com
+leapview doctor --target https://dash.example.com --format json
 ```
 
-For `401` responses, verify that a token was supplied for that target and is still valid. For `403`, inspect the authenticated identity's effective grants for the failed operation. Do not broaden the credential until the missing privilege is understood.
+Doctor ignores ambient targets in local mode. Remote mode accepts a URL or saved target name and rejects local Docker and profile selectors. It compares public instance identity with saved metadata. Authenticated capability and current-principal checks run only with `--token` or `LEAPVIEW_API_TOKEN`; doctor never reads or refreshes native OAuth credentials, exchanges workload credentials, or initiates login.
+
+For `401` responses, verify that a token was supplied for that target and is still valid. For `403`, inspect the authenticated identity's effective grants for the failed operation. Do not broaden the credential until the missing privilege is understood. `leapview plan` creates durable state on the target; use it after diagnosis when you intend to review a delivery operation.
 
 ## Interpret planning and deployment failures
 
@@ -43,6 +49,8 @@ If a plan shows unexpected removals, stop and inspect project discovery patterns
 
 Deployment failures should leave the last valid serving state active. Verify that state, preserve the rejected candidate and server diagnostics, then correct and re-run validation and planning. Do not repeatedly submit a changing candidate while diagnosing one failure.
 
+For guided `deploy`, retain the reported operation handle. Exit 3 means confirmation or server approval is still needed; exit 4 means the result is indeterminate. Follow the reported next action with `--resume` and the retained handle. Confirm only the exact reviewed plan with `--confirm-plan`. A client timeout does not prove that the server failed, and client confirmation never substitutes for server approval.
+
 ## Find command-specific help
 
-Use `leapview <command> --help` for syntax at the terminal and the [generated CLI reference](/docs/cli/reference) for complete flags and subcommands. Continue with [Authentication](/docs/cli/authentication), [Targets and environments](/docs/cli/targets), or [Develop, review, and publish](/docs/cli/validate-deploy) according to the failing stage.
+Use `leapview <command> --help` for syntax at the terminal and the [generated CLI reference](/docs/cli/reference) for complete flags and subcommands. `leapview --llms` prints offline agent guidance from the same command catalog. Continue with [Authentication](/docs/cli/authentication), [Targets and environments](/docs/cli/targets), or [Develop, review, and publish](/docs/cli/validate-deploy) according to the failing stage.

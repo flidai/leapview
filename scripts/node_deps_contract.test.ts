@@ -169,6 +169,30 @@ async function runTask(fixture: string, taskName: string, extraEnv: Record<strin
   return collectTask(spawnTask(fixture, taskName, { env: extraEnv }))
 }
 
+test('cold UI generation initializes the shared TypeSpec cache before parallel compiler consumers', async () => {
+  const { tasks } = parse(await readFile(join(repoRoot, 'Taskfile.yml'), 'utf8')) as { tasks: Record<string, Task> }
+  const dependencies = (name: string, seen = new Set<string>()): Set<string> => {
+    for (const dependency of (tasks[name]?.deps ?? []) as string[]) {
+      if (seen.has(dependency)) continue
+      seen.add(dependency)
+      dependencies(dependency, seen)
+    }
+    return seen
+  }
+  // Both dependency branches must await one writer even under task --force.
+  expect(tasks['visualization-ir:generate']?.run).toBe('once')
+  const targets = dependencies('ui-signals:generate')
+  expect(targets.has('exploration-contracts:generate')).toBe(true)
+  for (const name of targets) {
+    const commands = (tasks[name]?.cmds ?? []) as unknown[]
+    if (name === 'visualization-ir:generate' || !commands.some(command => typeof command === 'string' && command.includes('typespec-compile'))) continue
+    // Every compiler reachable from the security job's cold entrypoint must
+    // wait for the same initial npm install, including the exploration branch.
+    expect({ target: name, cacheInitialized: dependencies(name).has('visualization-ir:generate') })
+      .toEqual({ target: name, cacheInitialized: true })
+  }
+})
+
 test('node:deps runs once and gates both diamond consumers until install completes', async () => {
   await withFixture(async (fixture) => {
     await writeFixture(fixture)

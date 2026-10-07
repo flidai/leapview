@@ -32,6 +32,9 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 	if ref.Format != "" {
 		out["format"] = ref.Format
 	}
+	if ref.Const != nil {
+		out["const"] = *ref.Const
+	}
 	if len(ref.Enum) > 0 {
 		out["enum"] = append([]string(nil), ref.Enum...)
 	}
@@ -46,6 +49,12 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
 	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties
@@ -76,6 +85,9 @@ func applySchemaRefConstraints(doc ir.Document, out map[string]any, ref ir.Schem
 	if ref.Format != "" {
 		out["format"] = ref.Format
 	}
+	if ref.Const != nil {
+		out["const"] = *ref.Const
+	}
 	if len(ref.Enum) > 0 {
 		out["enum"] = append([]string(nil), ref.Enum...)
 	}
@@ -90,6 +102,12 @@ func applySchemaRefConstraints(doc ir.Document, out map[string]any, ref ir.Schem
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
 	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties

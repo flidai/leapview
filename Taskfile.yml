@@ -295,12 +295,16 @@ tasks:
       - ./scripts/postgres-dev.sh check
 
   test:qualification:native-postgres:
-    desc: Run the required container-backed native PostgreSQL 18 qualification contract
+    desc: Run native PostgreSQL topology, bundled retry, and cold restore regressions
     env:
       LEAPVIEW_TEST_CONTAINERS: "1"
+      LEAPVIEW_TEST_BUNDLED_POSTGRES_DOCKER: "1"
     cmds:
       - task: generate
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
+      - go test ./internal/app/cli/composectl -run '^TestBundledPostgresPrepareSeedsAppEnvBeforeCompose$' -count=1 -v
+      - go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerResumesProvisioningAndPreservesVolume$' -count=1 -v
+      - go test ./internal/app/cli/composectl -run '^TestBundledPostgresColdSnapshotRestoreQualification$' -count=1 -v
 
   test:qualification:demo-host-recovery:
     desc: Run isolated host recovery and migration-boundary qualification with synthetic disposable fixtures
@@ -548,17 +552,46 @@ tasks:
       - task: docs:check
       - go test ./cmd/leapview-site ./docs ./site ./internal/app/site/...
 
+  audit:inventory:
+    desc: Inventory tracked files, feature declarations and frontend CI registration without running product tests
+    deps: [node:deps]
+    cmds:
+      - node scripts/audit_inventory.mjs {{.CLI_ARGS}}
+
+  audit:controller-catalogs:
+    desc: Inventory explicit controller commands for both shipped builds without executing them
+    deps:
+      - node:deps
+      - db:generate
+      - config:generate
+      - api:generate
+      - ui-signals:generate
+    cmds:
+      # Bind the source before compilation as well as during construction.
+      - node scripts/controller_catalogs.mjs {{.CLI_ARGS}}
+
+  audit:go-receipt:
+    desc: Capture bounded fresh named Go executions and bind their source, inputs, command and raw logs
+    deps: [node:deps]
+    cmds:
+      # Prepare generated sources before capturing; keep logs in ignored/external storage.
+      - node scripts/go_receipts.mjs {{.CLI_ARGS}}
+
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
       - bun test scripts/nix_ci_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
+      - python3 -m unittest discover -s scripts/tests -p 'test_ci_sqlc_hosted_*.py'
+      - bun test scripts/sqlc_hosted_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
       - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
@@ -854,6 +887,7 @@ tasks:
       - task: data-resource-contracts:generate
       - task: desktop-discovery:generate
       - task: visualization-ir:generate
+      - task: exploration-contracts:generate
       - task: dashboard-contracts:generate
       - task: pipeline-contracts:generate
       - task: layout-contract:generate
@@ -1017,9 +1051,15 @@ tasks:
       - ui-signals:generate
     method: checksum
     sources:
+      - internal/platform/clidoc/**/*.go
       - Taskfile.yml
       - internal/app/cli/**/*.go
       - internal/admin/cli/**/*.go
+      - internal/access/cli/**/*.go
+      - internal/agent/cli/**/*.go
+      - internal/dashboard/cli/**/*.go
+      - internal/manageddata/cli/**/*.go
+      - internal/project/cli/**/*.go
       - internal/app/tools/clidocgen/**/*.go
     generates:
       - docs/reference/cli/catalog.json
@@ -1314,6 +1354,7 @@ tasks:
       - Taskfile.yml
       - api/apigen.yaml
       - api/typespec/**/*.tsp
+      - api/exploration/**/*.tsp
       - api/visualization/**/*.tsp
       - schemas/json/dashboard-document.schema.json
       - internal/app/tools/openapidocgen/**/*.go
@@ -1495,10 +1536,12 @@ tasks:
     desc: Generate UI signal Go and TypeScript contracts from TypeSpec
     deps:
       - api:generate
+      - exploration-contracts:generate
     method: checksum
     sources:
       - Taskfile.yml
       - api/apigen.yaml
+      - api/exploration/**/*.tsp
       - api/signals/**/*.tsp
       - api/visualization/**/*.tsp
       - internal/app/tools/signalcontracts/**/*.go
@@ -1522,6 +1565,9 @@ tasks:
 
   visualization-ir:generate:
     desc: Generate renderer-independent visualization IR contracts from TypeSpec
+    # API and exploration generation share this cold-cache initializer.
+    # Deduplicate it even when checksum checks are bypassed with --force.
+    run: once
     deps:
       - node:deps
       - apigen:build
@@ -1548,6 +1594,34 @@ tasks:
       - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target visualization-ir
       - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target visualization-ir
       - bun scripts/generate_visualization_validator.ts
+
+  exploration-contracts:generate:
+    desc: Generate the canonical renderer-neutral ExplorationSpec contract
+    deps:
+      - node:deps
+      - apigen:build
+      # This target runs alongside api:generate under ui-signals:generate.
+      # Wait for the shared TypeSpec cache install before starting its compiler.
+      - visualization-ir:generate
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - api/apigen.yaml
+      - api/exploration/**/*.tsp
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/src/**/*.ts
+      - pkg/apigen/typespec/dist/src/**/*
+      - pkg/apigen/typespec/lib/**/*.tsp
+      - pkg/apigen/typespec/package.json
+      - pkg/apigen/typespec/package-lock.json
+    generates:
+      - api/gen/exploration-ir.json
+      - internal/analytics/exploration/models.gen.go
+      - web/generated/exploration/index.ts
+      - api/gen/exploration.schema.json
+    cmds:
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target exploration-contracts
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target exploration-contracts
 
   dashboard-contracts:generate:
     desc: Generate the canonical Dashboard authoring document contract
@@ -1641,7 +1715,7 @@ tasks:
       - nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
 
   managed:hosts:boot-test:
-    desc: Boot isolated NixOS guests and verify TLS, filtering and reboot persistence
+    desc: Exercise managed-host updates and rollback plus network and GRUB reboot checks in NixOS guests
     cmds:
       - nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
 
@@ -1664,6 +1738,13 @@ tasks:
     dir: deploy/managed/kamal
     cmds:
       - bundle exec ruby config_test.rb
+      - bundle exec ruby maintenance_test.rb
+
+  managed:kamal:transport-test:
+    desc: Exercise pinned Kamal, Docker and TLS in isolated namespaces (requires sudo; transport evidence only)
+    cmds:
+      - python3 deploy/managed/nixos/tests/kamal_transport_contract_test.py
+      - bash deploy/managed/nixos/tests/run-kamal-transport.sh
 
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures

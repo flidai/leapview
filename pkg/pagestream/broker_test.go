@@ -112,6 +112,40 @@ func TestBrokerDisconnectsSlowSubscriberAtPendingLimit(t *testing.T) {
 	}
 }
 
+func TestBrokerDisconnectingSlowSubscriberPreservesLiveSubscriber(t *testing.T) {
+	broker := NewBrokerWithPendingLimit(2)
+	streamID := "client:page"
+	slow, unsubscribeSlow, err := broker.Subscribe(streamID)
+	if err != nil {
+		t.Fatalf("subscribe slow client: %v", err)
+	}
+	defer unsubscribeSlow()
+
+	live, unsubscribeLive, err := broker.Subscribe(streamID)
+	if err != nil {
+		t.Fatalf("subscribe live client: %v", err)
+	}
+	defer unsubscribeLive()
+
+	for sequence := range 3 {
+		broker.Publish(streamID, SignalPatch{"sequence": sequence})
+		patch, open := <-live
+		if !open || patch["sequence"] != sequence {
+			t.Fatalf("live client patch %d = %#v, open = %t", sequence, patch, open)
+		}
+	}
+
+	for sequence := range 2 {
+		patch, open := <-slow
+		if !open || patch["sequence"] != sequence {
+			t.Fatalf("slow client patch %d = %#v, open = %t", sequence, patch, open)
+		}
+	}
+	if _, open := <-slow; open {
+		t.Fatal("slow subscription remained open after overflow")
+	}
+}
+
 func TestBrokerSubscribeRejectsEmptyStreamID(t *testing.T) {
 	updates, unsubscribe, err := NewBroker().Subscribe("")
 	if !errors.Is(err, ErrEmptyStreamID) {

@@ -57,15 +57,18 @@ Keep activation/runtime feature work out of D02. The
 implementation split and retained denial dependencies. Extraction and passing
 tests do not accept this proposed decision.
 
-The current [ADR-0028 deployment proposal](https://github.com/flidai/leapview/blob/b305bcc616892538a27bd3d255fe0b4e9fa66dff/adr/0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md#decision-reconciliation-and-acceptance-boundary)
-retains candidate-first Kamal overlap. The single-process assumptions below limit
-the foundation's component evidence; they do not qualify that managed profile.
+The [ADR-0028 deployment proposal](0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md#decision-reconciliation-and-acceptance-boundary)
+now proposes replacing the roadmap's candidate-first Kamal overlap requirement
+with a bounded maintenance interruption for the shared-home, single-process
+profile. That amendment and the corresponding roadmap release gate remain pending
+review. The single-process assumptions below limit the foundation's component
+evidence; they do not qualify the combined managed profile.
 D01/D02 must reconcile the process contract before accepting affected lifecycle
 implementation, and D11/D12 must agree ownership, admission/draining, publication
 and restart interfaces before implementing their combined path. Readiness alone
 must not grant worker, mutation, activation or retirement authority. A stop-first
-maintenance profile requires a separate reviewed amendment to the deployment ADR
-and roadmap, named interruption bounds and its own qualification.
+maintenance profile requires acceptance of that deployment ADR and roadmap
+amendment, named interruption bounds and its own qualification.
 
 Classify an incompatible credential-format transition before durable mutation and
 use its reviewed maintenance/recovery procedure, not ordinary image rollback.

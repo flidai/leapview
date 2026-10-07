@@ -27,10 +27,10 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     ./scripts/generate_build_sources.sh && \
-    go run ./internal/app/tools/clidocgen && \
-    go run ./internal/app/tools/schemadocgen && \
-    go run ./internal/app/tools/openapidocgen && \
-    go run ./internal/app/tools/docsitegen
+    ./scripts/time_build_phase.sh cli-docs go run ./internal/app/tools/clidocgen && \
+    ./scripts/time_build_phase.sh schema-docs go run ./internal/app/tools/schemadocgen && \
+    ./scripts/time_build_phase.sh openapi-docs go run ./internal/app/tools/openapidocgen && \
+    ./scripts/time_build_phase.sh docs-site go run ./internal/app/tools/docsitegen
 
 # Keep the large, network-backed map extraction separate so a transient remote
 # failure can be retried without repeating deterministic source generation.
@@ -115,6 +115,7 @@ COPY --from=sourcegen /src/internal/analytics/physicalpool/postgres/internal/db 
 COPY --from=sourcegen /src/internal/analytics/connectionbinding/postgres/internal/db ./internal/analytics/connectionbinding/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/ducklake/postgres/internal/db ./internal/analytics/ducklake/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/queryaudit/postgres/internal/db ./internal/analytics/queryaudit/postgres/internal/db
+COPY --from=sourcegen /src/internal/analytics/exploration/saved/postgres/internal/db ./internal/analytics/exploration/saved/postgres/internal/db
 COPY --from=sourcegen /src/internal/release/postgres/internal/db ./internal/release/postgres/internal/db
 COPY --from=sourcegen /src/internal/recoveryset/postgres/internal/db ./internal/recoveryset/postgres/internal/db
 COPY --from=sourcegen /src/internal/access/ui/signals/models.gen.go ./internal/access/ui/signals/models.gen.go
@@ -182,7 +183,7 @@ RUN set -eu; \
       install -m 0644 "$control_dir/md5sums" "/out/runtime-security/var/lib/dpkg/status.d/$package.md5sums"; \
     done
 
-FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:f525a9a37aed3e8a848f46cfe055999782d66ed797e9e2886928c8caaaa4fc52 AS runtime-base
+FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:984d31d4bd6e71bb9469353d93e73c68f7b3c17142b2aec45f2a960489095b22 AS runtime-base
 COPY --from=runtime-security-update /out/runtime-security/ /
 
 FROM runtime-base AS runtime
@@ -225,7 +226,8 @@ COPY --from=build /out/leapview /usr/local/bin/leapview
 COPY --from=build /out/leapviewctl /usr/local/libexec/leapviewctl
 COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapviewctl
 COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions
-COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/compose.first-install-bootstrap.yaml deploy/compose/Caddyfile deploy/compose/Caddyfile.first-install-bootstrap deploy/compose/first-install.env deploy/compose/deployment.env.example deploy/compose/leapview.env.example deploy/compose/README.md deploy/compose/QUALIFICATION.md /usr/local/share/leapview/deployment/
+COPY deploy/compose/compose.yaml deploy/compose/compose.postgres.yaml deploy/compose/compose.https.yaml deploy/compose/compose.first-install-bootstrap.yaml deploy/compose/Caddyfile deploy/compose/Caddyfile.first-install-bootstrap deploy/compose/first-install.env deploy/compose/deployment.env.example deploy/compose/leapview.env.example deploy/compose/README.md deploy/compose/QUALIFICATION.md /usr/local/share/leapview/deployment/
+COPY deploy/compose/postgres /usr/local/share/leapview/deployment/postgres
 COPY deploy/compose/qualification /usr/local/share/leapview/deployment/qualification
 COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
@@ -239,6 +241,7 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
     find /usr/local/share/leapview/extensions -type d -exec chmod 0555 {} + && \
     find /usr/local/share/leapview/extensions -type f -exec chmod 0444 {} + && \
     chmod 0400 /usr/local/share/leapview/deployment/compose.yaml \
+      /usr/local/share/leapview/deployment/compose.postgres.yaml \
       /usr/local/share/leapview/deployment/compose.https.yaml \
       /usr/local/share/leapview/deployment/compose.first-install-bootstrap.yaml \
       /usr/local/share/leapview/deployment/Caddyfile.first-install-bootstrap \
@@ -249,6 +252,7 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
       /usr/local/share/leapview/deployment/README.md \
       /usr/local/share/leapview/deployment/QUALIFICATION.md \
       /usr/local/share/leapview/deployment/qualification/* && \
+    chmod 0444 /usr/local/share/leapview/deployment/postgres/*.sh && \
     mkdir -p /var/lib/leapview/home && \
     chown -R leapview:leapview /var/lib/leapview /app
 

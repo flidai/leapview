@@ -6,7 +6,7 @@ import { bulletGeometry, kpiSparklinePath, resolveKPIState } from './kpi'
 
 function envelope(current: number | null, comparison: number | null, goal: number | null): VisualizationEnvelope {
   return {
-    schemaVersion: 9,
+    schemaVersion: 14,
     visualID: 'revenue',
     rendererID: 'html',
     specRevision: 'sha256:kpi',

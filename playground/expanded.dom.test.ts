@@ -185,9 +185,10 @@ test('data exploration sort updates the typed command and result', async () => {
   await open('tables/data-explore')
   const table = page.locator('lv-data-explore-table')
   await table.getByRole('button', { name: 'Revenue', exact: true }).click()
-  await browserExpect.poll(() => table.evaluate((element: any) => element.command.sort[0])).toEqual({ field: 'revenue', direction: 'asc' })
+  await browserExpect.poll(() => table.evaluate((element: any) => element.command.spec.sort[0])).toEqual({ field: 'revenue', direction: 'asc' })
   await table.getByRole('button', { name: 'Revenue', exact: true }).click()
-  await browserExpect.poll(() => table.evaluate((element: any) => element.command.sort[0].direction)).toBe('desc')
+  await browserExpect.poll(() => table.evaluate((element: any) => element.command.spec.sort[0].direction)).toBe('desc')
+  expect(await table.evaluate((element: any) => element.command.sort)).toEqual([{ field: 'revenue', direction: 'desc' }])
   await browserExpect.poll(() => table.evaluate((element: any) => element.result.rows[0].revenue > element.result.rows.at(-1).revenue)).toBe(true)
 })
 

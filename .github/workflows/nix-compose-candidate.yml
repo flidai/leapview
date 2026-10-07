@@ -238,7 +238,7 @@ jobs:
           test "$IMAGE_REFERENCE" = "$(cat release-input/image-reference.txt)"
           test "$(printf '%s' "$IMAGE_REFERENCE" | cut -d@ -f2)" = "$IMAGE_DIGEST"
           docker pull "$IMAGE_REFERENCE"
-          docker run --rm "$IMAGE_REFERENCE" version --json > "preflight/$ARCH/image-runtime-identity.json"
+          docker run --rm "$IMAGE_REFERENCE" version --format json > "preflight/$ARCH/image-runtime-identity.json"
           cp -- "$RUNNER_TEMP/oci-admission.json" "preflight/$ARCH/oci-admission.json"
       - name: Remove temporary GHCR credentials
         if: always()
@@ -582,7 +582,7 @@ jobs:
           set -euo pipefail
           package_root="extracted-package/$PACKAGE_NAME"
           env -u GH_TOKEN -u GITHUB_TOKEN \
-            "$package_root/leapviewctl" version --json > controller-runtime-identity.json
+            "$package_root/leapviewctl" version --format json > controller-runtime-identity.json
 
       - name: Run the full installed-candidate journey
         env:
@@ -765,8 +765,13 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PROTECTED_REVISION"
           test -z "$(git status --porcelain --untracked-files=no)"
-          nix develop --no-update-lock-file .#runtime-security -c \
-            env CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/host-first-publication-verifier" ./cmd/leapviewctl
+          # The full CLI imports build-only API, signal and SQL packages. Run
+          # their generators from this protected checkout, never from source/.
+          nix develop --no-update-lock-file .#host-verifier -c bash -s <<'VERIFY'
+          set -euo pipefail
+          task generate
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/host-first-publication-verifier" ./cmd/leapviewctl
+          VERIFY
           chmod 700 "$RUNNER_TEMP/host-first-publication-verifier"
           sha256sum -- "$RUNNER_TEMP/host-first-publication-verifier"
       - name: Verify pinned vendor image and qualify a fresh disposable guest
@@ -935,7 +940,7 @@ jobs:
           set -euo pipefail
           mkdir -p candidate/amd64 candidate/arm64
           for arch in amd64 arm64; do
-            if [ "$arch" = amd64 ]; then nix_output=result-compose-cli-amd64; else nix_output=result-compose-cli; fi
+            nix_output="result-compose-cli-$arch"
             package="leapview-compose-candidate-${RELEASE_RUN_ID}-${RELEASE_RUN_ATTEMPT}-linux-${arch}"
             platform="linux/$arch"
             archive="candidate/$arch/$package.tar.gz"

@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "68ee1d6bf8736ef1033fcf07cd0cdbd7650fab9fc308a67889ea55c60f3bd818"
+	const expectedRouteContractDigest = "22facc5e401bf817477013d0ffe48283e7035af7301ee83b4bb62c0618580de2"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -173,6 +173,9 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/dashboards/{dashboard}/export.yaml":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
+	case path == "/explore/dashboard-targets" || path == "/explore/dashboard-targets/{dashboard}" || path == "/explore/add-to-dashboard":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "RESOURCE_EDIT"
 	case path == "/dashboards/{asset}/appearance":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_MANAGE"
@@ -182,7 +185,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
-	case path == "/explore" || path == "/explore/saved" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
+	case path == "/explore" || path == "/explore/saved" || path == "/explore/export" || path == "/explore/command" || path == "/explore/saved/{exploration}" || path == "/explore/saved/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_USE"
 	case path == "/pipelines/command":
@@ -208,7 +211,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 func apiOwner(tags []string) (string, bool) {
 	owners := map[string]string{
 		"Access": "access", "Current User": "access", "Service Principals": "access",
-		"Connections": "analytics",
+		"Connections": "analytics", "Saved Explorations": "analytics",
 		"Credentials": "credential",
 		"Agent":       "agent", "BI": "dashboard", "Dashboards": "dashboard", "Publications": "dashboard",
 		"Deployments": "deployment", "Delivery": "deployment", "Managed Data": "manageddata", "Refresh": "refresh",
@@ -316,11 +319,16 @@ GET /dashboards/{dashboard}/edit
 GET /dashboards/{dashboard}/fork
 GET /dashboards/{dashboard}/export.yaml
 GET /dashboards/{dashboard}/pages/{page}
+GET /dashboards/{dashboard}/pages/{page}/visuals/{visual}/explore
 GET /dashboards/{dashboard}/preview
 GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
+GET /explore/dashboard-targets
+GET /explore/dashboard-targets/{dashboard}
+GET /explore/export
+GET /explore/saved/{exploration}
 GET /explore/saved
 GET /favicon.ico
 GET /healthz
@@ -380,6 +388,8 @@ GET /catalog/search
 GET /connections/search
 GET /dashboards/search
 POST /explore/command
+POST /explore/add-to-dashboard
+POST /explore/saved/command
 POST /explore/saved
 POST /dashboards/{dashboard}/archive
 POST /dashboards/{dashboard}/delete

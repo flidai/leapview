@@ -9,6 +9,7 @@ import (
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	"github.com/flidai/leapview/internal/platform/cliapi"
+	"github.com/spf13/cobra"
 )
 
 func TestDeployCommandRejectsAmbiguousHeadlessSelectionAsStructuredError(t *testing.T) {
@@ -64,7 +65,7 @@ func TestDeployCommandLeavesManagedPinsToTargetCandidatePreparation(t *testing.T
 	operations := &deployOperations{}
 	command := DeployCommand(context.Background(), deployClient{}, operations)
 	command.SetArgs([]string{
-		"--target", "https://example.test", "--token", "secret",
+		"--target", "https://example.test", "--token", "secret", "--new",
 		"--environment", "prod",
 	})
 	if err := command.Execute(); err != nil {
@@ -80,6 +81,43 @@ func TestDeployCommandLeavesManagedPinsToTargetCandidatePreparation(t *testing.T
 	}
 	if command.Flags().Lookup("auto-approve") != nil {
 		t.Fatal("deploy command still exposes client-side approval bypass")
+	}
+}
+
+type resolveRecorder struct {
+	deployClient
+	called bool
+}
+
+func (client *resolveRecorder) Resolve(ctx context.Context, credentials cliapi.Credentials) (cliapi.Credentials, error) {
+	client.called = true
+	return client.deployClient.Resolve(ctx, credentials)
+}
+
+func TestDeployCommandRejectsHeadlessSelectionBeforeResolvingCredentials(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "json missing intent", args: []string{"deploy", "--format", "json"}},
+		{name: "json resume missing handle", args: []string{"deploy", "--resume", "--format", "json"}},
+		{name: "inherited no-input missing intent", args: []string{"deploy", "--no-input"}},
+	} {
+		client := &resolveRecorder{}
+		command := DeployCommand(context.Background(), client, &deployOperations{})
+		root := &cobra.Command{Use: "leapview"}
+		root.PersistentFlags().Bool("no-input", false, "")
+		root.AddCommand(command)
+		var output bytes.Buffer
+		root.SetOut(&output)
+		root.SilenceUsage = true
+		root.SetArgs(test.args)
+		if err := root.Execute(); err == nil {
+			t.Fatalf("Execute(%v) succeeded", test.args)
+		}
+		if client.called {
+			t.Fatalf("Execute(%v) resolved credentials before rejecting headless selection", test.args)
+		}
 	}
 }
 

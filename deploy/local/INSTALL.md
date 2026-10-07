@@ -66,7 +66,7 @@ If the symlink already exists, inspect it before replacing it. Add
 `$HOME/.local/bin` to `PATH`, then verify the embedded build identity:
 
 ```sh
-leapview version --json
+leapview version --format json
 leapview --help
 ```
 

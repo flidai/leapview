@@ -210,6 +210,9 @@ func (c Config) Validate(profile Profile) error {
 	if profile != ProfileServe {
 		return fmt.Errorf("unsupported configuration profile %q", profile)
 	}
+	if c.MaintenanceSocket != "" && !filepath.IsAbs(c.MaintenanceSocket) {
+		return errors.New("LEAPVIEW_MAINTENANCE_SOCKET must be an absolute private socket path")
+	}
 	if c.ManagedDataMaxFiles > manageddata.MaxManifestFiles {
 		return fmt.Errorf("LEAPVIEW_MANAGED_DATA_MAX_FILES must not exceed %d", manageddata.MaxManifestFiles)
 	}

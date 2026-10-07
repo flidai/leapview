@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       boot_test:
-        description: Also run the isolated host network and reboot qualification
+        description: Also test isolated host updates, rollback, networking and GRUB reboot
         type: boolean
         default: false
 
@@ -73,7 +73,19 @@ jobs:
           probe_image="$(nix build path:./deploy/managed/nixos#port-probe --no-link --no-update-lock-file --print-out-paths)"
           docker_package="$(nix build path:./deploy/managed/nixos#nixosConfigurations.example-app.config.virtualisation.docker.package --no-link --no-update-lock-file --print-out-paths)"
           sudo python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package"
-      - name: Qualify isolated guest networking and reboot persistence
+      - name: Exercise pinned Kamal handoff and offline recovery in isolated namespaces
+        run: |
+          python3 deploy/managed/nixos/tests/kamal_transport_contract_test.py
+          bash deploy/managed/nixos/tests/run-kamal-transport.sh "$RUNNER_TEMP/kamal-transport"
+      - name: Retain transport-only evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-kamal-transport
+          path: ${{ runner.temp }}/kamal-transport/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Exercise managed-host updates and rollback plus network and GRUB reboot checks
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
         run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
   application-template:
@@ -91,3 +103,4 @@ jobs:
         run: |
           bundle install
           bundle exec ruby config_test.rb
+          bundle exec ruby maintenance_test.rb

@@ -21,6 +21,7 @@ func firstInstallOptionsFixture(t *testing.T) FirstInstallOptions {
 	artifacts, err := adminoffline.UnmarshalQualificationPoolArtifacts(pool.output)
 	require.NoError(t, err)
 	return FirstInstallOptions{
+		Profile: FirstInstallPostgresExternal,
 		Postgres: FirstInstallPostgres{
 			ControlURL: postgres.ControlURL, ControlMigratorURL: postgres.ControlMigratorURL,
 			ControlMaintenanceURL: postgres.ControlMaintenanceURL,
@@ -107,6 +108,8 @@ func TestInitializeFirstInstallPassesControlMigratorOnlyToInitializer(t *testing
 			"LEAPVIEW_POSTGRES_REQUIRE_TLS=true\n",
 	), 0o600))
 	secret := "postgres://leapview_control_migrator:control-secret@db.example/leapview_control?sslmode=verify-full"
+	bootstrap := firstInstallOptionsFixture(t)
+	bootstrap.Postgres.ControlMigratorURL = secret
 	var calls [][]string
 	controller, err := New(Options{Root: root, qualificationExecutor: &recordingQualificationExecutor{}})
 	require.NoError(t, err)
@@ -120,7 +123,7 @@ func TestInitializeFirstInstallPassesControlMigratorOnlyToInitializer(t *testing
 	}
 	require.NoError(t, controller.InitializeFirstInstall(t.Context(), InitOptions{
 		AdminEmail: "admin@example.com", Domain: "dash.example.com", Environment: "prod", Image: image,
-	}, secret))
+	}, bootstrap))
 
 	joined := strings.Join(flattenArguments(calls), " ")
 	require.Contains(t, joined, "--env LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL")

@@ -281,12 +281,16 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err != nil {
 		return err
 	}
+	firstInstall, err := qualificationNativeFirstInstallOptions(nativeTopology, artifacts)
+	if err != nil {
+		return err
+	}
 	if err := c.InitializeFirstInstall(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
 		Image:       imageReference,
-	}, nativeTopology.ControlMigratorURL); err != nil {
+	}, firstInstall); err != nil {
 		return err
 	}
 	if err := appendOrReplaceQualificationEnv(
@@ -831,7 +835,7 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 		)
 	}
 	runtimeOutput, err := c.qualificationDocker(
-		ctx, nil, "run", "--rm", imageReference, "version", "--json",
+		ctx, nil, "run", "--rm", imageReference, "version", "--format", "json",
 	)
 	if err != nil {
 		return err

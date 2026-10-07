@@ -46,6 +46,12 @@ customer site.
 | [ADR-0025](0025-adopt-typed-resource-permissions-and-scoped-api-credentials.md) | Adopt typed resource permissions and scoped API credentials | Accepted | 2026-09-17 | Partial; typed contracts, assignments, durable grants, private operation slices, and native delivery planning/build qualified | [ADR-0026](0026-preserve-authority-across-governed-operations.md), authority flow, reference emphasis, and implementation sequencing |
 | [ADR-0026](0026-preserve-authority-across-governed-operations.md) | Preserve authority across governed operations | Accepted | 2026-09-17 | Partial; restricted consumption, scheduled/delegated refresh, delivery planning/build, discovery, cache, and rollback slices qualified | — |
 | [ADR-0027](0027-separate-credential-storage-activation-and-retirement.md) | Separate credential storage, activation and retirement | Proposed | Pending review | Partial; draft storage/service foundation | — |
+| [ADR-0028](0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md) | Share an open deployment stack for self-hosted and managed LeapView | Proposed | 2026-09-28 | In progress; profile qualification pending | — |
+
+ADR-0027 records the proposed credential-lifecycle decision. Its
+initial credential foundation merged in
+[PR #785](https://github.com/flidai/leapview/pull/785), but the ADR itself remains
+proposed and does not amend accepted ADR-0025 or ADR-0026.
 
 ## Companion specifications
 
@@ -69,6 +75,8 @@ historical records.
 - [Project namespace conformance](specifications/project-namespace-conformance.md)
 - [ADR-0018 final conformance evidence reconciliation](specifications/project-namespace-final-conformance-evidence.md)
 - [Analytics development CLI contract](specifications/analytics-development-cli-contract.md)
+- [Deployment stack reuse research](specifications/deployment-stack-reuse-research.md)
+- [Deployment profile qualification](specifications/deployment-profile-qualification.md)
 - [Resource authorization authority flow](specifications/resource-authorization-authority-flow.md)
 - [Credential lifecycle inventory](specifications/credential-lifecycle-inventory.md)
 - [Proposed credential lifecycle contract](specifications/credential-lifecycle-contract.md)

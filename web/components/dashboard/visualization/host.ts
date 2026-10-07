@@ -8,6 +8,7 @@ import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
+import type { ReportTable } from '../table/report-table'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
@@ -96,8 +97,11 @@ export class VisualizationHost extends LitElement {
     this.controller?.setResizeSuspended(suspended)
   }
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
+  @property({ attribute: false }) exploreHref?: string
   @property({ type: Boolean, attribute: 'defer-mount', reflect: true }) deferMount = false
   @property({ type: Boolean, reflect: true }) authoring = false
+  @property({ type: Boolean, attribute: 'actions-enabled' }) actionsEnabled = true
+  @property({ type: Boolean, attribute: 'visual-options-open', reflect: true }) visualOptionsOpen = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
   @state() private error = ''
   @state() private applying = false
@@ -199,6 +203,8 @@ export class VisualizationHost extends LitElement {
   }
 
   protected updated(changed: Map<PropertyKey, unknown>): void {
+    const table = this.rendererContainer?.querySelector<ReportTable>('lv-report-table')
+    if (table) table.exploreHref = this.actionsEnabled ? this.exploreHref : undefined
     if (changed.has('envelope') && this.mountRequested) this.scheduleApply()
     if ((changed.has('deferMount') || changed.has('authoring')) && !this.mountRequested) {
       if (!this.deferMount || this.authoring) this.requestMount()
@@ -210,6 +216,7 @@ export class VisualizationHost extends LitElement {
     this.closeOptions()
     this.removeOptionsListeners()
     const generation = ++this.connectionGeneration
+    this.setVisualOptionsOpen(false)
     super.disconnectedCallback()
     // A synchronous DOM move fires disconnected/connected callbacks even though
     // the visual remains live. Defer teardown so transient moves retain renderer
@@ -276,14 +283,14 @@ export class VisualizationHost extends LitElement {
               : html`<h2 data-visualization-title>${metadata?.title}</h2>`}
             ${metadata?.subtitle ? html`<p class="toolbar-subtitle" data-visualization-subtitle>${metadata.subtitle}</p>` : null}
           </div>
-          <div class="visual-actions">
+          ${this.actionsEnabled ? html`<div class="visual-actions">
             <slot name="agent-action"></slot>
             ${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}
             ${this.visualActions()}
             <slot name="focus-action"></slot>
-          </div>
+          </div>` : html`<div class="visual-actions"><slot name="focus-action"></slot></div>`}
         </header>
-      ` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
+      ` : !this.actionsEnabled ? html`<div class="headerless-actions"><div class="visual-actions"><slot name="focus-action"></slot></div></div>` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
@@ -422,6 +429,7 @@ export class VisualizationHost extends LitElement {
       <button class="options-trigger" type="button" aria-label="Visual options" aria-haspopup="menu" aria-expanded=${String(this.optionsOpen)} popovertarget="visual-options-menu" title="Visual options" @click=${this.toggleOptions} @keydown=${this.optionsTriggerKeydown}>${lucideIcon(EllipsisVertical)}</button>
       <div id="visual-options-menu" class="menu" popover="auto" role="menu" aria-label="Visualization actions" @toggle=${this.optionsToggled} @keydown=${this.optionsKeydown}>
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
+        ${this.exploreHref ? html`<a role="menuitem" href=${this.exploreHref}>${visualMenuIcon('explore')}<span>Explore</span></a>` : null}
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
         ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
@@ -451,6 +459,7 @@ export class VisualizationHost extends LitElement {
 
   private optionsToggled = (event: Event): void => {
     this.optionsOpen = (event.currentTarget as HTMLElement).matches(':popover-open')
+    this.setVisualOptionsOpen(this.optionsOpen)
     this.removeOptionsListeners()
     if (this.optionsOpen && this.isConnected) {
       // Scroll events do not cross shadow boundaries. Observe each ancestor root.
@@ -491,6 +500,16 @@ export class VisualizationHost extends LitElement {
     const current = items.indexOf(event.target as HTMLElement)
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
     items[next]?.focus()
+  }
+
+  private setVisualOptionsOpen(open: boolean): void {
+    if (this.visualOptionsOpen === open) return
+    this.visualOptionsOpen = open
+    this.dispatchEvent(new CustomEvent('lv-visual-options-toggle', {
+      bubbles: true,
+      composed: true,
+      detail: { open },
+    }))
   }
 
   private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {

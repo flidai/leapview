@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -52,7 +51,7 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			if format != "text" && format != "json" {
-				return fmt.Errorf("bootstrap-project format must be text or json")
+				return cliapi.NewUsageError(fmt.Errorf("bootstrap-project format must be text or json"))
 			}
 			// The issuer state is authoritative local identity. Persist it before
 			// resolving credentials or discovering the target so network failures
@@ -66,7 +65,7 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 			if err != nil {
 				return err
 			}
-			instance, err := newDeploymentCLIClient(http.DefaultClient, credentials.Target, credentials.Token).instance(ctx)
+			instance, err := newDeploymentCLIClient(defaultCLIHTTPClient, credentials.Target, credentials.Token).instance(ctx)
 			if err != nil {
 				return fmt.Errorf("discover bootstrap target: %w", err)
 			}
@@ -75,7 +74,7 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 			if instance.Id == "" || instance.Environment == "" {
 				return fmt.Errorf("target returned incomplete bootstrap identity")
 			}
-			generated := deploymentgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: credentials.Token, client: http.DefaultClient})
+			generated := deploymentgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: credentials.Token, client: defaultCLIHTTPClient})
 			key := uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/project-claim/"+instance.Id+"/"+authority.IssuerID+"/"+authority.ProjectUID+"/"+instance.Environment)).String()
 			response, err := generated.BootstrapProjectClaim(ctx, deploymentgen.GenBootstrapProjectClaimClientRequest{
 				Headers: deploymentgen.GenBootstrapProjectClaimClientHeaders{IdempotencyKey: key},
@@ -90,7 +89,7 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 				return err
 			}
 			publisherKey := uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/project-claim-publisher/"+instance.Id+"/"+authority.IssuerID+"/"+authority.ProjectUID+"/"+instance.Environment)).String()
-			publisherResponse, err := accessgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: credentials.Token, client: http.DefaultClient}).ExchangeProjectClaimPublisher(ctx, accessgen.GenExchangeProjectClaimPublisherClientRequest{
+			publisherResponse, err := accessgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: credentials.Token, client: defaultCLIHTTPClient}).ExchangeProjectClaimPublisher(ctx, accessgen.GenExchangeProjectClaimPublisherClientRequest{
 				Project: response.Body.ProjectUid,
 				Headers: accessgen.GenExchangeProjectClaimPublisherClientHeaders{IdempotencyKey: publisherKey},
 			})
@@ -101,7 +100,7 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 				return err
 			}
 			policyRevision, policyDigest, err := bootstrapProjectOwnerPolicy(
-				ctx, accessgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: publisherResponse.Body.PublisherToken, client: http.DefaultClient}),
+				ctx, accessgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: publisherResponse.Body.PublisherToken, client: defaultCLIHTTPClient}),
 				instance.Id, response.Body.ProjectUid, response.Body.Environment, response.Body.ClaimedBy,
 			)
 			if err != nil {
@@ -121,8 +120,8 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 					"publisherTokenExpiresAt":     publisherResponse.Body.PublisherTokenExpiresAt,
 				})
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Bootstrapped %s with ProjectUID %s (%s), authorization policy revision %d (%s); publisher handoff awaiting acknowledgement\n", credentials.Target, response.Body.ProjectUid, response.Body.Environment, policyRevision, policyDigest)
-			return nil
+			_, writeErr := fmt.Fprintf(command.OutOrStdout(), "Bootstrapped %s with ProjectUID %s (%s), authorization policy revision %d (%s); publisher handoff awaiting acknowledgement\n", credentials.Target, response.Body.ProjectUid, response.Body.Environment, policyRevision, policyDigest)
+			return writeErr
 		},
 	}
 	command.Flags().StringVar(&root.token, "token", root.token, "instance-admin API token")
@@ -144,10 +143,10 @@ func acknowledgeProjectClaimPublisherCommand(ctx context.Context, root *rootOpti
 			}
 			claimCredentialID = strings.TrimSpace(claimCredentialID)
 			if claimCredentialID == "" || claimCredentialID != strings.TrimSpace(claimCredentialID) {
-				return errors.New("claim credential ID is required")
+				return cliapi.NewUsageError(errors.New("claim credential ID is required"))
 			}
 			key := uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/project-claim-publisher-ack/"+claimCredentialID+"/"+args[1])).String()
-			_, err = accessgen.NewGenClient(capabilityAPITransport{target: resolved.Target, token: resolved.Token, client: http.DefaultClient}).AcknowledgeProjectClaimPublisher(ctx, accessgen.GenAcknowledgeProjectClaimPublisherClientRequest{
+			_, err = accessgen.NewGenClient(capabilityAPITransport{target: resolved.Target, token: resolved.Token, client: defaultCLIHTTPClient}).AcknowledgeProjectClaimPublisher(ctx, accessgen.GenAcknowledgeProjectClaimPublisherClientRequest{
 				Project: args[1],
 				Headers: accessgen.GenAcknowledgeProjectClaimPublisherClientHeaders{IdempotencyKey: key},
 				Body:    accessgen.GenSchemaProjectClaimPublisherAcknowledgeRequest{ClaimCredentialId: claimCredentialID},

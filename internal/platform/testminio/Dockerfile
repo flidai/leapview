@@ -1,4 +1,4 @@
-# Same Go toolchain and source commit as RELEASE.2025-09-07T16-13-09Z.
+# Source commit from RELEASE.2025-09-07T16-13-09Z; builder toolchain pinned below.
 # Build our disposable test fixture without pulling a prebuilt MinIO image.
 FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS build
 WORKDIR /src

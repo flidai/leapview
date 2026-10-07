@@ -1176,7 +1176,9 @@ func TestApplicationRetainsOnlyProcessFacingSurfaces(t *testing.T) {
 }
 
 func TestApplicationPublicSurfaceIsClosed(t *testing.T) {
-	want := map[string]bool{"Handler": true, "Start": true, "Shutdown": true, "Fatal": true}
+	// MaintenanceHandler exposes only the process-owned private Unix listener;
+	// the admission state and worker graph remain behind the lifecycle owner.
+	want := map[string]bool{"Handler": true, "MaintenanceHandler": true, "Start": true, "Shutdown": true, "Fatal": true}
 	got := map[string]bool{}
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir != "internal/app" {
@@ -1198,7 +1200,7 @@ func TestApplicationPublicSurfaceIsClosed(t *testing.T) {
 		}
 	}
 	if !boolMapsEqual(got, want) {
-		t.Fatalf("Application exported methods = %#v, want handler, start, shutdown, and fatal only", got)
+		t.Fatalf("Application exported methods = %#v, want public/private handlers, start, shutdown, and fatal only", got)
 	}
 }
 
@@ -2200,6 +2202,7 @@ func TestArrowImportsStayInsideAnalyticalDataPlaneAndExplicitEncoders(t *testing
 	allowed := []string{
 		"internal/analytics/arrowquery",
 		"internal/analytics/arrowdecode",
+		"internal/analytics/exploration/export",
 		"internal/analytics/resultcache",
 		"internal/analytics/materialize",
 		"internal/analytics/ducklake",
@@ -3000,7 +3003,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"qualify-production-image:",
 		"name: Qualify production image",
 		"needs: build-production-image",
-		"if: ${{ always() && needs.build-production-image.result == 'success' }}",
+		"if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}",
 		"uses: ./.github/actions/setup-ci",
 		"task image:qualify:production IMAGE=\"${immutable_image}\"",
 	} {

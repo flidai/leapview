@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -23,11 +24,22 @@ func TestStageDeclaredDevelopmentInputsPlansBeforeSyncing(t *testing.T) {
 	planner := localplan.NewService(loadManagedDataPlanCatalog)
 	var requests []manageddatacli.SyncRequest
 	var output bytes.Buffer
+	grantsVerified := false
 	dependencies := developmentInputStagingDependencies{
 		list:    developmentinput.Names,
 		resolve: resolveDevelopmentInput,
 		plan:    planner.Plan,
+		grants: func(_ context.Context, inputs []plannedDevelopmentInput) error {
+			if len(inputs) != 1 || inputs[0].plan.Connection == "" || inputs[0].plan.Manifest.RevisionID() == "" {
+				t.Fatal("grant creation ran before complete input validation")
+			}
+			grantsVerified = true
+			return nil
+		},
 		sync: func(_ context.Context, request manageddatacli.SyncRequest) error {
+			if !grantsVerified {
+				t.Fatal("upload preceded verified durable grant")
+			}
 			requests = append(requests, request)
 			return nil
 		},
@@ -66,6 +78,23 @@ func TestStageDeclaredDevelopmentInputsPlansBeforeSyncing(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "staging declared development input sample") {
 		t.Fatalf("output = %q", output.String())
+	}
+	requests = nil
+	dependencies.grants = func(context.Context, []plannedDevelopmentInput) error {
+		return errors.New("policy verification failed")
+	}
+	if _, err := stageDeclaredDevelopmentInputsWithDependencies(t.Context(), credentials, target, dependencies); err == nil || len(requests) != 0 {
+		t.Fatalf("grant failure did not stop upload: err=%v uploads=%d", err, len(requests))
+	}
+	dependencies.plan = func(context.Context, localplan.Request) (localplan.Result, error) {
+		return localplan.Result{}, errors.New("invalid fixture")
+	}
+	dependencies.grants = func(context.Context, []plannedDevelopmentInput) error {
+		t.Fatal("invalid fixture mutated grants")
+		return nil
+	}
+	if _, err := stageDeclaredDevelopmentInputsWithDependencies(t.Context(), credentials, target, dependencies); err == nil {
+		t.Fatal("invalid fixture accepted")
 	}
 }
 

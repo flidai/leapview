@@ -32,6 +32,7 @@ RUNTIME_PAYLOAD_MODES = {
     'leapviewctl': 0o700,
     'leapviewctl-wrapper': 0o700,
     'compose.yaml': 0o600,
+    'compose.postgres.yaml': 0o600,
     'compose.https.yaml': 0o600,
     'compose.first-install-bootstrap.yaml': 0o600,
     'Caddyfile.first-install-bootstrap': 0o600,
@@ -39,6 +40,8 @@ RUNTIME_PAYLOAD_MODES = {
     'Caddyfile': 0o600,
     'deployment.env.example': 0o600,
     'leapview.env.example': 0o600,
+    'postgres/bundled-entrypoint.sh': 0o644,
+    'postgres/bundled-init.sh': 0o644,
 }
 
 def replace_installation_image(data, old, new):
@@ -55,6 +58,22 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, stdout=kwargs.pop('stdout', LOG), stderr=LOG, **kwargs)
 
 def out(*args): return subprocess.check_output(args, text=True, stderr=LOG).strip()
+
+def runtime_version():
+    command = ('docker', 'exec', APP, 'leapview', 'version')
+    help_text = out(*command, '--help')
+    if re.search(r'(?m)^\s+--format\s+string\b', help_text):
+        arguments = ('--format', 'json')
+    elif re.search(r'(?m)^\s+--json(?:\s|$)', help_text):
+        arguments = ('--json',)
+    else:
+        raise RuntimeError('Installed runtime does not advertise a supported JSON version command')
+    identity = json.loads(out(*command, *arguments))
+    if (not isinstance(identity, dict) or identity.get('dirty') is not False or
+            not isinstance(identity.get('revision'), str) or
+            not re.fullmatch(r'[0-9a-f]{40}', identity['revision'])):
+        raise ValueError('Runtime source identity is invalid')
+    return identity
 
 def replace_image(data, old, new):
     lines = data.splitlines(keepends=True)
@@ -110,7 +129,7 @@ def inspect():
             raise RuntimeError('Backup target does not match application database binding')
     image = info['Config']['Image']
     if not re.fullmatch(IMAGE_RE, image): raise RuntimeError('Predecessor must use an immutable image')
-    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--json'))
+    version = runtime_version()
     if version['dirty']: raise RuntimeError('Dirty predecessor')
     ready()
     return {'image': image, 'revision': version['revision']}
@@ -291,7 +310,7 @@ def _runtime_outcome_evidence():
     image_info = json.loads(out('docker', 'image', 'inspect', image))[0]
     if info.get('Image') != image_info.get('Id') or image not in image_info.get('RepoDigests', []):
         raise ValueError('Container content does not match its immutable image reference')
-    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--json'))
+    version = runtime_version()
     if version.get('dirty') is not False or not re.fullmatch(r'[0-9a-f]{40}', version.get('revision', '')):
         raise ValueError('Runtime source identity is invalid')
     env = dict(v.split('=', 1) for v in info['Config']['Env'] if '=' in v)
@@ -414,7 +433,8 @@ def stage_release(image):
                 mode = entry.lstat().st_mode
                 if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                     raise RuntimeError('Deployment payload contains a link or special file; operator review required')
-                entries[str(entry.relative_to(path))] = None if stat.S_ISDIR(mode) else entry.read_bytes()
+                if stat.S_ISREG(mode):
+                    entries[str(entry.relative_to(path))] = entry.read_bytes()
             return entries
 
         complete = contents(packaged)
@@ -422,7 +442,9 @@ def stage_release(image):
             raise RuntimeError('Required runtime payload file is missing or empty')
         runtime = {name: complete[name] for name in RUNTIME_PAYLOAD_MODES}
         # Seed defaults belong to the candidate, not the installed topology.
-        for name in ['compose.yaml', 'compose.https.yaml', 'Caddyfile', 'deployment.env.example']:
+        for name in ['compose.yaml', 'compose.postgres.yaml', 'compose.https.yaml',
+                     'postgres/bundled-entrypoint.sh', 'postgres/bundled-init.sh',
+                     'Caddyfile', 'deployment.env.example']:
             if runtime[name] != (ROOT/name).read_bytes():
                 raise RuntimeError('Deployment payload changed; reviewed host upgrade required: '+name)
         if release.exists() or release.is_symlink():
@@ -435,8 +457,10 @@ def stage_release(image):
             staged = Path(directory)/'generation'
             staged.mkdir(mode=0o700)
             for name, mode in RUNTIME_PAYLOAD_MODES.items():
-                (staged/name).write_bytes(runtime[name])
-                (staged/name).chmod(mode)
+                path = staged/name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(runtime[name])
+                path.chmod(mode)
             staged.rename(release)
     return release
 
@@ -505,7 +529,7 @@ def _main():
     if shutil.disk_usage(PROVIDER).free < 10*1024**3:
         raise RuntimeError('Insufficient free space before image pull (10 GiB reserve required)')
     run('docker', 'pull', image)
-    identity = json.loads(out('docker', 'run', '--rm', image, 'version', '--json'))
+    identity = json.loads(out('docker', 'run', '--rm', image, 'version', '--format', 'json'))
     if identity['revision'] != revision or identity['dirty']: raise RuntimeError('Image identity mismatch')
     release = stage_release(image)
     volume = out('docker', 'volume', 'inspect', VOLUME, '--format', '{{.Mountpoint}}')

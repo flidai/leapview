@@ -181,7 +181,12 @@ for (const [target, command] of [['production', 'image'], ['site', 'site-image']
 test('native PostgreSQL qualification generates the complete application fixture before compilation', () => {
   const commands = tasks['test:qualification:native-postgres'].cmds
   expect(commands[0]).toEqual({ task: 'generate' })
-  expect(commands.at(-1)).toContain('TestQualificationNativePostgresTopologyContainerBackedContract')
+  expect(commands.slice(1)).toEqual([
+    "go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v",
+    "go test ./internal/app/cli/composectl -run '^TestBundledPostgresPrepareSeedsAppEnvBeforeCompose$' -count=1 -v",
+    "go test ./internal/app/cli/composectl -run '^TestBundledPostgresDockerResumesProvisioningAndPreservesVolume$' -count=1 -v",
+    "go test ./internal/app/cli/composectl -run '^TestBundledPostgresColdSnapshotRestoreQualification$' -count=1 -v",
+  ])
 })
 
 test('hosted demo rejects an unknown dataset before requesting deployment credentials', () => {

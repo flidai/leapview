@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	content "github.com/flidai/leapview/docs"
+	"github.com/flidai/leapview/internal/platform/clidoc"
 )
 
 type machineDocumentation struct {
@@ -20,35 +21,9 @@ type machineDocumentation struct {
 	agentToolByName   map[string]json.RawMessage
 	apiByID           map[string]json.RawMessage
 	apiSchemas        map[string]json.RawMessage
-	cli               []machineCLICommand
+	cli               []clidoc.Command
 	agentTools        []machineAgentTool
 	api               []machineAPIOperation
-}
-
-type machineCLICommand struct {
-	ID               string             `json:"id"`
-	Path             []string           `json:"path"`
-	Title            string             `json:"title"`
-	Summary          string             `json:"summary"`
-	Description      string             `json:"description"`
-	Usage            string             `json:"usage"`
-	Runnable         bool               `json:"runnable"`
-	Effect           string             `json:"effect"`
-	Confirmation     string             `json:"confirmation"`
-	Arguments        []string           `json:"arguments"`
-	Options          []machineCLIOption `json:"options"`
-	InheritedOptions []machineCLIOption `json:"inheritedOptions"`
-	Examples         []string           `json:"examples"`
-	Subcommands      []string           `json:"subcommands"`
-}
-
-type machineCLIOption struct {
-	Name        string `json:"name"`
-	Shorthand   string `json:"shorthand"`
-	Type        string `json:"type"`
-	Default     string `json:"default"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
 }
 
 type machineAgentTool struct {
@@ -119,10 +94,14 @@ func loadMachineDocumentation() machineDocumentation {
 	agentToolManifest := mustReadDocumentationArtifact("reference/agent-tools/manifest.json")
 	apiOperations := mustReadDocumentationArtifact("api/operations.json")
 	var cliManifestDecoded struct {
-		Commands []json.RawMessage `json:"commands"`
+		SchemaVersion int               `json:"schemaVersion"`
+		Commands      []json.RawMessage `json:"commands"`
 	}
 	if err := json.Unmarshal(cliManifest, &cliManifestDecoded); err != nil {
 		panic(fmt.Sprintf("decode CLI machine manifest: %v", err))
+	}
+	if cliManifestDecoded.SchemaVersion != clidoc.SchemaVersion {
+		panic(fmt.Sprintf("CLI machine manifest schema %d, expected %d", cliManifestDecoded.SchemaVersion, clidoc.SchemaVersion))
 	}
 	var agentToolManifestDecoded struct {
 		Tools []json.RawMessage `json:"tools"`
@@ -156,7 +135,7 @@ func loadMachineDocumentation() machineDocumentation {
 		loaded.agentTools = append(loaded.agentTools, tool)
 	}
 	for _, raw := range cliManifestDecoded.Commands {
-		var command machineCLICommand
+		var command clidoc.Command
 		if err := json.Unmarshal(raw, &command); err != nil {
 			panic(fmt.Sprintf("decode CLI machine command: %v", err))
 		}
@@ -215,7 +194,7 @@ func docsCLICommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeMachineArtifact(w, "application/json; charset=utf-8", prettyJSON(raw))
 		return
 	}
-	var command machineCLICommand
+	var command clidoc.Command
 	if err := json.Unmarshal(raw, &command); err != nil {
 		stdhttp.Error(w, "decode generated CLI command", stdhttp.StatusInternalServerError)
 		return
@@ -276,7 +255,7 @@ func writeMachineAgentToolSchema(out *strings.Builder, heading string, schema js
 	out.WriteString("```json\n" + strings.TrimSpace(string(prettyJSON(schema))) + "\n```\n")
 }
 
-func renderMachineCLICommand(command machineCLICommand) string {
+func renderMachineCLICommand(command clidoc.Command) string {
 	var out strings.Builder
 	out.WriteString("# " + command.Title + "\n\n")
 	out.WriteString(strings.TrimSpace(command.Description) + "\n\n")
@@ -284,6 +263,10 @@ func renderMachineCLICommand(command machineCLICommand) string {
 	if command.Runnable {
 		out.WriteString("\n## Behavior\n\n| Side effect | Confirmation |\n| --- | --- |\n")
 		out.WriteString("| `" + command.Effect + "` | `" + command.Confirmation + "` |\n")
+	}
+	out.WriteString("\n## Output\n\nDefault: `" + command.Output.DefaultFormat + "`.\n\n")
+	for _, mode := range command.Output.Modes {
+		out.WriteString("- `" + mode.Format + "`: " + mode.Framing + "\n")
 	}
 	writeMachineCLIOptions(&out, "Options", command.Options)
 	writeMachineCLIOptions(&out, "Inherited options", command.InheritedOptions)
@@ -299,7 +282,7 @@ func renderMachineCLICommand(command machineCLICommand) string {
 	return strings.TrimRight(out.String(), "\n") + "\n"
 }
 
-func writeMachineCLIOptions(out *strings.Builder, heading string, options []machineCLIOption) {
+func writeMachineCLIOptions(out *strings.Builder, heading string, options []clidoc.Option) {
 	if len(options) == 0 {
 		return
 	}
@@ -322,7 +305,7 @@ func legacyCLICommandLocation(slug string) (string, bool) {
 	if !exists {
 		return "", false
 	}
-	var command machineCLICommand
+	var command clidoc.Command
 	if err := json.Unmarshal(raw, &command); err != nil {
 		panic(fmt.Sprintf("decode legacy CLI command %q: %v", id, err))
 	}

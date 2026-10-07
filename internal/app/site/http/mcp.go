@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/platform/clidoc"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -163,7 +165,7 @@ func docsReadTool(_ context.Context, _ *mcp.CallToolRequest, input docsReadInput
 		if format == "json" {
 			return nil, docsReadOutput{ID: input.ID, ContentType: "application/json", Content: string(prettyJSON(raw))}, nil
 		}
-		var command machineCLICommand
+		var command clidoc.Command
 		if err := json.Unmarshal(raw, &command); err != nil {
 			return nil, docsReadOutput{}, err
 		}
@@ -203,8 +205,8 @@ func boundedLimit(limit, fallback int) int {
 	if limit <= 0 {
 		return fallback
 	}
-	if limit > 25 {
-		return 25
+	if maximum := max(fallback, 25); limit > maximum {
+		return maximum
 	}
 	return limit
 }
@@ -233,7 +235,7 @@ func documentReference(document siteDocument) docsReference {
 	return docsReference{ID: "doc:" + document.slug, Kind: "doc", Title: document.title, Summary: document.summary, URL: "/docs/" + document.slug}
 }
 
-func cliReference(command machineCLICommand) docsReference {
+func cliReference(command clidoc.Command) docsReference {
 	return docsReference{ID: "cli:" + command.ID, Kind: "cli", Title: command.Title, Summary: command.Summary, URL: "/docs/cli/commands/" + command.ID + ".md"}
 }
 

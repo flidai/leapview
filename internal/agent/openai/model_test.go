@@ -325,6 +325,110 @@ func TestOpenAIModelStreamsFirstTokenBeforeCompletion(t *testing.T) {
 	}
 }
 
+func TestOpenAIModelCancelsInFlightConfiguredHTTPStream(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+		mode  string
+		path  string
+		event string
+	}{
+		{
+			name:  "chat completions",
+			model: "test-model",
+			path:  "/chat/completions",
+			event: `data: {"id":"chatcmpl_cancel","choices":[{"index":0,"delta":{"role":"assistant","content":"first"},"finish_reason":null}]}`,
+		},
+		{
+			name:  "responses",
+			model: "test-model",
+			mode:  "responses",
+			path:  "/responses",
+			event: `data: {"type":"response.output_text.delta","delta":"first"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requestCanceled := make(chan struct{})
+			ctx, cancel := context.WithCancel(context.Background())
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != test.path {
+					t.Errorf("request path = %q, want %q", r.URL.Path, test.path)
+				}
+				var request struct {
+					Stream bool `json:"stream"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				if !request.Stream {
+					t.Error("turn request did not enable streaming")
+				}
+
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher := w.(http.Flusher)
+				_, _ = io.WriteString(w, test.event+"\n\n")
+				flusher.Flush()
+				<-r.Context().Done()
+				close(requestCanceled)
+			}))
+			resultDone := make(chan struct{})
+			defer func() {
+				cancel()
+				server.CloseClientConnections()
+				server.Close()
+				select {
+				case <-resultDone:
+				case <-time.After(10 * time.Second):
+					t.Error("Complete goroutine did not exit during cleanup")
+				}
+			}()
+
+			model := NewModel(agentapp.Config{
+				APIKey:  "test-key",
+				BaseURL: server.URL,
+				Model:   test.model,
+				APIMode: test.mode,
+			}, server.Client())
+			deltas := make(chan string, 1)
+			result := make(chan error, 1)
+			go func() {
+				defer close(resultDone)
+				_, err := model.Complete(ctx, agentcore.ModelRequest{Purpose: agentcore.ModelRequestPurposeTurn}, modelStreamFunc(func(_ context.Context, text string) error {
+					deltas <- text
+					return nil
+				}))
+				result <- err
+			}()
+
+			select {
+			case delta := <-deltas:
+				if delta != "first" {
+					t.Fatalf("first delta = %q, want %q", delta, "first")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("configured HTTP stream did not deliver its first event")
+			}
+
+			cancel()
+			select {
+			case err := <-result:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("Complete error = %v, want context cancellation", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Complete did not return after cancellation")
+			}
+			select {
+			case <-requestCanceled:
+			case <-time.After(10 * time.Second):
+				t.Fatal("configured HTTP request did not observe cancellation")
+			}
+		})
+	}
+}
+
 func TestOpenAIModelAccumulatesFragmentedToolCallDeltasAndUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var got openAIChatRequest

@@ -35,7 +35,7 @@ func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 		Use:   "list",
 		Short: "List generated API operations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAPIList()
+			return runAPIList(cmd.OutOrStdout())
 		},
 	}
 	describe := &cobra.Command{
@@ -43,7 +43,7 @@ func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 		Short: "Describe a generated API operation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAPIDescribe(args[0])
+			return runAPIDescribe(args[0], cmd.OutOrStdout())
 		},
 	}
 	callOpts := &apiCallOptions{}
@@ -52,7 +52,7 @@ func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 		Short: "Call a generated API operation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAPICall(ctx, opts, args[0], callOpts)
+			return runAPICall(ctx, opts, args[0], callOpts, cmd.OutOrStdout())
 		},
 	}
 	addTargetTokenFlags(call, opts)
@@ -72,9 +72,9 @@ func apiCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
 	return parent
 }
 
-func runAPIList() error {
+func runAPIList(out io.Writer) error {
 	contracts := sortedAPIOperationContracts()
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "OPERATION\tMETHOD\tPATH\tTAGS")
 	for _, contract := range contracts {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", contract.OperationID, contract.Method, contract.Path, strings.Join(contract.Tags, ","))
@@ -82,31 +82,31 @@ func runAPIList() error {
 	return tw.Flush()
 }
 
-func runAPIDescribe(operationID string) error {
+func runAPIDescribe(operationID string, out io.Writer) error {
 	contract, ok := apiaggregate.GetAPIGenOperationContract(operationID)
 	if !ok {
-		return fmt.Errorf("unknown API operation %q", operationID)
+		return cliapi.NewUsageError(fmt.Errorf("unknown API operation %q", operationID))
 	}
-	encoder := json.NewEncoder(os.Stdout)
+	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(contract)
 }
 
-func runAPICall(ctx context.Context, opts *rootOptions, operationID string, callOpts *apiCallOptions) error {
+func runAPICall(ctx context.Context, opts *rootOptions, operationID string, callOpts *apiCallOptions, out io.Writer) error {
 	contract, ok := apiaggregate.GetAPIGenOperationContract(operationID)
 	if !ok {
-		return fmt.Errorf("unknown API operation %q", operationID)
+		return cliapi.NewUsageError(fmt.Errorf("unknown API operation %q", operationID))
 	}
 	pathParams, err := parseKeyValuePairs(callOpts.pathParams)
 	if err != nil {
-		return fmt.Errorf("path: %w", err)
+		return cliapi.NewUsageError(fmt.Errorf("path: %w", err))
 	}
 	if err := requirePathParams(contract.Path, pathParams); err != nil {
-		return err
+		return cliapi.NewUsageError(err)
 	}
 	query, err := parseQueryValues(callOpts.queryParams)
 	if err != nil {
-		return fmt.Errorf("query: %w", err)
+		return cliapi.NewUsageError(fmt.Errorf("query: %w", err))
 	}
 	credentials, err := (capabilityAPIClient{}).Resolve(ctx, cliapi.Credentials{Target: opts.target, Token: opts.token})
 	if err != nil {
@@ -123,7 +123,7 @@ func runAPICall(ctx context.Context, opts *rootOptions, operationID string, call
 	}
 	idempotencyKey, ifMatch := generatedCommandHeaders(contract, callOpts)
 	if contract.Command != nil && contract.Command.Concurrency == "if-match" && ifMatch == "" {
-		return fmt.Errorf("operation %q requires --if-match", operationID)
+		return cliapi.NewUsageError(fmt.Errorf("operation %q requires --if-match", operationID))
 	}
 	return doRawAPI(
 		ctx,
@@ -134,7 +134,7 @@ func runAPICall(ctx context.Context, opts *rootOptions, operationID string, call
 		idempotencyKey,
 		ifMatch,
 		body,
-		os.Stdout,
+		out,
 	)
 }
 
@@ -231,11 +231,11 @@ func pathParamNames(path string) []string {
 
 func apiRequestBody(operationID string, callOpts *apiCallOptions, required bool) (io.Reader, string, error) {
 	if callOpts.bodyJSON != "" && callOpts.bodyFile != "" {
-		return nil, "", fmt.Errorf("use only one of --body-json or --body-file")
+		return nil, "", cliapi.NewUsageError(fmt.Errorf("use only one of --body-json or --body-file"))
 	}
 	if callOpts.bodyJSON != "" {
 		if !json.Valid([]byte(callOpts.bodyJSON)) {
-			return nil, "", fmt.Errorf("body-json must be valid JSON")
+			return nil, "", cliapi.NewUsageError(fmt.Errorf("body-json must be valid JSON"))
 		}
 		contentType := callOpts.contentType
 		if contentType == "" {
@@ -255,7 +255,7 @@ func apiRequestBody(operationID string, callOpts *apiCallOptions, required bool)
 		return bytes.NewReader(bodyBytes), contentType, nil
 	}
 	if required {
-		return nil, "", fmt.Errorf("operation requires --body-json or --body-file")
+		return nil, "", cliapi.NewUsageError(fmt.Errorf("operation requires --body-json or --body-file"))
 	}
 	return nil, "", nil
 }
@@ -318,12 +318,15 @@ func doRawAPI(
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := defaultCLIHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	bytes, _ := io.ReadAll(resp.Body)
+	bytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read API response: %w", err)
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("%s %s: %s", method, endpoint, strings.TrimSpace(string(bytes)))
 	}

@@ -1,0 +1,4 @@
+Host 127.0.0.1
+  StrictHostKeyChecking yes
+  UserKnownHostsFile /root/.ssh/known_hosts
+  ForwardAgent no

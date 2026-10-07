@@ -101,7 +101,10 @@ func TestDetachedNativeFailurePreservesReopenedLiveState(t *testing.T) {
 			if strings.Contains(call, "count(*)") {
 				return "0", nil
 			}
-			if strings.Contains(call, "version --json") {
+			if strings.Contains(call, "version --help") {
+				return "Flags:\n      --format string   output format: text or json\n", nil
+			}
+			if strings.Contains(call, "version --json") || strings.Contains(call, "version --format json") {
 				revision := e.request.PredecessorRevision
 				if images[args[1]] == e.id.Candidate {
 					revision = e.request.CandidateRevision

@@ -1,236 +1,348 @@
-# CodeQL reliability and alert remediation plan
+# LeapView CLI improvement plan
 
-Reviewed: 4 October 2026. Implementation and hosted acceptance completed: 5 October 2026.
-Tracking: [Linear project P-FAI-65](https://linear.app/flid/project/leapview-codeql-reliability-and-security-alert-remediation-c31a24fb8dc0), issues FAI-1077–FAI-1086. Lead: Ganesh Kambli. Target: Sunday, 11 October 2026.
-Repository: `flidai/leapview`. Baseline: `ad2c9bfb6b148834268e422ff2e2bbc1670acc81`.
-Scope: Go and JavaScript/TypeScript scanning, the seven open `main` alerts, and regression prevention.
-The previous, unrelated root plan is preserved unchanged in `plan.kamal-rollout.md`.
+Reviewed: 6 October 2026
+Repository baseline: `b15f86f973c315861467ef927909e8b0a8333ebc`
+Project: [LeapView CLI Usability, Diagnostics &amp; Agent Guidance](https://linear.app/flid/project/leapview-cli-usability-diagnostics-and-agent-guidance-223c86ae3130)
+Lead: Ganesh Kambli
+Target: 13 October 2026
 
-## Completed delivery — 5 October 2026
+Implementation was approved on 6 October 2026. The project is In Progress, led by Ganesh Kambli, and all five implementation issues are assigned to him. The linked issues carry their current delivery status. The acceptance gates below remain separate from code implementation and PR review.
 
-[PR 840](https://github.com/flidai/leapview/pull/840) merged through the queue at
-`6682845926675dc615515c90a31a14690f24f987`. All ten Linear issues are Done and the
-project is Completed. The [completion evidence](.security/codeql-remediation.md)
-records exact PR, merge-group, cold/warm, negative-test, and main runs.
+## 1. Objective and decisions
 
-At reassessment, main was `77ecf56bec6ee4f9a4018c869c802ee545285583`.
-Both language analyses were healthy, without the 44-package warning or new
-findings. Alerts 1 and 52 were fixed; 47, 48, 49, 87, and 91 remained open with
-individual reviewed dispositions. No alert was dismissed by this work.
+Make LeapView's CLI discoverable, predictable for automation, and useful for diagnosing problems. Review the entire public command surface, prioritizing analytics authors using init → dev → validate → deploy.
 
-Hosted full `task ci` and qualification passed. Local full CI did not complete;
-the completion record distinguishes the local environment limitations from the
-hosted results. Severity-based merge blocking remains a separate policy proposal,
-not an outstanding implementation requirement of this project.
+Jacob's screenshots motivate a design review; doctor and --llms are additions within that broader work.
 
-## Historical investigation and implementation plan
+Confirmed decisions:
 
-The sections below preserve the original baseline, proposed work, and early
-implementation observations. Present-tense defects, planned dispositions, old
-line numbers, and checks described as not yet run refer to those historical
-checkpoints. Use the completion evidence above for current status.
+* Bare `leapview` displays workflow help. Server startup requires `leapview serve`.
+* Commands offering selectable text/JSON results use `--format text|json`. Remove their Boolean `--json` flags and update affected callers.
+* Introduce no compatibility aliases, old/new interfaces, or fallback behavior.
+* Preserve the existing local-development and target-owned deployment architecture.
+* If this document is subsequently saved as root `plan.md`, first preserve the completed CodeQL plan as `plan.codeql-remediation.md`.
 
-## Findings that change this plan
+Success means a new author can discover the workflow, diagnose prerequisites, preview a project, and understand deployment outcomes without learning internal implementation details. CI and agents receive documented output and exit behavior without unexpected interaction.
 
-The screenshot reveals two separate workstreams: incomplete analysis and open code findings. Fixing the analysis warning will not automatically resolve the seven findings. A successful Actions job currently proves neither complete extraction nor absence of vulnerabilities.
+## 2. Research and repository findings
 
-1. **P1 — Incomplete Go analysis is confirmed.** The SAST runner does not generate required source or use the shared toolchain. CodeQL reports 44 missing local packages while its job and `Security gate` pass. Generation in the dependency job runs on another machine and cannot prepare the SAST workspace.
-2. **P2 — Page-stream cookie policy is inconsistent (#91).** Authentication uses the configured secure-cookie policy, but the page-stream cookie independently inspects TLS and an unconditionally trusted forwarded header. This is a real configuration gap; exploitation in the deployed proxy topology has not been demonstrated.
-3. **P2 — The desktop verification script needs message validation (#1).** The flagged callback comes from a private `Map`, which prevents arbitrary property dispatch. A separate, adjacent defect is reproducible: a WebSocket payload of JSON `null` throws before validation. This affects the local packaging/accessibility checker; it is not evidence of remote product code execution.
-4. **P3 — Integer and allocation alerts already have bounds (#52, #49).** Simplify the integer conversion and prove the allocation bound through both HTTP callers. Do not describe them as demonstrated overflow or memory-exhaustion vulnerabilities.
-5. **Triage — Both password-hashing alerts are false positives on the inspected paths (#47, #48).** Their SARIF flows originate from the boolean `HasLocalPassword`, not a password. The sinks create ETags and pagination keys. Actual stored password verifiers use Argon2id.
-6. **Triage — The local browser cookie is an intentional loopback exception (#87).** This flow explicitly accepts only `http://127.0.0.1:<port>`, binds its handoff listener to loopback, and disables redirects in its authentication client. Setting `Secure=true` indiscriminately would break the intended flow.
-7. **Policy limitation — Required checks do not enforce alert severity.** The active `main` ruleset requires `CI gate` and `Security gate`, but has no `code_scanning` rule. The workflow's aggregate gate checks job outcomes only. Keep this distinct from the proposed analysis-health check.
+The governing design is [ADR-0021](https://github.com/flidai/leapview/blob/b15f86f973c315861467ef927909e8b0a8333ebc/adr/0021-adopt-a-local-first-analytics-development-workflow.md) and the [analytics-development CLI contract](https://github.com/flidai/leapview/blob/b15f86f973c315861467ef927909e8b0a8333ebc/adr/specifications/analytics-development-cli-contract.md). Local runtime management, explicit remote development, durable operation handles, exact-plan confirmation, and deployment recovery already have implementations and tests.
 
-Priorities above are remediation priorities, not replacements for GitHub's displayed severity ratings. No alerts have been dismissed and no production code or repository settings have been changed during this review.
+External research supports clear help, separate result/diagnostic streams, explicit interaction rules, and useful failure messages:
 
-## Evidence and baseline
+* [CLI Guidelines](https://clig.dev/)
+* [Cobra user guide](https://github.com/spf13/cobra/blob/main/site/content/user_guide.md)
+* [Cobra command-derived documentation](https://cobra.dev/docs/how-to-guides/clis-for-llms/)
+* [Homebrew diagnostic-command precedent](https://docs.brew.sh/Manpage)
+* [llms.txt proposal](https://llmstxt.org/)
 
-- [Inspected security run](https://github.com/flidai/leapview/actions/runs/37200497398), [Go job](https://github.com/flidai/leapview/actions/runs/37200497398/job/111431019646), and [JavaScript job](https://github.com/flidai/leapview/actions/runs/37200497398/job/111431019681) all concern the baseline commit.
-- Go analysis ID `1888592831`; JavaScript analysis ID `1888591182`. Authenticated API retrieval confirmed seven open alerts, each with its most recent instance on the baseline commit. The private security page does not load through unauthenticated web browsing.
-- The Go log reports 44 unresolved generated packages, including `internal/access/api/gen`, `internal/platform/http/api/gen`, `internal/access/postgres/internal/db`, and `internal/access/ui/signals`. Import/type errors accompany the warning.
-- The reported 1,716/3,387 Go file count is not proof that half of production code is omitted: the denominator includes tests and other files that the extractor may legitimately exclude. Acceptance must examine missing dependencies and expected maintained packages, not impose a misleading percentage.
-- `.github/workflows/security.yml:86` currently uses Go `autobuild` and JavaScript/TypeScript `none`, with checkout, initialization, and analysis only. The CodeQL action is pinned to `2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2` (v4.38.2); the inspected run used CLI 2.27.1.
-- The autobuilder attempts `go mod tidy -e`. A plan that combines autobuild with an immutable dependency graph is inconsistent. Use a manual traced build with read-only module resolution.
-- Raw analyzer SARIF contains extraction diagnostics. SARIF downloaded from GitHub's analysis API is processed and omitted invocation diagnostics in this investigation. It is useful for alert traces, not as a fixture for the proposed health checker.
-- Active ruleset ID `19956950` was read without modifying it. It enables a merge queue and requires the two aggregate status checks, but contains no code-scanning severity rule.
+The llms.txt proposal concerns website documentation and does not define a CLI --llms flag; LeapView must define that interface.
 
-## All seven alerts: assessment and disposition
+| Finding | Evidence and implication |
+| -- | -- |
+| Root invocation starts services | NewCommand calls runServe without a subcommand. Replace this with help. |
+| Discovery depends on environment parsing | Command construction resolves paths through config.MustLoad, which can panic. Help must work independently of operational configuration. |
+| Output conventions differ | Validation, version, search, and agent commands use --json; authoring commands use --format. |
+| Local JSON can contain prose | Profile reporting and runtime startup use the same stdout as development results. |
+| Error handling loses distinctions | main uses log.Fatal although deployment has typed pending/failure/indeterminate outcomes. |
+| Some adapters bypass command streams | API commands write to os.Stdout and raw response handling ignores body-read errors. |
+| Documentation already has a foundation | clidocgen derives a manifest from Cobra and safety annotations. Extend it rather than create a second registry. |
+| Diagnostic guidance is misleading | Troubleshooting describes remote plan as read-only, although it creates durable target state. |
+| Implementation is not release evidence | The conformance matrix records outstanding archive, platform, measurement, and usability evidence. |
 
-### #91 — Cookie Secure attribute: page-stream identity
+The CLI already applies a five-minute HTTP timeout by modifying http.DefaultClient. Improve client ownership and testability; do not describe this as a missing timeout.
 
-[Alert #91](https://github.com/flidai/leapview/security/code-scanning/91), GitHub severity **Medium**, rule `go/cookie-secure-not-set`.
+## 3. Implementation sequence
 
-Evidence: `internal/platform/web/transport/client_id.go:18` returns an existing valid cookie immediately; line 32 sets `Secure: requestUsesHTTPS(r)`. Lines 37–45 trust `X-Forwarded-Proto` without consulting deployment policy. In contrast, `internal/app/config/config.go:197` computes `CookieSecure()` and `internal/app/postgres_build.go:134` passes that policy to authentication.
+Deliver five focused changes in order. Each includes its own relevant documentation and tests.
 
-A proxied HTTPS deployment with secure cookies configured can still issue a non-secure page-stream cookie if the forwarded header is missing or differs from the helper's expectation. A previously issued cookie is not reissued when the policy changes. The client ID is a routing/session correlation value, not the authentication credential: dashboard session keys also bind the principal (`internal/dashboard/http/handlers.go:349`). Do not infer an authentication bypass from this alert.
+### A. Make discovery reliable
 
-Planned change:
+* Root invocation prints grouped help and exits successfully without loading operational configuration, contacting services, or creating files.
+* Group public commands into Authoring, Delivery, Data and Query, Access, Operations, and Reference; retain existing command paths.
+* Add concise examples and useful next steps to authoring and diagnostic commands.
+* Move configuration, credential-store, checkpoint-path, and runtime initialization into execution. Invalid configuration returns ordinary errors, not panics.
+* Give every runnable command explicit positional-argument validation; correct required arguments advertised as optional.
+* Initialize Cobra's built-in help/completion before catalog generation and assign groups and metadata explicitly.
+* Add offline completion for formats, local target names, and generated API operation names; no authentication or target contact.
+* Audit maintained server launchers for implicit root startup and update them to serve.
 
-- Make page-stream cookie issuance consume an explicit application-owned policy derived at composition from the existing secure-cookie configuration and canonical serving origin. Production HTTPS and direct HTTPS must remain secure independently of client-supplied headers; supported local HTTP must remain functional.
-- Thread this policy through the product transport and its callers, including the `Patch*` helpers, dashboard/builder issuance, and admin issuance. Use one policy; remove the existing header-based decision. Update all callers rather than keep an old signature or implicit fallback.
-- When ensuring an existing valid client ID, reissue it with the current policy before response headers or SSE bytes are sent. Preserve the ID and other attributes. Request cookies do not reveal their original Secure flag, so the server cannot condition this upgrade on inspecting that flag.
-- Keep `HttpOnly`, `SameSite=Lax`, path `/`, host-only scope, and entropy-failure handling.
+### B. Establish output, error, and interaction contracts
 
-Regression proof: secure-policy requests over the proxy's internal HTTP connection must emit Secure with absent, misleading, and comma-separated forwarded headers; an existing valid ID must receive the correct attributes; direct HTTPS must stay secure; deliberate local HTTP must work. Verify cookie issuance precedes SSE streaming and principal isolation is unchanged. Confirm a deployed HTTPS response through the actual proxy before closing the finding.
+Output:
 
-### #1 — Callback dispatch in the accessibility checker
+* Replace Boolean --json switches with --format text|json on public commands that offer selectable result output; retain existing success payloads.
+* Preserve artifact encoding meanings for schema and Ossie exports. Do not add a conflicting global format flag.
+* Document fixed JSON/raw-output commands explicitly.
+* Results use command stdout; progress, prompts, and diagnostics use command stderr, including local startup/profile output.
+* Finite JSON results are one complete document. Development watch and device-login events remain newline-delimited JSON.
+* Propagate writer and response-body errors. Tests parse complete output without discarding leading prose.
 
-[Alert #1](https://github.com/flidai/leapview/security/code-scanning/1), GitHub severity **High**, rule `js/unvalidated-dynamic-method-call`.
+Failures:
 
-Evidence: `desktop/scripts/accessibility-contract.mjs:155` accepts only loopback WebSocket URLs. Lines 171–193 use a private `Map` of locally registered callbacks and safe-integer IDs. There is no attacker-selected object property or arbitrary function installation. `desktop/scripts/verify-package.mjs:360` invokes this during packaged-app verification.
+* Replace timestamped log.Fatal with one CLI error-rendering boundary.
+* Preserve existing structured domain results; do not append another result or duplicate an already-reported failure.
+* Failures without domain results include command, error code, message, and available next action. Use JSON stderr when JSON output is selected.
+* Exit codes: 0 successful command completion; 1 execution/validation/authentication/diagnostic failure; 2 invalid invocation or command selection; 3 guided deployment awaiting confirmation/approval; 4 guided deployment indeterminate; 130/143 client interruption by SIGINT/SIGTERM.
+* Deploy success means confirmed activation. Plan/build/publish success means completion of that command's operation; successful publication submission is not proof of active deployment.
 
-However, after `JSON.parse`, the code reads `message.id` without first checking the payload's shape. A fake loopback WebSocket delivering `null` reproduced `TypeError: Cannot read properties of null (reading 'id')`. The six existing tests exercise accessibility-tree validation, not this transport boundary.
+Interaction:
 
-Planned change:
+* Add --no-input as an explicit automation policy. JSON mode also disables terminal prompts and automatic browser opening.
+* Prompt only when stdin and the prompt destination are terminals; missing required input fails with the next action.
+* Preserve device-login JSON events and bounded authentication. Device login is not unattended CI authentication.
+* Preserve exact-plan confirmation, explicit new/resume intent, retained handles, and independent server approval.
+* Propagate cancellation through HTTP and child processes while preserving graceful server shutdown and development-session detach.
+* Replace global HTTP-client mutation with explicit CLI clients, retaining the five-minute default and specialized shorter timeouts.
 
-- Validate that decoded messages are non-null, non-array objects before accessing properties.
-- Accept responses only for valid outstanding positive safe-integer IDs. Ignore legitimate CDP notifications and unknown/duplicate response IDs without invoking anything.
-- Read the callback into a local variable, check that it is callable, delete its pending entry, then invoke it. Preserve `Map`; do not replace it with a plain object.
-- Route malformed frames and socket close/error into controlled rejection, clear outstanding timers, and settle pending operations. Preserve the existing message-size and timeout bounds.
+### C. Add read-only leapview doctor
 
-Regression proof: valid response and protocol error; JSON `null`, arrays, primitives, malformed/oversized frames; string/prototype-like and unsafe IDs; unknown/duplicate IDs; close/error while awaiting a response. Tests must verify controlled promise rejection without uncaught event-handler exceptions or leaked timers. Rerun the packaging accessibility smoke and CodeQL. If the original dispatch warning persists, triage that exact warning separately from the now-fixed malformed-frame defect.
+Local interface:
 
-### #52 — Platform-sized integer conversion
+```text
+leapview doctor [--source-root PATH]
+                [--profile-file PATH] [--profile NAME]
+                [--docker-context NAME | --docker-host URI]
+                [--format text|json] [--timeout DURATION]
+```
+
+Explicit remote interface:
+
+```text
+leapview doctor --target NAME_OR_URL
+                [--token TOKEN]
+                [--format text|json] [--timeout DURATION]
+```
+
+Default local checks:
+
+* CLI identity, supported platform, and runtime-package integrity/version agreement.
+* Docker and Compose availability and effective endpoint selection through existing verified-local-endpoint rules.
+* Source-root validation and selected profile validity.
+* Presence and structural validity of required credential environment variables without revealing values.
+* Existing checkout-owned runtime state, attachment consistency, and service status through inspection-only adapters.
+* Outside an analytics project, implicit project checks skip with explanation; an explicit missing/invalid source or profile path fails.
 
-[Alert #52](https://github.com/flidai/leapview/security/code-scanning/52), GitHub severity **High**, rule `go/incorrect-integer-conversion`.
+Remote checks:
+
+* Require --target; ambient targets cannot redirect local diagnosis.
+* Check readiness, public instance identity, and agreement with saved metadata.
+* Check authenticated capabilities/current principal only with an explicitly supplied token or the existing API-token environment setting.
+* Do not read native OAuth secrets, refresh credentials, exchange workload credentials, or initiate login. Skipped authentication must not appear verified.
+* Reject remote mode combined with local Docker/profile flags.
+
+Report:
+
+* Ordered report with schemaVersion, overall status, and stable check IDs; each check has pass/warn/fail/skip, explanation, and remediation.
+* Required check failures exit 1; warnings/inapplicable checks alone exit 0; invocation errors exit 2.
+* Overall timeout defaults to 30 seconds; external probes are bounded to at most five seconds each. Failed prerequisites cause dependent checks to skip.
+* No image pulls, container starts, state-directory/lock-file creation, profile mutation, upstream data connection tests, or deployment-plan creation.
+* Extract inspection-only functions from existing parsing/validation logic when lifecycle or authentication helpers mutate state.
+* Keep healthcheck as the narrow container-readiness command.
 
-Evidence: `pkg/duckdbsql/decode_helpers.go:155` parses an int64, checks architecture-specific upper and lower limits, then converts at line 166. The 32-bit branch already rejects out-of-range input; the 64-bit comparison is redundant after int64 parsing. This is a scanner-recognition/clarity issue on the reviewed code, not a reproduced overflow.
+### D. Add offline leapview --llms
 
-Planned change: retain JSON-number decoding, but parse `intValue` directly to the platform `int` range using `strconv.Atoi` on the decoded number. Keep the separate `int64Value` contract for its callers. Remove the manual bit-twiddling bounds. Preserve valid JSON/error behavior and avoid parsing through floating point.
+* One root-only documentation flag. Combining it with an executable subcommand fails before effects.
+* Emit deterministic Markdown and exit successfully without Docker, credentials, valid runtime configuration, a checkout, or network.
+* Include binary version, workflow examples, compact public-command index, target rules, side effects, confirmations, output modes, exit codes, and recovery guidance.
+* Point detailed inspection to command help and existing machine-readable documentation endpoints.
+* Extract a shared pure catalog builder from clidocgen for website reference generation and --llms.
+* Derive syntax, flags, defaults, examples, visibility, and safety from the finalized Cobra tree. Exclude hidden commands/flags.
+* Include root flags in generated documentation and distinguish single JSON documents, event streams, and raw output in metadata.
+* Update the manifest and website/MCP consumers together; no alternate parsers or duplicate catalogs.
+* Cover every feature-owned CLI package and the shared catalog in generation dependencies to prevent stale docs.
 
-Regression proof: native minimum and maximum int; one below/above them; 32-bit boundary values on both architectures; int64 overflow; malformed/fractional inputs; existing decode error classification. Run the focused pure-Go decoder tests on amd64 and 386 where executable. A compile-only cross-build is not proof that boundary tests ran. Rerun CodeQL before deciding whether any residual finding needs triage.
+### E. Update callers and qualify the experience
 
-### #49 — Response slice allocation
+* Update owned scripts, CI examples, package verification, archive qualification, guides, and tests affected by --json removal or explicit serve.
+* Migrate LeapView invocations only; do not change unrelated tools' --json flags.
+* Replace misleading troubleshooting with doctor/validation/readiness before state-changing commands.
+* Explain contributor task dev versus analytics-author leapview dev.
+* Retain existing delivery, project identity, approvals, Docker matrix, and lifecycle ownership.
+* Use existing release qualification. Installer redesign, new platform support, automatic repair, and new delivery state machines are out of scope.
 
-[Alert #49](https://github.com/flidai/leapview/security/code-scanning/49), GitHub severity **High**, rule `go/uncontrolled-allocation-size`.
+## 4. Test plan and acceptance
 
-Evidence: `internal/dashboard/semanticapi/semantic_query_support.go:130` allocates capacity `min(len(rows), limit)`. Both production callers, `semantic_queries.go:53,77` and `semantic_datasets.go:203,227`, obtain their limit through `semanticLimitAndOffset` at lines 60–72. It normalizes non-positive values and caps large values at `maxQueryLimit = 1000` (`semantic_http_support.go:141`). The query requests one extra row for pagination, while the response remains capped at the normalized page size. SARIF traces pass through this existing clamp.
+Use red-green-refactor for features and fixes.
 
-Planned disposition: first rescan with complete extraction and add behavior-level boundary tests for both callers. If the warning remains, record a narrow false-positive rationale with this call-chain evidence. Do not merely remove preallocation: appending without a capacity can still allocate unbounded memory in a truly unbounded path. Do not silently change the API from clamping to rejecting oversized requests.
+| Area | Required coverage |
+| -- | -- |
+| Discovery | Root/help/version/completion/--llms under missing configuration, malformed unrelated environment, no Docker, no credentials; no operational initialization. |
+| Arguments | Invalid flags, extra arguments, conflicting selectors, missing values fail before mutation. |
+| Output | Parse entire stdout; startup prose only on stderr; correct finite/event formats; writer failures propagate. |
+| Failures | Usage, validation, authentication, pending approval, indeterminate publication, cancellation, body-read failures; correct exit status without duplicate output. |
+| Interaction | Pipes/--no-input never prompt; JSON never opens browsers; interactive approval remains tied to the exact plan. |
+| Doctor | Missing Docker, remote contexts, unsupported endpoints, corrupt state, invalid profile, missing credentials, unhealthy services, identity mismatch, timeout; assert no mutating calls/filesystem changes. |
+| Agent docs | Deterministic output, complete visible-command coverage, hidden flags omitted, root flags included, examples resolve against command tree. |
+| Workflows | Local dev ignores ambient production targets; remote dev starts no containers; bad edits retain working result; resume uses retained source; shared-session shutdown preserved. |
+| Packaging | Current scripts use new flags; installed help/doctor/--llms work without contributor toolchain. |
 
-Regression proof: omitted/zero/negative limit, 1, 1000, 1001, maximum representable int; malformed numeric input; returned row counts and one-row pagination probe; cursor behavior for empty, exact-limit, and extra-row results. This conclusion concerns the flagged row-capacity allocation, not all memory use in query execution or column payloads.
+Prepare generated dependencies, run focused CLI/domain tests, documentation checks, task generated:check, and task ci. Run existing Docker/authoring qualification for lifecycle changes.
 
-### #47 and #48 — Non-secret metadata mistaken for password material
+Run two independent agent usability trials, as requested by Ganesh during implementation: one approaches the CLI as a new author and one uses a fresh checkout. Both must discover help, diagnose a seeded prerequisite issue, attempt the sample, repair an invalid edit, and distinguish pending approval from active deployment using the CLI’s own guidance. Record observed outcomes, friction, and any unavailable release/runtime prerequisites. These are agent trials, not human sessions; human sessions are no longer a completion requirement for this project.
 
-[Alert #47](https://github.com/flidai/leapview/security/code-scanning/47) and [alert #48](https://github.com/flidai/leapview/security/code-scanning/48), GitHub severity **High**, rule `go/weak-sensitive-data-hashing`.
+Planning-time verification:
 
-Evidence: the type at `internal/access/access.go:373` declares `HasLocalPassword bool`.
+* Passed internal/app/cli/localdocker and internal/platform/cliapi.
+* Application/project CLI, documentation-generator, and local-runtime tests could not execute because generated packages were absent.
+* Initial testing also hit exhausted /tmp inodes; another temporary directory enabled the independent passing suites.
+* No full CI, Docker qualification, usability study, or released-archive acceptance is claimed.
 
-- #47 starts at `internal/access/http/handler.go:230`, the `canChangePassword` capability, and reaches `resourceETag` at lines 597–600 through principal responses.
-- #48 starts at line 264, the `canResetPassword` capability, and reaches `apiItemPageKey` at lines 638–649 through principal-list pagination. Principal DTOs have an ID and normally take the earlier ID-based key branch.
-- These responses contain capability flags and profile metadata, not plaintext passwords or stored password verifiers. The real verifier functions at `internal/access/postgres/access_core.go:104` use Argon2id; password creation/change call that path.
+## 5. Final review corrections and completion criteria
 
-Planned disposition: preserve SHA-256 for deterministic metadata hashing. Save the source-to-sink evidence for each alert and, after a complete scan, use alert-specific false-positive triage if the warnings remain. Do not swap ETags or cursor keys to salted password hashes, remove capability flags, rename public fields to evade detection, or disable the rule globally.
+| Reviewed risk | Incorporated correction |
+| -- | -- |
+| Rebuilding an existing workflow | Improve ADR-0021 implementation while preserving authorities. |
+| Doctor mutating indirectly | Inspection-only adapters; avoid refresh, lifecycle locks, and planning APIs. |
+| Treating all JSON as one document | Preserve login/watch streams. |
+| Conflicting export formats | Normalize selectable results without a global format flag. |
+| Separate agent docs drifting | Share command-derived catalog. |
+| Help requiring valid configuration | Defer operational initialization. |
+| Packaging broken by flag migration | Update current scripts and qualification with the change. |
+| False missing-timeout claim | Preserve existing timeout while removing global mutation. |
+| Code mistaken for release proof | Require exact artifact/platform evidence and retain unresolved gates. |
 
-Regression proof: reuse/extend current-principal and principal-administration response tests to assert that credential material is absent; verify stable ETags for unchanged representations, ETag changes when relevant representation fields change, and pagination continuity. Retain existing password-verifier tests. Document these as false positives, not fixed password-storage vulnerabilities.
+Completion requires passing tests/CI, accurate generated docs, migrated callers, two recorded independent agent usability trials, and recorded qualification results. Unavailable release prerequisites stay explicitly unresolved in existing conformance evidence; source-level tests cannot close those gates.
 
-### #87 — Local browser session handoff
+## Implementation issues
 
-[Alert #87](https://github.com/flidai/leapview/security/code-scanning/87), GitHub severity **Medium**, rule `go/cookie-secure-not-set`.
-
-Evidence: `internal/app/cli/local_browser_session.go:340` sends the handoff cookie; `browserSessionCookie` explicitly sets `Secure=false` at line 303. `localSessionOrigin` at line 113 restricts origin to explicit HTTP IPv4 loopback plus a port, rejecting userinfo and nonempty paths/queries/fragments after trailing-slash normalization. `openLocalBrowserSession` at line 311 validates that origin again and binds `127.0.0.1:0` at line 322; its random handoff URL has a two-minute lifetime. Authentication redirects are disabled at line 131. The cookie remains HttpOnly, host-only, SameSite Lax.
-
-Planned disposition: retain the deliberately local HTTP behavior and document the exception beside the code. Add missing boundary tests before recommending alert-specific dismissal as intentional local-test/development behavior. Do not globally exclude CLI files or the cookie rule.
-
-Regression proof: reject remote hosts, hostname lookalikes, userinfo, alternate schemes, paths/queries/fragments, and missing ports before network or browser activity. Verify a failed/random path emits no session cookie, the handoff listener is loopback-only, authentication does not follow redirects, and browser handoff retains its cookie attributes and bounded lifetime.
-
-The local trust assumption must be explicit: cookies are not port-scoped, and hostile processes on the same host are not isolated by this design. `Secure` is not a solution to that local-process boundary. Do not claim this cookie is safe for remote HTTP deployment or dismiss it as unused code.
-
-## Implementation sequence
-
-### 1. Restore complete analysis on both matrix runners
-
-Files: `.github/workflows/security.yml`, `Taskfile.yml`, focused tooling under `internal/app/tools/securitysast`, workflow-contract tests, and security operating documentation.
-
-1. Keep existing triggers, check names, least-privilege permissions, commit-pinned actions, matrix independence, and `/language:${{ matrix.language }}` upload categories. Keep the current 45-minute budget initially; measure cold and warm runs before changing it.
-2. Run `./.github/actions/setup-ci` with the validation profile and `browser: "false"` before CodeQL initialization. This supplies the repository's locked Go/Node/Bun/sqlc/native toolchain. Do not replace it with an unrelated setup-go version or wrap the traced build in an environment that drops CodeQL instrumentation.
-3. Capture the checkout's dependency-manifest baseline before any installer, generator, or helper-build command can change it. Build the small SAST helper before initialization, outside the source tree, using read-only module resolution; include this build in integrity verification. The helper must depend only on policy/standard tooling, not generated application packages.
-4. Add a sequential `security:sast:prepare` task that invokes the existing generators. Start with `go:deps`, `db:generate`, `config:generate`, `api:generate`, `ui-signals:generate`, `agent-contracts:generate`, `data-resource-contracts:generate`, `pipeline-contracts:generate`, `desktop-discovery:generate`, `layout-contract:generate`, `map-style:generate`, and `lucide-icons:generate`. Reuse their declared dependency graph: API generation supplies the emitter, permission/dashboard/visualization contracts, and root Node installation. Explicit API generation before UI-signal generation avoids the clean-checkout bootstrap hole. Validate this exact set on a clean checkout rather than assuming it is complete.
-5. Use one top-level Task invocation and sequential `cmds`, so dependency installation has a single writer. Use the existing frozen Bun locks and npm `ci`; do not run independent generators concurrently against the same dependency tree. `NPM_CONFIG_AUDIT=false` prevents install-time advisory noise; the separate dependency-security lane stays enabled.
-6. Prepare generated source in each matrix job's own workspace. Do not rely on another job's files, commit ignored build inputs, copy stale generated output from caches, or run the entire docs/site-producing `task generate` just to satisfy extraction.
-7. Keep JavaScript/TypeScript build mode `none`. Before initialization, validate app/contracts/test TypeScript configs (including site source), playground where relevant, the APIGen emitter's production and test configs, and desktop production/test configs after `desktop:deps`. Invoke installed compilers with no emit; do not package Electron or bundle/minify assets for SAST. These checks establish resolvable source graphs, not full test or CodeQL coverage.
-8. Set explicit job environment: `GOFLAGS=-tags=duckdb_arrow`, `CODEQL_OVERLAY_DATABASE_MODE=none`, `CODEQL_ACTION_DIFF_INFORMED_QUERIES=false`, and `CODEQL_ACTION_EXPORT_DIAGNOSTICS=true`. The latter three are supported by the pinned action and need contract coverage on upgrades. Full extraction avoids depending on overlay indexing of ignored generated source; full query evaluation retains diagnostic coverage.
-9. For Go, change `build-mode` to `manual`. After CodeQL initialization and before analysis, invoke the prebuilt helper to enumerate every `go-module` in `.security/coverage.yaml`, currently root, `deploy/kamal-trial`, `pkg/apigen`, and `pkg/apigen/example`. Reuse the exported coverage types; reject empty/duplicate/escaping module paths and require the existing inventory policy to validate completeness. Do not add a second hard-coded module inventory.
-10. In each module, sequentially run `go list -mod=readonly -deps -tags=duckdb_arrow ./...` and `go build -a -p=2 -mod=readonly -tags=duckdb_arrow ./...`, propagating failures. The forced rebuild ensures restored build caches cannot eliminate the work CodeQL must observe. Preserve the initialized tracer environment and the shared CGO/native toolchain. No `go mod tidy`, `-e`, or continue-on-error in this path.
-11. Check dependency integrity after preparation and again after analysis, including on failures. Compare paths, existence, and content of maintained Go manifests/sums and JavaScript manifests/locks with the checkout baseline. Detect newly created files as well as modifications/deletions, including a `go.sum` originally absent. Ignore dependency/cache subtrees, not newly created first-party dependency files. Also reject unexpected tracked source drift from preparation.
-
-### 2. Fail the required job when analysis is incomplete
-
-Extend the focused SAST helper with raw-SARIF validation, with meaningful fixture tests.
-
-- Direct analyzer output to `${{ runner.temp }}/codeql-results`. The pinned analyzer writes `go.sarif` and `javascript.sarif`; the matrix label `javascript-typescript` is not the filename.
-- Validate expected SARIF 2.1.0 CodeQL output, expected language/category, at least one matching run, and nonempty invocation records with successful execution. Check every relevant run/invocation; do not inspect only the first. Normalize the category/run-ID representation according to actual output from the pinned analyzer.
-- Inspect both `toolExecutionNotifications` and `toolConfigurationNotifications`. Treat warning/error diagnostics as a failed health check. SARIF's omitted notification level defaults to warning. Note/none are allowed; absent notification arrays are legal when there are no diagnostics. Resolve descriptor IDs/indexes and report actionable diagnostic IDs, messages, and locations.
-- Reject missing, empty, malformed, unexpected-tool/category, unsuccessful, or unverifiable output. Do not confuse an API-processed report without diagnostics with raw analyzer output. Seed fixtures from actual runner output, plus focused synthetic error cases.
-- This is an **analysis-health** check. SARIF `results` are vulnerability findings, not extraction notifications; their handling is tracked separately below. Zero findings must not be mistaken for healthy extraction.
-- Run validation after analysis whenever initialization succeeded and the job was not cancelled, including when analysis failed. Missing output must fail rather than skip. Keep CodeQL's normal upload so developers can inspect findings; preserve the original analyze failure too.
-- Upload available raw SARIF on success or failure using the repository's pinned upload-artifact action, 14-day retention, and matrix/job/run/attempt-specific names. An artifact uploader may ignore a missing file, but the health check may not.
-- Keep the aggregate `Security gate` contract requiring every lane to succeed. A health failure in either matrix entry must propagate through the existing required gate.
-
-Tests must cover multiple runs/invocations, missing and failed invocations, both notification arrays, omitted/default and invalid levels, descriptor references, malformed/truncated JSON, category mismatches, missing output, vulnerability results without extraction warnings, and artifact/condition ordering. Parse workflow YAML for sequencing and conditions rather than rely only on matching text fragments. Update the existing `build-mode: autobuild` expectation. Add the helper tests to `task security:policy`.
-
-### 3. Establish a fresh alert baseline
-
-Run complete Go and JavaScript analysis on the implementation candidate before final triage. Retrieve the refreshed alerts and compare their source-to-sink paths with all seven entries above. Fixing missing packages can expose additional findings or change paths; newly surfaced findings need individual review.
-
-Do not delete historical analysis configurations merely to remove the warning banner. A manual-build configuration may have a different configuration identity; verify the current required analysis and current main status. Preserve categories and evidence so that alert history remains understandable.
-
-### 4. Apply focused code changes and triage
-
-Use separate reviewable commits for the scanner repair, page-stream cookie policy, desktop message validation, and integer parsing cleanup. Add the response-bound and local-loopback regression tests with their relevant rationale. Use red-green-refactor for confirmed defects; characterization tests for already-correct bounds may pass before any change.
-
-Retain the alert-specific evidence in a short repository review record. After fresh analysis, fixes should close through normal scanning; residual false positives or intentional local behavior should receive a narrow, reasoned disposition. Do not bulk-dismiss alerts, mark them fixed before a verifying scan, add blanket path/query exclusions, or place CodeQL dismissals into an unrelated dependency-advisory exception mechanism.
-
-### 5. Record the separate merge-policy decision
-
-The scanner repair makes incomplete scans fail. It does not make open High/Medium alerts fail the job. Document this explicitly in security operating guidance and the implementation PR.
-
-Recommended follow-up: propose a concrete addition to the existing `main` ruleset requiring CodeQL with `security_alerts_threshold: high_or_higher` and `alerts_threshold: none`, retaining its current required checks and queue configuration. This is a repository-setting proposal, not a change made by this plan. Re-read the current rule before producing its final diff, preserve other rules, and validate behavior with a disposable candidate.
-
-GitHub documents two material limits: this native protection does not apply to merge-queue groups, and qualifying alert locations must be in the PR diff. It will not retrospectively gate all seven existing findings. Do not advertise it as exact-candidate severity enforcement. If the project adopts that stronger policy, design and review a separate SARIF-result gate with explicit thresholds and tightly scoped triage handling; do not silently turn the diagnostic checker into an alert suppressor or pretend API dismissals remove findings from fresh raw SARIF.
-
-## Verification and acceptance
-
-### Checks completed during this investigation
-
-- Authenticated GitHub alert inventory, both analysis reports, Go job logs, and active main ruleset inspected.
-- Existing tests passed: `go test ./internal/platform/web/transport ./pkg/duckdbsql ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults`.
-- Existing desktop accessibility tests passed: `node --test desktop/scripts/accessibility-contract.test.mjs` (6 tests).
-- A local fake-WebSocket probe against the unchanged module reproduced the JSON-null TypeError, then shut down its pending call. No real remote service was contacted by that probe.
-- Earlier read-only `go list -mod=readonly -deps -tags=duckdb_arrow ./...` failed on missing generated packages, consistent with the extraction warning.
-
-These checks validate the investigation only. Generated-source preparation, the proposed manual traced build, broad application tests, and a new hosted CodeQL scan have not been executed. No claims of fixed alerts or healthy replacement analysis are made.
-
-### Required during implementation
-
-1. Focused tests for `securitysast`, workflow contracts, security policy/results, transport cookies, decoder boundaries, semantic query handlers, principal DTO/ETag/pagination behavior, local CLI handoff, and desktop transport handling. Prepare required generated source before application tests.
-2. `task security:policy`, workflow/actionlint validation, and `task ci` before handing off substantial implementation. Run the desktop test/build and packaged accessibility verification appropriate to its change; run the focused decoder tests on both integer widths. Do not substitute a typecheck for those behavior tests.
-3. Hosted cold-cache and warm-cache scans of the same candidate. Prove all four Go modules build under tracing, generated import paths resolve, and both language reports contain complete raw diagnostics. Record toolchain, candidate SHA, durations, and extraction evidence. Warm-cache success must still include forced compilation.
-4. On a disposable test candidate/fixture, remove a required generated package and inject a diagnostic warning separately. Each must fail the SAST job and required Security gate. Missing SARIF must also fail. Ensure diagnostics are retained even on failure.
-5. Change a TypeSpec input in a disposable validation case and confirm generation is refreshed before extraction. Verify no dependency manifest or lockfile changes, including newly created files, in both cold and warm cases.
-6. Verify actual proxy HTTPS cookies and local HTTP handoff. Recheck all seven GitHub alerts against the fixing commit and record fixed, false-positive, intentional-exception, or still-open status individually. Review any new findings rather than require the old alert count to remain seven.
-7. Verify the normal PR, merge-group, and main workflows on their actual candidate commits. Completion requires healthy current Go and JavaScript scans without the missing-package warning, required checks enforcing analysis health, and a reviewed disposition for every listed alert. The separate alert-severity enforcement limitation must remain explicit until that policy is implemented.
-
-## Research sources
-
-The repository and authenticated SARIF traces provide the case-specific evidence above. These primary sources informed the design:
-
-- [GitHub: compiled-language CodeQL build options](https://docs.github.com/en/code-security/reference/code-scanning/codeql/codeql-build-options-and-steps-for-compiled-languages) and [no source seen during build](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/no-source-code-seen-during-build): manual build sequencing and cache concerns.
-- [CodeQL Go autobuilder](https://github.com/github/codeql/blob/main/go/extractor/cli/go-autobuilder/go-autobuilder.go): module-update behavior, corroborated by the inspected job log.
-- Pinned CodeQL action [configuration logic](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/src/config-utils.ts), [feature flags](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/src/feature-flags.ts), [overlay indexing](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/src/overlay/index.ts), and [analyze inputs](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/analyze/action.yml): full extraction, diagnostics export, and output contract.
-- [SARIF 2.1.0 specification](https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/sarif-v2.1.0-os.html): invocation and notification semantics.
-- CodeQL query guidance for [integer conversion](https://codeql.github.com/codeql-query-help/go/go-incorrect-integer-conversion/), [allocation size](https://codeql.github.com/codeql-query-help/go/go-uncontrolled-allocation-size/), [sensitive-data hashing](https://codeql.github.com/codeql-query-help/go/go-weak-sensitive-data-hashing/), [cookies](https://codeql.github.com/codeql-query-help/go/go-cookie-secure-not-set/), and [dynamic method calls](https://codeql.github.com/codeql-query-help/javascript/js-unvalidated-dynamic-method-call/). The last recommends `Map`, which this repository already uses.
-- [Go strconv](https://pkg.go.dev/strconv): platform-sized parsing behavior.
-- [GitHub: resolving alerts](https://docs.github.com/en/code-security/how-tos/manage-security-alerts/manage-code-scanning-alerts/resolve-alerts), [merge-protection limitations](https://docs.github.com/en/code-security/concepts/code-scanning/merge-protection), and [setting merge protection](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/manage-your-configuration/set-merge-protection): narrow triage and separation of status checks from vulnerability policy.
-
-Implementation finding: clean-workspace TypeScript test checking also requires `docs/visuals/examples.gen.json`. Add `visual-docs:generate` to sequential SAST preparation, using its existing offline extension preparation dependencies. This was exposed by the new type-check gate.
-
-Hosted finding (5 October): a statically linked Go helper must not be the manual
-build entry point. The pinned CodeQL action documents that limitation in
-`src/init-action.ts` and wraps Go in a dynamic shell. The helper now emits the
-validated module inventory as NUL-separated paths; the workflow invokes all
-compiler commands directly from `/bin/bash`, retaining CodeQL's initialized
-PATH and the locked compiler environment. Run 37263931523 proves missing raw
-SARIF fails the health step and propagates to Security gate. Its JavaScript
-analysis passed with 817 successful extraction notifications and no findings.
+1. [FAI-1129: Make CLI discovery reliable and root invocation help-only](https://linear.app/flid/issue/FAI-1129/make-cli-discovery-reliable-and-root-invocation-help-only)
+2. [FAI-1130: Standardize CLI result formats, errors, interaction, and cancellation](https://linear.app/flid/issue/FAI-1130/standardize-cli-result-formats-errors-interaction-and-cancellation)
+3. [FAI-1131: Add read-only local and explicit remote CLI doctor](https://linear.app/flid/issue/FAI-1131/add-read-only-local-and-explicit-remote-cli-doctor)
+4. [FAI-1132: Generate offline --llms guidance from the shared CLI catalog](https://linear.app/flid/issue/FAI-1132/generate-offline-llms-guidance-from-the-shared-cli-catalog)
+5. [FAI-1133: Qualify the CLI workflow and finish documentation and caller migration](https://linear.app/flid/issue/FAI-1133/qualify-the-cli-workflow-and-finish-documentation-and-caller-migration)
+
+Issues are assigned to Ganesh Kambli and linked in delivery order. Code is delivered as five dependent PRs, with independent automated review and the repository’s required CI, security, and merge-queue checks.
+
+
+## 6. Implementation review and evidence
+
+The approved implementation uses existing Cobra commands, domain error/result types, local-runtime parsing, and release qualification. It adds no dependencies or legacy aliases. The website manifest and offline guidance share one pure command catalog; schema 2 replaces the previous manifest contract in all consumers.
+
+Independent review found and corrected these problems:
+
+* Contributor launchers still started the server through bare `leapview`; initial launch, restart, and Air now invoke `serve`, with maintained launcher tests updated.
+* Interactive deployment could wait indefinitely after cancellation. Prompt reads now stop waiting on context cancellation, and missing headless intent is rejected before credential resolution.
+* Hosted historical-transition qualification found that the client interruption boundary changed graceful server shutdown to exit 143. The boundary now preserves `serve`'s actual outcome: successful shutdown exits 0 and shutdown errors remain failures; interrupted client commands retain 130/143. The regression reproduced the old failure before passing, and existing real signal subprocess tests also passed. The flag-migration contract assertion is included in the same PR as the new flag.
+* Progress and result writers ignored failures. A failed write now returns an error; a successfully persisted local runtime remains applied even if its readiness message cannot be written.
+* Validation and agent failures could emit a second diagnostic or return success. Reported domain results now preserve failure status without duplicate output.
+* Runtime-package identity checks did not verify asset contents. Doctor now checks the four runtime assets against the installed package’s adjacent `SHA256SUMS`, rejecting missing, duplicate, malformed, unsafe, or mismatched entries.
+* Compilation does not accept a context. Doctor stops waiting at its deadline using a bounded worker; the read-only compiler can finish after that deadline. Making compilation itself cancellable remains the documented improvement if this ceiling matters.
+* Archive qualification originally checked too little discovery content. It now requires grouped help, authoring examples, offline guidance, a complete doctor JSON report, consistent failure status, and no created CLI state.
+* A migrated Python caller lost indentation; parsing and the affected qualification tests caught it and the indentation was restored.
+
+Observed checks are recorded below and in the final PRs. A successful source test or local candidate archive smoke is not public release evidence. Local `task ci` encountered an unavailable shared Docker bridge while provisioning its disposable PostgreSQL topology; required hosted checks must pass before merging.
+
+The requested independent agent usability trials are complete and recorded below. Remaining acceptance work requires exact public archive/platform qualification and the existing lifecycle/preview/measurement evidence. Do not mark the project or FAI-1133 complete until those required observations are recorded. Agent trial results must be identified as agent observations, with environment blockers stated rather than treated as successful journeys.
+
+
+### Delivery and verification
+
+| Slice | Pull request |
+| --- | --- |
+| A: discovery | [#875](https://github.com/flidai/leapview/pull/875) |
+| B: output/errors/interaction | [#878](https://github.com/flidai/leapview/pull/878) |
+| C: read-only doctor | [#879](https://github.com/flidai/leapview/pull/879) |
+| D: shared catalog and offline guidance | [#880](https://github.com/flidai/leapview/pull/880) |
+| E: qualification and trial corrections | [#881](https://github.com/flidai/leapview/pull/881) |
+
+Native GitHub stack 882 preserves this order and targets main. Each PR has its own review; required CI/security checks and the normal merge queue govern delivery.
+
+Passed locally after rebasing onto main: the full app CLI, local runtime, project initialization, project/access/agent/managed-data CLI, CLI API, shared catalog, generator, website HTTP, and archive-harness suites (12 packages). Generated snapshots, documentation checks, and quality-budget checks passed. Current caller tests passed: 20 Python publication tests (one skip), 17 Python qualification tests, and 35 Bun caller/launcher contracts. Focused checks passed again after the trial corrections. `task ci` reached its required PostgreSQL baseline test and failed because the shared Docker bridge is missing; this infrastructure failure is not waived.
+
+Both requested independent agent trials are recorded in [the usability evidence](reviews/cli-agent-usability.md). They discovered the workflow, initialized and validated the sample, repaired invalid authored YAML, and interpreted pending versus active delivery from guidance. Actual preview and target delivery were unavailable. Review corrected the init directory precondition, explained JSON diagnostic streams explicitly, pointed doctor failures to validation, and moved archive state snapshots before every executable probe, including version/help.
+
+Keep FAI-1133 and the project In Progress while exact public archive/platform and existing lifecycle/preview/measurement qualification remain outstanding. Do not replace those observations with source tests or agent interpretations of deployment guidance.
+
+## Continuation (7 October 2026)
+
+Inspected all five project issues, their linked PRs and reviews, the retained CLI branches, and the clean c2e8 checkout at `7437799c92bfe962c9d083530ce05f180d23d92b`. PRs #875, #878, #879, #880 and #881 are merged into main, and their latest hosted CI gates passed. FAI-1129–1132 are now Done. FAI-1133 remains In Progress: its implementation and the two agent trials are delivered, while exact current package/platform and real preview/lifecycle/measurement observations remain outstanding.
+
+The next qualification step exposed a maintained caller failure: enabling `run_lifecycle` in `authoring-package-qualification.yml` passes removed `--manual-prerequisites-confirmed` and exits 2 before archive or runtime qualification. Remove that argument and correct the obsolete manual-authentication descriptions. An executable regression runs the workflow's actual Bash step against the harness parser in both modes, including paths with spaces, required mode, and the explicit Docker socket. Before the fix, static mode passed and lifecycle mode failed on the removed argument. The full `deploy/local` suite and workflow `actionlint` pass after the fix.
+
+The current VPS has Docker Engine 29.8.0, Compose 5.4.0 and an active `docker0` bridge. The required PostgreSQL baseline preparation test passed during this continuation's `task ci` run; the earlier missing-bridge failure remains historical evidence. This source validation is separate from released-package lifecycle qualification.
+
+Full `task ci` did not pass: the unchanged APIGen TypeScript test `rejects invalid command contracts before writing IR` exceeded its 30-second limit (72 other tests passed). The same test timed out when run alone. No APIGen source was changed in this continuation. Retained logs are `.tmp/fai-1133/task-ci.log` and `.tmp/fai-1133/apigen-timeout-recheck.log`; the focused qualification suite, workflow lint, Python syntax check and patch whitespace check passed. The caller fix is reviewable, with full CI and the existing acceptance gates still unresolved.
+
+At the initial inspection, the newest public authoring release was `v0.3.0-alpha.1` (24 September), and the newest completed [release workflow candidate](https://github.com/flidai/leapview/actions/runs/37443301375) (revision `58ab08d3c5652eeac61402a4f1a17865436d4e6a`) also predated the CLI merges. Its four native authoring archives cannot establish acceptance for the updated CLI.
+
+The subsequent inspection found an already-running [current candidate build](https://github.com/flidai/leapview/actions/runs/37579919515) at `63c139359e1f9a621dfdb311e9efb453395bcd08`, containing all five implementation merges. Reused its Linux AMD64 archive and pinned runtime image. The installed-binary static checks pass, including grouped help, offline guidance, doctor and identity/checksums. The first real lifecycle failed because the headless host lacked an unlocked Secret Service. Added isolated native keyring setup to the optional workflow, without changing static qualification or product credential storage. With that setup, automatic authentication passed and the real lifecycle exposed a project policy bootstrap HTTP 403; confirmed cleanup passed. Exact identity, host, reproduction, and bounded outcomes are recorded in [candidate qualification evidence](reviews/cli-candidate-qualification.md).
+
+The next acceptance task is to resolve that authorization failure and rerun the exact candidate through sample staging, synchronization and retained-data restart. Real preview scenarios, measurements and exact public release/platform qualification remain outstanding. The project and FAI-1133 stay In Progress.
+
+The local authorization follow-up repairs the observed token ceiling mismatch: automatic local login requests project access read/manage in addition to ordinary authoring actions. Retained local credentials are inspected against their exact current session; insufficient scope uses the existing local authorization flow, while inspection failures preserve credentials and return an error. Remote login defaults and server authorization stay unchanged. Fresh-login and retained-scope regressions failed before the fix and pass afterward; independent review found no remaining issue. A newly built matching archive/runtime must still demonstrate the full real lifecycle before this acceptance gate can close.
+
+The scoped-login candidate advanced past native authentication but exposed a
+second bootstrap rejection: the server's canonical binding callback recognized
+REST API credentials only. The consolidated follow-up also recognizes the
+scoped authoring session after its existing exact claim-owner and canonical
+binding checks. The real PostgreSQL/generated HTTP journey now proves all three
+initial bindings, policy reads, retries, subsequent grant creation, and authority
+denials; the existing REST bootstrap journey still passes. The exact failed
+candidate and cleanup are preserved in the candidate evidence document.
+
+The same final PR adds required static harness execution to the four existing
+native archive jobs and retains bounded reports on success or failure. Failed
+lifecycle evidence keeps Docker endpoint pinning unproven until development and
+retained-data restart both succeed. These related fixes are consolidated in
+[#899](https://github.com/flidai/leapview/pull/899), stacked on the headless
+qualification support in [#898](https://github.com/flidai/leapview/pull/898).
+No additional implementation PR is planned. Merge the parent through the normal
+queue, retarget/rebase the child onto main, then validate a newly matched
+candidate. Public release/platform, preview, and measurement acceptance remain
+open; merging these PRs alone does not complete FAI-1133.
+
+PR #898 merged through the normal queue at 09:36:58 UTC, with PR and merge
+CI/security plus Electron proof passing. PR #899 was rebased without conflicts
+onto that merged main; the rebase required no implementation changes. The latest
+local `task ci` passed generator tests (73 TypeScript tests), Go packages,
+PostgreSQL application and package conformance, and quality/coverage checks.
+It did not complete: the reports browser lane hit its watchdog, then the
+unchanged record-table column-selector test exceeded five seconds on retry.
+That test also timed out alone, and its source matches main. No frontend fix or
+check waiver is included. Logs are retained in
+`.tmp/fai-1133/task-ci-consolidated-clean.log` and
+`.tmp/fai-1133/record-table-timeout-recheck.log`. Exact-head hosted checks and the
+normal merge queue remain required for #899.
+
+The rebased #899 head passed hosted CI/security. Its matching candidate
+37603015624 passed required static qualification on all four native archive
+hosts. The installed Linux AMD64 lifecycle passed native authentication,
+initial policy and sample staging, then returned 403 for development-profile
+application. The local login and retained-session ceiling now also require
+project settings read/update, shared through one helper. Fresh-login and
+retained-session regressions reproduced the omission before the fix; the full
+CLI suite passes afterward. Remaining delivery/upload/session requirements
+were audited against the existing default ceiling. The exact failed artifact,
+schema-consistent failure report and successful cleanup are recorded in the
+candidate evidence. Keep this follow-up in #899 and validate a newly matched
+artifact before claiming lifecycle, browser or measurement acceptance.
+The real PostgreSQL regression also reproduces the old ceiling's 403 and proves
+profile application plus native session persistence with the added scope. Native
+and existing REST bootstrap journeys pass together (14.213s); full CLI passes
+(43.857s). Independent review of the shared local ceiling found no issue.
+
+Candidate 37607465258 first-start synchronization and local Sales preview now
+work. Browser observations verify four settled visuals, 12 sales, 13,650 revenue,
+presentation changes, invalid-edit retention, repair, and semantic averaging to
+1,137.5. Two further qualification findings remain consolidated in #899:
+retained restart requires a captured exact upload grant for the declared fixture,
+and returning to previous source must plan against the current target revision
+instead of replaying its old publication. Exact upload grants use the existing
+offline administration command through the verified checkout-owned local
+runtime controller. Local provisioning does not broaden role presets, public
+grant issuance, or active snapshot authority. Retained fixture reuse must
+prove the exact available server revision and manifest after an initial upload
+authorization denial. Local planning keys include the authenticated target
+revision and reject races before build. The exact failed artifact and successful
+cleanup are recorded in the candidate evidence; the next matched artifact must
+prove restart and full edit/restoration behavior.
+
+The f04c615 head passed hosted CI and security. Its local full `task ci` passed
+generator, Go, PostgreSQL conformance, quality and coverage checks. Reports hit
+the watchdog and retried; the run later failed when the unchanged project-page
+test `unavailable pipeline shows guidance without an unrelated connections
+action` exceeded five seconds and subsequent tests saw a closed browser. That
+test passed alone (489.97ms), and its source matches main. Retained logs are
+`.tmp/fai-1133/task-ci-profile-scope.log` and
+`.tmp/fai-1133/project-page-timeout-recheck.log`. No frontend fix is included.
