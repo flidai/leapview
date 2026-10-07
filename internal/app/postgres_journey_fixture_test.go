@@ -241,6 +241,7 @@ func (f *PostgresJourneyFixture) buildCapabilities(t *testing.T, options Postgre
 	}
 	if options.ProjectClaimBootstrap {
 		accessConfig.AuthorizationPolicyEnvironment = "prod"
+		accessConfig.AuthoringProjectID = postgresAuthoringProjectIDResolver(f.Graph.DeploymentRepository, f.Graph.ServingState, options.TargetID, "prod")
 	}
 	if options.BrowserSessionAuth {
 		auth, authErr := accessmodule.NewAuth(f.Graph.Access, accessmodule.AuthConfig{
