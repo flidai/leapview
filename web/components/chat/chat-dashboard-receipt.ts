@@ -1,4 +1,4 @@
-import type { ChatDashboardMessage, SavedVisualImportMessage } from './dashboard-workspace'
+import type { ChatDashboardMessage, SavedVisualImportMessage } from './dashboard-preview-contract'
 
 // A tiny native-form response: no chart runtime, builder, or additional stream.
 const receipt = document.getElementById('chat-dashboard-receipt')?.dataset.receipt

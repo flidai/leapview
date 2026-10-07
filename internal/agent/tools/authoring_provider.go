@@ -11,7 +11,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
@@ -520,55 +519,12 @@ func dashboardToolCommandID(scope Scope, project projectgraph.ResourceID, draft 
 	return dashboardauthoring.CommandID(id.String())
 }
 
-// Agent tools use the same source-owned transactional audit contract as other
-// dashboard command producers. The repository commits this intent atomically
-// with the revision, using the exact same native identity as the command.
 func dashboardToolMutationContext(ctx context.Context, scope Scope, project projectgraph.ResourceID, command dashboardauthoring.Command) (context.Context, error) {
-	contract, ok := dashboardgen.GetAPIGenCommandRuntimeContract("executeDashboardAuthoringCommand")
-	if !ok {
-		return ctx, fmt.Errorf("dashboard authoring command contract is unavailable")
-	}
-	metadata, err := dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{OperationId: contract.OperationID, ProjectId: project.String(), DashboardId: command.DashboardID.String(), DraftId: command.DraftID.String(), Origin: string(dashboardauthoring.OriginAgent)})
-	if err != nil {
-		return ctx, err
-	}
-	capability := access.CapabilityResourceEdit
-	if command.Publish != nil {
-		capability = access.CapabilityResourcePublish
-	}
-	if command.Archive != nil {
-		capability = access.CapabilityResourceManage
-	}
-	return dashboardauthoring.WithAuditIntent(ctx, access.AuditIntent{EventID: string(command.ID), Source: "dashboard.authoring", Operation: contract.OperationID, ActorID: scope.PrincipalID, PrincipalID: scope.PrincipalID, Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: command.DashboardID.String(), Capability: capability, Outcome: "success", MetadataJSON: metadata}), nil
+	return dashboardauthoring.AgentMutationContext(ctx, scope.PrincipalID, project.String(), command)
 }
 
-// Creation allocates dashboard/draft IDs in the transaction. The repository
-// fills those identities and replays the original committed audit record when
-// the tool-call idempotency key is retried.
 func dashboardToolCreationContext(ctx context.Context, scope Scope, project projectgraph.ResourceID, operation string) (context.Context, error) {
-	contract, ok := dashboardgen.GetAPIGenCommandRuntimeContract(operation)
-	if !ok {
-		return ctx, fmt.Errorf("dashboard creation contract is unavailable")
-	}
-	payload := dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{OperationId: operation, ProjectId: project.String(), DashboardId: "pending-dashboard", DraftId: "pending-draft", Origin: string(dashboardauthoring.OriginAgent)}
-	var metadata string
-	var err error
-	switch operation {
-	case "createDashboardAuthoringDraft":
-		metadata, err = dashboardgen.EncodeGenCreateDashboardAuthoringDraftAuditPayload(payload)
-	case "forkDashboardAuthoringDraft":
-		metadata, err = dashboardgen.EncodeGenForkDashboardAuthoringDraftAuditPayload(payload)
-	default:
-		return ctx, fmt.Errorf("unsupported creation operation %q", operation)
-	}
-	if err != nil {
-		return ctx, err
-	}
-	id, err := uuid.NewV7()
-	if err != nil {
-		return ctx, err
-	}
-	return dashboardauthoring.WithAuditIntent(ctx, access.AuditIntent{EventID: id.String(), Source: "dashboard.authoring", Operation: operation, ActorID: scope.PrincipalID, PrincipalID: scope.PrincipalID, Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: "pending-dashboard", Capability: access.CapabilityResourceEdit, Outcome: "success", MetadataJSON: metadata}), nil
+	return dashboardauthoring.AgentCreationContext(ctx, scope.PrincipalID, project.String(), operation)
 }
 
 func authoredDashboardID(raw string) (dashboardauthoring.DashboardID, agentcore.ToolResult, bool) {

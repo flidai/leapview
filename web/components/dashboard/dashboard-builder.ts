@@ -1,6 +1,6 @@
 import { savedVisualComponentId, savedVisualSourceId } from '../chat/dashboard-membership'
 import { savedVisualDragType, submitVisualForm, type SavedVisualLibraryMessage } from '../chat/visual-library-bridge'
-import type { ChatDashboardMessage, SavedVisualImportMessage } from '../chat/dashboard-workspace'
+import type { ChatDashboardMessage, SavedVisualImportMessage } from '../chat/dashboard-preview-contract'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
@@ -324,7 +324,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   static styles = css`
     .saved-library-tabs { display:flex; gap:4px; padding:8px; border-bottom:var(--lv-border-default); }
     .saved-library-tabs[hidden], .saved-visuals-frame[hidden] { display:none; }
-    .saved-library-tabs button { flex:1; padding:7px 4px; font:inherit; font-size:12px; color:var(--lv-fg-muted); background:transparent; border:0; border-radius:5px; cursor:pointer; }
+    .saved-library-tabs button { flex:1; padding:7px 4px; font:inherit; font-size: var(--text-body-size-small); color:var(--lv-fg-muted); background:transparent; border:0; border-radius:5px; cursor:pointer; }
     .saved-library-tabs button[aria-pressed='true'] { background:var(--lv-bg-control-active); color:var(--lv-fg-default); }
     .saved-visuals-frame { display:block; border:0; width:100%; min-width:0; flex:1; min-height:0; box-sizing:border-box; }
     .data-pane { display:flex; flex-direction:column; }
@@ -740,12 +740,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel); color: var(--lv-fg-default);
     }
     .filter-add-menu[hidden] { display: none; }
-    .filter-add-search { width: 100%; min-width: 0; box-sizing: border-box; min-height: 30px; padding: 4px 6px; font-size: 12px; border: var(--lv-border-default); border-radius: 4px; background: var(--lv-bg-control); color: var(--lv-fg-default); }
+    .filter-add-search { width: 100%; min-width: 0; box-sizing: border-box; min-height: 30px; padding: 4px 6px; font-size: var(--text-body-size-small); border: var(--lv-border-default); border-radius: 4px; background: var(--lv-bg-control); color: var(--lv-fg-default); }
     .filter-add-options { min-width: 0; max-height: min(240px, 35vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
     .filter-add-menu .filter-add-option {
       display: block; width: 100%; min-width: 0; height: auto; min-height: 30px; padding: 5px 6px;
       text-align: left; white-space: normal; overflow-wrap: anywhere; border: 0; box-shadow: none;
-      background: transparent; border-radius: 4px; font-size: 12px; line-height: 18px; font-weight: 400;
+      background: transparent; border-radius: 4px; font-size: var(--text-body-size-small); line-height: 18px; font-weight: var(--base-text-weight-normal);
     }
     .filter-add-menu .filter-add-option:hover:not(:disabled), .filter-add-menu .filter-add-option:focus-visible { background: var(--lv-bg-control-hover); }
     .filter-add-menu .filter-add-option:focus-visible { outline-offset: -2px; }

@@ -6,7 +6,7 @@ export const chatThreadStyles = css`
   .tool-actions a:hover { background: var(--lv-bg-control-hover); text-decoration: underline; }
   .tool-actions a:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
   .artifact-actions { display:flex; gap:8px; margin:6px 0 12px; }
-  .artifact-actions button { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; font:inherit; font-size:12px; color:var(--lv-fg-muted); background:transparent; border:var(--lv-border-default); border-radius:6px; cursor:pointer; }
+  .artifact-actions button { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; font:inherit; font-size: var(--text-body-size-small); color:var(--lv-fg-muted); background:transparent; border:var(--lv-border-default); border-radius:6px; cursor:pointer; }
   .artifact-actions button:hover { background:var(--lv-bg-control-hover); color:var(--lv-fg-default); }
   .artifact-actions button:disabled { opacity:.6; cursor:default; }
   .artifact-actions svg { width:14px; height:14px; }
@@ -189,7 +189,7 @@ export const chatThreadStyles = css`
     .copy-error { color: var(--lv-fg-danger); font: var(--lv-type-caption); padding: 8px; }
     @media (hover: none) { .user .message-actions { opacity: 1; } .message-actions button { width: 36px; height: 36px; } }
 
-    .run-activity { color: var(--lv-fg-muted); font-size: var(--lv-chat-tool-font-size, 12px); }
+    .run-activity { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .run-activity > summary { display: flex; align-items: center; gap: 6px; width: fit-content; cursor: pointer; list-style: none; padding: 4px 0; }
     .run-activity > summary::-webkit-details-marker { display: none; }
     .run-activity[open] > summary svg { transform: rotate(90deg); }

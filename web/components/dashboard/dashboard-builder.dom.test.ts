@@ -2799,7 +2799,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
     expect(state.canvasWidth).toBe('1200px')
     expect(state.canvasBackground).toBe('rgb(251, 252, 254)')
     expect(state.canvasGuides).toBe('none')
-    expect(state.workspaceBackground).toBe('rgb(238, 241, 244)')
+    expect(state.chat-layoutBackground).toBe('rgb(238, 241, 244)')
     expect(state.emptyPreview).toContain('Add fields')
     expect(state.addPageHasIcon).toBe(true)
   } finally {

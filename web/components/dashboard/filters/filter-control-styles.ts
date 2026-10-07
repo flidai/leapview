@@ -165,12 +165,12 @@ export const filterControlStyles = css`
     .range-hint { grid-column: 1 / -1; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .range-slider { position: relative; grid-column: 1 / -1; height: 28px; margin: 0 8px; }
     .range-track { position: absolute; inset: 12px 0 auto; height: 4px; border-radius: 4px;
-      background: linear-gradient(to right, var(--lv-bg-control-hover) var(--range-start), var(--lv-accent-primary, #0969da) var(--range-start), var(--lv-accent-primary, #0969da) var(--range-end), var(--lv-bg-control-hover) var(--range-end)); }
+      background: linear-gradient(to right, var(--lv-bg-control-hover) var(--range-start), var(--lv-accent) var(--range-start), var(--lv-accent) var(--range-end), var(--lv-bg-control-hover) var(--range-end)); }
     .range-slider input[type='range'] { position: absolute; inset: 0; appearance: none; background: transparent; border: 0; padding: 0; margin: 0; width: 100%; height: 28px; min-height: 0; pointer-events: none; outline: none; }
-    .range-slider input[type='range']::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--lv-accent-primary, #0969da); background: var(--lv-bg-panel); pointer-events: auto; cursor: ew-resize; }
-    .range-slider input[type='range']::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--lv-accent-primary, #0969da); background: var(--lv-bg-panel); pointer-events: auto; cursor: ew-resize; }
-    .range-slider input[type='range']:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--lv-accent-primary, #0969da); outline-offset: 3px; }
-    .range-slider input[type='range']:focus-visible::-moz-range-thumb { outline: 2px solid var(--lv-accent-primary, #0969da); outline-offset: 3px; }
+    .range-slider input[type='range']::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--lv-accent); background: var(--lv-bg-panel); pointer-events: auto; cursor: ew-resize; }
+    .range-slider input[type='range']::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--lv-accent); background: var(--lv-bg-panel); pointer-events: auto; cursor: ew-resize; }
+    .range-slider input[type='range']:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--lv-accent); outline-offset: 3px; }
+    .range-slider input[type='range']:focus-visible::-moz-range-thumb { outline: 2px solid var(--lv-accent); outline-offset: 3px; }
     .range-slider input:disabled { opacity: .5; }
     .range label { display: grid; min-width: 0; gap: var(--base-size-4); }
     .range-error {

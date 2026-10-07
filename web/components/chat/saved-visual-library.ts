@@ -32,14 +32,14 @@ class SavedVisualLibrary extends DatastarLit(LitElement) {
   }
 
   static styles = css`
-    :host { display: block; color: var(--lv-fg-default); font-family: var(--fontStack-system, system-ui); font-size: 13px; }
-    .intro, .empty { padding: 8px 10px; margin: 0; color: var(--lv-fg-muted); font-size:12px; line-height: 1.4; }
+    :host { display: block; color: var(--lv-fg-default); font-family: var(--fontStack-system, system-ui); font-size: var(--text-body-size-small); }
+    .intro, .empty { padding: 8px 10px; margin: 0; color: var(--lv-fg-muted); font-size: var(--text-body-size-small); line-height: 1.4; }
     .list { display: flex; flex-direction: column; gap: 6px; padding: 0 8px 10px; }
     .visual { display: flex; align-items: center; gap: 6px; min-height:48px; box-sizing:border-box; padding: 6px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); cursor: grab; }
     .visual[aria-disabled='true'] { opacity: .5; cursor: default; }
     .copy { flex: 1; min-width: 0; }
     .title { display: -webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap: anywhere; line-height: 1.35; }
-    .model { display: block; color: var(--lv-fg-muted); font-size: 11px; margin-top: 4px; }
+    .model { display: block; color: var(--lv-fg-muted); font-size: var(--text-body-size-small); margin-top: 4px; }
     svg { width: 16px; height: 16px; flex-shrink: 0; }
     .grip { color: var(--lv-fg-muted); }
     button { display: inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; padding: 6px; border: 0; border-radius: 4px; background: transparent; color: var(--lv-fg-default); cursor: pointer; }

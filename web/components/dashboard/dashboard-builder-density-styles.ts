@@ -6,18 +6,18 @@ export const dashboardBuilderDensityStyles = css`
   .toolbar { gap: 8px; padding: 6px 12px; }
   .toolbar-actions { gap: 4px; }
   .arrange-toolbar { gap: 6px; }
-  .title { font-size: 14px; line-height: 20px; }
-  .meta { font-size: 11px; line-height: 16px; margin-top: 0; }
-  .toolbar button, .toolbar summary, .back { font-size: 13px; }
+  .title { font-size: var(--text-body-size-medium); line-height: 20px; }
+  .meta { font-size: var(--text-body-size-small); line-height: 16px; margin-top: 0; }
+  .toolbar button, .toolbar summary, .back { font-size: var(--text-body-size-small); }
   .pane-header, .field-browser-header { padding: 8px 10px; }
-  .pane-title, .inspector-heading .pane-title { font-size: 13px; line-height: 20px; }
+  .pane-title, .inspector-heading .pane-title { font-size: var(--text-body-size-small); line-height: 20px; }
   .inspector-heading { flex-wrap: nowrap; gap: 4px; }
   .inspector-title { flex: 1; gap: 6px; }
   .inspector-panel, .field-results { padding: 8px 10px; }
   .inspector-panel, .inspector-panel > *, .field-wells, .field-well, .field-well-target, .field-token { min-width: 0; }
   .visual-picker { grid-template-columns: repeat(auto-fit, minmax(28px, 1fr)); }
-  .property-label, .format-section h3, .field-entity summary { font-size: 13px; }
-  .pane-hint, .field-well-label, .format-text-field { font-size: 12px; }
+  .property-label, .format-section h3, .field-entity summary { font-size: var(--text-body-size-small); }
+  .pane-hint, .field-well-label, .format-text-field { font-size: var(--text-body-size-small); }
   .field-browser[hidden] { display: none; }
   .field-browser { flex: 1; overflow: auto; }
   .field-search-header { position: sticky; top: 0; z-index: 1; padding: 8px 10px; background: var(--lv-bg-panel); border-bottom: var(--lv-border-muted); }
@@ -26,10 +26,10 @@ export const dashboardBuilderDensityStyles = css`
   .field { min-height: 34px; padding: 4px 6px; }
   .field-well { gap: 4px; }
   .field-well-target { padding: 4px; min-height: 34px; }
-  .field-token { font-size: 13px; padding: 0 6px; }
+  .field-token { font-size: var(--text-body-size-small); padding: 0 6px; }
   .visual-query-controls, .visual-format-disclosure { margin-top: 4px; padding-top: 4px; border-top: var(--lv-border-muted); }
   .visual-query-controls > summary, .visual-format-disclosure > summary {
-    min-height: 32px; line-height: 32px; font-size: 13px; font-weight: 600;
+    min-height: 32px; line-height: 32px; font-size: var(--text-body-size-small); font-weight: var(--base-text-weight-semibold);
     cursor: pointer; color: var(--lv-fg-default);
   }
   .visual-query-controls > summary:focus-visible, .visual-format-disclosure > summary:focus-visible {
@@ -37,9 +37,9 @@ export const dashboardBuilderDensityStyles = css`
   }
   .visual-format-controls { margin: 0; border-top: 0; padding-top: 4px; gap: 8px; }
   .format-section { gap: 6px; padding-bottom: 8px; }
-  .format-text-field input, .format-text-field select { font-size: 13px; min-height: 30px; }
+  .format-text-field input, .format-text-field select { font-size: var(--text-body-size-small); min-height: 30px; }
   .query-control-list { gap: 6px; }
-  .visual-type-disclosure > summary { min-height: 32px; line-height: 32px; font-size: 13px; cursor: pointer; }
+  .visual-type-disclosure > summary { min-height: 32px; line-height: 32px; font-size: var(--text-body-size-small); cursor: pointer; }
   .visual-type-disclosure > summary:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
   .visual-type-disclosure .visual-picker-catalog { padding-top: 4px; }
   @media (hover: hover) {
@@ -49,7 +49,7 @@ export const dashboardBuilderDensityStyles = css`
   }
   .page-bar { min-height: 36px; }
   .page-bar > button { width: 36px; min-height: 36px; }
-  .page-tab { min-height: 36px; font-size: 13px; }
+  .page-tab { min-height: 36px; font-size: var(--text-body-size-small); }
   .right-dock[hidden] { display: none; }
   .body.tools-hidden, .chat-preview .body.tools-hidden { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
 

@@ -1,3 +1,4 @@
+import { setChatPreviewLocation, clearChatDashboardLocation, rememberChatDashboardLocation } from './dashboard-preview-location'
 import { generatedDashboardHref } from './generated-dashboard'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { savedVisualComponentId, savedVisualSourceId } from './dashboard-membership'
@@ -22,7 +23,7 @@ import { agentIcon } from './agent-icon'
 import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId, mergeReferences, normalizeReferenceLimit } from './reference'
 import './chat-composer'
 import './chat-list'
-import type { ChatDashboardMessage, DashboardChatComponent } from './dashboard-workspace'
+import type { ChatDashboardMessage, DashboardChatComponent } from './dashboard-preview-contract'
 import { chatVisualsFromSignals } from './visual-signals'
 
 const emptyAgent: ChatSignal = {
@@ -96,9 +97,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       this.builderFrame.src = this.savedBuilderHref
       this.builderNeedsRefresh = false
     }
-    const url = new URL(window.location.href)
-    url.searchParams.set('preview', 'builder')
-    window.history.pushState(window.history.state, '', url)
+    setChatPreviewLocation('builder')
   }
 
   private async openGeneratedDashboard(href: string): Promise<void> {
@@ -115,9 +114,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.dashboardPageId = ''
     this.selectedPreviewVisual = ''
     this.savingDashboard = true
-    const url = new URL(window.location.href)
-    url.searchParams.delete('dashboard')
-    window.history.replaceState(window.history.state, '', url)
+    clearChatDashboardLocation()
     this.enterBuilder()
     await this.updateComplete
     if (this.builderFrame) this.builderFrame.src = href
@@ -414,10 +411,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     if (href && href !== this.savedBuilderHref) {
       this.savedBuilderHref = href
       this.restoredBuilderHref = href
-      const workspace = window.history.state?.chatDashboard
-      if (workspace?.href === href) {
-        this.dashboardCopyLinks = workspace.links ?? {}
-        this.savedSignature = workspace.signature ?? ''
+      const retained = window.history.state?.chatDashboard
+      if (retained?.href === href) {
+        this.dashboardCopyLinks = retained.links ?? {}
+        this.savedSignature = retained.signature ?? ''
       }
     }
     const wasBuilder = this.builderOpen
@@ -442,13 +439,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private persistDashboardLocation(): void {
     const href = this.validBuilderHref(this.savedBuilderHref)
     if (!href) return
-    const url = new URL(window.location.href)
-    url.searchParams.set('dashboard', href)
-    // Store only identity links in browser history. The iframe always loads the
-    // latest authorized draft from the server, never a cached dashboard snapshot.
-    window.history.replaceState({ ...window.history.state, chatDashboard: {
-      href, links: this.dashboardCopyLinks, signature: this.savedSignature,
-    } }, '', url)
+    rememberChatDashboardLocation(href, this.dashboardCopyLinks, this.savedSignature)
   }
 
   private async openDashboardPreview(event?: CustomEvent<{ artifactId?: string }>): Promise<void> {
@@ -458,10 +449,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.selectedPreviewVisual = event?.detail?.artifactId ?? this.selectedPreviewArtifact?.id ?? ''
     this.visitedVisuals = [...this.visitedVisuals.filter(id => id !== this.selectedPreviewVisual), this.selectedPreviewVisual].slice(-3)
     if (!this.dashboardPreview || fromBuilder) {
-      const url = new URL(window.location.href)
-      url.searchParams.set('preview', 'dashboard')
-      if (fromBuilder) window.history.replaceState(window.history.state, '', url)
-      else window.history.pushState(window.history.state, '', url)
+      setChatPreviewLocation('dashboard', fromBuilder)
       this.dashboardPreview = true
     }
     await this.updateComplete
@@ -479,18 +467,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private async closeDashboardPreview(): Promise<void> {
     this.builderOpen = false
     this.dashboardPreview = true
-    const url = new URL(window.location.href)
-    url.searchParams.set('preview', 'dashboard')
-    window.history.replaceState(window.history.state, '', url)
+    setChatPreviewLocation('dashboard', true)
     await this.restoreChatLayout()
   }
 
   private async closeVisualSidebar(): Promise<void> {
     const position = this.chatThread?.captureScroll()
     this.dashboardPreview = false
-    const url = new URL(window.location.href)
-    url.searchParams.delete('preview')
-    window.history.replaceState(window.history.state, '', url)
+    setChatPreviewLocation(null, true)
     await this.updateComplete
     await this.chatThread?.updateComplete
     if (position) this.chatThread?.restoreScroll(position)
@@ -560,7 +544,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-app);
     }
 
-    .workspace {
+    .chat-layout {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       min-width: 0;
@@ -568,9 +552,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       overflow: hidden;
     }
 
-    .workspace { grid-template-areas: 'chat'; }
+    .chat-layout { grid-template-areas: 'chat'; }
     .body { grid-area: chat; }
-    .workspace.preview-open {
+    .chat-layout.preview-open {
       grid-template-columns: minmax(300px, .9fr) minmax(0, 1.1fr);
       grid-template-areas: 'chat visuals';
     }
@@ -588,8 +572,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     .preview-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex-shrink: 0; }
     .save-error { padding: 12px; color: var(--lv-fg-danger); font: var(--lv-type-body-compact); }
     .preview-action:disabled { opacity: .6; cursor: default; }
-    .workspace.builder-open { grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 320px); grid-template-areas: 'builder chat'; }
-    .workspace.builder-open .body {
+    .chat-layout.builder-open { grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 320px); grid-template-areas: 'builder chat'; }
+    .chat-layout.builder-open .body {
       --lv-type-body: 400 14px/1.5 var(--fontStack-system);
       --lv-chat-stack-gap: 24px;
     }
@@ -622,8 +606,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     .titlebar-start h1 { min-width: 0; }
 
     @media (max-width: 900px) {
-      .workspace.preview-open { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 42%) minmax(0, 1fr); grid-template-areas: 'chat' 'visuals'; }
-      .workspace.builder-open { grid-template-rows: minmax(0, 1fr) minmax(220px, 38%); grid-template-areas: 'builder' 'chat'; }
+      .chat-layout.preview-open { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 42%) minmax(0, 1fr); grid-template-areas: 'chat' 'visuals'; }
+      .chat-layout.builder-open { grid-template-rows: minmax(0, 1fr) minmax(220px, 38%); grid-template-areas: 'builder' 'chat'; }
       .preview-panel, .builder-open .body { border-left: 0; border-top: var(--lv-border-default); }
       .preview-scroll { padding: 12px; }
       .titlebar-start { flex-wrap: wrap; gap: 8px; }
@@ -704,7 +688,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     .chat-size-toggle:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
     .chat-size-toggle:disabled { opacity: .6; cursor: default; }
 
-    .list-main .workspace { overflow: visible; }
+    .list-main .chat-layout { overflow: visible; }
 
     .list-main .body {
       min-height: auto;
@@ -906,7 +890,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   updated(changed: Map<PropertyKey, unknown>): void {
     if (changed.has('builderOpen')) {
-      this.dispatchEvent(new CustomEvent('lv-chat-workspace-change', {
+      this.dispatchEvent(new CustomEvent('lv-chat-layout-change', {
         bubbles: true, composed: true, detail: { builderOpen: this.builderOpen },
       }))
     }
@@ -1055,9 +1039,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         <iframe class="mutation-frame" name=${this.mutationFrameName} title="Dashboard update" hidden @load=${this.handleMutationLoad}></iframe>
         <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : '', this.builderOpen ? 'builder-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
           ${isList || isNew || this.builderOpen ? null : this.renderConversationTitlebar(title)}
-          <div class=${`workspace${this.dashboardPreview && !isList && !isNew ? ` preview-open${this.builderOpen ? ' builder-open' : ''}` : ''}`}>
+          <div class=${`chat-layout${this.dashboardPreview && !isList && !isNew ? ` preview-open${this.builderOpen ? ' builder-open' : ''}` : ''}`}>
             ${this.renderDashboardPreview(title, !isList && !isNew && this.dashboardPreview && !this.builderOpen)}
-            <section class="builder-stage" aria-label="Dashboard builder workspace" ?hidden=${!this.dashboardPreview || !this.builderOpen}>
+            <section class="builder-stage" aria-label="Dashboard builder" ?hidden=${!this.dashboardPreview || !this.builderOpen}>
               ${this.dashboardSaveError ? html`<p class="save-error" role="alert">${this.dashboardSaveError}</p>` : null}
               <iframe class="builder-frame" name=${this.builderFrameName} title="Dashboard builder" src=${ifDefined(this.restoredBuilderHref)} @load=${this.handleBuilderLoad} ?hidden=${Boolean(this.dashboardSaveError)}></iframe>
             </section>

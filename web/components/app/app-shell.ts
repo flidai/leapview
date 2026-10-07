@@ -147,7 +147,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     this.addEventListener('product-search-open', this.openProductSearch)
     this.addEventListener('lv-chat-action', this.handleChatAction)
     this.addEventListener('lv-chat-settings-open', this.openChatSettings)
-    this.addEventListener('lv-chat-workspace-change', this.handleChatWorkspaceChange)
+    this.addEventListener('lv-chat-layout-change', this.handleChatLayoutChange)
     window.addEventListener('keydown', this.handleProductSearchShortcut)
   }
 
@@ -156,7 +156,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     this.removeEventListener('product-search-open', this.openProductSearch)
     this.removeEventListener('lv-chat-action', this.handleChatAction)
     this.removeEventListener('lv-chat-settings-open', this.openChatSettings)
-    this.removeEventListener('lv-chat-workspace-change', this.handleChatWorkspaceChange)
+    this.removeEventListener('lv-chat-layout-change', this.handleChatLayoutChange)
     window.removeEventListener('keydown', this.handleProductSearchShortcut)
     super.disconnectedCallback()
   }
@@ -175,7 +175,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     `
   }
 
-  private handleChatWorkspaceChange = (event: Event): void => {
+  private handleChatLayoutChange = (event: Event): void => {
     if (event.composedPath()[0] !== this.querySelector('lv-chat-page[slot="page"]')) return
     this.chatBuilderOpen = (event as CustomEvent<{ builderOpen: boolean }>).detail.builderOpen
   }
