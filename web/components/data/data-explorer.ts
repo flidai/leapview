@@ -1,4 +1,3 @@
-import { renderTimeGrouping, timeGroupingStyles } from './data-explorer-time-grouping'
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { keyed } from 'lit/directives/keyed.js'
@@ -72,12 +71,10 @@ import {
   filterOperator,
   filterValues,
   makeExplorationFilter,
-  setExplorationTime,
   removeExplorationField,
   toggleExplorationField,
 } from './data-explorer-spec'
 import {
-  fieldLabel,
   filterObjects,
   groupObjectsBySemanticModel,
   iconForLayer,
@@ -469,7 +466,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     ${savedExplorationStyles}
     ${dashboardAppendStyles}
     ${semanticLayoutStyles}
-    ${timeGroupingStyles}
 
     .content {
       display: grid;
@@ -1506,16 +1502,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 </div>
               </div>
               ${renderSelectedFieldRows(spec, explore.fields, (id, kind) => this.emitExploreSpec(removeExplorationField(spec, id, kind), command))}
-              <div class="selected-field-row">
-                <span class="query-label">Filters</span>
-                <div class="selected-field-values">
-                  ${spec.mode !== 'records' && spec.time ? renderTimeGrouping(fieldLabel(spec.time.field, explore.fields), spec.time.grain,
-                    grain => this.emitExploreSpec(setExplorationTime(spec, spec.time!.field, grain), command),
-                    () => this.emitExploreSpec(setExplorationTime(spec, ''), command)) : nothing}
-                  ${spec.filters.length ? html`<button type="button" class="chip" @click=${() => this.semanticPanel = 'filters'}>${spec.filters.length} active ${spec.filters.length === 1 ? 'filter' : 'filters'}</button>`
-                    : !spec.time || spec.mode === 'records' ? html`<span class="query-summary">No filters</span>` : nothing}
-                </div>
-              </div>
             </section>
             <div class="result-meta" aria-live="polite">
               <span><strong>${selectedSemanticModel?.title ?? label(command.semanticModelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
