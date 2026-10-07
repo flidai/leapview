@@ -37,7 +37,7 @@
       "effectiveIdentityChecks": ["before init", "after init", "after dev"],
       "endpointPinnedClaim": "true only after all pre/post identities agree; recognized-path proxy adversarial evidence remains external"
     },
-    "manualPrerequisite": "device authentication may require a human browser approval"
+    "authenticationPrerequisite": "automatic scoped local authentication requires a native credential store; headless Linux qualification uses an isolated unlocked Secret Service"
   },
   "evidence": {
     "scope": "static",

@@ -124,6 +124,46 @@ exit 0
 	}
 }
 
+func TestReleasedAuthoringQualificationInterruptionRetainsFailedEvidence(t *testing.T) {
+	root := repositoryRoot(t)
+	directory := t.TempDir()
+	python := `import hashlib, importlib.util, json, os, pathlib, signal, sys
+spec = importlib.util.spec_from_file_location("qualification", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+root = pathlib.Path(sys.argv[2])
+archive = root / "archive.tar.gz"
+archive.write_bytes(b"interrupt before extraction")
+archive.with_suffix(".gz.sha256").write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + "  archive.tar.gz\n")
+workdirs = []
+def interrupt_extraction(archive, directory):
+    workdirs.append(directory)
+    os.kill(os.getpid(), signal.SIGINT)
+module.extract_archive = interrupt_extraction
+result = module.main(["--archive", str(archive), "--required", "--evidence-dir", str(root / "evidence")])
+assert result == 1, result
+assert workdirs and all(not path.exists() for path in workdirs)
+report = json.loads((root / "evidence" / "qualification-report.json").read_text())
+assert report["result"] == "failed", report
+assert report["failures"] == ["qualification interrupted"]
+assert (root / "evidence" / "raw-results.json").is_file()
+`
+	command := exec.Command("python3", "-c", python, filepath.Join(root, "deploy/local/qualification/qualify.py"), directory)
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("interrupted harness did not retain failed evidence and clean up: %v\n%s", err, output)
+	}
+	var evidence map[string]any
+	body, err := os.ReadFile(filepath.Join(directory, "evidence/qualification-report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	validateQualificationEvidenceSchema(t, root, evidence)
+}
+
 func TestReleasedAuthoringQualificationRejectsArchiveChecksumDrift(t *testing.T) {
 	root := repositoryRoot(t)
 	archive := filepath.Join(t.TempDir(), "missing.tar.gz")

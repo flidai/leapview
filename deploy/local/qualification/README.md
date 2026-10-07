@@ -50,7 +50,19 @@ temporary checkout-owned Docker runtime:
 
 Lifecycle qualification requires a supported Linux or macOS host, an explicit
 local Unix Docker socket, and Docker Compose 2.17 or newer. Local bootstrap
-password rotation and scoped CLI authorization are automatic. SSH endpoints, arbitrary TCP endpoints, loopback
+password rotation and scoped CLI authorization are automatic. Linux also needs
+an unlocked native Secret Service to retain the scoped authorization. The
+optional CI lifecycle installs D-Bus and GNOME Keyring, then runs through
+`with_keyring.py` with a private bus, home, and keyring. The wrapper removes its
+temporary keyring state and stops its daemon after successful or failed runs;
+it does not access the operator's keyring. SIGINT and SIGTERM request a graceful
+qualification interruption, preserving the bus and keyring for up to 30 seconds
+while the harness resets its runtime and writes evidence before termination
+escalates. Static-only CI runs need neither
+dependency. On a headless Linux host with those dependencies installed, prefix
+the lifecycle command above with `python3 deploy/local/qualification/with_keyring.py`.
+
+SSH endpoints, arbitrary TCP endpoints, loopback
 tunnels, Podman compatibility sockets, and unknown socket paths are rejected.
 The v1 endpoint set covers Linux Docker Engine and macOS Docker Desktop,
 OrbStack, Colima Docker-mode profiles, and Rancher Desktop Moby/dockerd sockets.
