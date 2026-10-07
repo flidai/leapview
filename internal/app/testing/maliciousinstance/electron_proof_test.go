@@ -16,13 +16,21 @@ import (
 const maximumElectronProofDiagnosticBytes = 8 * 1024
 
 type electronProofResult struct {
-	Passed          bool          `json:"passed"`
-	Framework       string        `json:"framework"`
-	Chromium        string        `json:"chromium"`
-	Phase           string        `json:"phase"`
-	ManifestVersion string        `json:"manifestVersion"`
-	Observations    []Observation `json:"observations"`
-	Error           string        `json:"error"`
+	Passed             bool                        `json:"passed"`
+	Framework          string                      `json:"framework"`
+	Chromium           string                      `json:"chromium"`
+	Phase              string                      `json:"phase"`
+	CurrentCheck       string                      `json:"currentCheck"`
+	ManifestVersion    string                      `json:"manifestVersion"`
+	Observations       []Observation               `json:"observations"`
+	StorageDiagnostics []electronStorageDiagnostic `json:"storageDiagnostics"`
+	Error              string                      `json:"error"`
+}
+
+type electronStorageDiagnostic struct {
+	Operation  string `json:"operation"`
+	Status     string `json:"status"`
+	DurationMS int    `json:"durationMs"`
 }
 
 func TestElectronPolicyIntegrationPreservesBrowserEquivalentAuthority(t *testing.T) {
@@ -132,10 +140,12 @@ func electronProofProcessFailure(
 		return nil
 	}
 	return fmt.Errorf(
-		"Electron proof returned a valid failure result (size=%d bytes, phase=%q, error=%q)\nraw result: %s\n%s",
+		"Electron proof returned a valid failure result (size=%d bytes, phase=%q, error=%q, currentCheck=%q, storageDiagnostics=%v)\nraw result: %s\n%s",
 		len(payload),
 		result.Phase,
 		result.Error,
+		result.CurrentCheck,
+		result.StorageDiagnostics,
 		formatElectronProofPayload(payload),
 		electronProofProcessDiagnostics(processErr, output),
 	)
