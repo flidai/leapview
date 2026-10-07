@@ -222,7 +222,7 @@ type Manager struct {
 	logger                 *slog.Logger
 	onLeaseRenewalFailure  func(error)
 	onCleanupFailure       func(CleanupFailure)
-	leaseRenewalErrors     map[leaseHealthKey]error
+	leaseRenewalErrors     map[*runtimeLeaseHealth]error
 	current                *managedRuntime
 	retired                []*managedRuntime
 	cleanupWorkerRunning   bool
@@ -308,7 +308,7 @@ func NewManagerWithFactory(options ManagerOptions) *Manager {
 		shutdown = 5 * time.Second
 	}
 	environment := options.Environment
-	m := &Manager{repo: options.Repo, projectID: options.ProjectID, environment: environment, factory: options.Factory, managedData: options.ManagedData, authorization: options.Authorization, onDrained: options.OnDrained, leaseTTL: normalizedLeaseTTL(options.LeaseTTL), leaseOwner: firstNonEmpty(options.LeaseOwner, "runtimehost"), logger: logger, onLeaseRenewalFailure: options.OnLeaseRenewalFailure, onCleanupFailure: options.OnCleanupFailure, leaseRenewalErrors: map[leaseHealthKey]error{}, cleanupDrainTimeout: normalizedCleanupDrainTimeout(options.CleanupDrainTimeout), releaseShutdownTimeout: shutdown, requireSealedCatalog: options.RequireSealedCatalog}
+	m := &Manager{repo: options.Repo, projectID: options.ProjectID, environment: environment, factory: options.Factory, managedData: options.ManagedData, authorization: options.Authorization, onDrained: options.OnDrained, leaseTTL: normalizedLeaseTTL(options.LeaseTTL), leaseOwner: firstNonEmpty(options.LeaseOwner, "runtimehost"), logger: logger, onLeaseRenewalFailure: options.OnLeaseRenewalFailure, onCleanupFailure: options.OnCleanupFailure, leaseRenewalErrors: map[*runtimeLeaseHealth]error{}, cleanupDrainTimeout: normalizedCleanupDrainTimeout(options.CleanupDrainTimeout), releaseShutdownTimeout: shutdown, requireSealedCatalog: options.RequireSealedCatalog}
 	m.releaseQueue = newSnapshotLeaseReleaseQueue(capacity, m.releaseSnapshotLease)
 	return m
 }
@@ -395,16 +395,6 @@ func (m *Manager) BindClaimedProject(projectID projectgraph.ResourceID, environm
 		return fmt.Errorf("%w: runtime host project changed from %q to %q", ErrProjectBindConflict, m.projectID, projectID)
 	}
 	return nil
-}
-func (m *Manager) setLeaseRenewalError(id string, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	key := leaseHealthKey{snapshotLeaseID: id}
-	if err == nil {
-		delete(m.leaseRenewalErrors, key)
-	} else {
-		m.leaseRenewalErrors[key] = err
-	}
 }
 
 // Reload retries a bounded number of times when another cutover wins the
