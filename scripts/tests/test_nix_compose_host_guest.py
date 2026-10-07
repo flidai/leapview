@@ -7,6 +7,7 @@ import sys
 import urllib.parse
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -118,6 +119,7 @@ class HostGuestReceiptTests(unittest.TestCase):
         self._write("postgres-image-repo-digests.json", json.dumps(["postgres@sha256:" + "8" * 64]).encode() + b"\n")
         self._write("postgres-image-id.txt", (self.postgres_fixture["imageID"] + "\n").encode())
         self._write("postgres-image-platform.txt", b"linux/amd64\n")
+        self._write("postgres-init-bundle-sha256.txt", (self.postgres_fixture["initScriptSHA256"] + "\n").encode())
         self._write("postgres-compose-network-labels.txt", b"leapview default\n")
         self._write("postgres-compose-state-volume-labels.txt", b"leapview leapview-state\n")
         self._write("pool-probe-state-volume-owner.txt", b"999:999:999:999:755\n")
@@ -606,6 +608,11 @@ class HostGuestReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(host_guest.HostGuestError, "postgres-image-id.txt"):
             host_guest._validate_receipt(invalid, self.evidence)
 
+        invalid = json.loads(json.dumps(receipt))
+        invalid["guest"]["postgresFixture"]["initScriptSHA256"] = "sha256:" + "9" * 64
+        with self.assertRaisesRegex(host_guest.HostGuestError, "postgres-init-bundle-sha256.txt"):
+            host_guest._validate_receipt(invalid, self.evidence)
+
         order_path = self.evidence / "pool-probe-order.json"
         original = order_path.read_bytes()
         order = json.loads(original)
@@ -914,6 +921,61 @@ class HostGuestReceiptTests(unittest.TestCase):
 
 
 class FirstInstallGuestFixtureTests(unittest.TestCase):
+    def test_postgres_init_transfer_rejects_changed_bytes(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                data = kwargs.get("input_bytes")
+                return subprocess.run(
+                    ["bash", "-c", command], input=data + b"# changed\n" if data else None,
+                    check=True, capture_output=True,
+                ).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "verified-init.sh"
+            source.write_text("#!/bin/sh\nexit 0\n")
+            with self.assertRaisesRegex(host_guest.HostGuestError, "differs from the verified Compose archive"):
+                host_guest._transfer_postgres_init(Guest(), root, source, str(root / "guest-init.sh"))
+
+    def test_pool_fixture_uses_verified_bundle_init_without_oci_fixture(self):
+        class PreparedFixture(Exception):
+            pass
+
+        class Guest:
+            def run(self, command, **kwargs):
+                if command.startswith("cat ") and command.endswith("/leapview.env.example"):
+                    raise PreparedFixture()
+                return subprocess.run(
+                    ["bash", "-c", command], input=kwargs.get("input_bytes"),
+                    check=True, capture_output=True,
+                ).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = root / "oci-payload"
+            payload.mkdir()
+            (payload / "compose.yaml").write_text("services: {}\n")
+            bundle_init = root / "verified-bundle/qualification/postgres-init.sh"
+            bundle_init.parent.mkdir(parents=True)
+            source = (ROOT / "deploy/postgres/init.sh").read_bytes()
+            bundle_init.write_bytes(source)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            with self.assertRaises(PreparedFixture):
+                host_guest._prepare_pool_fixture(
+                    Guest(), evidence, args=SimpleNamespace(source_root=ROOT),
+                    paths={"root": str(root), "payload": str(payload)}, docker_env="",
+                    host_config={}, nonce="3" * 32, candidate_image_id="sha256:" + "4" * 64,
+                    postgres_init=bundle_init,
+                )
+            transferred = root / "postgres-fixture/postgres-init.sh"
+            self.assertEqual(transferred.read_bytes(), source)
+            self.assertEqual(transferred.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(
+                (evidence / "postgres-init-bundle-sha256.txt").read_text().strip(), host_guest._digest(source),
+            )
+            self.assertFalse((payload / "qualification/postgres-init.sh").exists())
+
     def test_prerequisite_timeout_retains_progress_and_rejects_success(self):
         class Guest:
             def run(self, command, **kwargs):

@@ -1256,8 +1256,25 @@ def _readiness_after_reboot_command(container_name: str, expected: str) -> str:
     )
 
 
+def _transfer_postgres_init(guest: SSHGuest, evidence: Path, source: Path, destination: str) -> str:
+    # verify_bundle authenticated this package asset against the clean release
+    # source. The OCI deployment payload does not contain packaging-only fixtures.
+    data = _read(source, "verified bundle PostgreSQL init script", qualification.compose_bundle.MAX_ASSET_BYTES)
+    expected = _digest(data)
+    _record(evidence, "postgres-init-bundle-sha256.txt", (expected + "\n").encode())
+    guest.run("umask 077; cat > " + shlex.quote(destination), input_bytes=data)
+    guest.run("chmod 644 " + shlex.quote(destination))
+    measured = "sha256:" + _one_line(guest.run(
+        "sha256sum " + shlex.quote(destination),
+    ), "transferred PostgreSQL init script hash").split()[0]
+    if measured != expected:
+        raise HostGuestError("transferred PostgreSQL init script differs from the verified Compose archive")
+    return expected
+
+
 def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict, docker_env: str,
-                          host_config: dict, nonce: str, candidate_image_id: str) -> tuple[dict, dict, list[str]]:
+                          host_config: dict, nonce: str, candidate_image_id: str,
+                          postgres_init: Path) -> tuple[dict, dict, list[str]]:
     postgres_image = _locked_postgres_image(Path(args.source_root))
     credentials = _postgres_fixture_credentials()
     urls = _postgres_connection_urls(credentials)
@@ -1272,8 +1289,8 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
 
     guest.run("install -d -m 700 -- " + " ".join(shlex.quote(path) for path in (project_dir, fixture_dir, tls_dir)))
     guest.run("cp -- " + shlex.quote(paths["payload"] + "/compose.yaml") + " " + shlex.quote(project_dir + "/compose.yaml"))
-    guest.run("cp -- " + shlex.quote(paths["payload"] + "/qualification/postgres-init.sh") + " " + shlex.quote(fixture_dir + "/postgres-init.sh"))
-    guest.run("chmod 600 " + shlex.quote(project_dir + "/compose.yaml") + " && chmod 644 " + shlex.quote(fixture_dir + "/postgres-init.sh"))
+    init_script_sha = _transfer_postgres_init(guest, evidence, postgres_init, fixture_dir + "/postgres-init.sh")
+    guest.run("chmod 600 " + shlex.quote(project_dir + "/compose.yaml"))
     env_template = guest.run("cat " + shlex.quote(paths["payload"] + "/leapview.env.example"))
     probe_env = _pool_probe_environment(env_template, urls, host_config)
     deployment_env = (
@@ -1413,6 +1430,11 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
         "sourceRevision": args.source_revision,
         "operatorBootstrapWrittenAfterPoolProbe": True,
     }, sort_keys=True) + "\n").encode())
+    final_init_sha = "sha256:" + _one_line(guest.run(
+        "sha256sum " + shlex.quote(fixture_dir + "/postgres-init.sh"),
+    ), "qualification PostgreSQL init script hash").split()[0]
+    if final_init_sha != init_script_sha:
+        raise HostGuestError("PostgreSQL fixture init script changed after verified bundle transfer")
     fixture = {
         "image": postgres_image,
         "repoDigest": postgres_repo_digest,
@@ -1424,7 +1446,7 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
         "stateVolume": state_volume,
         "dataVolume": data_volume,
         "restartPolicy": "unless-stopped",
-        "initScriptSHA256": "sha256:" + _one_line(guest.run("sha256sum " + shlex.quote(fixture_dir + "/postgres-init.sh")), "qualification PostgreSQL init script hash").split()[0],
+        "initScriptSHA256": init_script_sha,
         "tlsRoleProbesBeforeInstall": TLS_ROLE_EXPECTATIONS,
     }
     _record(evidence, "postgres-fixture.json", (json.dumps(fixture, sort_keys=True) + "\n").encode())
@@ -1626,6 +1648,7 @@ def _install_and_collect(args) -> dict:
         postgres_fixture, pool_info, fixture_secrets = _prepare_pool_fixture(
             guest, evidence, args=args, paths=paths, docker_env=docker_env,
             host_config=host_config, nonce=nonce, candidate_image_id=pulled_image_id,
+            postgres_init=nix_controller.parent / "qualification/postgres-init.sh",
         )
 
         install = _host_install_command(
@@ -2629,6 +2652,7 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
         "installed-controller-sha256.txt": controllers["installedSHA256"],
         "postgres-image-id.txt": postgres_fixture["imageID"],
         "postgres-image-platform.txt": postgres_fixture["platform"],
+        "postgres-init-bundle-sha256.txt": postgres_fixture["initScriptSHA256"],
         "postgres-container-before-reboot.txt": None,
         "postgres-container-after-reboot.txt": None,
         "physical-pool-qualification-sha256.txt": pool_artifacts_sha,
