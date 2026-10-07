@@ -30,6 +30,9 @@ SCHEMA_VERSION = 1
 SCOPE = "nix-compose-host-guest"
 MAX_RECEIPT_BYTES = 2 * 1024**2
 MAX_GUEST_OUTPUT_BYTES = 2 * 1024**2
+# Cold candidate images exceed 1 GiB compressed; unpacking them under the
+# supported native-ISA TCG profile takes longer than a five-minute pull.
+CANDIDATE_IMAGE_PULL_TIMEOUT = 1200
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 NONCE_RE = re.compile(r"^[0-9a-f]{32,128}$")
@@ -949,11 +952,14 @@ def _guest_prerequisite(guest: SSHGuest, evidence: Path, stage: str, command: st
     # fixture exists. Keep general SSH/installer output private by default.
     probe = (
         "set +e; umask 077; log=$(mktemp) || exit 1; trap 'rm -f -- \"$log\"' EXIT; "
-        "( " + command + " ) >\"$log\" 2>&1; result=$?; "
+        "timeout --kill-after=10s " + str(timeout) + "s bash -c " + shlex.quote(command) +
+        " >\"$log\" 2>&1; result=$?; "
         "printf '%s\\n' \"$result\"; tail -c 65536 \"$log\"; exit 0"
     )
     try:
-        result = guest.run(probe, timeout=timeout)
+        # Let the guest stop its child and return the bounded log before the
+        # transport deadline; killing SSH first loses the failing command's output.
+        result = guest.run(probe, timeout=timeout + 30)
     except HostGuestError as exc:
         raise HostGuestError(f"guest prerequisite {stage}: {exc}") from exc
     status, separator, diagnostic = result.partition(b"\n")
@@ -1208,6 +1214,14 @@ def _bootstrap_prepare_command(bootstrap_path: str, docker_env: str) -> str:
     return "env " + docker_env + " bash " + shlex.quote(bootstrap_path) + " prepare-host"
 
 
+def _openssl_setup_command() -> str:
+    return (
+        "if ! command -v openssl >/dev/null 2>&1; then "
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl || exit $?; "
+        "fi; openssl version"
+    )
+
+
 def _assert_no_secrets_in_evidence(evidence: Path, secrets_to_check: list[str]) -> None:
     encoded = [value.encode("utf-8") for value in secrets_to_check if value]
     for path in evidence.iterdir():
@@ -1420,7 +1434,10 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
 def _pull_payload(guest: SSHGuest, evidence: Path, *, image_reference: str, docker_env: str,
                  payload_path: str, nonce: str) -> tuple[list, str, str]:
     image = shlex.quote(image_reference)
-    guest.run("env " + docker_env + " docker pull " + image, timeout=300)
+    _guest_prerequisite(
+        guest, evidence, "candidate-image-pull", "env " + docker_env + " docker pull " + image,
+        timeout=CANDIDATE_IMAGE_PULL_TIMEOUT,
+    )
     repo_digest_bytes = _record(evidence, "oci-repo-digests.json", guest.run(
         "env " + docker_env + " docker image inspect --format '{{json .RepoDigests}}' " + image,
     ))
@@ -1599,7 +1616,7 @@ def _install_and_collect(args) -> dict:
             )
             _guest_prerequisite(
                 guest, evidence, "openssl-install",
-                "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl", timeout=30,
+                _openssl_setup_command(), timeout=600,
             )
         guest.run("mkdir -m 700 -- " + shlex.quote(paths["payload"]))
         repo_digests, pulled_image_id, payload_sha = _pull_payload(
