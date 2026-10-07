@@ -5,6 +5,7 @@ import { assetAccentColor, assetPresentation } from '../shared/asset-presentatio
 import { lucideIcon } from '../shared/lucide-icons'
 import {
   ProductSearchService,
+  productSearchPageHref,
   type ProductSearchItem,
 } from './product-search-service'
 
@@ -182,6 +183,9 @@ class LeapViewProductSearch extends LitElement {
       margin-left: auto;
     }
 
+    .search-page-link { margin-left: auto; color: var(--lv-fg-accent); text-decoration: none; }
+    .search-page-link:hover { text-decoration: underline; }
+
     @media (max-width: 640px) {
       dialog {
         width: calc(100vw - var(--base-size-16));
@@ -269,10 +273,11 @@ class LeapViewProductSearch extends LitElement {
                 : 'Search dashboards, models, sources, connections, semantic models, and pipelines'}</p>
             ` : null}
           </div>
-          <footer class="search-help" aria-hidden="true">
+          <footer class="search-help">
             <span>Arrow keys Navigate</span>
             <span>Enter Open</span>
             <span>Esc Close</span>
+            <a class="search-page-link" href=${productSearchPageHref(this.query)}>Open Search</a>
           </footer>
         </div>
       </dialog>

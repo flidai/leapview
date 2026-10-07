@@ -1,3 +1,4 @@
+import { retainedVisualExplorerHref } from './visual-action-links'
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { ChartColumn, CircleHelp, ExternalLink, LayoutDashboard, Maximize2, Move, Plus, RefreshCw, TrendingUp, X, type IconNode } from 'lucide'
@@ -500,6 +501,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
             title=${this.selectedVisualTitle || this.visuals[this.selectedVisualID].spec.title || 'Visual result'}
             .payload=${this.visuals[this.selectedVisualID]}
             .explorerHref=${this.selectedExplorerHref}
+            .auditHref=${retainedVisualExplorerHref(agent.activeConversationId ?? '', [...(agent.transcript ?? [])].reverse().find(item => item.artifact?.id === this.selectedVisualID && item.status === 'complete'), agent.status)}
             .saving=${this.visualSaving}
             .saved=${this.visualSaved}
             .saveError=${this.visualSaveError}

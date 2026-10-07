@@ -326,8 +326,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		CurrentRoleLabel: config.HTTP.CurrentRoleLabel, Layout: config.HTTP.Layout, ChatSignal: m.chatSignal,
 		ChatSignalWith: m.ChatSignalWith, SearchReferences: searchReferences,
 		ResolveTurnContext: resolveTurnContext, QueueMissingTitle: m.queueMissingChatTitle,
-		ExecuteStartedChatTurn: m.executeStartedChatTurn,
-		EnqueueRun:             m.EnqueueRun, EnqueueChatRun: m.EnqueueChatRun,
+		AuthorizeRetainedVisual: m.authorizeRetainedVisual,
+		ExecuteStartedChatTurn:  m.executeStartedChatTurn,
+		EnqueueRun:              m.EnqueueRun, EnqueueChatRun: m.EnqueueChatRun,
 		CancelQueuedRun: m.CancelQueuedRun, RecordCommandAudit: m.recordCommandAudit, Logger: config.Logger,
 		APIGenToolContracts: apiGenToolContracts(m.apiOperations),
 	})

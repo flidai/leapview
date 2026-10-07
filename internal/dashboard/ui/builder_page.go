@@ -234,6 +234,9 @@ func dashboardBuilderUpdatesURL(builder uisignals.DashboardBuilderSignal) string
 	if builder.SelectedPageID != nil && strings.TrimSpace(*builder.SelectedPageID) != "" {
 		values.Set("page", strings.TrimSpace(*builder.SelectedPageID))
 	}
+	if builder.SelectedVisualID != nil && strings.TrimSpace(*builder.SelectedVisualID) != "" {
+		values.Set("visual", strings.TrimSpace(*builder.SelectedVisualID))
+	}
 	return "/updates?" + values.Encode()
 }
 

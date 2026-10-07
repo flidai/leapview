@@ -1210,6 +1210,12 @@ func chooseVisual(pages []uisignals.DashboardBuilderPageSignal, pageID, requeste
 					return requested
 				}
 			}
+			// Agent operations may name the authored visual instead of its placement.
+			for _, visual := range page.Visuals {
+				if visual.VisualID == requested {
+					return visual.ID
+				}
+			}
 		}
 		return page.Visuals[0].ID
 	}

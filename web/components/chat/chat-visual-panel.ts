@@ -10,6 +10,7 @@ export class ChatVisualPanel extends LitElement {
   @property({ attribute: 'artifact-id' }) artifactId = ''
   @property({ attribute: false }) payload?: VisualizationEnvelope
   @property({ attribute: false }) explorerHref = ''
+  @property({ attribute: false }) auditHref = ''
   @property({ type: Boolean }) saving = false
   @property({ type: Boolean }) saved = false
   @property({ type: Boolean }) modal = false
@@ -111,7 +112,7 @@ export class ChatVisualPanel extends LitElement {
           </div>
         </div>
         <div class="content">
-          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()}></lv-visual-artifact>
+          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()} .explorerHref=${this.auditHref}></lv-visual-artifact>
           ${this.saveError ? html`<p class="feedback error" role="alert">${this.saveError}</p>` : nothing}
           ${this.saved ? html`<p class="feedback" role="status">Saved to Data Explorer.</p>` : nothing}
         </div>

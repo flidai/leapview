@@ -1,3 +1,4 @@
+import { retainedVisualExplorerHref } from './visual-action-links'
 import { LitElement, html } from 'lit'
 import { chatPageStyles } from './chat-page.styles'
 import { state } from 'lit/decorators.js'
@@ -195,6 +196,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             title=${this.selectedVisualTitle || selectedVisual.spec.title || 'Visual result'}
             .payload=${selectedVisual}
             .explorerHref=${this.selectedExplorerHref}
+            .auditHref=${retainedVisualExplorerHref(agent.activeConversationId ?? '', [...(agent.transcript ?? [])].reverse().find(item => item.artifact?.id === this.selectedVisualID && item.status === 'complete'), agent.status)}
             .saving=${this.visualSaving}
             .saved=${this.visualSaved}
             .saveError=${this.visualSaveError}

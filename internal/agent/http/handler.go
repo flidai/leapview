@@ -51,32 +51,33 @@ type Options struct {
 	// ActiveProjectID is retained for statically bound compositions. When
 	// ResolveProjectID is configured, it is authoritative and evaluated for
 	// each request; it is never read from request paths or signal payloads.
-	ActiveProjectID        string
-	ResolveProjectID       func(context.Context) (projectgraph.ResourceID, error)
-	ResolveGroupIDs        func(context.Context, string) ([]string, error)
-	Settings               Settings
-	PlatformAdmin          func(context.Context, string) (bool, error)
-	CurrentPrincipal       func(*stdhttp.Request) (Principal, bool)
-	CurrentCredential      func(*stdhttp.Request) (access.APICredential, bool)
-	Broker                 *pagestream.Broker
-	CSRFToken              func(*stdhttp.Request) string
-	CurrentRoleLabel       func(*stdhttp.Request) string
-	Layout                 func(*stdhttp.Request) webpage.Provider
-	ChatSignal             func(context.Context, agent.Scope, string, string, bool) ui.ChatViewState
-	ChatSignalWith         func(context.Context, agent.Scope, string, []agent.ChatTranscriptItem, agent.ChatArtifactSignals, string, bool) ui.ChatViewState
-	SearchReferences       func(*stdhttp.Request, agent.TurnContext, string, int) ([]ui.AgentReferenceSignal, error)
-	ResolveTurnContext     func(*stdhttp.Request, agent.Scope, agent.TurnContext) (agent.TurnContext, error)
-	QueueMissingTitle      func(context.Context, agent.Scope, string, string)
-	ExecuteStartedChatTurn func(context.Context, *agent.Service, agent.Scope, *agent.StartedPrompt, ChatTurnExecution) (agent.PromptResult, error)
-	EnqueueRun             func(context.Context, agent.Scope, *agent.StartedPrompt) error
-	EnqueueChatRun         func(context.Context, agent.Scope, *agent.StartedPrompt, string) error
-	CancelQueuedRun        func(context.Context, agent.Scope, string, string) (bool, error)
-	RecordCommandAudit     func(context.Context, CommandAuditInput) error
-	BuildAuditIntent       func(context.Context, CommandAuditInput) (*access.AuditIntent, error)
-	Logger                 *slog.Logger
-	APIGenToolContracts    map[string]agenttool.Contract
-	DashboardAuthoring     *dashboardauthoringapplication.Application
-	AuthorizeSemanticModel func(context.Context, agent.Scope, string) error
+	ActiveProjectID         string
+	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
+	ResolveGroupIDs         func(context.Context, string) ([]string, error)
+	Settings                Settings
+	PlatformAdmin           func(context.Context, string) (bool, error)
+	CurrentPrincipal        func(*stdhttp.Request) (Principal, bool)
+	CurrentCredential       func(*stdhttp.Request) (access.APICredential, bool)
+	Broker                  *pagestream.Broker
+	CSRFToken               func(*stdhttp.Request) string
+	CurrentRoleLabel        func(*stdhttp.Request) string
+	Layout                  func(*stdhttp.Request) webpage.Provider
+	ChatSignal              func(context.Context, agent.Scope, string, string, bool) ui.ChatViewState
+	ChatSignalWith          func(context.Context, agent.Scope, string, []agent.ChatTranscriptItem, agent.ChatArtifactSignals, string, bool) ui.ChatViewState
+	SearchReferences        func(*stdhttp.Request, agent.TurnContext, string, int) ([]ui.AgentReferenceSignal, error)
+	ResolveTurnContext      func(*stdhttp.Request, agent.Scope, agent.TurnContext) (agent.TurnContext, error)
+	AuthorizeRetainedVisual func(context.Context, agent.Scope, string) error
+	QueueMissingTitle       func(context.Context, agent.Scope, string, string)
+	ExecuteStartedChatTurn  func(context.Context, *agent.Service, agent.Scope, *agent.StartedPrompt, ChatTurnExecution) (agent.PromptResult, error)
+	EnqueueRun              func(context.Context, agent.Scope, *agent.StartedPrompt) error
+	EnqueueChatRun          func(context.Context, agent.Scope, *agent.StartedPrompt, string) error
+	CancelQueuedRun         func(context.Context, agent.Scope, string, string) (bool, error)
+	RecordCommandAudit      func(context.Context, CommandAuditInput) error
+	BuildAuditIntent        func(context.Context, CommandAuditInput) (*access.AuditIntent, error)
+	Logger                  *slog.Logger
+	APIGenToolContracts     map[string]agenttool.Contract
+	DashboardAuthoring      *dashboardauthoringapplication.Application
+	AuthorizeSemanticModel  func(context.Context, agent.Scope, string) error
 }
 
 func (h *Handler) DashboardBootstrap(r *stdhttp.Request) ui.ChatViewState {

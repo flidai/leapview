@@ -5,7 +5,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	stdhttp "net/http"
@@ -371,54 +370,6 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/models/search", wrap(h.ModelsSearch))
 	r.Get("/semantic-models/search", wrap(h.SemanticModelsSearch))
 	r.Get("/dashboards/search", wrap(h.DashboardsSearch))
-}
-
-func (h *BrowserHandler) ProductSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, ok := h.currentPrincipal(r)
-	if !ok || strings.TrimSpace(principal.ID) == "" {
-		stdhttp.Error(w, "authentication is required", stdhttp.StatusUnauthorized)
-		return
-	}
-	if h.SearchCatalog == nil {
-		stdhttp.Error(w, "search is temporarily unavailable", stdhttp.StatusServiceUnavailable)
-		return
-	}
-	credential := h.currentCredential(r)
-	projectID := projectgraph.ResourceID("")
-	if !principal.DevBypass || typedBrowserCredential(credential) {
-		var err error
-		projectID, err = h.boundProject(r.Context())
-		if err != nil {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-			return
-		}
-	}
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	limit := 24
-	request := projectcatalog.SearchRequest{
-		PrincipalID: principal.ID, DevAuthBypass: principal.DevBypass, Query: query,
-		Kinds: append([]projectgraph.Kind(nil), productSearchKinds...), Limit: limit,
-	}
-	page, err := searchCatalogAuthorized(r.Context(), h.SearchCatalog, request, credential, projectID)
-	if err != nil {
-		status := stdhttp.StatusServiceUnavailable
-		if errors.Is(err, projectcatalog.ErrInvalidRequest) || errors.Is(err, projectcatalog.ErrInvalidCursor) {
-			status = stdhttp.StatusBadRequest
-		}
-		stdhttp.Error(w, stdhttp.StatusText(status), status)
-		return
-	}
-	items := make([]productSearchResult, 0, len(page.Items))
-	for _, item := range page.Items {
-		if result, ok := productSearchResultFor(item); ok {
-			items = append(items, result)
-		}
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
-		Items []productSearchResult `json:"items"`
-	}{Items: items})
 }
 
 type productSearchResult struct {
