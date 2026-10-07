@@ -215,12 +215,12 @@ class ChatThread extends LitElement {
     const noFinalAnswer = !running && !this.status.error && !allItems.some(item => item.kind === 'error' || (item.kind === 'tool' && Boolean(item.artifact) && this.toolStatus(item) === 'complete'))
       && allItems.some(item => item.kind === 'tool' && this.toolStatus(item) === 'error')
       && lastAnswerOrTool?.kind === 'tool'
-    const actionItems = allItems.filter(item => item.kind === 'tool' && this.toolStatus(item) === 'complete' && !item.error && dashboardActionLinks(item, this.conversationId).length > 0)
     const lastPreview = [...allItems].reverse().find(item => item.name === 'preview_dashboard_draft' && this.toolStatus(item) === 'complete' && !item.error)
+    const actionItems = allItems.filter(item => item !== lastPreview && item.kind === 'tool' && this.toolStatus(item) === 'complete' && !item.error && dashboardActionLinks(item, this.conversationId).length > 0)
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
-          ${steps.length > 0 || context.length > 0 || actionItems.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context) : nothing}
+          ${steps.length > 0 || context.length > 0 || actionItems.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context, lastPreview) : nothing}
           ${displayedItems.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item))}
           ${noFinalAnswer ? html`<p class="run-notice" role="status">This request stopped before a final answer was ready. You can ask the agent to continue.</p>` : nothing}
           ${lastPreview ? this.renderToolActions(lastPreview) : nothing}
@@ -230,7 +230,7 @@ class ChatThread extends LitElement {
     `
   }
 
-  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, context: ChatTranscriptItemSignal[]) {
+  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, context: ChatTranscriptItemSignal[], primaryAction?: ChatTranscriptItemSignal) {
     const start = Date.parse(prompt?.createdAt || allItems[0]?.createdAt || '')
     const end = Date.parse(allItems[allItems.length - 1]?.createdAt || '')
     const elapsed = Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatElapsed(end - start) : ''
@@ -239,7 +239,7 @@ class ChatThread extends LitElement {
       <summary>${label}${lucideIcon(ChevronRight, { size: 16 })}</summary>
       ${steps.length > 0 ? html`<div class="run-step-list">${steps.map(item => html`<div class="run-step">${item.markdown || item.text || ''}</div>`)}</div>` : nothing}
       ${context.map(item => this.renderAgentItem(item))}
-      ${allItems.filter(item => item.kind === 'tool' && this.toolStatus(item) === 'complete').map(item => this.renderToolActions(item))}
+      ${allItems.filter(item => item !== primaryAction && item.kind === 'tool' && this.toolStatus(item) === 'complete').map(item => this.renderToolActions(item))}
     </details>`
   }
 

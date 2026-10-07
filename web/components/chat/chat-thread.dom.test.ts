@@ -1022,6 +1022,35 @@ test('message edit action ignores a transcript item without a persisted ID', asy
 })
 
 
+test('a preview action appears once while other dashboard destinations remain in steps', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.conversationId = 'conversation'
+      e.status = { enabled: true, running: false }
+      e.transcript = [
+        { id: 'user', kind: 'user', text: 'Build the dashboard' },
+        { id: 'source', kind: 'tool', name: 'get_dashboard_draft', toolCallId: 'source', runId: 'run', status: 'complete' },
+        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', runId: 'run', status: 'complete' },
+        { id: 'answer', kind: 'assistant', text: 'Dashboard ready.' },
+      ]
+      await e.updateComplete
+    })
+    const thread = page.locator('lv-chat-thread')
+    expect(await thread.locator('a[href*="/actions/preview/open"]').count()).toBe(1)
+    expect(await thread.locator('.run-steps a[href*="/actions/source/open"]').count()).toBe(1)
+    expect(await thread.locator('.agent-stack > .tool-actions a[href*="/actions/preview/open"]').count()).toBe(1)
+    await thread.evaluate(async (e: any) => {
+      e.transcript = e.transcript.filter((item: any) => item.id !== 'source')
+      await e.updateComplete
+    })
+    expect(await thread.locator('.run-steps').count()).toBe(0)
+    expect(await thread.locator('a[href*="/actions/preview/open"]').count()).toBe(1)
+  } finally { await page.close() }
+})
+
 test('builder chat opens each dashboard visual individually without duplicate add actions', async () => {
   const page = await browser.newPage()
   try {

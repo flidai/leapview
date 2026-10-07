@@ -9,6 +9,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -21,18 +22,26 @@ type chatDraftVisual struct {
 }
 
 // A copied visual gets independent filters and no links to its source canvas.
-func (input chatDraftVisual) forVisual(id string) chatDraftVisual {
+func (input chatDraftVisual) forVisual(id string) (chatDraftVisual, error) {
 	input.Visual.Interactions = nil
-	filters := make([]document.DashboardFilter, 0, len(input.Filters))
+	filterIDs := make(map[string]string, len(input.Filters))
 	for i, filter := range input.Filters {
-		filter.ID = fmt.Sprintf("%s_filter_%d", id, i)
+		filterIDs[filter.ID] = fmt.Sprintf("%s_filter_%d", id, i)
+	}
+	filters := make([]document.DashboardFilter, 0, len(input.Filters))
+	for _, source := range input.Filters {
+		filter, err := application.RemapChatFilterDependencies(source, filterIDs)
+		if err != nil {
+			return chatDraftVisual{}, err
+		}
+		filter.ID = filterIDs[source.ID]
 		targets := []string{id}
 		filter.Targets = &targets
 		filter.URLParameter = nil
 		filters = append(filters, filter)
 	}
 	input.Filters = filters
-	return input
+	return input, nil
 }
 
 // Size imported visuals in pixels, then snap to the destination grid. This
@@ -154,7 +163,11 @@ func (h Handler) createChatDashboard(w nethttp.ResponseWriter, r *nethttp.Reques
 		if savedID := r.FormValue("savedVisualId"); savedID != "" {
 			id = savedVisualComponentID(savedID, requestID)
 		}
-		input = input.forVisual(id)
+		input, err := input.forVisual(id)
+		if err != nil {
+			writeBuilderError(w, r, err)
+			return
+		}
 		doc.Spec.Visuals[id] = input.Visual
 		placement := chatVisualPlacement(string(input.Visual.Type), doc.Spec, page, 1, i == firstChart && (len(inputs) == 1 || chartCount >= 3 && chartCount%2 == 1))
 		page.Components = append(page.Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{

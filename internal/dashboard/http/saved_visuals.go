@@ -97,7 +97,11 @@ func (handler Handler) SaveVisual(w nethttp.ResponseWriter, r *nethttp.Request) 
 		handler.savedVisualLibrary(w, r, "The visual needs a title and source.")
 		return
 	}
-	input = input.forVisual("saved")
+	input, err = input.forVisual("saved")
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
 	doc := document.DashboardDocument{APIVersion: document.DashboardApiVersionLeapviewDevV1, Kind: document.DashboardResourceKindDashboard, Metadata: document.DashboardMetadata{ID: "dashboard:saved-visual", Name: "saved-visual"}, Spec: document.DashboardSpec{SemanticModel: input.SemanticModelID, Visuals: map[string]document.DashboardVisual{"saved": input.Visual}, Filters: input.Filters, Pages: []document.DashboardPage{{ID: "overview", Title: "Overview", Components: []document.DashboardPageComponent{}}}}}
 	if err = authoring.ValidateCanonicalDocument(doc); err != nil {
 		handler.savedVisualLibrary(w, r, "This visual definition cannot be saved: "+err.Error())
@@ -199,7 +203,11 @@ func (handler Handler) AddSavedVisual(w nethttp.ResponseWriter, r *nethttp.Reque
 		row = int32(requestedRow)
 	}
 	placement := chatVisualPlacement(string(input.Visual.Type), doc.Spec, *page, row)
-	input = input.forVisual(id)
+	input, err = input.forVisual(id)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
 	doc.Spec.Visuals[id] = input.Visual
 	page.Components = append(page.Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: id, Type: "visual", Placement: placement}, Type: "visual", Visual: id}})
 	doc.Spec.Filters = append(doc.Spec.Filters, input.Filters...)
