@@ -4004,3 +4004,44 @@ test('builder Back retains the originating chat across reload URLs', async () =>
     expect(new URL(page.url()).pathname).toBe('/chats/agentconv_origin')
   } finally { await page.close() }
 })
+
+test('embedded page tabs refresh selected-page previews without remounting the builder', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    const envelope = await editor.evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const builder = JSON.parse(JSON.stringify(element.builder))
+      builder.pages[1].visuals = [{ ...builder.pages[0].visuals[0], slots: [
+        { id: 'category', kind: 'dimension', fieldId: 'orders.status', label: 'Status' },
+        { id: 'value', kind: 'metric', fieldId: 'orders.count', label: 'Orders' },
+      ] }]
+      mergePatch({ builder }); await element.updateComplete
+      ;(window as any).retainedTabBuilder = element
+      ;(window as any).retainedTabCanvas = element.shadowRoot.querySelector('.canvas')
+      builder.selectedPageId = 'details'
+      builder.preview.active = true
+      return { builder, runtime: { servingStateId: 'generation-7' }, status: element.status }
+    })
+    const preview = governedBarPreviewEnvelope('page-details')
+    preview.consumerIdentity = 'details/sales-chart'
+    let requests = 0
+    await page.route('**/*builderReceipt=1*', async route => {
+      requests++
+      expect(new URL(route.request().url()).searchParams.get('page')).toBe('details')
+      await route.fulfill({ contentType: 'text/html', body: `<html><body><div id="chat-dashboard-receipt"></div><script>parent.postMessage(${JSON.stringify({ type: 'lv-builder-imported', envelope: { ...envelope, builderVisuals: { 'sales-chart': preview } }, agentContext: {} })}, location.origin)</script></body></html>` })
+    })
+    await editor.locator('.page-tab[data-page-id="details"]').click()
+    await editor.locator('canvas').first().waitFor({ timeout: 3000 })
+    const state = await editor.evaluate((element: any) => ({
+      sameBuilder: (window as any).retainedTabBuilder === element,
+      sameCanvas: (window as any).retainedTabCanvas === element.shadowRoot.querySelector('.canvas'),
+      selectedPage: element.selectedPage(element.builder)?.id,
+      pending: element.commandPending,
+    }))
+    expect(requests).toBe(1)
+    expect(state).toEqual({ sameBuilder: true, sameCanvas: true, selectedPage: 'details', pending: false })
+  } finally { await page.close() }
+})

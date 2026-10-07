@@ -6125,6 +6125,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     this.emit('lv-builder-page-select', { ...this.commandDetail(), pageId: pageID })
+    // Embedded tabs retain the document, so load the newly selected page's
+    // governed preview instead of keeping envelopes from the previous page.
+    if (this.embeddedInChat) this.refreshBuilderSignals()
   }
 
   private openPageSettings(page: DashboardBuilderPageSignal, event?: Event): void {
