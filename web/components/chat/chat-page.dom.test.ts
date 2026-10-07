@@ -775,9 +775,10 @@ test('chat switch waits for bootstrap before showing agent availability', async 
 })
 
 async function openDashboardTestVisual(page: Page): Promise<void> {
-  await page.goto(fixture.baseURL)
-  await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-thread'))
-  await page.evaluate(async () => {
+  await page.goto(`${fixture.baseURL}/chats/c1`)
+  await page.locator('lv-chat-page lv-chat-thread').waitFor()
+  await page.locator('lv-chat-page').evaluate(async (chat: any) => {
+    await chat.updateComplete
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
     const field = (id: string, role: string) => ({ id, role, dataType: role === 'metric' ? 'decimal' : 'string', nullable: false, label: id })
     mergePatch({ agent: { transcript: [{ id: 'tool-dashboard', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'chart-dashboard', type: 'bar', summary: 'Net sales by country' } }] }, visuals: { 'chart-dashboard': {
@@ -786,7 +787,6 @@ schemaVersion: 14, visualID: 'chart-dashboard', rendererID: 'echarts', specRevis
           dataState: { kind: 'inline', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['France', 42]], completeness: 'complete' }] },
           selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
     } } })
-    const chat = document.querySelector('lv-chat-page') as any
     await chat.updateComplete
     chat.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', {
       detail: { artifactId: 'chart-dashboard', title: 'Net sales by country', explorerHref: '/explore?model=sales' }, bubbles: true, composed: true,
