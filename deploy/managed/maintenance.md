@@ -116,8 +116,11 @@ Keep the exact private profile/request available for recovery. The controller:
 
 1. Acquires the shared host lock and validates the artifact, configuration,
    credentials, retained images and exclusive process/ingress inventory.
-2. Records closure intent durably. The predecessor closes HTTP/work admission,
-   cancels SSE subscriptions, drains admitted ordinary requests and stops workers.
+2. Records closure intent durably. The predecessor immediately closes HTTP
+   admission and cancels SSE subscriptions. Workers remain authorized during
+   ordinary request drain, then stop and drain before the closure RPC acknowledges
+   success. Work admission is considered closed only after that acknowledgement;
+   a timeout cannot advance the handoff to another process owner.
 3. Writes the private ingress gate and recreates the proxy without host ports.
    It gracefully stops the app, verifies exit status and acquires/releases the
    home lock to prove the previous owner is gone.
