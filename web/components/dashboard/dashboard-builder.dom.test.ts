@@ -2927,6 +2927,7 @@ test('dashboard builder exposes the full mobile surface through one vertical scr
       const body = root.querySelector('.body') as HTMLElement
       return {
         hostOverflowY: getComputedStyle(host).overflowY,
+        hostOverflowX: getComputedStyle(host).overflowX,
         hostScrollHeight: host.scrollHeight,
         hostClientHeight: host.clientHeight,
         visualBuilderReachable: reachable.top < innerHeight && reachable.bottom > 0,
@@ -2939,6 +2940,7 @@ test('dashboard builder exposes the full mobile surface through one vertical scr
       }
     })
     expect(state.hostOverflowY).toBe('auto')
+    expect(state.hostOverflowX).toBe('hidden')
     expect(state.hostScrollHeight).toBeGreaterThan(state.hostClientHeight)
     expect(state.visualBuilderReachable).toBe(true)
     expect(state.builderWidth).toBe(390)

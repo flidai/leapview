@@ -450,6 +450,7 @@ export const dashboardBuilderDialogsStyles = css`
       :host {
         height: 100%;
         max-height: 100svh;
+        overflow-x: hidden;
         overflow-y: auto;
       }
 

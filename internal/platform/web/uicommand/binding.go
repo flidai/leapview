@@ -3,7 +3,6 @@ package uicommand
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -55,7 +54,7 @@ func VerifyClaim(claims []string, operationID string) error {
 		return ErrOperationMissing
 	}
 	if len(claims) != 1 || strings.TrimSpace(claims[0]) != operationID {
-		return fmt.Errorf("%w: claimed %q, dispatched %q", ErrOperationMismatch, claims, operationID)
+		return ErrOperationMismatch
 	}
 	return nil
 }
@@ -79,11 +78,11 @@ func VerifyWorkflowClaims(claims []string, bindings []Binding) error {
 	}
 	sort.Strings(expected)
 	if len(claims) != len(expected) {
-		return fmt.Errorf("%w: claimed %q, workflow requires %q", ErrOperationMismatch, claims, expected)
+		return ErrOperationMismatch
 	}
 	for index := range expected {
 		if claims[index] != expected[index] {
-			return fmt.Errorf("%w: claimed %q, workflow requires %q", ErrOperationMismatch, claims, expected)
+			return ErrOperationMismatch
 		}
 	}
 	return nil

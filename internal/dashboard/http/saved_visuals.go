@@ -174,7 +174,7 @@ func (handler Handler) AddSavedVisual(w nethttp.ResponseWriter, r *nethttp.Reque
 		if handler.chatDashboardReceipt(w, r, dashboardID.String()) {
 			return
 		}
-		nethttp.Redirect(w, r, href, nethttp.StatusSeeOther)
+		redirectSavedVisualToBuilder(w, r, href)
 		return
 	}
 	if r.FormValue("revisionId") != string(draft.Revision.Token().RevisionID) {
@@ -216,7 +216,7 @@ func (handler Handler) AddSavedVisual(w nethttp.ResponseWriter, r *nethttp.Reque
 	if handler.chatDashboardReceipt(w, r, dashboardID.String()) {
 		return
 	}
-	nethttp.Redirect(w, r, href, nethttp.StatusSeeOther)
+	redirectSavedVisualToBuilder(w, r, href)
 }
 
 // Unsave affects only the account library; dashboard copies remain independent.
@@ -241,4 +241,14 @@ func (handler Handler) UnsaveVisual(w nethttp.ResponseWriter, r *nethttp.Request
 
 func savedVisualComponentID(savedID, requestID string) string {
 	return "saved_" + strings.ReplaceAll(savedID, "-", "") + "_" + strings.ReplaceAll(requestID, "-", "")
+}
+
+// Only local builder URLs can be used after a saved-visual import.
+func redirectSavedVisualToBuilder(w nethttp.ResponseWriter, r *nethttp.Request, href string) {
+	target, err := url.Parse(strings.ReplaceAll(href, "\\", "/"))
+	if err != nil || target.Hostname() != "" || target.Scheme != "" || target.User != nil || !strings.HasPrefix(target.Path, "/dashboards/") {
+		nethttp.Error(w, "invalid dashboard builder destination", nethttp.StatusBadRequest)
+		return
+	}
+	nethttp.Redirect(w, r, target.String(), nethttp.StatusSeeOther)
 }

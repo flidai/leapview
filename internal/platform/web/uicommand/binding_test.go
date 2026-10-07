@@ -3,6 +3,7 @@ package uicommand
 import (
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	apigenui "github.com/Yacobolo/toolbelt/apigen/runtime/ui"
@@ -25,5 +26,21 @@ func TestComposedClaimsStillVerifyEachIndividualCommand(t *testing.T) {
 	request.Header.Set(HeaderOperationID, "createWidget,deleteWidget,runWidget")
 	if err := VerifyWorkflowClaims(OperationClaims(request), workflow); !errors.Is(err, ErrOperationMismatch) {
 		t.Fatalf("workflow accepted an extra operation: %v", err)
+	}
+}
+
+func TestClaimMismatchDoesNotExposeRequestHeaders(t *testing.T) {
+	const sensitive = "Bearer private-token-do-not-log"
+	request := httptest.NewRequest("POST", "/workflow", nil)
+	request.Header.Set(HeaderOperationID, sensitive)
+	claims := OperationClaims(request)
+	workflow := []Binding{apigenui.MustAction("widget.run", "runWidget")}
+	for _, err := range []error{VerifyClaim(claims, "runWidget"), VerifyWorkflowClaims(claims, workflow), VerifyWorkflowClaims(append([]string{"runWidget"}, claims...), workflow)} {
+		if !errors.Is(err, ErrOperationMismatch) {
+			t.Fatalf("mismatch not rejected: %v", err)
+		}
+		if strings.Contains(err.Error(), sensitive) {
+			t.Fatal("request header leaked into a loggable error")
+		}
 	}
 }
