@@ -175,3 +175,46 @@ records success against the exact `4c3edcaa` image digest above, including
 `browserJourney`, `governedQuery` and `restartPersistence`. This refreshes the
 existing Compose evaluation-dashboard evidence; it does not substitute for
 local Sales preview, live-edit scenarios or timing observations.
+
+## First synchronized preview and retained-data findings
+
+[Candidate build 37607465258](https://github.com/flidai/leapview/actions/runs/37607465258)
+contains the profile-scope correction. Its Linux AMD64 archive is
+`leapview-cli-candidate-37607465258-1-linux-amd64.tar.gz`, SHA-256
+`372c33dcb19c636b59667d38729e5edcaea2da57c9825cd61ad9e8edf1298e21`,
+revision `f04c615a06b72511ccf4c7bd7937cb69d52650ca`, built at
+`2026-10-07T10:26:07Z`. Its pinned runtime is
+`ghcr.io/flidai/leapview@sha256:f6410f568b95a203693ae2da4c44a95f04f6aa1a5baa49061a8fd8bd7046b7d0`.
+The embedded version remains `0.3.0-alpha.1`, with development and dirty false.
+All four native static reports were retained with `partial` results and no
+failures; this does not establish the missing platform lifecycle observations.
+
+The first installed local `dev` now stages the fixture, applies the profile,
+synchronizes and activates the candidate, and emits working preview URLs.
+Retained-data restart fails while re-uploading the sample: the token permits
+`connection.upload`, but the captured project policy does not. Initial staging
+uses `connection.create` before the connection exists; the active connection
+correctly requires an explicit upload grant. The local role presets deliberately
+exclude upload authority. Exact reset succeeded and no checkout-owned Docker
+resources remained. Endpoint verification correctly stays unproven on failure.
+
+A separate browser run against the same archive/image observed these scenarios:
+
+| Scenario | Observed result |
+| --- | --- |
+| Authenticated local Sales preview | HTTP 200; four settled visuals; governed and accessible KPI values 12 sales and 13,650 revenue |
+| Presentation note edit | New candidate rendered with unchanged governed values |
+| Invalid semantic reference | Visible stale-preview diagnostic; last valid candidate and governed values retained |
+| Repair to a distinct valid source | New candidate rendered and diagnostic cleared |
+| Semantic `sum` to `avg` | New candidate rendered 1,137.5 revenue and 12 sales |
+| Restore previous semantic source | Failed: old plan/publication replayed after a newer candidate was active |
+| Model edit and final restoration observation | Not reached; temporary fixture restored during cleanup |
+
+The restoration diagnostic was `local active generation differs from the exact
+published candidate`. A source-only local plan idempotency key reused a prior
+plan without accounting for the current target revision. The observer timed out
+waiting for a successfully activated candidate, and exact runtime reset passed.
+Reports are under `.tmp/qualification/candidate-37607465258-1/`, including
+`lifecycle/qualification-report.json` and `local-preview/preview-observation.json`.
+These are partial functional observations, not a successful full lifecycle or
+latency distribution. Both findings remain in the consolidated #899 work.

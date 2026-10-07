@@ -321,3 +321,27 @@ The real PostgreSQL regression also reproduces the old ceiling's 403 and proves
 profile application plus native session persistence with the added scope. Native
 and existing REST bootstrap journeys pass together (14.213s); full CLI passes
 (43.857s). Independent review of the shared local ceiling found no issue.
+
+Candidate 37607465258 first-start synchronization and local Sales preview now
+work. Browser observations verify four settled visuals, 12 sales, 13,650 revenue,
+presentation changes, invalid-edit retention, repair, and semantic averaging to
+1,137.5. Two further qualification findings remain consolidated in #899:
+retained restart requires a captured exact upload grant for the declared fixture,
+and returning to previous source must plan against the current target revision
+instead of replaying its old publication. Typed exact grant creation extends the
+existing grant API and preserves legacy requests; local provisioning does not
+broaden role presets or active snapshot authority. Retained fixture reuse must
+prove the exact available server revision and manifest after an initial upload
+authorization denial. Local planning keys include the authenticated target
+revision and reject races before build. The exact failed artifact and successful
+cleanup are recorded in the candidate evidence; the next matched artifact must
+prove restart and full edit/restoration behavior.
+
+The f04c615 head passed hosted CI and security. Its local full `task ci` passed
+generator, Go, PostgreSQL conformance, quality and coverage checks. Reports hit
+the watchdog and retried; the run later failed when the unchanged project-page
+test `unavailable pipeline shows guidance without an unrelated connections
+action` exceeded five seconds and subsequent tests saw a closed browser. That
+test passed alone (489.97ms), and its source matches main. Retained logs are
+`.tmp/fai-1133/task-ci-profile-scope.log` and
+`.tmp/fai-1133/project-page-timeout-recheck.log`. No frontend fix is included.
