@@ -1,0 +1,296 @@
+{
+  "issue": "FAI-1149",
+  "date_utc": "2026-10-07",
+  "decision": "local mechanism screen only; no production adoption",
+  "source": "1bc97690e851447cb97cfbc3764fafd69458378a",
+  "source_archive_sha256": "01c9359c50a077283c77e59b71e10352e31752c45176073761590960be7c3f6c",
+  "dockerfile_sha256": "e51666b2ca63d2b5fe4452d0052fb979f7fded9869c53636e3dfd76ceb33bddf",
+  "builder_image": "moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3",
+  "platform": "linux/amd64",
+  "harness_sha256": "0e2de8320005219764faedf6d4d2d33f25aca5e36085d6b16e0870124723188a",
+  "host": {
+    "platform": "Linux-6.18.54-x86_64-with-glibc2.42",
+    "cpu_count": 16,
+    "load_average": [
+      6.93115234375,
+      5.1953125,
+      2.94873046875
+    ],
+    "canonical_ci_concurrent": true,
+    "limitations": "Shared VPS; Docker engine image store pre-exists. Fresh means a new isolated BuildKit content store and cache mounts, not a cold machine or hosted cache service."
+  },
+  "scope": "local SQLC-only screen; no hosted cost, full-image, adoption or SLO conclusion",
+  "limits": [
+    "Concurrent canonical CI and other shared-VPS work; not an isolated hosted experiment.",
+    "Fresh BuildKit stores and mounts; existing host image store and local cache transfer.",
+    "Total build includes diagnostic version/environment and output export overhead.",
+    "One producer per mode, three alternating consumer pairs; no ten confirmations or p95.",
+    "No whole image, hosted transfer/billing, adoption threshold or whole-CI SLO conclusion."
+  ],
+  "generated_file_count": 111,
+  "generated_directory_count": 29,
+  "generated_manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+  "mutated_manifest_sha256": "7d090c7e783508342559079de4c54cad8f224ca8f6d0360147c3864fa8ca398d",
+  "modes": {
+    "baseline": {
+      "producer_build_seconds": 266.61458060500445,
+      "producer_lifecycle_seconds": 290.26175896904897,
+      "exported_cache_bytes": 966424237,
+      "consumer_sqlc_seconds": [
+        103,
+        88,
+        94
+      ],
+      "consumer_build_seconds": [
+        161.32962004002184,
+        151.9148132079863,
+        153.2211339790374
+      ],
+      "consumer_lifecycle_seconds": [
+        171.28740631300025,
+        162.2198203819571,
+        163.2989813950262
+      ],
+      "median_consumer_build_seconds": 153.2211339790374,
+      "median_consumer_lifecycle_seconds": 163.2989813950262,
+      "median_plus_one_third_producer_seconds": 260.05290105137584,
+      "median_plus_entire_producer_seconds": 453.5607403640752
+    },
+    "treatment": {
+      "producer_build_seconds": 266.3202502640197,
+      "producer_lifecycle_seconds": 285.040747521969,
+      "exported_cache_bytes": 1025603085,
+      "consumer_sqlc_seconds": [
+        1,
+        1,
+        0
+      ],
+      "consumer_build_seconds": [
+        70.97999835398514,
+        75.45686457498232,
+        52.698027253034525
+      ],
+      "consumer_lifecycle_seconds": [
+        77.65198093705112,
+        82.92339376104064,
+        57.5811520779971
+      ],
+      "median_consumer_build_seconds": 70.97999835398514,
+      "median_consumer_lifecycle_seconds": 77.65198093705112,
+      "median_plus_one_third_producer_seconds": 172.66556344437413,
+      "median_plus_entire_producer_seconds": 362.69272845902015
+    }
+  },
+  "samples": [
+    {
+      "mode": "baseline",
+      "kind": "producer",
+      "context_sha256": "cf356bd95b03f0048c8ffe31507e938497b2864bc7fa358acb16c4939f66fa6e",
+      "marker": "producer\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 123,
+      "build_including_export_seconds": 266.61458060500445,
+      "total_seconds_including_builder_lifecycle": 290.26175896904897,
+      "cache_bytes": 966424237,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": null
+    },
+    {
+      "mode": "treatment",
+      "kind": "producer",
+      "context_sha256": "cf356bd95b03f0048c8ffe31507e938497b2864bc7fa358acb16c4939f66fa6e",
+      "marker": "producer\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 2,
+      "build_including_export_seconds": 266.3202502640197,
+      "total_seconds_including_builder_lifecycle": 285.040747521969,
+      "cache_bytes": 1025603085,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": {
+        "vertex": "14",
+        "header": "[sqlc-tool 2/2] RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 GOBIN=/out go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 && mkdir -p /identity && go version -m /out/sqlc > /identity/build.txt && sha256sum /out/sqlc > /identity/binary.sha256 && (cd /tmp && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go env -json GOOS GOARCH CGO_ENABLED GOFLAGS GOVERSION) > /identity/environment.json",
+        "cached": false
+      }
+    },
+    {
+      "mode": "baseline",
+      "kind": "pair-1",
+      "context_sha256": "515e51af576a9ba20c5b1e13bdf16e53bb7119c435de8a04006aefa3dd9e4a54",
+      "marker": "changed-source\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 103,
+      "build_including_export_seconds": 161.32962004002184,
+      "total_seconds_including_builder_lifecycle": 171.28740631300025,
+      "cache_bytes": 966424237,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": null
+    },
+    {
+      "mode": "treatment",
+      "kind": "pair-1",
+      "context_sha256": "515e51af576a9ba20c5b1e13bdf16e53bb7119c435de8a04006aefa3dd9e4a54",
+      "marker": "changed-source\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 1,
+      "build_including_export_seconds": 70.97999835398514,
+      "total_seconds_including_builder_lifecycle": 77.65198093705112,
+      "cache_bytes": 1025603085,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": {
+        "vertex": "14",
+        "header": "[sqlc-tool 2/2] RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 GOBIN=/out go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 && mkdir -p /identity && go version -m /out/sqlc > /identity/build.txt && sha256sum /out/sqlc > /identity/binary.sha256 && (cd /tmp && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go env -json GOOS GOARCH CGO_ENABLED GOFLAGS GOVERSION) > /identity/environment.json",
+        "cached": true
+      }
+    },
+    {
+      "mode": "treatment",
+      "kind": "pair-2",
+      "context_sha256": "515e51af576a9ba20c5b1e13bdf16e53bb7119c435de8a04006aefa3dd9e4a54",
+      "marker": "changed-source\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 1,
+      "build_including_export_seconds": 75.45686457498232,
+      "total_seconds_including_builder_lifecycle": 82.92339376104064,
+      "cache_bytes": 1025603085,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": {
+        "vertex": "14",
+        "header": "[sqlc-tool 2/2] RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 GOBIN=/out go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 && mkdir -p /identity && go version -m /out/sqlc > /identity/build.txt && sha256sum /out/sqlc > /identity/binary.sha256 && (cd /tmp && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go env -json GOOS GOARCH CGO_ENABLED GOFLAGS GOVERSION) > /identity/environment.json",
+        "cached": true
+      }
+    },
+    {
+      "mode": "baseline",
+      "kind": "pair-2",
+      "context_sha256": "515e51af576a9ba20c5b1e13bdf16e53bb7119c435de8a04006aefa3dd9e4a54",
+      "marker": "changed-source\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 88,
+      "build_including_export_seconds": 151.9148132079863,
+      "total_seconds_including_builder_lifecycle": 162.2198203819571,
+      "cache_bytes": 966424237,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": null
+    },
+    {
+      "mode": "baseline",
+      "kind": "pair-3",
+      "context_sha256": "515e51af576a9ba20c5b1e13bdf16e53bb7119c435de8a04006aefa3dd9e4a54",
+      "marker": "changed-source\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 94,
+      "build_including_export_seconds": 153.2211339790374,
+      "total_seconds_including_builder_lifecycle": 163.2989813950262,
+      "cache_bytes": 966424237,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": null
+    },
+    {
+      "mode": "treatment",
+      "kind": "pair-3",
+      "context_sha256": "515e51af576a9ba20c5b1e13bdf16e53bb7119c435de8a04006aefa3dd9e4a54",
+      "marker": "changed-source\n",
+      "query_sha256": "174238b1deab1687648a8ea9c370e6f53f27db67ed2cc1ddfa2537e8997b3403",
+      "sqlc_seconds": 0,
+      "build_including_export_seconds": 52.698027253034525,
+      "total_seconds_including_builder_lifecycle": 57.5811520779971,
+      "cache_bytes": 1025603085,
+      "manifest_sha256": "b528070970664f8830508e9d731260c39ab5eb33de877cef35154a730be681f9",
+      "tool_cache_proof": {
+        "vertex": "14",
+        "header": "[sqlc-tool 2/2] RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 GOBIN=/out go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 && mkdir -p /identity && go version -m /out/sqlc > /identity/build.txt && sha256sum /out/sqlc > /identity/binary.sha256 && (cd /tmp && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go env -json GOOS GOARCH CGO_ENABLED GOFLAGS GOVERSION) > /identity/environment.json",
+        "cached": true
+      }
+    },
+    {
+      "mode": "baseline",
+      "kind": "query-probe",
+      "context_sha256": "17519befb71cce1e5baeca6425ba92773a10ce48c092d665703962f58ba431fe",
+      "marker": "changed-source\n",
+      "query_sha256": "a602e074d20c3bf75713001ff190f59977a6b95ad3c47bd693b035fdc941be40",
+      "sqlc_seconds": 133,
+      "build_including_export_seconds": 195.97830673202407,
+      "total_seconds_including_builder_lifecycle": 207.5938244179706,
+      "cache_bytes": 966424237,
+      "manifest_sha256": "7d090c7e783508342559079de4c54cad8f224ca8f6d0360147c3864fa8ca398d",
+      "tool_cache_proof": null
+    },
+    {
+      "mode": "treatment",
+      "kind": "query-probe",
+      "context_sha256": "17519befb71cce1e5baeca6425ba92773a10ce48c092d665703962f58ba431fe",
+      "marker": "changed-source\n",
+      "query_sha256": "a602e074d20c3bf75713001ff190f59977a6b95ad3c47bd693b035fdc941be40",
+      "sqlc_seconds": 0,
+      "build_including_export_seconds": 55.64822675503092,
+      "total_seconds_including_builder_lifecycle": 62.50022782001179,
+      "cache_bytes": 1025603085,
+      "manifest_sha256": "7d090c7e783508342559079de4c54cad8f224ca8f6d0360147c3864fa8ca398d",
+      "tool_cache_proof": {
+        "vertex": "14",
+        "header": "[sqlc-tool 2/2] RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 GOBIN=/out go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 && mkdir -p /identity && go version -m /out/sqlc > /identity/build.txt && sha256sum /out/sqlc > /identity/binary.sha256 && (cd /tmp && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go env -json GOOS GOARCH CGO_ENABLED GOFLAGS GOVERSION) > /identity/environment.json",
+        "cached": true
+      }
+    }
+  ],
+  "tool_identity": {
+    "binary.sha256": "1cea9587f5d6031ff6abeb4e4d0d530c877a69a2ccc861013d5c48430990ac72  /out/sqlc\n",
+    "build.txt": "/out/sqlc: go1.26.7\n\tpath\tgithub.com/sqlc-dev/sqlc/cmd/sqlc\n\tmod\tgithub.com/sqlc-dev/sqlc\tv1.31.1\th1:+V+BjBJfFNPX/RFfL8eiZD9jk9lVJUEGGllWvnYNqbc=\n\tdep\tcel.dev/expr\tv0.25.1\th1:1KrZg61W6TWSxuNZ37Xy49ps13NUovb66QLprthtwi4=\n\tdep\tfilippo.io/edwards25519\tv1.1.1\th1:YpjwWWlNmGIDyXOn8zLzqiD+9TyIlPhGFG96P39uBpw=\n\tdep\tgithub.com/antlr4-go/antlr/v4\tv4.13.1\th1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=\n\tdep\tgithub.com/coreos/go-semver\tv0.3.1\th1:yi21YpKnrx1gt5R+la8n5WgS0kCrsPp33dmEyHReZr4=\n\tdep\tgithub.com/cubicdaiya/gonp\tv1.0.4\th1:ky2uIAJh81WiLcGKBVD5R7KsM/36W6IqqTy6Bo6rGws=\n\tdep\tgithub.com/davecgh/go-spew\tv1.1.1\th1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=\n\tdep\tgithub.com/fatih/structtag\tv1.2.0\th1:/OdNE99OxoI/PqaW/SuSK9uxxT3f/tcSZgon/ssNSx4=\n\tdep\tgithub.com/go-sql-driver/mysql\tv1.9.3\th1:U/N249h2WzJ3Ukj8SowVFjdtZKfu9vlLZxjPXV1aweo=\n\tdep\tgithub.com/google/cel-go\tv0.28.0\th1:KjSWstCpz/MN5t4a8gnGJNIYUsJRpdi/r97xWDphIQc=\n\tdep\tgithub.com/jackc/pgpassfile\tv1.0.0\th1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=\n\tdep\tgithub.com/jackc/pgservicefile\tv0.0.0-20240606120523-5a60cdf6a761\th1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=\n\tdep\tgithub.com/jackc/pgx/v5\tv5.9.2\th1:3ZhOzMWnR4yJ+RW1XImIPsD1aNSz4T4fyP7zlQb56hw=\n\tdep\tgithub.com/jackc/puddle/v2\tv2.2.2\th1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo=\n\tdep\tgithub.com/jinzhu/inflection\tv1.0.0\th1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD/E=\n\tdep\tgithub.com/ncruces/go-sqlite3\tv0.32.0\th1:hNBUXp88LrfQCsuyXLqWTbTUG35sUuktDsqhhgHvU20=\n\tdep\tgithub.com/ncruces/julianday\tv1.0.0\th1:fH0OKwa7NWvniGQtxdJRxAgkBMolni2BjDHaWTxqt7M=\n\tdep\tgithub.com/pganalyze/pg_query_go/v6\tv6.2.2\th1:O0L6zMC226R82RF3X5n0Ki6HjytDsoAzuzp4ATVAHNo=\n\tdep\tgithub.com/pingcap/errors\tv0.11.5-0.20250523034308-74f78ae071ee\th1:/IDPbpzkzA97t1/Z1+C3KlxbevjMeaI6BQYxvivu4u8=\n\tdep\tgithub.com/pingcap/failpoint\tv0.0.0-20240528011301-b51a646c7c86\th1:tdMsjOqUR7YXHoBitzdebTvOjs/swniBTOLy5XiMtuE=\n\tdep\tgithub.com/pingcap/log\tv1.1.0\th1:ELiPxACz7vdo1qAvvaWJg1NrYFoY6gqAh/+Uo6aXdD8=\n\tdep\tgithub.com/pingcap/tidb/pkg/parser\tv0.0.0-20260418072757-ce92298d1124\th1:zYmP5fBH+i2yhhU6f5uOol6zxHtR2/sD47BsJLfy0oU=\n\tdep\tgithub.com/riza-io/grpc-go\tv0.2.0\th1:2HxQKFVE7VuYstcJ8zqpN84VnAoJ4dCL6YFhJewNcHQ=\n\tdep\tgithub.com/spf13/cobra\tv1.10.2\th1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=\n\tdep\tgithub.com/spf13/pflag\tv1.0.10\th1:4EBh2KAYBwaONj6b2Ye1GiHfwjqyROoF4RwYO+vPwFk=\n\tdep\tgithub.com/sqlc-dev/doubleclick\tv1.0.0\th1:2/OApfQ2eLgcfa/Fqs8WSMA6atH0G8j9hHbQIgMfAXI=\n\tdep\tgithub.com/tetratelabs/wazero\tv1.11.0\th1:+gKemEuKCTevU4d7ZTzlsvgd1uaToIDtlQlmNbwqYhA=\n\tdep\tgo.uber.org/atomic\tv1.11.0\th1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=\n\tdep\tgo.uber.org/multierr\tv1.11.0\th1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=\n\tdep\tgo.uber.org/zap\tv1.27.0\th1:aJMhYGrd5QSmlpLMr2MftRKl7t8J8PTZPA732ud/XR8=\n\tdep\tgolang.org/x/exp\tv0.0.0-20250620022241-b7579e27df2b\th1:M2rDM6z3Fhozi9O7NWsxAkg/yqS/lQJ6PmkyIV3YP+o=\n\tdep\tgolang.org/x/net\tv0.49.0\th1:eeHFmOGUTtaaPSGNmjBKpbng9MulQsJURQUAfUwY++o=\n\tdep\tgolang.org/x/sync\tv0.20.0\th1:e0PTpb7pjO8GAtTs2dQ6jYa5BWYlMuX047Dco/pItO4=\n\tdep\tgolang.org/x/sys\tv0.43.0\th1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=\n\tdep\tgolang.org/x/text\tv0.36.0\th1:JfKh3XmcRPqZPKevfXVpI1wXPTqbkE5f7JA92a55Yxg=\n\tdep\tgoogle.golang.org/genproto/googleapis/api\tv0.0.0-20260120221211-b8f7ae30c516\th1:vmC/ws+pLzWjj/gzApyoZuSVrDtF1aod4u/+bbj8hgM=\n\tdep\tgoogle.golang.org/genproto/googleapis/rpc\tv0.0.0-20260120221211-b8f7ae30c516\th1:sNrWoksmOyF5bvJUcnmbeAmQi8baNhqg5IWaI3llQqU=\n\tdep\tgoogle.golang.org/grpc\tv1.80.0\th1:Xr6m2WmWZLETvUNvIUmeD5OAagMw3FiKmMlTdViWsHM=\n\tdep\tgoogle.golang.org/protobuf\tv1.36.11\th1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=\n\tdep\tgopkg.in/natefinch/lumberjack.v2\tv2.2.1\th1:bBRl1b0OH9s/DuPhuXpNl+VtCaJXFZ5/uEFST95x9zc=\n\tdep\tgopkg.in/yaml.v3\tv3.0.1\th1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1\n",
+    "environment.json": "{\n\t\"CGO_ENABLED\": \"1\",\n\t\"GOARCH\": \"amd64\",\n\t\"GOFLAGS\": \"\",\n\t\"GOOS\": \"linux\",\n\t\"GOVERSION\": \"go1.26.7\"\n}\n",
+    "version.txt": "v1.31.1\n"
+  },
+  "receipt_sha256": "e1c3ced7deb87db5e9d8c7d89b1650871484b3805602565a06374a8a7b56ebad",
+  "raw_receipt_directory": "/home/codex/.cache/leapview-ci-tmp/fai-1149-2026-10-07/screen-02",
+  "raw_log_sha256": {
+    "000-source.log": "b741e6be8727329b9178b0b1ec7f52438ccce7078ae08046e6a942f1259e91a1",
+    "001-archive.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "002-docker-version.log": "0e8b9f4e8378a7c608f6aecf0f6d48ce71523835813b9f54291276c3eb1181b5",
+    "003-buildx-version.log": "89761e09a48281628610586597d87fd199bd1ef8d88687046ca611064cd4171b",
+    "004-baseline-producer-create.log": "3a2729f3d7f5e9a20e25761ad700bd32321a9e14465623fc892f287f49a189c2",
+    "005-baseline-producer-bootstrap.log": "82a4f5bcb61834a97872ae666e20fa5827445996acbd70a224b53dd67233f78f",
+    "006-baseline-producer-build.log": "21abdcaf8013187dcc9d6e9e4de5eb721bf97f29ee9f69071aecac23bebbf137",
+    "007-baseline-producer-cleanup.log": "b8674d9410dab380e23d63659d9f3afe6fb91b90aa3cf0caeb861730c85189aa",
+    "008-treatment-producer-create.log": "f4bd5b3d5d507f4cdac854daf2bee2da0942cb7196d5fa94c8421683a7881973",
+    "009-treatment-producer-bootstrap.log": "743f899068e74d311bf96384df3b68c86fbb60a666ffb6bdc5caccdde395a85e",
+    "010-treatment-producer-build.log": "56bc225c816f26f6c4f7ff6701cf7ad6862bbda402993e3aa53bbb289a6b9b1c",
+    "011-treatment-producer-cleanup.log": "37e7fa360ce8d6501e1e89528dec68b6c2d1fdf97ded8b53c5ff8ffe0cb8d509",
+    "012-baseline-pair-1-create.log": "23e848bd3a59c2f6be045e89a3ea085066907797c164cf0d7f106d1dcfa07cee",
+    "013-baseline-pair-1-bootstrap.log": "10024fbea5d033d92e5d74e2927d9da7ca5ea09b91c50849c418e2b822cc2688",
+    "014-baseline-pair-1-build.log": "ae47453494ff8e53b86feeed73748ac2ed691e67e1110babcc18bcade1a02645",
+    "015-baseline-pair-1-cleanup.log": "f4caea1e249c958c8bad5c6c404168f0eaeda906f8e42ff3a034bc59104c60bc",
+    "016-treatment-pair-1-create.log": "abe901126cdb2c41c6c509ecb3f0dbae9d5b41f26be583b7564b256bcd483271",
+    "017-treatment-pair-1-bootstrap.log": "9d41bf8b5c14c455280b0e51b03a7256643ed256c7f7b3f434d9de4690934d9d",
+    "018-treatment-pair-1-build.log": "cc4969caa24687d02005827a098ac1502002d82576f61e6ac5d86cc057bc3e47",
+    "019-treatment-pair-1-cleanup.log": "324aee649c2653ee730b05a3d14ff47b0cb76e0cd69490863d036bd4111cefae",
+    "020-treatment-pair-2-create.log": "4f26c803edce846443e88a899f012574f8351a14329a08ae5034b7f430d9fdb2",
+    "021-treatment-pair-2-bootstrap.log": "0639b89e747d4fed9d31adab93a8c0c9f0a41f6f5afa19373232d3e0fe07edef",
+    "022-treatment-pair-2-build.log": "ab1efed5698b9e337faa4b3c78092eac158a09234fcdf5a9ec1aa02fcffe0c85",
+    "023-treatment-pair-2-cleanup.log": "e5ade7ec81a55be576557da64d785f0b2414af75e2a12452836195c69000f13c",
+    "024-baseline-pair-2-create.log": "4ffde4e91fa674199416d4f35f29863112ecc2156e9053460dc15d7d0feedacc",
+    "025-baseline-pair-2-bootstrap.log": "cf94b96055184e88740a56396c3a4bf6c5fa259a0b0945f44ef93c981ecdc799",
+    "026-baseline-pair-2-build.log": "a2bc74dc7d2958d281c15d63962a56de7b78ae4df37e3fb4a2b1d04ebf7a1c63",
+    "027-baseline-pair-2-cleanup.log": "f4237afe7fa5e6cf568c533e33fd171532fbb812d30e2bde38b34f60e917c1ae",
+    "028-baseline-pair-3-create.log": "8e79eb75ca0b4a7526b5da65929e0841b7d7ef24cd27d972cd618a1fa1711569",
+    "029-baseline-pair-3-bootstrap.log": "5724f51287dbad9d6e14921f1f4842bebc13997a1cd3de5e2f8a68e679edc76f",
+    "030-baseline-pair-3-build.log": "7ac6262265712a1d79f9f608be9b993c86a4a1f7d6a7834d64a64dcf3eb678f8",
+    "031-baseline-pair-3-cleanup.log": "37117b704e81c07de05c6eb224c13d435c3fe53187a15dafa88c96e0336a80fa",
+    "032-treatment-pair-3-create.log": "6d04f40552171e6edb28ef3e3d340038830a51cf77af0ba59639be1673955d5d",
+    "033-treatment-pair-3-bootstrap.log": "e8bd17c718745e8c38cac0703dae18835362ecaf0e13092f7e4e5591df27e530",
+    "034-treatment-pair-3-build.log": "87f611b9834091e9ecd772bbe3398630c5a9cbe976844d1c86aa43b4603ffda9",
+    "035-treatment-pair-3-cleanup.log": "140a5c196f3c98dc7362cf747f4d261d808f6906c029531e739e7f22fd5a0321",
+    "036-baseline-query-probe-create.log": "62403869a1b27f8db83e215ae457e1659129104d6592c56231d738aed30e6a84",
+    "037-baseline-query-probe-bootstrap.log": "51bd18e53125ab369e1db8ca03fc4283785ba50105816443bf0c16273ed21960",
+    "038-baseline-query-probe-build.log": "76ec9d74ddadcb5718f012d332681a499c1fb24da234efc3bfc4ab8a90dbb0ca",
+    "039-baseline-query-probe-cleanup.log": "d8cc6ff23e57ccf97af10b6418fb1979ff94dcd7b299b94acf343ddacda565de",
+    "040-treatment-query-probe-create.log": "9a153189506ae443388fccf96cb5fd6790f9bb8629946057775602eb0a3c5794",
+    "041-treatment-query-probe-bootstrap.log": "d51b47d4c8989c6e82facf9adb53a13ccb80cfaf2c30f8a6213de180b9c716b1",
+    "042-treatment-query-probe-build.log": "3736b526b8d99ba5bd7db72a0ab8255766d215c77b024ab7f3367e8d242cb37f",
+    "043-treatment-query-probe-cleanup.log": "aa9b40119573ec525377fac8521a6da02b30cc47dfb8183a9d235f06e56190d3"
+  },
+  "incomplete_attempt": {
+    "receipt_sha256": "b8194aa9de401d28c03a69632fe1737f34988faa6e82bb5ff7b859d244c53999",
+    "reason": "Collector rejected repeated identical BuildKit vertex header; fixed with red/green regression.",
+    "directory": "/home/codex/.cache/leapview-ci-tmp/fai-1149-2026-10-07/screen-01",
+    "included_in_completed_cohort": false
+  }
+}
