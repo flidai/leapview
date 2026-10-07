@@ -222,7 +222,7 @@ test('embedded chat panels keep distinct click targets and default Data to field
     const editor = frame.locator('lv-dashboard-builder')
     await frame.locator('.field-results').waitFor()
     expect(await editor.getByRole('searchbox', { name: 'Search fields' }).isVisible()).toBe(true)
-    for (const pane of ['filters', 'data']) {
+    for (const pane of ['filters', 'visuals', 'data']) {
       const toggle = editor.locator(`[data-pane-toggle="${pane}"]`)
       if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click()
       expect(await toggle.getAttribute('aria-expanded')).toBe('true')
@@ -237,7 +237,8 @@ test('embedded chat panels keep distinct click targets and default Data to field
     expect(await editor.locator('.data-pane .pane-title').textContent()).toBe('Data')
     await editor.getByRole('button', { name: 'Collapse Data pane', exact: true }).click()
     expect(await editor.locator('.right-dock').isVisible()).toBe(true)
-    for (const pane of ['filters', 'data']) {
+    expect(await editor.locator('[data-pane-toggle="visuals"]').count()).toBe(1)
+    for (const pane of ['filters', 'visuals', 'data']) {
       expect(await editor.locator(`[data-pane-toggle="${pane}"]`).isVisible()).toBe(true)
     }
     await editor.getByRole('button', { name: 'Expand Data pane', exact: true }).click()
@@ -258,7 +259,8 @@ test('chat preview starts with side-by-side tools open and preserves independent
     const frame = page.frameLocator('iframe')
     const editor = frame.locator('lv-dashboard-builder')
     await frame.locator('.field-results').waitFor()
-    for (const pane of ['filters', 'data']) {
+    expect(await editor.locator('[data-pane-toggle="visuals"]').count()).toBe(1)
+    for (const pane of ['filters', 'visuals', 'data']) {
       expect(await editor.locator(`[data-pane-toggle="${pane}"]`).getAttribute('aria-expanded')).toBe('true')
     }
     const regions = await editor.evaluate((element: any) => ['.canvas-pane', '.filters-pane', '.visual-builder', '.data-pane'].map(selector => {
@@ -271,16 +273,32 @@ test('chat preview starts with side-by-side tools open and preserves independent
     }
     expect(await editor.locator('[data-visual-picker-type="bar"]').isVisible()).toBe(true)
     expect(await editor.locator('.visual-builder').evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true)
-    expect(await editor.locator('[data-pane-toggle="visuals"]').count()).toBe(0)
+    expect(await editor.getByRole('button', { name: 'Collapse Visuals pane', exact: true }).isVisible()).toBe(true)
     expect(await editor.locator('.visual-builder .pane-content').isVisible()).toBe(true)
     await editor.getByRole('button', { name: 'Collapse Data pane', exact: true }).click()
     expect(await editor.getByRole('button', { name: 'Collapse Filters pane', exact: true }).isVisible()).toBe(true)
     expect(await editor.locator('.visual-builder .pane-content').isVisible()).toBe(true)
+    const visualBefore = await editor.evaluate((element: any) => JSON.stringify(element.builder.pages))
+    await editor.getByRole('button', { name: 'Collapse Visuals pane', exact: true }).click()
+    expect(await editor.locator('#builder-visuals-content').isVisible()).toBe(false)
+    expect(await editor.locator('[data-pane-toggle="filters"]').getAttribute('aria-expanded')).toBe('true')
     await page.reload()
     await frame.locator('[data-pane-toggle="data"]').waitFor()
     expect(await editor.locator('[data-pane-toggle="data"]').getAttribute('aria-expanded')).toBe('false')
     expect(await editor.locator('[data-pane-toggle="filters"]').getAttribute('aria-expanded')).toBe('true')
-    expect(await editor.locator('.visual-builder').getAttribute('data-collapsed')).toBe('false')
+    expect(await editor.locator('.visual-builder').getAttribute('data-collapsed')).toBe('true')
+    await editor.getByRole('button', { name: 'Expand Visuals pane', exact: true }).click()
+    expect(await editor.locator('#builder-visuals-content').isVisible()).toBe(true)
+    expect(await editor.evaluate((element: any) => JSON.stringify(element.builder.pages))).toBe(visualBefore)
+    const retained = await editor.evaluate(async (element: any) => {
+      const fields = element.shadowRoot.querySelector('#builder-visuals-content')
+      element.shadowRoot.querySelector('[data-pane-toggle="visuals"]').click()
+      await element.updateComplete
+      element.shadowRoot.querySelector('[data-pane-toggle="visuals"]').click()
+      await element.updateComplete
+      return fields === element.shadowRoot.querySelector('#builder-visuals-content')
+    })
+    expect(retained).toBe(true)
   } finally { await page.close() }
 })
 
@@ -291,7 +309,7 @@ test('Visual magic in the preview builder preserves authored placement and zoom'
     const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
     await editor.locator('.field-results').waitFor()
     expect(await editor.getByRole('button', { name: 'Arrange visuals', exact: true }).count()).toBe(0)
-    expect(await editor.locator('[data-pane-toggle="visuals"]').count()).toBe(0)
+    expect(await editor.getByRole('button', { name: 'Collapse Visuals pane', exact: true }).isVisible()).toBe(true)
     await editor.evaluate(async (element: any) => {
       const builder = JSON.parse(JSON.stringify(element.builder))
       const visual = builder.pages[0].visuals[0]

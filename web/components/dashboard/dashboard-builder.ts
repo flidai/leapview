@@ -835,7 +835,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         data: collapsed.has('data'),
         agent: legacy ? true : collapsed.has('agent'),
       }
-      if (this.embeddedInChat) { this.collapsedPanes.agent = true; this.collapsedPanes.visuals = false }
+      if (this.embeddedInChat) this.collapsedPanes.agent = true
     } catch {
       this.collapsedPanes = { ...defaultCollapsedPanes }
     }
@@ -1971,7 +1971,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               ${formattingPage && !collapsed ? html`<span class="visual-type-badge">Page</span>` : nothing}
               ${metadataHeader && !collapsed ? html`<span class="visual-type-badge">Header</span>` : nothing}
             </div>
-            ${this.embeddedInChat ? nothing : this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
+            ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
           </div>
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
