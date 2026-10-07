@@ -1242,6 +1242,9 @@ def main(argv: list[str]) -> int:
                     if not confirmation:
                         raise QualificationError("cleanup reset plan did not return an exact ownership confirmation; the temporary runtime was retained")
                     run_command("cleanup-reset", [str(binary), "dev", "reset", "--docker-host", docker_host, "--confirm", confirmation.group(1)], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host)
+    except KeyboardInterrupt:
+        evidence["failures"].append("qualification interrupted")
+        evidence["result"] = "failed"
     except QualificationSkip as exc:
         evidence["skipped"].append(str(exc))
         evidence["result"] = "skipped"
