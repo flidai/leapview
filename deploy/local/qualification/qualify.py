@@ -1011,7 +1011,7 @@ def docker_metadata(docker_host: str, raw_results: list[dict[str, Any]], timeout
         "server": server,
         "composeVersion": compose_version,
         # One probe establishes only a candidate identity.  The lifecycle
-        # upgrades this to verified-pre-post after init and before dev.
+        # upgrades this only after init, dev, and retained-data restart agree.
         "endpointPinned": False,
         "pinState": "not-proven",
     }
@@ -1209,7 +1209,6 @@ def main(argv: list[str]) -> int:
                         docker["pinState"] = "not-proven"
                         raise QualificationError("Docker effective server identity changed during init; lifecycle endpoint was not proven stable")
                     docker["serverPost"] = post_identity
-                    docker["pinState"] = "verified-pre-post"
                     evidence["metadata"]["fixture"] = fixture_metadata(checkout)
                     first_dev = run_command("dev-once", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host, live_output=True)
                     require_happy_path_dev_output("dev-once", first_dev)
@@ -1230,6 +1229,7 @@ def main(argv: list[str]) -> int:
                         raise QualificationError("Docker effective server identity changed during retained-data restart; lifecycle endpoint was not proven stable")
                     docker["serverPost"] = post_restart_identity
                     docker["endpointPinned"] = True
+                    docker["pinState"] = "verified-pre-post"
                     evidence["metadata"]["warmup"] = {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_RELEASED}
                 finally:
                     # Reset is intentionally bounded and recorded. If dev

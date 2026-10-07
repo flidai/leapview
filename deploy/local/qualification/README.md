@@ -33,8 +33,12 @@ help surfaces (`init`, `dev`, `plan`, `build`, `publish`, `deploy`, `doctor`, an
 groups and authoring examples; `--llms` must return offline guidance. Local
 `doctor --format json` must return a complete report with consistent checks and
 exit status (0 for pass/warn, 1 for failed prerequisites). These checks run in
-the isolated command home without creating CLI state. The existing release `authoring-cli` job
-remains a separate build/provenance gate and is not replaced by this lane.
+the isolated command home without creating CLI state. The existing release
+`authoring-cli` jobs run these required static checks on each of the four native
+archives, alongside their build/provenance checks. They upload bounded reports
+even when qualification fails. Candidate reports establish the observed native
+static contracts; they do not establish public release, lifecycle, or preview
+acceptance.
 
 ## Optional local lifecycle
 

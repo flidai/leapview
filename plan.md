@@ -271,3 +271,23 @@ The subsequent inspection found an already-running [current candidate build](htt
 The next acceptance task is to resolve that authorization failure and rerun the exact candidate through sample staging, synchronization and retained-data restart. Real preview scenarios, measurements and exact public release/platform qualification remain outstanding. The project and FAI-1133 stay In Progress.
 
 The local authorization follow-up repairs the observed token ceiling mismatch: automatic local login requests project access read/manage in addition to ordinary authoring actions. Retained local credentials are inspected against their exact current session; insufficient scope uses the existing local authorization flow, while inspection failures preserve credentials and return an error. Remote login defaults and server authorization stay unchanged. Fresh-login and retained-scope regressions failed before the fix and pass afterward; independent review found no remaining issue. A newly built matching archive/runtime must still demonstrate the full real lifecycle before this acceptance gate can close.
+
+The scoped-login candidate advanced past native authentication but exposed a
+second bootstrap rejection: the server's canonical binding callback recognized
+REST API credentials only. The consolidated follow-up also recognizes the
+scoped authoring session after its existing exact claim-owner and canonical
+binding checks. The real PostgreSQL/generated HTTP journey now proves all three
+initial bindings, policy reads, retries, subsequent grant creation, and authority
+denials; the existing REST bootstrap journey still passes. The exact failed
+candidate and cleanup are preserved in the candidate evidence document.
+
+The same final PR adds required static harness execution to the four existing
+native archive jobs and retains bounded reports on success or failure. Failed
+lifecycle evidence keeps Docker endpoint pinning unproven until development and
+retained-data restart both succeed. These related fixes are consolidated in
+[#899](https://github.com/flidai/leapview/pull/899), stacked on the headless
+qualification support in [#898](https://github.com/flidai/leapview/pull/898).
+No additional implementation PR is planned. Merge the parent through the normal
+queue, retarget/rebase the child onto main, then validate a newly matched
+candidate. Public release/platform, preview, and measurement acceptance remain
+open; merging these PRs alone does not complete FAI-1133.

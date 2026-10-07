@@ -73,3 +73,50 @@ Those paths are execution artifacts, not portable release evidence. This documen
 records the artifact identity and durable observed outcomes. FAI-1133 remains In
 Progress until the authorization failure and remaining exact public archive,
 platform, preview and measurement gates have observed results.
+
+## Scoped-login candidate follow-up
+
+The completed [candidate build 37585063372](https://github.com/flidai/leapview/actions/runs/37585063372)
+contains the local login permission-ceiling fix and was reused for a second exact
+installed-archive qualification. All four native archive jobs completed, but
+only the Linux AMD64 archive was run through this harness on this VPS.
+
+| Field | Observed value |
+| --- | --- |
+| Archive | `leapview-cli-candidate-37585063372-1-linux-amd64.tar.gz` |
+| Artifact ID | `11467207364` |
+| Archive SHA-256 | `f368a4a6e1c71e281dfc6817afef320d46f3e0032e70dfab63ba10d16c6b7cc2` |
+| Revision | `dca163dd9cd7321e8ed7162c8c26ad3d6c9ff258` |
+| Embedded version | `0.3.0-alpha.1` (candidate, not public release) |
+| Build time | `2026-10-07T06:47:20Z` |
+| Development / dirty | `false` / `false` |
+| Runtime image | `ghcr.io/flidai/leapview@sha256:d449452ac6e97059cce88a3a49ff5ef88fd424412ea7d27e84ec3ff596f27244` |
+| Actual host | Same NixOS Linux AMD64 VPS; not Ubuntu acceptance |
+| Docker server / Compose | `29.8.0` / `5.4.0` |
+| Credential store | GNOME Keyring 50.0 in isolated D-Bus session |
+
+All 12 installed static probes passed, with the required overall `partial`
+result. Native authentication and runtime readiness passed, but initial project
+policy creation failed with `durable grant was not found`; its verification read
+reported `authorization policy was not found`. Sample staging, synchronization,
+and retained-data restart were not reached. The exact-confirmation reset exited
+0, and the checkout-owned containers, volumes, and network were removed.
+
+The server's canonical binding authorizer accepted REST credentials only, even
+though its outer middleware accepted the scoped native authoring session. The
+source fix repeats the typed authoring permission check after the existing claim
+owner and canonical binding checks, while retaining the REST fallback. A real
+PostgreSQL/generated HTTP regression passes for all three bindings, idempotent
+retries, policy/grant reads and subsequent grant creation. It also rejects
+read-only, foreign-target, foreign-project, other-owner, noncanonical, and
+other-recipient requests. Those tests are source evidence; this candidate still
+contains the observed failure and must not be recorded as passing after the fix.
+
+Reports remain under
+`.tmp/qualification/candidate-37585063372-1/{static,lifecycle}/`. The historical
+failed lifecycle report also exposed inconsistent endpoint evidence:
+`endpointPinned: false` with `pinState: verified-pre-post`. It does not satisfy
+the evidence schema. The harness now promotes both fields together only after
+successful development and restart identity checks; the original report is
+preserved rather than rewritten. A newly built matching archive/runtime is
+required for the next lifecycle attempt.

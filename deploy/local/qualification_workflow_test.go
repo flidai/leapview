@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -106,6 +107,91 @@ print(json.dumps(vars(module.parse_args(sys.argv[1:]))))
 			_, markerErr := os.Stat(marker)
 			if (markerErr == nil) != lifecycle {
 				t.Fatalf("isolated keyring usage does not match lifecycle=%t", lifecycle)
+			}
+		})
+	}
+}
+
+func TestNativeAuthoringBuildRunsRequiredStaticQualification(t *testing.T) {
+	root := repositoryRoot(t)
+	var workflow struct {
+		Jobs map[string]struct {
+			Strategy struct {
+				Matrix struct {
+					Include []struct{ OS, Arch string } `yaml:"include"`
+				} `yaml:"matrix"`
+			} `yaml:"strategy"`
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Run  string            `yaml:"run"`
+				If   string            `yaml:"if"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(readFile(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))), &workflow); err != nil {
+		t.Fatal(err)
+	}
+	job := workflow.Jobs["authoring-cli"]
+	var script string
+	var durableEvidence bool
+	for _, step := range job.Steps {
+		if step.Name == "Qualify installed discovery and diagnostics" {
+			script = step.Run
+		}
+		if step.Name == "Upload authoring qualification evidence" {
+			durableEvidence = step.If == "always()" && strings.Contains(step.With["path"], "qualification-report.json") && strings.Contains(step.With["path"], "raw-results.json")
+		}
+	}
+	if script == "" || !durableEvidence {
+		t.Fatal("native archive builds must run static qualification and retain success/failure evidence")
+	}
+	if len(job.Strategy.Matrix.Include) != 4 {
+		t.Fatal("expected the four existing native authoring targets")
+	}
+	for _, target := range job.Strategy.Matrix.Include {
+		t.Run(target.OS+"/"+target.Arch, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "checkout with spaces")
+			entrypoint := filepath.Join(directory, "deploy/local/qualification/qualify.sh")
+			if err := os.MkdirAll(filepath.Dir(entrypoint), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// Bash reports the physical working directory on macOS, where
+			// the temporary root may be reached through /var's symlink.
+			var err error
+			directory, err = filepath.EvalSymlinks(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entrypoint = filepath.Join(directory, "deploy/local/qualification/qualify.sh")
+			requireWriteFile(t, filepath.Join(filepath.Dir(entrypoint), "parse.py"), `import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("qualification", os.environ["QUALIFICATION_MODULE"])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps(vars(module.parse_args(sys.argv[1:]))))
+`, 0o600)
+			requireWriteFile(t, entrypoint, "#!/usr/bin/env bash\nexec python3 \"$(dirname \"$0\")/parse.py\" \"$@\"\n", 0o755)
+			command := exec.Command("bash", "-c", script)
+			command.Dir = directory
+			command.Env = append(os.Environ(), "RELEASE_TAG=candidate-123-1", "TARGET_OS="+target.OS, "TARGET_ARCH="+target.Arch,
+				"QUALIFICATION_MODULE="+filepath.Join(root, "deploy/local/qualification/qualify.py"), "PYTHONDONTWRITEBYTECODE=1")
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("native qualification arguments rejected: %v\n%s", err, output)
+			}
+			var arguments struct {
+				Archive      string `json:"archive"`
+				EvidenceDir  string `json:"evidence_dir"`
+				Required     bool   `json:"required"`
+				RunLifecycle bool   `json:"run_lifecycle"`
+			}
+			if err := json.Unmarshal(output, &arguments); err != nil {
+				t.Fatal(err)
+			}
+			archive := filepath.Join(directory, "dist", "leapview-cli-candidate-123-1-"+target.OS+"-"+target.Arch+".tar.gz")
+			evidence := filepath.Join(directory, "dist/evidence", "qualification-"+target.OS+"-"+target.Arch)
+			if arguments.Archive != archive || arguments.EvidenceDir != evidence || !arguments.Required || arguments.RunLifecycle {
+				t.Fatalf("native static qualification arguments = %+v", arguments)
 			}
 		})
 	}
