@@ -134,11 +134,23 @@ module LeapViewManagedMaintenance
     end
   end
 
+  module LocalDocker
+    private
+
+    def docker(*args)
+      # Loopback SSH must address the same daemon as the controller inventory,
+      # regardless of the root account's selected Docker context or environment.
+      super("--host", "unix:///var/run/docker.sock", *args)
+    end
+  end
+
   module ProxyCommands
     def remove_container
       # Stock Kamal prunes every stopped container carrying the proxy label.
       # Restrict recovery to our exact proxy name and retain lookup failures.
-      shell([%q{proxy_id=$(docker container ls --all --filter 'name=^/kamal-proxy$' --quiet) && if [ -n "$proxy_id" ]; then docker container rm "$proxy_id"; fi}])
+      lookup = docker(:container, :ls, "--all", "--filter", "'name=^/kamal-proxy$'", "--quiet").join(" ")
+      remove = docker(:container, :rm, '"$proxy_id"').join(" ")
+      shell([%(proxy_id=$(#{lookup}) && if [ -n "$proxy_id" ]; then #{remove}; fi)])
     end
   end
 
@@ -156,6 +168,7 @@ Kamal::Configuration.prepend(LeapViewManagedMaintenance::Configuration)
 Kamal::Configuration::Proxy::Run.prepend(LeapViewManagedMaintenance::ProxyRun)
 Kamal::Configuration::Role.prepend(LeapViewManagedMaintenance::Role)
 Kamal::Configuration::Proxy.prepend(LeapViewManagedMaintenance::Proxy)
+Kamal::Commands::Base.prepend(LeapViewManagedMaintenance::LocalDocker)
 Kamal::Commands::Registry.prepend(LeapViewManagedMaintenance::Registry)
 Kamal::Commands::Proxy.prepend(LeapViewManagedMaintenance::ProxyCommands)
 Kamal::Cli::Base.prepend(LeapViewManagedMaintenance::ControllerLock)

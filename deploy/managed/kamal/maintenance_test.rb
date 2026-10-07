@@ -56,7 +56,7 @@ class ManagedKamalMaintenanceTest < Minitest::Test
     assert_includes subject.proxy.run.options_args, "--pull=never"
     assert_includes subject.role("web").option_args, "--pull=never"
     command = Kamal::Commands::Registry.new(subject).login.join(" ")
-    assert_includes command, "docker image inspect"
+    assert_includes command, "docker --host unix:///var/run/docker.sock image inspect"
     assert_includes command, ENV.fetch("LEAPVIEW_MANAGED_IMAGE")
     assert_includes command, ENV.fetch("LEAPVIEW_MANAGED_PROXY_IMAGE")
     refute_includes command, "login"
@@ -69,6 +69,22 @@ class ManagedKamalMaintenanceTest < Minitest::Test
     assert_includes proxy_command, "--pull=never"
     assert_includes proxy_command, ENV.fetch("LEAPVIEW_MANAGED_PROXY_IMAGE")
     refute_includes proxy_command, "--publish"
+  end
+
+  def test_remote_kamal_commands_pin_the_controllers_local_docker_daemon
+    ENV["DOCKER_HOST"] = "tcp://other.invalid:2375"
+    ENV["DOCKER_CONTEXT"] = "other-daemon"
+    subject = config
+    app = Kamal::Commands::App.new(subject, role: subject.role("web"), host: "127.0.0.1")
+    proxy = Kamal::Commands::Proxy.new(subject, host: "127.0.0.1")
+    commands = [app.run, app.stop, proxy.run, proxy.stop, proxy.remove_container, Kamal::Commands::Registry.new(subject).login]
+    commands.each do |parts|
+      command = parts.join(" ")
+      assert_includes command, "docker --host unix:///var/run/docker.sock"
+      refute_match(/docker (?!\-\-host unix:\/\/\/var\/run\/docker.sock)/, command)
+      refute_includes command, "other.invalid"
+      refute_includes command, "other-daemon"
+    end
   end
 
   def test_prepared_probe_preserves_public_host
@@ -265,6 +281,8 @@ class ManagedKamalMaintenanceTest < Minitest::Test
     command = Kamal::Commands::Proxy.new(config, host: "127.0.0.1").remove_container.join(" ")
     File.write("docker", <<~SH, perm: 0o700)
       #!/usr/bin/env sh
+      [ "$1" = --host ] && [ "$2" = unix:///var/run/docker.sock ] || exit 90
+      shift 2
       if [ "$2" = ls ]; then
         [ "$5" = 'name=^/kamal-proxy$' ] || exit 91
         [ "$FAKE_DOCKER_CASE" = lookup-error ] && exit 42
