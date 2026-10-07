@@ -59,9 +59,10 @@ SCENARIOS = (
     "invalid",
 )
 REPETITIONS = ("coldUncached", "coldCached", "warmRestart", "editToVisible")
-PREVIEW_NOT_RELEASED = (
-    "preview/deploy implementation and browser observation are planned in "
-    "ADR-0021; this package lane does not fabricate edit-to-visible samples"
+PREVIEW_NOT_OBSERVED = (
+    "This archive/lifecycle lane does not execute preview/edit scenarios or "
+    "browser timing observations; those gates remain not-run until separately "
+    "observed against the identified artifact."
 )
 # The qualification subprocesses are intentionally given a small, explicit
 # process environment.  In particular, Docker context/configuration and
@@ -1011,7 +1012,7 @@ def docker_metadata(docker_host: str, raw_results: list[dict[str, Any]], timeout
         "server": server,
         "composeVersion": compose_version,
         # One probe establishes only a candidate identity.  The lifecycle
-        # upgrades this to verified-pre-post after init and before dev.
+        # upgrades this only after init, dev, and retained-data restart agree.
         "endpointPinned": False,
         "pinState": "not-proven",
     }
@@ -1058,11 +1059,11 @@ def qualification_document(required: bool, started_at: str) -> dict[str, Any]:
             "hardware": hardware_metadata(),
             "fixture": None,
             "network": {"mode": "not-measured", "endpoint": None, "conditions": None},
-            "warmup": {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_RELEASED},
-            "repetitions": {name: empty_measurement(PREVIEW_NOT_RELEASED, 3 if name != "editToVisible" else 5) for name in REPETITIONS},
+            "warmup": {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_OBSERVED},
+            "repetitions": {name: empty_measurement(PREVIEW_NOT_OBSERVED, 3 if name != "editToVisible" else 5) for name in REPETITIONS},
         },
         "package": None,
-        "scenarios": {name: empty_measurement(PREVIEW_NOT_RELEASED, 1) for name in SCENARIOS},
+        "scenarios": {name: empty_measurement(PREVIEW_NOT_OBSERVED, 1) for name in SCENARIOS},
         "rawResults": [],
         "skipped": [],
         "failures": [],
@@ -1209,7 +1210,6 @@ def main(argv: list[str]) -> int:
                         docker["pinState"] = "not-proven"
                         raise QualificationError("Docker effective server identity changed during init; lifecycle endpoint was not proven stable")
                     docker["serverPost"] = post_identity
-                    docker["pinState"] = "verified-pre-post"
                     evidence["metadata"]["fixture"] = fixture_metadata(checkout)
                     first_dev = run_command("dev-once", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host, live_output=True)
                     require_happy_path_dev_output("dev-once", first_dev)
@@ -1230,7 +1230,8 @@ def main(argv: list[str]) -> int:
                         raise QualificationError("Docker effective server identity changed during retained-data restart; lifecycle endpoint was not proven stable")
                     docker["serverPost"] = post_restart_identity
                     docker["endpointPinned"] = True
-                    evidence["metadata"]["warmup"] = {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_RELEASED}
+                    docker["pinState"] = "verified-pre-post"
+                    evidence["metadata"]["warmup"] = {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_OBSERVED}
                 finally:
                     # Reset is intentionally bounded and recorded. If dev
                     # fails after creating state, cleanup still uses the

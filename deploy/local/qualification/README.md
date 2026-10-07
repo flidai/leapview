@@ -33,8 +33,12 @@ help surfaces (`init`, `dev`, `plan`, `build`, `publish`, `deploy`, `doctor`, an
 groups and authoring examples; `--llms` must return offline guidance. Local
 `doctor --format json` must return a complete report with consistent checks and
 exit status (0 for pass/warn, 1 for failed prerequisites). These checks run in
-the isolated command home without creating CLI state. The existing release `authoring-cli` job
-remains a separate build/provenance gate and is not replaced by this lane.
+the isolated command home without creating CLI state. The existing release
+`authoring-cli` jobs run these required static checks on each of the four native
+archives, alongside their build/provenance checks. They upload bounded reports
+even when qualification fails. Candidate reports establish the observed native
+static contracts; they do not establish public release, lifecycle, or preview
+acceptance.
 
 ## Optional local lifecycle
 
@@ -106,8 +110,10 @@ samples are populated only from observed commands or browser measurements;
 planned repetitions have `executed: 0`, an empty `samplesMs` array, and a
 reason. The semantic, model, dashboard, presentation, and invalid edit
 scenarios, including cold uncached/cached, warm restart, and edit-to-visible
-measurements, remain `not-run` until the released preview surface provides a
-supported observation contract. This lane never fabricates those values.
+measurements, remain `not-run` until browser qualification records those
+scenarios and measurements against the identified artifact. The product's
+preview routes and live updates do not themselves establish these observations.
+This lane never fabricates those values.
 
 The machine-readable source is
 [`qualification-contract.json`](qualification-contract.json). It records the
