@@ -133,7 +133,10 @@ Keep the exact private profile/request available for recovery. The controller:
 Each effect has a phase timeout and the operation has a total deadline. Kamal
 inherits the controller's actual locked file descriptor; its adapter verifies
 the inode and flock before bypassing the separate persistent Kamal lock. A child
-still running after a controller crash retains that exclusion. An abandoned
+still running after a controller crash retains that exclusion; its independent
+deadline watchdog terminates its local process group when the phase expires.
+Remote SSH command termination is not inferred from local process exit; shared-home
+ownership and startup admission continue to fence late remote effects. An abandoned
 provisional application lease closes admission and stops workers. Fresh process
 startup always remains closed until explicitly admitted.
 

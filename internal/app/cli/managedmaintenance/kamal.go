@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // KamalEffects is deliberately host-local: the enrolled Kamal configuration
@@ -51,6 +53,17 @@ type controlStatus struct {
 }
 
 func (k *KamalEffects) command(ctx context.Context, bin string, args []string, env []string) ([]byte, error) {
+	if bin == "bundle" {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			budget := k.Request.Budgets.Phase
+			if budget <= 0 {
+				budget = 2 * time.Minute
+			}
+			deadline = time.Now().Add(budget)
+		}
+		env = append(append([]string(nil), env...), "LEAPVIEW_MANAGED_DEADLINE_UNIX_MS="+strconv.FormatInt(deadline.UnixMilli(), 10))
+	}
 	runner := k.run
 	if runner == nil {
 		runner = func(ctx context.Context, bin string, args, env []string, dir string) ([]byte, error) {
@@ -81,7 +94,7 @@ func (k *KamalEffects) environment(release Release) ([]string, error) {
 		if !strings.HasPrefix(name, "LEAPVIEW_") && !strings.HasPrefix(name, "KAMAL_") {
 			return nil, errors.New("unexpected managed environment key")
 		}
-		if name == "LEAPVIEW_MANAGED_IMAGE" || name == "LEAPVIEW_MANAGED_PROXY_IMAGE" || name == "LEAPVIEW_MANAGED_GATE" || name == "LEAPVIEW_MANAGED_REVISION" || name == "LEAPVIEW_MANAGED_CONFIG" || name == "LEAPVIEW_MANAGED_LOCK_FD" || name == "LEAPVIEW_MANAGED_LOCK_PATH" {
+		if name == "LEAPVIEW_MANAGED_IMAGE" || name == "LEAPVIEW_MANAGED_PROXY_IMAGE" || name == "LEAPVIEW_MANAGED_GATE" || name == "LEAPVIEW_MANAGED_REVISION" || name == "LEAPVIEW_MANAGED_CONFIG" || name == "LEAPVIEW_MANAGED_LOCK_FD" || name == "LEAPVIEW_MANAGED_LOCK_PATH" || name == "LEAPVIEW_MANAGED_DEADLINE_UNIX_MS" {
 			return nil, errors.New("reserved managed adapter environment")
 		}
 	}
