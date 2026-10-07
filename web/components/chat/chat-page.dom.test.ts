@@ -64,6 +64,7 @@ test('chat visual card opens a side panel with the chart and Save action', async
     fixture.savedVisualRequest = null
     await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-thread'))
+    await page.locator('lv-chat-page lv-chat-thread').waitFor()
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       const field = (id: string, role: string) => ({ id, role, dataType: role === 'metric' ? 'decimal' : 'string', nullable: false, label: id })
