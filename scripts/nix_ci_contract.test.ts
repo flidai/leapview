@@ -34,6 +34,13 @@ const steps = action.runs.steps
 const locked = "inputs.toolchain == 'auto' && runner.os == 'Linux' && runner.arch == 'X64'"
 const conventional = "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'"
 
+test('Nix source-generation inputs select their consumer builds', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-development.yml', 'utf8'))
+  for (const input of ['scripts/generate_build_sources.sh', 'scripts/time_build_phase.sh']) {
+    expect(workflow.on.pull_request.paths.some((pattern: string) => new Bun.Glob(pattern).match(input))).toBe(true)
+  }
+})
+
 test('orchestration archive manifest checks run in the CI contract lane', () => {
   const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_orchestration_cache.py'], { encoding: 'utf8' })
   if (result.status !== 0) throw new Error(result.stdout + result.stderr)

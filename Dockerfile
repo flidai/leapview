@@ -27,10 +27,10 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     ./scripts/generate_build_sources.sh && \
-    go run ./internal/app/tools/clidocgen && \
-    go run ./internal/app/tools/schemadocgen && \
-    go run ./internal/app/tools/openapidocgen && \
-    go run ./internal/app/tools/docsitegen
+    ./scripts/time_build_phase.sh cli-docs go run ./internal/app/tools/clidocgen && \
+    ./scripts/time_build_phase.sh schema-docs go run ./internal/app/tools/schemadocgen && \
+    ./scripts/time_build_phase.sh openapi-docs go run ./internal/app/tools/openapidocgen && \
+    ./scripts/time_build_phase.sh docs-site go run ./internal/app/tools/docsitegen
 
 # Keep the large, network-backed map extraction separate so a transient remote
 # failure can be retried without repeating deterministic source generation.

@@ -69,6 +69,7 @@ on:
       - 'scripts/tests/test_nix_compose_guest_launcher.py'
       - '.github/workflows/nix-compose-candidate.yml'
       - 'scripts/generate_build_sources.sh'
+      - 'scripts/time_build_phase.sh'
       - 'pkg/apigen/**'
       - 'scripts/ensure_playwright*'
       - '.github/workflows/nix-development.yml'
