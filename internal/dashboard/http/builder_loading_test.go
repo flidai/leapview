@@ -158,6 +158,44 @@ func TestDashboardBuilderAgentSnapshotDropsWhenManualSaveRacesPreview(t *testing
 	}
 }
 
+func TestDashboardBuilderReceiptRejectsWhenManualSaveRacesPreview(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			oldBuilder := uisignals.DashboardBuilderSignal{
+				ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-7",
+				SelectedPageID: uisignals.Optional("details"), SelectedVisualID: uisignals.Optional("chart-1"),
+				Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-1", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+			}
+			newBuilder := oldBuilder
+			newBuilder.Revision = uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: "sha256:" + strings.Repeat("b", 64)}
+			fake := &revisionRacingBuilderFake{builderAuthoringFake: &builderAuthoringFake{builder: oldBuilder}, latestBuilder: newBuilder}
+			h := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*http.Request) string { return "principal-1" }}
+			values := url.Values{"builderReceipt": {"1"}, "page": {"details"}, "pageId": {"details"}, "visual": {"chart-1"}}
+			request := httptest.NewRequest(method, "/dashboards/revenue/edit?"+values.Encode(), nil)
+			if method == http.MethodPost {
+				request = httptest.NewRequest(method, "/dashboards/revenue/draft/saved-visual", strings.NewReader(values.Encode()))
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
+			request = withBuilderURLParams(request, "sales", "revenue")
+			recorder := httptest.NewRecorder()
+			if method == http.MethodGet {
+				h.DashboardBuilder(recorder, request)
+			} else {
+				h.savedVisualImportReceipt(recorder, request, "revenue")
+			}
+			if recorder.Code != http.StatusConflict || strings.Contains(recorder.Body.String(), "data-receipt") {
+				t.Fatalf("stale receipt: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if fake.previewCalls != 1 || fake.builderReads != 2 {
+				t.Fatalf("preview calls=%d builder reads=%d, want one preview and a revision fence", fake.previewCalls, fake.builderReads)
+			}
+			if fake.builderReq.SelectedPageID != "details" || fake.builderReq.SelectedVisualID != "chart-1" {
+				t.Fatalf("revision check changed the selection: %#v", fake.builderReq)
+			}
+		})
+	}
+}
+
 func TestDashboardBuilderAgentSnapshotPreservesAppliedFiltersAndSelection(t *testing.T) {
 	const pageID = "details"
 	const generation = "generation-11"

@@ -105,6 +105,20 @@ func (handler Handler) renderBuilderSessionReceipt(w nethttp.ResponseWriter, r *
 		writeBuilderError(w, r, err)
 		return
 	}
+	// A native refresh or import preview can outlive a concurrent draft edit,
+	// just like an SSE snapshot. Do not replace newer state with its receipt.
+	latestBuilder, err := handler.Authoring.Builder(r.Context(), builderview.Request{
+		ProjectID: project, ActorID: actor, DashboardID: authoring.DashboardID(builder.DashboardID),
+		SelectedPageID: optionalRuntimeValue(builder.SelectedPageID), SelectedVisualID: optionalRuntimeValue(builder.SelectedVisualID),
+	})
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if !sameDashboardBuilderRevision(builder, latestBuilder) {
+		writeBuilderError(w, r, authoring.ErrStaleRevision)
+		return
+	}
 	if handler.SessionStore != nil && runtime.ClientID != nil && !handler.builderSnapshotFilterStateIsCurrent(r.Context(), r, builder, runtime, envelope.BuilderFilterState, optionalRuntimeValue(envelope.Runtime.ServingStateID)) {
 		writeBuilderError(w, r, authoring.ErrStaleRevision)
 		return
