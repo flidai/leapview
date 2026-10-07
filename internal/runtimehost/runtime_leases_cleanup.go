@@ -173,6 +173,7 @@ type managedRuntime struct {
 	managedData             ManagedDataLifetime
 	snapshotLease           *persistentSnapshotLease
 	runtimeLifetime         RuntimeLifetime
+	leaseHealth             *runtimeLeaseHealth
 	snapshotID              int64
 	sealed                  bool
 	refs                    int
@@ -307,6 +308,7 @@ func (m *Manager) closeManagedResources(runtime *managedRuntime) []cleanupResult
 		if err := closeRuntimeLifetime(runtime.runtimeLifetime); err != nil {
 			out = append(out, cleanupResult{CleanupResourceDependency, err})
 		}
+		runtime.leaseHealth.close()
 		runtime.cleanupResults = out
 	})
 	return append([]cleanupResult(nil), runtime.cleanupResults...)
