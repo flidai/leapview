@@ -3,11 +3,13 @@ import { state } from 'lit/decorators.js'
 import type { ChatTranscriptItemSignal } from '../web/generated/signals'
 import { createArtifactFixture } from './content-fixtures'
 import { visualDataExplorerHref, visualExplorerHref } from '../web/components/chat/visual-action-links'
+import { renderTimeGrouping, timeGroupingStyles, type TimeGroupingGrain } from '../web/components/data/data-explorer-time-grouping'
 import '../web/components/chat/chat-thread'
 import '../web/components/chat/chat-visual-panel'
 
 /** Production components with local receipts; destination links never navigate. */
 class AssistantHandoffs extends LitElement {
+  @state() private grain: TimeGroupingGrain | undefined = 'month'
   @state() private visualOpen = false
   @state() private destination = 'Choose a handoff to inspect its destination.'
   private readonly envelope = createArtifactFixture('ready')
@@ -31,6 +33,10 @@ class AssistantHandoffs extends LitElement {
   ]
 
   static styles = css`
+    ${timeGroupingStyles}
+    .query-example { display: grid; gap: 12px; padding: 16px; margin-bottom: 20px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); }
+    .query-example-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+    .query-example-row > span { min-width: 60px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     :host { display:block; min-width:0; }
     .preview { display:grid; grid-template-columns:minmax(0, 1fr); min-height:24rem; }
     .preview.open { grid-template-columns:minmax(16rem, 1fr) minmax(18rem, 1fr); }
@@ -41,7 +47,10 @@ class AssistantHandoffs extends LitElement {
   `
 
   render() {
-    return html`<p class="destination">Illustrative recorded actions. Open the chart, then use its three-dot menu. Links display their destination without navigating or creating data.</p>
+    return html`<section class="query-example" aria-label="Explorer date grouping">
+      <div class="query-example-row"><span>Fields</span>Net revenue</div>
+      <div class="query-example-row"><span>Filters</span>${this.grain ? renderTimeGrouping('Finance date', this.grain, grain => this.grain = grain, () => this.grain = undefined) : html`<button @click=${() => this.grain = 'month'}>Add date grouping</button>`}</div>
+    </section><p class="destination">Illustrative recorded actions. Open the chart, then use its three-dot menu. Links display their destination without navigating or creating data.</p>
       <p class="destination" role="status">${this.destination}</p>
       <div class=${this.visualOpen ? 'preview open' : 'preview'} @click=${this.inspectLink}>
         <lv-chat-thread conversation-id="demo-conversation" .status=${{ enabled: true, running: false }}
