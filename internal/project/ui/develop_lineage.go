@@ -12,6 +12,13 @@ import (
 
 func assetLineage(projectID string, selected projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) assetLineageModel {
 	byID := assetsByID(assets)
+	if selected.Type != "catalog" {
+		// Resource projection already walks the complete dependency graph.
+		// Avoid building the legacy containment graph first: its path-local
+		// traversal repeats shared branches in converging model chains.
+		graph := collapsedAssetLineageGraph(projectID, selected, byID, edges)
+		return assetLineageFromGraph(projectID, selected, graph, byID, edges)
+	}
 	outgoing := edgesByFromAsset(edges)
 	incoming := edgesByToAsset(edges)
 	graph := assetLineageGraph{
@@ -126,12 +133,15 @@ func assetLineage(projectID string, selected projectview.DevelopAssetView, asset
 
 	sortLineageNodes(graph.Nodes)
 	sortLineageGraphEdges(graph.Edges)
-	collapsedGraph := collapsedAssetLineageGraph(projectID, selected, graph, byID, edges)
-	enrichAssetLineageGraph(collapsedGraph, byID, edges)
-	usesRows, usedByRows := lineageTablesFromGraph(projectID, selected, collapsedGraph, byID, edges)
+	return assetLineageFromGraph(projectID, selected, graph, byID, edges)
+}
+
+func assetLineageFromGraph(projectID string, selected projectview.DevelopAssetView, graph assetLineageGraph, assets map[string]projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) assetLineageModel {
+	enrichAssetLineageGraph(graph, assets, edges)
+	usesRows, usedByRows := lineageTablesFromGraph(projectID, selected, graph, assets, edges)
 	return assetLineageModel{
 		Count:  len(usesRows) + len(usedByRows),
-		Graph:  collapsedGraph,
+		Graph:  graph,
 		Uses:   lineageTable(usesRows, "This asset does not reference other assets."),
 		UsedBy: lineageTable(usedByRows, "No assets reference this asset."),
 	}
@@ -219,10 +229,7 @@ func pluralAssetTypeLabel(typ string, count int) string {
 	return label + "s"
 }
 
-func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAssetView, graph assetLineageGraph, assets map[string]projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) assetLineageGraph {
-	if selected.Type == "catalog" {
-		return graph
-	}
+func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAssetView, assets map[string]projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) assetLineageGraph {
 	selectedAnchor, selectedAnchorOK := lineageVisibleAnchor(selected, assets)
 	if !selectedAnchorOK {
 		return assetLineageGraph{}
@@ -259,18 +266,9 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		if !consumerOK || !providerOK {
 			continue
 		}
-		// Refresh pipelines have their own lineage surface. Keep their
-		// operational dependency out of semantic/dashboard lineage, where
-		// pipelines are already represented as a separate overview fact.
-		if !isPipelineAsset(selected.Type) && (isPipelineAsset(consumer.Type) || isPipelineAsset(provider.Type)) {
-			continue
-		}
 		source, sourceOK := lineageVisibleAnchor(provider, assets)
 		target, targetOK := lineageVisibleAnchor(consumer, assets)
 		if !sourceOK || !targetOK || source.ID == target.ID {
-			continue
-		}
-		if lineageVisualLayer(source.Type) > lineageVisualLayer(target.Type) {
 			continue
 		}
 		policy := lineageProjectionEdge(source.Type, target.Type, edge.Type)
@@ -297,62 +295,32 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		downstreamBySource[edge.source] = append(downstreamBySource[edge.source], edge)
 	}
 	relevant := make([]collapsedEdge, 0, len(candidates))
-	type traversalVisit struct {
-		assetID         string
-		visibleAnchorID string
-	}
-	upstreamVisited := map[traversalVisit]struct{}{{assetID: selectedAnchor.ID, visibleAnchorID: selectedAnchor.ID}: {}}
-	var walkUpstream func(string, string)
-	walkUpstream = func(targetID, visibleTargetID string) {
-		for _, edge := range upstreamByTarget[targetID] {
-			if lineageVisualLayer(assets[edge.source].Type) < lineageVisualLayer(assets[visibleTargetID].Type) {
-				policy := lineageProjectionEdge(assets[edge.source].Type, assets[visibleTargetID].Type, edge.kind)
-				relevant = append(relevant, collapsedEdge{source: edge.source, target: visibleTargetID, kind: policy.kind})
-				visit := traversalVisit{assetID: edge.source, visibleAnchorID: edge.source}
-				_, seen := upstreamVisited[visit]
-				if seen {
+	// Only contained implementation details collapse to their resource owner.
+	// Resource dependencies keep their real endpoints, including model chains
+	// and dependencies whose direction differs from the usual type order.
+	// Walk the selected resource's ancestors and descendants independently so
+	// unrelated consumers of an upstream resource do not enter this graph.
+	walk := func(edgesByNode map[string][]collapsedEdge, upstream bool) map[string]struct{} {
+		visited := map[string]struct{}{selectedAnchor.ID: {}}
+		queue := []string{selectedAnchor.ID}
+		for index := 0; index < len(queue); index++ {
+			for _, edge := range edgesByNode[queue[index]] {
+				relevant = append(relevant, edge)
+				peerID := edge.target
+				if upstream {
+					peerID = edge.source
+				}
+				if _, seen := visited[peerID]; seen {
 					continue
 				}
-				upstreamVisited[visit] = struct{}{}
-				walkUpstream(edge.source, edge.source)
-				continue
+				visited[peerID] = struct{}{}
+				queue = append(queue, peerID)
 			}
-			visit := traversalVisit{assetID: edge.source, visibleAnchorID: visibleTargetID}
-			_, seen := upstreamVisited[visit]
-			if seen {
-				continue
-			}
-			upstreamVisited[visit] = struct{}{}
-			walkUpstream(edge.source, visibleTargetID)
 		}
+		return visited
 	}
-	downstreamVisited := map[traversalVisit]struct{}{{assetID: selectedAnchor.ID, visibleAnchorID: selectedAnchor.ID}: {}}
-	var walkDownstream func(string, string)
-	walkDownstream = func(sourceID, visibleSourceID string) {
-		for _, edge := range downstreamBySource[sourceID] {
-			if lineageVisualLayer(assets[edge.target].Type) > lineageVisualLayer(assets[visibleSourceID].Type) {
-				policy := lineageProjectionEdge(assets[visibleSourceID].Type, assets[edge.target].Type, edge.kind)
-				relevant = append(relevant, collapsedEdge{source: visibleSourceID, target: edge.target, kind: policy.kind})
-				visit := traversalVisit{assetID: edge.target, visibleAnchorID: edge.target}
-				_, seen := downstreamVisited[visit]
-				if seen {
-					continue
-				}
-				downstreamVisited[visit] = struct{}{}
-				walkDownstream(edge.target, edge.target)
-				continue
-			}
-			visit := traversalVisit{assetID: edge.target, visibleAnchorID: visibleSourceID}
-			_, seen := downstreamVisited[visit]
-			if seen {
-				continue
-			}
-			downstreamVisited[visit] = struct{}{}
-			walkDownstream(edge.target, visibleSourceID)
-		}
-	}
-	walkUpstream(selectedAnchor.ID, selectedAnchor.ID)
-	walkDownstream(selectedAnchor.ID, selectedAnchor.ID)
+	upstream := walk(upstreamByTarget, true)
+	downstream := walk(downstreamBySource, false)
 
 	seenEdges := map[string]struct{}{}
 	for _, edge := range relevant {
@@ -375,6 +343,16 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 			Label: nil,
 			Kind:  edge.kind,
 		})
+	}
+	for index, node := range out.Nodes {
+		if node.ID == selectedAnchor.ID {
+			continue
+		}
+		if _, ok := upstream[node.ID]; ok {
+			out.Nodes[index].Side = "upstream"
+		} else if _, ok := downstream[node.ID]; ok {
+			out.Nodes[index].Side = "downstream"
+		}
 	}
 	sortLineageNodes(out.Nodes)
 	sortLineageGraphEdges(out.Edges)
@@ -454,12 +432,33 @@ func lineageTablesFromGraph(projectID string, selected projectview.DevelopAssetV
 
 func lineageGraphTableRow(projectID string, edge assetLineageEdge, peer projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
 	return map[string]any{
-		"relation":  firstNonEmpty(uisignals.ValueOrZero(edge.Label), labelFromKey(edge.Kind)),
+		"relation":  firstNonEmpty(uisignals.ValueOrZero(edge.Label), lineageRelationshipLabel(edge.Kind)),
 		"asset":     assetTitle(peer),
 		"assetHref": lineageAssetHref(projectID, peer, edges),
 		"type":      assetTypeLabel(peer.Type),
 		"key":       peer.Key,
 	}
+}
+
+func lineageRelationshipLabel(kind string) string {
+	switch kind {
+	case "lineage_connection_source":
+		return "Provides source"
+	case "lineage_source_model":
+		return "Feeds model"
+	case "lineage_model_semantic_model":
+		return "Provides model"
+	case "lineage_semantic_model_dashboard":
+		return "Powers dashboard"
+	case "lineage_semantic_model_pipeline", "lineage_semantic_model_refresh_pipeline":
+		return "Refreshes semantic model"
+	case "lineage_pipeline_dashboard", "lineage_refresh_pipeline_dashboard":
+		return "Feeds dashboard"
+	}
+	if strings.HasPrefix(kind, "lineage_") {
+		return "Data dependency"
+	}
+	return labelFromKey(kind)
 }
 
 func lineageTable(rows []map[string]any, empty string) recordTable {
@@ -648,10 +647,6 @@ func isRollupLineageAsset(typ string) bool {
 	default:
 		return false
 	}
-}
-
-func isPipelineAsset(typ string) bool {
-	return typ == "pipeline" || typ == "refresh_pipeline"
 }
 
 func addContainsContext(selectedID string, graph *assetLineageGraph, nodeIndex map[string]int, assets map[string]projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, addNode func(projectview.DevelopAssetView, int, bool), addEdge func(projectview.DevelopEdgeView)) {

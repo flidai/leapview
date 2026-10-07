@@ -107,7 +107,7 @@ func TestSemanticModelDetailProjectionRendersDatasetsDimensionsMetricsRelationsh
 	if len(overview.Pipelines) != 1 || overview.Pipelines[0].Label != "Sales refresh" || overview.Pipelines[0].Href != "/pipelines/pipeline:sales-refresh/details" {
 		t.Fatalf("semantic overview pipelines = %#v", overview.Pipelines)
 	}
-	if len(overview.DownstreamAssets) != 1 || overview.DownstreamAssets[0].Label != "Executive Sales" || overview.DownstreamAssets[0].Href != "/dashboards/dashboard:executive-sales/details" {
+	if len(overview.DownstreamAssets) != 2 || overview.DownstreamAssets[0].Label != "Executive Sales" || overview.DownstreamAssets[0].Href != "/dashboards/dashboard:executive-sales/details" || overview.DownstreamAssets[1].Href != "/pipelines/pipeline:sales-refresh/details" {
 		t.Fatalf("semantic overview downstream = %#v", overview.DownstreamAssets)
 	}
 	var ordersNode *uisignals.SemanticModelGraphNodeSignal

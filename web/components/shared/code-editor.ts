@@ -178,6 +178,8 @@ class CodeEditor extends LitElement {
         lineNumbersMinChars: 3,
         minimap: { enabled: false },
         readOnly: this.disabled,
+        // Keep the active-line cue in the gutter so syntax retains contrast on its theme background.
+        renderLineHighlight: 'gutter',
         scrollBeyondLastLine: false,
         tabSize: 2,
         theme: currentTheme(),

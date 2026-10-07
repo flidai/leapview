@@ -136,6 +136,53 @@ test('configuration viewer can open on Source while keeping Outline available', 
   }
 })
 
+test('outline disclosure buttons support keyboard expansion and filtering', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.locator('lv-config-viewer').evaluate(async (element: any) => {
+      element.configuration = 'spec:\n  displayName: Orders\n  source: orders\n'
+      await element.updateComplete
+    })
+    const outline = page.getByRole('region', { name: 'Configuration outline' })
+    const branch = outline.getByRole('button', { name: /spec/ })
+    await page.getByRole('button', { name: 'Collapse all' }).click()
+    await branch.focus()
+    await page.keyboard.press('Enter')
+    expect(await branch.getAttribute('aria-expanded')).toBe('true')
+    expect(await outline.getByText('displayName', { exact: true }).isVisible()).toBe(true)
+    await page.keyboard.press('Space')
+    expect(await branch.getAttribute('aria-expanded')).toBe('false')
+    await page.getByRole('searchbox', { name: 'Filter configuration' }).fill('displayName')
+    expect(await outline.getByText('displayName', { exact: true }).isVisible()).toBe(true)
+    expect(await outline.getByText('source', { exact: true }).count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('nested configuration rows and SQL stay inside the narrow viewer', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-config-viewer'))
+    await page.locator('lv-config-viewer').evaluate(async (element: any) => {
+      element.configuration = 'name: report\nmodel:\n  source: orders\n  transform:\n    sql: SELECT region, SUM(revenue) AS revenue FROM orders GROUP BY region\n'
+      await element.updateComplete
+    })
+    await page.locator('lv-config-viewer .sql-row lv-code-block pre').waitFor()
+    const bounds = await page.locator('lv-config-viewer').evaluate((element) => {
+      const right = element.getBoundingClientRect().right
+      return [...element.shadowRoot!.querySelectorAll('.row, .sql-row lv-code-block')]
+        .map((row) => row.getBoundingClientRect().right - right)
+    })
+    expect(bounds.length).toBeGreaterThan(0)
+    expect(Math.max(...bounds)).toBeLessThanOrEqual(0.5)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   return `
     <!doctype html>

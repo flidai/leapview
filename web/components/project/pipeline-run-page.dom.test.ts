@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
 
 let server: Server
 let baseURL = ''
@@ -255,6 +255,8 @@ test('run graph shows recorded model states and only an active model moves', asy
     await page.getByRole('group', { name: 'Execution view' }).getByRole('button', { name: 'Graph' }).click()
     await graph.locator('.asset-lineage-node-selected').filter({ hasText: 'Prepared model' }).waitFor()
     await graph.getByRole('button', { name: 'Show focused path' }).click()
+    // Scope controls inclusion; the viewport action centers the selected card at readable 100%.
+    await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
     await page.waitForFunction(() => {
       const root = document.querySelector('lv-pipeline-run-page')?.shadowRoot
       const nodes = Array.from(root?.querySelectorAll<HTMLElement>('lv-asset-lineage-graph .asset-lineage-node-selected') ?? [])
@@ -321,12 +323,13 @@ test('run graph keeps scope separate from Fit and expansion', async () => {
     expect((await heading.textContent())?.trim()).toBe('Dependencies')
     expect(await graph.locator('.react-flow__node').count()).toBe(3)
 
-    await graph.getByRole('button', { name: 'Expand graph' }).click()
+    await graph.getByRole('button', { name: 'Expand to full page' }).click()
     expect((await graph.locator('.asset-lineage-dialog-title').textContent())?.trim()).toBe('Sales refresh · Full run graph · run:latest')
     expect(await graph.locator('dialog').getAttribute('aria-label')).toBe('Sales refresh · Full run graph · run:latest')
-    await graph.getByRole('button', { name: 'Close graph' }).click()
+    await graph.getByRole('button', { name: 'Exit full page' }).click()
 
-    await graph.getByRole('button', { name: 'Fit', exact: true }).click()
+    await graph.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await graph.getByRole('button', { name: 'Fit graph', exact: true }).click()
     expect(await graph.locator('.react-flow__node').count()).toBe(3)
     expect(await graph.getByRole('button', { name: 'Show focused path' }).count()).toBe(1)
 
@@ -335,7 +338,7 @@ test('run graph keeps scope separate from Fit and expansion', async () => {
     expect((await heading.textContent())?.trim()).toBe('Dependencies')
     expect(await graph.locator('.react-flow__node').count()).toBe(3)
     await graph.getByRole('button', { name: 'Show focused path' }).click()
-    expect(await graph.locator('.react-flow__node').count()).toBe(1)
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(1)
     expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Prepared model')
   } finally {
     await page.close()

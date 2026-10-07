@@ -21,7 +21,7 @@ import {
   useNodesState,
 } from '@xyflow/react'
 import { fieldTypeIcon } from './field-type-icon'
-import { orderDatasetRanks, splitDatasetRankNodes } from './semantic-model-graph-layout'
+import { datasetNodeRanks, orderDatasetRanks, splitDatasetRankNodes } from './semantic-model-graph-layout'
 import { FIELD_HEIGHT, HEADER_HEIGHT, NODE_WIDTH, semanticModelGraphStyles } from './semantic-model-graph.styles'
 import type {
   SemanticModelGraphEdgeSignal,
@@ -63,6 +63,14 @@ class SemanticModelGraphElement extends LitElement {
   private manualPositions = new Map<string, NodePosition>()
   private lastLayoutKey = ''
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    if (this.mount && !this.root) {
+      this.root = createRoot(this.mount)
+      this.renderFlow()
+    }
+  }
+
   createRenderRoot(): HTMLElement {
     return this
   }
@@ -81,6 +89,7 @@ class SemanticModelGraphElement extends LitElement {
 
   disconnectedCallback(): void {
     this.root?.unmount()
+    this.root = undefined
     super.disconnectedCallback()
   }
 
@@ -142,6 +151,15 @@ function SemanticModelGraphFlow({
   const [selectedEdgeID, setSelectedEdgeID] = React.useState<string | undefined>()
   const [hoveredEdgeID, setHoveredEdgeID] = React.useState<string | undefined>()
   const [showAllFields, setShowAllFields] = React.useState(false)
+  const relatedButton = React.useRef<HTMLButtonElement>(null)
+  const allButton = React.useRef<HTMLButtonElement>(null)
+  const restoreFieldFocus = React.useRef(false)
+  React.useLayoutEffect(() => {
+    if (!restoreFieldFocus.current) return
+    restoreFieldFocus.current = false
+    const button = showAllFields ? allButton : relatedButton
+    button.current?.focus()
+  }, [showAllFields])
   const [nodes, setNodes, onNodesChange] = useNodesState<DatasetNode>([])
   const displayGraph = React.useMemo(() => relationshipFocusedGraph(graph, showAllFields), [graph, showAllFields])
   const fieldCounts = React.useMemo(() => new Map(graph.nodes.map((node) => [node.id, node.fields.length])), [graph.nodes])
@@ -268,16 +286,24 @@ function SemanticModelGraphFlow({
             { className: 'semantic-model-fields-control', role: 'group', 'aria-label': 'Fields shown' },
             React.createElement('span', { className: 'semantic-model-fields-label' }, 'Fields:'),
             React.createElement('button', {
+              ref: relatedButton,
               className: 'semantic-model-fields-option',
               type: 'button',
               'aria-pressed': !showAllFields,
-              onClick: () => setShowAllFields(false),
+              onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+                restoreFieldFocus.current = event.currentTarget.matches(':focus')
+                setShowAllFields(false)
+              },
             }, 'Related'),
             React.createElement('button', {
+              ref: allButton,
               className: 'semantic-model-fields-option',
               type: 'button',
               'aria-pressed': showAllFields,
-              onClick: () => setShowAllFields(true),
+              onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+                restoreFieldFocus.current = event.currentTarget.matches(':focus')
+                setShowAllFields(true)
+              },
             }, 'All'),
           ),
           React.createElement(
@@ -404,44 +430,6 @@ function datasetNodePositions(graph: SemanticModelGraphSignal, fieldCounts: Map<
   return positions
 }
 
-function datasetNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
-  const ranks = new Map<string, number>()
-  const nodeIDs = new Set(graph.nodes.map((node) => node.id))
-  const incoming = new Map(graph.nodes.map((node) => [node.id, 0]))
-  const outgoing = new Map(graph.nodes.map((node) => [node.id, [] as string[]]))
-
-  for (const edge of graph.edges) {
-    if (!nodeIDs.has(edge.source) || !nodeIDs.has(edge.target) || edge.source === edge.target) continue
-    outgoing.get(edge.source)?.push(edge.target)
-    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
-  }
-
-  const queue = graph.nodes
-    .filter((node) => (incoming.get(node.id) ?? 0) === 0)
-    .map((node) => node.id)
-    .sort((left, right) => left.localeCompare(right))
-  for (const root of queue) ranks.set(root, 0)
-
-  while (queue.length) {
-    const current = queue.shift() ?? ''
-    const currentRank = ranks.get(current) ?? 0
-    for (const next of outgoing.get(current) ?? []) {
-      ranks.set(next, Math.max(ranks.get(next) ?? 0, currentRank + 1))
-      const remaining = (incoming.get(next) ?? 1) - 1
-      incoming.set(next, remaining)
-      if (remaining === 0) queue.push(next)
-    }
-  }
-
-  // Cyclic components have no topological root. Keep them together in the
-  // first rank so the layout remains bounded and users can separate them by
-  // dragging without an unbounded rank walk.
-  for (const node of graph.nodes) {
-    if (!ranks.has(node.id)) ranks.set(node.id, 0)
-  }
-  return ranks
-}
-
 function nodeHeight(node: SemanticModelGraphNodeSignal, totalFieldCount = node.fields.length): number {
   const summaryRows = totalFieldCount > node.fields.length ? 1 : 0
   return HEADER_HEIGHT + (Math.max(1, node.fields.length) + summaryRows) * FIELD_HEIGHT + 12
@@ -508,6 +496,9 @@ function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
         'aria-label': relationshipLabel,
         style: {
           transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+          // Keep descriptive labels inside the gap between datasets so they
+          // cannot cover field names or cardinality markers at either end.
+          maxWidth: !data?.sameRank ? Math.max(30, Math.abs(props.targetX - props.sourceX) - 12) : undefined,
         },
       }, data?.label ?? ''),
       React.createElement('div', {

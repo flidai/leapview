@@ -230,7 +230,7 @@ export class EntityMultiSelect extends LitElement {
         : visibleItems.length === 0
           ? html`<div class="empty">${this.noResultsMessage}</div>`
           : html`
-            <div class="list" role="listbox" aria-label=${this.label} aria-multiselectable="true">
+            <div class="list" role="group" aria-label=${this.label}>
               ${visibleItems.map((item) => html`
                 <label class=${item.disabled ? 'item item-disabled' : 'item'}>
                   <input

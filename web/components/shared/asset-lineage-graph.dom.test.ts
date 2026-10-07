@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 
 let server: Server
 let baseURL = ''
@@ -51,10 +51,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
     await page.waitForFunction(() => customElements.get('lv-asset-lineage-graph'))
     await page.waitForFunction(() => {
       const host = document.querySelector('lineage-test-host') as HTMLElement & { shadowRoot: ShadowRoot }
-      const graph = host?.shadowRoot?.querySelector('lv-asset-lineage-graph')
-      return Boolean(graph?.querySelector('.react-flow__node')
-        && graph.querySelector('.react-flow__edge')
-        && graph.querySelector('.react-flow__controls-button svg'))
+      return Boolean(host?.shadowRoot?.querySelector('.react-flow__node'))
     })
 
     const state = await page.evaluate(() => {
@@ -65,16 +62,13 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       const node = graph.querySelector('.react-flow__node') as HTMLElement
       const edge = graph.querySelector('.react-flow__edges') as HTMLElement
       const edgePath = graph.querySelector('.react-flow__edge') as SVGElement
-      const controlButton = graph.querySelector('.react-flow__controls-button') as HTMLElement
-      const controlIcon = controlButton.querySelector('svg') as SVGElement
+      const controlButton = graph.querySelector('.asset-lineage-viewport-controls button') as HTMLElement
       const flowRect = flow.getBoundingClientRect()
       const nodeRect = node.getBoundingClientRect()
       const controlRect = controlButton.getBoundingClientRect()
-      const controlIconRect = controlIcon.getBoundingClientRect()
       return {
         flowHeight: Math.round(flowRect.height),
         flowWidth: Math.round(flowRect.width),
-        graphActions: Array.from(graph.querySelectorAll('.asset-lineage-actions button')).map((button) => button.textContent?.trim()),
         inspectorPanels: graph.querySelectorAll('.asset-lineage-panel').length,
         viewportPosition: getComputedStyle(viewport).position,
         viewportMatchesFlowWidth: Math.round(Number.parseFloat(getComputedStyle(viewport).width)) === Math.round(flowRect.width),
@@ -82,18 +76,16 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
         edgeRouting: edgePath.getAttribute('class') ?? '',
         nodePosition: getComputedStyle(node).position,
         nodeInsideFlow: nodeRect.top >= flowRect.top && nodeRect.top < flowRect.bottom,
+        controlsOutsideCanvas: controlRect.top >= flowRect.bottom,
         controlDisplay: getComputedStyle(controlButton).display,
         controlWidth: Math.round(controlRect.width),
         controlHeight: Math.round(controlRect.height),
-        controlIconWidth: Math.round(controlIconRect.width),
-        controlIconFill: getComputedStyle(controlIcon).fill,
       }
     })
 
     expect(state).toEqual({
       flowHeight: expect.any(Number),
       flowWidth: 900,
-      graphActions: ['Show all upstream', 'Fit', 'Expand graph'],
       inspectorPanels: 0,
       viewportPosition: 'absolute',
       viewportMatchesFlowWidth: true,
@@ -101,13 +93,41 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       edgeRouting: expect.stringContaining('react-flow__edge-smoothstep'),
       nodePosition: 'absolute',
       nodeInsideFlow: true,
+      controlsOutsideCanvas: true,
       controlDisplay: 'flex',
-      controlWidth: 26,
-      controlHeight: 26,
-      controlIconWidth: 12,
-      controlIconFill: 'rgb(36, 41, 47)',
+      controlWidth: 36,
+      controlHeight: 36,
     })
-    expect(state.flowHeight).toBeLessThan(420)
+  } finally {
+    await page.close()
+  }
+})
+
+test('short narrow lineage previews scroll to usable viewport controls', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate(element => {
+      element.style.width = '360px'
+      element.style.height = '260px'
+      element.style.overflow = 'hidden'
+    })
+    const expand = graph.getByRole('button', { name: 'Expand to full page' })
+    await expand.scrollIntoViewIfNeeded()
+    await browserExpect.poll(() => expand.evaluate(button => {
+      const bounds = button.getBoundingClientRect()
+      const layout = button.closest('.asset-lineage-layout')!.getBoundingClientRect()
+      return bounds.top >= layout.top && bounds.bottom <= layout.bottom
+    })).toBe(true)
+    await expand.click()
+    await browserExpect(graph.getByRole('dialog')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await browserExpect(graph.getByRole('dialog')).toBeHidden()
+    await browserExpect(expand).toBeFocused()
+    await graph.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await browserExpect(graph.getByRole('button', { name: 'Zoom out', exact: true })).toBeEnabled()
   } finally {
     await page.close()
   }
@@ -135,14 +155,38 @@ test('asset lineage selection clears from the background and Escape', async () =
   }
 })
 
+test('cleared lineage selection survives refresh but follows a changed incoming anchor', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(1)
+    await graph.getByRole('button', { name: 'Show all', exact: true }).click()
+    await browserExpect(graph.getByLabel('Find asset')).toHaveValue('')
+    await graph.evaluate(async (element: HTMLElement & { graph: any; updateComplete: Promise<unknown> }) => {
+      element.graph = structuredClone(element.graph)
+      await element.updateComplete
+    })
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(0)
+    await browserExpect(graph.getByRole('button', { name: 'Focus selected', exact: true })).toBeDisabled()
+    const anchor = await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      const next = element.graph.nodes.find((node: any) => !node.selected).id
+      element.graph = { ...element.graph, nodes: element.graph.nodes.map((node: any) => ({ ...node, selected: node.id === next })) }
+      return next
+    })
+    await browserExpect(graph.getByLabel('Find asset')).toHaveValue(anchor)
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(1)
+    await browserExpect(graph.getByRole('button', { name: 'Focus selected', exact: true })).toBeEnabled()
+  } finally { await page.close() }
+})
+
 test('asset lineage keeps the complete upstream and downstream path highlighted when an intermediate model is selected', async () => {
   const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
   try {
     await page.goto(baseURL)
     const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
     await graph.locator('.react-flow__node').first().waitFor()
-    await graph.evaluate((element: HTMLElement & { graph: any; scope: string }) => {
-      element.scope = 'full'
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
       element.graph = {
         nodes: [
           { id: 'connection', label: 'CFO demo managed files', kind: 'connection', rank: -2 },
@@ -194,13 +238,13 @@ test('asset lineage uses a non-looping route for peers in the same rank', async 
     })
     const edge = graph.locator('.react-flow__edge[data-id="model-a-model-b"]')
     await edge.waitFor({ state: 'attached' })
-    expect(await edge.getAttribute('class')).toContain('react-flow__edge-default')
+    expect(await edge.getAttribute('class')).toContain('react-flow__edge-smoothstep')
   } finally {
     await page.close()
   }
 })
 
-test('asset lineage keeps the selected node readable on a dense mobile fit', async () => {
+test('asset lineage keeps dense graphs readable on initial fit', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
   try {
     await page.goto(`${baseURL}?dense=1`)
@@ -208,9 +252,10 @@ test('asset lineage keeps the selected node readable on a dense mobile fit', asy
     await graph.locator('.react-flow__node').first().waitFor()
     await page.waitForFunction(() => {
       const graph = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph')
-      return graph?.querySelectorAll('.react-flow__node').length === 1
+      return graph?.querySelectorAll('.react-flow__node').length === 14
     })
 
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText('100%')
     const state = await graph.evaluate((element) => {
       const viewport = element.querySelector('.react-flow__viewport') as HTMLElement
       const flow = element.querySelector('.react-flow') as HTMLElement
@@ -221,28 +266,351 @@ test('asset lineage keeps the selected node readable on a dense mobile fit', asy
       const nodeRects = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).map((node) => node.getBoundingClientRect())
       return {
         scale: Number(match?.[1]),
-        renderedTitlePixels: Number.parseFloat(getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).fontSize) * Number(match?.[1]),
         selectedVisible: selectedRect.top >= flowRect.top
           && selectedRect.bottom <= flowRect.bottom
           && selectedRect.left < flowRect.right
           && selectedRect.right > flowRect.left,
-        focusedNodeCount: nodeRects.length,
-        titleWhiteSpace: getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).whiteSpace,
-        titleTextOverflow: getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).textOverflow,
+        allNodesVerticallyVisible: nodeRects.every((rect) => rect.top >= flowRect.top && rect.bottom <= flowRect.bottom && rect.left >= flowRect.left && rect.right <= flowRect.right),
       }
     })
-    expect(state.scale).toBeGreaterThanOrEqual(0.85)
-    expect(state.renderedTitlePixels).toBeGreaterThanOrEqual(12)
+    expect(state.scale).toBe(1)
     expect(state.selectedVisible).toBe(true)
-    expect(state.focusedNodeCount).toBe(1)
-    expect(state.titleWhiteSpace).toBe('normal')
-    expect(state.titleTextOverflow).toBe('clip')
+    expect(state.allNodesVerticallyVisible).toBe(false)
+    await graph.getByRole('button', { name: 'Fit graph', exact: true }).click()
+    await browserExpect.poll(() => graph.evaluate(element => {
+      const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+      return [...element.querySelectorAll('.react-flow__node')].every(node => {
+        const rect = node.getBoundingClientRect()
+        return rect.top >= flow.top && rect.bottom <= flow.bottom && rect.left >= flow.left && rect.right <= flow.right
+      })
+    })).toBe(true)
   } finally {
     await page.close()
   }
 })
 
-test('scope controls graph inclusion separately from Fit, and Expand opens a full-width workspace', async () => {
+test('clipped nodes remain clickable and keyboard focus brings the next asset into view', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((el: HTMLElement & { selections?: string[] }) => {
+      el.style.height = '300px'
+      el.selections = []
+      el.addEventListener('lv-lineage-select', event => el.selections!.push((event as CustomEvent).detail.id))
+    })
+    for (let i = 0; i < 3; i++) await graph.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText('200%')
+    const source = graph.getByRole('button', { name: 'Source orders', exact: true })
+    expect(await source.evaluate(el => {
+      const node = el.getBoundingClientRect()
+      const canvas = el.closest('.asset-lineage-flow')!.getBoundingClientRect()
+      return node.top < canvas.top || node.left < canvas.left
+    })).toBe(true)
+    await source.click()
+    await browserExpect.poll(() => graph.evaluate((el: any) => el.selections)).toEqual(['source'])
+    await page.keyboard.press('Tab')
+    const next = graph.getByRole('button', { name: 'Dashboard Executive Sales Dashboard', exact: true })
+    await browserExpect(next).toBeFocused()
+    await browserExpect.poll(() => next.evaluate(el => {
+      const node = el.getBoundingClientRect()
+      const canvas = el.closest('.asset-lineage-flow')!.getBoundingClientRect()
+      return node.left + node.width / 2 - canvas.left - canvas.width / 2
+    })).toBeCloseTo(0, 1)
+    await page.keyboard.press('Enter')
+    await browserExpect.poll(() => graph.evaluate((el: any) => el.selections)).toEqual(['source', 'dashboard'])
+  } finally { await page.close() }
+}, 15_000)
+
+test('lineage toolbar opens assets and filters actual dependency paths', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      element.graph = {
+        nodes: [
+          { id: 'a', label: 'Orders source', kind: 'source', href: '/sources/a' },
+          { id: 'b', label: 'Sales model', kind: 'model', selected: true, href: '/models/b' },
+          { id: 'c', label: 'Revenue dashboard', kind: 'dashboard', href: '/dashboards/c' },
+          { id: 'd', label: 'Other source', kind: 'source' },
+        ],
+        edges: [{ id: 'ab', source: 'a', target: 'b', kind: 'uses' }, { id: 'bc', source: 'b', target: 'c', kind: 'uses' }],
+      }
+    })
+    await browserExpect.poll(() => graph.getByRole('link', { name: 'Open asset' }).getAttribute('href')).toBe('/models/b')
+    await graph.getByRole('button', { name: /^Upstream/ }).click()
+    await browserExpect.poll(() => graph.locator('.react-flow__node').count()).toBe(2)
+    expect(await graph.locator('.react-flow__node').allTextContents()).toEqual(expect.arrayContaining([expect.stringContaining('Orders source'), expect.stringContaining('Sales model')]))
+    await graph.getByRole('button', { name: /^Downstream/ }).click()
+    await browserExpect.poll(() => graph.locator('.react-flow__node').count()).toBe(2)
+    expect(await graph.locator('.react-flow__node').allTextContents()).toEqual(expect.arrayContaining([expect.stringContaining('Revenue dashboard')]))
+    await graph.getByRole('button', { name: 'Show all', exact: true }).click()
+    await browserExpect.poll(() => graph.locator('.react-flow__node').count()).toBe(4)
+    await graph.getByRole('combobox', { name: 'Find asset' }).selectOption('a')
+    await browserExpect.poll(() => graph.getByRole('link', { name: 'Open asset' }).getAttribute('href')).toBe('/sources/a')
+    await graph.getByRole('button', { name: 'Focus selected' }).click()
+    await graph.getByRole('button', { name: 'Fit graph' }).click()
+  } finally { await page.close() }
+})
+
+test('lineage zoom, fit, resize and signal refresh preserve a usable view', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    const scale = () => graph.locator('.react-flow__viewport').evaluate(el => Number((el as HTMLElement).style.transform.match(/scale\(([^)]+)/)?.[1]))
+    await browserExpect.poll(scale).toBeGreaterThan(0)
+    await graph.getByRole('button', { name: 'Focus selected' }).click()
+    await browserExpect.poll(scale).toBeCloseTo(1, 2)
+    await graph.getByRole('button', { name: 'Zoom in' }).click()
+    await browserExpect.poll(scale).toBeGreaterThan(1)
+    await graph.getByRole('button', { name: 'Zoom out' }).click()
+    await browserExpect.poll(scale).toBeLessThan(1.05)
+    await graph.getByRole('button', { name: 'Show all', exact: true }).click()
+    await graph.evaluate((el: HTMLElement & { graph: any }) => { el.graph = structuredClone(el.graph); el.style.width = '346px' })
+    await browserExpect.poll(() => graph.locator('.asset-lineage-node-selected').count()).toBe(0)
+    const allVisible = () => graph.evaluate(el => {
+      const flow = el.querySelector('.react-flow')!.getBoundingClientRect()
+      return [...el.querySelectorAll('.react-flow__node')].every(node => {
+        const r = node.getBoundingClientRect()
+        return r.left >= flow.left && r.right <= flow.right && r.top >= flow.top && r.bottom <= flow.bottom
+      })
+    })
+    await browserExpect.poll(scale).toBeCloseTo(1, 2)
+    await graph.getByRole('button', { name: 'Fit graph' }).click()
+    await browserExpect.poll(allVisible).toBe(true)
+    for (let i = 0; i < 4; i++) await graph.getByRole('button', { name: 'Zoom in' }).click()
+    await browserExpect.poll(allVisible).toBe(false)
+    await graph.getByRole('button', { name: 'Fit graph' }).click()
+    await browserExpect.poll(allVisible).toBe(true)
+  } finally { await page.close() }
+}, 15_000)
+
+test('choosing an already fitted overview survives resize and manual views retain their center', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    const zoom = graph.getByRole('status', { name: 'Zoom level' })
+    const fit = graph.getByRole('button', { name: 'Fit graph', exact: true })
+    await browserExpect(zoom).toHaveText('100%')
+    await browserExpect(fit).toBeEnabled()
+    await fit.click()
+    await browserExpect(fit).toBeDisabled()
+    await browserExpect(zoom).toHaveText('100%')
+    await graph.evaluate((el: HTMLElement) => { el.style.width = '346px' })
+    await browserExpect(zoom).not.toHaveText('100%')
+    await browserExpect(fit).toBeDisabled()
+    await browserExpect.poll(() => graph.evaluate(el => {
+      const flow = el.querySelector('.react-flow')!.getBoundingClientRect()
+      return [...el.querySelectorAll('.react-flow__node')].every(node => {
+        const r = node.getBoundingClientRect()
+        return r.left >= flow.left && r.right <= flow.right && r.top >= flow.top && r.bottom <= flow.bottom
+      })
+    })).toBe(true)
+    const flow = (await graph.locator('.react-flow').boundingBox())!
+    await page.mouse.move(flow.x + flow.width - 24, flow.y + 24)
+    await page.mouse.down()
+    await page.mouse.move(flow.x + flow.width - 64, flow.y + 44, { steps: 5 })
+    await page.mouse.up()
+    await browserExpect(fit).toBeEnabled()
+    const view = () => graph.evaluate(el => {
+      const match = (el.querySelector('.react-flow__viewport') as HTMLElement).style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/)!
+      const bounds = el.querySelector('.react-flow')!.getBoundingClientRect()
+      const scale = Number(match[3])
+      return { scale, centerX: (bounds.width / 2 - Number(match[1])) / scale, centerY: (bounds.height / 2 - Number(match[2])) / scale }
+    })
+    const before = await view()
+    await graph.evaluate((el: HTMLElement & { graph: any }) => { el.graph = structuredClone(el.graph); el.style.width = '620px' })
+    await browserExpect.poll(async () => (await view()).centerX).toBeCloseTo(before.centerX, 1)
+    const after = await view()
+    expect(after.scale).toBe(before.scale)
+    expect(after.centerY).toBeCloseTo(before.centerY, 1)
+  } finally { await page.close() }
+}, 15_000)
+
+test('viewport controls explain their actions and keep zoom anchored without changing the selected path', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.asset-lineage-node').first().waitFor()
+    await graph.evaluate((el: HTMLElement) => { el.style.width = '346px' })
+    const controls = graph.getByRole('group', { name: 'Graph view' })
+    const zoom = controls.getByRole('status', { name: 'Zoom level' })
+    await browserExpect(zoom).toHaveText('100%')
+    await browserExpect(controls.getByRole('button', { name: 'Fit graph', exact: true })).toBeEnabled()
+    await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
+    await browserExpect(zoom).toHaveText('100%')
+    const viewport = () => graph.evaluate(el => {
+      const transform = (el.querySelector('.react-flow__viewport') as HTMLElement).style.transform
+      const match = transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/)!
+      const bounds = el.querySelector('.react-flow')!.getBoundingClientRect()
+      const x = Number(match[1]), y = Number(match[2]), scale = Number(match[3])
+      return { scale, centerX: (bounds.width / 2 - x) / scale, centerY: (bounds.height / 2 - y) / scale }
+    })
+    const before = await viewport()
+    await controls.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await browserExpect(zoom).toHaveText('125%')
+    const after = await viewport()
+    expect(after.centerX).toBeCloseTo(before.centerX, 1)
+    expect(after.centerY).toBeCloseTo(before.centerY, 1)
+    await graph.getByRole('combobox', { name: 'Find asset' }).selectOption('source')
+    await browserExpect(zoom).toHaveText('125%')
+    await graph.locator('.react-flow__renderer').dispatchEvent('click')
+    await browserExpect(zoom).toHaveText('125%')
+    await graph.getByRole('combobox', { name: 'Find asset' }).selectOption('dashboard')
+    await browserExpect(zoom).toHaveText('125%')
+    await controls.getByRole('button', { name: 'Zoom out', exact: true }).click()
+    await browserExpect(zoom).toHaveText('100%')
+    await controls.getByRole('button', { name: 'Zoom in', exact: true }).click({ clickCount: 3 })
+    await browserExpect(zoom).toHaveText('200%')
+    await browserExpect(controls.getByRole('button', { name: 'Zoom in', exact: true })).toBeDisabled()
+    await browserExpect(controls.getByRole('button', { name: 'Fit graph', exact: true })).toBeEnabled()
+    await controls.getByRole('button', { name: 'Fit graph', exact: true }).click()
+    await browserExpect(controls.getByRole('button', { name: 'Fit graph', exact: true })).toBeDisabled()
+    expect(await graph.locator('.asset-lineage-node-selected').count()).toBe(1)
+    await graph.getByRole('button', { name: /^Upstream/ }).click()
+    await browserExpect(graph.locator('.asset-lineage-node')).toHaveCount(2)
+    await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
+    await browserExpect(graph.getByRole('button', { name: /^Upstream/ })).toHaveAttribute('aria-pressed', 'true')
+  } finally { await page.close() }
+}, 15_000)
+
+test('expand opens the whole lineage explorer across the page and restores it on exit', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.asset-lineage-node').first().waitFor()
+    await graph.getByRole('button', { name: /^Upstream/ }).click()
+    const initial = await graph.locator('.asset-lineage-root').boundingBox()
+    const selected = await graph.getByRole('combobox', { name: 'Find asset' }).inputValue()
+    await graph.getByRole('button', { name: 'Expand to full page' }).click()
+    const expanded = graph.getByRole('dialog', { name: 'Full-page lineage explorer' })
+    await browserExpect(expanded).toBeVisible()
+    expect(await expanded.boundingBox()).toEqual({ x: 0, y: 0, width: 1180, height: 760 })
+    await browserExpect(expanded.getByRole('combobox', { name: 'Find asset' })).toHaveValue(selected)
+    await browserExpect(expanded.getByRole('button', { name: /^Upstream/ })).toHaveAttribute('aria-pressed', 'true')
+    await expanded.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await browserExpect(expanded.getByRole('status', { name: 'Zoom level' })).toHaveText('125%')
+    await expanded.getByRole('button', { name: 'Zoom out', exact: true }).click()
+    await browserExpect(expanded.getByRole('status', { name: 'Zoom level' })).toHaveText('100%')
+    await expanded.getByRole('button', { name: 'Exit full page' }).press('Escape')
+    await browserExpect(expanded).not.toBeVisible()
+    await browserExpect(graph.getByRole('button', { name: 'Expand to full page' })).toBeFocused()
+    expect(await graph.locator('.asset-lineage-root').boundingBox()).toEqual(initial)
+    await browserExpect(graph.getByRole('combobox', { name: 'Find asset' })).toHaveValue(selected)
+    await browserExpect(graph.getByRole('button', { name: /^Upstream/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(await page.evaluate(() => document.documentElement.style.overflow)).toBe('')
+    await graph.getByRole('button', { name: 'Expand to full page' }).click()
+    await expanded.getByRole('button', { name: 'Exit full page' }).click()
+    await browserExpect(expanded).not.toBeVisible()
+    await graph.getByRole('button', { name: 'Expand to full page' }).click()
+    await graph.evaluate(element => element.remove())
+    expect(await page.evaluate(() => document.documentElement.style.overflow)).toBe('')
+    expect(await page.locator('dialog:modal').count()).toBe(0)
+  } finally { await page.close() }
+}, 15_000)
+
+test('lineage graph reconnects without becoming blank', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element) => {
+      const parent = element.parentNode!
+      element.remove()
+      parent.append(element)
+    })
+    await graph.locator('.react-flow__node').first().waitFor({ timeout: 3000 })
+    expect(await graph.locator('.react-flow__node').count()).toBe(2)
+  } finally { await page.close() }
+})
+
+
+test('focused scope includes direct dependencies and scope events remain separate from Fit', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}?focused=1`)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((el: HTMLElement & { graph: any; events?: any[] }) => {
+      el.events = []
+      el.addEventListener('lv-lineage-select', (event: Event) => el.events!.push(['select', (event as CustomEvent).detail]))
+      el.addEventListener('lv-lineage-scope-change', (event: Event) => el.events!.push(['scope', (event as CustomEvent).detail]))
+      el.graph = {
+        nodes: [
+          { id: 'a', label: 'Original source', kind: 'source' },
+          { id: 'b', label: 'Direct model', kind: 'model' },
+          { id: 'c', label: 'Selected report', kind: 'dashboard', selected: true },
+        ],
+        edges: [{ id: 'ab', source: 'a', target: 'b', kind: 'uses' }, { id: 'bc', source: 'b', target: 'c', kind: 'uses' }],
+      }
+    })
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(2)
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText('100%')
+    await graph.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await graph.getByRole('button', { name: 'Show all upstream', exact: true }).click()
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(3)
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText('125%')
+    await graph.getByRole('button', { name: 'Fit graph', exact: true }).click()
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(3)
+    expect(await graph.evaluate((el: any) => el.scope)).toBe('full')
+    await graph.getByRole('button', { name: 'Show direct dependencies', exact: true }).click()
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(2)
+    await graph.getByRole('combobox', { name: 'Find asset' }).selectOption('b')
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(3)
+    expect(await graph.evaluate((el: any) => el.events)).toEqual([
+      ['scope', { scope: 'full' }], ['scope', { scope: 'focused' }], ['select', { id: 'b' }],
+    ])
+    await graph.getByRole('button', { name: 'Show all', exact: true }).click()
+    expect(await graph.evaluate((el: any) => el.scope)).toBe('full')
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(0)
+  } finally { await page.close() }
+})
+
+test('run graph preserves status overlays, run scope labels, custom dialog titles and focus containment', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}?focused=1`)
+    const graph = page.locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((el: any) => {
+      el.scopeMode = 'run'
+      el.dialogTitle = 'Pipeline run graph'
+      el.graph = {
+        nodes: [
+          { id: 'a', label: 'Ingest', kind: 'source', runStatus: 'succeeded', runStatusLabel: 'Succeeded' },
+          { id: 'b', label: 'Build', kind: 'model', selected: true, runStatus: 'running', runStatusLabel: 'Running now', runAnimate: true },
+        ],
+        edges: [{ id: 'ab', source: 'a', target: 'b', kind: 'uses' }],
+      }
+    })
+    await browserExpect(graph.getByRole('button', { name: 'Model Build, Running now', exact: true })).toHaveClass(/asset-lineage-node-run-animated/)
+    await browserExpect(graph.locator('.asset-lineage-node-run-succeeded .asset-lineage-node-run-status')).toHaveText('Succeeded')
+    await graph.getByRole('button', { name: 'Show full run graph', exact: true }).click()
+    await browserExpect(graph.getByRole('button', { name: 'Show focused path', exact: true })).toBeVisible()
+    await graph.getByRole('button', { name: 'Expand to full page' }).click()
+    const dialog = graph.getByRole('dialog', { name: 'Pipeline run graph' })
+    await browserExpect(dialog).toBeVisible()
+    for (let i = 0; i < 24; i++) {
+      await page.keyboard.press('Tab')
+      expect(await dialog.evaluate(el => el.matches(':focus-within'))).toBe(true)
+    }
+    await page.keyboard.press('Escape')
+    await browserExpect(dialog).not.toBeVisible()
+    await browserExpect(graph.getByRole('button', { name: 'Expand to full page' })).toBeFocused()
+  } finally { await page.close() }
+})
+
+test('external lineage scope changes keep the anchor visible and narrow Full Fit contains every node', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
   try {
     await page.goto(baseURL)
@@ -251,150 +619,49 @@ test('scope controls graph inclusion separately from Fit, and Expand opens a ful
     await graph.evaluate((element: HTMLElement & { graph: any }) => {
       element.style.width = '346px'
       element.graph = {
-        nodes: [
-          { id: 'source-upstream', label: 'Earlier source outside the focus', kind: 'source', rank: -2 },
-          { id: 'source-direct', label: 'Direct source dependency with a long complete title', kind: 'source', rank: -1 },
-          { id: 'model-selected', label: 'Selected model with a long complete title', kind: 'model', rank: 0, selected: true },
-        ],
-        edges: [
-          { id: 'earlier-direct', source: 'source-upstream', target: 'source-direct', kind: 'uses_source' },
-          { id: 'direct-selected', source: 'source-direct', target: 'model-selected', kind: 'uses_source' },
-        ],
+        nodes: [-2, -1, 0, 1, 2].map(rank => ({ id: `asset-${rank}`, label: `Asset ${rank}`, kind: 'model', rank, selected: rank === 0 })),
+        edges: [-2, -1, 0, 1].map(rank => ({ id: `edge-${rank}`, source: `asset-${rank}`, target: `asset-${rank + 1}`, kind: 'uses_model' })),
       }
     })
-    await graph.locator('.asset-lineage-node-selected').filter({ hasText: 'Selected model with a long complete title' }).waitFor()
-    // Rendering a node precedes React Flow's measurement and scheduled fit.
-    // Wait for the viewport outcome, not merely the node's DOM insertion.
-    await graph.locator('.asset-lineage-node-selected').evaluate(async (selected) => {
-      await new Promise<void>((resolve, reject) => {
-        const deadline = performance.now() + 5000
-        const check = () => {
-          const bounds = selected.closest('.react-flow')!.getBoundingClientRect()
-          const rect = selected.getBoundingClientRect()
-          if (rect.top >= bounds.top && rect.bottom <= bounds.bottom && rect.left < bounds.right && rect.right > bounds.left) resolve()
-          else if (performance.now() >= deadline) reject(new Error('Selected model did not enter the graph viewport'))
-          else requestAnimationFrame(check)
-        }
-        check()
-      })
-    })
-    const state = await graph.evaluate((element) => {
-      const flow = element.querySelector('.react-flow') as HTMLElement
-      const selected = element.querySelector('.asset-lineage-node-selected') as HTMLElement
-      const direct = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).find((node) => node.textContent?.includes('Direct source dependency'))!
-      const indirect = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).find((node) => node.textContent?.includes('Earlier source'))
-      const match = (element.querySelector('.react-flow__viewport') as HTMLElement).style.transform.match(/scale\(([-\d.]+)\)/)
-      const visible = (node: HTMLElement) => {
-        const rect = node.getBoundingClientRect()
-        const bounds = flow.getBoundingClientRect()
-        return rect.top >= bounds.top && rect.bottom <= bounds.bottom && rect.left < bounds.right && rect.right > bounds.left
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveText(/Asset 0/)
+    for (const cleared of [false, true]) {
+      if (cleared) {
+        await graph.locator('.react-flow__renderer').dispatchEvent('click')
+        await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(0)
+        const flow = (await graph.locator('.react-flow').boundingBox())!
+        await page.mouse.move(flow.x + flow.width - 16, flow.y + flow.height - 20)
+        await page.mouse.down()
+        await page.mouse.move(flow.x + 4, flow.y + flow.height - 20, { steps: 4 })
+        await page.mouse.up()
+        await browserExpect.poll(() => graph.evaluate(element => {
+          const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+          return element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect().right < flow.left
+        }), { message: 'Pan must move the fallback asset out of view' }).toBe(true)
       }
-      return {
-        zoom: Number(match?.[1]),
-        nodeCount: element.querySelectorAll('.react-flow__node').length,
-        selectedVisible: visible(selected),
-        directVisible: visible(direct),
-        indirectIncluded: indirect !== undefined,
-        edgeIDs: Array.from(element.querySelectorAll<HTMLElement>('.react-flow__edge')).map((edge) => edge.getAttribute('data-id')),
-        completeTitle: selected.querySelector('.asset-lineage-node-title')?.textContent?.trim(),
-        clippedTitle: getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).textOverflow,
+      for (const scope of cleared ? ['focused', 'full'] : ['full']) {
+        await graph.evaluate((element: HTMLElement & { scope: string }, value) => { element.scope = value }, scope)
+        await browserExpect(graph.locator('.react-flow__node')).toHaveCount(scope === 'full' ? 5 : 3)
+        await browserExpect.poll(() => graph.evaluate(element => {
+          const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+          const anchor = element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect()
+          return anchor.width > 0 && anchor.left >= flow.left && anchor.right <= flow.right
+            && anchor.top >= flow.top && anchor.bottom <= flow.bottom
+        }), { message: `${scope} scope must center the ${cleared ? 'fallback' : 'selected'} asset` }).toBe(true)
+        await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(cleared ? 0 : 1)
       }
-    })
-    expect(state.zoom).toBeGreaterThanOrEqual(0.85)
-    expect(state.nodeCount).toBe(2)
-    expect(state.selectedVisible).toBe(true)
-    expect(state.directVisible).toBe(true)
-    expect(state.indirectIncluded).toBe(false)
-    expect(state.edgeIDs).toEqual(['direct-selected'])
-    expect(state.completeTitle).toBe('Selected model with a long complete title')
-    expect(state.clippedTitle).toBe('clip')
-
-    const scopeToggle = graph.getByRole('button', { name: 'Show all upstream' })
-    await scopeToggle.click()
-    await graph.locator('.react-flow__node').filter({ hasText: 'Earlier source' }).waitFor()
-    expect(await graph.locator('.react-flow__node').count()).toBe(3)
-    expect(await graph.locator('.react-flow__edge').count()).toBe(2)
-    expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Selected model')
-    await page.waitForFunction(() => {
-      const graph = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph')
-      const flow = graph?.querySelector('.react-flow')
-      const selected = graph?.querySelector('.asset-lineage-node-selected')
-      if (!flow || !selected) return false
-      const flowBounds = flow.getBoundingClientRect()
-      const selectedBounds = selected.getBoundingClientRect()
-      return selectedBounds.top >= flowBounds.top && selectedBounds.bottom <= flowBounds.bottom
-        && selectedBounds.left >= flowBounds.left && selectedBounds.right <= flowBounds.right
-    })
-    const fullScopeView = await graph.evaluate((element) => {
-      const flow = element.querySelector('.react-flow') as HTMLElement
-      const selected = element.querySelector('.asset-lineage-node-selected') as HTMLElement
-      const scale = Number((element.querySelector('.react-flow__viewport') as HTMLElement).style.transform.match(/scale\(([-\d.]+)\)/)?.[1])
-      const selectedBounds = selected.getBoundingClientRect()
-        const flowBounds = flow.getBoundingClientRect()
-        return {
-          scale,
-          selectedVisible: selectedBounds.top >= flowBounds.top && selectedBounds.bottom <= flowBounds.bottom
-          && selectedBounds.left >= flowBounds.left && selectedBounds.right <= flowBounds.right,
-      }
-    })
-    expect(fullScopeView.selectedVisible).toBe(true)
-    expect(fullScopeView.scale).toBeCloseTo(state.zoom, 2)
-
-    await graph.getByRole('button', { name: 'Fit', exact: true }).click()
-    expect(await graph.locator('.react-flow__node').count()).toBe(3)
-    expect(await graph.getByRole('button', { name: 'Show direct dependencies' }).count()).toBe(1)
-    await graph.getByRole('button', { name: 'Show direct dependencies' }).click()
-    expect(await graph.locator('.react-flow__node').count()).toBe(2)
-
-    const expand = graph.getByRole('button', { name: 'Expand graph' })
-    const before = await graph.evaluate((element) => element.getBoundingClientRect().width)
-    await expand.click()
-    const close = graph.getByRole('button', { name: 'Close graph' })
-    await close.waitFor()
-    const expanded = await graph.evaluate((element) => ({
-      width: element.querySelector('dialog')!.getBoundingClientRect().width,
-      viewportWidth: document.documentElement.clientWidth,
-      position: getComputedStyle(element.querySelector('dialog')!).position,
-      modal: element.querySelector('dialog')!.matches(':modal'),
-      label: element.querySelector('dialog')!.getAttribute('aria-label'),
-    }))
-    expect(expanded.width).toBeGreaterThanOrEqual(expanded.viewportWidth - 2)
-    expect(expanded.position).toBe('fixed')
-    expect(expanded.modal).toBe(true)
-    expect(expanded.label).toBe('Expanded dependency graph')
-    expect((await graph.locator('.asset-lineage-dialog-title').textContent())?.trim()).toBe('Expanded dependency graph')
-    expect(await graph.locator('.react-flow__node').count()).toBe(2)
-    expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Selected model')
-    await page.waitForFunction(() => {
-      const graph = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph')
-      const flow = graph?.querySelector('.react-flow')
-      const selected = graph?.querySelector('.asset-lineage-node-selected')
-      if (!flow || !selected) return false
-      const flowBounds = flow.getBoundingClientRect()
-      const selectedBounds = selected.getBoundingClientRect()
-      const center = (selectedBounds.left + selectedBounds.right) / 2
-      const fraction = (center - flowBounds.left) / flowBounds.width
-      return fraction >= 0.4 && fraction <= 0.6
-    })
-    const dialog = graph.locator('dialog')
-    await page.waitForFunction(() => {
-      const dialog = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph dialog')
-      return Boolean(dialog?.matches(':focus-within'))
-    })
-    for (let index = 0; index < 24; index++) {
-      await page.keyboard.press('Tab')
-      expect(await dialog.evaluate((element) => element.matches(':focus-within'))).toBe(true)
     }
-    await page.keyboard.press('Escape')
-    await graph.getByRole('button', { name: 'Expand graph' }).waitFor()
-    expect(await graph.getByRole('button', { name: 'Expand graph' }).evaluate((element) => element.matches(':focus'))).toBe(true)
-    expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Selected model')
-    await graph.getByRole('button', { name: 'Expand graph' }).click()
-    await graph.getByRole('button', { name: 'Close graph' }).click()
-    await graph.getByRole('button', { name: 'Expand graph' }).waitFor()
-  } finally {
-    await page.close()
-  }
+    await graph.getByRole('button', { name: 'Fit graph', exact: true }).click()
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(5)
+    await browserExpect.poll(() => graph.evaluate(element => {
+      const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+      return Array.from(element.querySelectorAll('.react-flow__node')).flatMap(node => {
+        const bounds = node.getBoundingClientRect()
+        const inside = bounds.width > 0 && bounds.left >= flow.left && bounds.right <= flow.right
+          && bounds.top >= flow.top && bounds.bottom <= flow.bottom
+        return inside ? [] : [{ id: node.getAttribute('data-id'), node: bounds.toJSON(), flow: flow.toJSON() }]
+      })
+    }), { message: 'Full Fit must contain every included node' }).toEqual([])
+  } finally { await page.close() }
 })
 
 function testDocument(): string {
@@ -411,7 +678,6 @@ function testDocument(): string {
             --base-text-lineHeight-normal: 1.5;
             --lv-type-caption: 400 12px/1.25 system-ui;
             --lv-type-body: 400 14px/1.5 system-ui;
-            --lv-type-body-compact: 400 14px/1.4 system-ui;
             --lv-type-code-inline: 400 0.9285em ui-monospace;
             --lv-bg-app: #f6f8fa;
             --lv-bg-page: #f6f8fa;
@@ -474,6 +740,7 @@ function testDocument(): string {
               root.innerHTML = '<lv-asset-lineage-graph style="display:block;width:900px;height:420px"></lv-asset-lineage-graph>'
               const element = root.querySelector('lv-asset-lineage-graph')
               if (location.search.includes('dense=1')) element.style.width = '346px'
+              element.scope = location.search.includes('focused=1') ? 'focused' : 'full'
               element.graph = initialGraph
             }
           })

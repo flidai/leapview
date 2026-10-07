@@ -445,6 +445,81 @@ test('windowed table only shows loading for missing visible rows', async () => {
   }
 })
 
+test('report headings and values align at every density without changing row selection', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-report-table'))
+    const result = await page.evaluate(async () => {
+      const table = document.createElement('lv-report-table') as any
+      table.style.cssText = 'display:block;width:800px;height:320px;'
+      const sort = { key: 'amount', direction: 'desc' }
+      const row = { id: 'o1', customer: 'Acme Studio', amount: 1250 }
+      table.tableId = 'alignment-orders'
+      table.table = {
+        ...table.table,
+        columns: [
+          { key: 'customer', label: 'Customer', align: 'left', role: 'row_header' },
+          { key: 'amount', label: 'Amount', align: 'right', format: 'integer' },
+        ],
+        sort, resetVersion: 1,
+        cardinality: { kind: 'exact', value: 1 }, availableRows: 1,
+        blocks: { a: { start: 0, requestSeq: 0, resetVersion: 1, sort, rows: [row] } },
+        interaction: { kind: 'row_selection', mappings: [{ field: 'orders.order_id', dataset: 'orders', value: 'id' }] },
+      }
+      document.body.prepend(table)
+      await table.updateComplete
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      const commands: any[] = []
+      table.addEventListener('lv-interaction-select', (event: CustomEvent) => commands.push(event.detail))
+      const textBounds = (node: Element) => {
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        return range.getBoundingClientRect()
+      }
+      const densities = []
+      for (const density of ['compact', 'comfortable', 'spacious']) {
+        table.table = { ...table.table, style: { ...table.table.style, density } }
+        await table.updateComplete
+        const root = table.shadowRoot as ShadowRoot
+        const headings = root.querySelectorAll('.header-button > span:first-child')
+        const cells = root.querySelectorAll('.row:not(.skeleton-row) .cell')
+        const leftHeading = textBounds(headings[0]!)
+        const leftValue = textBounds(cells[0]!.querySelector('.cell-value')!)
+        const rightHeading = textBounds(headings[1]!)
+        const rightValue = textBounds(cells[1]!.querySelector('.cell-value')!)
+        densities.push({
+          density,
+          leftDelta: Math.abs(leftHeading.left - leftValue.left),
+          rightDelta: Math.abs(rightHeading.right - rightValue.right),
+          leftInset: leftValue.left - cells[0]!.getBoundingClientRect().left,
+          rightInset: cells[1]!.getBoundingClientRect().right - rightValue.right,
+          pinnedIdentity: cells[0]!.classList.contains('pinned-left'),
+        })
+        ;(cells[1]!.querySelector('.cell-action') as HTMLButtonElement).click()
+      }
+      table.remove()
+      return { densities, commands }
+    })
+    expect(result.densities.map(item => item.density)).toEqual(['compact', 'comfortable', 'spacious'])
+    for (const [index, geometry] of result.densities.entries()) {
+      expect(geometry.leftDelta).toBeLessThan(2)
+      expect(geometry.rightDelta).toBeLessThan(2)
+      expect(geometry.leftInset).toBeCloseTo([6, 8, 12][index]!, 0)
+      expect(geometry.rightInset).toBeCloseTo([6, 8, 12][index]!, 0)
+      expect(geometry.pinnedIdentity).toBe(true)
+    }
+    expect(result.commands).toHaveLength(3)
+    for (const command of result.commands) {
+      expect(command).toEqual({
+        sourceKind: 'visual', sourceId: 'alignment-orders', interactionKind: 'row_selection',
+        action: 'replace', toggle: false,
+        mappings: [{ field: 'orders.order_id', dataset: 'orders', value: 'o1', label: 'o1' }],
+      })
+    }
+  } finally { await page.close() }
+})
+
 test('empty table distinguishes completed results from waiting and keeps its message visible', async () => {
   const page = await browser.newPage()
   try {

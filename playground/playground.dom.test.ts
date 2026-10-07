@@ -461,6 +461,79 @@ for (const layer of ['point', 'heat', 'density', 'choropleth', 'path', 'referenc
 }
 
 
+test('map value ranges support keyboard endpoints and dragging with usable targets', async () => {
+  await open('charts/map')
+  await page.locator('lv-visualization-host').evaluate(async (element: any) => { await element.ensureMounted() })
+  const minimum = page.getByRole('slider', { name: 'Minimum Orders' })
+  const maximum = page.getByRole('slider', { name: 'Maximum Orders' })
+  const box = await minimum.boundingBox()
+  if (!box) throw new Error('Map minimum range is not visible')
+  expect(box.width).toBeGreaterThanOrEqual(24)
+  expect(box.height).toBeGreaterThanOrEqual(24)
+  const initial = Number(await minimum.inputValue())
+  await minimum.focus()
+  await page.keyboard.press('ArrowRight')
+  await browserExpect.poll(async () => Number(await minimum.inputValue())).toBeGreaterThan(initial)
+  await page.mouse.move(box.x + box.height / 2 + 1, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * .4, box.y + box.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await browserExpect.poll(async () => Number(await minimum.inputValue())).toBeGreaterThan(initial + 1)
+  await minimum.focus()
+  await page.keyboard.press('Home')
+  await browserExpect(minimum).toHaveValue((await minimum.getAttribute('min'))!)
+  await maximum.focus()
+  await page.keyboard.press('End')
+  await browserExpect(maximum).toHaveValue((await maximum.getAttribute('max'))!)
+}, 20_000)
+
+test('map ranges retain drag travel at low report zoom and in narrow cards', async () => {
+  await open('charts/map')
+  const host = page.locator('lv-visualization-host')
+  await host.evaluate(async (element: any) => { await element.ensureMounted() })
+  const minimum = page.getByRole('slider', { name: 'Minimum Orders' })
+  for (const width of [360, 1200]) {
+    for (const scale of [1, .1, .05]) {
+      // Use the report canvas's public CSS scale contract, with room for its chrome.
+      await host.evaluate((element, { width, scale }) => {
+        element.style.width = `${width}px`
+        element.style.height = '2000px'
+        element.parentElement!.style.height = `${2000 * scale}px`
+        element.style.setProperty('--report-canvas-inverse-scale', String(1 / scale))
+        element.style.transformOrigin = 'top left'
+        element.style.transform = `scale(${scale})`
+      }, { width, scale })
+      await minimum.scrollIntoViewIfNeeded()
+      await minimum.focus()
+      await page.keyboard.press('Home')
+      const initial = Number(await minimum.inputValue())
+      const geometry = await minimum.evaluate(input => {
+        const track = input.parentElement!
+        const rail = track.querySelector('.lv-map-range-rail')!
+        const stage = input.closest('.renderer-stage')!
+        return {
+          thumb: parseFloat(getComputedStyle(input).height),
+          track: parseFloat(getComputedStyle(track).width),
+          rail: parseFloat(getComputedStyle(rail).width),
+          trackBounds: track.getBoundingClientRect().toJSON(),
+          stageBounds: stage.getBoundingClientRect().toJSON(),
+        }
+      })
+      expect(geometry.rail).toBeGreaterThan(0)
+      expect(geometry.thumb).toBeLessThanOrEqual(geometry.track / 2 + 1)
+      expect(geometry.trackBounds.x).toBeGreaterThanOrEqual(geometry.stageBounds.x)
+      expect(geometry.trackBounds.right).toBeLessThanOrEqual(geometry.stageBounds.right)
+      const box = (await minimum.boundingBox())!
+      const thumb = geometry.thumb * scale
+      await page.mouse.move(box.x + thumb / 2 + .1, box.y + box.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(box.x + box.width * .65, box.y + box.height / 2, { steps: 10 })
+      await page.mouse.up()
+      await browserExpect.poll(async () => Number(await minimum.inputValue()), { message: `Range drag at width ${width}, scale ${scale}` }).toBeGreaterThan(initial)
+    }
+  }
+}, 30_000)
+
 test('category dropdowns support keyboard navigation, active routes and search', async () => {
   await open('charts/bar')
   const nav = page.getByRole('navigation', { name: 'Examples' })

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
 import { testDocument, type ProjectTableElement } from './project-page.dom.fixture'
 
 let server: Server
@@ -1116,7 +1116,7 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
           graphNodeIDs: (graph?.graph?.nodes ?? []).map((node: any) => node.id),
           heading: root.querySelector('#pipeline-dependencies-title')?.textContent?.trim(),
           focusedNodeCount: graph?.querySelectorAll('.react-flow__node').length ?? 0,
-          scopeAction: graph?.querySelector('.asset-lineage-actions button')?.textContent?.trim(),
+          scopeAction: graph?.querySelector('.asset-lineage-scope')?.textContent?.trim(),
           recentRunCount: root.querySelectorAll('.recent-run').length,
           latestRunDate: root.querySelector('.summary-item:nth-child(3) a')?.textContent?.trim(),
           latestRunHref: root.querySelector('.summary-item:nth-child(3) a')?.getAttribute('href'),
@@ -1151,13 +1151,14 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
     await lineage.getByRole('button', { name: 'Show all upstream' }).click()
     expect((await dependencyHeading.textContent())?.trim()).toBe('Full dependency graph')
     expect(await scopeHint.count()).toBe(0)
-    expect(await lineage.locator('.react-flow__node').count()).toBe(3)
-    await lineage.getByRole('button', { name: 'Fit', exact: true }).click()
+    await browserExpect(lineage.locator('.react-flow__node')).toHaveCount(3)
+    await lineage.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await lineage.getByRole('button', { name: 'Fit graph', exact: true }).click()
     expect(await lineage.locator('.react-flow__node').count()).toBe(3)
     await lineage.getByRole('button', { name: 'Show direct dependencies' }).click()
     expect((await dependencyHeading.textContent())?.trim()).toBe('Direct dependencies')
     expect(await scopeHint.count()).toBe(0)
-    expect(await lineage.locator('.react-flow__node').count()).toBe(2)
+    await browserExpect(lineage.locator('.react-flow__node')).toHaveCount(2)
     const defaultTimezone = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
       element.signals.page.timezone = ''
       element.requestUpdate()
