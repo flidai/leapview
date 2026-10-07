@@ -375,6 +375,8 @@ test('run update indicator follows only its page stream and recovers on a fresh 
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'retrying', el: main } }))
     })
     await page.waitForFunction(() => document.querySelector('lv-pipeline-run-page')?.shadowRoot?.querySelector('.run-live-status')?.textContent?.trim() === 'Reconnecting')
+    // The graph commits through React after the parent Lit status update.
+    await animated.waitFor({ state: 'detached' })
     expect(await animated.count()).toBe(0)
     await page.evaluate(() => {
       document.dispatchEvent(new CustomEvent('datastar-signal-patch', { detail: { runtime: { streamInstanceId: 'reconnected-stream' } } }))
