@@ -2916,6 +2916,12 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_MANAGED_CONFIG": {
+      "description": "Controller-injected enrolled Kamal configuration path.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
+    },
     "LEAPVIEW_MANAGED_DATA_BACKEND": {
       "default": "local",
       "description": "Storage backend for project-global managed data; supported values are local and s3. Production local storage requires provider-native volume snapshot protection.",
@@ -3050,6 +3056,50 @@
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
+    },
+    "LEAPVIEW_MANAGED_DEADLINE_UNIX_MS": {
+      "description": "Controller-injected absolute child-process deadline in Unix milliseconds.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
+    },
+    "LEAPVIEW_MANAGED_GATE": {
+      "description": "Controller-injected private durable proxy ingress gate path.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
+    },
+    "LEAPVIEW_MANAGED_IMAGE": {
+      "description": "Controller-injected admitted immutable application image.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
+    },
+    "LEAPVIEW_MANAGED_LOCK_FD": {
+      "description": "Controller-inherited host exclusion lock descriptor; its identity and ownership are independently verified.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
+    },
+    "LEAPVIEW_MANAGED_LOCK_PATH": {
+      "description": "Controller-injected host exclusion lock path used to verify the inherited descriptor.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
+    },
+    "LEAPVIEW_MANAGED_PROXY_IMAGE": {
+      "description": "Controller-injected retained immutable proxy image.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
+    },
+    "LEAPVIEW_MANAGED_REVISION": {
+      "description": "Controller-injected exact application source revision.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "managed release adapter"
     },
     "LEAPVIEW_MAP_ASSET_DIR": {
       "default": ".data/map-assets",
