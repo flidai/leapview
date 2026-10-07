@@ -269,3 +269,80 @@ At the initial inspection, the newest public authoring release was `v0.3.0-alpha
 The subsequent inspection found an already-running [current candidate build](https://github.com/flidai/leapview/actions/runs/37579919515) at `63c139359e1f9a621dfdb311e9efb453395bcd08`, containing all five implementation merges. Reused its Linux AMD64 archive and pinned runtime image. The installed-binary static checks pass, including grouped help, offline guidance, doctor and identity/checksums. The first real lifecycle failed because the headless host lacked an unlocked Secret Service. Added isolated native keyring setup to the optional workflow, without changing static qualification or product credential storage. With that setup, automatic authentication passed and the real lifecycle exposed a project policy bootstrap HTTP 403; confirmed cleanup passed. Exact identity, host, reproduction, and bounded outcomes are recorded in [candidate qualification evidence](reviews/cli-candidate-qualification.md).
 
 The next acceptance task is to resolve that authorization failure and rerun the exact candidate through sample staging, synchronization and retained-data restart. Real preview scenarios, measurements and exact public release/platform qualification remain outstanding. The project and FAI-1133 stay In Progress.
+
+The local authorization follow-up repairs the observed token ceiling mismatch: automatic local login requests project access read/manage in addition to ordinary authoring actions. Retained local credentials are inspected against their exact current session; insufficient scope uses the existing local authorization flow, while inspection failures preserve credentials and return an error. Remote login defaults and server authorization stay unchanged. Fresh-login and retained-scope regressions failed before the fix and pass afterward; independent review found no remaining issue. A newly built matching archive/runtime must still demonstrate the full real lifecycle before this acceptance gate can close.
+
+The scoped-login candidate advanced past native authentication but exposed a
+second bootstrap rejection: the server's canonical binding callback recognized
+REST API credentials only. The consolidated follow-up also recognizes the
+scoped authoring session after its existing exact claim-owner and canonical
+binding checks. The real PostgreSQL/generated HTTP journey now proves all three
+initial bindings, policy reads, retries, subsequent grant creation, and authority
+denials; the existing REST bootstrap journey still passes. The exact failed
+candidate and cleanup are preserved in the candidate evidence document.
+
+The same final PR adds required static harness execution to the four existing
+native archive jobs and retains bounded reports on success or failure. Failed
+lifecycle evidence keeps Docker endpoint pinning unproven until development and
+retained-data restart both succeed. These related fixes are consolidated in
+[#899](https://github.com/flidai/leapview/pull/899), stacked on the headless
+qualification support in [#898](https://github.com/flidai/leapview/pull/898).
+No additional implementation PR is planned. Merge the parent through the normal
+queue, retarget/rebase the child onto main, then validate a newly matched
+candidate. Public release/platform, preview, and measurement acceptance remain
+open; merging these PRs alone does not complete FAI-1133.
+
+PR #898 merged through the normal queue at 09:36:58 UTC, with PR and merge
+CI/security plus Electron proof passing. PR #899 was rebased without conflicts
+onto that merged main; the rebase required no implementation changes. The latest
+local `task ci` passed generator tests (73 TypeScript tests), Go packages,
+PostgreSQL application and package conformance, and quality/coverage checks.
+It did not complete: the reports browser lane hit its watchdog, then the
+unchanged record-table column-selector test exceeded five seconds on retry.
+That test also timed out alone, and its source matches main. No frontend fix or
+check waiver is included. Logs are retained in
+`.tmp/fai-1133/task-ci-consolidated-clean.log` and
+`.tmp/fai-1133/record-table-timeout-recheck.log`. Exact-head hosted checks and the
+normal merge queue remain required for #899.
+
+The rebased #899 head passed hosted CI/security. Its matching candidate
+37603015624 passed required static qualification on all four native archive
+hosts. The installed Linux AMD64 lifecycle passed native authentication,
+initial policy and sample staging, then returned 403 for development-profile
+application. The local login and retained-session ceiling now also require
+project settings read/update, shared through one helper. Fresh-login and
+retained-session regressions reproduced the omission before the fix; the full
+CLI suite passes afterward. Remaining delivery/upload/session requirements
+were audited against the existing default ceiling. The exact failed artifact,
+schema-consistent failure report and successful cleanup are recorded in the
+candidate evidence. Keep this follow-up in #899 and validate a newly matched
+artifact before claiming lifecycle, browser or measurement acceptance.
+The real PostgreSQL regression also reproduces the old ceiling's 403 and proves
+profile application plus native session persistence with the added scope. Native
+and existing REST bootstrap journeys pass together (14.213s); full CLI passes
+(43.857s). Independent review of the shared local ceiling found no issue.
+
+Candidate 37607465258 first-start synchronization and local Sales preview now
+work. Browser observations verify four settled visuals, 12 sales, 13,650 revenue,
+presentation changes, invalid-edit retention, repair, and semantic averaging to
+1,137.5. Two further qualification findings remain consolidated in #899:
+retained restart requires a captured exact upload grant for the declared fixture,
+and returning to previous source must plan against the current target revision
+instead of replaying its old publication. Exact upload grants use the existing
+offline administration command through the verified checkout-owned local
+runtime controller. Local provisioning does not broaden role presets, public
+grant issuance, or active snapshot authority. Retained fixture reuse must
+prove the exact available server revision and manifest after an initial upload
+authorization denial. Local planning keys include the authenticated target
+revision and reject races before build. The exact failed artifact and successful
+cleanup are recorded in the candidate evidence; the next matched artifact must
+prove restart and full edit/restoration behavior.
+
+The f04c615 head passed hosted CI and security. Its local full `task ci` passed
+generator, Go, PostgreSQL conformance, quality and coverage checks. Reports hit
+the watchdog and retried; the run later failed when the unchanged project-page
+test `unavailable pipeline shows guidance without an unrelated connections
+action` exceeded five seconds and subsequent tests saw a closed browser. That
+test passed alone (489.97ms), and its source matches main. Retained logs are
+`.tmp/fai-1133/task-ci-profile-scope.log` and
+`.tmp/fai-1133/project-page-timeout-recheck.log`. No frontend fix is included.

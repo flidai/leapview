@@ -163,7 +163,33 @@ this code does not autonomously approve work after a machine restart.
 adapter against the locked gem. The Go suites cover the durable coordinator,
 cross-controller exclusion, compatibility checks, Unix control protocol,
 startup-closed HTTP, SSE/request draining, database privilege changes and loss of
-the controller during provisional admission. Run `task ci` before promotion.
+the controller during provisional admission. After proxy recreation, the
+controller waits for verified HTTPS readiness within the existing phase budget;
+Docker's detached startup is not itself evidence that the proxy is ready.
+
+`task managed:kamal:transport-test` runs the pinned Kamal adapter over real
+loopback SSH against a dedicated Docker daemon and kamal-proxy. It requires Nix
+and root (or sudo) on Linux. The runner verifies fresh mount, network and PID
+namespaces before hiding the host runtime, root home and application storage.
+Keep the checkout, artifacts and evidence outside `/root`, `/run` and `/var`;
+the fixture replaces these directories privately and provisions its own SSH
+privilege-separation directory, independent of the host distribution.
+It builds two synthetic protocol images, preloads the digest-pinned proxy and
+locked gems, then stops its local fixture registry before exercising the
+candidate and predecessor. Public probes use a separate network namespace and
+verify the generated certificate. The exercise checks private ingress, proxy
+route restoration, retained-image boot, clean process stop and preservation of
+a file write acknowledged through the candidate proxy. Evidence is written to
+`.tmp/kamal-transport/transport.json` and retained by managed-scaffold CI.
+
+This is **transport-only evidence**: the synthetic server is not LeapView and
+no artifact-admission records are issued. It does not qualify application
+database behavior, actual workers, SSE, customer uploads, the complete Go
+maintenance coordinator, ACME renewal or provider recovery. The custom
+certificate fixture leaves normal certificate verification enabled. Full
+application qualification requires two admitted images supporting the private
+maintenance protocol and the actual application/database workload. Run
+`task ci` before promotion.
 
 Remaining D11 work includes qualified migration-authority coordination for
 schema-changing releases, capacity/retention evidence, and a real dedicated host

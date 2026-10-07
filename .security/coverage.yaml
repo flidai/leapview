@@ -12,6 +12,10 @@ surfaces:
     kind: go-module
     updater: {ecosystem: gomod, directory: /deploy/kamal-trial}
     scanners: [govulncheck]
+  - path: deploy/managed/nixos/tests/testdata/go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /deploy/managed/nixos/tests/testdata}
+    scanners: [govulncheck]
   - path: pkg/apigen/go.mod
     kind: go-module
     updater: {ecosystem: gomod, directory: /pkg/apigen}
@@ -236,6 +240,14 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/workflows/orchestration-cache.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/sqlc-image-screen.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/sqlc-image-sample.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

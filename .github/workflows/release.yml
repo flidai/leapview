@@ -525,6 +525,19 @@ jobs:
             )
           fi
 
+      - name: Qualify installed discovery and diagnostics
+        env:
+          RELEASE_TAG: ${{ needs.image.outputs.release_tag }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          package="leapview-cli-${RELEASE_TAG}-${TARGET_OS}-${TARGET_ARCH}"
+          ./deploy/local/qualification/qualify.sh \
+            --archive "$PWD/dist/$package.tar.gz" \
+            --evidence-dir "$PWD/dist/evidence/qualification-${TARGET_OS}-${TARGET_ARCH}" \
+            --required
+
       - name: Record native dependency boundary
         run: |
           mkdir -p dist/evidence
@@ -555,6 +568,17 @@ jobs:
             dist/leapview-cli-*.tar.gz
             dist/leapview-cli-*.tar.gz.sha256
             dist/evidence/native-*.txt
+
+      - name: Upload authoring qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authoring-qualification-${{ needs.image.outputs.release_tag }}-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            dist/evidence/qualification-*/qualification-report.json
+            dist/evidence/qualification-*/raw-results.json
 
   qualify:
     name: Pre-publication qualification (${{ matrix.arch }})
