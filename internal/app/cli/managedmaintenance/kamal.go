@@ -477,19 +477,34 @@ func (k *KamalEffects) publicReadiness(ctx context.Context) error {
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+k.Profile.Hostname+"/readyz", nil)
+	return waitPublishedReadiness(ctx, client, "https://"+k.Profile.Hostname+"/readyz")
+}
+func waitPublishedReadiness(ctx context.Context, client *http.Client, endpoint string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
+	// Kamal's proxy reboot returns after detached Docker start. Listening and
+	// persisted route restoration can finish later, within this phase's deadline.
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("published proxy readiness failed: %w", err)
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return ctx.Err()
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("published proxy readiness failed: %w", ctx.Err())
+		case <-ticker.C:
+		}
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return errors.New("published proxy readiness failed")
-	}
-	return nil
 }
 func (k *KamalEffects) FinalizeWork(ctx context.Context, r Release) error {
 	status, err := k.control(ctx, "finalize", r)
