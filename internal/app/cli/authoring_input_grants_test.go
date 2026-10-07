@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +15,7 @@ import (
 )
 
 func TestDeclaredDevelopmentInputGrantsAreExactVerifiedAndIdempotent(t *testing.T) {
-	for _, scenario := range []string{"valid", "tampered", "missing after create", "foreign principal", "foreign connection", "foreign project", "paginated"} {
+	for _, scenario := range []string{"valid", "tampered", "missing after create", "foreign principal", "foreign connection", "foreign project", "paginated", "operator failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			const target, project, principal = "local-target", "project:local", "local-owner"
 			scope := access.AuthorizationPolicyScope{TargetID: target, ProjectID: project, Environment: "dev"}
@@ -35,44 +37,10 @@ func TestDeclaredDevelopmentInputGrantsAreExactVerifiedAndIdempotent(t *testing.
 					http.NotFound(w, r)
 					return
 				}
-				if r.Method == http.MethodPost {
-					creates++
-					var body accessgen.GenSchemaTargetGrantCreateRequest
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						t.Error(err)
-					}
-					if !isGrant || body.Capability != nil || body.PermissionProfile == nil || string(*body.PermissionProfile) != access.PermissionCatalogProfile || body.Permissions == nil || len(*body.Permissions) != 1 || body.ResourceId != "connection:sample" || body.ResourceKind != "connection" || body.SubjectId != principal || body.SubjectType != "principal" || body.ExpectedRevision != revision || r.Header.Get("Idempotency-Key") == "" {
-						t.Errorf("unexpected declared grant %#v", body)
-					}
-					encoded, _ := json.Marshal(body.Permissions)
-					pairs, err := access.DecodePermissionPairs(encoded)
-					if err != nil {
-						t.Error(err)
-						http.Error(w, "invalid", 400)
-						return
-					}
-					resource, _ := access.NewResourceRef("connection:sample", graph.KindConnection)
-					expected, _ := access.NewExactPermissionPair(access.ActionConnectionUpload, graph.ResourceID(project), resource)
-					a, _ := json.Marshal(pairs)
-					b, _ := json.Marshal([]access.PermissionPair{expected})
-					if string(a) != string(b) {
-						t.Errorf("grant authority=%s want %s", a, b)
-					}
-					grant := access.AuthorizationGrant{ID: body.Id, Resource: resource, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principal}, PermissionProfile: access.PermissionCatalogProfile, Permissions: pairs}
-					if body.Name != nil {
-						grant.Name = *body.Name
-					}
-					if scenario == "foreign principal" {
-						grant.Subject.ID = "another-owner"
-					}
-					if scenario == "foreign connection" {
-						grant.Resource, _ = access.NewResourceRef("connection:other", graph.KindConnection)
-						grant.Permissions[0], _ = access.NewExactPermissionPair(access.ActionConnectionUpload, graph.ResourceID(project), grant.Resource)
-					}
-					if scenario != "missing after create" {
-						grants = append(grants, grant)
-						revision++
-					}
+				if r.Method != http.MethodGet {
+					t.Error("declared input attempted a public policy mutation")
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
 				}
 				digest, err := access.AuthorizationPolicyDigest(scope, bindings, grants...)
 				if err != nil {
@@ -91,14 +59,7 @@ func TestDeclaredDevelopmentInputGrantsAreExactVerifiedAndIdempotent(t *testing.
 					return map[string]any{"id": g.ID, "name": g.Name, "subjectType": g.Subject.Kind, "subjectId": g.Subject.ID, "resourceId": g.Resource.ID(), "resourceKind": g.Resource.Kind(), "permissionProfile": g.PermissionProfile, "permissions": g.Permissions, "policyRevision": revision, "policyDigest": digest}
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodPost {
-					if len(grants) > 0 {
-						_ = json.NewEncoder(w).Encode(item(grants[len(grants)-1]))
-					} else {
-						_ = json.NewEncoder(w).Encode(map[string]any{})
-					}
-					return
-				}
+
 				response := map[string]any{"targetId": target, "projectId": project, "environment": "dev", "policyRevision": revision, "policyDigest": digest, "page": map[string]any{}}
 				if scenario == "paginated" {
 					response["page"] = map[string]any{"nextCursor": "more"}
@@ -116,7 +77,31 @@ func TestDeclaredDevelopmentInputGrantsAreExactVerifiedAndIdempotent(t *testing.
 			}))
 			defer server.Close()
 			client := accessgen.NewGenClient(capabilityAPITransport{target: server.URL, token: "local-token", client: server.Client()})
-			err = ensureDeclaredDevelopmentInputGrants(t.Context(), client, target, project, "dev", principal, []string{"connection:sample"})
+			stage := func(_ context.Context, grant access.AuthorizationGrant, expectedRevision int64, operationID string) error {
+				creates++
+				if scenario == "operator failure" {
+					return errors.New("owned runtime unavailable")
+				}
+				resource, _ := access.NewResourceRef("connection:sample", graph.KindConnection)
+				expected, _ := access.NewExactPermissionPair(access.ActionConnectionUpload, graph.ResourceID(project), resource)
+				if grant.Name != "" || grant.Subject.ID != principal || grant.Subject.Kind != access.SubjectKindPrincipal || grant.Resource != resource || grant.Capability != "" || grant.PermissionProfile != access.PermissionCatalogProfile || len(grant.Permissions) != 1 || grant.Permissions[0] != expected || expectedRevision != revision || operationID == "" {
+					t.Errorf("unexpected offline grant %#v revision %d operation %q", grant, expectedRevision, operationID)
+				}
+				if scenario == "foreign principal" {
+					grant.Subject.ID = "another-owner"
+				}
+				if scenario == "foreign connection" {
+					grant.Resource, _ = access.NewResourceRef("connection:other", graph.KindConnection)
+					grant.Permissions[0], _ = access.NewExactPermissionPair(access.ActionConnectionUpload, graph.ResourceID(project), grant.Resource)
+				}
+				if scenario != "missing after create" {
+					grants = append(grants, grant)
+					revision++
+				}
+				return nil
+			}
+
+			err = ensureDeclaredDevelopmentInputGrants(t.Context(), client, target, project, "dev", principal, []string{"connection:sample"}, stage)
 			if scenario != "valid" {
 				if err == nil {
 					t.Fatal("accepted inconsistent grant policy")
@@ -126,7 +111,7 @@ func TestDeclaredDevelopmentInputGrantsAreExactVerifiedAndIdempotent(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = ensureDeclaredDevelopmentInputGrants(t.Context(), client, target, project, "dev", principal, []string{"connection:sample"}); err != nil {
+			if err = ensureDeclaredDevelopmentInputGrants(t.Context(), client, target, project, "dev", principal, []string{"connection:sample"}, stage); err != nil {
 				t.Fatal(err)
 			}
 			if creates != 1 || len(grants) != 1 {

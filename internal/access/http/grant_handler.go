@@ -1,8 +1,6 @@
 package http
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	stdhttp "net/http"
@@ -14,16 +12,14 @@ import (
 )
 
 type grantCreateRequest struct {
-	ID                string          `json:"id"`
-	Name              string          `json:"name"`
-	ResourceKind      string          `json:"resourceKind"`
-	ResourceID        string          `json:"resourceId"`
-	SubjectType       string          `json:"subjectType"`
-	SubjectID         string          `json:"subjectId"`
-	Capability        json.RawMessage `json:"capability"`
-	PermissionProfile json.RawMessage `json:"permissionProfile"`
-	Permissions       json.RawMessage `json:"permissions"`
-	ExpectedRevision  *int64          `json:"expectedRevision"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	ResourceKind     string `json:"resourceKind"`
+	ResourceID       string `json:"resourceId"`
+	SubjectType      string `json:"subjectType"`
+	SubjectID        string `json:"subjectId"`
+	Capability       string `json:"capability"`
+	ExpectedRevision *int64 `json:"expectedRevision"`
 }
 
 func grantDTO(g access.AuthorizationGrant, p access.AuthorizationPolicy) map[string]any {
@@ -100,29 +96,8 @@ func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
-	grant := access.AuthorizationGrant{ID: input.ID, Name: input.Name, Subject: access.SubjectRef{Kind: access.SubjectKind(input.SubjectType), ID: input.SubjectID}, Resource: resource}
-	if len(input.PermissionProfile) > 0 || len(input.Permissions) > 0 {
-		// Presence is significant: even an empty or null legacy field cannot
-		// accompany the typed form. The nested permission decoder stays strict.
-		if len(input.Capability) > 0 || len(input.PermissionProfile) == 0 || len(input.Permissions) == 0 {
-			writeJSONError(w, errors.New("typed grants require permissionProfile and permissions without capability"), stdhttp.StatusBadRequest)
-			return
-		}
-		if err := json.Unmarshal(input.PermissionProfile, &grant.PermissionProfile); err != nil {
-			writeJSONError(w, err, stdhttp.StatusBadRequest)
-			return
-		}
-		decoder := json.NewDecoder(bytes.NewReader(input.Permissions))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&grant.Permissions); err != nil {
-			writeJSONError(w, err, stdhttp.StatusBadRequest)
-			return
-		}
-	} else if err := json.Unmarshal(input.Capability, &grant.Capability); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return
-	}
-	if err := access.ValidateAuthorizationGrantForScope(grant, scope); err != nil {
+	grant := access.AuthorizationGrant{ID: input.ID, Name: input.Name, Subject: access.SubjectRef{Kind: access.SubjectKind(input.SubjectType), ID: input.SubjectID}, Resource: resource, Capability: access.Capability(input.Capability)}
+	if err := access.ValidateAuthorizationGrant(grant); err != nil {
 		writeAuthorizationPolicyError(w, err)
 		return
 	}
@@ -142,21 +117,7 @@ func (h Handler) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if err != nil {
 			return access.AuditEventInput{}, err
 		}
-		payload := accessgen.GenSchemaGrantAuditPayload{
-			OperationId: "createGrant", ResourceId: input.ResourceID, ResourceKind: protocolgen.ResourceKind(input.ResourceKind),
-			Environment: scope.Environment, SubjectId: input.SubjectID, SubjectType: input.SubjectType,
-			Capability: string(grant.Capability), PermissionProfile: grant.PermissionProfile,
-			Permissions: make([]protocolgen.PermissionPair, 0, len(grant.Permissions)), Surface: "api",
-		}
-		for _, pair := range grant.Permissions {
-			projectID, resourceID := pair.Target.ProjectID.String(), pair.Target.ResourceID.String()
-			kind := protocolgen.ResourceKind(pair.Target.ResourceKind)
-			payload.Permissions = append(payload.Permissions, protocolgen.PermissionPair{
-				Action: protocolgen.PermissionAction(pair.Action), Profile: protocolgen.PermissionCatalogProfile(pair.Profile),
-				Target: protocolgen.PermissionTarget{Scope: protocolgen.PermissionScopeResource, ProjectId: &projectID, ResourceId: &resourceID, ResourceKind: &kind},
-			})
-		}
-		metadata, err := accessgen.EncodeGenCreateGrantAuditPayload(payload)
+		metadata, err := accessgen.EncodeGenCreateGrantAuditPayload(accessgen.GenSchemaGrantAuditPayload{OperationId: "createGrant", ResourceId: input.ResourceID, ResourceKind: protocolgen.ResourceKind(input.ResourceKind), Environment: scope.Environment, SubjectId: input.SubjectID, SubjectType: input.SubjectType, Capability: protocolgen.Capability(input.Capability), Surface: "api"})
 		if err != nil {
 			return access.AuditEventInput{}, err
 		}

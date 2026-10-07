@@ -328,9 +328,10 @@ presentation changes, invalid-edit retention, repair, and semantic averaging to
 1,137.5. Two further qualification findings remain consolidated in #899:
 retained restart requires a captured exact upload grant for the declared fixture,
 and returning to previous source must plan against the current target revision
-instead of replaying its old publication. Typed exact grant creation extends the
-existing grant API and preserves legacy requests; local provisioning does not
-broaden role presets or active snapshot authority. Retained fixture reuse must
+instead of replaying its old publication. Exact upload grants use the existing
+offline administration command through the verified checkout-owned local
+runtime controller. Local provisioning does not broaden role presets, public
+grant issuance, or active snapshot authority. Retained fixture reuse must
 prove the exact available server revision and manifest after an initial upload
 authorization denial. Local planning keys include the authenticated target
 revision and reject races before build. The exact failed artifact and successful

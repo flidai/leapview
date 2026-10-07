@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -21,107 +20,6 @@ type grantRepositoryStub struct {
 	audit access.AuditEventInput
 	calls int
 }
-
-func TestCreateGrantAcceptsExactTypedAuthorityAndAuditsIt(t *testing.T) {
-	resource, err := access.NewResourceRef("connection:sample", projectgraph.KindConnection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pair, err := access.NewExactPermissionPair(access.ActionConnectionUpload, "project:demo", resource)
-	if err != nil {
-		t.Fatal(err)
-	}
-	permissions := []access.PermissionPair{pair}
-	body, err := json.Marshal(map[string]any{
-		"id": "local-fixture-upload", "resourceKind": "connection", "resourceId": "connection:sample",
-		"subjectType": "principal", "subjectId": "owner", "permissionProfile": access.PermissionCatalogProfile,
-		"permissions": permissions, "expectedRevision": 4,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := &grantRepositoryStub{}
-	handler := Handler{Repository: func() (access.Repository, error) { return repo, nil }, AuthorizationPolicyTargetID: "server-target", AuthorizationPolicyEnvironment: "dev"}
-	request := withProjectRoute(httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:demo/grants", strings.NewReader(string(body))), "project:demo")
-	ctx, guard, err := accessgen.BeginGenCreateGrantCommand(request.Context(), accessgen.GenCreateGrantCommandInvocation{Surface: apigencommand.SurfaceAPI, Project: "project:demo", IdempotencyKey: "typed-grant"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	recorder := httptest.NewRecorder()
-	NewAPIGenDispatcher(handler).CreateGrant(recorder, request.WithContext(ctx), "project:demo", accessgen.GenCreateGrantHeaders{IdempotencyKey: "typed-grant"})
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("status %d: %s", recorder.Code, recorder.Body.String())
-	}
-	if !guard.Completed() || repo.calls != 1 || repo.input.ExpectedRevision != 4 || repo.input.IdempotencyKey != "typed-grant" ||
-		repo.input.Scope != (access.AuthorizationPolicyScope{TargetID: "server-target", ProjectID: "project:demo", Environment: "dev"}) {
-		t.Fatalf("wrong typed policy mutation: %#v", repo.input)
-	}
-	grant := repo.input.Grant
-	if grant.Capability != "" || grant.PermissionProfile != access.PermissionCatalogProfile || !reflect.DeepEqual(grant.Permissions, permissions) ||
-		grant.Resource != resource || grant.Subject != (access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "owner"}) {
-		t.Fatalf("typed authority changed: %#v", grant)
-	}
-	var response map[string]json.RawMessage
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	var audit struct {
-		Payload map[string]json.RawMessage `json:"payload"`
-	}
-	if err := json.Unmarshal([]byte(repo.audit.MetadataJSON), &audit); err != nil {
-		t.Fatal(err)
-	}
-	for name, fields := range map[string]map[string]json.RawMessage{"response": response, "audit": audit.Payload} {
-		if legacy, present := fields["capability"]; present && (name != "audit" || string(legacy) != `""`) {
-			t.Fatalf("%s invents a legacy capability: %s", name, fields["capability"])
-		}
-		var profile string
-		var got []access.PermissionPair
-		if err := json.Unmarshal(fields["permissionProfile"], &profile); err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(fields["permissions"], &got); err != nil {
-			t.Fatal(err)
-		}
-		if profile != access.PermissionCatalogProfile || !reflect.DeepEqual(got, permissions) {
-			t.Fatalf("%s omitted exact typed authority: %#v", name, fields)
-		}
-	}
-}
-
-func TestCreateGrantRejectsInvalidTypedAuthorityBeforeMutation(t *testing.T) {
-	valid := `{"id":"fixture-upload","resourceKind":"connection","resourceId":"connection:sample","subjectType":"principal","subjectId":"owner","permissionProfile":"leapview-permissions/v1","permissions":[{"profile":"leapview-permissions/v1","action":"connection.upload","target":{"scope":"resource","projectId":"project:demo","resourceKind":"connection","resourceId":"connection:sample"}}],"expectedRevision":4}`
-	valid = strings.ReplaceAll(valid, "leapview-permissions/v1", access.PermissionCatalogProfile)
-	for name, body := range map[string]string{
-		"mixed capability":       strings.Replace(valid, `"expectedRevision":4`, `"capability":"RESOURCE_EDIT","expectedRevision":4`, 1),
-		"empty mixed capability": strings.Replace(valid, `"expectedRevision":4`, `"capability":"","expectedRevision":4`, 1),
-		"null mixed capability":  strings.Replace(valid, `"expectedRevision":4`, `"capability":null,"expectedRevision":4`, 1),
-		"wrong profile":          strings.Replace(valid, access.PermissionCatalogProfile, "unsupported", 1),
-		"wrong pair profile":     strings.Replace(valid, `"profile":"`+access.PermissionCatalogProfile+`"`, `"profile":"unsupported"`, 1),
-		"missing profile":        strings.Replace(valid, `"permissionProfile":"`+access.PermissionCatalogProfile+`",`, "", 1),
-		"null profile":           strings.Replace(valid, `"permissionProfile":"`+access.PermissionCatalogProfile+`"`, `"permissionProfile":null`, 1),
-		"empty permissions":      strings.Replace(valid, `[{"profile":"`+access.PermissionCatalogProfile+`","action":"connection.upload","target":{"scope":"resource","projectId":"project:demo","resourceKind":"connection","resourceId":"connection:sample"}}]`, `[]`, 1),
-		"foreign project":        strings.Replace(valid, `"projectId":"project:demo"`, `"projectId":"project:foreign"`, 1),
-		"foreign resource":       strings.Replace(valid, `"resourceId":"connection:sample"`, `"resourceId":"connection:other"`, 1),
-		"project scope":          strings.Replace(valid, `"scope":"resource"`, `"scope":"project"`, 1),
-		"future resources":       strings.Replace(valid, `"scope":"resource"`, `"scope":"resource","includeFuture":true`, 1),
-		"unknown action":         strings.Replace(valid, "connection.upload", "connection.unrecognized", 1),
-		"invalid subject":        strings.Replace(valid, `"subjectType":"principal"`, `"subjectType":"everyone"`, 1),
-		"unknown target field":   strings.Replace(valid, `"scope":"resource"`, `"scope":"resource","targetId":"other"`, 1),
-	} {
-		t.Run(name, func(t *testing.T) {
-			repo := &grantRepositoryStub{}
-			handler := Handler{Repository: func() (access.Repository, error) { return repo, nil }, AuthorizationPolicyTargetID: "server-target", AuthorizationPolicyEnvironment: "dev"}
-			request := withProjectRoute(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "project:demo")
-			recorder := httptest.NewRecorder()
-			handler.CreateGrant(recorder, request)
-			if recorder.Code != http.StatusBadRequest || repo.calls != 0 {
-				t.Fatalf("invalid typed request mutated policy: status %d calls %d: %s", recorder.Code, repo.calls, recorder.Body.String())
-			}
-		})
-	}
-}
-
 type grantTransactionStub struct {
 	access.Repository
 	parent *grantRepositoryStub
@@ -182,12 +80,8 @@ func TestGrantCommandUsesTransactionalPolicyAndServerScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, ok := metadata["payload"].(map[string]any)
-	if !ok || payload["resourceId"] != "dashboard:sales" || payload["subjectId"] != "demo" ||
-		payload["capability"] != "RESOURCE_READ" || payload["permissionProfile"] != "" {
+	if !ok || payload["resourceId"] != "dashboard:sales" || payload["subjectId"] != "demo" {
 		t.Fatalf("missing audit payload: %v", metadata)
-	}
-	if pairs, ok := payload["permissions"].([]any); !ok || len(pairs) != 0 {
-		t.Fatalf("legacy audit invented typed permissions: %v", payload)
 	}
 	for _, invalid := range []string{strings.Replace(body, `,"expectedRevision":4`, "", 1), strings.Replace(body, "RESOURCE_READ", "PROJECT_ADMIN", 1), strings.Replace(body, `"id":"demo-read"`, `"id":"demo-read","targetId":"attacker"`, 1)} {
 		req := withProjectRoute(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(invalid)), "project:demo")

@@ -12,12 +12,13 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
-	protocolgen "github.com/flidai/leapview/internal/platform/http/api/gen"
 	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 )
 
-func ensureDeclaredDevelopmentInputGrants(ctx context.Context, client *accessgen.GenClient, targetID, projectID, environment, principalID string, connections []string) error {
+type declaredDevelopmentInputGrantStager func(context.Context, access.AuthorizationGrant, int64, string) error
+
+func ensureDeclaredDevelopmentInputGrants(ctx context.Context, client *accessgen.GenClient, targetID, projectID, environment, principalID string, connections []string, stage declaredDevelopmentInputGrantStager) error {
 	if ctx == nil || client == nil || strings.TrimSpace(targetID) == "" || strings.TrimSpace(projectID) == "" || strings.TrimSpace(principalID) == "" || environment != "dev" {
 		return errors.New("declared input grants require an authenticated exact local dev target")
 	}
@@ -65,7 +66,7 @@ func ensureDeclaredDevelopmentInputGrants(ctx context.Context, client *accessgen
 		identity, _ := json.Marshal([]string{targetID, projectID, environment, principalID, connection})
 		key := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("leapview/local-declared-input-upload/"), identity...)).String()
 		expected := access.AuthorizationGrant{
-			ID: "local-input-upload-" + key, Name: "Local declared input upload",
+			ID:       "local-input-upload-" + key,
 			Resource: resource, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID},
 			PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{permission},
 		}
@@ -86,23 +87,13 @@ func ensureDeclaredDevelopmentInputGrants(ctx context.Context, client *accessgen
 		} else if found {
 			continue
 		}
-		encoded, err := json.Marshal(expected.Permissions)
-		if err != nil {
-			return err
+		if stage == nil {
+			return errors.New("owned local runtime grant staging is unavailable")
 		}
-		var pairs []protocolgen.PermissionPair
-		if err := json.Unmarshal(encoded, &pairs); err != nil {
-			return err
-		}
-		profile := protocolgen.PermissionCatalogProfile(access.PermissionCatalogProfile)
-		_, createErr := client.CreateGrant(ctx, accessgen.GenCreateGrantClientRequest{
-			Project: projectID, Headers: accessgen.GenCreateGrantClientHeaders{IdempotencyKey: key},
-			Body: accessgen.GenSchemaTargetGrantCreateRequest{
-				Id: expected.ID, Name: &expected.Name, ResourceId: connection, ResourceKind: protocolgen.ResourceKindConnection,
-				SubjectType: string(expected.Subject.Kind), SubjectId: principalID, ExpectedRevision: revision,
-				PermissionProfile: &profile, Permissions: &pairs,
-			},
-		})
+		// Only the checkout-owned local operator can stage new authority. The
+		// native authoring credential is used solely for authenticated readback;
+		// project.access.manage does not itself authorize arbitrary typed grants.
+		createErr := stage(ctx, expected, revision, key)
 		revision, grants, err = read()
 		if err != nil {
 			return fmt.Errorf("verify current declared input grant: %w", err)

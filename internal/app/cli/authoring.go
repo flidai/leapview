@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
+	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/app/cli/localdocker"
@@ -45,10 +46,11 @@ type projectDevRemoteFactory struct {
 }
 
 type localDevelopmentSession struct {
-	profile     localDevelopmentProfile
-	state       localruntime.State
-	output      io.Writer
-	openBrowser func(context.Context) error
+	profile         localDevelopmentProfile
+	state           localruntime.State
+	output          io.Writer
+	openBrowser     func(context.Context) error
+	stageInputGrant declaredDevelopmentInputGrantStager
 }
 
 type localDevelopmentSessionContextKey struct{}
@@ -294,6 +296,12 @@ func runLocalDevRuntime(
 			return err
 		}
 		local := localDevelopmentSession{profile: profile, state: state, output: command.ErrOrStderr()}
+		local.stageInputGrant = func(ctx context.Context, grant access.AuthorizationGrant, revision int64, operationID string) error {
+			return controller.StageDeclaredInputUploadGrant(ctx, state, localruntime.DeclaredInputUploadGrantRequest{
+				PrincipalID: grant.Subject.ID, ConnectionID: grant.Resource.ID().String(), GrantID: grant.ID,
+				ExpectedRevision: revision, OperationID: operationID,
+			})
+		}
 		if browserRequest.OpenBrowser {
 			local.openBrowser = func(ctx context.Context) error {
 				_, cookie, err := establishLocalBrowserSession(ctx, browserRequest, defaultCLIHTTPClient)

@@ -121,42 +121,6 @@ func TestLocalAuthoringClaimBootstrapPolicyJourney(t *testing.T) {
 	if len(policy.RoleBindings) != 3 || len(policy.Grants) != 1 {
 		t.Fatalf("persisted bootstrap policy: %+v", policy)
 	}
-	// Declared local fixtures need exact upload authority in the next captured
-	// policy; the editor role intentionally does not confer this permission.
-	connection, err := access.NewResourceRef("connection:sample", projectgraph.KindConnection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	uploadPair, err := access.NewExactPermissionPair(access.ActionConnectionUpload, postgresJourneyProject, connection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	uploadBody, err := json.Marshal(map[string]any{
-		"id": "local-sample-upload", "resourceKind": connection.Kind(), "resourceId": connection.ID(),
-		"subjectType": "principal", "subjectId": owner, "permissionProfile": access.PermissionCatalogProfile,
-		"permissions": []access.PermissionPair{uploadPair}, "expectedRevision": 4,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	uploadGrant := request(http.MethodPost, "/grants", string(uploadBody), token, "local-sample-upload", http.StatusCreated)
-	request(http.MethodPost, "/grants", string(uploadBody), token, "local-sample-upload", http.StatusCreated)
-	if uploadGrant["permissionProfile"] != access.PermissionCatalogProfile || uploadGrant["policyRevision"] != float64(5) {
-		t.Fatalf("typed fixture grant did not advance policy: %v", uploadGrant)
-	}
-	policy, err = repo.AuthorizationPolicy(ctx, access.AuthorizationPolicyScope{TargetID: instanceID, ProjectID: postgresJourneyProject.String(), Environment: "prod"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var retainedUpload *access.AuthorizationGrant
-	for index := range policy.Grants {
-		if policy.Grants[index].ID == "local-sample-upload" {
-			retainedUpload = &policy.Grants[index]
-		}
-	}
-	if retainedUpload == nil || retainedUpload.PermissionProfile != access.PermissionCatalogProfile || retainedUpload.Capability != "" || len(retainedUpload.Permissions) != 1 || retainedUpload.Permissions[0] != uploadPair {
-		t.Fatalf("typed fixture upload permission was not durably retained: %+v", retainedUpload)
-	}
 
 	// The installed CLI reaches profile application immediately after staging
 	// its declared fixture. The former local ceiling included policy management

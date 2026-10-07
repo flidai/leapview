@@ -43688,21 +43688,9 @@ paths:
             schema:
               $ref: '#/components/schemas/TargetGrantCreateRequest'
             example:
-              expectedRevision: 3
-              id: sample-fixture-upload
-              permissionProfile: leapview.permissions/v1
-              permissions:
-                - action: connection.upload
-                  profile: leapview.permissions/v1
-                  target:
-                    projectId: project:analytics
-                    resourceId: connection:sample
-                    resourceKind: connection
-                    scope: resource
-              resourceId: connection:sample
-              resourceKind: connection
-              subjectId: principal:author
-              subjectType: principal
+              expectedRevision: 1
+              id: example
+              name: example
       x-apigen-operation-kind: command
       x-apigen-command:
         additional_exposures:
@@ -43717,10 +43705,6 @@ paths:
                 sensitivity: public
               - name: operationId
                 sensitivity: internal
-              - name: permissionProfile
-                sensitivity: public
-              - name: permissions
-                sensitivity: internal
               - name: resourceId
                 sensitivity: internal
               - name: resourceKind
@@ -43734,7 +43718,7 @@ paths:
             retention: security
             schema:
               ref: GrantAuditPayload
-            schema_version: 2
+            schema_version: 1
           required: true
           success_action: grant.created
         authz_mode: privilege
@@ -83605,8 +83589,6 @@ components:
         - subjectId
         - subjectType
         - capability
-        - permissionProfile
-        - permissions
         - surface
       properties:
         operationId:
@@ -83630,48 +83612,50 @@ components:
           type: string
           example: example
         capability:
-          type: string
-          description: Empty for typed grants; legacy grants retain the exact validated
-            capability.
-          example: example
-        permissionProfile:
-          type: string
-          description: Empty for legacy grants; typed grants retain the native permission
-            profile.
-          example: example
-        permissions:
-          type: array
-          items:
-            $ref: '#/components/schemas/PermissionPair'
-          example:
-            - action: dashboard.read
-              profile: leapview.permissions/v1
-              target:
-                projectId: project:analytics
-                resourceId: dashboard:sales
-                resourceKind: dashboard
-                scope: resource
+          $ref: '#/components/schemas/Capability'
         surface:
           type: string
           example: example
       example:
-        capability: ""
-        environment: dev
-        operationId: createGrant
-        permissionProfile: leapview.permissions/v1
-        permissions:
-          - action: connection.upload
-            profile: leapview.permissions/v1
-            target:
-              projectId: project:analytics
-              resourceId: connection:sample
-              resourceKind: connection
-              scope: resource
-        resourceId: connection:sample
-        resourceKind: connection
-        subjectId: principal:author
-        subjectType: principal
-        surface: api
+        capability: PLATFORM_ADMIN
+        environment: example
+        operationId: example
+        resourceId: example
+        resourceKind: project
+        subjectId: example
+        subjectType: example
+        surface: example
+    GrantRequest:
+      type: object
+      required:
+        - resourceKind
+        - resourceId
+        - subjectType
+        - subjectId
+        - capability
+      properties:
+        resourceKind:
+          $ref: '#/components/schemas/ResourceKind'
+        resourceId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        subjectType:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        capability:
+          $ref: '#/components/schemas/Capability'
+      example:
+        capability: PLATFORM_ADMIN
+        resourceId: example
+        resourceKind: project
+        subjectId: example
+        subjectType: example
     GridVisualizationPresentation:
       type: object
       required:
@@ -94616,12 +94600,10 @@ components:
         targetId: example
     TargetGrantCreateRequest:
       type: object
+      allOf:
+        - $ref: '#/components/schemas/GrantRequest'
       required:
         - id
-        - resourceKind
-        - resourceId
-        - subjectType
-        - subjectId
         - expectedRevision
       properties:
         id:
@@ -94630,59 +94612,16 @@ components:
         name:
           type: string
           example: example
-        resourceKind:
-          $ref: '#/components/schemas/ResourceKind'
-        resourceId:
-          type: string
-          minLength: 1
-          maxLength: 200
-          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        subjectType:
-          type: string
-          example: example
-        subjectId:
-          type: string
-          example: example
-        capability:
-          $ref: '#/components/schemas/Capability'
-        permissionProfile:
-          $ref: '#/components/schemas/PermissionCatalogProfile'
-        permissions:
-          type: array
-          items:
-            $ref: '#/components/schemas/PermissionPair'
-          example:
-            - action: dashboard.read
-              profile: leapview.permissions/v1
-              target:
-                projectId: project:analytics
-                resourceId: dashboard:sales
-                resourceKind: dashboard
-                scope: resource
         expectedRevision:
           type: integer
           format: int64
           example: 1
       description: Mutable target policy intent; publication activates its graph-bound
-        grants. Supply either a legacy capability or a native permission profile with
-        exact action-target pairs, never both.
+        grants.
       example:
-        expectedRevision: 3
-        id: sample-fixture-upload
-        permissionProfile: leapview.permissions/v1
-        permissions:
-          - action: connection.upload
-            profile: leapview.permissions/v1
-            target:
-              projectId: project:analytics
-              resourceId: connection:sample
-              resourceKind: connection
-              scope: resource
-        resourceId: connection:sample
-        resourceKind: connection
-        subjectId: principal:author
-        subjectType: principal
+        expectedRevision: 1
+        id: example
+        name: example
     TargetGrantListResponse:
       type: object
       required:

@@ -63,7 +63,7 @@ func stageDeclaredDevelopmentInputs(ctx context.Context, credentials cliapi.Cred
 			for index, input := range inputs {
 				connections[index] = input.plan.Connection
 			}
-			return ensureDeclaredDevelopmentInputGrants(ctx, client, local.state.Authority.InstanceID, local.state.Authority.ProjectUID, local.state.Authority.Environment, strings.TrimSpace(principal.Body.Id), connections)
+			return ensureDeclaredDevelopmentInputGrants(ctx, client, local.state.Authority.InstanceID, local.state.Authority.ProjectUID, local.state.Authority.Environment, strings.TrimSpace(principal.Body.Id), connections, local.stageInputGrant)
 		},
 	})
 }
