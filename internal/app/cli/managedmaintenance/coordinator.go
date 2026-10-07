@@ -102,7 +102,7 @@ func (c *Coordinator) load(ctx context.Context) (State, error) {
 	if err = s.Validate(); err != nil {
 		return s, err
 	}
-	if s.RequestDigest != digest || s.Target != c.Request.Target {
+	if s.RequestDigest != digest || s.Target != c.Request.Target || s.Deadline.Sub(s.StartedAt) != c.Request.Budgets.Total {
 		return s, errors.New("managed maintenance request differs from durable operation")
 	}
 	return s, nil
