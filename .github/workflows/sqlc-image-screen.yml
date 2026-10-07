@@ -1,0 +1,79 @@
+name: Qualification / SQLC image cache
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+cache-mode: none
+
+concurrency:
+  group: sqlc-image-screen
+  cancel-in-progress: false
+
+jobs:
+  producers:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    cache-mode: write-only
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        mode: [baseline, treatment]
+    uses: ./.github/workflows/sqlc-image-sample.yml
+    with:
+      mode: ${{ matrix.mode }}
+      kind: producer
+      pair: 0
+
+  consumers:
+    needs: [producers]
+    cache-mode: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        pair: [1, 2, 3]
+        mode: [baseline, treatment]
+    uses: ./.github/workflows/sqlc-image-sample.yml
+    with:
+      mode: ${{ matrix.mode }}
+      kind: consumer
+      pair: ${{ matrix.pair }}
+
+  compare:
+    if: ${{ !cancelled() }}
+    needs: [producers, consumers]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sqlc-sample-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/sqlc-samples
+      - name: Retain job timing and attempt evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/sqlc-samples/jobs.json"
+      - name: Compare every required sample
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: python3 scripts/ci_sqlc_hosted_summary.py --samples "$RUNNER_TEMP/sqlc-samples" --source "$SOURCE_REVISION" --attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Retain complete comparison including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sqlc-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sqlc-samples/comparison.json
+            ${{ runner.temp }}/sqlc-samples/jobs.json
+          if-no-files-found: error
+          retention-days: 30
