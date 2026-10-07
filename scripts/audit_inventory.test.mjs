@@ -100,6 +100,7 @@ test('the command emits deterministic inventories and reports deleted tracked fi
       'docs/api/openapi.yaml': JSON.stringify(input.openapi),
       'docs/visuals/catalog.json': JSON.stringify(input.visuals),
       'docs/reference/agent-tools/manifest.json': JSON.stringify(input.agentManifest),
+      'docs/reference/cli/manifest.json': JSON.stringify({ schemaVersion: 2, commands: [{ path: [], runnable: true }] }),
       'Taskfile.yml': JSON.stringify({ tasks: { 'ci:lane:frontend': { cmds: [] }, 'ci:lane:frontend:shard': { cmds: [] } } }),
       'package.json': JSON.stringify({ scripts: {} }),
       '.gitignore': '.tmp/\n',
@@ -129,6 +130,9 @@ test('the command emits deterministic inventories and reports deleted tracked fi
     const summary = JSON.parse(readFileSync(join(out, 'summary.json')))
     assert.equal(summary.sourceCommit, git('rev-parse', 'HEAD').toString().trim())
     assert.equal(summary.currentDispositions.not_run, summary.featureCount)
+    const features = JSON.parse(readFileSync(join(out, 'features.json')))
+    assert.equal(features.find(row => row.kind === 'cli-command').name, 'leapview')
+    assert.equal(summary.runtimeCLIManifestSHA256.length, 64)
     assert.equal(existsSync(join(out, 'frontend-registration.json')), true)
   } finally {
     rmSync(root, { recursive: true, force: true })

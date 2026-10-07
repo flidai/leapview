@@ -203,7 +203,8 @@ function main() {
     .map(row => [row.path, readFileSync(join(root, row.path), 'utf8')]))
   const readJSON = path => JSON.parse(readFileSync(join(root, path), 'utf8'))
   const cliPath = 'docs/reference/cli/manifest.json'
-  const cliManifest = existsSync(join(root, cliPath)) ? readJSON(cliPath) : undefined
+  const cliBytes = existsSync(join(root, cliPath)) ? readFileSync(join(root, cliPath)) : undefined
+  const cliManifest = cliBytes ? JSON.parse(cliBytes) : undefined
   const catalogs = collectFeatures({ texts, openapi: parse(readFileSync(join(root, 'docs/api/openapi.yaml'), 'utf8')),
     visuals: readJSON('docs/visuals/catalog.json'), agentManifest: readJSON('docs/reference/agent-tools/manifest.json'), cliManifest })
   const previousBytes = values['previous-ledger'] ? readFileSync(resolve(values['previous-ledger'])) : undefined
@@ -224,7 +225,7 @@ function main() {
     missingFeatureSources: sorted(new Set(features.filter(row => !row.sourcePresent).map(row => row.source))),
     historicalLedgerSHA256: previousBytes ? sha256(previousBytes) : null,
     historicalLedgerPath: previousBytes ? resolve(values['previous-ledger']) : null,
-    runtimeCLIManifestSHA256: cliManifest ? sha256(readFileSync(join(root, cliPath))) : null,
+    runtimeCLIManifestSHA256: cliBytes ? sha256(cliBytes) : null,
     commandInputs: { taskfileSHA256: sha256(taskfileBytes), packageJSONSHA256: sha256(packageBytes) },
     limitations: [...catalogs.limitations, 'Historical receipts retain their original identities and do not set current dispositions.',
       'Frontend component registration uses the maintained Taskfile reachability audit. Other test/command mappings remain to be reviewed.'],
