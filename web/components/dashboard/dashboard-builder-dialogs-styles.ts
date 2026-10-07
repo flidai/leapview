@@ -570,6 +570,9 @@ export const dashboardBuilderDialogsStyles = css`
         overflow: visible;
       }
 
+      .meta { white-space: normal; }
+      .meta span { min-width: 0; overflow-wrap: anywhere; }
+
       .dashboard-metadata-form {
         left: 0;
         right: auto;
