@@ -96,6 +96,7 @@ class GuestLauncherTests(unittest.TestCase):
         self.processes.clear()
         userdata_seen = []
         collector_calls = []
+        self.overlay_sizes = []
         self.collector_guest_reset = None
 
         def fake_run(command, **kwargs):
@@ -106,7 +107,9 @@ class GuestLauncherTests(unittest.TestCase):
             if tool == "qemu-img" and command[1:3] == ["info", "--output=json"]:
                 return subprocess.CompletedProcess(command, 0, b'{"format":"qcow2","virtual-size":8589934592}\n', b"")
             if tool == "qemu-img" and command[1] == "create":
-                Path(command[-1]).write_bytes(b"overlay")
+                overlay = command[command.index("-b") + 2]
+                self.overlay_sizes.append(command[command.index("-b") + 3:])
+                Path(overlay).write_bytes(b"overlay")
                 return subprocess.CompletedProcess(command, 0, b"", b"")
             if tool == "ssh-keygen":
                 key_path = Path(command[command.index("-f") + 1])
@@ -217,6 +220,16 @@ class GuestLauncherTests(unittest.TestCase):
         self.assertTrue(lifecycle["tempDirectoryRemoved"])
         self.assertEqual(lifecycle["launcherReceiptSHA256"], launcher._digest(self.launcher_receipt.read_bytes()))
         self.assertEqual(lifecycle["guestReceiptSHA256"], launcher._file_digest(self.output_dir / "host-guest-receipt.json"))
+
+    def test_guest_has_space_for_installed_images_without_mutating_vendor_image(self):
+        original = self.image.read_bytes()
+        _, error, user_data, _, _ = self._run_launch()
+        self.assertIsNone(error)
+        self.assertEqual(self.overlay_sizes, [["40G"]])
+        cloud_config = json.loads(user_data[0].split(b"\n", 1)[1])
+        self.assertTrue(cloud_config["resize_rootfs"])
+        self.assertEqual(cloud_config["growpart"]["devices"], ["/"])
+        self.assertEqual(self.image.read_bytes(), original)
 
     def test_collector_failure_still_kills_qemu_and_removes_temporary_guest(self):
         receipt, error, _, _, _ = self._run_launch(collector_exit=7)

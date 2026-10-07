@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 import sys
 import urllib.parse
@@ -911,6 +912,41 @@ class HostGuestReceiptTests(unittest.TestCase):
 
 
 class FirstInstallGuestFixtureTests(unittest.TestCase):
+    def test_prerequisite_failure_retains_bounded_diagnostics_and_stops_setup(self):
+        commands = []
+
+        class Guest:
+            def run(self, command, **kwargs):
+                commands.append(command)
+                if "apt-get install" in command:
+                    return b"100\nE: Not enough free space in /var/cache/apt/archives/\n"
+                return b"0\npackage index updated\n"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "apt-install failed \\(100\\)"):
+                host_guest._guest_package_setup(Guest(), "debian13", evidence=evidence)
+            self.assertEqual(len(commands), 2)
+            self.assertIn(b"Not enough free space", (evidence / "prerequisite-apt-install.log").read_bytes())
+            self.assertEqual((evidence / "prerequisite-apt-install-exit-code.txt").read_bytes(), b"100\n")
+
+    def test_prerequisite_probe_keeps_exit_status_and_bounds_output(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                return subprocess.run(["bash", "-c", command], check=True, capture_output=True).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "fixture failed \\(7\\)"):
+                host_guest._guest_prerequisite(
+                    Guest(), evidence, "fixture", "printf 'failure on stderr\\n' >&2; exit 7", timeout=10,
+                )
+            self.assertEqual((evidence / "prerequisite-fixture.log").read_bytes(), b"failure on stderr\n")
+            host_guest._guest_prerequisite(
+                Guest(), evidence, "large", "head -c 100000 /dev/zero", timeout=10,
+            )
+            self.assertEqual((evidence / "prerequisite-large.log").stat().st_size, 65536)
+
     def test_probe_credentials_and_urls_are_private_and_role_specific(self):
         credentials = host_guest._postgres_fixture_credentials()
         self.assertEqual(set(credentials), set(host_guest.POSTGRES_PASSWORD_KEYS))
