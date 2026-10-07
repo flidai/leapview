@@ -2354,6 +2354,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <div class="format-section" data-format-section=${section}>
               <h3>${section}</h3>
               ${options.map((option) => this.renderFormatOption(visual, option, editable))}
+              ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
             </div>
           `)}
           ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no additional formatting controls. Configure advanced options in dashboard code.</p>` : nothing}
