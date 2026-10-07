@@ -2,6 +2,44 @@ import type { SemanticModelGraphNodeSignal, SemanticModelGraphSignal } from '../
 
 const LAYOUT_SWEEP_COUNT = 4
 
+export function datasetNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
+  const ranks = new Map<string, number>()
+  const nodeIDs = new Set(graph.nodes.map((node) => node.id))
+  const incoming = new Map(graph.nodes.map((node) => [node.id, 0]))
+  const outgoing = new Map(graph.nodes.map((node) => [node.id, [] as string[]]))
+
+  for (const edge of graph.edges) {
+    if (!nodeIDs.has(edge.source) || !nodeIDs.has(edge.target) || edge.source === edge.target) continue
+    outgoing.get(edge.source)?.push(edge.target)
+    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
+  }
+
+  const queue = graph.nodes
+    .filter((node) => (incoming.get(node.id) ?? 0) === 0)
+    .map((node) => node.id)
+    .sort((left, right) => left.localeCompare(right))
+  for (const root of queue) ranks.set(root, 0)
+
+  while (queue.length) {
+    const current = queue.shift() ?? ''
+    const currentRank = ranks.get(current) ?? 0
+    for (const next of outgoing.get(current) ?? []) {
+      ranks.set(next, Math.max(ranks.get(next) ?? 0, currentRank + 1))
+      const remaining = (incoming.get(next) ?? 1) - 1
+      incoming.set(next, remaining)
+      if (remaining === 0) queue.push(next)
+    }
+  }
+
+  // Cyclic components have no topological root. Keep them together in the
+  // first rank so the layout remains bounded and users can separate them by
+  // dragging without an unbounded rank walk.
+  for (const node of graph.nodes) {
+    if (!ranks.has(node.id)) ranks.set(node.id, 0)
+  }
+  return ranks
+}
+
 export function orderDatasetRanks(
   graph: SemanticModelGraphSignal,
   ranks: Map<string, number>,
