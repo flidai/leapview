@@ -209,6 +209,10 @@ export const chatThreadStyles = css`
       font: var(--lv-type-secondary);
     }
 
+    .agent-stack:has(> .run-steps[open]) > .dashboard-summary {
+      display: none;
+    }
+
     .run-steps summary {
       display: inline-flex;
       align-items: center;

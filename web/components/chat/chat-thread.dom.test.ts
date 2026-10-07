@@ -1022,6 +1022,63 @@ test('message edit action ignores a transcript item without a persisted ID', asy
 })
 
 
+test('dashboard replies keep a short summary and reveal the full explanation on demand', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    const answer = 'Created your dashboard on the selected page. One requested metric is unavailable.\n\n## Visuals\n\n- Revenue by month\n- Revenue by country\n\n## Filters\n\nCountry and reporting period are available.'
+    await page.locator('lv-chat-thread').evaluate(async (e: any, answer: string) => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).copied = text } } })
+      e.conversationId = 'conversation'
+      e.status = { enabled: true, running: false }
+      e.transcript = [
+        { id: 'user', kind: 'user', text: 'Create a dashboard' },
+        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', runId: 'run', status: 'complete' },
+        { id: 'answer', kind: 'assistant', markdown: answer },
+      ]
+      await e.updateComplete
+    }, answer)
+    const thread = page.locator('lv-chat-thread')
+    for (const surface of ['page', 'drawer']) {
+      await thread.evaluate(async (e: any, surface: string) => { e.surface = surface; await e.updateComplete }, surface)
+      const summary = page.getByText('Created your dashboard on the selected page. One requested metric is unavailable.', { exact: true })
+      expect(await summary.first().isVisible()).toBe(true)
+      expect(await summary.last().isVisible()).toBe(false)
+      expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(false)
+      expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
+      const disclosure = thread.locator('.run-steps')
+      await disclosure.locator('summary').click()
+      expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
+      expect(await page.getByText('Country and reporting period are available.', { exact: true }).isVisible()).toBe(true)
+      expect(await summary.first().isVisible()).toBe(false)
+      expect(await summary.last().isVisible()).toBe(true)
+      await disclosure.locator('summary').click()
+    }
+    expect(await thread.locator('.run-steps summary').textContent()).toContain('View details')
+    await page.getByRole('group', { name: 'Answer actions' }).getByRole('button', { name: 'Copy message' }).click()
+    expect(await page.evaluate(() => (window as any).copied)).toBe(answer)
+    await thread.evaluate(async (e: any) => {
+      e.transcript = e.transcript.filter((item: any) => item.kind !== 'tool')
+      await e.updateComplete
+    })
+    expect(await thread.locator('.run-steps').count()).toBe(0)
+    expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
+    await thread.evaluate(async (e: any) => {
+      e.dashboardPreviewAvailable = true
+      e.transcript = [
+        { id: 'user', kind: 'user', text: 'Create a dashboard' },
+        { id: 'visual', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'revenue', type: 'bar', summary: 'Revenue' } },
+        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', status: 'complete' },
+        { id: 'answer', kind: 'assistant', text: 'Dashboard ready on the selected page.' },
+      ]
+      await e.updateComplete
+    })
+    expect(await page.getByText('Dashboard ready on the selected page.', { exact: true }).isVisible()).toBe(true)
+    expect(await thread.locator('.run-steps').count()).toBe(0)
+  } finally { await page.close() }
+})
+
 test('a preview action appears once while other dashboard destinations remain in steps', async () => {
   const page = await browser.newPage()
   try {
