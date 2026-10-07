@@ -17,6 +17,7 @@ export const timeGroupingStyles = css`
   .time-grouping-field { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
   .time-grouping-field svg { flex: none; color: var(--lv-fg-muted); }
   .time-grouping-field span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .time-grouping-actions { display: inline-flex; align-items: center; gap: 6px; }
   .time-grouping label { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: var(--lv-fg-muted); font: inherit; white-space: nowrap; }
   .time-grouping select {
     box-sizing: border-box; width: auto; min-width: 92px; height: 28px; margin: 0;
@@ -36,9 +37,9 @@ export const timeGroupingStyles = css`
 export function renderTimeGrouping(fieldLabel: string, grain: string, change: (grain: TimeGroupingGrain) => void, remove: () => void) {
   return html`<div class="time-grouping" role="group" aria-label="Date grouping">
     <span class="time-grouping-field" title=${fieldLabel}>${lucideIcon(CalendarDays, { size: 14 })}<span>${fieldLabel}</span></span>
-    <label>Group by<select aria-label="Time grain" .value=${grain} @change=${(event: Event) => change((event.target as HTMLSelectElement).value as TimeGroupingGrain)}>
+    <span class="time-grouping-actions"><label>Group by<select aria-label="Time grain" .value=${grain} @change=${(event: Event) => change((event.target as HTMLSelectElement).value as TimeGroupingGrain)}>
       ${grains.map(value => html`<option value=${value} .selected=${value === grain}>${value[0].toUpperCase() + value.slice(1)}</option>`)}
     </select></label>
-    <button class="time-grouping-remove" type="button" aria-label="Remove time grouping" title="Remove time grouping" @click=${remove}>${lucideIcon(X, { size: 14 })}</button>
+    <button class="time-grouping-remove" type="button" aria-label="Remove time grouping" title="Remove time grouping" @click=${remove}>${lucideIcon(X, { size: 14 })}</button></span>
   </div>`
 }
