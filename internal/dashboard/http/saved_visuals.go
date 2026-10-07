@@ -43,7 +43,7 @@ func (handler Handler) savedVisualLibrary(w nethttp.ResponseWriter, r *nethttp.R
 			signal.SourceKey = item.SourceKey
 		}
 	}
-	encoded, err := json.Marshal(map[string]any{"savedVisualLibrary": signal})
+	encoded, err := json.Marshal(uisignals.SavedVisualLibraryEnvelope{SavedVisualLibrary: signal})
 	if err != nil {
 		writeBuilderError(w, r, err)
 		return
