@@ -1,5 +1,5 @@
 import type { AgentReferenceSignal, AgentContextSignal, ChatArtifactSignal, DashboardBuilderEnvelope } from '../../generated/signals'
-import type { VisualizationEnvelope } from '../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationWindowRequest } from '../../generated/visualization'
 
 export type SavedVisualImportMessage = {
   type: 'lv-builder-imported'
@@ -15,6 +15,7 @@ export type ChatDashboardMessage =
   | { type: 'lv-dashboard-mutation'; href: string; revisionId: string; pageId: string; reference: AgentReferenceSignal; components: DashboardChatComponent[] }
   | { type: 'lv-builder-back-to-chat' }
   | { type: 'lv-refresh-builder' }
+  | { type: 'lv-builder-visual-window'; pageId: string; request: VisualizationWindowRequest }
   | { type: 'lv-select-dashboard-page'; pageId: string }
   | { type: 'lv-arrange-dashboard-visuals' }
   | { type: 'lv-builder-operation-error'; message: string }

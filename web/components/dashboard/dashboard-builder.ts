@@ -149,9 +149,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visuals = this.builderVisuals
     const ordered = [...(page?.visuals ?? [])].sort((a, b) => a.placement.row - b.placement.row || a.placement.col - b.placement.col)
-    const key = JSON.stringify([builder.revision, page?.id, builder.preview.loading, builder.capabilities.canEdit, this.commandPending, this.builderFilterController.pending, Boolean(this.builderFilterCommandInFlight), Boolean(this.pendingFixVisuals), this.fixVisualsMessage, this.toolsHidden, ordered.map(visual => {
+    const key = JSON.stringify([builder.revision, page?.id, this.builderFilterState.revision, builder.preview.loading, builder.capabilities.canEdit, this.commandPending, this.builderFilterController.pending, Boolean(this.builderFilterCommandInFlight), Boolean(this.pendingFixVisuals), this.fixVisualsMessage, this.toolsHidden, ordered.map(visual => {
       const envelope = visuals[this.visualSignalID(visual)]
-      return [visual.id, envelope?.dataRevision, envelope?.specRevision, envelope?.status.kind]
+      const window = envelope?.dataState.kind === 'windowed' ? envelope.dataState : undefined
+      return [visual.id, envelope?.dataRevision, envelope?.specRevision, envelope?.status.kind, window && [window.generation, window.resetVersion, window.sort, Object.values(window.blocks).map(block => [block.id, block.start, block.requestSeq, block.rows.length])]]
     })])
     if (key === this.chatProjectionKey) return
     this.chatProjectionKey = key
@@ -1347,7 +1348,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     runtime.mergePatch({
       builder: envelope.builder, builderVisuals: envelope.builderVisuals,
       agentContext: event.data.agentContext,
-      runtime: { servingStateId: envelope.runtime.servingStateId },
+      runtime: { servingStateId: envelope.runtime.servingStateId, pageId: envelope.runtime.pageId ?? envelope.builder.selectedPageId },
       builderFilterContract: envelope.builderFilterContract, builderFilterState: envelope.builderFilterState,
       builderFilterOptionPages: envelope.builderFilterOptionPages, builderFilterValidation: envelope.builderFilterValidation,
       status: envelope.status,
@@ -1378,14 +1379,23 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const href = new URL(window.location.href)
     href.searchParams.set('builderReceipt', '1')
     href.searchParams.set('page', page.id)
+    href.searchParams.set('builderRuntime', JSON.stringify(this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })))
     frame.src = href.pathname + href.search
     this.importTimer = window.setTimeout(() => this.finishVisualImport('Refreshing the dashboard took too long. Please try again.'), 45000)
   }
 
-  private handleSavedVisualMessage = (event: MessageEvent<SavedVisualLibraryMessage>): void => {
+  private handleSavedVisualMessage = (event: MessageEvent<SavedVisualLibraryMessage | ChatDashboardMessage>): void => {
     if (event.origin !== window.location.origin) return
     const fromParent = this.embeddedInChat && event.source === window.parent
     if (!fromParent && event.source !== this.savedVisualFrame?.contentWindow) return
+    if (fromParent && event.data?.type === 'lv-builder-visual-window') {
+      const page = this.builder ? this.selectedPage(this.builder) : undefined
+      const request = event.data.request
+      if (page?.id === event.data.pageId && page.visuals.some(visual => this.visualSignalID(visual) === request.visualID)) {
+        this.dispatchEvent(new CustomEvent('lv-visualization-window-request', { detail: request, bubbles: true, composed: true }))
+      }
+      return
+    }
     if (fromParent && (event.data as { type: string }).type === 'lv-arrange-dashboard-visuals') this.arrangeVisuals()
     if (fromParent && (event.data as {type: string}).type === 'lv-select-dashboard-page') {
       const pageId = (event.data as unknown as {pageId: string}).pageId
@@ -1452,6 +1462,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.requestUpdate()
     submitVisualForm(`/dashboards/${encodeURIComponent(builder.dashboardId)}/draft/saved-visual`, this.visualImportFrame, {
       idempotencyKey: importID, builderReceipt: '1',
+      builderRuntime: JSON.stringify(this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })),
       savedVisualId: id, pageId: page.id, revisionId: builder.revision.id,
       row: String(row ?? 1), embed: this.embeddedInChat ? 'chat' : '',
     })

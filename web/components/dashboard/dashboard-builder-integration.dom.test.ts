@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from 'bun:test'
 import type { Browser } from '@playwright/test'
 import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser.test-fixture'
-import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope } from './dashboard-builder-test-fixtures'
+import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope, windowedTablePreviewEnvelope } from './dashboard-builder-test-fixtures'
 import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test-fixture'
 
 const fixture = dashboardBuilderBrowserFixture()
@@ -30,6 +30,7 @@ test('saved visual imports update the current builder without navigation and ret
       expect(form.get('builderReceipt')).toBe('1')
       expect(form.get('pageId')).toBe('overview')
       expect(form.get('savedVisualId')).toBe('saved-visual-1')
+      expect(JSON.parse(form.get('builderRuntime')!).servingStateId).toBe('generation-7')
       const imported = envelope.builder.pages[0].visuals[1]
       imported.id = imported.visualId = `saved_${form.get('savedVisualId')!.replaceAll('-', '')}_${form.get('idempotencyKey')!.replaceAll('-', '')}`
       await route.fulfill({ contentType: 'text/html', body: `<html><body><div id="chat-dashboard-receipt"></div><script>parent.postMessage(${JSON.stringify({ type: 'lv-builder-imported', envelope, agentContext: {} })}, location.origin)</script></body></html>` })
@@ -645,6 +646,7 @@ test('embedded page tabs refresh selected-page previews without remounting the b
     await page.route('**/*builderReceipt=1*', async route => {
       requests++
       expect(new URL(route.request().url()).searchParams.get('page')).toBe('details')
+      expect(JSON.parse(new URL(route.request().url()).searchParams.get('builderRuntime')!).servingStateId).toBe('generation-7')
       await route.fulfill({ contentType: 'text/html', body: `<html><body><div id="chat-dashboard-receipt"></div><script>parent.postMessage(${JSON.stringify({ type: 'lv-builder-imported', envelope: { ...envelope, builderVisuals: { 'sales-chart': preview } }, agentContext: {} })}, location.origin)</script></body></html>` })
     })
     await editor.locator('.page-tab[data-page-id="details"]').click()
@@ -654,8 +656,60 @@ test('embedded page tabs refresh selected-page previews without remounting the b
       sameCanvas: (window as any).retainedTabCanvas === element.shadowRoot.querySelector('.canvas'),
       selectedPage: element.selectedPage(element.builder)?.id,
       pending: element.commandPending,
+      runtimePage: element.signal('runtime', {}).pageId,
     }))
     expect(requests).toBe(1)
-    expect(state).toEqual({ sameBuilder: true, sameCanvas: false, selectedPage: 'details', pending: false })
+    expect(state).toEqual({ sameBuilder: true, sameCanvas: false, selectedPage: 'details', pending: false, runtimePage: 'details' })
+  } finally { await page.close() }
+})
+
+test('embedded builder relays table requests and publishes window changes with unchanged data revisions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    await page.evaluate(() => {
+      ;(window as any).projections = []
+      window.addEventListener('message', event => { if (event.data.type === 'lv-builder-saved') (window as any).projections.push(event.data) })
+    })
+    const envelope = windowedTablePreviewEnvelope()
+    await editor.evaluate(async (e: any, envelope) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const dataState = { schemaVersion: 1, encoding: 'json', kind: 'windowed', specRevision: envelope.specRevision, dataRevision: envelope.dataRevision, generation: 1, payload: JSON.stringify(envelope.dataState) }
+      mergePatch({ builderVisuals: { 'sales-chart': { ...envelope, dataState, servingStateID: 'generation-7', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'overview/sales-chart' } } })
+      e.requests = []
+      e.addEventListener('lv-visualization-window-request', (event: CustomEvent) => e.requests.push(event.detail))
+      await e.updateComplete
+    }, envelope)
+    await page.waitForFunction(() => (window as any).projections.some((p: any) => Object.values(p.visuals).some((v: any) => v.dataState.kind === 'windowed')))
+    const request = { visualID: 'sales-chart', specRevision: 'table-spec', dataRevision: 1, requestSeq: 2, resetVersion: 1, start: 0, limit: 50, sort: [{ field: { dataset: 'primary', field: 'amount' }, direction: 'descending' }], blockID: 'all' }
+    await page.evaluate(request => {
+      const child = document.querySelector('iframe')!.contentWindow!
+      child.postMessage({ type: 'lv-builder-visual-window', pageId: 'details', request }, location.origin)
+      child.postMessage({ type: 'lv-builder-visual-window', pageId: 'overview', request }, location.origin)
+    }, request)
+    await page.waitForFunction(() => ((document.querySelector('iframe')!.contentDocument!.querySelector('lv-dashboard-builder') as any).requests.length > 0))
+    expect(await editor.evaluate((e: any) => e.requests.filter((item: any) => item.resetVersion === 1))).toEqual([request])
+    await editor.evaluate(async (e: any, request) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const base = e.signal('builderVisuals', {})['sales-chart']
+      const state = JSON.parse(base.dataState.payload)
+      state.resetVersion = request.resetVersion; state.sort = request.sort
+      state.blocks = { a: { id: 'a', start: 0, rows: [[249]], requestSeq: request.requestSeq, resetVersion: request.resetVersion, sort: request.sort } }
+      mergePatch({ builderVisuals: { 'window:generation-7:overview:0:sales-chart': { ...base, dataState: { ...base.dataState, payload: JSON.stringify(state) } } } })
+      await e.updateComplete
+    }, request)
+    await page.waitForFunction(() => (window as any).projections.some((p: any) => Object.values(p.visuals).some((v: any) => v.dataState.resetVersion === 1 && v.dataState.blocks.a?.rows[0][0] === 249)))
+    await editor.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const slot = 'window:generation-7:overview:0:sales-chart'
+      const previous = e.signal('builderVisuals', {})[slot]
+      const state = JSON.parse(previous.dataState.payload)
+      state.blocks = { b: { id: 'b', start: 150, rows: [[99]], requestSeq: 3, resetVersion: 1, sort: state.sort } }
+      mergePatch({ builderVisuals: { [slot]: { ...previous, dataState: { ...previous.dataState, payload: JSON.stringify(state) } } } })
+      await e.updateComplete
+    })
+    await page.waitForFunction(() => (window as any).projections.some((p: any) => Object.values(p.visuals).some((v: any) => v.dataState.blocks.b?.start === 150 && v.dataState.blocks.b.rows[0][0] === 99)))
   } finally { await page.close() }
 })

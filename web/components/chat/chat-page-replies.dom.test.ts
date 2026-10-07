@@ -1,7 +1,59 @@
 import { expect, test } from 'bun:test'
 import { chatPageBrowserFixture } from './chat-page-browser.test-fixture'
+import { windowedTablePreviewEnvelope } from '../dashboard/dashboard-builder-test-fixtures'
 
 const fixture = chatPageBrowserFixture()
+
+test('dashboard tables forward sorting and paging to the retained builder', async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  await page.route('**/dashboards/demo/edit?*', route => route.fulfill({ contentType: 'text/html', body: '<lv-dashboard-builder></lv-dashboard-builder>' }))
+  await page.goto(fixture.baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async (e: any) => {
+   e.savedBuilderHref = '/dashboards/demo/edit?embed=chat&page=details'
+   e.restoredBuilderHref = e.savedBuilderHref
+   await e.updateComplete
+  })
+  await page.frameLocator('.builder-frame').locator('lv-dashboard-builder').waitFor({ state: 'attached' })
+  await chat.evaluate(async (e: any, envelope) => {
+   const child = e.builderFrame.contentWindow
+   child.requests = []
+   child.addEventListener('message', (event: MessageEvent) => { if (event.data.type === 'lv-builder-visual-window') child.requests.push(event.data) })
+   e.savedDashboardArtifacts = [{ id: 'detail', type: 'table', summary: 'Amounts' }]
+   e.savedDashboardVisuals = { detail: envelope }
+   e.dashboardPageId = 'details'
+   e.dashboardPreview = true
+   e.selectedPreviewVisual = 'detail'
+   e.visitedVisuals = ['detail']
+   await e.updateComplete
+  }, windowedTablePreviewEnvelope())
+  const table = chat.locator('lv-report-table')
+  await table.locator('.header-button').click()
+  await page.waitForFunction(() => (document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.some((item: any) => item.request.sort[0].direction === 'descending'))
+  const request = await chat.evaluate((e: any) => e.builderFrame.contentWindow.requests.find((item: any) => item.request.sort[0].direction === 'descending'))
+  expect(request.pageId).toBe('details')
+  expect(request.request.visualID).toBe('sales-chart')
+  expect(request.request.sort[0].direction).toBe('descending')
+  const sorted = windowedTablePreviewEnvelope()
+  if (sorted.dataState.kind !== 'windowed') throw new Error('expected windowed table')
+  sorted.dataState.sort = request.request.sort
+  sorted.dataState.resetVersion = request.request.resetVersion
+  sorted.dataState.blocks = Object.fromEntries(['a', 'b', 'c'].map((id, index) => [id, { id, start: index * 50, rows: Array.from({ length: 50 }, (_, i) => [249 - index * 50 - i]), requestSeq: request.request.requestSeq, resetVersion: request.request.resetVersion, sort: request.request.sort }]))
+  await page.frameLocator('.builder-frame').locator('body').evaluate((_, envelope) => {
+   window.parent.postMessage({ type: 'lv-builder-saved', revisionId: 'rev', pageId: 'details', href: '/dashboards/demo/edit?embed=chat&page=details', reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], locations: [], context: [] }, components: [{ id: 'sales-chart', pageId: 'details', artifactId: 'detail' }], artifacts: [{ id: 'detail', type: 'table', summary: 'Amounts' }], visuals: { detail: envelope } }, window.parent.location.origin)
+  }, sorted)
+  await page.waitForFunction(() => {
+   const chat = document.querySelector('lv-chat-page') as any
+   return chat.savedDashboardVisuals.detail.dataState.sort[0].direction === 'descending'
+  })
+  expect(await table.evaluate((e: any) => ({ sort: e.table.sort, first: e.table.blocks.a.rows[0].amount }))).toEqual({ sort: { key: 'amount', direction: 'desc' }, first: 249 })
+  const requestCount = await chat.evaluate((e: any) => e.builderFrame.contentWindow.requests.length)
+  await table.locator('.table-scrollport').evaluate(e => { e.scrollTop = 5100; e.dispatchEvent(new Event('scroll')) })
+  await page.waitForFunction(count => (document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.slice(count).some((item: any) => item.request.start >= 150 && item.request.sort[0].direction === 'descending'), requestCount)
+ } finally { await page.close() }
+})
 
 test('reopening a generated dashboard reply loads all visual cards without leaving chat', async () => {
  const page = await fixture.browser.newPage()

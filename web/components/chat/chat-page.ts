@@ -14,7 +14,7 @@ import { chatPagePreviewStyles } from './chat-page-preview.styles'
 import { state } from 'lit/decorators.js'
 import { Check, CircleHelp, LayoutDashboard, Maximize2, Minimize2, Minus, Plus, Save, TrendingUp, X, type IconNode } from 'lucide'
 import type { ChatArtifactSignal, AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal, ChatTranscriptItemSignal } from '../../generated/signals'
-import type { VisualizationEnvelope } from '../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationWindowRequest } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -776,6 +776,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     `
   }
 
+  private requestDashboardVisualWindow = (event: CustomEvent<VisualizationWindowRequest>): void => {
+    const payload = this.selectedPreviewVisual ? this.savedDashboardVisuals[this.selectedPreviewVisual] : undefined
+    if (payload?.dataState.kind !== 'windowed' || payload.visualID !== event.detail.visualID || !this.dashboardPageId) return
+    event.stopPropagation()
+    this.liveBuilder?.postMessage({ type: 'lv-builder-visual-window', pageId: this.dashboardPageId, request: event.detail } satisfies ChatDashboardMessage, window.location.origin)
+  }
+
   private renderDashboardPreview(title: string, visible: boolean) {
     const selected = this.selectedPreviewArtifact
     // Keep at most three visited renderers mounted; only the selected one is visible.
@@ -787,7 +794,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const added = Boolean(selected && this.dashboardCopies[selected.id])
     const canSave = Boolean(selected && this.agent.transcript?.some(item => item.artifact?.id === selected.id))
     return html`
-      <section class="preview-panel" aria-label="Dashboard preview" ?hidden=${!visible}>
+      <section class="preview-panel" aria-label="Dashboard preview" ?hidden=${!visible} @lv-visualization-window-request=${this.requestDashboardVisualWindow}>
         <div class="preview-heading">
           <h2>Visual</h2>
           <div class="preview-actions">

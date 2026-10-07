@@ -24,7 +24,6 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/document"
-	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
@@ -76,7 +75,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 	if r.URL.Query().Get("builderReceipt") == "1" {
-		h.renderBuilderSignalReceipt(w, r, h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder))
+		h.renderBuilderSessionReceipt(w, r, project, actorID, builder)
 		return
 	}
 	envelope := dashboardBuilderEnvelope(builder)
@@ -602,8 +601,9 @@ func (h Handler) dashboardBuilderSnapshotEnvelope(r *nethttp.Request, project pr
 		if loadErr != nil {
 			return uisignals.DashboardBuilderEnvelope{}, loadErr
 		}
-		if _, err := dashboardfilter.RestoreMachine(compiled.Definition.FilterApplication.WithDefaults().Mode, compiled.Definition.FilterBindingSpecs(), record.State.Filters); err != nil {
-			return uisignals.DashboardBuilderEnvelope{}, authoring.ErrStaleRevision
+		record, err = h.reconcileBuilderFilterSession(r.Context(), record, compiled.Definition)
+		if err != nil {
+			return uisignals.DashboardBuilderEnvelope{}, err
 		}
 		state := record.State.Filters.State
 		filters = dashboard.Filters{CompiledState: &state, ActivePageID: firstBuilderPage(builder), ServingStateID: servingStateID}

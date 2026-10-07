@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	nethttp "net/http"
 	"net/url"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
@@ -84,9 +86,31 @@ func (handler Handler) savedVisualImportReceipt(w nethttp.ResponseWriter, r *net
 		writeBuilderError(w, r, err)
 		return true
 	}
-	envelope := handler.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actor, builder)
-	handler.renderBuilderSignalReceipt(w, r, envelope)
+	handler.renderBuilderSessionReceipt(w, r, project, actor, builder)
 	return true
+}
+
+// Native iframe receipts share the active builder's filter session, just like
+// snapshot updates. Query and form inputs carry only its bounded runtime identity.
+func (handler Handler) renderBuilderSessionReceipt(w nethttp.ResponseWriter, r *nethttp.Request, project projectgraph.ResourceID, actor string, builder uisignals.DashboardBuilderSignal) {
+	var runtime uisignals.RouteRuntimeSignal
+	if encoded := r.FormValue("builderRuntime"); encoded != "" {
+		if len(encoded) > 4096 || json.Unmarshal([]byte(encoded), &runtime) != nil {
+			writeBuilderError(w, r, fmt.Errorf("%w: invalid builder runtime identity", authoring.ErrInvalidPayload))
+			return
+		}
+	}
+	envelope, err := handler.dashboardBuilderSnapshotEnvelope(r, project, actor, builder, runtime)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if handler.SessionStore != nil && runtime.ClientID != nil && !handler.builderSnapshotFilterStateIsCurrent(r.Context(), r, builder, runtime, envelope.BuilderFilterState, optionalRuntimeValue(envelope.Runtime.ServingStateID)) {
+		writeBuilderError(w, r, authoring.ErrStaleRevision)
+		return
+	}
+	envelope.Runtime.PageID = uisignals.Optional(firstBuilderPage(builder))
+	handler.renderBuilderSignalReceipt(w, r, envelope)
 }
 
 func (handler Handler) renderBuilderSignalReceipt(w nethttp.ResponseWriter, r *nethttp.Request, envelope uisignals.DashboardBuilderEnvelope) {
