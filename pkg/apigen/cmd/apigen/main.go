@@ -833,8 +833,12 @@ func copyTypeSpecProject(src string, dst string) error {
 		if err != nil {
 			return fmt.Errorf("resolve staged typespec path: %w", err)
 		}
-		if rel != "." && entry.IsDir() && entry.Name() == "node_modules" {
-			return filepath.SkipDir
+		if rel != "." && entry.Name() == "node_modules" {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			// Local dependency links must not escape the isolated staging tree.
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		if entry.IsDir() {

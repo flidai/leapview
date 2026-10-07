@@ -713,6 +713,44 @@ test('dashboard builder restores the exact prior revision when immediately switc
   }
 })
 
+test('dashboard builder does not restore a broken preview when switching back', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({builder:{pages: element.builder.pages.map((page: any) => ({...page, visuals: page.visuals.map((visual: any) => ({...visual, previewError: 'Invalid prior preview'}))}))}})
+      await element.updateComplete
+      const root = (element.shadowRoot as ShadowRoot)
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
+      await element.updateComplete
+
+      const sourcePage = element.builder.pages[0]
+      mergePatch({ builder: {
+        pages: [{ ...sourcePage, visuals: sourcePage.visuals.map((visual: any) => visual.id === 'sales-chart' ? { ...visual, type: 'line' } : visual) }, element.builder.pages[1]],
+        revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' },
+      } })
+      await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      ;(root.querySelector('button[data-visual-picker-type="bar"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      return { commands, selectedType: root.querySelector('.visual-picker-button[aria-pressed="true"]')?.getAttribute('data-visual-type') }
+    })
+    expect(state.commands[0]).toMatchObject({ action: 'set_visual_type', type: 'line' })
+    expect(state.commands[1]).toMatchObject({
+      action: 'set_visual_type', type: 'bar',
+    })
+    expect(state.selectedType).toBe('bar')
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder remaps normally after an intervening edit instead of rolling it back', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1046,6 +1084,17 @@ test('dashboard builder exposes field-token remove, role movement, and reorder a
   } finally {
     await page.close()
   }
+})
+
+test('generated dashboard links are editable immediately, including old preview links', async () => {
+ const page=await browser.newPage({viewport:{width:1100,height:820}})
+ try {
+  await page.goto(`${baseURL}/?mode=preview`)
+  const editor=page.locator('lv-dashboard-builder')
+  await editor.getByRole('button',{name:'Hide tools',exact:true}).waitFor()
+  expect(await editor.locator('#builder-tools').isVisible()).toBe(true)
+  expect(await editor.getByRole('button',{name:'Edit dashboard',exact:true}).count()).toBe(0)
+ } finally {await page.close()}
 })
 
 test('hiding tools gives the canvas full width and reopening restores the same editor', async () => {
@@ -3639,7 +3688,7 @@ test('chat preview starts with side-by-side tools open and preserves independent
   } finally { await page.close() }
 })
 
-test('preview Fix preserves authored placement and zoom through its owning parent', async () => {
+test('Visual magic in the preview builder preserves authored placement and zoom', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(`${baseURL}/embed-host`)
@@ -3660,7 +3709,8 @@ test('preview Fix preserves authored placement and zoom through its owning paren
       window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: window, data: { type: 'lv-arrange-dashboard-visuals' } }))
     })
     expect(await editor.evaluate((e: any) => e.testCommands.length)).toBe(0)
-    await page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'lv-arrange-dashboard-visuals' }, location.origin))
+    await editor.getByRole('button', { name: 'Visual magic', exact: true }).click()
+    expect(await editor.getByRole('button', { name: 'Visual magic', exact: true }).isDisabled()).toBe(true)
     await editor.evaluate(async (e: any) => {
       const started = Date.now()
       while (e.testCommands.length !== 1) {
@@ -3681,6 +3731,7 @@ test('preview Fix preserves authored placement and zoom through its owning paren
     })
     expect(result.pending).toBeNull()
     expect(result.message).toContain('3 visuals could not be completed automatically')
+    expect(await editor.getByRole('status').filter({ hasText: result.message }).isVisible()).toBe(true)
   } finally { await page.close() }
 })
 
@@ -3952,15 +4003,4 @@ test('builder Back retains the originating chat across reload URLs', async () =>
     await back.click()
     expect(new URL(page.url()).pathname).toBe('/chats/agentconv_origin')
   } finally { await page.close() }
-})
-
-test('generated dashboard links are editable immediately, including old preview links', async () => {
- const page=await browser.newPage({viewport:{width:1100,height:820}})
- try {
-  await page.goto(`${baseURL}/?mode=preview`)
-  const editor=page.locator('lv-dashboard-builder')
-  await editor.getByRole('button',{name:'Hide tools',exact:true}).waitFor()
-  expect(await editor.locator('#builder-tools').isVisible()).toBe(true)
-  expect(await editor.getByRole('button',{name:'Edit dashboard',exact:true}).count()).toBe(0)
- } finally {await page.close()}
 })

@@ -107,3 +107,21 @@ func TestRecordDetailFieldIDForValidationQualifiesAgainstRecordsDataset(t *testi
 		})
 	}
 }
+
+func TestVisualIDForIntentAcceptsPlacedDefinitionAndComponentIDs(t *testing.T) {
+	doc := document.DashboardDocument{Spec: document.DashboardSpec{
+		Visuals: map[string]document.DashboardVisual{"revenue": {}, "unplaced": {}},
+		Pages:   []document.DashboardPage{{ID: "charts", Components: []document.DashboardPageComponent{{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "component_1", Type: "visual"}, Type: "visual", Visual: "revenue"}}}}, {ID: "empty"}},
+	}}
+	for _, id := range []string{"component_1", "revenue"} {
+		got, err := visualIDForIntent(doc, "charts", id)
+		if err != nil || got != "revenue" {
+			t.Fatalf("resolve %s: %s, %v", id, got, err)
+		}
+	}
+	for _, test := range []struct{ page, id string }{{"empty", "revenue"}, {"charts", "unplaced"}, {"missing", "component_1"}} {
+		if _, err := visualIDForIntent(doc, test.page, test.id); err == nil {
+			t.Fatalf("resolved visual outside page: %+v", test)
+		}
+	}
+}

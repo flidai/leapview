@@ -149,6 +149,14 @@ func (a *Application) prepareVisualTypeSwitch(ctx context.Context, project proje
 }
 
 func visualForIntent(doc document.DashboardDocument, pageID, componentID string) (document.DashboardVisual, error) {
+	id, err := visualIDForIntent(doc, pageID, componentID)
+	if err != nil {
+		return document.DashboardVisual{}, err
+	}
+	return doc.Spec.Visuals[id], nil
+}
+
+func visualIDForIntent(doc document.DashboardDocument, pageID, componentID string) (string, error) {
 	for _, page := range doc.Spec.Pages {
 		if page.ID != pageID {
 			continue
@@ -156,7 +164,7 @@ func visualForIntent(doc document.DashboardDocument, pageID, componentID string)
 		for _, component := range page.Components {
 			base, err := component.Base()
 			if err != nil {
-				return document.DashboardVisual{}, err
+				return "", err
 			}
 			placed, ok := component.Value.(*document.VisualDashboardPageComponent)
 			if !ok || strings.TrimSpace(placed.Visual) == "" {
@@ -165,15 +173,14 @@ func visualForIntent(doc document.DashboardDocument, pageID, componentID string)
 			if base.ID != componentID && placed.Visual != componentID {
 				continue
 			}
-			visual, ok := doc.Spec.Visuals[placed.Visual]
-			if !ok {
-				return document.DashboardVisual{}, fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, placed.Visual)
+			if _, exists := doc.Spec.Visuals[placed.Visual]; !exists {
+				return "", fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, placed.Visual)
 			}
-			return visual, nil
+			return placed.Visual, nil
 		}
-		return document.DashboardVisual{}, fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, componentID, pageID)
+		return "", fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, componentID, pageID)
 	}
-	return document.DashboardVisual{}, fmt.Errorf("%w: page %q", authoring.ErrNotFound, pageID)
+	return "", fmt.Errorf("%w: page %q", authoring.ErrNotFound, pageID)
 }
 
 func resolveVisualTypeFieldBindings(model *semanticmodel.Model, visual document.DashboardVisual) authoring.VisualTypeFieldBindings {
@@ -410,30 +417,9 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	if err != nil {
 		return err
 	}
-	var componentVisual string
-	for _, page := range revision.Document.Spec.Pages {
-		if page.ID != field.PageID {
-			continue
-		}
-		for _, component := range page.Components {
-			base, baseErr := component.Base()
-			if baseErr != nil {
-				return baseErr
-			}
-			if base.ID == field.VisualID {
-				if visual, ok := component.Value.(*document.VisualDashboardPageComponent); ok {
-					componentVisual = visual.Visual
-				}
-				break
-			}
-		}
-		break
-	}
-	if componentVisual == "" {
-		return fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, field.VisualID, field.PageID)
-	}
-	if _, ok := revision.Document.Spec.Visuals[componentVisual]; !ok {
-		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
+	componentVisual, err := visualIDForIntent(revision.Document, field.PageID, field.VisualID)
+	if err != nil {
+		return err
 	}
 	// Records queries store detail selections as unqualified root fields (the
 	// dataset is authored once on the query). Validation resolves dimensions

@@ -257,11 +257,12 @@ for (const viewport of [
         descriptionCount: 0,
         contextHint: 'Type @ to attach a dashboard, metric, model, page, or visual.',
         starters: [
+          { label: 'Build a dashboard', prompt: 'Build a complete dashboard from my selected data source, with key metrics, trends, comparisons, and useful filters. Arrange it clearly and open the preview.' },
           { label: 'Spot a change', prompt: 'What changed most in the last 30 days?' },
           { label: 'Explain a metric', prompt: 'Explain how revenue is calculated.' },
           { label: 'Review a dashboard', prompt: 'Summarize the Executive Sales dashboard.' },
         ],
-        starterDraft: 'What changed most in the last 30 days?',
+        starterDraft: 'Build a complete dashboard from my selected data source, with key metrics, trends, comparisons, and useful filters. Arrange it clearly and open the preview.',
         starterFocused: true,
         starterSubmits: 0,
         promptsFollowComposer: true,
@@ -662,7 +663,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
     expect(newState).toEqual({
       title: 'Ask about your data',
       descriptionCount: 0,
-      starterCount: 3,
+      starterCount: 4,
       startersDisabled: true,
       composerDisabled: true,
       placeholder: 'Agent is not configured.',
@@ -799,53 +800,23 @@ function escapeHTML(value: string): string {
     .replaceAll('>', '&gt;')
 }
 
-test('Arrange appears only in preview chat and sends its command to the retained builder', async () => {
+test('preview chat keeps expansion controls without dashboard actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
     const chat = page.locator('lv-chat-page')
     await chat.locator('lv-chat-composer').waitFor()
-    expect(await page.getByRole('button', { name: 'Fix view visuals', exact: true }).count()).toBe(0)
     await chat.evaluate(async (e: any) => {
       e.dashboardPreview = true
       e.builderOpen = true
       await e.updateComplete
-      const frame = e.shadowRoot.querySelector('.builder-frame') as HTMLIFrameElement
-      ;(window as any).retainedBuilder = frame
-      ;(window as any).arrangeMessages = []
-      frame.contentWindow!.addEventListener('message', event => {
-        if (event.data?.type === 'lv-arrange-dashboard-visuals') (window as any).arrangeMessages.push(event.data)
-      })
+      ;(window as any).retainedBuilder = e.shadowRoot.querySelector('.builder-frame')
     })
-    expect(await page.getByRole('button', { name: 'Fix view visuals', exact: true }).isDisabled()).toBe(true)
-    await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
-      window.parent.postMessage({
-        type: 'lv-builder-saved', canArrange: true, revisionId: 'rev-1', pageId: 'overview', href: '/dashboards/demo/edit',
-        reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], href: '/dashboards/demo/edit', locations: [], context: [] },
-        components: [], artifacts: [], visuals: {},
-      }, window.parent.location.origin)
-    })
-    await page.waitForFunction(() => (document.querySelector('lv-chat-page') as any)?.canArrangeDashboard)
-    await page.getByRole('button', { name: 'Fix view visuals', exact: true }).click()
-    await page.waitForFunction(() => (window as any).arrangeMessages.length === 1)
-    expect(await page.evaluate(() => (window as any).arrangeMessages)).toEqual([{ type: 'lv-arrange-dashboard-visuals' }])
-    const fix = page.getByRole('button', { name: 'Fix view visuals', exact: true })
-    expect(await fix.isDisabled()).toBe(true)
-    expect(await fix.getAttribute('aria-busy')).toBe('true')
-    expect(await fix.innerText()).toContain('Fixing')
-    await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
-      window.parent.postMessage({
-        type: 'lv-builder-saved', canArrange: true, fixingVisuals: false, fixMessage: 'Completed 1 visual. Your layout is unchanged.', revisionId: 'rev-2', pageId: 'overview', href: '/dashboards/demo/edit',
-        reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], href: '/dashboards/demo/edit', locations: [], context: [] },
-        components: [], artifacts: [], visuals: {},
-      }, window.parent.location.origin)
-    })
-    await page.getByRole('status').filter({ hasText: 'Completed 1 visual' }).waitFor()
-    expect(await fix.isDisabled()).toBe(false)
-    expect(await fix.getAttribute('aria-busy')).toBe('false')
-    expect(await chat.evaluate((e: any) => e.shadowRoot.querySelector('.builder-frame') === (window as any).retainedBuilder)).toBe(true)
+    expect(await chat.getByRole('button', { name: 'Chart assist', exact: true }).count()).toBe(0)
+    expect(await chat.getByRole('button', { name: 'Visual magic', exact: true }).count()).toBe(0)
     await page.getByRole('button', { name: 'Expand chat', exact: true }).click()
-    expect(await page.getByRole('button', { name: 'Fix view visuals', exact: true }).count()).toBe(0)
+    expect(await chat.evaluate((e: any) => e.builderOpen)).toBe(false)
+    expect(await chat.evaluate((e: any) => e.shadowRoot.querySelector('.builder-frame') === (window as any).retainedBuilder)).toBe(true)
   } finally { await page.close() }
 })
 
@@ -1075,9 +1046,29 @@ test('side agent exposes dashboard-authored visuals in the individual side view'
   expect(await page.getByRole('combobox',{name:'Dashboard page',exact:true}).inputValue()).toBe('pies')
   expect(await page.getByTitle('Save visual',{exact:true}).count()).toBe(0)
   expect(await page.getByTitle('Unsave visual',{exact:true}).count()).toBe(0)
-  await page.getByRole('button',{name:'View in Dashboard Preview',exact:true}).click()
+  await page.getByRole('button',{name:'Open in Builder',exact:true}).click()
   expect(await chat.evaluate((e: any)=>({builderOpen:e.builderOpen,page:e.dashboardPageId}))).toEqual({builderOpen:true,page:'pies'})
  } finally {await page.close()}
+})
+
+test('submission distinguishes builder authoring from expanded main chat', async () => {
+ const page = await browser.newPage()
+ try {
+  await page.goto(baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  const surfaces = await chat.evaluate(async (e: any) => {
+   const surfaces: string[] = []
+   e.addEventListener('lv-chat-submit', (event: CustomEvent) => surfaces.push(event.detail.surface))
+   for (const builderOpen of [true, false]) {
+    e.builderOpen = builderOpen
+    await e.updateComplete
+    e.shadowRoot.querySelector('.route').dispatchEvent(new CustomEvent('lv-chat-submit', {bubbles:true,composed:true,detail:{input:'Create a bar chart',references:[]}}))
+   }
+   return surfaces
+  })
+  expect(surfaces).toEqual(['builder', 'chat'])
+ } finally { await page.close() }
 })
 
 for (const terminalError of ['', 'The final reply exceeded the conversation limit.']) test(`a live full-dashboard run opens its successful preview automatically and only once (${terminalError || 'success'})`, async () => {

@@ -139,6 +139,7 @@ test('narrow chat wraps messages and keeps long context and visual cards inside 
         { id: 'tool-1', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'revenue', type: 'combo', summary: 'Actual, budget, and forecast revenue for the finance team' } },
         { id: 'assistant-1', kind: 'assistant', text: 'The dashboard and this conversation are still available. Review revenue and cash together.' },
       ]
+      element.conversationId = 'conversation-1'
       element.dashboardPreviewAvailable = true
       await element.updateComplete
       const scroll = element.shadowRoot.querySelector('.scroll') as HTMLElement
@@ -147,6 +148,7 @@ test('narrow chat wraps messages and keeps long context and visual cards inside 
     })
     expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width + 1)
     expect(layout.cardRight).toBeLessThanOrEqual(340)
+    expect(await page.getByRole('link', { name: 'Open in Explorer' }).count()).toBe(0)
   } finally {
     await page.close()
   }

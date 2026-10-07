@@ -34,7 +34,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 		return m.resolveDashboardTurnContext(r.Context(), scope, candidate)
 	case "data":
 		return m.resolveDataTurnContext(r.Context(), scope, candidate)
-	case "chat":
+	case "chat", "builder":
 		if m.catalog == nil {
 			return agent.TurnContext{}, errors.New("catalog is not configured")
 		}
@@ -79,7 +79,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			}
 			references = append(references, TurnReferenceFromCatalog(item.Item, projectID))
 		}
-		resolved := agent.TurnContext{Surface: "chat", References: references}
+		resolved := agent.TurnContext{Surface: strings.ToLower(strings.TrimSpace(candidate.Surface)), References: references}
 		// Chat stays attached to its conversation while edits target the active
 		// builder page. Resolve the selection against the authorized draft;
 		// client-provided page names and model IDs are never authoritative.
@@ -100,6 +100,9 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			resolved.DashboardTitle = draft.Lifecycle.Title
 			resolved.ModelID = draft.Lifecycle.SemanticModel.String()
 			return withChatDraftPage(resolved, draft.Revision.Document, pageID)
+		}
+		if resolved.Surface == "builder" {
+			return agent.TurnContext{}, errors.New("select a dashboard page before asking the builder agent to add visuals")
 		}
 		return resolved, nil
 	default:

@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "5fd03c7c5535e919400ae2669006764296b1ff11fcd6c37622f099e7ac09fb0e"
+	const expectedRouteContractDigest = "13b0951068bbe5601f005b5bb20b46377d1543752ddd335c00e8a3e0587221d3"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -158,7 +158,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "PROJECT_ADMIN"
-	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command" || path == "/dashboards/{dashboard}/draft/visual-window":
+	case strings.HasPrefix(path, "/visuals/saved") || path == "/dashboards/{dashboard}/draft/chat-remove-visual" || path == "/dashboards/{dashboard}/draft/saved-visual" || path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command" || path == "/dashboards/{dashboard}/draft/visual-window":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
 	case path == "/dashboards/{dashboard}/archive" || path == "/dashboards/{dashboard}/delete":
@@ -284,6 +284,7 @@ GET /chats/management
 GET /chats/references/search
 GET /chats/restore
 GET /chats/{conversation}
+GET /chats/{conversation}/actions/{toolcall}/open
 GET /candidates/{candidate}
 GET /candidates/{candidate}/review
 GET /candidates/{candidate}/dashboards/{dashboard}
@@ -335,6 +336,7 @@ GET /semantic-models
 GET /semantic-models/{asset}/{section}
 GET /static/*
 GET /updates
+GET /visuals/saved
 HEAD /metrics
 HEAD /static/*
 OPTIONS /metrics
@@ -375,6 +377,8 @@ POST /dashboards/{dashboard}/commands/select
 POST /dashboards/{dashboard}/commands/spatial-select
 POST /dashboards/{dashboard}/commands/visual-window
 POST /dashboards/{dashboard}/draft/command
+POST /dashboards/{dashboard}/draft/chat-remove-visual
+POST /dashboards/{dashboard}/draft/saved-visual
 POST /dashboards/{dashboard}/draft/filter
 POST /dashboards/{dashboard}/draft/filter-options
 POST /dashboards/{dashboard}/draft/visual-window
@@ -400,6 +404,8 @@ POST /public/dashboards/{publicId}/commands/navigate
 POST /public/dashboards/{publicId}/commands/select
 POST /public/dashboards/{publicId}/commands/spatial-select
 POST /public/dashboards/{publicId}/commands/visual-window
+POST /visuals/saved
+POST /visuals/saved/remove
 POST /static/*
 PUT /metrics
 PUT /static/*

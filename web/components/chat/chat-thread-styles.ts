@@ -1,6 +1,10 @@
 import { css } from 'lit'
 
 export const chatThreadStyles = css`
+  .tool-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+  .tool-actions a { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: var(--lv-border-default); border-radius: 6px; color: var(--lv-accent); font: var(--lv-type-caption); text-decoration: none; }
+  .tool-actions a:hover { background: var(--lv-bg-control-hover); text-decoration: underline; }
+  .tool-actions a:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
   .artifact-actions { display:flex; gap:8px; margin:6px 0 12px; }
   .artifact-actions button { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; font:inherit; font-size:12px; color:var(--lv-fg-muted); background:transparent; border:var(--lv-border-default); border-radius:6px; cursor:pointer; }
   .artifact-actions button:hover { background:var(--lv-bg-control-hover); color:var(--lv-fg-default); }

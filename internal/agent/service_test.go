@@ -2192,3 +2192,41 @@ func pageTestRows[T any](rows []T, page Page, id func(T) string) []T {
 	}
 	return append([]T(nil), rows[start:end]...)
 }
+
+func TestBuilderAuthoringGuidanceReachesModelAsSystemInstructions(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "builder-context@example.com")
+	model := newRecordingAgentModel(agentcore.ModelResponse{Content: "Done.", FinishReason: agentcore.FinishReasonStop})
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	service.SetSystemPromptProvider(func(context.Context) (string, error) { return "Configured business instructions.", nil })
+	scope := Scope{ProjectID: "sales", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Builder context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Create a bar chart", Context: &TurnContext{Surface: "builder", DashboardID: "draft", PageID: "bars", References: []TurnReference{{Reference: TurnReferenceKey{Kind: "dashboard", ID: "draft"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := model.Requests()
+	if len(requests) != 1 {
+		t.Fatalf("requests: %d", len(requests))
+	}
+	var system string
+	for _, message := range requests[0].Messages {
+		if message.Role == agentcore.RoleSystem {
+			system += message.Content
+		}
+	}
+	for _, want := range []string{"Configured business instructions.", "surface is builder", "add_dashboard_visual", "assign_dashboard_field", "Do not stop at query_visual", "For surface chat", "edit_dashboard_source", "one atomic edit", "preview_dashboard_draft"} {
+		if !strings.Contains(system, want) {
+			t.Fatalf("missing trusted builder guidance %q", want)
+		}
+	}
+	payload, _ := json.Marshal(requests[0].Messages)
+	if !strings.Contains(string(payload), `\"pageId\":\"bars\"`) {
+		t.Fatalf("selected page missing from model context")
+	}
+}

@@ -11,6 +11,7 @@ import '../shared/markdown-view'
 import '../shared/code-block'
 import '../shared/visual-artifact'
 import { readAttachedMessage } from './attachments'
+import { dashboardActionLinks } from './dashboard-action-links'
 
 type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
@@ -182,6 +183,7 @@ class ChatThread extends LitElement {
     const noFinalAnswer = !running && !this.status.error && !items.some(item => item.kind === 'error' || isVisual(item))
       && activity.some(item => this.toolStatus(item) === 'error')
       && lastAnswerOrTool?.kind === 'tool'
+    const lastPreview = [...activity].reverse().find(item => item.name === 'preview_dashboard_draft' && this.toolStatus(item) === 'complete' && !item.error)
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
@@ -191,6 +193,7 @@ class ChatThread extends LitElement {
           </details>` : nothing}
           ${items.filter(item => item.kind !== 'tool' || isVisual(item)).map(item => this.renderAgentItem(item))}
           ${noFinalAnswer ? html`<p class="run-notice" role="status">This request stopped before a final answer was ready. You can ask the agent to continue.</p>` : nothing}
+          ${lastPreview ? this.renderToolActions(lastPreview) : nothing}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>
@@ -269,7 +272,7 @@ class ChatThread extends LitElement {
     const detailsID = toolDetailsID(key)
     const expanded = this.expandedToolCalls.has(key)
     const stateLabel = statusLabel(status)
-    if (status === 'complete' && item.artifact && this.dashboardPreviewAvailable) return this.renderArtifact(item.artifact)
+    if (status === 'complete' && item.artifact && this.dashboardPreviewAvailable) return html`${this.renderArtifact(item.artifact)}${this.renderToolActions(item)}`
     return html`
       <div
         class=${['tool-call', item.artifact ? 'has-artifact' : '', status === 'running' ? 'running' : '', status === 'complete' ? 'done' : '', status === 'error' ? 'error' : '', status === 'interrupted' ? 'interrupted' : ''].filter(Boolean).join(' ')}
@@ -289,9 +292,18 @@ class ChatThread extends LitElement {
           <span class="tool-chevron" aria-hidden="true">${chevronRightIcon()}</span>
         </button>
         ${status === 'complete' && item.artifact ? this.renderArtifact(item.artifact) : nothing}
+        ${status === 'complete' ? this.renderToolActions(item) : nothing}
         ${expanded ? this.renderToolDetails(item, detailsID) : nothing}
       </div>
     `
+  }
+
+  private renderToolActions(item: ChatTranscriptItemSignal) {
+    if (item.error) return nothing
+    const actions = dashboardActionLinks(item, this.conversationId)
+    return actions.length ? html`<nav class="tool-actions" aria-label="Review this action in the app">
+      ${actions.map(action => html`<a href=${action.href}>${action.label}${lucideIcon(ChevronRight, { size: 14 })}</a>`)}
+    </nav>` : nothing
   }
 
   private renderArtifact(artifact: ChatArtifactSignal) {

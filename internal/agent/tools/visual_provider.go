@@ -275,6 +275,19 @@ func compileAgentVisual(input agentVisualInput, model *semanticmodel.Model, id s
 	if model == nil {
 		return dashboarddefinition.Definition{}, fmt.Errorf("semantic model is required")
 	}
+	// The dashboard compiler's default budget is larger than the agent's cap.
+	// Default an omitted optional budget here; explicit budgets still validate.
+	if input.Visual.DataBudget == nil {
+		input.Visual.DataBudget = &dashboarddocument.DashboardDataBudget{MaxRows: maxVisualRows}
+	}
+	input.Visual.Query = defaultAgentQueryLimit(input.Visual.Query, input.Visual.DataBudget.MaxRows)
+	if input.Visual.Datasets != nil {
+		datasets := make(map[string]dashboarddocument.DashboardQuery, len(*input.Visual.Datasets))
+		for key, query := range *input.Visual.Datasets {
+			datasets[key] = defaultAgentQueryLimit(query, input.Visual.DataBudget.MaxRows)
+		}
+		input.Visual.Datasets = &datasets
+	}
 	doc := agentVisualDocument(input, id, input.Model)
 	compiled, err := dashboardcompiler.CompileDocument(doc, map[string]*semanticmodel.Model{input.Model: model})
 	if err != nil {
@@ -834,4 +847,30 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// Apply bounded defaults without rewriting an explicit query or its caller's value.
+func defaultAgentQueryLimit(query dashboarddocument.DashboardQuery, budget int32) dashboarddocument.DashboardQuery {
+	limit := min(budget, int32(maxVisualRows))
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		if value.Limit == nil {
+			next := *value
+			next.Limit = &limit
+			query.Value = &next
+		}
+	case *dashboarddocument.RecordsDashboardQuery:
+		if value.Limit == nil {
+			next := *value
+			next.Limit = &limit
+			query.Value = &next
+		}
+	case *dashboarddocument.DistributionDashboardQuery:
+		if value.Limit == nil {
+			next := *value
+			next.Limit = &limit
+			query.Value = &next
+		}
+	}
+	return query
 }

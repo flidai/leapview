@@ -4,7 +4,7 @@ import type { ChatDashboardMessage, SavedVisualImportMessage } from '../chat/das
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, Grid2X2, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, X } from 'lucide'
+import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, Grid2X2, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, WandSparkles, X } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-styles'
@@ -153,7 +153,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visuals = this.builderVisuals
     const ordered = [...(page?.visuals ?? [])].sort((a, b) => a.placement.row - b.placement.row || a.placement.col - b.placement.col)
-    const key = JSON.stringify([builder.revision, page?.id, builder.preview.loading, builder.capabilities.canEdit, this.commandPending, this.builderFilterController.pending, Boolean(this.builderFilterCommandInFlight), Boolean(this.pendingFixVisuals), this.fixVisualsMessage, ordered.map(visual => {
+    const key = JSON.stringify([builder.revision, page?.id, builder.preview.loading, builder.capabilities.canEdit, this.commandPending, this.builderFilterController.pending, Boolean(this.builderFilterCommandInFlight), Boolean(this.pendingFixVisuals), this.fixVisualsMessage, this.toolsHidden, ordered.map(visual => {
       const envelope = visuals[this.visualSignalID(visual)]
       return [visual.id, envelope?.dataRevision, envelope?.specRevision, envelope?.status.kind]
     })])
@@ -161,6 +161,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.chatProjectionKey = key
     const href = new URL(window.location.href)
     href.searchParams.set('embed', 'chat')
+    href.searchParams.delete('mode')
     if (page) href.searchParams.set('page', page.id)
     const artifactID = (pageId: string, componentId: string) => `dashboard:${builder.dashboardId}:${pageId}:${componentId}`
     window.parent.postMessage({
@@ -406,6 +407,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       gap: 0.4rem;
     }
 
+    .magic-fill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .magic-fill svg { color: var(--lv-fg-accent); flex-shrink: 0; }
+    .magic-fill-result { margin: 0; padding: 6px 12px; border-bottom: var(--lv-border-default); color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
     .more-menu .arrange-mobile { display: none; }
 
     @media (max-width: 640px) {
@@ -3295,7 +3299,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <section class=${`builder${this.embeddedInChat ? ' chat-preview' : ''}`} aria-label="Dashboard builder">
         ${this.renderTerminalFailure()}
-        ${this.renderToolbar(builder)}
+        <div class="builder-header">${this.renderToolbar(builder)}</div>
         <div class=${`body${this.toolsHidden ? ' tools-hidden' : ''}`}>
           ${this.renderCanvas(builder, page)}
           ${this.renderPageBar(builder, page)}
@@ -3355,6 +3359,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
+          ${this.embeddedInChat ? html`<button class="magic-fill" type="button" aria-label="Visual magic" aria-busy=${Boolean(this.pendingFixVisuals)} title="Complete missing chart fields on this page. Your layout stays unchanged." ?disabled=${!builder.capabilities.canEdit || this.commandPending || Boolean(this.pendingFixVisuals) || this.builderFilterController.pending || Boolean(this.builderFilterCommandInFlight) || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>${lucideIcon(WandSparkles, { size: 16, strokeWidth: 2 })}<span>${this.pendingFixVisuals ? 'Completing…' : 'Visual magic'}</span></button>` : nothing}
           ${this.embeddedInChat ? nothing : html`<button class="arrange-toolbar" type="button" aria-label="Arrange visuals" title="Fit visuals into a balanced grid" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>${lucideIcon(Grid2X2, { size: 16, strokeWidth: 2 })}<span class="arrange-label">Arrange visuals</span></button>`}
           <button type="button" class="icon-action" data-builder-action="tools" aria-label=${this.toolsHidden ? 'Show tools' : 'Hide tools'} title=${this.toolsHidden ? 'Show editing panels' : 'Hide editing panels'} aria-expanded=${!this.toolsHidden} aria-controls="builder-tools" @click=${this.toggleTools}>${lucideIcon(this.toolsHidden ? PanelRightOpen : PanelRightClose, { size: 16, strokeWidth: 2 })}<span class="sr-only">${this.toolsHidden ? 'Show tools' : 'Hide tools'}</span></button>
           <details class="dashboard-metadata">
@@ -3384,6 +3389,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${builder.capabilities.canPublish ? html`<button type="button" class="primary" data-builder-action="publish" title=${publishTitle} ?disabled=${publishDisabled} @click=${this.publish}>${publishLabel}</button>` : nothing}
         </div>
       </header>
+      ${this.embeddedInChat && this.fixVisualsMessage ? html`<p class="magic-fill-result" role="status">${this.fixVisualsMessage}</p>` : nothing}
     `
   }
 
@@ -5534,7 +5540,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       : `Changing ${visual.title} to a ${this.visualLabel(type, builder)} visual.`
     if (currentType !== type) {
       this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
-      if (currentRevision) {
+      if (currentRevision && !visual.previewError) {
         this.pendingVisualTypeSwitch = { pageID: page.id, visualID: visual.id, fromType: currentType, toType: type, fromRevision: currentRevision }
       }
       this.reversibleVisualTypeSwitch = null

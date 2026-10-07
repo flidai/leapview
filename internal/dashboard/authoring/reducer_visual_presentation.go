@@ -96,11 +96,16 @@ func canonicalVisualSwitchQuery(target document.DashboardQuery, visualType docum
 
 func boundedVisualSwitchFields(fields []string, visualType document.DashboardVisualType, role FieldRole) []string {
 	maximum := int32(0)
+	supported := false
 	for _, limit := range CanonicalVisualRoleLimits(visualType) {
 		if limit.Role == string(role) {
+			supported = true
 			maximum = limit.Maximum
 			break
 		}
+	}
+	if !supported {
+		return nil
 	}
 	result := make([]string, 0, len(fields))
 	seen := make(map[string]struct{}, len(fields))

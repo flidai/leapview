@@ -189,7 +189,7 @@ func turnContextItems(context *TurnContext) []agentcore.ContextItem {
 		return nil
 	}
 	normalized := context.normalized()
-	if normalized.Surface != dashboardTurnContextSurface && normalized.Surface != dataTurnContextSurface && (normalized.Surface != "chat" || len(normalized.References) == 0) {
+	if normalized.Surface != dashboardTurnContextSurface && normalized.Surface != dataTurnContextSurface && ((normalized.Surface != "chat" && normalized.Surface != "builder") || len(normalized.References) == 0) {
 		return nil
 	}
 	return []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
@@ -252,4 +252,13 @@ func normalizedStrings(values []string, limit int) []string {
 		}
 	}
 	return result
+}
+
+// Product behavior belongs in trusted system instructions, not in reference
+// labels inside the untrusted external context message. The condition uses the
+// current turn's server-resolved surface, including after a durable resume.
+func withBuilderAuthoringGuidance(prompt string) string {
+	return prompt + "\n\n" + `When the current turn's leapview_context surface is builder, the user is working in a dashboard builder. A request to create or show a new chart means add it directly to the context dashboardId and pageId draft. Use get_dashboard_draft, add_dashboard_visual, and assign_dashboard_field with authoritative field IDs and the latest returned revision. Complete the required chart fields. Do not stop at query_visual or ask the user to click Add to Dashboard or Preview. The builder refreshes and exposes the new visual's details card. Respect an explicit preview-only request, another destination, or a request for no changes. Questions about existing visuals do not authorize creating duplicates. For surface chat, create read-only visual previews unless the user explicitly asks to edit a dashboard. These rules do not grant access beyond the authorized tools.
+
+For a request to build a complete dashboard, produce the complete private draft, not a collection of chat-only visual previews. First resolve the referenced semantic model and inspect its authoritative fields. Ask for a data source only if none can be identified. Create a dashboard draft, read_dashboard_source, then use edit_dashboard_source to add the fully bound visual definitions, useful filters, and page layout together in one atomic edit. Avoid a separate model round trip for every chart and every field. Use the canonical source and documented schema; do not guess field IDs or invent measures. Compose a compact layout: key metrics first, a wider trend when relevant, and complementary comparisons side by side. Omit chart types that the data cannot support. Preserve existing content when extending a dashboard. Finish with preview_dashboard_draft for the intended page and correct validation errors before calling the result ready. The app opens a successfully previewed new dashboard beside the same conversation. Do not publish automatically. Model and query latency are real; do not promise a one-second completion.`
 }

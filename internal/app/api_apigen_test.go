@@ -802,9 +802,10 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 130 {
-		t.Fatalf("UI signal IR contracts = %d, want 130", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 131 {
+		t.Fatalf("UI signal IR contracts = %d, want 131", len(irDoc.Contracts))
 	}
+	foundSavedVisualLibrary := false
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
 	foundDashboardVisualizationSignal := false
@@ -812,6 +813,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	foundRefreshRunDrawerSignal := false
 	foundAssetVersionDrawerSignal := false
 	for _, contract := range irDoc.Contracts {
+		if contract.Name == "SavedVisualLibrarySignal" && contract.Kind == "ui-signal" {
+			foundSavedVisualLibrary = true
+		}
 		if contract.Name == "DashboardEnvelope" && contract.Kind == "ui-envelope" && contract.Extensions["x-leapview-contract-role"] == "envelope" {
 			foundEnvelopeMetadata = true
 		}
@@ -830,6 +834,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		if contract.Name == "AssetVersionDrawerSignal" && contract.Kind == "ui-signal" {
 			foundAssetVersionDrawerSignal = true
 		}
+	}
+	if !foundSavedVisualLibrary {
+		t.Fatal("UI signals do not emit the saved visual library")
 	}
 	if !foundEnvelopeMetadata {
 		t.Fatal("DashboardEnvelope contract metadata was not preserved in IR")

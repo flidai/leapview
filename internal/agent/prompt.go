@@ -234,7 +234,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				if promptErr != nil {
 					return nil, promptErr
 				}
-				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", Limits: dashboardAgentLimits(), SystemPrompt: withDashboardFieldGuidance(systemPrompt), Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
+				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", Limits: dashboardAgentLimits(), SystemPrompt: withDashboardFieldGuidance(withBuilderAuthoringGuidance(systemPrompt)), Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
 				if prepErr != nil {
 					return nil, prepErr
 				}
@@ -323,7 +323,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	prepared, err := agentcore.New(agentcore.Definition{
 		Name:              "leapview-governed",
 		Limits:            dashboardAgentLimits(),
-		SystemPrompt:      withDashboardFieldGuidance(systemPrompt),
+		SystemPrompt:      withDashboardFieldGuidance(withBuilderAuthoringGuidance(systemPrompt)),
 		Model:             runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: initial,
@@ -547,7 +547,7 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 	def := agentcore.Definition{
 		Name:              "leapview-governed",
 		Limits:            dashboardAgentLimits(),
-		SystemPrompt:      withDashboardFieldGuidance(p.systemPrompt),
+		SystemPrompt:      withDashboardFieldGuidance(withBuilderAuthoringGuidance(p.systemPrompt)),
 		Model:             p.runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: p.initial,
