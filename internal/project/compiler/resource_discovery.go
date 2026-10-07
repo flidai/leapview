@@ -102,9 +102,12 @@ func discoverAuthoredResources(sourceRoot string) (authoredResourceDiscovery, er
 		if headerErr != nil {
 			return authoredResourceDiscovery{}, headerErr
 		}
-		// Owned directories may contain dashboard fragments. Only LeapView
-		// envelopes are standalone resources.
+		// Dashboard directories may contain fragments; other owned directories
+		// contain only LeapView resource envelopes.
 		if !recognized {
+			if owned.kind != "Dashboard" {
+				return authoredResourceDiscovery{}, fmt.Errorf("%s: %s/ YAML must use a %s resource envelope", path, owned.directory, owned.kind)
+			}
 			continue
 		}
 		if kind == "Project" {

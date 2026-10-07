@@ -3,6 +3,7 @@ package postgres
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -46,6 +47,23 @@ func TestAuthorizationPolicyPostgreSQLCASIdempotencyAndHistoricalReads(t *testin
 	if second.Revision != 2 || second.Digest == first.Digest {
 		t.Fatalf("changed policy = %+v, want revision 2 and a new digest", second)
 	}
+	removed, err := repo.RemoveAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, IdempotencyKey: "policy-remove", ExpectedRevision: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.Revision != 3 || removed.Digest == second.Digest || len(removed.RoleBindings) != 0 {
+		t.Fatalf("removed policy = %+v, want empty revision 3 with a new digest", removed)
+	}
+	removeReplay, err := repo.RemoveAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, IdempotencyKey: "policy-remove", ExpectedRevision: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(removeReplay, removed) {
+		t.Fatalf("remove replay = %+v, want exact result %+v", removeReplay, removed)
+	}
+	if _, err := repo.RemoveAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, IdempotencyKey: "policy-remove-other", ExpectedRevision: 3}); !errors.Is(err, access.ErrAuthorizationPolicyNotFound) {
+		t.Fatalf("missing binding removal error = %v, want ErrAuthorizationPolicyNotFound", err)
+	}
 	historical, err := repo.AuthorizationPolicyRevision(ctx, scope, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -64,14 +82,14 @@ func TestAuthorizationPolicyPostgreSQLCASIdempotencyAndHistoricalReads(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := ValidateAuthorizationPolicyRevisionTx(ctx, tx, scope, second.Revision, second.Digest)
+	sealed, err := ValidateAuthorizationPolicyRevisionTx(ctx, tx, scope, removed.Revision, removed.Digest)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
-	if sealed.Revision != second.Revision || sealed.Digest != second.Digest {
+	if sealed.Revision != removed.Revision || sealed.Digest != removed.Digest {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("tx-bound policy = %+v, want revision/digest %d/%s", sealed, second.Revision, second.Digest)
+		t.Fatalf("tx-bound policy = %+v, want revision/digest %d/%s", sealed, removed.Revision, removed.Digest)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -101,6 +119,30 @@ func TestAuthorizationPolicyPostgreSQLCASIdempotencyAndHistoricalReads(t *testin
 	wrongScope.Environment = "staging"
 	if _, err := repo.AuthorizationPolicy(ctx, wrongScope); !errors.Is(err, access.ErrAuthorizationPolicyNotFound) {
 		t.Fatalf("wrong environment read error = %v, want ErrAuthorizationPolicyNotFound", err)
+	}
+}
+
+func TestAuthorizationSnapshotDigestReadsExactImmutableScope(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	ctx := t.Context()
+	repo := &Repository{db: db.runtime}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := db.admin.Exec(ctx, `INSERT INTO access.authorization_snapshot(project_id, environment, generation_id, digest) VALUES ($1, $2, $3, $4)`, "project-policy", "production", "generation-legacy", digest); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := repo.AuthorizationSnapshotDigest(ctx, "project-policy", "production", "generation-legacy")
+	if err != nil || !found || got != digest {
+		t.Fatalf("exact stored snapshot digest = %q, found=%t err=%v", got, found, err)
+	}
+	for _, identity := range [][3]string{
+		{"project-other", "production", "generation-legacy"},
+		{"project-policy", "staging", "generation-legacy"},
+		{"project-policy", "production", "generation-other"},
+	} {
+		got, found, err := repo.AuthorizationSnapshotDigest(ctx, identity[0], identity[1], identity[2])
+		if err != nil || found || got != "" {
+			t.Fatalf("foreign snapshot identity %v returned %q, found=%t err=%v", identity, got, found, err)
+		}
 	}
 }
 

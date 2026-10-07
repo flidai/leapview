@@ -87,6 +87,7 @@ func (m *Module) MountAuthenticatedBrowser(r chi.Router) {
 func (m *Module) MountLocalLogin(r chi.Router) {
 	if m != nil {
 		r.Post("/auth/local/login", m.LocalLogin)
+		r.Post("/auth/development/login", m.DevelopmentLogin)
 	}
 }
 

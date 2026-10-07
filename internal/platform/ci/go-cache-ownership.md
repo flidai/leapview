@@ -1,5 +1,13 @@
 # Go cache ownership — #520
 
+This records the original ownership rollout and its historical measurements.
+The current `setup-ci` action uses `go-validation-v2`, includes toolchain
+selection plus the `flake.lock` / `nix/toolchain.nix` identity, and resolves the
+main compiler as Go 1.27.1. The v1 keys and Go 1.26.8 references below describe
+the original rollout, not the current cache contract. See
+[the 4 October follow-through](slo-followthrough-2026-10-04.md) for the current
+baseline and verified compiler change.
+
 ## Cause and evidence
 
 The [preparation audit](preparation-profile.md) traced an immutable-cache race.

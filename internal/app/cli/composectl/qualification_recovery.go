@@ -45,20 +45,21 @@ const (
 )
 
 type qualificationRecoveryOptions struct {
-	BundleRoot           string
-	EvidenceDir          string
-	PublisherToken       string
-	WorkloadToken        string
-	ProjectDataToken     string
-	RecoveryControlToken string
-	MetricsToken         string
-	AuthorPrincipalID    string
-	ReviewerPrincipalID  string
-	ContainerID          string
-	ComposeProject       string
-	ProjectID            string
-	Image                string
-	Target               string
+	BundleRoot              string
+	EvidenceDir             string
+	PublisherToken          string
+	WorkloadToken           string
+	ConnectionEvidenceToken qualificationConnectionEvidenceToken
+	RecoveryUploadToken     qualificationRecoveryUploadToken
+	RecoveryControlToken    string
+	MetricsToken            string
+	AuthorPrincipalID       string
+	ReviewerPrincipalID     string
+	ContainerID             string
+	ComposeProject          string
+	ProjectID               string
+	Image                   string
+	Target                  string
 }
 
 type qualificationRecoveryReport struct {
@@ -141,20 +142,21 @@ func (c *Controller) runQualificationRecovery(
 		return report, fmt.Errorf("recovery qualification requires exact evaluation project %q", manageddataqualificationbarrier.EvaluationProjectID)
 	}
 	for label, value := range map[string]string{
-		"bundle root":            options.BundleRoot,
-		"evidence directory":     options.EvidenceDir,
-		"publisher token":        options.PublisherToken,
-		"workload token":         options.WorkloadToken,
-		"project data token":     options.ProjectDataToken,
-		"recovery control token": options.RecoveryControlToken,
-		"metrics token":          options.MetricsToken,
-		"author principal id":    options.AuthorPrincipalID,
-		"reviewer principal id":  options.ReviewerPrincipalID,
-		"container":              options.ContainerID,
-		"Compose project":        options.ComposeProject,
-		"project":                options.ProjectID,
-		"image":                  options.Image,
-		"target":                 options.Target,
+		"bundle root":               options.BundleRoot,
+		"evidence directory":        options.EvidenceDir,
+		"publisher token":           options.PublisherToken,
+		"workload token":            options.WorkloadToken,
+		"connection evidence token": string(options.ConnectionEvidenceToken),
+		"recovery upload token":     string(options.RecoveryUploadToken),
+		"recovery control token":    options.RecoveryControlToken,
+		"metrics token":             options.MetricsToken,
+		"author principal id":       options.AuthorPrincipalID,
+		"reviewer principal id":     options.ReviewerPrincipalID,
+		"container":                 options.ContainerID,
+		"Compose project":           options.ComposeProject,
+		"project":                   options.ProjectID,
+		"image":                     options.Image,
+		"target":                    options.Target,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return report, fmt.Errorf("recovery qualification %s is required", label)
@@ -238,19 +240,12 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "managed upload interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
-	var active struct {
-		Revision struct {
-			ID string `json:"id"`
-		} `json:"revision"`
-	}
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet,
-		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/active-revision",
-		options.ProjectDataToken, nil, "", &active,
-	); err != nil {
+	baselineRevision, err := qualificationActiveManagedRevision(
+		ctx, client, apiRoot, options.ProjectID, options.ConnectionEvidenceToken,
+	)
+	if err != nil {
 		return report, err
 	}
-	baselineRevision := active.Revision.ID
 	// A clean installation legitimately has no active managed-data revision
 	// until its first deployment selects a staged revision. The interruption
 	// invariant is still exact: the partial upload must leave that empty active
@@ -265,23 +260,11 @@ func (c *Controller) runQualificationRecovery(
 	cleanup.Add(func(context.Context) error {
 		return clearQualificationManagedUploadBarrier(managedUploadBarrierDir)
 	})
+	syncCommandSpec := qualificationManagedUploadSyncCommand(options)
 	syncCommand, err := c.startQualificationClientCommandWithEnv(
-		ctx,
-		recoveryClient,
-		options.PublisherToken,
-		options.Target,
+		ctx, recoveryClient, syncCommandSpec.token, options.Target,
 		filepath.Join(options.EvidenceDir, "recovery-managed-upload.log"),
-		map[string]string{
-			manageddataqualificationbarrier.EnabledEnv:   manageddataqualificationbarrier.EnabledValue,
-			manageddataqualificationbarrier.PathEnv:      "/client-home",
-			manageddataqualificationbarrier.ProjectIDEnv: options.ProjectID,
-		},
-		"leapview", "data", "sync",
-		"--source-root", "/work/project-a",
-		"--project-id", options.ProjectID,
-		"--connection", "sample",
-		"--from", "/work/input",
-		"--format", "json",
+		syncCommandSpec.environment, syncCommandSpec.arguments...,
 	)
 	if err != nil {
 		return report, err
@@ -302,24 +285,10 @@ func (c *Controller) runQualificationRecovery(
 		_ = syncCommand.Stop()
 		return report, err
 	}
-	var sessionObject struct {
-		Status string `json:"status"`
-		Files  []struct {
-			Negotiation struct {
-				TUS struct {
-					Offset int64 `json:"offset"`
-				} `json:"tus"`
-			} `json:"negotiation"`
-		} `json:"files"`
-	}
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet,
-		fmt.Sprintf(
-			"%s%s/upload-sessions/%s",
-			apiRoot, qualificationManagedConnectionPath(options.ProjectID), urlPath(interruptedSession),
-		),
-		options.PublisherToken, nil, "", &sessionObject,
-	); err != nil {
+	sessionObject, err := readQualificationManagedUploadSessionStatus(
+		ctx, client, apiRoot, options, interruptedSession,
+	)
+	if err != nil {
 		return report, err
 	}
 	maxOffset := int64(0)
@@ -345,25 +314,17 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil || faultRevision == baselineRevision {
 		return report, fmt.Errorf("managed upload did not create a distinct staged revision")
 	}
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet,
-		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/active-revision",
-		options.ProjectDataToken, nil, "", &active,
-	); err != nil {
+	activeRevision, err := qualificationActiveManagedRevision(
+		ctx, client, apiRoot, options.ProjectID, options.ConnectionEvidenceToken,
+	)
+	if err != nil {
 		return report, err
 	}
-	if active.Revision.ID != baselineRevision {
+	if activeRevision != baselineRevision {
 		return report, fmt.Errorf("interrupted upload changed the active revision")
 	}
-	managedEvents, err := waitForQualificationEvents(
-		ctx,
-		client,
-		apiRoot+fmt.Sprintf(
-			"%s/upload-sessions/%s/events?limit=100",
-			qualificationManagedConnectionPath(options.ProjectID), urlPath(interruptedSession),
-		),
-		options.PublisherToken,
-		[]string{"upload_session.created", "upload_session.finalizing", "upload_session.completed"},
+	managedEvents, err := waitForQualificationManagedUploadEvents(
+		ctx, client, apiRoot, options, interruptedSession,
 	)
 	if err != nil {
 		return report, err
@@ -473,13 +434,14 @@ func (c *Controller) runQualificationRecovery(
 	if err := c.armQualificationActivationBarrier(ctx, options.ContainerID, workDir); err != nil {
 		return report, err
 	}
-	if err := approveQualificationPublication(
+	if _, err := approveQualificationPublication(
 		ctx,
 		client,
-		qualificationAuthoringOptions{Target: apiRoot, ProjectID: options.ProjectID},
+		qualificationAuthoringOptions{Target: apiRoot, ProjectID: options.ProjectID, Environment: explicitQualificationEnvironment},
 		options.PublisherToken,
 		options.RecoveryControlToken,
 		pendingPublication,
+		options.ReviewerPrincipalID,
 		options.ComposeProject+"-recovery",
 	); err != nil {
 		return report, err
@@ -1316,7 +1278,7 @@ func qualificationManagedUploadPartialOffset(
 	if err := qualificationAPI(
 		ctx, client, http.MethodGet,
 		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/upload-sessions?limit=100",
-		options.PublisherToken, nil, "", &sessions,
+		string(options.ConnectionEvidenceToken), nil, "", &sessions,
 	); err != nil {
 		return "", 0, err
 	}

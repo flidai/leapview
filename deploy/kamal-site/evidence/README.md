@@ -1,0 +1,106 @@
+# Manual operator qualification — 29 September 2026
+
+## Final live proofs — 2 October 2026
+
+The [final acceptance report](final-acceptance-20261002.md) and
+[receipt index](final-acceptance-20261002.json) record the full replacement
+24-hour interval, both boundary adoption smokes, actual observer and acceptance
+command exits, and the final read-only storage/retention/recovery audit.
+All required live proofs passed. Fallback #748 was subsequently closed externally
+as superseded at 16:07:20 IST on 2 October. Closeout documentation review and
+protected merge remain pending. Automatic VPS activation remains deferred.
+
+## Historical live rollout snapshot — 30 September 2026
+
+The public website now serves through the manually managed Kamal deployment.
+Production A/B admission and capacity qualification, original Compose
+restoration, B-to-A offline rollback and return to B, Caddy recreation, and a
+real host reboot all passed. Image B is active and A is the verified prior.
+At this snapshot the 24-hour observer was still running. Completion required the full interval,
+then its end adoption smoke and observation acceptance receipt, then the final
+retention/recovery audit, and finally closure of fallback PR #748.
+
+See the [sanitized rollout report](live-rollout-20260930.md) and
+[machine-readable receipt](live-rollout-20260930.json). They preserve UTC and
+IST event times, admitted image/source identities, capacity margins, observer
+status, and hashes of protected source receipts. Raw protected receipts and
+their locations are not published. The v3 observer's failed sample is retained
+as a monitoring-tool limitation. The v4 interval subsequently stopped and is
+also excluded. Only the replacement 1–2 October interval qualifies for acceptance.
+
+The operator and disposable lifecycle results below remain historical synthetic
+qualification. They are not production migration, real-image capacity, or host
+reboot evidence; the live receipt supplies those separate results.
+
+The final operator passed the disposable lifecycle run recorded in
+[operator-qualification-20260929.json](operator-qualification-20260929.json)
+and its [transcript](operator-qualification-20260929.log). The JSON binds the
+exact tested operator and harness source hashes. All recorded operator hashes
+match the committed source. The trial harness is from PR #751 at
+`671395792d42b26a0d9cc38f36bb133ecabf82b1`; both branches integrate main snapshot
+`2a08a13da0a309ed6972d17ec6c5839f99a72c4e`.
+
+The run used private PID, mount and network namespaces, Docker 29.1.3 with the
+containerd overlayfs image store, Kamal 2.12.0, SSH, a local anonymous registry,
+Caddy and a disposable 5 GiB ext4 filesystem. Fixture versions share a binary
+layer. Ten updates retained exactly current plus distinct prior. Capacity and
+recovery-material rejection, foreign-image preservation, rejected deployment
+restoration, cleanup-failure maintenance, offline no-op, broken-current offline
+rollback, persistent Caddy recreation, protected Compose restoration, engine
+restart, and surviving remote work after SSH loss passed.
+
+The expanded remote failure matrix also passed:
+
+- An interrupted real digest pull retained pending state and blocked takeover
+  until remote work settled and ownership was audited. Recovery used local
+  retained content with the registry offline.
+- Terminating the actual Kamal client after the proxy switched left the saved
+  active plus pending candidate recorded. Explicit recovery restored the saved
+  version and stopped validated stale containers before clearing pending state.
+  This scenario reproduced an extra-live-container cleanup failure before the
+  recovery fix; the final run verifies the corrected behavior.
+- A host acceptance committed before its RPC response was discarded. The
+  unresolved owner prevented takeover; after audit, maintenance preserved the
+  accepted version instead of guessing a rollback.
+
+Production `load_ready`/topology checks passed against actual disposable Docker
+containers twice, after Caddy recreation and after engine restart. The report
+lists the exact fixture bindings (repository, filesystem paths and inactive
+systemd state); runtime image, ports, mounts, network, restart policies and
+configuration-drift checks were exercised. The proxy archive preserves the
+pinned OCI digest.
+
+These are synthetic results. Their capacity peaks must not be used as production
+capacity qualification. The two live image digests later received their own
+measured byte/inode qualification on matching storage/runtime. Docker/containerd
+restart is not a real VPS reboot; the separate live-host reboot result is recorded
+in the 30 September receipt.
+
+All [39 Python operator regression tests](operator-tests-20260929.log) passed
+against operator commit `21907af07` using `python3 -m unittest discover -v -s
+deploy/kamal-site -p 'test_*.py'`. Focused Go deployment/config/
+security/OCI tests, actionlint and whitespace checks passed. Hosted CI, security and Electron passed on final code head `dfb89f61d`.
+The fresh frozen-source local aggregate failed when both reports attempts
+exceeded the unchanged 180-second watchdog; hosted reports finished in about
+137 seconds with the same command and pinned tool versions. No local reports
+assertion failure was recorded. See the [validation receipt](local-ci-20260929.md)
+and [remaining plan](../../../plan.md). This local gap requires an explicit
+review decision; draft-skipped checks and separate passes do not close it.
+The [28 September report](operator-qualification-20260928.json) and
+[transcript](operator-qualification-20260928.log) remain historical evidence for
+their recorded source hashes.
+
+[Production inventory](production-inventory-20260928.json) was read-only. The
+29 September reassessment in the remaining plan confirmed the original Compose
+site, inactive updater and absence of permanent Kamal handover records.
+Approximately 32.3 GiB was available on the shared Docker/containerd filesystem.
+That inventory preceded the separately recorded 30 September live migration.
+
+The live evidence completes production admission, real-image capacity
+qualification, controlled handover/restoration, offline rollback, Caddy
+recreation and real host restart. The 2 October final acceptance report also
+records the completed 24-hour observation, both adoption boundary smokes,
+bound acceptance receipt and post-observation retention/recovery audit.
+Fallback PR #748 was closed externally after those proofs passed. Completion
+requires final documentation review and protected merge. Automatic VPS
+activation remains deferred.

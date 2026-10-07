@@ -7,8 +7,6 @@
   );
   --site-header-inline-space: var(--base-size-16);
   --site-header-gap: var(--base-size-16);
-  --site-header-fill: transparent;
-  --site-header-edge: none;
   --site-reading-width: calc(
     var(--base-size-128) + var(--base-size-128) + var(--base-size-128) +
       var(--base-size-128)
@@ -93,6 +91,9 @@ html {
 }
 
 body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
   min-width: 20rem;
   margin: 0;
   background: var(--lv-bg-page);
@@ -104,7 +105,8 @@ a {
 }
 
 .site-page {
-  min-height: 100svh;
+  flex: 1;
+  min-width: 0;
 }
 
 .skip-link {
@@ -129,42 +131,7 @@ a {
   z-index: var(--zIndex-sticky);
   top: 0;
   isolation: isolate;
-  background: transparent;
-}
-
-.site-header::before {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  background: transparent;
-  -webkit-backdrop-filter: blur(0);
-  backdrop-filter: blur(0);
-  content: "";
-  pointer-events: none;
-  transition:
-    background-color var(--site-motion-duration-short) var(--site-motion-easing),
-    -webkit-backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing),
-    backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing);
-}
-
-.site-header.is-scrolled::before {
-  background-color: var(
-    --site-header-fill,
-    color-mix(in srgb, var(--lv-bg-page) 88%, transparent)
-  );
-  background-image: var(--site-header-edge, none);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-}
-
-.site-header--docs {
   background: var(--lv-bg-page);
-}
-
-.site-header--docs.is-scrolled::before {
-  background: transparent;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 .site-shell {
@@ -2331,12 +2298,12 @@ lv-site-search:not(:defined) > .site-search-active-input {
   padding: var(--base-size-64) var(--base-size-32) var(--base-size-32);
 }
 
-.site-home + .site-footer {
+.site-page:has(.site-home) + .site-footer {
   background: var(--lv-bg-page);
   padding-inline: 0;
 }
 
-.site-home + .site-footer :is(.site-footer-content, .site-footer-bottom) {
+.site-page:has(.site-home) + .site-footer :is(.site-footer-content, .site-footer-bottom) {
   padding-inline: var(--site-header-inline-space);
 }
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-17",
+  "updated": "2026-10-02",
   "guarantees": {
     "transactional": "The state transition and audit event commit in one durable transaction; an audit failure aborts the transition.",
     "durable-before-stream": "The access identity is persisted before a governed stream can release bytes. A later completion event may be best-effort.",
@@ -8,6 +8,55 @@
     "mixed": "The producer owns operation families with different guarantees; each operation-level TypeSpec contract remains authoritative."
   },
   "producers": [
+    {
+      "id": "credential.owner-setup",
+      "owner": "platform",
+      "kind": "administrative-audit",
+      "events": ["credential.owner.declared"],
+      "guarantee": "transactional",
+      "failureBehavior": "Offline owner declaration and redacted audit commit together. Audit failure rolls back ownership; an exact declaration replay adds no audit event.",
+      "implementation": ["internal/app/adminpostgres/credential_setup.go", "internal/platform/bootstrap/postgres/customer_owner.go"],
+      "contractSources": ["adr/specifications/credential-lifecycle-contract.md"],
+      "evidence": ["internal/app/adminpostgres/credential_setup_test.go"]
+    },
+    {
+      "id": "credential.draft-storage",
+      "owner": "credential",
+      "kind": "administrative-audit",
+      "events": [
+        "credential.draft.saved"
+      ],
+      "guarantee": "transactional",
+      "implementationStatus": "Encrypted draft storage and authorized non-replayable connection API; isolated validation is a separate operation; runtime integration remains deferred.",
+      "failureBehavior": "Draft metadata, encrypted envelope and audit commit together; audit failure rolls back the draft. The separately committed encryption reservation remains consumed.",
+      "implementation": [
+        "internal/credential/service.go",
+        "internal/credential/postgres/repository.go",
+        "internal/credential/module/apigen.go"
+      ],
+      "contractSources": [
+        "adr/specifications/credential-lifecycle-contract.md",
+        "api/typespec/credentials.tsp"
+      ],
+      "evidence": [
+        "internal/credential/service_test.go",
+        "internal/credential/postgres/repository_test.go",
+        "internal/credential/module/apigen_test.go",
+        "internal/app/api/protocol/credential_drafts_test.go"
+      ]
+    },
+    {
+      "id": "credential.validation-receipt",
+      "owner": "credential",
+      "kind": "administrative-audit",
+      "events": ["credential.draft.validated"],
+      "guarantee": "transactional",
+      "implementationStatus": "Public PostgreSQL password draft validation; isolated probe with live caller authority rechecks. Runtime activation is not implemented.",
+      "failureBehavior": "A successful isolated probe's immutable receipt and redacted audit commit together. Audit failure rolls back the receipt. A receipt is an expiring observation, never an activation grant.",
+      "implementation": ["internal/credential/validation.go", "internal/credential/postgres/validation.go", "internal/credential/module/apigen_validation.go"],
+      "contractSources": ["adr/specifications/credential-lifecycle-contract.md", "internal/credential/validation.go", "api/typespec/credentials.tsp"],
+      "evidence": ["internal/credential/validation_test.go", "internal/credential/postgres/validation_test.go", "internal/credential/postgres/validation_service_integration_test.go", "internal/credential/module/apigen_validation_test.go", "internal/app/api/protocol/credential_validation_test.go"]
+    },
     {
       "id": "access.transactional-mutations",
       "owner": "access",
@@ -121,6 +170,17 @@
       "evidence": ["internal/analytics/dataquery/audit_test.go", "internal/analytics/queryaudit/postgres/repository_test.go"]
     },
     {
+      "id": "analytics.saved-exploration-lifecycle",
+      "owner": "analytics",
+      "kind": "generated-command-audit",
+      "events": ["saved_exploration.created", "saved_exploration.updated", "saved_exploration.duplicated", "saved_exploration.archived"],
+      "guarantee": "transactional",
+      "failureBehavior": "Saved-exploration state, immutable revision, idempotency evidence, and durable audit intent commit atomically; any failure rolls the mutation back.",
+      "implementation": ["internal/analytics/exploration/saved/postgres/repository.go", "internal/app/savedexplorationaudit/adapter.go", "internal/project/http/saved_explorations.go"],
+      "contractSources": ["api/typespec/saved_explorations.tsp"],
+      "evidence": ["internal/analytics/exploration/saved/postgres/repository_test.go", "internal/app/saved_exploration_adapters_test.go", "internal/project/http/saved_explorations_test.go"]
+    },
+    {
       "id": "connection.binding-administration",
       "owner": "analytics",
       "kind": "generated-command-audit",
@@ -135,7 +195,7 @@
       "id": "connection.credential-rotation",
       "owner": "analytics",
       "kind": "credential-lifecycle-audit",
-      "events": ["credential.refresh.scheduled", "credential.refresh.requested", "credential.test.requested", "credential.runtime.acquire"],
+      "events": ["credential.refresh.scheduled", "credential.refresh.requested", "credential.runtime.acquire"],
       "guarantee": "best-effort",
       "failureBehavior": "Credential rotation outcome is preserved; audit failure is logged with non-secret identity and reason metadata.",
       "implementation": ["internal/analytics/connectionbinding/rotation.go", "internal/analytics/connectionbinding/rotation_audit.go"],
@@ -189,10 +249,10 @@
         "transactional": ["deployment create/retry/rollback/cancel", "approval request/approve/deny/revoke", "activation workflow acceptance", "delivery plan/build/publication lifecycle"],
         "best-effort": ["candidate source/blob command callbacks", "candidate ready/failed/retried observations"]
       },
-      "failureBehavior": "Durable lifecycle transitions fail closed in their repository; best-effort callbacks preserve the committed delivery result and log failures.",
+      "failureBehavior": "Durable lifecycle transitions fail closed in their repository. Delivery activation rolls back its admission, pointer, retention and evidence writes to an inner savepoint on ordinary failure, preserving unrelated caller work. If savepoint cleanup is uncertain, it aborts the caller transaction instead. Best-effort callbacks preserve the committed delivery result and log failures.",
       "implementation": ["internal/app/projectsource/native.go", "internal/app/deploymentpostgres/native_delivery.go", "internal/deployment/module/candidate_sync.go", "internal/deployment/module/native_delivery.go", "internal/deployment/postgres/repository.go", "internal/deployment/postgres/approval_authority.go"],
       "contractSources": ["api/typespec/deployments.tsp"],
-      "evidence": ["internal/deployment/postgres/repository_test.go", "internal/deployment/postgres/approval_authority_test.go", "internal/deployment/module/native_coordinator_pg_test.go"]
+      "evidence": ["internal/deployment/postgres/repository_test.go", "internal/deployment/postgres/activation_savepoint_test.go", "internal/deployment/postgres/approval_authority_test.go", "internal/deployment/module/native_coordinator_pg_test.go"]
     },
     {
       "id": "release.commands",

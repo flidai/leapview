@@ -20,8 +20,6 @@ dashboards/
     sales-refresh.yaml
   dashboards/
     executive-sales.yaml
-  access/
-    sales-analysts.yaml
 ```
 
 ## Source-root discovery
@@ -32,10 +30,10 @@ no project manifest or include list to maintain. Keep files in the directory
 for their kind, use one stable ID per resource, and avoid overlapping copies.
 
 The six documented authoring resource kinds are Connection, Source, Model,
-SemanticModel, Pipeline, and Dashboard. Access declarations may still be
-compiled as policy inputs where enabled by the target, but they are not
-additional source-root catalog kinds. Public dashboard publication is a
-target-owned operation, not a source-root resource.
+SemanticModel, Pipeline, and Dashboard. SemanticModel definitions can contain
+portable access grants and filters. Principals, attribute assignments, role
+bindings, resource-grant assignments, and public dashboard publication are
+target-owned; standalone access resources are not source-root catalog kinds.
 
 ## Resource layers
 
@@ -73,7 +71,7 @@ go run ./cmd/leapview validate --source-root dashboards
 
 Validation catches duplicate resources, invalid references, unsupported fields,
 and other contract failures before deployment. Use the generated pages for
-[Connection](/docs/config/connection), [Source](/docs/config/source),
-[Model](/docs/config/model), [SemanticModel](/docs/config/semantic-model),
-[Pipeline](/docs/config/pipeline), and [Dashboard](/docs/config/dashboard-document)
+[Connection](https://leapview.dev/docs/config/connection), [Source](https://leapview.dev/docs/config/source),
+[Model](https://leapview.dev/docs/config/model), [SemanticModel](https://leapview.dev/docs/config/semantic-model),
+[Pipeline](https://leapview.dev/docs/config/pipeline), and [Dashboard](https://leapview.dev/docs/config/dashboard-document)
 field details.

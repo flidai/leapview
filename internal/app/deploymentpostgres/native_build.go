@@ -90,27 +90,29 @@ type NativeBuildConfig struct {
 	PhysicalPoolID      string
 	CompatibilityDigest string
 
-	Operations            deploymentmodule.NativeBuildOperationAuthority
-	Heartbeat             NativeBuildHeartbeatRunner
-	AttemptAdmission      CandidateBuildAttemptAdmission
-	AttemptTermination    AttemptTermination
-	GenerationAdmission   GenerationAdmission
-	PhysicalFactory       NativePhysicalBuildEnvironmentFactory
-	ObservationWriter     ducklakepostgres.SourceObservationWriter
-	MarkerResolverFactory NativePhysicalMarkerResolverFactory
-	MarkerQuarantine      NativeMarkerQuarantineWriter
-	ObservationReader     NativeSourceObservationReader
-	SnapshotFactory       NativePhysicalSnapshotInspectorFactory
-	QualificationFactory  NativeQualificationEnvironmentFactory
-	RuntimeVersion        string
-	Bounds                gates.Bounds
-	SessionIdentity       string
-	LeaseDuration         time.Duration
-	HeartbeatInterval     time.Duration
-	Clock                 func() time.Time
-	Events                deploymentmodule.NativeDeliveryEventAppender
-	Audit                 deploymentmodule.NativeDeliveryAuditAppender
-	Workflow              deploymentmodule.NativeDeliveryWorkflowRecorder
+	Operations                   deploymentmodule.NativeBuildOperationAuthority
+	Heartbeat                    NativeBuildHeartbeatRunner
+	AttemptAdmission             CandidateBuildAttemptAdmission
+	AttemptTermination           AttemptTermination
+	GenerationAdmission          GenerationAdmission
+	PhysicalFactory              NativePhysicalBuildEnvironmentFactory
+	ObservationWriter            ducklakepostgres.SourceObservationWriter
+	MarkerResolverFactory        NativePhysicalMarkerResolverFactory
+	MarkerQuarantine             NativeMarkerQuarantineWriter
+	ObservationReader            NativeSourceObservationReader
+	SnapshotFactory              NativePhysicalSnapshotInspectorFactory
+	QualificationFactory         NativeQualificationEnvironmentFactory
+	AuthorizeDelivery            NativeDeliveryAuthorization
+	RequireCompoundAuthorization bool
+	RuntimeVersion               string
+	Bounds                       gates.Bounds
+	SessionIdentity              string
+	LeaseDuration                time.Duration
+	HeartbeatInterval            time.Duration
+	Clock                        func() time.Time
+	Events                       deploymentmodule.NativeDeliveryEventAppender
+	Audit                        deploymentmodule.NativeDeliveryAuditAppender
+	Workflow                     deploymentmodule.NativeDeliveryWorkflowRecorder
 }
 
 // NativeBuildCoordinatorConfig is an expressive alias used by callers that
@@ -142,6 +144,8 @@ type NativeBuildCoordinator struct {
 	observationReader                   NativeSourceObservationReader
 	snapshotFactory                     NativePhysicalSnapshotInspectorFactory
 	qualificationFactory                NativeQualificationEnvironmentFactory
+	authorizeDelivery                   NativeDeliveryAuthorization
+	requireCompoundAuthorization        bool
 	runtimeVersion, sessionIdentity     string
 	bounds                              gates.Bounds
 	leaseDuration, heartbeatInterval    time.Duration
@@ -189,6 +193,9 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 	artifacts := config.Artifacts
 	if nativeBuildAuthorityNil(artifacts) {
 		return nil, errors.New("native build artifact phases are required")
+	}
+	if config.RequireCompoundAuthorization && config.AuthorizeDelivery == nil {
+		return nil, errors.New("native build compound authorization resolver is required")
 	}
 	contract := config.Contract
 	if nativeBuildAuthorityNil(contract) {
@@ -257,6 +264,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
 		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, markerQuarantine: config.MarkerQuarantine, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
+		authorizeDelivery: config.AuthorizeDelivery, requireCompoundAuthorization: config.RequireCompoundAuthorization,
 		runtimeVersion: config.RuntimeVersion, sessionIdentity: session, bounds: bounds,
 		leaseDuration: leaseDuration, clock: clock, events: config.Events, eventReader: eventReader, audit: config.Audit,
 		auditReader: auditReader, workflow: config.Workflow,
@@ -377,6 +385,9 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	inspected, err := c.artifacts.InspectCandidateArtifacts(ctx, artifactRequest)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("inspect candidate artifacts: %w", err)
+	}
+	if err := c.revalidateNativeCompoundAuthorization(ctx, normalized.PrincipalID, plan.DeliveryPlan, inspected); err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	effectiveInspection, err := deploymentmodule.EffectiveCandidateArtifacts(plan.DeliveryPlan, candidateID, inspected)
 	if err != nil {

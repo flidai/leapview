@@ -43,6 +43,7 @@ type SessionProvider func(*stdhttp.Request) (string, bool)
 type EffectiveCapabilitiesProvider func(context.Context, *stdhttp.Request, string) ([]access.Capability, error)
 type PlatformAdminProvider func(context.Context, string) (bool, error)
 type RequestPlatformAdminProvider func(context.Context, *stdhttp.Request, string) (bool, error)
+type DurableGrantServiceProvider func(*stdhttp.Request) (*access.DurableGrantService, error)
 
 type AuthoringAuthentication interface {
 	InstanceID() string
@@ -68,8 +69,22 @@ type Handler struct {
 	CurrentCredential              CredentialProvider
 	CurrentSession                 SessionProvider
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
+	// CurrentEffectivePermissionOptions resolves durable, exact action-target
+	// authority for session-authenticated token issuance. It is never sourced
+	// from browser picker data.
+	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
+	// AuthorizeClaimBootstrapBinding is a narrowly scoped escape hatch for the
+	// claiming principal's three deterministic bindings before a policy exists.
+	// It must prove the request's bootstrap marker, live credential, and claim.
+	AuthorizeClaimBootstrapBinding func(*stdhttp.Request, access.AuthorizationPolicyScope, access.RoleBinding, string) (bool, error)
 	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
-	RequestEffectiveCapabilities   EffectiveCapabilitiesProvider
+	DurableGrantService            DurableGrantServiceProvider
+	DurableGrantInstanceID         string
+	// ProjectClaim resolves the immutable deployment-owned project claim used
+	// by the initial publisher-token handoff. The request path is checked
+	// against this durable value before Access mutates credentials.
+	ProjectClaim                 func(context.Context) (projectID, claimedBy string, err error)
+	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
 	// applies request-credential attenuation.
@@ -153,24 +168,17 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 			return false
 		}
-		if credential.Token.ID != "" && credential.Token.Capabilities != nil {
-			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin) {
-				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
-				return false
-			}
+		if credential.Token.ID != "" {
+			// Without the request-level typed instance marker, this fallback
+			// cannot establish which platform action the token was allowed to
+			// perform. Never promote a historical broad capability to one.
+			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+			return false
 		}
 	}
 	return true
 }
 
-func containsCapability(capabilities []access.Capability, expected access.Capability) bool {
-	for _, capability := range capabilities {
-		if capability == expected {
-			return true
-		}
-	}
-	return false
-}
 func (h Handler) rejectAuthoringCredential(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
 	if credential, ok := h.currentCredential(r); ok && credential.Authoring != nil {
 		writeJSONError(w, errors.New("authoring credentials cannot perform this mutation"), stdhttp.StatusForbidden)
@@ -303,15 +311,38 @@ func groupAuditMetadata(row access.Group) map[string]any {
 	return map[string]any{"provider": row.Provider, "externalId": row.ExternalID, "displayName": row.Name}
 }
 func apiTokenDTO(row access.APIToken) map[string]any {
-	out := map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "description": row.Description, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
-	if row.Capabilities != nil {
-		values := make([]string, 0, len(row.Capabilities))
-		for _, capability := range row.Capabilities {
-			values = append(values, string(capability))
-		}
-		out["capabilities"] = values
+	values := make([]string, 0, len(row.Capabilities))
+	for _, capability := range row.Capabilities {
+		values = append(values, string(capability))
 	}
-	return out
+	permissions := make([]map[string]any, 0, len(row.Permissions))
+	for _, permission := range row.Permissions {
+		target := map[string]any{"scope": string(permission.Target.Scope)}
+		if permission.Target.InstanceID != "" {
+			target["instanceId"] = permission.Target.InstanceID
+		}
+		if permission.Target.ProjectID != "" {
+			target["projectId"] = permission.Target.ProjectID.String()
+		}
+		if permission.Target.ResourceKind != "" {
+			target["resourceKind"] = string(permission.Target.ResourceKind)
+		}
+		if permission.Target.ResourceID != "" {
+			target["resourceId"] = permission.Target.ResourceID.String()
+		}
+		if permission.Target.IncludeFuture {
+			target["includeFuture"] = true
+		}
+		permissions = append(permissions, map[string]any{
+			"action": string(permission.Action), "target": target, "profile": permission.Profile,
+		})
+	}
+	return map[string]any{
+		"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "description": row.Description,
+		"permissionProfile": emptyToNil(row.PermissionProfile), "permissions": permissions,
+		"capabilities": values, "expiresAt": emptyToNil(row.ExpiresAt),
+		"createdAt": row.CreatedAt, "modifiedAt": row.ModifiedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt),
+	}
 }
 func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, raw string) map[string]any {
 	out := map[string]any{"id": row.ID, "servicePrincipalId": row.ServicePrincipalID, "name": row.Name, "expiresAt": row.ExpiresAt, "createdAt": row.CreatedAt, "revokedAt": emptyToNil(row.RevokedAt)}
@@ -336,6 +367,21 @@ func auditInput(r *stdhttp.Request, action, principalID, resourceKind, resourceI
 	return access.AuditEventInput{PrincipalID: principalID, Action: action, ResourceKind: resourceKind, ResourceID: resourceID, Capability: capability, Status: status, RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r), MetadataJSON: string(encoded)}
 }
 func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation func(access.Repository) (access.AuditEventInput, error)) error {
+	if operationID, generated := apigencommand.OperationID(r.Context()); generated {
+		executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+		if err != nil {
+			return err
+		}
+		return executor.Execute(r.Context(), operationID, apigencommand.Execution{
+			Transactional: func(context.Context, apigencommand.Contract) error {
+				return persistAuditedMutation(r, repo, mutation)
+			},
+		})
+	}
+	return persistAuditedMutation(r, repo, mutation)
+}
+
+func persistAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation func(access.Repository) (access.AuditEventInput, error)) error {
 	transactional, ok := repo.(access.AuditedMutationRepository)
 	if !ok {
 		return errors.New("transactional access repository is required")
@@ -343,11 +389,9 @@ func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation fun
 	return transactional.RunAuditedMutation(r.Context(), mutation)
 }
 
-// executeAuditedMutation keeps the existing repository transaction as the
-// generated command's transactional execution capability. Direct browser
-// handlers still use the repository helper unchanged; generated API/CLI
-// transports additionally need the command executor to mark the invocation
-// complete before the transport guard flushes a successful response.
+// executeAuditedMutation binds a handler's explicit operation identity to its
+// transactional mutation. Handlers that call runAuditedMutation directly use
+// the active generated operation identity when present.
 func executeAuditedMutation(
 	r *stdhttp.Request,
 	repo access.Repository,
@@ -355,7 +399,7 @@ func executeAuditedMutation(
 	mutation func(access.Repository) (access.AuditEventInput, error),
 ) error {
 	if _, generated := apigencommand.OperationID(r.Context()); !generated {
-		return runAuditedMutation(r, repo, mutation)
+		return persistAuditedMutation(r, repo, mutation)
 	}
 	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
 	if err != nil {
@@ -363,7 +407,7 @@ func executeAuditedMutation(
 	}
 	return executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
 		Transactional: func(context.Context, apigencommand.Contract) error {
-			return runAuditedMutation(r, repo, mutation)
+			return persistAuditedMutation(r, repo, mutation)
 		},
 	})
 }
@@ -378,20 +422,46 @@ func runAuditedMutationWithRevision(
 	currentRevision func(access.Repository) (string, error),
 	mutation func(access.Repository) (access.AuditEventInput, error),
 ) error {
-	transactional, ok := repo.(access.AuditedMutationRepository)
-	if !ok {
-		return errors.New("transactional access repository is required")
-	}
-	return transactional.RunAuditedMutation(r.Context(), func(tx access.Repository) (access.AuditEventInput, error) {
+	operationID, generated := apigencommand.OperationID(r.Context())
+	mutationWithRevision := func(tx access.Repository) (access.AuditEventInput, error) {
 		current, err := currentRevision(tx)
 		if err != nil {
 			return access.AuditEventInput{}, err
 		}
-		if err := checkIfMatch(r.Header.Get("If-Match"), current); err != nil {
+		if err := checkAuditedMutationIfMatch(r, current); err != nil {
 			return access.AuditEventInput{}, err
 		}
 		return mutation(tx)
-	})
+	}
+	if generated {
+		executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+		if err != nil {
+			return err
+		}
+		return executor.Execute(r.Context(), operationID, apigencommand.Execution{
+			Transactional: func(context.Context, apigencommand.Contract) error {
+				return persistAuditedMutation(r, repo, mutationWithRevision)
+			},
+		})
+	}
+	return persistAuditedMutation(r, repo, mutationWithRevision)
+}
+
+// checkAuditedMutationIfMatch compares the transaction-time revision and marks
+// the generated command's concurrency policy complete when applicable.
+func checkAuditedMutationIfMatch(r *stdhttp.Request, current string) error {
+	if err := checkIfMatch(r.Header.Get("If-Match"), current); err != nil {
+		return err
+	}
+	operationID, generated := apigencommand.OperationID(r.Context())
+	if !generated {
+		return nil
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	return executor.CheckConcurrency(r.Context(), operationID, r.Header.Get("If-Match"), current)
 }
 
 var (

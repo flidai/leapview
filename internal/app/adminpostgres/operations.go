@@ -77,6 +77,7 @@ type AccessInitializer interface {
 // Bootstrap is the native platform authority used to check the initialization
 // marker and permanently bind the instance environment.
 type Bootstrap interface {
+	InstanceID(context.Context) (string, error)
 	InstanceEnvironment(context.Context) (string, error)
 	BindInstanceEnvironment(context.Context, string) error
 }
@@ -95,8 +96,12 @@ type Dependencies struct {
 	NewBootstrap    func(AccessPool) Bootstrap
 	BootstrapPool   func(context.Context, config.Config, adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error)
 	UpgradePool     func(context.Context, config.Config, admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error)
-	AcquireLock     func(string) (adminoffline.Lock, error)
-	Now             func() time.Time
+	// AuthorizeAccessTransition must verify that a caller is inside the exact
+	// admitted, locked maintenance operation named by the transition intent.
+	// Nil deliberately disables apply; a request-supplied digest is not proof.
+	AuthorizeAccessTransition func(context.Context, AccessTransitionAuthorization) error
+	AcquireLock               func(string) (adminoffline.Lock, error)
+	Now                       func() time.Time
 }
 
 // Operations owns the PostgreSQL-native Admin command operations.

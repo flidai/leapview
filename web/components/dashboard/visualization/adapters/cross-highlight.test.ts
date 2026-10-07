@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
@@ -19,17 +20,15 @@ test('mixed renderer targets preserve comparison frames and project one governed
   const faceted = facetedEnvelope()
   const originalRows = structuredClone(faceted.dataState.kind === 'inline' ? faceted.dataState.datasets[0]!.rows : [])
   const option = echartsOption(faceted) as any
-  const delivered = option.series.find((series: any) => series.name === 'delivered')
-  const canceled = option.series.find((series: any) => series.name === 'canceled')
-  expect(delivered.itemStyle.opacity({ dataIndex: 0 })).toBe(1)
-  expect(delivered.itemStyle.opacity({ dataIndex: 1 })).toBe(0.2)
-  expect(canceled.itemStyle.opacity({ dataIndex: 0 })).toBe(0.2)
+  const opacity = renderedBarOpacities(option)
+  expect(opacity.delivered).toEqual([1, 0.2])
+  expect(opacity.canceled).toEqual([0.2])
   expect(faceted.dataState.kind === 'inline' ? faceted.dataState.datasets[0]!.rows : []).toEqual(originalRows)
   expect(option.aria.description).toContain('Comparison totals are unchanged')
 
   faceted.highlights = []
   const cleared = echartsOption(faceted) as any
-  expect(cleared.series.every((series: any) => series.itemStyle?.opacity === undefined)).toBe(true)
+  expect(renderedBarOpacities(cleared)).toEqual({ delivered: [1, 1], canceled: [1] })
   expect(cleared.aria.description).not.toContain('Comparison totals are unchanged')
 
   const table = tableSignal(tableEnvelope())
@@ -51,10 +50,7 @@ test('ECharts cross-highlight maps typed category series to their source rows', 
     entries: [{ label: 'String one', mappings: [{ targetFieldID: 'orders.status', value: '1' }] }],
   }]
   const option = echartsOption(faceted) as any
-  const numberSeries = option.series.find((series: any) => series.name === '1 [number:1]')
-  const stringSeries = option.series.find((series: any) => series.name === '1 [string:1]')
-  expect(numberSeries.itemStyle.opacity({ dataIndex: 0 })).toBe(0.2)
-  expect(stringSeries.itemStyle.opacity({ dataIndex: 0 })).toBe(1)
+  expect(renderedBarOpacities(option)).toEqual({ '1 [number:1]': [0.2], '1 [string:1]': [1] })
 })
 
 test('MapLibre projects highlight state into governed feature properties and paint policy', () => {
@@ -100,7 +96,7 @@ function facetedEnvelope(): VisualizationEnvelope {
     { id: 'value', sourceRef: 'order_count', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' },
   ]
   return {
-    schemaVersion: 9, visualID: 'state-status', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'state-status', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'cartesian', mark: 'column',
       x: { dataset: 'primary', field: 'state' }, y: [{ dataset: 'primary', field: 'value' }], series: { dataset: 'primary', field: 'status' },
@@ -120,7 +116,7 @@ function tableEnvelope(): VisualizationEnvelope {
     { id: 'order_id', sourceRef: 'orders.order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
   ]
   return {
-    schemaVersion: 9, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'table',
       columns: fields.map((field) => ({ field: { dataset: 'primary', field: field.id }, label: field.label, formatting: [] })),
@@ -135,7 +131,7 @@ function tableEnvelope(): VisualizationEnvelope {
 function kpiEnvelope(): VisualizationEnvelope {
   const fields = [{ id: 'value', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' }]
   return {
-    schemaVersion: 9, visualID: 'orders-kpi', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'orders-kpi', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'kpi', value: { dataset: 'primary', field: 'value' },
       presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [], tone: 'ink' },
@@ -156,7 +152,7 @@ function mapEnvelope(): VisualizationEnvelope {
     color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#fff', width: 1, opacity: 1 }, opacity: 0.82,
   } as unknown as VisualizationGeographicLayer
   return {
-    schemaVersion: 9, visualID: 'map', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'map', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'geographic', layers: [layer],
       presentation: {
@@ -168,4 +164,21 @@ function mapEnvelope(): VisualizationEnvelope {
     dataState: inlineState(['state', 'value'], [['SP', 10], ['RJ', 7]]),
     selection: [], highlights: highlight, status: { kind: 'ready' }, diagnostics: [],
   } as unknown as VisualizationEnvelope
+}
+
+function renderedBarOpacities(option: echarts.EChartsOption): Record<string, number[]> {
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(option)
+    const result: Record<string, number[]> = {}
+    // Inspect ECharts' resolved datum styles, including dataset transforms and visual maps.
+    ;(chart as any).getModel().eachSeries((series: any) => {
+      if (series.subType !== 'bar' || series.get('silent')) return
+      const data = series.getData()
+      result[series.name] = Array.from({ length: data.count() }, (_, index) => data.getItemVisual(index, 'style').opacity ?? 1)
+    })
+    return result
+  } finally {
+    chart.dispose()
+  }
 }

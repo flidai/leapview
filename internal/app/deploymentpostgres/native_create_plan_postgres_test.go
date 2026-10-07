@@ -313,6 +313,108 @@ func TestNativeCreatePlanPostgresCreatesFreshTargetUnderExistingClaim(t *testing
 	}
 }
 
+func TestNativeCreatePlanWaitsForTargetBeforeLockingAuthorizationPolicy(t *testing.T) {
+	db, repository := nativePlanPostgresDB(t)
+	snapshot, artifacts := nativePlanPostgresFixture(t, createPlanTestDigest('a'), createPlanTestDigest('b'))
+	inspectionStarted := make(chan struct{}, 1)
+	continueInspection := make(chan struct{})
+	inspector := &nativePlanArtifactInspector{set: artifacts, entered: inspectionStarted, continueC: continueInspection}
+	coord := nativePlanCoordinator(t, db, &nativePlanSourceReader{snap: snapshot}, inspector)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	bootstrapEntered := make(chan struct{})
+	bootstrapRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseBootstrap := func() { releaseOnce.Do(func() { close(bootstrapRelease) }) }
+	defer releaseBootstrap()
+	fenceDone := make(chan error, 1)
+	go func() {
+		fenceDone <- repository.WithUnpublishedTarget(ctx, "target_native_plan", "project_native_plan", "prod", func(context.Context) error {
+			close(bootstrapEntered)
+			select {
+			case <-bootstrapRelease:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}()
+	select {
+	case <-bootstrapEntered:
+	case <-ctx.Done():
+		t.Fatalf("bootstrap fence did not acquire the target: %v", ctx.Err())
+	}
+
+	planDone := make(chan error, 1)
+	go func() {
+		_, err := coord.CreatePlan(ctx, nativePlanRequest())
+		planDone <- err
+	}()
+	select {
+	case <-inspectionStarted:
+	case <-ctx.Done():
+		t.Fatalf("plan artifact inspection did not start: %v", ctx.Err())
+	}
+	close(continueInspection)
+
+	// Wait until CreatePlan is blocked trying to ensure the target row. While
+	// it waits, its policy lock must still be free for the bootstrap callback.
+	waitingOnTarget := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := db.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname=current_database()
+			  AND wait_event_type='Lock'
+			  AND query ILIKE '%INSERT INTO delivery.delivery_target%'
+		)`).Scan(&waitingOnTarget); err != nil {
+			t.Fatal(err)
+		}
+		if waitingOnTarget {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !waitingOnTarget {
+		t.Fatal("CreatePlan did not wait on the bootstrap target row")
+	}
+
+	policyTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var policyTarget string
+	err = policyTx.QueryRow(ctx, `SELECT target_id FROM access.authorization_policy
+		WHERE target_id='target_native_plan' AND project_id='project_native_plan' AND environment='prod'
+		FOR UPDATE NOWAIT`).Scan(&policyTarget)
+	rollbackErr := policyTx.Rollback(ctx)
+	if err != nil {
+		t.Fatalf("policy head was locked before target admission completed: %v", err)
+	}
+	if rollbackErr != nil {
+		t.Fatal(rollbackErr)
+	}
+
+	releaseBootstrap()
+	select {
+	case err := <-fenceDone:
+		if err != nil {
+			t.Fatalf("bootstrap fence: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("bootstrap fence did not release target: %v", ctx.Err())
+	}
+	select {
+	case err := <-planDone:
+		if err != nil {
+			t.Fatalf("CreatePlan after target release: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("CreatePlan did not continue after target release: %v", ctx.Err())
+	}
+}
+
 func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 	db, repo := nativePlanPostgresDB(t)
 	if _, err := repo.CreateTarget(t.Context(), deploymentnative.TargetInput{TargetID: "target_native_plan", ProjectID: "project_native_plan", Environment: "prod"}); err != nil {

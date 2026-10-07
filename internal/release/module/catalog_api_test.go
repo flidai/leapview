@@ -53,7 +53,7 @@ func TestListManagedConnectionsAuthenticatesBeforeCatalogAndFilters(t *testing.T
 		catalog: repo, environment: "dev",
 		api: APIConfig{
 			CurrentPrincipal: testPrincipal,
-			AuthorizeConnection: func(_ context.Context, _ string, _ string, connectionID string, _ access.Capability) (bool, error) {
+			AuthorizeConnection: func(_ context.Context, _ string, _ string, connectionID string, _ access.Action) (bool, error) {
 				return connectionID == "allowed", nil
 			},
 		},
@@ -94,9 +94,9 @@ func TestManagedConnectionAPIsReceiveAuthenticatedBearerPrincipal(t *testing.T) 
 				principal, ok := accessSurface.CurrentPrincipal(r)
 				return Principal{ID: principal.ID}, ok
 			},
-			AuthorizeConnection: func(_ context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+			AuthorizeConnection: func(_ context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
 				authorizedPrincipalIDs = append(authorizedPrincipalIDs, principalID)
-				return principalID == accessmodule.DevelopmentPrincipalID && projectID == "project:leapview-showcase" && connectionID == "connection:warehouse" && capability == access.CapabilityResourceRead, nil
+				return principalID == accessmodule.DevelopmentPrincipalID && projectID == "project:leapview-showcase" && connectionID == "connection:warehouse" && action == access.ActionConnectionRead, nil
 			},
 		},
 	}
@@ -128,7 +128,7 @@ func TestManagedConnectionAPIsReceiveAuthenticatedBearerPrincipal(t *testing.T) 
 
 func TestListManagedConnectionsDoesNotQueryWithoutAuthenticationOrAuthorizer(t *testing.T) {
 	for name, api := range map[string]APIConfig{
-		"unauthenticated":    {CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{}, false }, AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) { return true, nil }},
+		"unauthenticated":    {CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{}, false }, AuthorizeConnection: func(context.Context, string, string, string, access.Action) (bool, error) { return true, nil }},
 		"missing authorizer": {CurrentPrincipal: testPrincipal},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -156,7 +156,7 @@ func TestGetManagedConnectionDoesNotQueryWhenForbidden(t *testing.T) {
 		catalog: repo,
 		api: APIConfig{
 			CurrentPrincipal:    testPrincipal,
-			AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) { return false, nil },
+			AuthorizeConnection: func(context.Context, string, string, string, access.Action) (bool, error) { return false, nil },
 		},
 	}
 	recorder := httptest.NewRecorder()

@@ -26,10 +26,29 @@ var legacyPayloadFiles = []payloadFile{
 	{Source: "leapviewctl-wrapper", Target: func(paths Paths) string { return filepath.Join(paths.SystemBin, "leapviewctl") }, Mode: 0o700},
 }
 
-var requiredPayloadFiles = append([]payloadFile{}, legacyPayloadFiles...)
+// Private bootstrap extends the current payload without changing the frozen
+// six-file format shipped by the historical public installers.
+var privateBootstrapPayloadFiles = []payloadFile{
+	{Source: "compose.first-install-bootstrap.yaml", Target: func(paths Paths) string { return filepath.Join(paths.Root, "compose.first-install-bootstrap.yaml") }, Mode: 0o600},
+	{Source: "Caddyfile.first-install-bootstrap", Target: func(paths Paths) string { return filepath.Join(paths.Root, "Caddyfile.first-install-bootstrap") }, Mode: 0o600},
+	{Source: "first-install.env", Target: func(paths Paths) string { return filepath.Join(paths.Root, "first-install.env") }, Mode: 0o600},
+	{Source: "leapview.env.example", Target: func(paths Paths) string { return filepath.Join(paths.Root, "leapview.env.example") }, Mode: 0o600},
+}
+
+// bundledPostgresPayloadFiles extend the current host payload. Keep them out
+// of legacyPayloadFiles because the exact pinned revision 019 predecessor did
+// not ship the optional PostgreSQL adapter.
+var bundledPostgresPayloadFiles = []payloadFile{
+	{Source: "compose.postgres.yaml", Target: func(paths Paths) string { return filepath.Join(paths.Root, "compose.postgres.yaml") }, Mode: 0o600},
+	{Source: "postgres/bundled-entrypoint.sh", Target: func(paths Paths) string { return filepath.Join(paths.Root, "postgres", "bundled-entrypoint.sh") }, Mode: 0o644},
+	{Source: "postgres/bundled-init.sh", Target: func(paths Paths) string { return filepath.Join(paths.Root, "postgres", "bundled-init.sh") }, Mode: 0o644},
+}
+
+var additionalPayloadFiles = append(append([]payloadFile{}, privateBootstrapPayloadFiles...), bundledPostgresPayloadFiles...)
+var requiredPayloadFiles = append(append([]payloadFile{}, legacyPayloadFiles...), additionalPayloadFiles...)
 
 func payloadFiles(payload map[string][]byte) ([]payloadFile, error) {
-	for _, file := range legacyPayloadFiles {
+	for _, file := range requiredPayloadFiles {
 		if len(payload[file.Source]) == 0 {
 			return nil, fmt.Errorf("deployment payload %s is missing or empty", file.Source)
 		}
@@ -131,6 +150,23 @@ func ensurePayloadLinks(paths Paths) error {
 	return ensurePayloadLinksFor(paths, requiredPayloadFiles)
 }
 
+func ensureLegacyPayloadLinks(paths Paths) error {
+	files := make([]payloadFile, 0, len(additionalPayloadFiles))
+	for _, file := range additionalPayloadFiles {
+		// Seed templates can already be operator-owned files. Retain them;
+		// ordinary maintenance does not use them as installed topology.
+		if file.Source == "leapview.env.example" {
+			if _, err := os.Lstat(file.Target(paths)); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
+		files = append(files, file)
+	}
+	return ensurePayloadLinksFor(paths, files)
+}
+
 func ensurePayloadLinksFor(paths Paths, files []payloadFile) error {
 	for _, file := range files {
 		target := file.Target(paths)
@@ -224,6 +260,16 @@ func syncPath(path string) error {
 
 func readPayload(directory string) (map[string][]byte, error) {
 	contents := make(map[string][]byte, len(requiredPayloadFiles))
+	for _, file := range requiredPayloadFiles {
+		if err := readPayloadFile(directory, file, contents); err != nil {
+			return nil, err
+		}
+	}
+	return contents, nil
+}
+
+func readLegacyPayload(directory string) (map[string][]byte, error) {
+	contents := make(map[string][]byte, len(legacyPayloadFiles))
 	for _, file := range legacyPayloadFiles {
 		if err := readPayloadFile(directory, file, contents); err != nil {
 			return nil, err

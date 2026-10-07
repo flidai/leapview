@@ -13,6 +13,8 @@ const govulnProtocolVersion = "v1.0.0"
 
 type govulnStream struct {
 	findings []govulnFinding
+	config   govulnConfig
+	sbom     govulnSBOM
 }
 
 type govulnConfig struct {
@@ -93,14 +95,20 @@ func (f *govulnFrame) UnmarshalJSON(data []byte) error {
 }
 
 type govulnSBOM struct {
-	GoVersion string `json:"go_version"`
-	Modules   []struct {
-		Path string `json:"path"`
-	} `json:"modules"`
-	Roots []string `json:"roots"`
+	GoVersion string         `json:"go_version"`
+	Modules   []govulnModule `json:"modules"`
+	Roots     []string       `json:"roots"`
 }
 
-func parseGovulnStream(data []byte) (govulnStream, error) {
+type govulnModule struct {
+	Path    string `json:"path"`
+	Version string `json:"version,omitempty"`
+}
+
+func parseGovulnStream(data []byte, mode string) (govulnStream, error) {
+	if mode != "source" && mode != "binary" {
+		return govulnStream{}, errors.New("unsupported scan mode")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	stream := govulnStream{}
 	osvIDs := map[string]struct{}{}
@@ -115,10 +123,10 @@ func parseGovulnStream(data []byte) (govulnStream, error) {
 				return govulnStream{}, errors.New("stream is empty")
 			}
 			if !sawConfig {
-				return govulnStream{}, errors.New("source config is missing")
+				return govulnStream{}, fmt.Errorf("%s config is missing", mode)
 			}
 			if !sawSBOM {
-				return govulnStream{}, errors.New("source SBOM is missing")
+				return govulnStream{}, fmt.Errorf("%s SBOM is missing", mode)
 			}
 			return stream, nil
 		}
@@ -145,25 +153,32 @@ func parseGovulnStream(data []byte) (govulnStream, error) {
 				if err := json.Unmarshal(payload, &config); err != nil {
 					return govulnStream{}, errors.New("config is malformed")
 				}
-				if config.ProtocolVersion != govulnProtocolVersion || config.ScannerName != "govulncheck" || config.ScannerVersion != govulncheckVersion || config.ScanMode != "source" || config.ScanLevel != "symbol" {
+				if config.ProtocolVersion != govulnProtocolVersion || config.ScannerName != "govulncheck" || config.ScannerVersion != govulncheckVersion || config.ScanMode != mode || config.ScanLevel != "symbol" {
 					return govulnStream{}, errors.New("config identity is unsupported")
 				}
 				if strings.TrimSpace(config.Database) == "" || strings.TrimSpace(config.DBLastModified) == "" {
 					return govulnStream{}, errors.New("config vulnerability database identity is incomplete")
 				}
+				stream.config = config
 				sawConfig = true
 			case "progress":
 				var object map[string]json.RawMessage
 				if err := json.Unmarshal(payload, &object); err != nil || object == nil {
 					return govulnStream{}, fmt.Errorf("%s message is malformed", kind)
 				}
+				if mode == "binary" {
+					var message string
+					if json.Unmarshal(object["message"], &message) != nil || strings.Contains(strings.ToLower(message), "warning:") {
+						return govulnStream{}, errors.New("binary scan progress is malformed or contains a coverage warning")
+					}
+				}
 			case "SBOM":
 				if sawSBOM {
-					return govulnStream{}, errors.New("source SBOM must occur exactly once")
+					return govulnStream{}, fmt.Errorf("%s SBOM must occur exactly once", mode)
 				}
 				var sbom govulnSBOM
 				if err := json.Unmarshal(payload, &sbom); err != nil || strings.TrimSpace(sbom.GoVersion) == "" || len(sbom.Modules) == 0 || len(sbom.Roots) == 0 {
-					return govulnStream{}, errors.New("source SBOM is incomplete")
+					return govulnStream{}, fmt.Errorf("%s SBOM is incomplete", mode)
 				}
 				for _, module := range sbom.Modules {
 					if strings.TrimSpace(module.Path) == "" || strings.TrimSpace(module.Path) != module.Path {
@@ -175,6 +190,7 @@ func parseGovulnStream(data []byte) (govulnStream, error) {
 						return govulnStream{}, errors.New("source SBOM root is missing")
 					}
 				}
+				stream.sbom = sbom
 				sawSBOM = true
 			case "osv":
 				if !sawSBOM {

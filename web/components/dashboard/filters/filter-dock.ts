@@ -388,7 +388,7 @@ class LeapViewFilterDock extends LitElement {
     }
 
     @media (prefers-reduced-motion: reduce) {
-      aside {
+      :host, aside {
         transition: none;
       }
     }

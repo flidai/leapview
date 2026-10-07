@@ -17,29 +17,30 @@ import (
 )
 
 type AdminData struct {
-	CSRFToken             string
-	AuthConfigured        bool
-	AccessConfigured      bool
-	AccessStatusLabel     string
-	PrincipalCount        int
-	GroupCount            int
-	BindingCount          int
-	RoleCount             int
-	Principals            []AdminPrincipal
-	SelectedPrincipal     *AdminPrincipal
-	Groups                []AdminGroup
-	SelectedGroup         *AdminGroup
-	Agent                 AdminAgentData
-	Storage               AdminStorageData
-	QueryHistory          AdminQueryHistoryData
-	Publications          []AdminPublication
-	CanManagePublications bool
-	AgentConfigCommand    uicommand.Binding
-	PublicationCommands   map[string]uicommand.Binding
-	ProductCommands       map[string]uicommand.Binding
-	Profile               AdminProfile
-	ListFilter            string
-	ListQuery             string
+	CSRFToken                string
+	AuthConfigured           bool
+	AccessConfigured         bool
+	AccessStatusLabel        string
+	PrincipalCount           int
+	GroupCount               int
+	BindingCount             int
+	RoleCount                int
+	Principals               []AdminPrincipal
+	SelectedPrincipal        *AdminPrincipal
+	SelectedServiceAccountID string
+	Groups                   []AdminGroup
+	SelectedGroup            *AdminGroup
+	Agent                    AdminAgentData
+	Storage                  AdminStorageData
+	QueryHistory             AdminQueryHistoryData
+	Publications             []AdminPublication
+	CanManagePublications    bool
+	AgentConfigCommand       uicommand.Binding
+	PublicationCommands      map[string]uicommand.Binding
+	ProductCommands          map[string]uicommand.Binding
+	Profile                  AdminProfile
+	ListFilter               string
+	ListQuery                string
 }
 
 type AdminProfile struct {
@@ -187,6 +188,9 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	if active == "group-detail" && data.SelectedGroup != nil {
 		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "group", data.SelectedGroup.ID)
 	}
+	if active == "service-accounts-detail" && data.SelectedServiceAccountID != "" {
+		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "serviceAccount", data.SelectedServiceAccountID)
+	}
 	if active == "storage-detail" && len(data.Storage.Tables) == 1 {
 		table := data.Storage.Tables[0]
 		adminUpdatesURL = updatesURL(uisignals.RouteAdmin, "section", active, "schema", table.Schema, "table", table.Name)
@@ -195,7 +199,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 		g.Attr("slot", "page"),
 		g.Attr("section", active),
 	}
-	if active == "profile" || active == "security" || active == "api-tokens" || active == "api-token-new" {
+	if active == "profile" || active == "security" || active == "api-tokens" || active == "api-token-new" || active == "api-token-edit" {
 		adminAttrs = append(adminAttrs, personalsettings.CommandAttributes("/admin/personal-settings/command?section="+url.QueryEscape(active))...)
 	}
 	if active == "general" || active == "authentication" || active == "system" {
@@ -213,7 +217,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-product-settings-command", "$productSettingsCommand = evt.detail; evt.detail.action == 'refresh' ? ("+productRefresh+") : ("+productMutation+")"),
 		)
 	}
-	if active == "service-accounts" || active == "service-accounts-new" {
+	if active == "service-accounts" || active == "service-accounts-detail" || active == "service-accounts-new" {
 		serviceAccountCommands := map[string]uicommand.Binding{
 			"create":        accessgen.GenUIActionCreateServicePrincipal(),
 			"delete":        accessgen.GenUIActionDeleteServicePrincipal(),
@@ -229,7 +233,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	if active == "agent" {
 		adminAttrs = append(adminAttrs, g.Attr("data-on:lv-agent-config-command", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatchWithRevision(data.AgentConfigCommand, "/admin/agent/config", "$page.agent.revision", "adminAgentCommand")))
 	}
-	if active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" {
+	if active == "access" || active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" || active == "service-accounts" || active == "service-accounts-detail" || active == "service-accounts-new" {
 		accessCommands := map[string]uicommand.Binding{
 			"create_principal":    accessgen.GenUIActionCreatePrincipal(),
 			"update_principal":    accessgen.GenUIActionUpdatePrincipal(),
@@ -244,6 +248,8 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			"delete_group":        accessgen.GenUIActionDeleteGroup(),
 			"add_group_member":    accessgen.GenUIActionAddGroupMember(),
 			"remove_group_member": accessgen.GenUIActionRemoveGroupMember(),
+			"grant_role":          accessgen.GenUIActionCreateProjectRoleBinding(),
+			"revoke_role":         accessgen.GenUIActionDeleteProjectRoleBinding(),
 		}
 		commandQuery := url.Values{"section": []string{active}}
 		if data.SelectedPrincipal != nil {
@@ -328,9 +334,11 @@ func AdminListResultsPatch(active string, data AdminData) map[string]any {
 
 func adminLayoutContext(active string) webpage.Context {
 	pageID := active
-	if active == "storage-detail" {
+	if active == "service-accounts-detail" {
+		pageID = "service-accounts"
+	} else if active == "storage-detail" {
 		pageID = "storage"
-	} else if active == "api-token-new" {
+	} else if active == "api-token-new" || active == "api-token-edit" {
 		pageID = "api-tokens"
 	}
 	return webpage.Context{
@@ -367,6 +375,9 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		ListQuery:  uisignals.Optional(data.ListQuery),
 	}
 	switch active {
+	case "access":
+		page.HeaderTitle = "Roles & permissions"
+		page.HeaderDetail = "Inspect built-in roles and the exact permissions they contain."
 	case "principals":
 		page.HeaderTitle = "Users"
 		page.HeaderDetail = "Manage user identities, account status, and access."
@@ -386,6 +397,9 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 	case "api-token-new":
 		page.HeaderTitle = "New personal access token"
 		page.HeaderDetail = "Create a scoped credential for API, CLI, and automation access."
+	case "api-token-edit":
+		page.HeaderTitle = "Edit personal access token"
+		page.HeaderDetail = "Update this credential's metadata, expiry, and scoped permissions."
 	case "general":
 		page.HeaderTitle = "General"
 		page.HeaderDetail = "Configure product identity and view instance details."
@@ -405,7 +419,7 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.HeaderDetail = "Organize users and assign access collectively."
 		page.ListFilterOptions = uisignals.OptionalSlice(adminGroupProviders(data.Groups))
 		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminGroupsGrid(filterAdminGroups(data.Groups, data.ListQuery, data.ListFilter)))}})
-	case "service-accounts", "service-accounts-new":
+	case "service-accounts", "service-accounts-detail", "service-accounts-new":
 		page.HeaderTitle = "Service accounts"
 		if active == "service-accounts-new" {
 			page.HeaderTitle = "Create service account"

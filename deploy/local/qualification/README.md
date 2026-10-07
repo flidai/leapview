@@ -2,10 +2,12 @@
 
 This directory owns the Milestone 5 qualification contract for a future or
 exact released `leapview` authoring archive. It is independent of the source
-checkout and of the unfinished remote preview/deploy flows. Current public
-archives are recorded as Compose/`leapviewctl`-only until FAI-798 ships the
-installable authoring CLI; running this harness against repository code does
-not create released evidence.
+checkout and of the remote preview/deploy flows.
+[v0.3.0-alpha.1](https://github.com/flidai/leapview/releases/tag/v0.3.0-alpha.1)
+publishes authoring archives for Linux and macOS on AMD64 and ARM64. Published
+archives and build/provenance checks do not establish the optional lifecycle
+results below; running this harness against repository code does not create
+released evidence.
 
 ## Qualification evidence boundary
 
@@ -25,9 +27,13 @@ When an exact public authoring archive is available, the harness verifies the
 outer archive checksum, safe archive members, the
 inner `SHA256SUMS` manifest, `authoring-package.json`,
 `release-identity.json`, `image-reference.txt`, `runtime-package.json`, and
-the executable's `leapview version --json` identity. It also checks the
-read-only command surfaces (`init`, `dev`, `plan`, `build`, `publish`, and
-`deploy`) through their help output. The existing release `authoring-cli` job
+the executable's `leapview version --format json` identity. It also checks the
+help surfaces (`init`, `dev`, `plan`, `build`, `publish`, `deploy`, `doctor`, and
+`completion`) through their help output. Bare root help must include workflow
+groups and authoring examples; `--llms` must return offline guidance. Local
+`doctor --format json` must return a complete report with consistent checks and
+exit status (0 for pass/warn, 1 for failed prerequisites). These checks run in
+the isolated command home without creating CLI state. The existing release `authoring-cli` job
 remains a separate build/provenance gate and is not replaced by this lane.
 
 ## Optional local lifecycle
@@ -44,7 +50,19 @@ temporary checkout-owned Docker runtime:
 
 Lifecycle qualification requires a supported Linux or macOS host, an explicit
 local Unix Docker socket, and Docker Compose 2.17 or newer. Local bootstrap
-password rotation and scoped CLI authorization are automatic. SSH endpoints, arbitrary TCP endpoints, loopback
+password rotation and scoped CLI authorization are automatic. Linux also needs
+an unlocked native Secret Service to retain the scoped authorization. The
+optional CI lifecycle installs D-Bus and GNOME Keyring, then runs through
+`with_keyring.py` with a private bus, home, and keyring. The wrapper removes its
+temporary keyring state and stops its daemon after successful or failed runs;
+it does not access the operator's keyring. SIGINT and SIGTERM request a graceful
+qualification interruption, preserving the bus and keyring for up to 30 seconds
+while the harness resets its runtime and writes evidence before termination
+escalates. Static-only CI runs need neither
+dependency. On a headless Linux host with those dependencies installed, prefix
+the lifecycle command above with `python3 deploy/local/qualification/with_keyring.py`.
+
+SSH endpoints, arbitrary TCP endpoints, loopback
 tunnels, Podman compatibility sockets, and unknown socket paths are rejected.
 The v1 endpoint set covers Linux Docker Engine and macOS Docker Desktop,
 OrbStack, Colima Docker-mode profiles, and Rancher Desktop Moby/dockerd sockets.

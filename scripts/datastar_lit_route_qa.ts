@@ -1,8 +1,13 @@
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect, type Locator, type Page } from '@playwright/test'
-import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
+import { blockingAxeViolations, formatAxeViolations, nonBlockingAxeViolationDetails } from './axe_accessibility'
 import { ensureDashboardVisualizationsMounted } from './dashboard_visualization_readiness'
 import { verifyDashboardCopyBuilder } from './dashboard_copy_builder_qa'
+import {
+  verifyDataExplorerKeyboardJourney,
+  verifyDataExplorerRecoveryActions,
+  verifyDataExplorerResponsiveLayout,
+} from './datastar_lit_data_explorer_qa'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
@@ -16,6 +21,7 @@ type AccessibilityRoute = RouteExpectation & {
 }
 
 const baseURL = Bun.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195'
+const storageState = Bun.env.LEAPVIEW_QA_STORAGE_STATE?.trim()
 const routeQAScope = Bun.env.LEAPVIEW_ROUTE_QA_SCOPE?.trim() || 'all'
 const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
 const accessibilityRoutes: AccessibilityRoute[] = [
@@ -23,6 +29,7 @@ const accessibilityRoutes: AccessibilityRoute[] = [
   { label: 'Sources', path: '/sources', root: 'lv-project-page', shell: true },
   { label: 'Dashboard', path: '/dashboards/dashboard:executive-sales/pages/overview', root: 'lv-dashboard-page', shell: true },
   { label: 'Visual Showcase', path: dashboardPath, root: 'lv-dashboard-page', shell: true },
+  { label: 'Data Explorer', path: '/explore', root: 'lv-data-explorer', shell: true },
 ]
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const routes: RouteExpectation[] = [
@@ -42,13 +49,22 @@ const routes: RouteExpectation[] = [
 ]
 
 const browser = await chromium.launch()
+function newQAPage(viewport: { width: number, height: number }, authenticated = true): Promise<Page> {
+  return browser.newPage({ viewport, ...(authenticated && storageState ? { storageState } : {}) })
+}
 try {
   if (routeQAScope === 'accessibility') {
     await verifyWCAGAccessibilityRoutes()
     console.log(`WCAG accessibility route QA passed for ${accessibilityRoutes.length} routes at ${baseURL}`)
   } else if (routeQAScope === 'keyboard') {
     await verifyKeyboardAccessibilityJourney()
+    await verifyDataExplorerKeyboardJourney({ browser, baseURL, storageState, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
     console.log(`Keyboard accessibility route QA passed at ${baseURL}`)
+  } else if (routeQAScope === 'data-explorer') {
+    await verifyDataExplorerRecoveryActions({ browser, baseURL, storageState, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerKeyboardJourney({ browser, baseURL, storageState, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerResponsiveLayout({ browser, baseURL, storageState, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    console.log(`Data Explorer route QA passed at ${baseURL}`)
   } else if (routeQAScope === 'all') {
     for (const route of routes) {
       await verifyRoute(route)
@@ -58,77 +74,27 @@ try {
     await verifyKeyboardAccessibilityJourney()
     await verifyEChartsFirstNavigation()
     await verifyDashboardCommandDoesNotReopenUpdates()
-    await verifyDashboardCopyBuilder(browser, baseURL)
-    await verifyDataExplorerRecoveryActions()
+    // Copies persist until the QA runner destroys its disposable database.
+    if (Bun.env.LEAPVIEW_QA_DISPOSABLE === '1') {
+      await verifyDashboardCopyBuilder(browser, baseURL, storageState)
+    }
+    await verifyDataExplorerRecoveryActions({ browser, baseURL, storageState, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerKeyboardJourney({ browser, baseURL, storageState, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerResponsiveLayout({ browser, baseURL, storageState, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
     await verifyTableShowcase()
     await verifyFilterShowcase()
     await verifySpatialShowcaseMaps()
     await verifySpatialMapWindowing()
     console.log(`DatastarLit route QA passed for ${routes.length} routes at ${baseURL}`)
   } else {
-    throw new Error(`Unsupported LEAPVIEW_ROUTE_QA_SCOPE=${JSON.stringify(routeQAScope)}; expected "all", "accessibility", or "keyboard"`)
+    throw new Error(`Unsupported LEAPVIEW_ROUTE_QA_SCOPE=${JSON.stringify(routeQAScope)}; expected "all", "accessibility", "keyboard", or "data-explorer"`)
   }
 } finally {
   await browser.close()
 }
 
-async function verifyDataExplorerRecoveryActions(): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  const messages = collectBlockingConsoleMessages(page)
-
-  try {
-    const response = await page.goto(new URL('/explore', baseURL).toString(), { waitUntil: 'domcontentloaded' })
-    if (!response?.ok()) throw new Error(`/explore recovery: status ${response?.status() ?? 'unknown'}`)
-    const explorer = page.locator('lv-data-explorer')
-    await explorer.waitFor()
-    // /explore opens in semantic-query mode. Preview recovery belongs to the
-    // browse mode of the same canonical route, so switch the typed command
-    // state before selecting a resource instead of clicking a hidden tree.
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { command: { mode: 'browse' } } })
-    })
-    await expect(explorer.locator('.route')).not.toHaveClass(/semantic/)
-
-    const preview = explorer.locator('lv-data-preview-table')
-    if (!await preview.isVisible()) {
-      const firstGroup = explorer.locator('details.resource-group').first()
-      await firstGroup.locator(':scope > summary').click()
-      const firstObject = firstGroup.locator('.object-button').first()
-      await firstObject.waitFor({ state: 'visible' })
-      await firstObject.click()
-    }
-    await preview.waitFor({ state: 'visible' })
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
-    })
-
-    const failure = preview.locator('[role="alert"]')
-    await expect(failure).toContainText('Qualification-injected preview failure.')
-    const retryRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
-    await failure.getByRole('button', { name: 'Retry', exact: true }).click()
-    await retryRequest
-
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
-    })
-    await expect(failure).toBeVisible()
-    const resetRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
-    await failure.getByRole('button', { name: 'Reset view', exact: true }).click()
-    const reset = await resetRequest
-    if (!reset.postData()?.includes('resetVersion')) {
-      throw new Error('/explore recovery reset did not send canonical reset state')
-    }
-    assertNoBlockingConsoleMessages('data explorer recovery', messages)
-  } finally {
-    await page.close()
-  }
-}
-
 async function verifySidebarCollapseToggle(): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await newQAPage({ width: 1280, height: 820 })
   await page.addInitScript(() => localStorage.removeItem('leapview-sidebar-collapsed'))
   const messages = collectBlockingConsoleMessages(page)
 
@@ -154,7 +120,7 @@ async function verifySidebarCollapseToggle(): Promise<void> {
 }
 
 async function verifyRoute(route: RouteExpectation): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await newQAPage({ width: 1280, height: 820 }, route.path !== '/login')
   const messages = collectBlockingConsoleMessages(page)
   const updates: string[] = []
   page.on('request', (request) => {
@@ -202,7 +168,7 @@ async function verifyWCAGAccessibilityRoutes(): Promise<void> {
 }
 
 async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute): Promise<void> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 820 } })
+  const context = await browser.newContext({ viewport: { width: 1280, height: 820 }, ...(storageState ? { storageState } : {}) })
   const page = await context.newPage()
   const messages = collectBlockingConsoleMessages(page)
   const updates: string[] = []
@@ -228,17 +194,21 @@ async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute): Promise<
       .withTags(wcagTags)
       .analyze()
     const blocking = blockingAxeViolations(results.violations)
+    const nonBlocking = nonBlockingAxeViolationDetails(results.violations)
+    if (nonBlocking.length > 0) {
+      console.log(`${route.label} (${route.path}): WCAG non-blocking findings: ${JSON.stringify(nonBlocking)}`)
+    }
     if (blocking.length > 0) throw new Error(formatAxeViolations(route, blocking))
 
     assertNoBlockingConsoleMessages(`${route.label} accessibility scan`, messages)
-    console.log(`${route.label} (${route.path}): WCAG scan passed; ${results.violations.length} non-blocking violation${results.violations.length === 1 ? '' : 's'} omitted`)
+    console.log(`${route.label} (${route.path}): WCAG scan passed`)
   } finally {
     await context.close()
   }
 }
 
 async function verifyKeyboardAccessibilityJourney(): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await newQAPage({ width: 1280, height: 820 })
   const messages = collectBlockingConsoleMessages(page)
   await page.addInitScript(() => {
     localStorage.removeItem('leapview-sidebar-collapsed')
@@ -282,19 +252,20 @@ async function verifyKeyboardAccessibilityJourney(): Promise<void> {
     await expect(close, 'opening a visual modal must move focus to its Close control').toBeFocused()
 
     await page.keyboard.press('Shift+Tab')
-    const reverseTrap = await page.locator('lv-visual-modal').evaluate((modal: any) => {
-      const active = modal.deepActiveElement()
-      return {
-        active: describeElement(active),
-        contained: Boolean(active && modal.focusableElements().includes(active)),
+    const reverseTrap = await page.locator('lv-visual-modal').evaluate((modal) => {
+      let active: Element | null = document.activeElement
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+      const dialog = modal.shadowRoot?.querySelector('dialog[open]')
+      let ancestor: Node | null = active
+      while (ancestor && ancestor !== dialog) {
+        ancestor = ancestor instanceof Element && ancestor.assignedSlot
+          ? ancestor.assignedSlot
+          : ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null)
       }
-
-      function describeElement(element: HTMLElement | null): string {
-        if (!element) return '<none>'
-        return element.getAttribute('aria-label')
-          || element.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
-          || element.localName
-      }
+      const activeName = active?.getAttribute('aria-label')
+        || active?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
+        || active?.localName || '<none>'
+      return { active: activeName, contained: Boolean(dialog && ancestor === dialog) }
     })
     if (!reverseTrap.contained) {
       throw new Error(`visual modal: Shift+Tab escaped the dialog to ${reverseTrap.active}`)
@@ -344,7 +315,7 @@ async function assertDocumentFocusReset(page: Page, label: string): Promise<void
 
 async function verifyEChartsFirstNavigation(): Promise<void> {
   const catalogPath = '/', dashboardHref = '/dashboards/dashboard:visual-showcase'
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await newQAPage({ width: 1280, height: 820 })
   const messages = collectBlockingConsoleMessages(page)
 
   try {
@@ -426,7 +397,7 @@ async function waitForUpdatesRequest(label: string, updates: string[]): Promise<
 }
 
 async function verifyDashboardCommandDoesNotReopenUpdates(): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await newQAPage({ width: 1280, height: 820 })
   const messages = collectBlockingConsoleMessages(page)
   const updates: string[] = []
   const commands: string[] = []
@@ -485,7 +456,7 @@ async function verifyDashboardCommandDoesNotReopenUpdates(): Promise<void> {
 
 async function verifyFilterShowcase(): Promise<void> {
   const path = '/dashboards/dashboard:visual-showcase/pages/filters'
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
+  const page = await newQAPage({ width: 1366, height: 900 })
   const messages = collectBlockingConsoleMessages(page)
 
   try {
@@ -735,7 +706,7 @@ async function verifyFilterShowcase(): Promise<void> {
 
 async function verifyTableShowcase(): Promise<void> {
   const path = '/dashboards/dashboard:visual-showcase/pages/tables'
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
+  const page = await newQAPage({ width: 1366, height: 900 })
   const messages = collectBlockingConsoleMessages(page)
 
   try {
@@ -791,7 +762,7 @@ type SpatialTileSnapshot = {
 async function verifySpatialShowcaseMaps(): Promise<void> {
   const path = '/dashboards/dashboard:visual-showcase/pages/chart-map'
   const visualIDs = ['customer_point_map', 'customer_revenue_heat_map', 'customer_density_map']
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
+  const page = await newQAPage({ width: 1366, height: 900 })
   const messages = collectBlockingConsoleMessages(page)
   const pageErrors: string[] = []
   const tileZooms = new Map<string, number[]>()
@@ -857,7 +828,7 @@ async function verifySpatialShowcaseMaps(): Promise<void> {
 async function verifySpatialMapWindowing(): Promise<void> {
   const path = '/dashboards/dashboard:visual-showcase/pages/chart-map-scale'
   const origin = new URL(baseURL).origin
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await newQAPage({ width: 1280, height: 820 })
   const messages = collectBlockingConsoleMessages(page)
   const updates: string[] = []
   const tiles: Array<{ load: number; url: string; status: number; bytes: number; features: number; precision: string; cache: string }> = []

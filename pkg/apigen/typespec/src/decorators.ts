@@ -80,6 +80,7 @@ export interface CommandOptions {
   auditAction?: string;
   guarantee?: "transactional" | "best-effort";
   execution?: AsyncExecutionOptions;
+  nonReplayable?: boolean;
   failures?: CommandFailureOptions[];
   additionalExposures?: Array<"ui" | "agent" | "automation">;
   targetParameter?: string;

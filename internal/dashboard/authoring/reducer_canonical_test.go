@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strconv"
@@ -83,6 +84,20 @@ func TestCanonicalVisualTypeSwitchConfiguresScatterFromResolvedBindings(t *testi
 	}
 }
 
+func TestCanonicalVisualTypeSwitchKeepsEmptyPivotAxesSchemaValid(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{
+		PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypePivot,
+		ResolvedBindings: &VisualTypeFieldBindings{Metrics: []string{"revenue"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	query := revision.Document.Spec.Visuals["base"].Query.Value.(*document.PivotDashboardQuery)
+	if query.Rows == nil || query.Columns == nil {
+		t.Fatalf("pivot axes must encode as arrays, got rows=%#v columns=%#v", query.Rows, query.Columns)
+	}
+}
+
 func TestCanonicalVisualDefaultsAndCartesianSwitchPreserveCompilerContract(t *testing.T) {
 	bar := defaultCanonicalVisual(string(document.DashboardVisualTypeBar), "Bar")
 	barPresentation, ok := bar.Presentation.Value.(*document.CartesianDashboardPresentation)
@@ -152,11 +167,22 @@ func TestCanonicalVisualDefaultsAndCartesianSwitchPreserveCompilerContract(t *te
 	if !ok {
 		t.Fatalf("area presentation = %T, want Cartesian", switched.Presentation.Value)
 	}
-	if area.LegendTitle != line.LegendTitle || area.LegendItems != line.LegendItems || area.Tooltip != line.Tooltip || area.SeriesIntent != line.SeriesIntent || area.Axes != line.Axes || area.ReferenceLines != line.ReferenceLines || area.ReferenceBands != line.ReferenceBands || area.EventAnnotations != line.EventAnnotations {
+	if !reflect.DeepEqual(area, line) {
 		t.Fatalf("same-family switch dropped presentation fields: source=%#v switched=%#v", line, area)
 	}
 	if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err != nil {
 		t.Fatalf("lower switched area presentation: %v", err)
+	}
+}
+
+func TestCanonicalVisualDefaultsUseValidPresentationForEveryVisualType(t *testing.T) {
+	for _, entry := range CanonicalVisualCatalog() {
+		t.Run(string(entry.Type), func(t *testing.T) {
+			visual := defaultCanonicalVisual(string(entry.Type), entry.Label)
+			if _, err := compiler.LowerCanonicalDashboardPresentation(visual.Presentation, visual.Type); err != nil {
+				t.Fatalf("lower default %s presentation: %v", entry.Type, err)
+			}
+		})
 	}
 }
 
@@ -202,7 +228,7 @@ func TestCanonicalVisualTypeSwitchDoesNotCarryAxisVisibilityToUnsupportedFamily(
 	}
 }
 
-func TestCanonicalVisualTypeSwitchKeepsInapplicableOrientationActionable(t *testing.T) {
+func TestCanonicalVisualTypeSwitchDropsInapplicableOrientation(t *testing.T) {
 	for _, orientation := range []document.DashboardOrientation{document.DashboardOrientationHorizontal, document.DashboardOrientationVertical} {
 		t.Run(string(orientation), func(t *testing.T) {
 			_, revision := canonicalReducerFixture(t)
@@ -214,11 +240,11 @@ func TestCanonicalVisualTypeSwitchKeepsInapplicableOrientationActionable(t *test
 			}
 			switched := revision.Document.Spec.Visuals["base"]
 			presentation := switched.Presentation.Value.(*document.CartesianDashboardPresentation)
-			if presentation.Orientation == nil || *presentation.Orientation != orientation {
-				t.Fatalf("bar switch orientation = %#v, want authored orientation %q retained for validation", presentation.Orientation, orientation)
+			if presentation.Orientation != nil {
+				t.Fatalf("bar switch retained unsupported orientation %#v", presentation.Orientation)
 			}
-			if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err == nil || !strings.Contains(err.Error(), "presentation.orientation is not supported for bar visuals") {
-				t.Fatalf("bar switch compiler error = %v, want inapplicable orientation diagnostic", err)
+			if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err != nil {
+				t.Fatalf("bar switch compiler error = %v", err)
 			}
 		})
 	}
@@ -259,6 +285,27 @@ func TestCanonicalVisualQueryAliasRewriteKeepsExistingSortValid(t *testing.T) {
 }
 
 func stringPtr(value string) *string { return &value }
+
+func TestClearingVisualQuerySortSerializesAnEmptyArray(t *testing.T) {
+	for _, kind := range []document.DashboardVisualType{document.DashboardVisualTypeLine, document.DashboardVisualTypeTable, document.DashboardVisualTypePivot} {
+		t.Run(string(kind), func(t *testing.T) {
+			_, revision := canonicalReducerFixture(t)
+			revision.Document.Spec.Visuals["base"] = defaultCanonicalVisual(string(kind), "Base")
+			if err := setCanonicalVisualQueryOptions(&revision.Document, SetVisualQueryOptionsPayload{
+				PageID: "overview", VisualID: "base-component", Sort: &[]document.DashboardSort{},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(revision.Document.Spec.Visuals["base"].Query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(encoded), `"sort":[]`) {
+				t.Fatalf("cleared sort must remain a schema-valid array: %s", encoded)
+			}
+		})
+	}
+}
 
 func TestCanonicalDonutWithLegacyRecordsQueryRepairsToEditableAggregateQuery(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)
@@ -335,8 +382,9 @@ func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t 
 		document.DashboardVisualTypeHistogram: {"histogram", "cartesian"},
 		document.DashboardVisualTypeBoxplot:   {"distribution", "cartesian"},
 		document.DashboardVisualTypeTable:     {"records", "table"},
-		document.DashboardVisualTypeMatrix:    {"aggregate", "table"},
+		document.DashboardVisualTypeMatrix:    {"pivot", "table"},
 		document.DashboardVisualTypePivot:     {"pivot", "table"},
+		document.DashboardVisualTypeMap:       {"aggregate", "geographic"},
 		document.DashboardVisualTypePie:       {"aggregate", "proportional"},
 		document.DashboardVisualTypeDonut:     {"aggregate", "proportional"},
 		document.DashboardVisualTypeFunnel:    {"aggregate", "proportional"},
@@ -347,7 +395,6 @@ func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t 
 		document.DashboardVisualTypeSunburst:  {"aggregate", "hierarchy"},
 		document.DashboardVisualTypeGauge:     {"aggregate", "polar"},
 		document.DashboardVisualTypeRadar:     {"aggregate", "polar"},
-		document.DashboardVisualTypeMap:       {"records", "geographic"},
 		document.DashboardVisualTypeKpi:       {"aggregate", "kpi"},
 		document.DashboardVisualTypeScatter:   {"aggregate", "point"},
 	}
@@ -916,41 +963,6 @@ func TestCanonicalReducerFilterControlChangePreservesSelectOptionsAndDropsIncomp
 	updated = &doc.Spec.Filters[0]
 	if updated.Operators != nil || updated.Default != nil || updated.Required == nil || *updated.Required {
 		t.Fatalf("incompatible select state survived text conversion: %#v", updated)
-	}
-}
-
-func TestCanonicalReducerAddsSlicerAtomically(t *testing.T) {
-	lifecycle, current := canonicalReducerFixture(t)
-	command := Command{
-		ID:               CommandID("add-slicer"),
-		DashboardID:      current.DashboardID,
-		DraftID:          lifecycle.Draft.ID,
-		ExpectedRevision: current.Token(),
-		Provenance:       canonicalReducerProvenance(),
-	}
-	command = canonicalReducerCommandWithPayload(command, &AddSlicerPayload{
-		PageID:      "overview",
-		Label:       "Status",
-		Dimension:   "status",
-		Dataset:     "orders",
-		ControlType: "multiSelect",
-	})
-
-	_, next, err := ApplyEdit(lifecycle, current, command, RevisionID("slicer-revision"), current.Number+1, time.Date(2026, 8, 18, 18, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(next.Document.Spec.Filters) != 1 {
-		t.Fatalf("filter count = %d", len(next.Document.Spec.Filters))
-	}
-	filter := next.Document.Spec.Filters[0]
-	if filter.ID == "" || filter.Label != "Status" || filter.Dimension != "status" {
-		t.Fatalf("filter = %#v", filter)
-	}
-	components := next.Document.Spec.Pages[0].Components
-	component, ok := components[len(components)-1].Value.(*document.FilterDashboardPageComponent)
-	if !ok || component.ID == "" || component.Filter != filter.ID {
-		t.Fatalf("slicer component = %#v", components[len(components)-1])
 	}
 }
 

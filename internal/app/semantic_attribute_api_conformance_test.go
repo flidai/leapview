@@ -6,7 +6,7 @@ import (
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
-var semanticAttributeAuthenticatedOperations = []string{
+var semanticAttributePlatformOperations = []string{
 	"listSemanticAttributeDefinitions",
 	"registerSemanticAttribute",
 	"getSemanticAttributeDefinition",
@@ -27,7 +27,7 @@ var semanticAttributeAuthenticatedOperations = []string{
 
 func TestSemanticAttributeAPIGenOperationContracts(t *testing.T) {
 	contracts := accessgen.GetAPIGenOperationContracts()
-	for _, operationID := range semanticAttributeAuthenticatedOperations {
+	for _, operationID := range semanticAttributePlatformOperations {
 		t.Run(operationID, func(t *testing.T) {
 			contract, ok := contracts[operationID]
 			if !ok {
@@ -37,11 +37,24 @@ func TestSemanticAttributeAPIGenOperationContracts(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s missing generated x-authz extension: %#v", operationID, contract.Extensions["x-authz"])
 			}
-			if got := authz["mode"]; got != "authenticated" {
-				t.Fatalf("%s x-authz mode = %#v, want authenticated", operationID, got)
+			if got := authz["mode"]; got != "privilege" {
+				t.Fatalf("%s x-authz mode = %#v, want privilege", operationID, got)
 			}
-			if got := contract.Extensions["x-leapview-object-scope"]; got != "platform" {
-				t.Fatalf("%s object scope = %#v, want platform", operationID, got)
+			if got := authz["privilege"]; got != "PLATFORM_ADMIN" {
+				t.Fatalf("%s privilege = %#v, want PLATFORM_ADMIN", operationID, got)
+			}
+			wantAction := "platform.access.manage"
+			if operationID == "listSemanticAttributeDefinitions" || operationID == "getSemanticAttributeDefinition" || operationID == "listPrincipalSemanticAttributeAssignments" || operationID == "listGroupSemanticAttributeAssignments" || operationID == "listSemanticAttributeClaimMappings" || operationID == "previewSemanticAttributeImpact" {
+				wantAction = "platform.access.read"
+			}
+			if got := authz["action"]; got != wantAction {
+				t.Fatalf("%s action = %#v, want %s", operationID, got, wantAction)
+			}
+			if got := authz["resolver"]; got != "instance" {
+				t.Fatalf("%s resolver = %#v, want instance", operationID, got)
+			}
+			if got := contract.Extensions["x-leapview-object-scope"]; got != "instance" {
+				t.Fatalf("%s object scope = %#v, want instance", operationID, got)
 			}
 		})
 	}

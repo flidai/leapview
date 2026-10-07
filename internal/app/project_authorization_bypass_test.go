@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
@@ -40,30 +41,54 @@ func TestAuthoringAuthorizationPreservesDevelopmentBypass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resourceAllowed, err := authorizeAuthoringResource(ctx, nil, nil, "dev", "project:demo", resource, access.CapabilityResourceRead)
+	resourceAllowed, err := authorizeAuthoringResource(ctx, nil, nil, "dev", "project:demo", resource, access.ActionDashboardRead)
 	if err != nil || !resourceAllowed {
 		t.Fatalf("resource authorization = (%v, %v), want (true, nil)", resourceAllowed, err)
 	}
-	projectAllowed, err := authorizeAuthoringProject(ctx, nil, nil, "dev", "project:demo", access.CapabilityResourceEdit)
+	projectAllowed, err := authorizeAuthoringProject(ctx, nil, nil, "dev", "project:demo", access.ActionProjectSettingsUpdate)
 	if err != nil || !projectAllowed {
 		t.Fatalf("project authorization = (%v, %v), want (true, nil)", projectAllowed, err)
 	}
 
-	if _, err := authorizeAuthoringResource(ctx, nil, nil, "other", "project:demo", resource, access.CapabilityResourceRead); err == nil {
+	if _, err := authorizeAuthoringResource(ctx, nil, nil, "other", "project:demo", resource, access.ActionDashboardRead); err == nil {
 		t.Fatal("resource authorization accepted a development principal under another actor identity")
 	}
-	if _, err := authorizeAuthoringProject(ctx, nil, nil, "other", "project:demo", access.CapabilityResourceEdit); err == nil {
+	if _, err := authorizeAuthoringProject(ctx, nil, nil, "other", "project:demo", access.ActionProjectSettingsUpdate); err == nil {
 		t.Fatal("project authorization accepted a development principal under another actor identity")
 	}
 }
 
 func TestProjectAuthoringGuardRoutesManageToDashboardManageAuthorization(t *testing.T) {
+	resource, err := access.NewResourceRef("dashboard_owned", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_authoring_manage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: resource.ID(), Kind: resource.Kind(), Name: "dashboard_owned"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionDashboardDelete, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := accesssnapshot.NewTypedGrant("typed-dashboard-delete", "typed dashboard delete", access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "owner"}, []access.PermissionPair{pair})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{grant}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	authorizer := &repositoryDashboardAuthorizerFake{}
 	guarded := protectProjectAuthoringResource(
-		tusAccess{principal: accessmodule.Principal{ID: "owner"}, ok: true},
-		tusRuntime{project: "project_demo"},
+		tusAccess{principal: accessmodule.Principal{ID: "owner"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "owner"}}},
+		tusRuntime{project: identity.ProjectID, lease: tusLease{identity: identity, snapshot: snapshot}},
 		authorizer,
-		access.CapabilityResourceManage,
+		access.ActionDashboardDelete,
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
 	)
 	router := chi.NewRouter()

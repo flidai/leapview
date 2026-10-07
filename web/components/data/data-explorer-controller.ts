@@ -1,13 +1,38 @@
 import type {
+  AgentReferenceSignal,
   DataExploreCommand,
   DataExploreFieldSignal,
   DataExplorerCommand,
   DataExplorerObjectSignal,
+  DataExplorerPageSignal,
+  DataExplorerSignal,
 } from '../../generated/signals'
+import type { ExplorationSpec } from '../../generated/exploration'
+import { explorationSpecFor, explorationSpecFromCommand, reconcileExplorationPresentation } from './data-explorer-spec'
 
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
 
 export type DataExplorerAgentStoredState = { open: boolean; conversationId: string }
+
+export function dataExplorerAgentSuggestions(
+  explorer: DataExplorerSignal,
+  command: DataExploreCommand,
+  context?: DataExplorerPageSignal['context'],
+): AgentReferenceSignal[] {
+  const projectId = context?.projectId ?? ''
+  const generationId = context?.generationId ?? ''
+  const semanticModelId = command.semanticModelId ?? ''
+  const datasetId = command.datasetId ?? ''
+  if (!projectId || !generationId || !semanticModelId || !datasetId) return []
+  const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
+  const href = `/explore?mode=explore&semanticModel=${encodeURIComponent(semanticModelId)}&dataset=${encodeURIComponent(datasetId)}`
+  return [{
+    reference: { kind: 'dataset', id: `${semanticModelId}/${datasetId}` },
+    name: dataset?.title ?? datasetId,
+    description: dataset?.description,
+    hierarchy: [projectId, semanticModelId], href, locations: [], context: ['active_project_generation'],
+  }]
+}
 
 export function readDataExplorerAgentState(storage: Storage | undefined = typeof localStorage === 'undefined' ? undefined : localStorage): DataExplorerAgentStoredState {
   if (!storage) return { open: false, conversationId: '' }
@@ -129,15 +154,30 @@ export class DataExplorerPanelController {
 
 export class DataExplorerSelectionController {
   private lastSelectedKey = ''
+  private pendingSelectedKey = ''
 
   observe(selectedKey: string): boolean {
     if (selectedKey === this.lastSelectedKey) return false
     this.lastSelectedKey = selectedKey
+    this.pendingSelectedKey = selectedKey
     return true
+  }
+
+  revealPendingSelection(root: ParentNode, expandedGroupIDs: Set<string>): void {
+    if (!this.pendingSelectedKey) return
+    const selected = root.querySelector<HTMLElement>('.object-button.is-selected')
+    const objectNode = selected?.closest<HTMLDetailsElement>('.object-node')
+    const group = selected?.closest<HTMLDetailsElement>('.resource-group')
+    if (!objectNode || !group) return
+    if (group.dataset.groupId) expandedGroupIDs.add(group.dataset.groupId)
+    group.open = true
+    objectNode.open = true
+    this.pendingSelectedKey = ''
   }
 
   reset(): void {
     this.lastSelectedKey = ''
+    this.pendingSelectedKey = ''
   }
 }
 
@@ -161,17 +201,59 @@ export class DataExplorerQueryController {
       resetVersion: Math.max(current.resetVersion ?? 0, next.resetVersion ?? 0) + 1,
       columnWidths: next.columnWidths ?? current.columnWidths ?? {},
     }
+    delete command.window
+    command.spec = explorationSpecFromCommand(command)
     // The flag is intentionally accepted for call-site readability. Debounce
     // scheduling belongs to the route because it owns its lifecycle timer.
     void requestNow
     return command
   }
 
-  command(current: DataExplorerCommand, partial: Partial<DataExplorerCommand>): DataExplorerCommand {
+  exploreSpec(current: DataExploreCommand, next: Partial<ExplorationSpec>): DataExploreCommand {
+    const currentSpec = explorationSpecFor(current)
+    const datasetID = Object.prototype.hasOwnProperty.call(next, 'datasetId') ? next.datasetId : currentSpec.datasetId
+    const time = Object.prototype.hasOwnProperty.call(next, 'time') ? next.time : currentSpec.time
     return {
+      ...current,
+      action: 'configure',
+      window: undefined,
+      // Compatibility edits must not restore a time selection that the
+      // canonical query just cleared or replaced.
+      time: time ? { field: time.field, grain: time.grain, alias: time.alias } : undefined,
+      spec: reconcileExplorationPresentation({
+        ...currentSpec,
+        ...next,
+        schemaVersion: next.schemaVersion ?? currentSpec.schemaVersion ?? 1,
+        modelId: next.modelId ?? currentSpec.modelId ?? '',
+        datasetId: datasetID || undefined,
+        dimensions: [...(next.dimensions ?? currentSpec.dimensions ?? [])],
+        metrics: [...(next.metrics ?? currentSpec.metrics ?? [])],
+        filters: [...(next.filters ?? currentSpec.filters ?? [])],
+        sort: [...(next.sort ?? currentSpec.sort ?? [])],
+        limit: next.limit ?? currentSpec.limit ?? 100,
+      }),
+      requestSeq: (current.requestSeq ?? 0) + 1,
+      resetVersion: (current.resetVersion ?? 0) + 1,
+      columnWidths: current.columnWidths ?? {},
+    }
+  }
+
+  command(current: DataExplorerCommand, partial: Partial<DataExplorerCommand>): DataExplorerCommand {
+    const explore = partial.explore ?? current.explore
+    const hasExplicitRunID = Object.prototype.hasOwnProperty.call(partial, 'runId')
+    const explicitAction = Object.prototype.hasOwnProperty.call(partial, 'action')
+      ? partial.action
+      : Object.prototype.hasOwnProperty.call(partial.explore ?? {}, 'action')
+        ? partial.explore?.action
+        : undefined
+    const clearRunID = !hasExplicitRunID && (explicitAction === 'configure' || partial.mode === 'browse')
+    const runId = hasExplicitRunID ? partial.runId : clearRunID ? undefined : current.runId
+    const command: DataExplorerCommand = {
+      action: Object.prototype.hasOwnProperty.call(partial, 'action') ? partial.action : current.action,
       mode: partial.mode ?? current.mode ?? 'browse',
-      explore: partial.explore ?? current.explore,
+      explore,
       objectKey: partial.objectKey ?? current.objectKey ?? '',
+      clientId: partial.clientId ?? current.clientId,
       offset: partial.offset ?? current.offset ?? 0,
       limit: partial.limit ?? current.limit ?? 100,
       block: partial.block ?? current.block ?? 'all',
@@ -183,7 +265,30 @@ export class DataExplorerQueryController {
       visibleColumns: partial.visibleColumns ?? current.visibleColumns ?? [],
       columnWidths: partial.columnWidths ?? current.columnWidths ?? {},
     }
+    if (runId) command.runId = runId
+    return command
   }
+}
+
+export function prepareExplorationRun(current: DataExploreCommand): DataExploreCommand {
+  return { ...current, window: undefined, action: 'run', requestSeq: (current.requestSeq ?? 0) + 1, resetVersion: (current.resetVersion ?? 0) + 1 }
+}
+
+/** Window sequence belongs to the table; semantic sequence orders server runs. */
+export function prepareExplorationWindow(current: DataExploreCommand, next: Partial<DataExploreCommand>): DataExploreCommand {
+  return {
+    ...current,
+    ...next,
+    action: 'run',
+    spec: next.spec ?? explorationSpecFor(current),
+    filterSuggestions: undefined,
+    requestSeq: (current.requestSeq ?? 0) + 1,
+    resetVersion: next.window?.resetVersion ?? current.resetVersion ?? 0,
+  }
+}
+
+export function prepareExplorationStop(current: DataExploreCommand): DataExploreCommand {
+  return { ...current, action: 'stop' }
 }
 
 export function clampBrowserWidth(value: number): number {

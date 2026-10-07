@@ -30,11 +30,11 @@ var requiredChecks = []string{"CI gate", "Security gate"}
 // TrustedBuilders is the allow-list documented in SECURITY.md. Workflow paths
 // are compared exactly, while the display names make reports useful to people.
 var trustedBuilders = []Builder{
-	{Workflow: ".github/workflows/artifacts.yml", Name: "Main artifacts"},
-	{Workflow: ".github/workflows/release.yml", Name: "Release image"},
-	{Workflow: ".github/workflows/site-image.yml", Name: "Publish public site image"},
-	{Workflow: ".github/workflows/electron-security-proof.yml", Name: "Electron security proof"},
-	{Workflow: ".github/workflows/desktop-preview-release.yml", Name: "Desktop unsigned preview release"},
+	{Workflow: ".github/workflows/artifacts.yml", Name: "Build / Main image"},
+	{Workflow: ".github/workflows/release.yml", Name: "Release / Server and CLI"},
+	{Workflow: ".github/workflows/site-image.yml", Name: "Build / Public site image"},
+	{Workflow: ".github/workflows/electron-security-proof.yml", Name: "Security / Electron proof"},
+	{Workflow: ".github/workflows/desktop-preview-release.yml", Name: "Release / Desktop unsigned preview"},
 }
 
 // GovernedEnvironments are the deployment environments whose settings are
@@ -43,7 +43,7 @@ var trustedBuilders = []Builder{
 // deployment environment in this audit.
 var governedEnvironments = []EnvironmentContract{
 	{Name: "leapview-demo", MainOnly: true, ReviewRequired: true},
-	{Name: "leapview-ephemeral-qualification", MainOnly: false, ReviewRequired: true},
+	{Name: "leapview-ephemeral-qualification", MainOnly: true, ReviewRequired: true},
 	{Name: "leapview-site-production", MainOnly: true, ReviewRequired: true},
 }
 
@@ -99,6 +99,7 @@ type statusCheck struct {
 
 type environment struct {
 	Name                   string                  `json:"name"`
+	CanAdminsBypass        *bool                   `json:"can_admins_bypass"`
 	ProtectionRules        []protectionRule        `json:"protection_rules"`
 	DeploymentBranchPolicy *deploymentBranchPolicy `json:"deployment_branch_policy"`
 	// GitHub's environments endpoint normally exposes whether custom policies
@@ -381,6 +382,7 @@ func Audit(snapshot Snapshot) (Report, error) {
 			findings = append(findings, Finding{"environment.missing", fmt.Sprintf("governed environment %q is missing", contract.Name)})
 			continue
 		}
+		findings = append(findings, adminBypassFindings(env)...)
 		if contract.ReviewRequired {
 			findings = append(findings, requiredReviewerFindings(env)...)
 		}
@@ -396,6 +398,13 @@ func Audit(snapshot Snapshot) (Report, error) {
 		return findings[i].Code < findings[j].Code
 	})
 	return Report{OK: len(findings) == 0, Findings: findings}, nil
+}
+
+func adminBypassFindings(env environment) []Finding {
+	if env.CanAdminsBypass != nil && !*env.CanAdminsBypass {
+		return nil
+	}
+	return []Finding{{"environment.admin_bypass", fmt.Sprintf("environment %q must explicitly set can_admins_bypass=false", env.Name)}}
 }
 
 func findMainRuleset(rulesets []ruleset) *ruleset {

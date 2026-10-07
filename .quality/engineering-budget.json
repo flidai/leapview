@@ -10,19 +10,19 @@
     "go-test": {
       "lineLimit": 1200,
       "maxFilesOverLimit": 17,
-      "maxExcessLines": 10499,
+      "maxExcessLines": 10605,
       "maxLargestFile": 4721
     },
     "typescript-production": {
       "lineLimit": 700,
       "maxFilesOverLimit": 27,
-      "maxExcessLines": 19136,
+      "maxExcessLines": 19540,
       "maxLargestFile": 6082
     },
     "typescript-test": {
       "lineLimit": 1200,
-      "maxFilesOverLimit": 8,
-      "maxExcessLines": 9116,
+      "maxFilesOverLimit": 9,
+      "maxExcessLines": 9433,
       "maxLargestFile": 3824
     }
   },

@@ -10,7 +10,7 @@ export const visualizationHostStyles = css`
     background: var(--lv-chart-surface);
     font-family: var(--fontStack-system);
   }
-  :host([slot='focus-visual']) { --lv-visual-expand-display: none; --lv-visual-focus-close-space: var(--base-size-48); }
+  :host([slot='focus-visual']) { --lv-visual-expand-display: none; }
   .surface { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
   .surface.headerless { grid-template-rows: minmax(0, 1fr); }
   .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
@@ -31,6 +31,10 @@ export const visualizationHostStyles = css`
     overflow: hidden;
     background: var(--lv-chart-surface);
     container-type: inline-size;
+  }
+  :host(:not([slot='focus-visual'])) .lv-kpi-card[data-mode='compact'][data-layout='wide'] {
+    align-content: start;
+    padding-block-start: var(--base-size-32);
   }
   .lv-visualization-label {
     overflow: hidden;
@@ -218,7 +222,8 @@ export const visualizationHostStyles = css`
     white-space: nowrap;
   }
   .visual-options { position: relative; flex: 0 0 auto; }
-  .visual-options summary {
+  .visual-options .options-trigger {
+    box-sizing: border-box;
     display: grid;
     width: var(--lv-visual-action-target);
     min-width: var(--lv-visual-action-target);
@@ -232,11 +237,10 @@ export const visualizationHostStyles = css`
     cursor: pointer;
     list-style: none;
   }
-  .visual-options summary::-webkit-details-marker { display: none; }
-  .visual-options summary svg { width: var(--base-size-16); height: var(--base-size-16); }
-  .visual-options summary:hover,
-  .visual-options summary:focus-visible,
-  .visual-options[open] summary {
+  .visual-options .options-trigger svg { width: var(--base-size-16); height: var(--base-size-16); }
+  .visual-options .options-trigger:hover,
+  .visual-options .options-trigger:focus-visible,
+  .visual-options .options-trigger[aria-expanded="true"] {
     border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
     background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
     color: var(--lv-icon-default, var(--lv-fg-default));
@@ -245,11 +249,12 @@ export const visualizationHostStyles = css`
     outline-offset: var(--focus-outline-offset, var(--base-size-2));
   }
   .visual-options .menu {
-    position: absolute;
-    top: calc(100% + var(--base-size-4));
-    right: 0;
-    z-index: var(--zIndex-dropdown);
-    display: grid;
+    position: fixed;
+    inset: auto;
+    box-sizing: border-box;
+    margin: 0;
+    display: none;
+    overflow: auto;
     width: min(220px, calc(100vw - var(--base-size-24)));
     border: var(--lv-border-default);
     border-radius: var(--lv-radius-default);
@@ -257,7 +262,9 @@ export const visualizationHostStyles = css`
     box-shadow: var(--shadow-floating-small);
     padding: var(--base-size-4);
   }
-  .visual-options .menu button {
+  .visual-options .menu:popover-open { display: grid; }
+  .visual-options .menu button,
+  .visual-options .menu a {
     display: flex;
     align-items: center;
     gap: var(--base-size-8);
@@ -272,9 +279,12 @@ export const visualizationHostStyles = css`
     font: var(--lv-type-caption);
     font-weight: var(--base-text-weight-medium);
     text-align: left;
+    text-decoration: none;
   }
   .visual-options .menu button:hover,
-  .visual-options .menu button:focus-visible {
+  .visual-options .menu button:focus-visible,
+  .visual-options .menu a:hover,
+  .visual-options .menu a:focus-visible {
     border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
     background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
     outline: var(--focus-outline, var(--lv-border-default));
@@ -290,6 +300,5 @@ export const visualizationHostStyles = css`
   @media (max-width: 480px) {
     .toolbar { gap: var(--base-size-4); padding-inline: var(--base-size-8); }
     .toolbar-subtitle { display: none; }
-    .visual-options .menu { position: fixed; top: var(--base-size-48); right: var(--base-size-8); }
   }
 `

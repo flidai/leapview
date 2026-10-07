@@ -127,6 +127,10 @@ class ChatComposer extends LitElement {
     this.resizeTextarea()
   }
 
+  public focusInput(): void {
+    this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+  }
+
   public setDraft(value: string, focus = true): void {
     const message = readAttachedMessage(value)
     this.draft = message.text
@@ -143,6 +147,11 @@ class ChatComposer extends LitElement {
       }
       this.resizeTextarea(textarea)
     })
+  }
+
+  /** Read the current draft edited by the user or set through setDraft(). */
+  public getDraft(): string {
+    return this.draft
   }
 
   render() {

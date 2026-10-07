@@ -1,21 +1,15 @@
 /* Homepage study, scoped to preserve the shared site shell. */
 @scope (.site-home) {
 .project-section {
-  --project-code-key: #9ccaff;
-  --project-code-value: #d2a8ff;
-  --project-code-sql: #7ee4ba;
-  --project-code-comment: #7fb278;
+  --project-code-key: light-dark(#0550ae, #9ccaff);
+  --project-code-value: light-dark(#8250df, #d2a8ff);
+  --project-code-sql: light-dark(#1a7f37, #7ee4ba);
+  --project-code-comment: light-dark(#27803c, #7fb278);
   position: relative;
   padding: 105px 0 100px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 96%, var(--ink));
   scroll-margin-top: 72px;
-}
-:scope.is-light .project-section {
-  --project-code-key: #0550ae;
-  --project-code-value: #8250df;
-  --project-code-sql: #1a7f37;
-  --project-code-comment: #27803c;
 }
 .project-heading h2 { max-width: 850px; margin: 0; font-size: var(--section-title-size); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; text-wrap: balance; }
 .project-intro { max-width: 750px; margin: 18px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; text-wrap: pretty; }
@@ -45,6 +39,7 @@
 .project-code-scroll { height: 402px; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
 .project-code-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .project-code { width: max-content; min-width: 100%; margin: 0; padding: 15px 0 29px; color: var(--ink); font: 13px/1.8 var(--fontStack-monospace); tab-size: 2; }
+.project-code:not(:has(.project-code-row)) { padding-inline: 20px; }
 .project-code-row { display: flex; min-height: 22px; padding-right: 24px; white-space: pre; }
 .project-code-row:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .project-code-row.is-entering { animation: project-code-enter .4s both; animation-delay: calc(var(--enter-order) * 45ms); }

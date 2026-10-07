@@ -15,20 +15,15 @@ func TestNativePostgresQualificationPackagingContract(t *testing.T) {
 	initScript := read(t, filepath.Join(root, "deploy", "postgres", "init.sh"))
 	environment := read(t, filepath.Join(root, "deploy", "compose", "leapview.env.example"))
 
+	// Exact asset content, modes, checksums and rejection behavior are exercised
+	// by the shared packager's tests; this contract checks the release caller.
 	for _, required := range []string{
-		`canonical_postgres_init="deploy/postgres/init.sh"`,
-		`canonical_postgres_init_sha256="$(sha256sum "$canonical_postgres_init" | awk '{print $1}')"`,
-		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
-		`chmod 0755 "dist/$package/qualification/postgres-init.sh"`,
-		`test "$(stat -c '%a' "dist/$package/qualification/postgres-init.sh")" = "755"`,
-		`test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"`,
-		`chmod 0755 "dist/$package/qualification/validate-bundle.sh"`,
-		`chmod 0644 "dist/$package/Caddyfile"`,
-		`test "$(stat -c '%a' "dist/$package/Caddyfile")" = "644"`,
-		`"dist/$package/qualification/validate-bundle.sh" "dist/$package"`,
+		"python3 scripts/package_compose_bundle.py",
+		`--source-root . --controller "$controller" --platform "$os/$arch"`,
+		`--image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json`,
 	} {
 		if !strings.Contains(release, required) {
-			t.Errorf("release workflow missing native PostgreSQL packaging contract %q", required)
+			t.Errorf("release workflow missing shared packaging contract %q", required)
 		}
 	}
 	for _, required := range []string{
@@ -157,8 +152,10 @@ func TestQualificationBundleValidatorBehavior(t *testing.T) {
 func writeQualificationBundleFixture(t *testing.T) string {
 	t.Helper()
 	bundle := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(bundle, "qualification"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, directory := range []string{"qualification", "postgres"} {
+		if err := os.MkdirAll(filepath.Join(bundle, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	files := map[string]struct {
 		contents string
@@ -168,12 +165,28 @@ func writeQualificationBundleFixture(t *testing.T) string {
 			contents: "services:\n  leapview:\n    image: example/leapview\n",
 			mode:     0o600,
 		},
+		"compose.postgres.yaml": {
+			contents: "services:\n  postgres:\n    image: postgres:18-alpine\n    volumes:\n      - leapview-postgres-data:/var/lib/postgresql\n      - type: bind\n        target: /run/leapview-postgres/bundled-init.sh\n    environment:\n      LEAPVIEW_POSTGRES_SECRET_DIR: /var/lib/postgresql/18/leapview-secrets\nnetworks:\n  postgres-private:\n    internal: true\n",
+			mode:     0o644,
+		},
 		"compose.https.yaml": {
 			contents: "services:\n  caddy:\n    image: example/caddy\n",
 			mode:     0o600,
 		},
+		"compose.first-install-bootstrap.yaml": {
+			contents: "services:\n  caddy:\n    depends_on:\n      leapview: {condition: service_started}\n",
+			mode:     0o644,
+		},
 		"Caddyfile": {
 			contents: "{$CADDY_DOMAIN} {\n  reverse_proxy leapview:8080\n}\n",
+			mode:     0o644,
+		},
+		"Caddyfile.first-install-bootstrap": {
+			contents: "{$CADDY_DOMAIN} {\n  tls internal\n  reverse_proxy leapview:8080\n}\n",
+			mode:     0o644,
+		},
+		"first-install.env": {
+			contents: "COMPOSE_APP_BIND=127.0.0.1:8080\nCADDY_HTTP_BIND=127.0.0.1:80\nCADDY_HTTPS_BIND=127.0.0.1:443\nCADDY_HTTPS_UDP_BIND=127.0.0.1:443\n",
 			mode:     0o644,
 		},
 		"leapview.env.example": {
@@ -182,6 +195,14 @@ func writeQualificationBundleFixture(t *testing.T) string {
 		},
 		"qualification/postgres-init.sh": {
 			contents: "#!/usr/bin/env bash\nCREATE ROLE leapview_control_owner;\nCREATE ROLE leapview_ducklake_owner;\nCREATE DATABASE leapview;\n",
+			mode:     0o755,
+		},
+		"postgres/bundled-entrypoint.sh": {
+			contents: "#!/bin/sh\n",
+			mode:     0o755,
+		},
+		"postgres/bundled-init.sh": {
+			contents: "#!/bin/sh\nPGSSLMODE=verify-full\n",
 			mode:     0o755,
 		},
 		"qualification/validate-bundle.sh": {

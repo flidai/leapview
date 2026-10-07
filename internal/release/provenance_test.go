@@ -2,10 +2,12 @@ package release
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
@@ -17,19 +19,141 @@ func TestProvenanceCanonicalizesGenerationEvidence(t *testing.T) {
 	require.Equal(t, provenance.Artifact.ContentDigest, provenance.Artifact.ContentDigest)
 }
 
-func TestProvenanceRequiresPolicyEvidenceAndValidatesLegacyVersionFour(t *testing.T) {
+func TestProvenanceValidatesImmutableVersionFiveGolden(t *testing.T) {
+	// Fixed output of NewProvenance in v5 commit 28bfc7e7e8f8074847229c05c42f0bbc2dd79336.
+	encoded, err := os.ReadFile("testdata/provenance_v5.json")
+	require.NoError(t, err)
+	var provenance Provenance
+	require.NoError(t, json.Unmarshal(encoded, &provenance))
+
+	require.Equal(t, 5, provenance.Version)
+	require.Equal(t, "sha256:35e828d289732d505094f92745017d6604cfb287002ac6ab67849f4f5cf2203d", provenance.ArtifactProvenanceDigest)
+	require.Equal(t, "sha256:3e6d66d1d9db5950b28d77962843563cc5382b8e76d159498eb4c5bd6a496aa7", provenance.PlanDigest)
+	require.Equal(t, "sha256:e801981ee796e0f12c630383e7740b188e9b91827daaaba9e53355da9775dcd1", provenance.Digest)
+	require.NoError(t, provenance.Validate())
+
+	canonical, err := json.MarshalIndent(provenance, "", "  ")
+	require.NoError(t, err)
+	require.Equal(t, strings.TrimSpace(string(encoded)), string(canonical))
+
+	tampered := provenance
+	tampered.Plan.TargetID = "target_tampered"
+	require.ErrorContains(t, tampered.Validate(), "content digest mismatch")
+}
+
+func TestProvenanceVersionFiveRejectsInsertedLocalCredentialPin(t *testing.T) {
+	encoded, err := os.ReadFile("testdata/provenance_v5.json")
+	require.NoError(t, err)
+	var provenance Provenance
+	require.NoError(t, json.Unmarshal(encoded, &provenance))
+
+	provenance.Plan.Bindings = append([]BindingEvidence(nil), provenance.Plan.Bindings...)
+	provenance.Plan.Bindings[0].ValidatedVersion = ""
+	provenance.Plan.Bindings[0].CredentialVersionID = "0198f2c0-7c7a-7f00-8a11-000000000301"
+	evidence := *provenance.Plan.GateEvidence
+	evidence.BindingGeneration = BindingFingerprint(provenance.Plan.Bindings)
+	evidence, err = evidence.Canonical()
+	require.NoError(t, err)
+	provenance.Plan.GateEvidence = &evidence
+
+	require.ErrorContains(t, provenance.Validate(), "version-5 provenance cannot carry local credential version pins")
+}
+
+func TestProvenanceAuthorizationEvidenceVersionBoundaries(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	input.Plan.PolicyRevision = 0
+	input.Plan.AuthorizationDigest = ""
+
+	v4, err := newProvenanceVersion(input, 4)
+	require.NoError(t, err)
+	require.NoError(t, v4.Validate())
+	_, err = newProvenanceVersion(input, 5)
+	require.ErrorContains(t, err, "target authorization policy revision and compiled digest are required")
+	_, err = newProvenanceVersion(input, 6)
+	require.ErrorContains(t, err, "target authorization policy revision and compiled digest are required")
+}
+
+func TestProvenanceRequiresPolicyEvidenceAndValidatesVersionFour(t *testing.T) {
 	current := testGenerationInput(t, GenerationDataRefreshSources)
 	current.Plan.PolicyRevision = 0
 	current.Plan.AuthorizationDigest = ""
 	if _, err := NewProvenance(current); err == nil {
-		t.Fatal("version-5 provenance accepted missing target authorization policy evidence")
+		t.Fatal("current provenance accepted missing target authorization policy evidence")
 	}
 
 	legacy, err := NewLegacyProvenance(current)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Validate())
+	unsupportedVersion := legacy
+	unsupportedVersion.Version = 7
+	require.Error(t, unsupportedVersion.Validate())
 	legacy.Digest = testDigest("0")
 	require.Error(t, legacy.Validate())
+}
+
+func TestProvenancePinsLocalCredentialVersionAndIncludesItInDigest(t *testing.T) {
+	input := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000301")
+	provenance, err := NewProvenance(input)
+	require.NoError(t, err)
+	require.Equal(t, ProvenanceVersion, provenance.Version)
+	require.NoError(t, provenance.Validate())
+	require.Equal(t, input.Plan.Bindings[0].CredentialVersionID, provenance.Plan.Bindings[0].CredentialVersionID)
+
+	other := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000302")
+	otherProvenance, err := NewProvenance(other)
+	require.NoError(t, err)
+	require.NotEqual(t, provenance.PlanDigest, otherProvenance.PlanDigest)
+
+	tampered := provenance
+	tampered.Plan.Bindings = append([]BindingEvidence(nil), provenance.Plan.Bindings...)
+	tampered.Plan.Bindings[0].CredentialVersionID = other.Plan.Bindings[0].CredentialVersionID
+	require.Error(t, tampered.Validate())
+
+	encoded, err := json.Marshal(provenance.Plan.Bindings)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"credentialVersionId":"0198f2c0-7c7a-7f00-8a11-000000000301"`)
+}
+
+func TestProvenanceRejectsInvalidLocalCredentialVersionPins(t *testing.T) {
+	tests := map[string]func(*ProvenanceInput){
+		"malformed UUID": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].CredentialVersionID = "not-a-uuid"
+		},
+		"nil UUID": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].CredentialVersionID = "00000000-0000-0000-0000-000000000000"
+		},
+		"both version sources": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].ValidatedVersion = "provider:v1"
+		},
+		"non-postgres connector": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].ConnectorKind = "s3"
+		},
+		"public connection": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].Access = semanticmodel.ConnectionAccessPublic
+		},
+		"unknown access": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].Access = semanticmodel.ConnectionAccess("unknown")
+		},
+		"missing both versions": func(input *ProvenanceInput) {
+			input.Plan.Bindings[0].CredentialVersionID = ""
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			input := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000301")
+			mutate(&input)
+			_, err := NewProvenance(input)
+			require.ErrorIs(t, err, ErrProvenanceInvalid)
+		})
+	}
+}
+
+func TestLegacyProvenanceCannotCarryLocalCredentialPin(t *testing.T) {
+	input := localCredentialPinInput(t, "0198f2c0-7c7a-7f00-8a11-000000000301")
+	input.Plan.PolicyRevision = 0
+	input.Plan.AuthorizationDigest = ""
+	_, err := NewLegacyProvenance(input)
+	require.ErrorIs(t, err, ErrProvenanceInvalid)
 }
 
 func TestProvenanceBindsGateEvidenceAndDetectsTampering(t *testing.T) {
@@ -152,6 +276,15 @@ func testGenerationInput(t *testing.T, mode GenerationDataMode) ProvenanceInput 
 	plan := GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), PolicyRevision: 1, AuthorizationDigest: testDigest("f"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil}
 	plan.GateEvidence = testPlanGateEvidence(t, artifact, candidate, plan)
 	return ProvenanceInput{Artifact: artifact, Candidate: candidate, Plan: plan}
+}
+
+func localCredentialPinInput(t *testing.T, versionID string) ProvenanceInput {
+	t.Helper()
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	input.Plan.Bindings[0].ValidatedVersion = ""
+	input.Plan.Bindings[0].CredentialVersionID = versionID
+	input.Plan.GateEvidence = testPlanGateEvidence(t, input.Artifact, input.Candidate, input.Plan)
+	return input
 }
 
 func testPlanGateEvidence(t *testing.T, artifact ProjectArtifactProvenance, candidate CandidateProvenance, plan GenerationPlanProvenance) *GateEvidence {

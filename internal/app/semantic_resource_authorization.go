@@ -46,5 +46,21 @@ func authorizeSemanticModelResourceRead(
 	if requestLocalDevelopmentAuthorization(ctx, principalID) {
 		return true, nil
 	}
-	return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+	return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, access.ActionSemanticRead)
+}
+
+// authorizeDashboardListResource covers dashboard listings and the semantic
+// model visibility check required before handing a visualization to Explorer.
+func authorizeDashboardListResource(ctx context.Context, accessModule canonicalAccessModule, runtimeHost canonicalRuntimeHost, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+	if capability != access.CapabilityResourceRead {
+		return false, nil
+	}
+	switch resource.Kind() {
+	case projectgraph.KindSemanticModel:
+		return authorizeSemanticModelResourceRead(ctx, accessModule, runtimeHost, principalID, projectID, resource, capability)
+	case projectgraph.KindDashboard:
+		return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, access.ActionDashboardRead)
+	default:
+		return false, nil
+	}
 }

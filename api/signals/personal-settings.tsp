@@ -55,7 +55,8 @@ model PersonalAuthoringSessionSignal {
   `clientId`: string;
   `targetId`: string;
   `projectId`: string;
-  `capabilities`: string[];
+  `permissionProfile`: string;
+  `permissions`: PersonalPermissionPairSignal[];
   `createdAt`: string;
   `lastUsedAt`: string;
   `expiresAt`: string;
@@ -66,17 +67,45 @@ model PersonalAuthoringSessionSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model PersonalTokensSignal {
   `items`: PersonalTokenSignal[];
+  /** Typed action-target options authorized for the active principal. */
   `capabilities`: PersonalCapabilityOptionSignal[];
+  /** True when capabilities is the authoritative typed option set, including an explicit empty set. */
+  `permissionOptionsReady`: boolean;
   `newToken`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "personal-settings", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model PersonalPermissionTargetSignal {
+  `scope`: string;
+  `instanceId`?: string;
+  `projectId`?: string;
+  `resourceKind`?: string;
+  `resourceId`?: string;
+  `includeFuture`?: boolean;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "personal-settings", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model PersonalPermissionPairSignal {
+  `action`: string;
+  `target`: PersonalPermissionTargetSignal;
+  `profile`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "personal-settings", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model PersonalCapabilityOptionSignal {
   `value`: string;
+  /** Human-facing action name used to group resource targets into one policy block. */
+  `actionLabel`: string;
+  /** Catalog description of the action, independent of any target label or scope. */
+  `actionDescription`?: string;
   `label`: string;
   `description`: string;
   `category`: string;
+  /** Every issuance option carries the exact action-target pair(s) it persists. */
+  `permissions`?: PersonalPermissionPairSignal[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "personal-settings", "signal"] })
@@ -85,8 +114,12 @@ model PersonalTokenSignal {
   `id`: string;
   `name`: string;
   `description`: string;
+  `permissionProfile`?: string;
+  `permissions`: PersonalPermissionPairSignal[];
+  /** Legacy capability rows remain readable during migration; new issuance uses permissions. */
   `capabilities`: string[];
   `createdAt`: string;
+  `modifiedAt`: string;
   `lastUsedAt`: string;
   `expiresAt`: string;
   `revokedAt`: string;
@@ -132,8 +165,9 @@ model PersonalAuthoringSessionCommand {
 model PersonalTokenCommand {
   `action`: string;
   `tokenId`: string;
+  `expectedModifiedAt`: string;
   `name`: string;
   `description`: string;
-  `capabilities`: string[];
+  `permissions`: PersonalPermissionPairSignal[];
   `expiresAt`: string;
 }

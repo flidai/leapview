@@ -1,0 +1,109 @@
+services:
+  leapview:
+    networks: [default, postgres-private]
+    volumes:
+      - type: bind
+        source: ./.postgres-secrets/ca.crt
+        target: /run/leapview/postgres/ca.crt
+        read_only: true
+
+  postgres:
+    image: docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-2g}
+    stop_grace_period: 2m
+    environment:
+      PGDATA: /var/lib/postgresql/18/docker
+      POSTGRES_USER: leapview_bootstrap
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+      LEAPVIEW_POSTGRES_SECRET_DIR: /var/lib/postgresql/18/leapview-secrets
+    entrypoint: ["/bin/sh", "/run/leapview-postgres/bundled-entrypoint.sh"]
+    command: [postgres]
+    volumes:
+      - leapview-postgres-data:/var/lib/postgresql
+      - type: bind
+        source: ./.postgres-secrets/bootstrap-password
+        target: /run/leapview-postgres-secrets/bootstrap-password
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/control-runtime-password
+        target: /run/leapview-postgres-secrets/control-runtime-password
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/control-migrator-password
+        target: /run/leapview-postgres-secrets/control-migrator-password
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/control-maintenance-password
+        target: /run/leapview-postgres-secrets/control-maintenance-password
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/ducklake-runtime-password
+        target: /run/leapview-postgres-secrets/ducklake-runtime-password
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/ducklake-migrator-password
+        target: /run/leapview-postgres-secrets/ducklake-migrator-password
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/ducklake-maintenance-password
+        target: /run/leapview-postgres-secrets/ducklake-maintenance-password
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/ca.crt
+        target: /run/leapview-postgres-secrets/ca.crt
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/server.crt
+        target: /run/leapview-postgres-secrets/server.crt
+        read_only: true
+      - type: bind
+        source: ./.postgres-secrets/server.key
+        target: /run/leapview-postgres-secrets/server.key
+        read_only: true
+      - type: bind
+        source: ./postgres/bundled-entrypoint.sh
+        target: /run/leapview-postgres/bundled-entrypoint.sh
+        read_only: true
+      - type: bind
+        source: ./postgres/bundled-init.sh
+        target: /docker-entrypoint-initdb.d/10-leapview-roles.sh
+        read_only: true
+      - type: bind
+        source: ./postgres/bundled-init.sh
+        target: /run/leapview-postgres/bundled-init.sh
+        read_only: true
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 268435456
+          mode: 01777
+      - type: tmpfs
+        target: /run/postgresql
+        tmpfs:
+          size: 16777216
+          mode: 0755
+    networks: [postgres-private]
+    healthcheck:
+      test: [CMD, pg_isready, --host, 127.0.0.1, --username, leapview_bootstrap, --dbname, postgres]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 30
+    logging:
+      driver: local
+      options: {max-size: 20m, max-file: "5"}
+
+networks:
+  postgres-private:
+    internal: true
+
+volumes:
+  leapview-postgres-data:

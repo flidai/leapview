@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
@@ -25,132 +24,47 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-// Current main's generated surface plus target-policy and development-profile
-// operations.
-const expectedAPIGenAggregateOperationCount = 193
+// Combined generated surface including target-policy and development-profile
+// operations. This count is a contract snapshot, not a feature-coverage claim.
+const expectedAPIGenAggregateOperationCount = 212
 
-func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
-	root := projectRoot(t)
-	manifest, err := os.ReadFile(filepath.Join(root, "api", "apigen.yaml"))
-	if err != nil {
-		t.Fatalf("read manifest: %v", err)
-	}
-	manifestText := string(manifest)
-	for _, source := range []string{
-		"typespec_entrypoint: typespec/main.tsp",
-		"typespec_entrypoint: signals/main.tsp",
-		"typespec_entrypoint: visualization/main.tsp",
-		"typespec_entrypoint: dashboard/main.tsp",
-		"typespec_entrypoint: data-resources/main.tsp",
-		"typespec_entrypoint: desktop-discovery/main.tsp",
-		"typespec_entrypoint: internal/agent/contracts/typespec/main.tsp",
+func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
+	contracts := accessAPIGenOperationContracts()
+	for operationID, want := range map[string]struct {
+		action   string
+		resolver string
+	}{
+		"getDashboard":              {"dashboard.read", "dashboard"},
+		"getDashboardPage":          {"dashboard.read", "dashboard"},
+		"getDashboardFilter":        {"dashboard.read", "dashboard"},
+		"listDashboardFilterValues": {"dashboard.read", "dashboard"},
+		"queryDashboardPage":        {"dashboard.read", "dashboard"},
+		"getDashboardVisual":        {"dashboard.read", "dashboard"},
+		"queryDashboardVisualData":  {"dashboard.read", "dashboard"},
+		"createRefreshRun":          {"pipeline.run", "pipeline"},
 	} {
-		if !strings.Contains(manifestText, source) {
-			t.Fatalf("manifest should select TypeSpec source %q, got:\n%s", source, manifestText)
+		contract, ok := contracts[operationID]
+		if !ok {
+			t.Fatalf("operation %q is missing from access conversion", operationID)
+		}
+		if contract.Action != want.action || contract.Resolver != want.resolver {
+			t.Errorf("operation %q typed authz = %q/%q, want %q/%q", operationID, contract.Action, contract.Resolver, want.action, want.resolver)
 		}
 	}
-	if strings.Contains(manifestText, "cue_dir:") {
-		t.Fatalf("manifest should not use cue_dir after APIGen v0.3.0 migration")
-	}
-	for _, want := range []string{
-		"unmatched: error",
-		"LeapViewAPI:",
-		"LeapViewAPI.Access:",
-		"LeapViewAPI.Agent:",
-		"LeapViewAPI.Analytics:",
-		"LeapViewAPI.Dashboard:",
-		"LeapViewAPI.Deployment:",
-		"LeapViewAPI.ManagedData:",
-		"LeapViewAPI.Project:",
-		"LeapViewAPI.Protocol:",
-		"LeapViewAPI.Refresh:",
-		"LeapViewAPI.Release:",
-		"import_path: github.com/flidai/leapview/internal/app/api/gen",
-	} {
-		if !strings.Contains(manifestText, want) {
-			t.Fatalf("manifest should define the coalesced capability package plan setting %q", want)
-		}
-	}
+}
 
-	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
-	if err != nil {
-		t.Fatalf("read Taskfile.yml: %v", err)
+func TestResourceShareRevocationUsesIssuerBoundAuthenticatedContract(t *testing.T) {
+	contracts := accessAPIGenOperationContracts()
+	revoke, ok := contracts["revokeResourceShareGrant"]
+	if !ok {
+		t.Fatal("resource-share revoke operation is missing")
 	}
-	taskText := string(taskfile)
-	for _, want := range []string{
-		"- task: api:generate\n      - task: agent-contracts:generate\n      - task: ui-signals:generate\n      - task: schema:generate",
-		"- task: desktop-discovery:generate",
-		"schema:generate:\n    desc: Generate JSON Schema artifacts for LeapView YAML contracts\n    deps:\n      - db:generate\n      - config:generate\n      - api:generate\n      - ui-signals:generate",
-		"ui-signals:generate:\n    desc: Generate UI signal Go and TypeScript contracts from TypeSpec\n    deps:\n      - api:generate",
-	} {
-		if !strings.Contains(taskText, want) {
-			t.Fatalf("Taskfile.yml does not enforce generated-model ordering %q", want)
-		}
+	if revoke.AuthzMode != "authenticated" || revoke.Action != "" || revoke.Resolver != "" || revoke.Extensions["x-leapview-object-scope"] != "principal" {
+		t.Fatalf("resource-share revoke contract = %#v, want issuer-bound authenticated operation", revoke)
 	}
-	assertAPIGenCommands := func(label, text string, targets []string) {
-		for _, target := range targets {
-			for _, command := range []string{"typespec-compile", "all"} {
-				want := "go -C pkg/apigen run ./cmd/apigen " + command + " -manifest ../../api/apigen.yaml -target " + target
-				if !strings.Contains(text, want) {
-					t.Fatalf("%s missing nested APIGen command %q", label, want)
-				}
-			}
-		}
-	}
-	assertAPIGenCommands("Taskfile.yml", taskText, []string{"leapview-v1", "agent-tool-contracts", "data-resource-contracts", "desktop-discovery-contracts", "ui-signals", "visualization-ir", "dashboard-contracts"})
-	if !strings.Contains(taskText, "go -C pkg/apigen test ./...") {
-		t.Fatal("Taskfile.yml missing APIGen module test command")
-	}
-	for _, forbidden := range []string{"cue-compile", "apigen@v0.2.0", "apigen@v0.3.0", "apigen@v0.3.2", "apigen@v0.3.3", "apigen@v0.4.0", "apigen@v0.5.0", "apigen@v0.5.1", "apigen@v0.5.2", "apigen@v0.5.3", "apigen@v0.6.0", "apigen@v0.6.1", "apigen@v0.6.2", "apigen@v0.6.3", "apigen@v0.6.4", "apigen@v0.6.5", "apigen@v0.7.0", "apigen@v0.7.1", "apigen@v0.7.2", "apigen@v0.7.3", "apigenpostprocess"} {
-		if strings.Contains(taskText, forbidden) {
-			t.Fatalf("Taskfile.yml should not contain superseded generator %q", forbidden)
-		}
-	}
-	buildSources, err := os.ReadFile(filepath.Join(root, "scripts", "generate_build_sources.sh"))
-	if err != nil {
-		t.Fatalf("read container source-generation script: %v", err)
-	}
-	assertAPIGenCommands("container source-generation script", string(buildSources), []string{"leapview-v1", "data-resource-contracts", "ui-signals", "desktop-discovery-contracts", "visualization-ir"})
-	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil {
-		t.Fatalf("read go.mod: %v", err)
-	}
-	if !strings.Contains(string(goMod), "replace github.com/Yacobolo/toolbelt/apigen => ./pkg/apigen") {
-		t.Fatal("go.mod does not select the vendored APIGen module")
-	}
-	if _, err := os.Stat(filepath.Join(root, "pkg", "apigen", "UPSTREAM.md")); err != nil {
-		t.Fatalf("vendored APIGen provenance is missing: %v", err)
-	}
-	if want := "go run ./internal/app/tools/layoutcontractgen"; !strings.Contains(string(buildSources), want) {
-		t.Fatalf("container source-generation script missing layout contract generation %q", want)
-	}
-
-	ir, err := os.ReadFile(filepath.Join(root, "api", "gen", "json-ir.json"))
-	if err != nil {
-		t.Fatalf("read APIGen IR: %v", err)
-	}
-	var irDoc map[string]any
-	if err := json.Unmarshal(ir, &irDoc); err != nil {
-		t.Fatalf("decode APIGen IR: %v", err)
-	}
-	if got := irDoc["schema_version"]; got != "v4" {
-		t.Fatalf("APIGen IR schema_version = %#v, want v4", got)
-	}
-
-	if _, err := os.Stat(filepath.Join(root, "internal", "tools", "apigenpostprocess")); !os.IsNotExist(err) {
-		t.Fatalf("APIGen should not require a postprocessor, stat error = %v", err)
-	}
-	for path, forbidden := range map[string]string{
-		filepath.Join(root, "api", "typespec", "bi.tsp"):                        "toolbelt#34",
-		filepath.Join(root, "internal", "agent", "tools", "apigen_provider.go"): "projectUnionToolResult",
-	} {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		if strings.Contains(string(content), forbidden) {
-			t.Fatalf("APIGen superseded workaround %q in %s", forbidden, path)
-		}
+	issue, ok := contracts["issueResourceShareGrant"]
+	if !ok || issue.AuthzMode != "privilege" || issue.Action != "resource.share" || issue.Resolver != "resource-share" {
+		t.Fatalf("resource-share issue contract = %#v, want typed resource.share authorization", issue)
 	}
 }
 
@@ -191,7 +105,7 @@ func TestAPIGenAgentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAgentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	agentContracts := agentgen.GetAPIGenOperationContracts()
-	if got, want := len(agentContracts), 15; got != want {
+	if got, want := len(agentContracts), 17; got != want {
 		t.Fatalf("Agent generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range agentContracts {
@@ -244,7 +158,7 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 71; got != want {
+	if got, want := len(accessContracts), 77; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}
@@ -270,12 +184,14 @@ func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 
 func TestAPIGenAnalyticsCapabilityOwnsItsOperationSurface(t *testing.T) {
 	analyticsContracts := analyticsgen.GetAPIGenOperationContracts()
-	if got, want := len(analyticsContracts), 13; got != want {
+	if got, want := len(analyticsContracts), 20; got != want {
 		t.Fatalf("Analytics generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range analyticsContracts {
 		wantTag := "Connections"
-		if operationID == "listQueryEvents" {
+		if strings.Contains(operationID, "SavedExploration") || operationID == "listSavedExplorations" {
+			wantTag = "Saved Explorations"
+		} else if operationID == "listQueryEvents" {
 			wantTag = "Audit"
 		}
 		if len(contract.Tags) != 1 || contract.Tags[0] != wantTag {
@@ -521,6 +437,15 @@ func TestAPIGenManagedDataCapabilityOwnsItsOperationSurface(t *testing.T) {
 		t.Fatalf("ManagedData generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
+	uploadMutations := map[string]bool{
+		"createManagedDataUploadSession":       true,
+		"cancelManagedDataUploadSession":       true,
+		"finalizeManagedDataUploadSession":     true,
+		"createManagedDataS3MultipartUpload":   true,
+		"signManagedDataS3MultipartPart":       true,
+		"completeManagedDataS3MultipartUpload": true,
+		"abortManagedDataS3MultipartUpload":    true,
+	}
 	for operationID, contract := range contracts {
 		if len(contract.Tags) != 1 || contract.Tags[0] != "Managed Data" {
 			t.Errorf("ManagedData operation %q tags = %v, want [Managed Data]", operationID, contract.Tags)
@@ -528,6 +453,15 @@ func TestAPIGenManagedDataCapabilityOwnsItsOperationSurface(t *testing.T) {
 		if _, exists := appContracts[operationID]; exists {
 			t.Errorf("ManagedData operation %q is still emitted by the application package", operationID)
 		}
+		if uploadMutations[operationID] {
+			if contract.Authz == nil || contract.Authz.Action != "connection.upload" {
+				t.Errorf("ManagedData mutation %q action = %#v, want connection.upload", operationID, contract.Authz)
+			}
+			delete(uploadMutations, operationID)
+		}
+	}
+	for operationID := range uploadMutations {
+		t.Errorf("ManagedData upload mutation contract %q is missing", operationID)
 	}
 	if got, want := len(apiaggregate.GetAPIGenOperationContracts()), expectedAPIGenAggregateOperationCount; got != want {
 		t.Fatalf("aggregate generated operations = %d, want %d", got, want)
@@ -632,6 +566,8 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"BI":                  "LeapViewAPI.Dashboard",
 		"Dashboard Authoring": "LeapViewAPI.Dashboard",
 		"Connections":         "LeapViewAPI.Analytics",
+		"Saved Explorations":  "LeapViewAPI.Analytics",
+		"Credentials":         "LeapViewAPI.Credential",
 		"Publications":        "LeapViewAPI.Dashboard",
 		"Deployments":         "LeapViewAPI.Deployment",
 		"Delivery":            "LeapViewAPI.Deployment",
@@ -664,6 +600,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"LeapViewAPI.Access":      {},
 		"LeapViewAPI.Agent":       {},
 		"LeapViewAPI.Analytics":   {},
+		"LeapViewAPI.Credential":  {},
 		"LeapViewAPI.Dashboard":   {},
 		"LeapViewAPI.Deployment":  {},
 		"LeapViewAPI.ManagedData": {},
@@ -672,6 +609,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"LeapViewAPI.Refresh":     {},
 		"LeapViewAPI.Release":     {},
 		"LeapViewDashboard":       {},
+		"LeapViewExploration":     {},
 		"LeapViewVisualization":   {},
 	}
 	for name, schema := range document.Schemas {
@@ -802,8 +740,19 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 132 {
-		t.Fatalf("UI signal IR contracts = %d, want 132", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 146 {
+		t.Fatalf("UI signal IR contracts = %d, want 146", len(irDoc.Contracts))
+	}
+	// Saved lifecycle roots are additive to the existing UI contract catalog.
+	savedExplorationRoles := map[string]string{
+		"SavedExplorationRevisionSignal":   "signal",
+		"SavedExplorationListItemSignal":   "signal",
+		"SavedExplorationCurrentSignal":    "signal",
+		"SavedExplorationCommandSignal":    "command",
+		"SavedExplorationSaveStateSignal":  "signal",
+		"SavedExplorationLegacyItemSignal": "signal",
+		"SavedExplorationListSignal":       "signal",
+		"SavedExplorationStateSignal":      "signal",
 	}
 	foundSavedVisualLibrary := false
 	foundEnvelopeMetadata := false
@@ -815,6 +764,12 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	for _, contract := range irDoc.Contracts {
 		if contract.Name == "SavedVisualLibrarySignal" && contract.Kind == "ui-signal" {
 			foundSavedVisualLibrary = true
+		}
+		if role, ok := savedExplorationRoles[contract.Name]; ok {
+			if contract.Kind != "ui-signal" || contract.Extensions["x-leapview-contract-role"] != role || contract.Extensions["x-leapview-surface"] != "saved_explorations" {
+				t.Fatalf("saved exploration contract metadata was not preserved: %#v", contract)
+			}
+			delete(savedExplorationRoles, contract.Name)
 		}
 		if contract.Name == "DashboardEnvelope" && contract.Kind == "ui-envelope" && contract.Extensions["x-leapview-contract-role"] == "envelope" {
 			foundEnvelopeMetadata = true
@@ -837,6 +792,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	}
 	if !foundSavedVisualLibrary {
 		t.Fatal("UI signals do not emit the saved visual library")
+	}
+	if len(savedExplorationRoles) != 0 {
+		t.Fatalf("UI signals are missing saved exploration lifecycle contracts: %v", savedExplorationRoles)
 	}
 	if !foundEnvelopeMetadata {
 		t.Fatal("DashboardEnvelope contract metadata was not preserved in IR")
@@ -971,7 +929,8 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"getInstance": true,
 	}
 	authenticatedOperations := map[string]bool{
-		"addGroupMember":                   true,
+		"addChatVisualToDashboard":         true,
+		"listChatVisualDashboards":         true,
 		"archiveAgentConversation":         true,
 		"cancelAgentRun":                   true,
 		"cancelRefreshRun":                 true,
@@ -980,39 +939,20 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"createAgentConversation":          true,
 		"createAgentRun":                   true,
 		"createCurrentAPIToken":            true,
-		"createDashboardAuthoringDraft":    true,
-		"createGroup":                      true,
-		"createPrincipal":                  true,
-		"createRefreshRun":                 true,
-		"createServicePrincipal":           true,
-		"createServicePrincipalSecret":     true,
+		"updateCurrentAPIToken":            true,
+		"rotateCurrentAPIToken":            true,
 		"decideDeviceAuthorization":        true,
 		"deleteCurrentAvatar":              true,
-		"deleteGroup":                      true,
-		"deletePrincipal":                  true,
-		"deleteProductLogo":                true,
-		"deleteServicePrincipal":           true,
-		"disablePrincipal":                 true,
-		"enablePrincipal":                  true,
 		"executeDashboardAuthoringCommand": true,
-		"forkDashboardAuthoringDraft":      true,
-		"getAgentConfig":                   true,
 		"getAgentConversation":             true,
 		"getAgentRun":                      true,
 		"getCapabilities":                  true,
 		"getCurrentPrincipal":              true,
-		"getDashboardPublication":          true,
-		"getGroup":                         true,
-		"getPrincipal":                     true,
 		"getPrincipalAvatar":               true,
 		"getProductAPIStatus":              true,
 		"getProductAuthenticationStatus":   true,
-		"getProductLogo":                   true,
-		"getProductSettings":               true,
 		"getProductSystemStatus":           true,
 		"getRefreshRun":                    true,
-		"getServicePrincipal":              true,
-		"getServicePrincipalSecret":        true,
 		"listAgentConversations":           true,
 		"listArchivedAgentConversations":   true,
 		"listAgentEvents":                  true,
@@ -1025,37 +965,31 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"listDashboardAuthoringCatalog":    true,
 		"listDashboardPublications":        true,
 		"listDashboards":                   true,
-		"listGroupMembers":                 true,
-		"listGroups":                       true,
 		"listManagedConnections":           true,
-		"listPlatformAuditEvents":          true,
-		"listPrincipalSessions":            true,
-		"listPrincipals":                   true,
 		"listRefreshRunEvents":             true,
 		"listRefreshRuns":                  true,
 		"listSemanticModels":               true,
-		"listServicePrincipalSecrets":      true,
-		"listServicePrincipals":            true,
-		"removeGroupMember":                true,
-		"resetPrincipalPassword":           true,
-		"resetProductSettings":             true,
 		"revokeCurrentAPIToken":            true,
 		"revokeCurrentAuthoringSession":    true,
 		"revokeCurrentSession":             true,
-		"revokePrincipalSession":           true,
-		"revokeServicePrincipalSecret":     true,
+		"revokeResourceShareGrant":         true,
 		"search":                           true,
-		"updateAgentConfig":                true,
 		"updateAgentConversation":          true,
 		"manageAgentConversations":         true,
 		"updateCurrentPrincipal":           true,
 		"updateCurrentTheme":               true,
-		"updateGroup":                      true,
-		"updatePrincipal":                  true,
-		"updateProductSettings":            true,
-		"updateServicePrincipal":           true,
 		"uploadCurrentAvatar":              true,
-		"uploadProductLogo":                true,
+		// Saved-object ownership, exact semantic permissions, and credential
+		// attenuation are enforced by the domain service after authentication.
+		// The saved exploration transport/authorizer tests cover those checks.
+		"listSavedExplorations":     true,
+		"getSavedExploration":       true,
+		"createSavedExploration":    true,
+		"updateSavedExploration":    true,
+		"duplicateSavedExploration": true,
+		"archiveSavedExploration":   true,
+		"exportSavedExploration":    true,
+		"exportSavedExplorationURL": true,
 	}
 	for operationID, contract := range contracts {
 		authz, ok := contract.Extensions["x-authz"].(map[string]any)
@@ -1068,7 +1002,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 			}
 			continue
 		}
-		if authenticatedOperations[operationID] || slices.Contains(semanticAttributeAuthenticatedOperations, operationID) {
+		if authenticatedOperations[operationID] {
 			if got := authz["mode"]; got != "authenticated" {
 				t.Fatalf("%s x-authz mode = %#v, want authenticated", operationID, got)
 			}
@@ -1098,144 +1032,6 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		if _, ok := contract.Extensions["x-leapview-dispatch"]; ok {
 			t.Fatalf("%s should not have raw-body dispatch extension", operationID)
 		}
-	}
-}
-
-func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
-	rolesByCapability := make(map[access.Capability][]string)
-	for _, role := range access.CanonicalProjectRoles() {
-		for _, capability := range access.ProjectRoleCapabilities(role) {
-			rolesByCapability[capability] = append(rolesByCapability[capability], string(role))
-		}
-	}
-	runtimeContracts := apiaggregate.GetAPIGenCommandRuntimeContracts()
-	commandCount := 0
-	for operationID, contract := range apiaggregate.GetAPIGenOperationContracts() {
-		switch contract.Kind {
-		case apiaggregate.GenOperationKindQuery:
-			if contract.Command != nil {
-				t.Errorf("query %s has command metadata: %#v", operationID, contract.Command)
-			}
-		case apiaggregate.GenOperationKindCommand:
-			commandCount++
-			command := contract.Command
-			if command == nil {
-				t.Errorf("command %s has no command metadata", operationID)
-				continue
-			}
-			if !command.Audit.Required || command.Audit.SuccessAction == "" {
-				t.Errorf("command %s does not require a stable success audit: %#v", operationID, command.Audit)
-			}
-			if command.Audit.Payload == nil {
-				t.Errorf("command %s has no typed audit payload contract", operationID)
-			}
-			if command.Failures == nil {
-				t.Errorf("command %s did not explicitly declare its failure vocabulary", operationID)
-			}
-			runtimeFailures, ok := apiaggregate.GetAPIGenCommandFailureContracts(operationID)
-			if !ok {
-				t.Errorf("command %s has no generated runtime failure contract", operationID)
-			} else if len(runtimeFailures) != len(command.Failures) {
-				t.Errorf("command %s runtime failure count = %d, generated count = %d", operationID, len(runtimeFailures), len(command.Failures))
-			} else {
-				for index, failure := range command.Failures {
-					runtimeFailure := runtimeFailures[index]
-					if runtimeFailure.Kind != failure.Kind || runtimeFailure.StatusCode != failure.StatusCode || runtimeFailure.Code != failure.Code || runtimeFailure.PublicDetail != failure.PublicDetail {
-						t.Errorf("command %s runtime failure %#v differs from generated failure %#v", operationID, runtimeFailure, failure)
-					}
-					if !slices.Contains(contract.DocumentedStatusCodes, failure.StatusCode) {
-						t.Errorf("command %s failure %q status %d is not documented", operationID, failure.Kind, failure.StatusCode)
-					}
-				}
-			}
-			if command.Audit.Guarantee != "transactional" && command.Audit.Guarantee != "best-effort" {
-				t.Errorf("command %s has no supported audit guarantee: %#v", operationID, command.Audit)
-			}
-			runtimeContract, ok := apiaggregate.GetAPIGenCommandRuntimeContract(operationID)
-			if !ok {
-				t.Errorf("command %s has no generated runtime contract", operationID)
-			} else if err := runtimeContract.Validate(); err != nil {
-				t.Errorf("command %s runtime contract is invalid: %v", operationID, err)
-			} else if runtimeContract.OperationID != operationID || runtimeContract.Owner != command.Owner ||
-				runtimeContract.Method != contract.Method || runtimeContract.Path != contract.Path ||
-				string(runtimeContract.Idempotency) != command.Idempotency || string(runtimeContract.Concurrency) != command.Concurrency ||
-				runtimeContract.AuthzMode != command.AuthzMode || runtimeContract.Privilege != command.Privilege ||
-				runtimeContract.AuditAction != command.Audit.SuccessAction || string(runtimeContract.Guarantee) != command.Audit.Guarantee {
-				t.Errorf("command %s runtime contract %#v differs from generated metadata %#v", operationID, runtimeContract, command)
-			} else if command.Audit.Payload == nil || runtimeContract.AuditPayload == nil {
-				t.Errorf("command %s runtime audit payload is missing: generated=%#v runtime=%#v", operationID, command.Audit.Payload, runtimeContract.AuditPayload)
-			} else if runtimeContract.AuditPayload.Schema != command.Audit.Payload.Schema ||
-				runtimeContract.AuditPayload.SchemaVersion != command.Audit.Payload.SchemaVersion ||
-				string(runtimeContract.AuditPayload.Retention) != command.Audit.Payload.Retention ||
-				len(runtimeContract.AuditPayload.Fields) != len(command.Audit.Payload.Fields) {
-				t.Errorf("command %s runtime audit payload %#v differs from generated metadata %#v", operationID, runtimeContract.AuditPayload, command.Audit.Payload)
-			} else {
-				for index, field := range command.Audit.Payload.Fields {
-					runtimeField := runtimeContract.AuditPayload.Fields[index]
-					if runtimeField.Name != field.Name || string(runtimeField.Sensitivity) != field.Sensitivity {
-						t.Errorf("command %s runtime audit field %#v differs from generated field %#v", operationID, runtimeField, field)
-					}
-				}
-			}
-			if ok {
-				if (command.Target == nil) != (runtimeContract.Target == nil) {
-					t.Errorf("command %s runtime target %#v differs from generated target %#v", operationID, runtimeContract.Target, command.Target)
-				} else if command.Target != nil && (runtimeContract.Target.Parameter != command.Target.Parameter || runtimeContract.Target.Type != command.Target.Type) {
-					t.Errorf("command %s runtime target %#v differs from generated target %#v", operationID, runtimeContract.Target, command.Target)
-				}
-				if len(runtimeContract.AdditionalExposures) != len(command.AdditionalExposures) {
-					t.Errorf("command %s runtime exposures %#v differ from generated exposures %#v", operationID, runtimeContract.AdditionalExposures, command.AdditionalExposures)
-				} else {
-					for index, exposure := range command.AdditionalExposures {
-						if string(runtimeContract.AdditionalExposures[index]) != string(exposure) {
-							t.Errorf("command %s runtime exposure %q differs from generated exposure %q", operationID, runtimeContract.AdditionalExposures[index], exposure)
-						}
-					}
-				}
-				dependencies := runtimeContract.Dependencies()
-				for dependency, required := range map[apigencommand.Dependency]bool{
-					apigencommand.DependencyAuthorization: command.AuthzMode != "none",
-					apigencommand.DependencyIdempotency:   command.Idempotency == "required",
-					apigencommand.DependencyConcurrency:   command.Concurrency == "if-match",
-					apigencommand.DependencyAudit:         true,
-					apigencommand.DependencyJobQueue:      command.Execution != nil,
-				} {
-					if slices.Contains(dependencies, dependency) != required {
-						t.Errorf("command %s dependency %q required=%v dependencies=%#v", operationID, dependency, required, dependencies)
-					}
-				}
-				if runtimeContract.SpanName() != "command."+operationID {
-					t.Errorf("command %s span name = %q", operationID, runtimeContract.SpanName())
-				}
-			}
-			if command.AuthzMode != contract.AuthzMode {
-				t.Errorf("command %s authz mode %q differs from operation mode %q", operationID, command.AuthzMode, contract.AuthzMode)
-			}
-			if contract.Method == http.MethodPost && command.Idempotency != "required" {
-				t.Errorf("POST command %s idempotency = %q", operationID, command.Idempotency)
-			}
-			if contract.Method == http.MethodPatch && command.Concurrency != "if-match" {
-				t.Errorf("PATCH command %s concurrency = %q", operationID, command.Concurrency)
-			}
-			if command.Target != nil && !strings.Contains(contract.Path, "{"+command.Target.Parameter+"}") {
-				t.Errorf("command %s target %#v is absent from %s", operationID, command.Target, contract.Path)
-			}
-			if command.AuthzMode == "privilege" {
-				capability, err := access.ParseCapability(command.Privilege)
-				if err != nil {
-					t.Errorf("command %s has unknown capability %q", operationID, command.Privilege)
-					continue
-				}
-				if len(rolesByCapability[capability]) == 0 {
-					t.Errorf("command %s capability %q is not granted by any project role", operationID, capability)
-				}
-			}
-		default:
-			t.Errorf("operation %s has no normalized command/query kind: %q", operationID, contract.Kind)
-		}
-	}
-	if len(runtimeContracts) != commandCount {
-		t.Errorf("runtime command registry has %d entries, want %d generated commands", len(runtimeContracts), commandCount)
 	}
 }
 

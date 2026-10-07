@@ -1,0 +1,5 @@
+{$CADDY_DOMAIN} {
+  tls internal
+  encode zstd gzip
+  reverse_proxy leapview:8080
+}

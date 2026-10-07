@@ -50,6 +50,7 @@ spec:
   visuals:
     - id: revenue_kpi
       type: kpi
+      title: Revenue
       query:
         type: aggregate
         dimensions: []
@@ -61,6 +62,7 @@ spec:
         tone: success
     - id: aov_kpi
       type: kpi
+      title: Average order value
       query:
         type: aggregate
         dimensions: []
@@ -72,6 +74,7 @@ spec:
         tone: warning
     - id: total_orders
       type: kpi
+      title: Total orders
       query:
         type: aggregate
         dimensions: []

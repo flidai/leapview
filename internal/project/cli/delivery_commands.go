@@ -169,12 +169,12 @@ func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations)
 			}
 			if len(args) == 1 {
 				if command.Flags().Changed("source-root") {
-					return fmt.Errorf("choose either --source-root or positional source root, not both")
+					return cliapi.NewUsageError(fmt.Errorf("choose either --source-root or positional source root, not both"))
 				}
 				values.SourceRoot = args[0]
 			}
 			if values.Format != "text" && values.Format != "json" {
-				return fmt.Errorf("plan format must be text or json")
+				return cliapi.NewUsageError(fmt.Errorf("plan format must be text or json"))
 			}
 			result, err := operations.Create(ctx, values)
 			if err != nil {
@@ -198,30 +198,56 @@ func writeDeliveryPlanResult(out io.Writer, format string, result DeliveryPlanRe
 	if format == "json" {
 		return json.NewEncoder(out).Encode(result)
 	}
-	fmt.Fprintf(out, "plan %s target %s environment %s operation %s\n", result.PlanID, result.TargetID, result.Environment, result.Operation)
-	fmt.Fprintf(out, "project %s source %s status %s\n", result.ProjectID, result.SourceDigest, result.Status)
-	fmt.Fprintf(out, "plan-digest %s\nexecution-digest %s\nprovenance-digest %s\ngovernance-digest %s\nevidence-digest %s\n", result.PlanDigest, result.ExecutionDigest, result.ProvenanceDigest, result.GovernanceDigest, result.EvidenceDigest)
-	fmt.Fprintf(out, "evidence digest %s compatibility-breaking %t added %d removed %d modified %d affected %d reused %d qualification-steps %d\n", result.Evidence.Digest, result.Evidence.CompatibilityBreaking, result.Evidence.AddedCount, result.Evidence.RemovedCount, result.Evidence.DirectlyModifiedCount, result.Evidence.IndirectlyAffectedCount, result.Evidence.ReuseCount, result.Evidence.QualificationStepCount)
+	write := func(format string, values ...any) error {
+		_, err := fmt.Fprintf(out, format, values...)
+		return err
+	}
+	if err := write("plan %s target %s environment %s operation %s\n", result.PlanID, result.TargetID, result.Environment, result.Operation); err != nil {
+		return err
+	}
+	if err := write("project %s source %s status %s\n", result.ProjectID, result.SourceDigest, result.Status); err != nil {
+		return err
+	}
+	if err := write("plan-digest %s\nexecution-digest %s\nprovenance-digest %s\ngovernance-digest %s\nevidence-digest %s\n", result.PlanDigest, result.ExecutionDigest, result.ProvenanceDigest, result.GovernanceDigest, result.EvidenceDigest); err != nil {
+		return err
+	}
+	if err := write("evidence digest %s compatibility-breaking %t added %d removed %d modified %d affected %d reused %d qualification-steps %d\n", result.Evidence.Digest, result.Evidence.CompatibilityBreaking, result.Evidence.AddedCount, result.Evidence.RemovedCount, result.Evidence.DirectlyModifiedCount, result.Evidence.IndirectlyAffectedCount, result.Evidence.ReuseCount, result.Evidence.QualificationStepCount); err != nil {
+		return err
+	}
 	if result.Evidence.ImpactStatement != "" {
-		fmt.Fprintf(out, "impact %s\n", result.Evidence.ImpactStatement)
+		if err := write("impact %s\n", result.Evidence.ImpactStatement); err != nil {
+			return err
+		}
 	}
 	if result.Evidence.PhysicalWorkStatement != "" {
-		fmt.Fprintf(out, "physical-work %s\n", result.Evidence.PhysicalWorkStatement)
+		if err := write("physical-work %s\n", result.Evidence.PhysicalWorkStatement); err != nil {
+			return err
+		}
 	}
 	if result.Evidence.ReuseStatement != "" {
-		fmt.Fprintf(out, "reuse %s\n", result.Evidence.ReuseStatement)
+		if err := write("reuse %s\n", result.Evidence.ReuseStatement); err != nil {
+			return err
+		}
 	}
 	if result.Evidence.QualificationPolicy != "" {
-		fmt.Fprintf(out, "qualification-policy %s\n", result.Evidence.QualificationPolicy)
+		if err := write("qualification-policy %s\n", result.Evidence.QualificationPolicy); err != nil {
+			return err
+		}
 	}
 	if result.Evidence.StalePolicy.Mode != "" {
-		fmt.Fprintf(out, "stale-policy %s allow-retained-base %t\n", result.Evidence.StalePolicy.Mode, result.Evidence.StalePolicy.AllowRetainedBase)
+		if err := write("stale-policy %s allow-retained-base %t\n", result.Evidence.StalePolicy.Mode, result.Evidence.StalePolicy.AllowRetainedBase); err != nil {
+			return err
+		}
 	}
 	if result.Evidence.RollbackClass != "" {
-		fmt.Fprintf(out, "rollback-class %s\n", result.Evidence.RollbackClass)
+		if err := write("rollback-class %s\n", result.Evidence.RollbackClass); err != nil {
+			return err
+		}
 	}
 	if result.BaseGenerationID != "" {
-		fmt.Fprintf(out, "base-generation %s revision %d\n", result.BaseGenerationID, result.BaseTargetRevision)
+		if err := write("base-generation %s revision %d\n", result.BaseGenerationID, result.BaseTargetRevision); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -270,7 +296,7 @@ func DeliveryBuildCommand(ctx context.Context, operations DeliveryBuildOperation
 				return fmt.Errorf("delivery build operations are required")
 			}
 			if values.Format != "text" && values.Format != "json" {
-				return fmt.Errorf("build format must be text or json")
+				return cliapi.NewUsageError(fmt.Errorf("build format must be text or json"))
 			}
 			values.PlanID = strings.TrimSpace(args[0])
 			result, err := operations.Build(ctx, values)
@@ -280,10 +306,16 @@ func DeliveryBuildCommand(ctx context.Context, operations DeliveryBuildOperation
 			if values.Format == "json" {
 				return json.NewEncoder(command.OutOrStdout()).Encode(result)
 			}
-			fmt.Fprintf(command.OutOrStdout(), "build %s plan %s status %s revision %d\n", result.BuildID, result.PlanID, result.Status, result.Revision)
-			fmt.Fprintf(command.OutOrStdout(), "plan-digest %s source %s execution-digest %s\n", result.PlanDigest, result.SourceDigest, result.ExecutionDigest)
+			if _, err := fmt.Fprintf(command.OutOrStdout(), "build %s plan %s status %s revision %d\n", result.BuildID, result.PlanID, result.Status, result.Revision); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(command.OutOrStdout(), "plan-digest %s source %s execution-digest %s\n", result.PlanDigest, result.SourceDigest, result.ExecutionDigest); err != nil {
+				return err
+			}
 			if result.CandidateID != "" {
-				fmt.Fprintf(command.OutOrStdout(), "candidate %s seal %s\n", result.CandidateID, result.SealID)
+				if _, err := fmt.Fprintf(command.OutOrStdout(), "candidate %s seal %s\n", result.CandidateID, result.SealID); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
@@ -327,7 +359,7 @@ func DeliveryRollbackCommand(ctx context.Context, operations DeliveryRollbackOpe
 				return fmt.Errorf("delivery rollback operations are required")
 			}
 			if values.Format != "text" && values.Format != "json" {
-				return fmt.Errorf("rollback format must be text or json")
+				return cliapi.NewUsageError(fmt.Errorf("rollback format must be text or json"))
 			}
 			values.GenerationID = strings.TrimSpace(args[0])
 			result, err := operations.Rollback(ctx, values)
@@ -337,9 +369,11 @@ func DeliveryRollbackCommand(ctx context.Context, operations DeliveryRollbackOpe
 			if values.Format == "json" {
 				return json.NewEncoder(command.OutOrStdout()).Encode(result)
 			}
-			fmt.Fprintf(command.OutOrStdout(), "rollback publication %s generation %s status %s\n", result.PublicationID, result.GenerationID, result.Status)
-			fmt.Fprintf(command.OutOrStdout(), "plan %s digest %s revision %d -> %d\n", result.PlanID, result.PlanDigest, result.ExpectedTargetRevision, result.ResultTargetRevision)
-			return nil
+			if _, err := fmt.Fprintf(command.OutOrStdout(), "rollback publication %s generation %s status %s\n", result.PublicationID, result.GenerationID, result.Status); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(command.OutOrStdout(), "plan %s digest %s revision %d -> %d\n", result.PlanID, result.PlanDigest, result.ExpectedTargetRevision, result.ResultTargetRevision)
+			return err
 		},
 	}
 	command.Flags().StringVar(&values.Credentials.Token, "token", "", "ephemeral API token for one-shot automation")

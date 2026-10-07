@@ -99,7 +99,7 @@ func TestAccessRemainingPostgreSQL18ConcurrentSCIMGroupCreation(t *testing.T) {
 	}
 }
 
-func TestAccessRemainingPostgreSQL18AuditFiltersCursorAndBootstrapEvidence(t *testing.T) {
+func TestAccessRemainingPostgreSQL18AuditFiltersAndCursor(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
 	if err != nil {
@@ -109,19 +109,6 @@ func TestAccessRemainingPostgreSQL18AuditFiltersCursorAndBootstrapEvidence(t *te
 	user, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "audit-filter@example.com", DisplayName: "Audit Filter", Password: "audit password long enough"})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: user.Principal.ID, Role: access.PlatformRoleAdmin}); err != nil {
-		t.Fatal(err)
-	}
-	_, token, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID: user.Principal.ID, Name: "bootstrap-evidence", Capabilities: []access.Capability{access.CapabilityResourcePublish}, ExpiresAt: time.Now().Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evidence, err := repo.BootstrapAPITokenEvidence(ctx, user.Principal.ID, token.ID, time.Now())
-	if err != nil || evidence.ID != token.ID {
-		t.Fatalf("bootstrap token evidence = %#v, err=%v", evidence, err)
 	}
 	if err := repo.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: user.Principal.ID, Action: "scim.user.updated", ResourceKind: "principal", ResourceID: user.Principal.ID, Capability: access.CapabilityResourceEdit, Status: "success", MetadataJSON: `{"source":"scim"}`}); err != nil {
 		t.Fatal(err)
@@ -159,12 +146,6 @@ func TestAccessRemainingPostgreSQL18AuditFiltersCursorAndBootstrapEvidence(t *te
 	if len(next) != 2 {
 		t.Fatalf("second audit page = %d, want 2", len(next))
 	}
-	if _, err := repo.DisableProvisionedPrincipal(ctx, user.Principal.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.BootstrapAPITokenEvidence(ctx, user.Principal.ID, token.ID, time.Now()); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("disabled principal token evidence = %v, want no rows", err)
-	}
 	if strings.TrimSpace(page[0].MetadataJSON) == "" {
 		t.Fatal("audit metadata was empty")
 	}
@@ -200,11 +181,14 @@ func TestAccessRemainingPostgreSQL18SCIMDeactivationRevokesAllCredentials(t *tes
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := repo.VerifyLocalPassword(ctx, user.Principal.Email, "scim cascade password"); err != nil {
+		t.Fatalf("pre-deactivation local credential: %v", err)
+	}
 	browserToken, err := repo.CreateSession(ctx, user.Principal.ID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	apiSecret, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: user.Principal.ID, Name: "scim-cascade", ExpiresAt: time.Now().Add(time.Hour)})
+	apiSecret, _, err := repo.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: user.Principal.ID, Name: "scim-cascade", Permissions: []access.PermissionPair{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +196,15 @@ func TestAccessRemainingPostgreSQL18SCIMDeactivationRevokesAllCredentials(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := access.NewAuthoringScope("scim-cascade-target", projectID, []access.Capability{access.CapabilityResourceRead})
+	resource, err := access.NewResourceRef("scim-cascade-model", graph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := access.NewExactPermissionPair(access.ActionSemanticConsume, projectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := access.NewAuthoringScope("scim-cascade-target", projectID, []access.PermissionPair{permission})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,6 +219,38 @@ func TestAccessRemainingPostgreSQL18SCIMDeactivationRevokesAllCredentials(t *tes
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := repo.AuthoringCredentialByAccessTokenHash(ctx, strings.Repeat("a", 64), created); err != nil {
+		t.Fatalf("pre-deactivation human CLI credential: %v", err)
+	}
+	if _, err := db.runtime.Exec(ctx, `
+INSERT INTO access.oauth_session(kind, signature, request_id, request_json, access_signature)
+VALUES
+  ('access_token', 'scim-cascade-oauth-access', 'scim-cascade-oauth', jsonb_build_object('session', jsonb_build_object('subject', $1::text)), ''),
+  ('refresh_token', 'scim-cascade-oauth-refresh', 'scim-cascade-oauth', jsonb_build_object('session', jsonb_build_object('subject', $1::text)), 'scim-cascade-oauth-access')`, user.Principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	group, err := repo.UpsertSCIMGroup(ctx, access.SCIMGroupInput{
+		ExternalID: "scim-cascade-group", Name: "SCIM Cascade Group", MemberIDs: []string{user.Principal.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var activeOAuth int
+	if err := db.admin.QueryRow(ctx, `
+SELECT count(*) FROM access.oauth_session
+WHERE active = true AND request_json->'session'->>'subject' = $1`, user.Principal.ID).Scan(&activeOAuth); err != nil {
+		t.Fatal(err)
+	}
+	if activeOAuth != 2 {
+		t.Fatalf("pre-deactivation active OAuth sessions = %d, want 2", activeOAuth)
+	}
+	members, err := repo.ListSCIMGroupMembers(ctx, group.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 1 || members[0].PrincipalID != user.Principal.ID {
+		t.Fatalf("pre-deactivation group memberships = %#v", members)
 	}
 	if _, err := repo.UpsertSCIMUser(ctx, access.SCIMUserInput{ExternalID: "scim-cascade", UserName: "scim-cascade", Email: "scim-cascade@example.com", DisplayName: "SCIM Cascade", Active: false}); err != nil {
 		t.Fatal(err)
@@ -250,6 +274,119 @@ func TestAccessRemainingPostgreSQL18SCIMDeactivationRevokesAllCredentials(t *tes
 	}
 	if len(sessions) != 1 || sessions[0].RevokedAt.IsZero() {
 		t.Fatalf("SCIM deactivation authoring sessions = %#v", sessions)
+	}
+	if err := db.admin.QueryRow(ctx, `
+SELECT count(*) FROM access.oauth_session
+WHERE active = true AND request_json->'session'->>'subject' = $1`, user.Principal.ID).Scan(&activeOAuth); err != nil {
+		t.Fatal(err)
+	}
+	if activeOAuth != 0 {
+		t.Fatalf("SCIM deactivation retained %d active OAuth sessions", activeOAuth)
+	}
+	members, err = repo.ListSCIMGroupMembers(ctx, group.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("SCIM deactivation retained group memberships: %#v", members)
+	}
+	if _, err := repo.UpsertSCIMUser(ctx, access.SCIMUserInput{ExternalID: "scim-cascade", UserName: "scim-cascade", Email: "scim-cascade@example.com", DisplayName: "SCIM Cascade", Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PrincipalForToken(ctx, browserToken); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("SCIM reactivation revived browser session: %v", err)
+	}
+	if _, err := repo.PrincipalForAPIToken(ctx, apiSecret); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("SCIM reactivation revived API token: %v", err)
+	}
+	if _, _, err := repo.VerifyLocalPassword(ctx, user.Principal.Email, "scim cascade password"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("SCIM reactivation revived local credential: %v", err)
+	}
+	if _, err := repo.AuthoringCredentialByAccessTokenHash(ctx, strings.Repeat("a", 64), time.Now().UTC()); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("SCIM reactivation revived human CLI credential: %v", err)
+	}
+	if err := db.admin.QueryRow(ctx, `
+SELECT count(*) FROM access.oauth_session
+WHERE active = true AND request_json->'session'->>'subject' = $1`, user.Principal.ID).Scan(&activeOAuth); err != nil {
+		t.Fatal(err)
+	}
+	if activeOAuth != 0 {
+		t.Fatalf("SCIM reactivation revived %d OAuth sessions", activeOAuth)
+	}
+	members, err = repo.ListSCIMGroupMembers(ctx, group.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("SCIM reactivation revived group memberships: %#v", members)
+	}
+	newSession, err := repo.CreateSession(ctx, user.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create post-reactivation browser session: %v", err)
+	}
+	if _, err := repo.PrincipalForToken(ctx, newSession); err != nil {
+		t.Fatalf("post-reactivation browser session: %v", err)
+	}
+}
+
+func TestAccessRemainingPostgreSQL18SCIMRevocationFailureRollsBack(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	user, err := repo.UpsertSCIMUser(ctx, access.SCIMUserInput{ExternalID: "scim-rollback", UserName: "scim-rollback", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	browserToken, err := repo.CreateSession(ctx, user.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.runtime.Exec(ctx, `
+INSERT INTO access.oauth_session(kind, signature, request_id, request_json, access_signature)
+VALUES ('access_token', 'scim-rollback-oauth', 'scim-rollback',
+  jsonb_build_object('session', jsonb_build_object('subject', $1::text)), '')`, user.Principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	group, err := repo.UpsertSCIMGroup(ctx, access.SCIMGroupInput{
+		ExternalID: "scim-rollback-group", Name: "SCIM Rollback Group", MemberIDs: []string{user.Principal.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.admin.Exec(ctx, `
+CREATE FUNCTION access.reject_scim_group_revoke() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'test SCIM group revocation failure';
+END;
+$$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.admin.Exec(ctx, `
+CREATE TRIGGER reject_scim_group_revoke BEFORE UPDATE ON access.principal_group
+FOR EACH ROW WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL)
+EXECUTE FUNCTION access.reject_scim_group_revoke()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertSCIMUser(ctx, access.SCIMUserInput{ExternalID: "scim-rollback", UserName: "scim-rollback", Active: false}); err == nil {
+		t.Fatal("SCIM deactivation succeeded despite group revocation failure")
+	}
+	principal, err := repo.PrincipalByID(ctx, user.Principal.ID)
+	if err != nil || principal.AccessDisabled() {
+		t.Fatalf("failed deactivation changed principal: %#v, %v", principal, err)
+	}
+	if _, err := repo.PrincipalForToken(ctx, browserToken); err != nil {
+		t.Fatalf("failed deactivation revoked browser session: %v", err)
+	}
+	var active bool
+	if err := db.admin.QueryRow(ctx, `SELECT active FROM access.oauth_session WHERE signature = 'scim-rollback-oauth'`).Scan(&active); err != nil || !active {
+		t.Fatalf("failed deactivation revoked MCP OAuth session: active=%v, err=%v", active, err)
+	}
+	members, err := repo.ListSCIMGroupMembers(ctx, group.ID)
+	if err != nil || len(members) != 1 || members[0].PrincipalID != user.Principal.ID {
+		t.Fatalf("failed deactivation changed group membership: %#v, %v", members, err)
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -881,6 +881,9 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 	if tag.RowsAffected() == 0 {
 		return access.LocalCredential{}, pgx.ErrNoRows
 	}
+	if err = accessdb.New(tx).CloseInitialPasswordSetup(ctx, parsedID); err != nil {
+		return access.LocalCredential{}, err
+	}
 	if err = accessdb.New(tx).RevokePrincipalSessions(ctx, parsedID); err != nil {
 		return access.LocalCredential{}, err
 	}
@@ -896,6 +899,13 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 }
 
 func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Duration) (string, error) {
+	return r.CreateSessionWithClientLabel(ctx, pid, ttl, "")
+}
+
+// CreateSessionWithClientLabel creates a browser session with a bounded,
+// display-safe client label. Callers classify the request user agent before it
+// reaches the repository so raw user-agent strings are never persisted.
+func (r *Repository) CreateSessionWithClientLabel(ctx context.Context, pid string, ttl time.Duration, clientLabel string) (string, error) {
 	db, err := r.requireDB()
 	if err != nil {
 		return "", err
@@ -906,6 +916,10 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 	}
 	if ttl <= 0 || ttl > maxSessionTTL {
 		return "", fmt.Errorf("session ttl must be between 0 and %s", maxSessionTTL)
+	}
+	clientLabel = strings.TrimSpace(clientLabel)
+	if len(clientLabel) > 255 {
+		return "", fmt.Errorf("session client label must not exceed 255 bytes")
 	}
 	token, err := tokenSecret("lv_sess_")
 	if err != nil {
@@ -928,7 +942,7 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 		return "", err
 	}
 	tag, err := accessdb.New(db).CreateBrowserSession(ctx, accessdb.CreateBrowserSessionParams{ID: parsedID, PrincipalID: principalID,
-		TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl)})
+		TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl), ClientLabel: clientLabel})
 	if err != nil {
 		return "", err
 	}
@@ -942,16 +956,25 @@ func (r *Repository) PrincipalForToken(ctx context.Context, token string) (acces
 	if err != nil {
 		return access.Principal{}, err
 	}
-	row, err := accessdb.New(db).FindBrowserSession(ctx, r.secretFingerprint(token))
+	fingerprint := r.secretFingerprint(token)
+	row, err := accessdb.New(db).FindBrowserSession(ctx, fingerprint)
+	if err == nil {
+		if !hmac.Equal(row.TokenFingerprint, fingerprint) || !verifySecret(token, row.Verifier) {
+			return access.Principal{}, pgx.ErrNoRows
+		}
+		_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
+		return r.PrincipalByID(ctx, principalUUID(row.ID))
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return access.Principal{}, err
+	}
+	desktop, err := r.DesktopSessionForToken(ctx, token)
 	if err != nil {
 		return access.Principal{}, err
 	}
-	if !hmac.Equal(row.TokenFingerprint, r.secretFingerprint(token)) || !verifySecret(token, row.Verifier) {
-		return access.Principal{}, pgx.ErrNoRows
-	}
-	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
-	return r.PrincipalByID(ctx, principalUUID(row.ID))
+	return r.PrincipalByID(ctx, desktop.PrincipalID)
 }
+
 func (r *Repository) DeleteSession(ctx context.Context, token string) error {
 	db, err := r.requireDB()
 	if err != nil {
@@ -983,7 +1006,7 @@ func (r *Repository) ListSessions(ctx context.Context, pid string) ([]access.Ses
 	out := make([]access.Session, 0, len(rows))
 	for _, row := range rows {
 		s := access.Session{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Kind: access.SessionKind(row.Kind),
-			InstanceID: row.InstanceID, ProfileID: row.ProfileID, ClientID: row.ClientID,
+			InstanceID: row.InstanceID, ProfileID: row.ProfileID, ClientID: row.ClientID, ClientLabel: row.ClientLabel,
 			ExpiresAt: principalTimestamp(row.ExpiresAt), AbsoluteExpiresAt: principalTimestamp(row.AbsoluteExpiresAt),
 			CreatedAt: principalTimestamp(row.CreatedAt), LastSeenAt: principalTimestamp(row.LastSeenAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 		out = append(out, s)
@@ -1052,16 +1075,6 @@ func (r *Repository) RevokeSessionForPrincipal(ctx context.Context, pid, id stri
 	return err
 }
 
-func capabilitiesJSON(caps []access.Capability) ([]byte, error) {
-	if err := access.ValidateTokenCapabilities(caps, access.CanonicalCapabilities()); err != nil {
-		return nil, err
-	}
-	if caps == nil {
-		return nil, nil
-	}
-	return json.Marshal(caps)
-}
-
 func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (bool, error) {
 	valid, err := accessdb.New(db).CheckExpiry(ctx, pgTimestamp(expiresAt))
 	if err != nil || valid == nil {
@@ -1070,72 +1083,6 @@ func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (boo
 	return *valid, nil
 }
 
-func (r *Repository) CreateAPIToken(ctx context.Context, pid, name string) (string, error) {
-	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name})
-	return t, e
-}
-func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.APITokenInput) (string, access.APIToken, error) {
-	db, err := r.requireDB()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	pid, err := uuidID("principal id", in.PrincipalID)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	name, err := bounded(strings.TrimSpace(in.Name), "token name", 255)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	description := strings.TrimSpace(in.Description)
-	if len(description) > 1024 {
-		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
-	}
-	caps, err := capabilitiesJSON(in.Capabilities)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	if in.ExpiresAt.IsZero() {
-		in.ExpiresAt = time.Now().Add(defaultAPITokenTTL)
-	}
-	tok, err := tokenSecret("lv_pat_")
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	ver, err := secretVerifier(tok)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	id, err := newUUID()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tokenID, err := pgUUID(id)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	principalID, err := pgUUID(pid)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
-		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	if tag.RowsAffected() == 0 {
-		valid, checkErr := databaseExpiryValid(ctx, db, in.ExpiresAt)
-		if checkErr != nil {
-			return "", access.APIToken{}, checkErr
-		}
-		if !valid {
-			return "", access.APIToken{}, fmt.Errorf("api token expiry is invalid")
-		}
-		return "", access.APIToken{}, pgx.ErrNoRows
-	}
-	row, e := r.apiToken(ctx, id)
-	return tok, row, e
-}
 func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, error) {
 	db, _ := r.requireDB()
 	parsedID, err := pgUUID(id)
@@ -1146,14 +1093,28 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, Description: row.Description,
-		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
+	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, Description: row.Description, TokenFingerprint: hex.EncodeToString(row.TokenFingerprint),
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), ModifiedAt: principalTimestamp(row.ModifiedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
-	if len(row.Capabilities) > 0 && string(row.Capabilities) != "null" {
-		_ = json.Unmarshal(row.Capabilities, &t.Capabilities)
+	if row.PermissionProfile != nil {
+		if *row.PermissionProfile != access.PermissionCatalogProfile || row.Permissions == nil {
+			return access.APIToken{}, fmt.Errorf("API token permission profile is invalid")
+		}
+		permissions, err := access.DecodePermissionPairs(row.Permissions)
+		if err != nil {
+			return access.APIToken{}, fmt.Errorf("decode API token permissions: %w", err)
+		}
+		t.PermissionProfile = *row.PermissionProfile
+		t.Permissions = permissions
+		t.Capabilities = []access.Capability{}
+		return t, nil
 	}
+	// Capability-only rows are legacy records. Preserve their metadata for
+	// lifecycle/audit views, but never decode their scope into current authority.
+	t.Capabilities = []access.Capability{}
 	return t, nil
 }
+
 func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (access.APIToken, error) {
 	db, err := r.requireDB()
 	if err != nil {
@@ -1182,7 +1143,11 @@ func (r *Repository) CredentialForAPIToken(ctx context.Context, tok string) (acc
 	if e != nil || p.AccessDisabled() {
 		return access.APICredential{}, pgx.ErrNoRows
 	}
-	return access.APICredential{Principal: p, Token: t}, nil
+	origin, _, err := r.initialPublisherOrigin(ctx, t)
+	if err != nil {
+		return access.APICredential{}, err
+	}
+	return access.APICredential{Principal: p, Token: t, InitialPublisher: origin}, nil
 }
 func (r *Repository) ListAPITokens(ctx context.Context, pid string) ([]access.APIToken, error) {
 	pid, e := uuidID("principal id", pid)

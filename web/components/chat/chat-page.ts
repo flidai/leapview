@@ -9,6 +9,8 @@ import { LitElement, css, html } from 'lit'
 import { visualizationRegistry } from '../dashboard/visualization/registry'
 import { repeat } from 'lit/directives/repeat.js'
 import { ifDefined } from 'lit/directives/if-defined.js'
+import { chatPageStyles } from './chat-page.styles'
+import { chatPagePreviewStyles } from './chat-page-preview.styles'
 import { state } from 'lit/decorators.js'
 import { Check, CircleHelp, LayoutDashboard, Maximize2, Minimize2, Minus, Plus, Save, TrendingUp, X, type IconNode } from 'lucide'
 import type { ChatArtifactSignal, AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal, ChatTranscriptItemSignal } from '../../generated/signals'
@@ -16,7 +18,7 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
-import { uuidv7 } from '../shared/command'
+import { uuidv7 } from '../shared/command-identity'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
@@ -25,6 +27,11 @@ import './chat-composer'
 import './chat-list'
 import type { ChatDashboardMessage, DashboardChatComponent } from './dashboard-preview-contract'
 import { chatVisualsFromSignals } from './visual-signals'
+import './chat-visual-panel'
+import type { ChatVisualPanel } from './chat-visual-panel'
+import { saveChatVisual } from './saved-visuals'
+import './chat-dashboard-picker'
+import type { ChatDashboardResult } from './chat-dashboard-api'
 
 const emptyAgent: ChatSignal = {
   conversations: [],
@@ -390,6 +397,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   connectedCallback(): void {
     super.connectedCallback()
+    if (typeof window === 'undefined') return
+    this.compactMedia = window.matchMedia('(max-width: 768px)')
+    this.compactViewport = this.compactMedia.matches
+    this.compactMedia.addEventListener('change', this.onCompactViewportChange)
     this.syncPreviewLocation()
     window.addEventListener('popstate', this.syncPreviewLocation)
     window.addEventListener('message', this.handleBuilderMessage)
@@ -397,6 +408,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   disconnectedCallback(): void {
+    this.compactMedia?.removeEventListener('change', this.onCompactViewportChange)
+    this.compactMedia = undefined
     window.removeEventListener('popstate', this.syncPreviewLocation)
     window.removeEventListener('message', this.handleBuilderMessage)
     document.removeEventListener('datastar-signal-patch', this.invalidateVisualCache)
@@ -509,6 +522,16 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     })
   }
 
+  @state() private selectedVisualID = ''
+  @state() private selectedExplorerHref = ''
+  @state() private selectedVisualTitle = ''
+  @state() private visualSaving = false
+  @state() private visualSaved = false
+  @state() private visualSaveError = ''
+  @state() private dashboardPickerOpen = false
+  @state() private dashboardDestination?: ChatDashboardResult
+  @state() private compactViewport = false
+  private compactMedia?: MediaQueryList
   @state() private references: AgentReferenceSignal[] = []
 	@state() private editMessageId = ''
 	@state() private optimisticTurn: ChatTranscriptItemSignal | null = null
@@ -518,375 +541,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 	private trackedConversationID: string | null = null
 	private trackedAcceptedRunID: string | null = null
 
-  static styles = css`
-    :host {
-      display: block;
-      min-width: 0;
-      min-height: 100svh;
-      color: var(--lv-fg-default);
-      font-family: var(--fontStack-system);
-      background: var(--lv-bg-app);
-    }
+  static styles = [chatPageStyles, chatPagePreviewStyles]
 
-    .route {
-      display: block;
-      min-height: 100svh;
-      background: var(--lv-bg-app);
-    }
-
-    .main {
-      display: grid;
-      min-width: 0;
-      height: 100svh;
-      min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr);
-      overflow: hidden;
-      background: var(--lv-bg-app);
-    }
-
-    .chat-layout {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    .chat-layout { grid-template-areas: 'chat'; }
-    .body { grid-area: chat; }
-    .chat-layout.preview-open {
-      grid-template-columns: minmax(300px, .9fr) minmax(0, 1.1fr);
-      grid-template-areas: 'chat visuals';
-    }
-    .preview-open .thread-stack { --lv-chat-stack-width: 100%; }
-    .preview-panel {
-      grid-area: visuals; display: grid; grid-template-rows: auto minmax(0, 1fr);
-      min-width: 0; min-height: 0; overflow: hidden; border-left: var(--lv-border-default);
-      background: var(--lv-bg-panel);
-    }
-    .preview-scroll { overflow: auto; min-height: 0; padding: 16px; overscroll-behavior: contain; }
-    .preview-panel:has(.dashboard-destination) { grid-template-rows: auto auto minmax(0, 1fr); }
-    .preview-panel[hidden], .builder-stage[hidden], .builder-frame[hidden] { display: none; }
-    .builder-stage { grid-area: builder; min-width: 0; min-height: 0; position: relative; }
-    .builder-frame { display: block; width: 100%; height: 100%; border: 0; }
-    .preview-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex-shrink: 0; }
-    .save-error { padding: 12px; color: var(--lv-fg-danger); font: var(--lv-type-body-compact); }
-    .preview-action:disabled { opacity: .6; cursor: default; }
-    .chat-layout.builder-open { grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 320px); grid-template-areas: 'builder chat'; }
-    .chat-layout.builder-open .body {
-      --lv-type-body: 400 14px/1.5 var(--fontStack-system);
-      --lv-chat-stack-gap: 24px;
-    }
-    .builder-open .body { border-left: var(--lv-border-default); }
-    .preview-heading { flex-wrap: wrap; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: var(--lv-border-default); }
-    .preview-heading h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font: var(--lv-type-section-title); }
-    .preview-empty { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .preview-grid { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-    .preview-card[hidden] { display: none; }
-    .preview-card { min-width: 0; border-radius: var(--lv-radius-default); outline: none; scroll-margin: 6px; }
-    .preview-card:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 3px; }
-    .preview-card lv-visual-artifact { height: clamp(300px, 44svh, 480px); }
-    .preview-card.kpi lv-visual-artifact { height: 180px; }
-    .preview-card.wide lv-visual-artifact {
-      height: auto;
-      --lv-visual-height: auto;
-      --lv-table-max-body-height: min(52svh, 560px);
-    }
-    .preview-action {
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 7px 12px; min-height: 34px; border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default); background: var(--lv-bg-panel);
-      color: var(--lv-fg-default); font: var(--lv-type-body-compact); cursor: pointer; text-decoration: none;
-    }
-    .preview-action:hover { background: var(--lv-bg-control-hover); }
-    .preview-action:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
-    .preview-action svg { width: 16px; height: 16px; }
-    .close-visuals { padding: 7px; }
-    .titlebar-start { display: flex; min-width: 0; align-items: center; gap: 16px; }
-    .titlebar-start h1 { min-width: 0; }
-
-    @media (max-width: 900px) {
-      .chat-layout.preview-open { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 42%) minmax(0, 1fr); grid-template-areas: 'chat' 'visuals'; }
-      .chat-layout.builder-open { grid-template-rows: minmax(0, 1fr) minmax(220px, 38%); grid-template-areas: 'builder' 'chat'; }
-      .preview-panel, .builder-open .body { border-left: 0; border-top: var(--lv-border-default); }
-      .preview-scroll { padding: 12px; }
-      .titlebar-start { flex-wrap: wrap; gap: 8px; }
-      .preview-heading { padding: 10px 12px; }
-    }
-
-    .main.list-main {
-      height: auto;
-      min-height: 100svh;
-      grid-template-rows: minmax(0, 1fr);
-      overflow: visible;
-    }
-
-    .main.new-main {
-      grid-template-rows: minmax(0, 1fr);
-    }
-
-    .main.builder-main { grid-template-rows: minmax(0, 1fr); }
-
-    .loading-state {
-      display: grid;
-      place-items: center;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-    }
-
-    .conversation-titlebar {
-      display: grid;
-      min-width: 0;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 16px;
-      padding: 14px var(--base-size-16) var(--base-size-8);
-    }
-
-    h1 {
-      margin: 0;
-    }
-
-    h1 {
-      overflow: hidden;
-      color: var(--lv-fg-default);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-section-title);
-    }
-
-    .body {
-      display: grid;
-      grid-template-rows: minmax(0, 1fr);
-      min-width: 0;
-      min-height: 0;
-      overflow: auto;
-      background: var(--lv-bg-app);
-    }
-
-    .body.with-chat-header { grid-template-rows: auto minmax(0, 1fr); }
-    .chat-pane-header {
-      display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
-      gap: 6px; min-height: 50px; padding: 0 12px; border-bottom: var(--lv-border-default);
-    }
-    .chat-pane-header[hidden] { display: none; }
-    .chat-pane-heading { display: flex; min-width: 0; align-items: center; gap: 6px; white-space: nowrap; font: var(--lv-type-body-compact); }
-    .chat-page-name { overflow: hidden; text-overflow: ellipsis; }
-    .chat-pane-heading svg { flex-shrink: 0; }
-    .dashboard-destination { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: var(--lv-border-default); font: var(--lv-type-body-compact); }
-    .dashboard-destination select { min-width: 0; max-width: 240px; padding: 5px 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); }
-    .chat-pane-heading svg { width: 16px; height: 16px; }
-    .titlebar-actions { display: flex; align-items: center; gap: 8px; }
-    .chat-size-toggle {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 32px; height: 32px; flex-shrink: 0; padding: 6px;
-      border: 0; border-radius: var(--lv-radius-default); background: transparent;
-      color: var(--lv-fg-muted); cursor: pointer;
-    }
-    .chat-size-toggle svg { width: 16px; height: 16px; }
-    .chat-size-toggle:hover { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
-    .chat-size-toggle:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
-    .chat-size-toggle:disabled { opacity: .6; cursor: default; }
-
-    .list-main .chat-layout { overflow: visible; }
-
-    .list-main .body {
-      min-height: auto;
-      overflow: visible;
-    }
-
-    .thread-stack {
-      display: grid;
-      min-width: 0;
-      min-height: 0;
-      grid-template-rows: minmax(0, 1fr) auto;
-      overflow: hidden;
-      background: var(--lv-bg-app);
-    }
-
-    .new-chat-stage {
-      box-sizing: border-box;
-      display: flex;
-      min-width: 0;
-      min-height: 100%;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: var(--lv-space-md);
-      overflow-y: auto;
-      padding: calc(var(--lv-space-lg) * 3) 0 var(--lv-space-lg);
-      background: var(--lv-bg-app);
-    }
-
-    .new-chat-stage > * {
-      animation: new-chat-enter var(--lv-transition-medium) both;
-    }
-
-    .new-chat-stage lv-chat-composer {
-      width: 100%;
-      animation-delay: 70ms;
-    }
-
-    .new-chat-intro {
-      box-sizing: border-box;
-      width: min(100%, var(--lv-chat-stack-width));
-      padding-inline: var(--lv-space-lg);
-    }
-
-    .new-chat-heading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: var(--lv-space-sm);
-      text-align: center;
-    }
-
-    .agent-mark {
-      display: grid;
-      width: var(--base-size-24);
-      height: var(--base-size-24);
-      flex: 0 0 var(--base-size-24);
-      place-items: center;
-      color: var(--lv-accent);
-    }
-
-    .agent-mark svg {
-      width: var(--base-size-20);
-      height: var(--base-size-20);
-    }
-
-    .new-chat-title {
-      max-width: 100%;
-      font: var(--lv-type-page-title);
-    }
-
-    .prompt-starters {
-      box-sizing: border-box;
-      display: flex;
-      width: min(100%, var(--lv-chat-stack-width));
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: var(--lv-space-sm);
-      padding-inline: var(--lv-space-lg);
-    }
-
-    .prompt-starter {
-      display: inline-flex;
-      min-height: var(--lv-control-medium);
-      align-items: center;
-      gap: var(--lv-space-xs);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-full);
-      background: var(--lv-bg-panel);
-      color: var(--lv-fg-default);
-      padding: 0 var(--lv-space-md);
-      cursor: pointer;
-      transition:
-        background var(--lv-transition-fast),
-        border-color var(--lv-transition-fast);
-    }
-
-    .prompt-starter:hover:not(:disabled) {
-      border-color: var(--lv-line-accent-muted);
-      background: var(--lv-bg-control-hover);
-    }
-
-    .prompt-starter:focus-visible {
-      outline: var(--lv-border-width-focus) solid var(--lv-line-accent);
-      outline-offset: var(--lv-space-2xs);
-    }
-
-    .prompt-starter:disabled {
-      color: var(--lv-fg-muted);
-      cursor: not-allowed;
-      opacity: 0.65;
-    }
-
-    .prompt-starter-icon {
-      display: grid;
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-      place-items: center;
-      color: var(--lv-accent);
-    }
-
-    .prompt-starter-icon svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-    }
-
-    .prompt-starter-label {
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .new-chat-context-hint {
-      margin: 0;
-      padding-inline: var(--lv-space-lg);
-      color: var(--lv-fg-muted);
-      text-align: center;
-      font: var(--lv-type-caption);
-    }
-
-    .new-chat-context-hint kbd {
-      display: inline-grid;
-      min-width: 20px;
-      height: 20px;
-      place-items: center;
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-tight);
-      background: var(--lv-bg-control);
-      color: var(--lv-fg-default);
-      font: inherit;
-    }
-
-    @keyframes new-chat-enter {
-      from {
-        opacity: 0;
-        transform: translateY(var(--lv-space-sm));
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .new-chat-stage > * {
-        animation: none;
-      }
-    }
-
-    lv-chat-thread {
-      display: block;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    lv-chat-composer {
-      display: block;
-      background: var(--lv-bg-app);
-    }
-
-    @media (max-width: 768px) {
-      .route {
-        grid-template-columns: 1fr;
-      }
-
-      .main.new-main {
-        height: 100svh;
-      }
-
-      .new-chat-stage {
-        justify-content: flex-start;
-        padding-top: calc(var(--lv-space-lg) * 2);
-      }
-
-      .prompt-starters { gap: var(--lv-space-xs); }
-    }
-  `
+  private onCompactViewportChange = (event: MediaQueryListEvent): void => {
+    this.compactViewport = event.matches
+  }
 
   updated(changed: Map<PropertyKey, unknown>): void {
     if (changed.has('builderOpen')) {
@@ -913,6 +572,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     })
 		this.syncEditState()
 		this.syncOptimisticTurn()
+    if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
     this.navigateFromDraft()
     const running = Boolean(this.agent.status.running)
     const runId = this.agent.status.runId || latestAcceptedRunId(this.agent.transcript ?? [])
@@ -951,6 +611,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 			this.references = []
 			this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft('')
 		}
+		if (this.trackedConversationID !== null && this.trackedConversationID !== conversationID) {
+      this.closeVisual(false)
+      this.dashboardDestination = undefined
+    }
 		if (
 			(this.trackedConversationID !== null && this.trackedConversationID !== conversationID)
 			|| (this.trackedAcceptedRunID !== null && acceptedRunID && this.trackedAcceptedRunID !== acceptedRunID)
@@ -1034,10 +698,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const isList = view === 'list'
     const isNew = view === 'new'
     const title = conversationTitle(agent)
+    const selectedVisual = this.selectedVisualID ? this.visuals[this.selectedVisualID] : undefined
     return html`
-      <div class="route" @lv-add-agent-visual=${this.addAgentVisual} @lv-saved-visuals-changed=${this.refreshSavedVisuals} @lv-chat-submit=${this.showOptimisticTurn} @lv-chat-dashboard-preview=${this.openDashboardPreview}>
+      <div class=${selectedVisual && !isList && !isNew ? 'route visual-open' : 'route'} @lv-add-agent-visual=${this.addAgentVisual} @lv-saved-visuals-changed=${this.refreshSavedVisuals} @lv-chat-submit=${this.showOptimisticTurn} @lv-chat-dashboard-preview=${this.openDashboardPreview}>
         <iframe class="mutation-frame" name=${this.mutationFrameName} title="Dashboard update" hidden @load=${this.handleMutationLoad}></iframe>
-        <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : '', this.builderOpen ? 'builder-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
+        <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : '', this.builderOpen ? 'builder-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats" ?inert=${Boolean(selectedVisual && this.compactViewport)}>
           ${isList || isNew || this.builderOpen ? null : this.renderConversationTitlebar(title)}
           <div class=${`chat-layout${this.dashboardPreview && !isList && !isNew ? ` preview-open${this.builderOpen ? ' builder-open' : ''}` : ''}`}>
             ${this.renderDashboardPreview(title, !isList && !isNew && this.dashboardPreview && !this.builderOpen)}
@@ -1057,7 +722,35 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           </div>
           <lv-visual-modal></lv-visual-modal>
         </section>
+        ${selectedVisual && !isList && !isNew ? html`
+          <lv-chat-visual-panel
+            artifact-id=${this.selectedVisualID}
+            title=${this.selectedVisualTitle || selectedVisual.spec.title || 'Visual result'}
+            .payload=${selectedVisual}
+            .explorerHref=${this.selectedExplorerHref}
+            .saving=${this.visualSaving}
+            .saved=${this.visualSaved}
+            .saveError=${this.visualSaveError}
+            .modal=${this.compactViewport}
+            .dashboardAvailable=${Boolean(agent.activeConversationId) && (agent.transcript ?? []).some(item => item.kind === 'tool' && item.name === 'query_visual' && item.status === 'complete' && item.artifact?.id === this.selectedVisualID)}
+            @lv-chat-visual-add-dashboard=${() => { this.dashboardPickerOpen = true }}
+            @lv-chat-visual-close=${() => this.closeVisual(true)}
+            @lv-chat-visual-save=${this.saveVisual}
+          ></lv-chat-visual-panel>
+        ` : null}
       </div>
+      ${this.dashboardPickerOpen && selectedVisual ? html`
+        <lv-chat-dashboard-picker
+          .conversationId=${agent.activeConversationId}
+          .artifactId=${this.selectedVisualID}
+          .visualTitle=${this.selectedVisualTitle || selectedVisual.spec.title || 'Visual result'}
+          .preferredDashboardId=${this.dashboardDestination?.dashboardId ?? ''}
+          .preferredPageId=${this.dashboardDestination?.pageId ?? ''}
+          @lv-chat-dashboard-added=${this.dashboardVisualAdded}
+          @lv-chat-dashboard-close=${this.closeDashboardPicker}
+          @lv-chat-dashboard-add-another=${this.addAnotherVisual}
+        ></lv-chat-dashboard-picker>
+      ` : null}
     `
   }
 
@@ -1166,15 +859,92 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           .pageTitle=${this.dashboardPageTitle}
           .visuals=${this.visuals ?? {}}
           .status=${status}
-          .dashboardPreviewAvailable=${true}
+          .dashboardPreviewAvailable=${this.dashboardPreview || Boolean(this.savedBuilderHref)}
           .selectedVisualId=${this.dashboardPreview ? this.selectedPreviewArtifact?.id ?? '' : ''}
           surface=${this.builderOpen ? 'drawer' : 'page'}
           conversation-id=${agent.activeConversationId ?? ''}
           @lv-chat-reuse=${this.reuseDraft}
+          @lv-chat-visual-open=${this.openVisual}
         >${status.error ?? ''}</lv-chat-thread>
-        ${status.enabled ? this.renderComposer(composer, status) : null}
+        <div>
+          ${this.dashboardDestination ? html`<div class="dashboard-destination"><span>Add visuals to <a href=${this.dashboardDestination.href}>${this.dashboardDestination.title}</a></span><button type="button" @click=${() => { this.dashboardDestination = undefined }}>Done</button></div>` : null}
+          ${status.enabled ? this.renderComposer(composer, status) : null}
+        </div>
       </div>
     `
+  }
+
+  private openVisual(event: CustomEvent<{ artifactId: string; explorerHref: string; title: string }>): void {
+    const artifactId = event.detail?.artifactId ?? ''
+    if (!artifactId || !this.visuals[artifactId]) return
+    this.dashboardPickerOpen = false
+    this.selectedVisualID = artifactId
+    this.selectedExplorerHref = event.detail.explorerHref ?? ''
+    this.selectedVisualTitle = event.detail.title ?? ''
+    this.visualSaved = false
+    this.visualSaveError = ''
+    void this.updateComplete.then(() => this.shadowRoot?.querySelector<ChatVisualPanel>('lv-chat-visual-panel')?.focusClose())
+  }
+
+  private closeVisual(restoreFocus: boolean): void {
+    const artifactId = this.selectedVisualID
+    this.dashboardPickerOpen = false
+    if (!artifactId) return
+    this.selectedVisualID = ''
+    this.selectedExplorerHref = ''
+    this.selectedVisualTitle = ''
+    this.visualSaveError = ''
+    if (restoreFocus) void this.updateComplete.then(() => {
+      const cards = this.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll<HTMLButtonElement>('.artifact-card')
+      Array.from(cards ?? []).find(card => card.dataset.visualId === artifactId)?.focus()
+    })
+  }
+
+  private closeDashboardPicker = (): void => {
+    this.dashboardPickerOpen = false
+    if (this.dashboardCopies[this.selectedVisualID]) {
+      const artifactId = this.selectedVisualID
+      this.closeVisual(false)
+      void this.openDashboardPreview(new CustomEvent('lv-chat-dashboard-preview', { detail: { artifactId } }))
+      return
+    }
+    void this.updateComplete.then(() => this.shadowRoot?.querySelector<ChatVisualPanel>('lv-chat-visual-panel')?.focusAddToDashboard())
+  }
+
+  private dashboardVisualAdded = (event: CustomEvent<ChatDashboardResult>): void => {
+    const { componentId, pageId, href } = event.detail
+    const builderHref = this.validBuilderHref(href)
+    if (!componentId || !builderHref || !this.selectedVisualID) return
+    this.savedBuilderHref = builderHref
+    this.restoredBuilderHref = builderHref
+    this.dashboardPageId = pageId
+    const component: DashboardChatComponent = { id: componentId, pageId }
+    this.dashboardComponents = [...this.dashboardComponents.filter(item => item.id !== componentId), component]
+    this.rememberDashboardCopy(this.selectedVisualID, component)
+    this.reconcileDashboardCopies()
+    this.persistDashboardLocation()
+  }
+
+  private addAnotherVisual = (event: CustomEvent<ChatDashboardResult>): void => {
+    this.dashboardDestination = event.detail
+    this.closeVisual(false)
+    void this.updateComplete.then(() => this.shadowRoot?.querySelector<HTMLElement & { focusInput(): void }>('lv-chat-composer')?.focusInput())
+  }
+
+  private saveVisual = async (event: CustomEvent<{ title: string; explorerHref: string; artifactId: string }>): Promise<void> => {
+    if (this.visualSaving || !this.selectedVisualID || event.detail?.artifactId !== this.selectedVisualID) return
+    const { title, explorerHref } = event.detail
+    if (!explorerHref) return
+    this.visualSaving = true
+    this.visualSaveError = ''
+    try {
+      await saveChatVisual(title, explorerHref)
+      if (event.detail.artifactId === this.selectedVisualID) this.visualSaved = true
+    } catch {
+      if (event.detail.artifactId === this.selectedVisualID) this.visualSaveError = 'Could not save this visual. Please try again.'
+    } finally {
+      this.visualSaving = false
+    }
   }
 
   private renderComposer(composer: ChatSignal['composer'], status: ChatSignal['status'], hideContextAction = false) {

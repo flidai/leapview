@@ -1,25 +1,11 @@
+import { uuidv7 } from './command-identity'
+
 type CommandHeaders = Record<string, string>
 type CommandOperation = string | readonly string[]
 
 function csrfToken(): string {
   if (typeof document === 'undefined') return ''
   return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content.trim() ?? ''
-}
-
-// Generate a canonical lower-case UUIDv7 for durable command identity. The
-// browser's randomUUID() is UUIDv4, which is intentionally not accepted by
-// the publication/audit authorities for idempotency keys.
-export function uuidv7(): string {
-  const cryptoAPI = globalThis.crypto
-  if (!cryptoAPI?.getRandomValues) throw new Error('secure randomness unavailable')
-  const bytes = new Uint8Array(16)
-  cryptoAPI.getRandomValues(bytes)
-  const timestamp = BigInt(Date.now())
-  for (let i = 5; i >= 0; i--) bytes[i] = Number((timestamp >> BigInt((5 - i) * 8)) & 0xffn)
-  bytes[6] = (bytes[6] & 0x0f) | 0x70
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 export function headers(operation?: CommandOperation, ifMatch?: string): CommandHeaders {
@@ -40,14 +26,37 @@ export function headers(operation?: CommandOperation, ifMatch?: string): Command
   }
 }
 
+// Non-replayable actions carry request identity and an operation claim without
+// requesting durable replay. Authorization remains a server-side check.
+export function nonReplayableHeaders(operation: string): CommandHeaders {
+  if (!operation.trim()) throw new Error('operation identity is required')
+  const token = csrfToken()
+  return {
+    ...(token ? { 'X-CSRF-Token': token } : {}),
+    'X-Request-ID': uuidv7(),
+    'X-LeapView-Operation-ID': operation,
+  }
+}
+
+/** Send a browser-only JSON command through the shared CSRF and request identity transport. */
+export function postUIJSON(url: string, operation: string, body: unknown, idempotencyKey?: string): Promise<Response> {
+  return fetch(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { ...headers(operation), ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 declare global {
   interface Window {
     LeapViewCommand: {
       headers(operation?: CommandOperation, ifMatch?: string): CommandHeaders
+      nonReplayableHeaders(operation: string): CommandHeaders
     }
   }
 }
 
-if (typeof window !== 'undefined') window.LeapViewCommand = { headers }
+if (typeof window !== 'undefined') window.LeapViewCommand = { headers, nonReplayableHeaders }
 
 export {}

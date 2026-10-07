@@ -1,5 +1,5 @@
 import { css, html } from 'lit'
-import { Archive, ChevronRight, Pin, PinOff, Trash2 } from 'lucide'
+import { Archive, ChevronRight, MessagesSquare, Pin, PinOff, Trash2 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 
@@ -19,11 +19,17 @@ export type SidebarHistoryItem = {
 }
 
 export const sidebarChatHistoryStyles = css`
-  .history {
+  .history-sections {
     display: grid;
     gap: var(--base-size-4);
     min-height: 0;
     padding-top: var(--base-size-8);
+  }
+
+  .history {
+    display: grid;
+    gap: var(--base-size-4);
+    min-height: 0;
   }
 
   .history-label {
@@ -70,7 +76,8 @@ export const sidebarChatHistoryStyles = css`
 
   .history-row { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--lv-radius-default); }
   .history-row .history-item { flex: 1; min-width: 0; }
-  .chat-pin { display: inline-flex; flex-shrink: 0; color: var(--lv-fg-muted); }
+  .pinned-items .history-item.pinned { grid-template-columns: calc(var(--control-xsmall-size) + var(--base-size-2)) minmax(0, 1fr) auto; }
+  .pinned-chat-icon { display: inline-flex; justify-content: center; flex-shrink: 0; color: var(--lv-fg-muted); }
   .history-actions { position: absolute; right: var(--base-size-4); z-index: 3; display: flex; align-items: center; gap: var(--base-size-2); opacity: 0; }
   .history-action { display: inline-grid; width: var(--control-small-size); height: var(--control-small-size); place-items: center; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); color: var(--lv-fg-muted); cursor: pointer; }
   .history-row:hover .history-actions,
@@ -116,21 +123,50 @@ export function renderSidebarChatHistory(
   if (!history) return null
   const pending = new Set(pendingRemovalIds)
   const items = (Array.isArray(history.items) ? history.items : []).filter(item => !pending.has(item.id))
+  const pinnedItems = items.filter(item => item.pinned)
+  const regularItems = items.filter(item => !item.pinned)
   return html`
-    <details class="history" open>
+    <div class="history-sections">
+      ${renderSidebarChatHistorySection(
+        'chats-history',
+        history.label || 'Chats',
+        regularItems,
+        regularItems.length > 0 ? '' : pinnedItems.length > 0 ? 'No other chats.' : history.emptyText || 'No chats yet.',
+        followInternalLink,
+        chatAction,
+      )}
+    </div>
+  `
+}
+
+export function sidebarPinnedChats(history: SidebarHistory | undefined, pendingRemovalIds: readonly string[]): SidebarHistoryItem[] {
+  const pending = new Set(pendingRemovalIds)
+  return (Array.isArray(history?.items) ? history.items : []).filter(item => item.pinned && !pending.has(item.id))
+}
+
+function renderSidebarChatHistorySection(
+  className: string,
+  label: string,
+  items: SidebarHistoryItem[],
+  emptyText: string,
+  followInternalLink: (event: MouseEvent, href: string) => void,
+  chatAction: (action: string, item: SidebarHistoryItem) => void,
+) {
+  return html`
+    <details class=${`history ${className}`} open>
       <summary class="history-label">
-        <span class="history-label-text">${history.label || 'Chats'}</span>
+        <span class="history-label-text" role="heading" aria-level="2">${label}</span>
         <span class="history-chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
       </summary>
       <div class="history-list">
-        ${items.length === 0 ? html`<span class="history-empty">${history.emptyText || 'No chats yet.'}</span>` : null}
+        ${items.length === 0 && emptyText ? html`<span class="history-empty">${emptyText}</span>` : null}
         ${items.map((item) => renderSidebarChatHistoryItem(item, followInternalLink, chatAction))}
       </div>
     </details>
   `
 }
 
-function renderSidebarChatHistoryItem(
+export function renderSidebarChatHistoryItem(
   item: SidebarHistoryItem,
   followInternalLink: (event: MouseEvent, href: string) => void,
   chatAction: (action: string, item: SidebarHistoryItem) => void,
@@ -139,7 +175,7 @@ function renderSidebarChatHistoryItem(
   return html`
     <div class="history-row">
       <a class=${`nav-item history-item${item.pinned ? ' pinned' : ''}`} href=${item.href} aria-current=${item.active ? 'page' : 'false'} aria-label=${title} title=${title} @click=${(event: MouseEvent) => followInternalLink(event, item.href)}>
-        ${item.pinned ? html`<span class="chat-pin" title="Pinned chat" aria-label="Pinned chat">${lucideIcon(Pin, { size: 13 })}</span>` : null}
+        ${item.pinned ? html`<span class="pinned-chat-icon" title="Chat" aria-label="Chat">${lucideIcon(MessagesSquare, { size: 13 })}</span>` : null}
         <span class="history-title">${title}</span>
         ${item.pending ? html`<lv-loading-spinner size="small" aria-label="Title loading"></lv-loading-spinner>` : null}
       </a>

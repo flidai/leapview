@@ -1,4 +1,4 @@
-name: Security gates
+name: Security / Policy and scans
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.event.pull_request.stack.id || github.ref }}
+  group: security-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,6 +36,12 @@ jobs:
 
       - name: Verify inventory, exceptions, updaters, and workflow contracts
         run: task security:policy
+
+      - name: Execute platform integer boundaries on 386
+        env:
+          GOARCH: "386"
+          CGO_ENABLED: "0"
+        run: go test ./pkg/duckdbsql/decode_integer.go ./pkg/duckdbsql/decode_integer_test.go
 
   dependency-validation:
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
@@ -88,6 +94,12 @@ jobs:
     name: Selected SAST (${{ matrix.language }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      GOFLAGS: -tags=duckdb_arrow
+      NPM_CONFIG_AUDIT: "false"
+      CODEQL_OVERLAY_DATABASE_MODE: none
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: "false"
+      CODEQL_ACTION_EXPORT_DIAGNOSTICS: "true"
     permissions:
       contents: read
       packages: read
@@ -97,24 +109,88 @@ jobs:
       matrix:
         include:
           - language: go
-            build-mode: autobuild
+            build-mode: manual
+            sarif: go.sarif
           - language: javascript-typescript
             build-mode: none
+            sarif: javascript.sarif
 
     steps:
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Capture immutable SAST checkout baseline
+        run: git rev-parse HEAD > "$RUNNER_TEMP/security-sast-revision"
+
+      - name: Set up the locked SAST toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          profile: validation
+          browser: "false"
+
+      - name: Build the SAST contract helper before tracing
+        id: sast_helper
+        run: go build -mod=readonly -o "$RUNNER_TEMP/securitysast" ./internal/app/tools/securitysast
+
+      - name: Prepare generated source in this runner
+        run: task security:sast:prepare
+
+      - name: Check maintained TypeScript source graphs
+        if: matrix.language == 'javascript-typescript'
+        run: task security:sast:typescript
+
+      - name: Verify checkout integrity before extraction
+        run: '"$RUNNER_TEMP/securitysast" integrity -root . -revision "$(cat "$RUNNER_TEMP/security-sast-revision")"'
+
       - name: Initialize selected CodeQL analysis
-        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        id: codeql_init
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
+      - name: Trace every maintained Go module
+        if: matrix.language == 'go'
+        # The pinned action cannot trace a static Go program as the build entry
+        # point. Keep compiler invocations in the runner's dynamic system shell;
+        # retain the initialized CodeQL PATH and locked compiler environment.
+        shell: /bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          "$RUNNER_TEMP/securitysast" modules -root . > "$RUNNER_TEMP/security-sast-modules"
+          while IFS= read -r -d '' module; do
+            (
+              cd -- "$module"
+              echo "Tracing Go module: $module"
+              go list -mod=readonly -deps -tags=duckdb_arrow ./...
+              go build -a -p=2 -mod=readonly -tags=duckdb_arrow ./...
+            )
+          done < "$RUNNER_TEMP/security-sast-modules"
+
       - name: Analyze selected source language
-        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:${{ matrix.language }}
+          output: ${{ runner.temp }}/codeql-results
+
+      - name: Require complete analysis diagnostics
+        if: ${{ !cancelled() && steps.codeql_init.outcome == 'success' }}
+        env:
+          SAST_SARIF: ${{ matrix.sarif }}
+          SAST_CATEGORY: /language:${{ matrix.language }}
+        run: '"$RUNNER_TEMP/securitysast" sarif -input "$RUNNER_TEMP/codeql-results/$SAST_SARIF" -category "$SAST_CATEGORY"'
+
+      - name: Verify checkout integrity after analysis
+        if: ${{ !cancelled() && steps.sast_helper.outcome == 'success' }}
+        run: '"$RUNNER_TEMP/securitysast" integrity -root . -revision "$(cat "$RUNNER_TEMP/security-sast-revision")"'
+
+      - name: Retain raw CodeQL diagnostics
+        if: ${{ !cancelled() && steps.codeql_init.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: codeql-${{ matrix.language }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codeql-results/*.sarif
+          if-no-files-found: ignore
+          retention-days: 14
 
   security-gate:
     name: Security gate

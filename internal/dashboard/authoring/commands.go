@@ -261,6 +261,7 @@ type SetPlacementsPayload struct {
 	FillMissingFields bool              `json:"fillMissingFields,omitempty"`
 	// ResolvedFields are governed additions prepared by the application, never supplied by a client.
 	ResolvedFields []AssignFieldPayload `json:"-"`
+	Compact        bool                 `json:"compact,omitempty"`
 }
 
 func (SetPlacementsPayload) authoringPayload() {}
@@ -533,15 +534,14 @@ func (AddFilterPayload) RequiredAction() (AuthorizationAction, error) {
 // the canonical document still stores the ordinary filter definition and
 // filter page component used by dashboards as code.
 type AddSlicerPayload struct {
-	PageID      string `json:"pageId"`
-	FilterID    string `json:"filterId,omitempty"`
-	ComponentID string `json:"componentId,omitempty"`
-	Label       string `json:"label"`
-	Dimension   string `json:"dimension"`
-	Dataset     string `json:"dataset,omitempty"`
-	ControlType string `json:"controlType"`
-	// ResolvedTargets is derived by the application from the active model.
-	ResolvedTargets []string `json:"-"`
+	PageID      string   `json:"pageId"`
+	FilterID    string   `json:"filterId,omitempty"`
+	ComponentID string   `json:"componentId,omitempty"`
+	Label       string   `json:"label"`
+	Dimension   string   `json:"dimension"`
+	Dataset     string   `json:"dataset,omitempty"`
+	ControlType string   `json:"controlType"`
+	Targets     []string `json:"-"` // resolved from the active semantic model before reduction
 }
 
 func (AddSlicerPayload) authoringPayload() {}

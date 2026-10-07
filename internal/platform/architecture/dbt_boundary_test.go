@@ -280,8 +280,7 @@ func TestDBTWarehouseBoundaryWorkflowPublishesBeforeLeapView(t *testing.T) {
 
 	producerOrder := []string{
 		"Set up pinned Python",
-		"Install pinned dbt Core",
-		"Install pinned dbt-duckdb",
+		"Install pinned dbt dependencies",
 		"Read the bounded producer inputs",
 		"Run dbt build and verify physical Parquet",
 		"Select a new immutable publication prefix",
@@ -507,7 +506,7 @@ func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"dbt-warehouse-boundary-validation:",
 		"name: dbt physical contract (PR)",
-		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]",
+		"needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation, host-recovery-validation]",
 		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
 	} {
 		if !strings.Contains(text, want) {

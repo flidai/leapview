@@ -14,14 +14,18 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 	ocidigest "github.com/opencontainers/go-digest"
 )
 
 // ProvenanceVersion is bumped whenever the canonical project-generation
 // evidence shape changes. Provenance is immutable release evidence.
-const ProvenanceVersion = 5
+const ProvenanceVersion = 6
 
 const legacyProvenanceVersion = 4
+
+// authorizationProvenanceVersion is retained for validating immutable v5 records.
+const authorizationProvenanceVersion = 5
 
 var (
 	ErrProvenanceInvalid = errors.New("release provenance invalid")
@@ -46,13 +50,14 @@ type ManagedDataPin struct {
 }
 
 type BindingEvidence struct {
-	BindingID          string                         `json:"bindingId"`
-	ConnectionID       string                         `json:"connectionId"`
-	ConnectorKind      string                         `json:"connectorKind"`
-	Revision           int64                          `json:"revision"`
-	ValidatedVersion   string                         `json:"validatedVersion"`
-	EndpointConfigHash string                         `json:"endpointConfigHash"`
-	Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+	BindingID           string                         `json:"bindingId"`
+	ConnectionID        string                         `json:"connectionId"`
+	ConnectorKind       string                         `json:"connectorKind"`
+	Revision            int64                          `json:"revision"`
+	ValidatedVersion    string                         `json:"validatedVersion"`
+	CredentialVersionID string                         `json:"credentialVersionId,omitempty"`
+	EndpointConfigHash  string                         `json:"endpointConfigHash"`
+	Access              semanticmodel.ConnectionAccess `json:"access,omitempty"`
 }
 
 // BindingFingerprint returns the canonical hash of target-acquired binding
@@ -61,17 +66,18 @@ func BindingFingerprint(values []BindingEvidence) string {
 	values = append([]BindingEvidence(nil), values...)
 	sort.Slice(values, func(i, j int) bool { return values[i].BindingID < values[j].BindingID })
 	type input struct {
-		BindingID          string                         `json:"bindingId"`
-		ConnectionID       string                         `json:"connectionId"`
-		ConnectorKind      string                         `json:"connectorKind"`
-		Revision           int64                          `json:"revision"`
-		ProviderVersion    string                         `json:"providerVersion"`
-		EndpointConfigHash string                         `json:"endpointConfigHash"`
-		Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+		BindingID           string                         `json:"bindingId"`
+		ConnectionID        string                         `json:"connectionId"`
+		ConnectorKind       string                         `json:"connectorKind"`
+		Revision            int64                          `json:"revision"`
+		ProviderVersion     string                         `json:"providerVersion"`
+		CredentialVersionID string                         `json:"credentialVersionId,omitempty"`
+		EndpointConfigHash  string                         `json:"endpointConfigHash"`
+		Access              semanticmodel.ConnectionAccess `json:"access,omitempty"`
 	}
 	preimage := make([]input, len(values))
 	for i, value := range values {
-		preimage[i] = input{value.BindingID, value.ConnectionID, value.ConnectorKind, value.Revision, value.ValidatedVersion, value.EndpointConfigHash, value.Access}
+		preimage[i] = input{value.BindingID, value.ConnectionID, value.ConnectorKind, value.Revision, value.ValidatedVersion, value.CredentialVersionID, value.EndpointConfigHash, value.Access}
 	}
 	encoded, _ := json.Marshal(preimage)
 	sum := sha256.Sum256(encoded)
@@ -166,7 +172,7 @@ func newProvenance(input ProvenanceInput) (Provenance, error) {
 }
 
 func newProvenanceVersion(input ProvenanceInput, version int) (Provenance, error) {
-	if version != legacyProvenanceVersion && version != ProvenanceVersion {
+	if version != legacyProvenanceVersion && version != authorizationProvenanceVersion && version != ProvenanceVersion {
 		return Provenance{}, provenanceInvalid(fmt.Errorf("unsupported version %d", version))
 	}
 	artifact, err := normalizeProjectArtifactProvenance(input.Artifact)
@@ -185,12 +191,18 @@ func newProvenanceVersion(input ProvenanceInput, version int) (Provenance, error
 	if err != nil {
 		return Provenance{}, err
 	}
-	if version == ProvenanceVersion {
+	if version <= authorizationProvenanceVersion && hasCredentialVersionPin(plan.Bindings) {
+		if version == authorizationProvenanceVersion {
+			return Provenance{}, provenanceInvalid(errors.New("version-5 provenance cannot carry local credential version pins"))
+		}
+		return Provenance{}, provenanceInvalid(errors.New("legacy provenance cannot carry local credential version pins"))
+	}
+	if version >= authorizationProvenanceVersion {
 		if plan.PolicyRevision < 1 || platformdigest.ValidateSHA256Identity(plan.AuthorizationDigest) != nil {
 			return Provenance{}, provenanceInvalid(errors.New("target authorization policy revision and compiled digest are required"))
 		}
 	} else if plan.PolicyRevision != 0 || plan.AuthorizationDigest != "" {
-		return Provenance{}, provenanceInvalid(errors.New("legacy provenance cannot carry version-5 authorization evidence"))
+		return Provenance{}, provenanceInvalid(errors.New("legacy provenance cannot carry current authorization evidence"))
 	}
 	if plan.GateEvidence == nil || plan.GateEvidence.CandidateID != candidate.ID {
 		return Provenance{}, provenanceInvalid(errors.New("gate evidence is not bound to candidate identity"))
@@ -223,7 +235,7 @@ func (p Provenance) Validate() error {
 }
 
 func (p Provenance) validate() error {
-	if p.Version != legacyProvenanceVersion && p.Version != ProvenanceVersion {
+	if p.Version != legacyProvenanceVersion && p.Version != authorizationProvenanceVersion && p.Version != ProvenanceVersion {
 		return provenanceInvalid(fmt.Errorf("unsupported version %d", p.Version))
 	}
 	expected, err := newProvenanceVersion(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan}, p.Version)
@@ -431,12 +443,15 @@ func normalizeBindingEvidence(values []BindingEvidence) ([]BindingEvidence, erro
 	values = append([]BindingEvidence(nil), values...)
 	for i := range values {
 		v := &values[i]
-		if v.BindingID != strings.TrimSpace(v.BindingID) || v.ConnectionID != strings.TrimSpace(v.ConnectionID) || v.ConnectorKind != strings.TrimSpace(v.ConnectorKind) || v.ValidatedVersion != strings.TrimSpace(v.ValidatedVersion) || v.EndpointConfigHash != strings.TrimSpace(v.EndpointConfigHash) {
+		if v.BindingID != strings.TrimSpace(v.BindingID) || v.ConnectionID != strings.TrimSpace(v.ConnectionID) || v.ConnectorKind != strings.TrimSpace(v.ConnectorKind) || v.ValidatedVersion != strings.TrimSpace(v.ValidatedVersion) || v.CredentialVersionID != strings.TrimSpace(v.CredentialVersionID) || v.EndpointConfigHash != strings.TrimSpace(v.EndpointConfigHash) {
 			return nil, provenanceInvalid(errors.New("binding evidence identity must be canonical"))
 		}
-		v.BindingID, v.ConnectionID, v.ConnectorKind, v.ValidatedVersion, v.EndpointConfigHash = strings.TrimSpace(v.BindingID), strings.TrimSpace(v.ConnectionID), strings.TrimSpace(v.ConnectorKind), strings.TrimSpace(v.ValidatedVersion), strings.TrimSpace(v.EndpointConfigHash)
-		if validateOperationalID(v.BindingID) != nil || v.ConnectionID == "" || projectgraph.ResourceID(v.ConnectionID).Validate() != nil || v.ConnectorKind == "" || v.Revision < 1 || v.ValidatedVersion == "" || platformdigest.ValidateSHA256Identity(v.EndpointConfigHash) != nil {
+		v.BindingID, v.ConnectionID, v.ConnectorKind, v.ValidatedVersion, v.CredentialVersionID, v.EndpointConfigHash = strings.TrimSpace(v.BindingID), strings.TrimSpace(v.ConnectionID), strings.TrimSpace(v.ConnectorKind), strings.TrimSpace(v.ValidatedVersion), strings.TrimSpace(v.CredentialVersionID), strings.TrimSpace(v.EndpointConfigHash)
+		if validateOperationalID(v.BindingID) != nil || v.ConnectionID == "" || projectgraph.ResourceID(v.ConnectionID).Validate() != nil || v.ConnectorKind == "" || v.Revision < 1 || platformdigest.ValidateSHA256Identity(v.EndpointConfigHash) != nil {
 			return nil, provenanceInvalid(errors.New("binding evidence is invalid"))
+		}
+		if err := validateBindingCredentialVersion(v.ConnectorKind, v.Access, v.ValidatedVersion, v.CredentialVersionID); err != nil {
+			return nil, err
 		}
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].BindingID < values[j].BindingID })
@@ -446,6 +461,29 @@ func normalizeBindingEvidence(values []BindingEvidence) ([]BindingEvidence, erro
 		}
 	}
 	return values, nil
+}
+
+func validateBindingCredentialVersion(connectorKind string, access semanticmodel.ConnectionAccess, validatedVersion, credentialVersionID string) error {
+	if credentialVersionID == "" {
+		if validatedVersion == "" {
+			return provenanceInvalid(errors.New("binding evidence requires a provider version or local credential version"))
+		}
+		return nil
+	}
+	versionID, err := uuid.Parse(credentialVersionID)
+	if err != nil || versionID == uuid.Nil || versionID.String() != credentialVersionID || validatedVersion != "" || connectorKind != "postgres" || access != "" {
+		return provenanceInvalid(errors.New("local credential version is invalid for this binding"))
+	}
+	return nil
+}
+
+func hasCredentialVersionPin(bindings []BindingEvidence) bool {
+	for _, binding := range bindings {
+		if binding.CredentialVersionID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // validateOperationalID checks an opaque managed-data/binding identifier

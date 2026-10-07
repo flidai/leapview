@@ -84,12 +84,13 @@ func DevCommand(
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				if command.Flags().Changed("source-root") {
-					return fmt.Errorf(
+					return cliapi.NewUsageError(fmt.Errorf(
 						"choose either --source-root or positional source root, not both",
-					)
+					))
 				}
 				values.SourceRoot = args[0]
 			}
+			values.NoBrowser = values.NoBrowser || values.Format == "json" || cliapi.NoInput(command)
 			return RunDev(
 				command.Context(),
 				client,
@@ -224,7 +225,7 @@ func RunDev(
 		return fmt.Errorf("Project candidate remote factory is required")
 	}
 	if options.Format != "text" && options.Format != "json" {
-		return fmt.Errorf("dev format must be text or json")
+		return cliapi.NewUsageError(fmt.Errorf("dev format must be text or json"))
 	}
 	targetSelector := strings.TrimSpace(options.Credentials.Target)
 	credentials, err := client.Resolve(ctx, options.Credentials)
@@ -296,7 +297,9 @@ func RunDev(
 	report := func(update devloop.Update) error {
 		if update.Err != nil {
 			for _, diagnostic := range configschema.Diagnostics(update.Err) {
-				fmt.Fprintln(errOut, diagnostic.String())
+				if _, err := fmt.Fprintln(errOut, diagnostic.String()); err != nil {
+					return fmt.Errorf("write dev diagnostic: %w", err)
+				}
 			}
 			return update.Err
 		}
@@ -376,9 +379,13 @@ func RunDev(
 				return fmt.Errorf("write dev result: %w", err)
 			}
 		} else {
-			fmt.Fprintf(out, "synchronized %s\n", candidate.ArtifactDigest)
-			fmt.Fprintf(out, "provenance %s\n", candidate.ProvenanceDigest)
-			fmt.Fprintf(
+			if _, err := fmt.Fprintf(out, "synchronized %s\n", candidate.ArtifactDigest); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(out, "provenance %s\n", candidate.ProvenanceDigest); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(
 				out,
 				"candidate %s revision %d target %s environment %s principal %s\n",
 				candidate.ID,
@@ -386,14 +393,22 @@ func RunDev(
 				candidate.TargetID,
 				candidate.Environment,
 				candidate.OwnerID,
-			)
+			); err != nil {
+				return err
+			}
 			if checkpoint.PlanID != "" {
-				fmt.Fprintf(out, "plan %s digest %s evidence %s\n", checkpoint.PlanID, checkpoint.PlanDigest, checkpoint.EvidenceDigest)
+				if _, err := fmt.Fprintf(out, "plan %s digest %s evidence %s\n", checkpoint.PlanID, checkpoint.PlanDigest, checkpoint.EvidenceDigest); err != nil {
+					return err
+				}
 			}
 			if sessionBinding != nil && stableSessionPreviewURL != "" && stableSessionPreviewURL != lastPreviewURL {
-				fmt.Fprintf(out, "session-preview %s\n", stableSessionPreviewURL)
+				if _, err := fmt.Fprintf(out, "session-preview %s\n", stableSessionPreviewURL); err != nil {
+					return err
+				}
 				if sessionBinding.AppURL != "" {
-					fmt.Fprintf(out, "app %s\n", sessionBinding.AppURL)
+					if _, err := fmt.Fprintf(out, "app %s\n", sessionBinding.AppURL); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -414,32 +429,40 @@ func RunDev(
 						err = openBrowser(stableSessionPreviewURL)
 					}
 					if err != nil {
-						fmt.Fprintf(
+						if _, writeErr := fmt.Fprintf(
 							errOut,
 							"could not open local app in the system browser: %v; open %s manually\n",
 							err,
 							manualURL,
-						)
+						); writeErr != nil {
+							return fmt.Errorf("write browser warning: %w", writeErr)
+						}
 					}
 				}
 				lastPreviewURL = stableSessionPreviewURL
 			}
 			if options.Format == "text" && candidate.PreviewURL != "" {
-				fmt.Fprintf(out, "candidate-preview %s\n", candidate.PreviewURL)
+				if _, err := fmt.Fprintf(out, "candidate-preview %s\n", candidate.PreviewURL); err != nil {
+					return err
+				}
 			}
 		} else if candidate.PreviewURL != "" &&
 			candidate.PreviewURL != lastPreviewURL {
 			if options.Format == "text" {
-				fmt.Fprintf(out, "preview %s\n", candidate.PreviewURL)
+				if _, err := fmt.Fprintf(out, "preview %s\n", candidate.PreviewURL); err != nil {
+					return err
+				}
 			}
 			if !options.NoBrowser && openBrowser != nil {
 				if err := openBrowser(candidate.PreviewURL); err != nil {
-					fmt.Fprintf(
+					if _, writeErr := fmt.Fprintf(
 						errOut,
 						"could not open preview in the system browser: %v; open %s manually\n",
 						err,
 						candidate.PreviewURL,
-					)
+					); writeErr != nil {
+						return fmt.Errorf("write browser warning: %w", writeErr)
+					}
 				}
 			}
 			lastPreviewURL = candidate.PreviewURL
@@ -467,11 +490,21 @@ func RunDev(
 		syscall.SIGTERM,
 	)
 	defer stop()
-	return watcher.Run(signalContext, func(update devloop.Update) {
+	watchContext, cancelWatch := context.WithCancel(signalContext)
+	defer cancelWatch()
+	var progressWriteErr error
+	watchErr := watcher.Run(watchContext, func(update devloop.Update) {
 		if err := report(update); err != nil && update.Err == nil {
-			fmt.Fprintln(errOut, err)
+			if _, writeErr := fmt.Fprintln(errOut, err); writeErr != nil {
+				progressWriteErr = fmt.Errorf("write development progress error: %w", writeErr)
+				cancelWatch()
+			}
 		}
 	})
+	if progressWriteErr != nil {
+		return progressWriteErr
+	}
+	return watchErr
 }
 
 func sessionAppURL(binding *DevSessionBinding) string {

@@ -117,6 +117,44 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 	}
 }
 
+func TestBundledPostgresComposeProfileIsExplicitAndPrivate(t *testing.T) {
+	compose := read(t, "compose.postgres.yaml")
+	for _, required := range []string{
+		"leapview-postgres-data:/var/lib/postgresql",
+		"postgres-private:",
+		"internal: true",
+		"source: ./.postgres-secrets/server.key",
+		"target: /run/leapview-postgres-secrets/server.key",
+		"source: ./.postgres-secrets/ca.crt",
+		"target: /run/leapview-postgres-secrets/ca.crt",
+		"source: ./postgres/bundled-entrypoint.sh",
+		"target: /run/leapview-postgres/bundled-entrypoint.sh",
+		"target: /docker-entrypoint-initdb.d/10-leapview-roles.sh",
+		"target: /run/leapview-postgres/bundled-init.sh",
+		"LEAPVIEW_POSTGRES_SECRET_DIR: /var/lib/postgresql/18/leapview-secrets",
+	} {
+		if !strings.Contains(compose, required) {
+			t.Errorf("compose.yaml missing bundled PostgreSQL contract %q", required)
+		}
+	}
+	initializer := read(t, "postgres/bundled-init.sh")
+	if !strings.Contains(initializer, "PGSSLMODE=verify-full") {
+		t.Fatal("bundled PostgreSQL retries must verify the server certificate and hostname")
+	}
+	postgres, _, present := strings.Cut(compose, "  postgres:\n")
+	if !present {
+		t.Fatal("compose.yaml has no optional postgres service")
+	}
+	postgres, _, _ = strings.Cut(postgres, "\nvolumes:")
+	if strings.Contains(postgres, "ports:") || strings.Contains(postgres, "expose:") {
+		t.Fatal("bundled PostgreSQL must not publish or expose a port")
+	}
+	if strings.Contains(postgres, "./.postgres-secrets:/run/leapview-postgres-secrets:ro") ||
+		strings.Contains(postgres, "ca.key") {
+		t.Fatal("the PostgreSQL container must receive only explicit serving files, never the CA signing key")
+	}
+}
+
 func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 	root := filepath.Join("..", "..")
 	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
@@ -141,7 +179,7 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 		t.Fatal("standard Compose must not expose extension supply selection as authored env")
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	for _, required := range []string{"Verify target-native runtime entrypoint", `docker run --rm "$IMAGE_REFERENCE" version --json`, "Run installed-candidate journey"} {
+	for _, required := range []string{"Verify target-native runtime entrypoint", `docker run --rm "$IMAGE_REFERENCE" version --format json`, "Run installed-candidate journey"} {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release qualification missing distroless runtime contract %q", required)
 		}
@@ -231,6 +269,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	browser := read(t, filepath.Join(root, "deploy", "compose", "qualification", "browser.mjs"))
 	authoringWorker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	performance := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
+	performanceStatus := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance-status.mjs"))
 	reportTable := read(t, filepath.Join(root, "web", "components", "dashboard", "table", "report-table.ts"))
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
@@ -247,8 +286,8 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		t.Error("browser qualification must prove PROJECT_ADMIN denial with the project-bound restricted workload credential")
 	}
 	for _, required := range []string{
-		"cp -R deploy/compose/qualification",
-		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
+		"python3 scripts/package_compose_bundle.py assemble",
+		`--controller-build-identity "$controller.identity.json"`,
 		"args=(qualify installed-candidate",
 		"--multi-node-process",
 		"gh release create",
@@ -280,7 +319,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("installed-candidate workflow missing %q", required)
 		}
 	}
-	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "recovery-report.json"} {
+	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "performance-status.mjs", "recovery-report.json"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
 		}
@@ -317,6 +356,13 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if strings.Contains(performance, "setInterval(") || strings.Count(performance, "metricSamples.push(await metricSnapshot())") < 7 || !strings.Contains(performance, "{ mode: 0o644 }") {
 		t.Error("performance evidence must be bounded and artifact-readable")
+	}
+	if !strings.Contains(performance, "waitForDashboardRevision(page, resetRevision, 30_000)") ||
+		!strings.Contains(performance, "waitForDashboardRevision(page, filterRevision, 30_000)") ||
+		!strings.Contains(performanceStatus, "snapshot.filterRevision !== expectedRevision") ||
+		!strings.Contains(performanceStatus, "visual.streamGeneration === status.generation") ||
+		!strings.Contains(performanceStatus, "status.loading || status.error") {
+		t.Error("performance filter settling must follow the canonical filter revision and its current, completed visual generation")
 	}
 	for name, script := range map[string]string{
 		"authoring":   authoringWorker,
@@ -402,8 +448,10 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	ci := read(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	artifacts := read(t, filepath.Join(root, ".github", "workflows", "artifacts.yml"))
 	installed := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_installed.go"))
-	authoring := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authoring.go"))
+	authoring := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authoring.go")) +
+		read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_approval.go"))
 	client := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_client.go"))
+	policy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authorization_policy.go"))
 	deploymentClient := read(t, filepath.Join(root, "internal", "deployment", "api", "gen", "client.apigen.gen.go"))
 	worker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	clientImage := read(t, filepath.Join(root, "deploy", "compose", "qualification", "Dockerfile.authoring-client"))
@@ -427,9 +475,14 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(client, "LEAPVIEW_API_TOKEN") {
 		t.Error("authoring must use browser-approved login")
 	}
-	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "PROJECT_ADMIN", "capabilities"} {
+	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "qualificationAdministratorActions()", "qualificationReviewerActions()", "ActionProjectAccessRead", "ActionDeliveryRead", "ActionDeliveryPublish", "ActionDeliveryApprove", "expectedRevision"} {
 		if !strings.Contains(authoring, required) {
 			t.Errorf("typed authoring controller missing %q", required)
+		}
+	}
+	for _, required := range []string{"NewTypedRoleBinding", "PermissionRoleProjectAdmin", "ProjectID", "PolicyRevision", "grantReviewer func(expectedRevision int64) error", "retrieveQualificationRoleBindingPolicy", "sameQualificationRoleBinding"} {
+		if !strings.Contains(policy, required) {
+			t.Errorf("typed authoring policy flow missing %q", required)
 		}
 	}
 	for _, required := range []string{"approval-requests", "/delivery/candidates/{candidate}/publish"} {
@@ -448,10 +501,13 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker missing %q", required)
 		}
 	}
-	for _, required := range []string{"lv-personal-token-command", "new CustomEvent", "capabilities: params.capabilities"} {
+	for _, required := range []string{"lv-personal-token-command", "new CustomEvent", "permissions: params.permissions"} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker must create exact-scope API tokens through the stable UI command contract: missing %q", required)
 		}
+	}
+	if strings.Contains(worker, "capabilities") {
+		t.Error("browser worker must send typed permission pairs instead of legacy capabilities")
 	}
 	if !strings.Contains(worker, "new URL('/admin/api-tokens/new', baseURL)") || strings.Contains(worker, "new URL('/admin/api-tokens', baseURL)") || strings.Contains(worker, "#token-expiry") {
 		t.Error("browser worker must open the token creation route and avoid the removed raw-expiry control")
@@ -467,8 +523,15 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker must resolve durable principal IDs from the authenticated directory: missing %q", required)
 		}
 	}
-	if strings.Contains(worker, "params.principalId") || strings.Contains(worker, "new URL('/api/v1/me'") || strings.Contains(worker, "/api/v1/principals?email=") {
-		t.Error("browser worker must not fabricate identities or send browser sessions to bearer-only API routes")
+	for _, required := range []string{"async grantReviewerRole(params)", "new URL('/admin/access', baseURL)", "lv-access-admin-command", "'/admin/access/command'", "action: 'grant_role'", "expectedRevision"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must issue the revision-fenced reviewer grant through the native access command: missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"new URL('/api/v1/me'", "/api/v1/principals?email=", "new URL('/api/v1/projects/", "/api/v1/projects/"} {
+		if strings.Contains(worker, forbidden) {
+			t.Errorf("browser worker must not fabricate identities or send browser sessions to bearer-only API routes; found %q", forbidden)
+		}
 	}
 	for _, required := range []string{"page.waitForResponse", "'/auth/local/password'", `locator('input[name="password"]').fill(password)`, `locator('input[name="currentPassword"]')`, `locator('input[name="newPassword"]')`} {
 		if !strings.Contains(worker, required) {
@@ -523,6 +586,7 @@ func TestReleaseIdentityContract(t *testing.T) {
 
 	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
 	for _, required := range []string{
+		`service="leapview"`,
 		"BUILD_VERSION=development",
 		"BUILD_REVISION=unknown",
 		"BUILD_TIME=unknown",
@@ -547,9 +611,11 @@ func TestReleaseIdentityContract(t *testing.T) {
 		"BUILD_DIRTY=false",
 		"BUILD_RELEASE=",
 		"release-identity.json",
-		"./leapviewctl version --json",
+		`"$controller" version --format json`,
+		"python3 scripts/package_compose_bundle.py record-build-identity",
+		"python3 scripts/package_compose_bundle.py assemble",
 		"Verify published runtime identity",
-		`docker run --rm "$IMAGE_REFERENCE" version --json`,
+		`docker run --rm "$IMAGE_REFERENCE" version --format json`,
 	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing build identity contract %q", required)
@@ -563,7 +629,7 @@ func TestReleaseIdentityContract(t *testing.T) {
 		document := read(t, name)
 		for _, required := range []string{
 			"release-identity.json",
-			"leapviewctl version --json",
+			"leapviewctl version --format json",
 			"org.opencontainers.image.version",
 			"/api/v1/capabilities",
 		} {
@@ -603,7 +669,7 @@ if [[ " $* " == *" config validate --production "* ]]; then
   exec %q config validate --production
 fi
 if [[ " $* " == *" admin initialize --format json "* ]]; then
-  printf '{"email":"admin@example.com","temporaryPassword":"temporary","publisherToken":"publisher","publisherTokenExpiresAt":"2026-07-19T00:00:00Z"}\n'
+  printf '{"email":"admin@example.com","temporaryPassword":"temporary","projectClaimToken":"claim","projectClaimTokenExpiresAt":"2099-07-19T00:00:00Z"}\n'
 fi
 `, validator)
 			if err := os.WriteFile(fakeDocker, []byte(script), 0o700); err != nil {
@@ -646,6 +712,9 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 		"linux arm64",
 		"darwin amd64",
 		"darwin arm64",
+		"python3 scripts/package_compose_bundle.py",
+		"--controller \"$controller\" --platform \"$os/$arch\"",
+		"--image-reference \"$IMAGE_REFERENCE\" --release-identity release-identity.json",
 	} {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release workflow missing Go controller packaging contract %q", required)
@@ -686,7 +755,7 @@ if [[ " $* " == *" config validate --production "* ]]; then
   set +a
   exec "$root/config-validator"
 elif [[ " $* " == *" admin initialize --format json "* ]]; then
-  printf '{"email":"admin@example.com","temporaryPassword":"temporary","publisherToken":"publisher","publisherTokenExpiresAt":"2026-07-19T00:00:00Z"}\n'
+  printf '{"email":"admin@example.com","temporaryPassword":"temporary","projectClaimToken":"claim","projectClaimTokenExpiresAt":"2099-07-19T00:00:00Z"}\n'
 fi
 `), 0o700); err != nil {
 			t.Fatal(err)

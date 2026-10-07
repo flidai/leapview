@@ -56,7 +56,7 @@ func TestConnectionBindingAPICreatesOnlyNonSecretMetadata(t *testing.T) {
 	}
 }
 
-func TestConnectionBindingAPINeverReturnsRawProviderErrors(t *testing.T) {
+func TestConnectionBindingAPIRefreshNeverReturnsRawProviderErrors(t *testing.T) {
 	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
 	binding := testAPIBinding(t, now)
 	repository := &apiBindingRepository{binding: binding}
@@ -77,10 +77,10 @@ func TestConnectionBindingAPINeverReturnsRawProviderErrors(t *testing.T) {
 			return "operator-1", true
 		},
 	}}
-	request := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(nil))
+	request := httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewReader(nil))
 	recorder := httptest.NewRecorder()
 
-	handler.Test(recorder, request, "sales", "target-1", "warehouse")
+	handler.Refresh(recorder, request, "sales", "target-1", "warehouse")
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())

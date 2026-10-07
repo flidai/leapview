@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
-import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
+import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -18,6 +18,33 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
       throw new Error(`${id}: ${JSON.stringify((validateVisualizationEnvelope as typeof validateVisualizationEnvelope & { errors?: unknown }).errors)}`)
     }
   }
+})
+
+test('dashboard handoff is a visual-menu action only in the app presentation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const href = '/dashboards/executive-sales/pages/overview/visuals/orders_chart/explore'
+      mergePatch({ visuals: { orders_chart: { exploreHref: href } } })
+      await dashboard.updateComplete
+      const host = () => (dashboard.shadowRoot as ShadowRoot).querySelector('[data-visual-id="orders_chart"] lv-visualization-host') as any
+      await host().updateComplete
+      const appHref = (host().shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('.visual-options a[role="menuitem"]')?.getAttribute('href')
+      dashboard.presentation = 'public'
+      await dashboard.updateComplete
+      await host().updateComplete
+      const publicLink = (host().shadowRoot as ShadowRoot).querySelector('.visual-options a[role="menuitem"]')
+      dashboard.presentation = 'embed'
+      await dashboard.updateComplete
+      await host().updateComplete
+      const embedLink = (host().shadowRoot as ShadowRoot).querySelector('.visual-options a[role="menuitem"]')
+      return { appHref, publicLink: Boolean(publicLink), embedLink: Boolean(embedLink) }
+    })
+    expect(result).toEqual({ appHref: '/dashboards/executive-sales/pages/overview/visuals/orders_chart/explore', publicLink: false, embedLink: false })
+  } finally { await page.close() }
 })
 
 beforeAll(async () => {
@@ -101,6 +128,50 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
   }
 })
 
+test('closing a deeply scrolled focused table restores visible rows in the dashboard', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    const table = page.locator('lv-report-table')
+    await table.waitFor()
+    await table.evaluate(async (element: any) => {
+      await element.updateComplete
+      const base = element.table
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...base.blocks.a.rows[0], order_id: `order-${start + offset}` }))
+      const block = (start: number) => ({ ...base.blocks.a, start, rows: rows(start) })
+      element.table = {
+        ...base,
+        availableRows: 1000,
+        cardinality: { kind: 'exact', value: 1000 },
+        chunkSize: 100,
+        blocks: { a: block(0), b: block(100), c: block(200) },
+      }
+      await element.updateComplete
+    })
+    await table.evaluate((element: any) => element.runAction('focus'))
+    await table.locator('.table-scrollport').evaluate((viewport: HTMLElement) => {
+      viewport.scrollTop = 500 * 34
+      viewport.dispatchEvent(new Event('scroll'))
+    })
+    await page.locator('lv-visual-modal').getByRole('button', { name: 'Close visual modal' }).click()
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page')
+      const host = [...(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((item: any) => item.envelope?.visualID === 'orders')
+      const table = host?.shadowRoot?.querySelector('lv-report-table') as any
+      return table?.viewportTop === 0 && table?.visibleRows?.[0]?.kind === 'row'
+    })
+    const restored = await table.evaluate((element: any) => ({
+      scrollTop: element.shadowRoot.querySelector('.table-scrollport').scrollTop,
+      viewportTop: element.viewportTop,
+      firstRow: element.visibleRows[0].index,
+      firstKind: element.visibleRows[0].kind,
+    }))
+    expect(restored).toEqual({ scrollTop: 0, viewportTop: 0, firstRow: 0, firstKind: 'row' })
+  } finally {
+    await page.close()
+  }
+})
+
 for (const emptyResponse of [false, true]) test(`windowed table reconciles cached rows after a delayed ${emptyResponse ? 'empty' : 'populated'} jump response`, async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -149,6 +220,165 @@ for (const emptyResponse of [false, true]) test(`windowed table reconciles cache
     expect(result.followUp).toEqual(expect.objectContaining({ blockID: 'all', start: 0, limit: 100 }))
     expect(result.requests.filter((r: any) => r.requestSeq >= result.jump.requestSeq).map((r: any) => [r.blockID, r.start])).toEqual([['all', 500], ['all', 0]])
     expect(result.skeletons).toBeGreaterThan(0)
+  } finally { await page.close() }
+})
+
+test('windowed table retries a dropped deep-scroll request', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const host = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((item: any) => item.envelope?.visualID === 'orders') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const seed = base.blocks.a.rows[0] ?? {}
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `retry-${start + offset}` }))
+      const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
+      table.clearJumpTimer()
+      table.windowRetryController.clear()
+      table.expectedBlocks.clear()
+      table.windowRetryController.delay = 50
+      table.table = {
+        ...base,
+        availableRows: 1000,
+        rowCap: 10000,
+        chunkSize: 100,
+        cardinality: { kind: 'exact', value: 1000 },
+        blocks: { a: block(0), b: block(100), c: block(200) },
+        loadingBlock: '',
+        error: '',
+      }
+      await table.updateComplete
+      const requests: any[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => {
+        requests.push(event.detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+      table.viewportTop = 500 * table.rowHeight
+      table.virtualizationController.setViewport(table.viewportTop, table.viewportHeight)
+      table.emitBlock('all', 500)
+      const deadline = Date.now() + 4000
+      while (requests.filter((request) => request.start === 500).length < 2) {
+        if (Date.now() > deadline) throw new Error('Dropped window request was not retried')
+        await new Promise((resolve) => window.setTimeout(resolve, 10))
+      }
+      const retry = requests.filter((request) => request.start === 500).at(-1)
+      table.table = {
+        ...table.table,
+        blocks: { a: block(400, retry.requestSeq), b: block(500, retry.requestSeq), c: block(600, retry.requestSeq) },
+      }
+      await table.updateComplete
+      await new Promise((resolve) => window.setTimeout(resolve, 70))
+      const successful = {
+        requests: requests.filter((request) => request.start === 500),
+        pending: table.expectedBlocks.size,
+        skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
+      }
+      requests.length = 0
+      table.viewportTop = 800 * table.rowHeight
+      table.virtualizationController.setViewport(table.viewportTop, table.viewportHeight)
+      table.emitBlock('all', 800)
+      const exhaustionDeadline = Date.now() + 4000
+      while (requests.filter((request) => request.start === 800).length < 2) {
+        if (Date.now() > exhaustionDeadline) throw new Error('Dropped window request was not retried once')
+        await new Promise((resolve) => window.setTimeout(resolve, 10))
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 130))
+      return {
+        successful,
+        exhaustedRequests: requests.filter((request) => request.start === 800),
+        pending: table.expectedBlocks.size,
+        retryTimers: table.windowRetryController.size,
+        suppressed: table.windowRetryController.blocked,
+      }
+    })
+    expect(result.successful.requests).toHaveLength(2)
+    expect(result.successful.requests.map((request: any) => [request.blockID, request.start, request.limit])).toEqual([
+      ['all', 500, 100],
+      ['all', 500, 100],
+    ])
+    expect(result.successful.requests[1].requestSeq).toBeGreaterThan(result.successful.requests[0].requestSeq)
+    expect(result.successful.pending).toBe(0)
+    expect(result.successful.skeletons).toBe(0)
+    expect(result.exhaustedRequests).toHaveLength(2)
+    expect(result.pending).toBe(0)
+    expect(result.retryTimers).toBe(0)
+    expect(result.suppressed).toBe(true)
+  } finally { await page.close() }
+})
+
+for (const outcome of ['slow', 'error'] as const) test(`windowed table does not retry an acknowledged ${outcome} request`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any, outcome: 'slow' | 'error') => {
+      const host = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((item: any) => item.envelope?.visualID === 'orders') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const seed = base.blocks.a.rows[0] ?? {}
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `${outcome}-${start + offset}` }))
+      const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
+      table.clearJumpTimer()
+      table.windowRetryController.clear()
+      table.expectedBlocks.clear()
+      table.windowRetryController.delay = 50
+      table.table = {
+        ...base,
+        availableRows: 1000,
+        rowCap: 10000,
+        chunkSize: 100,
+        cardinality: { kind: 'exact', value: 1000 },
+        blocks: { a: block(0), b: block(100), c: block(200) },
+        loadingBlock: '',
+        error: '',
+      }
+      await table.updateComplete
+      const requests: any[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => {
+        requests.push(event.detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+      table.viewportTop = 500 * table.rowHeight
+      table.virtualizationController.setViewport(table.viewportTop, table.viewportHeight)
+      table.emitBlock('all', 500)
+      const request = requests[0]
+      table.table = { ...table.table, loadingBlock: outcome === 'slow' ? 'all' : '', error: outcome === 'error' ? 'query failed' : '' }
+      await table.updateComplete
+      const acknowledged = { error: table.table.error, pending: table.expectedBlocks.size, retryTimers: table.windowRetryController.size, requests: requests.filter((candidate) => candidate.start === 500).length, suppressed: table.windowRetryController.blocked }
+      await new Promise((resolve) => window.setTimeout(resolve, 130))
+      const requestsAfterTimeout = requests.filter((candidate) => candidate.start === 500).length
+      if (outcome === 'slow') {
+        table.table = {
+          ...table.table,
+          blocks: { a: block(400, request.requestSeq), b: block(500, request.requestSeq), c: block(600, request.requestSeq) },
+          loadingBlock: '',
+        }
+        await table.updateComplete
+        await new Promise((resolve) => window.setTimeout(resolve, 70))
+      }
+      return {
+        acknowledged,
+        requestsAfterTimeout,
+        requests: requests.filter((candidate) => candidate.start === 500).length,
+        pending: table.expectedBlocks.size,
+        retryTimers: table.windowRetryController.size,
+        suppressed: table.windowRetryController.blocked,
+        skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
+      }
+    }, outcome)
+    expect(result.acknowledged).toEqual(outcome === 'error'
+      ? { error: 'query failed', pending: 0, retryTimers: 0, requests: 1, suppressed: true }
+      : { error: '', pending: 3, retryTimers: 1, requests: 1, suppressed: false })
+    expect(result.suppressed).toBe(outcome === 'error')
+    expect(result.requestsAfterTimeout).toBe(1)
+    expect(result.requests).toBe(1)
+    expect(result.pending).toBe(0)
+    expect(result.retryTimers).toBe(0)
+    if (outcome === 'slow') expect(result.skeletons).toBe(0)
   } finally { await page.close() }
 })
 
@@ -359,14 +589,14 @@ test('visualization actions keep touch targets and spacing when a report is scal
       await canvas.updateComplete
       const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
       const chart = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
-      const options = chart?.shadowRoot?.querySelector('.visual-options') as HTMLDetailsElement | null
+      const options = chart?.shadowRoot?.querySelector('.options-trigger') as HTMLButtonElement | null
       if (options) {
-        options.open = true
+        options.click()
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
       const actions = [
         chart?.shadowRoot?.querySelector('[data-visualization-expand]'),
-        chart?.shadowRoot?.querySelector('.visual-options summary'),
+        chart?.shadowRoot?.querySelector('.visual-options .options-trigger'),
       ].filter(Boolean) as HTMLElement[]
       const rects = actions.map((action) => {
         const rect = action.getBoundingClientRect()
@@ -400,6 +630,59 @@ test('visualization actions keep touch targets and spacing when a report is scal
       expect(result.menuRects[index].top).toBeGreaterThanOrEqual(result.menuRects[index - 1].bottom)
     }
   } finally { await page.close() }
+})
+
+test('an open visual menu escapes its card clipping layer and raises only its frame', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const first = hosts.find((host) => host.envelope?.visualID === 'orders_kpi')
+      const second = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
+      const firstFrame = first.closest('lv-dashboard-visual-frame') as HTMLElement
+      const secondFrame = second.closest('lv-dashboard-visual-frame') as HTMLElement
+      const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLElement
+      const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLElement
+      const firstMenu = firstOptions.querySelector<HTMLElement>('.menu')!
+      const secondMenu = secondOptions.querySelector<HTMLElement>('.menu')!
+      // Native popover toggle events are queued separately from animation
+      // frames. Observe those events before inspecting their frame effects.
+      const toggled = (menu: HTMLElement) => new Promise<void>((resolve) => {
+        menu.addEventListener('toggle', () => resolve(), { once: true })
+      })
+      const firstOpened = toggled(firstMenu)
+      firstOptions.querySelector<HTMLElement>('.options-trigger')!.click()
+      await firstOpened
+      const firstZIndex = Number.parseInt(getComputedStyle(firstFrame).zIndex, 10)
+      const secondZIndex = Number.parseInt(getComputedStyle(secondFrame).zIndex, 10)
+      const firstOpen = {
+        frameMarked: firstFrame.hasAttribute('data-visual-options-open'),
+        frameOverflow: getComputedStyle(firstFrame).overflow,
+        innerOverflow: getComputedStyle(firstFrame.shadowRoot!.querySelector<HTMLElement>('.frame')!).overflow,
+        raised: Number.isFinite(firstZIndex) && (!Number.isFinite(secondZIndex) || firstZIndex > secondZIndex),
+      }
+
+      const firstClosed = toggled(firstMenu)
+      const secondOpened = toggled(secondMenu)
+      secondOptions.querySelector<HTMLElement>('.options-trigger')!.click()
+      await Promise.all([firstClosed, secondOpened])
+      return {
+        firstOpen,
+        onlySecondRaised: !firstFrame.hasAttribute('data-visual-options-open')
+          && secondFrame.hasAttribute('data-visual-options-open')
+          && !firstMenu.matches(':popover-open')
+          && secondMenu.matches(':popover-open'),
+      }
+    })
+    expect(state).toEqual({
+      firstOpen: { frameMarked: true, frameOverflow: 'visible', innerOverflow: 'visible', raised: true },
+      onlySecondRaised: true,
+    })
+  } finally {
+    await page.close()
+  }
 })
 
 for (const start of [50, 950]) {
@@ -463,12 +746,12 @@ test('phone headers keep page actions below the title and default table values r
     expect(result.actionsBelowTitle).toBe(true)
     expect(result.defaultWidths.length).toBeGreaterThan(0)
     expect(Math.min(...result.defaultWidths)).toBeGreaterThanOrEqual(168)
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ page: { pages: ['overview', 'statement', 'liquidity', 'drivers'].map((id, index) => ({
         id, title: id, href: `/dashboards/executive-sales/pages/${id}`, active: index === 0,
       })) } })
-    })
+    }))
     await page.locator('.mobile-page-menu summary').click()
     // Exercise hit testing: chart/table stacking must not intercept the last option.
     await page.locator('.mobile-page-menu a').last().click({ trial: true })

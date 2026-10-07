@@ -17,9 +17,9 @@ func TestValidateCommandOwnsProjectArgumentRules(t *testing.T) {
 }
 
 func TestPlanCommandHasNoWorkspaceSelector(t *testing.T) {
-	command := PlanCommand(context.Background())
-	if command.Flags().Lookup("workspace") != nil || command.Flags().Lookup("target") != nil {
-		t.Fatal("project plan exposes a removed workspace/target selector")
+	command := DeliveryPlanCommand(context.Background(), nil)
+	if command.Flags().Lookup("workspace") != nil {
+		t.Fatal("project plan exposes a removed workspace selector")
 	}
 }
 

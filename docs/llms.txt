@@ -17,8 +17,8 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 ### Start here
 
 - [What is LeapView?](/docs/introduction): Understand the problems LeapView solves and its code-native model.
-- [Installation](/docs/installation): Pull the public image locally or prepare a durable production instance.
-- [Get started with LeapView](/docs/getting-started): Choose a path from installation through your first validated dashboard change.
+- [Installation](/docs/installation): Install the authoring CLI, configure Compose, or set up a source checkout.
+- [Get started with LeapView](/docs/getting-started): Choose a workflow and follow the source-checkout dashboard tutorial.
 - [Build your first dashboard](/docs/first-dashboard): Change a model and dashboard and deploy it locally.
 - [Project structure](/docs/project-structure): Learn how project-wide resources are organized.
 
@@ -74,6 +74,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Analytics development workflow](/docs/cli/analytics-development): Initialize a project, run local or remote development, and deliver with explicit profile and operation boundaries.
 - [Targets and environments](/docs/cli/targets): Keep local, staging, and production changes explicit.
 - [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring): Move private dashboard drafts through development, review, and production with explicit ownership boundaries.
+- [Exploration links and exports](/docs/guides/operate/exploration-sharing-exports): Share access-controlled exploration state and download bounded CSV or Parquet results.
 - [Production configuration](/docs/guides/operate/production-configuration): Configure secrets, storage, auth, and runtime boundaries.
 - [Self-hosting](/docs/guides/operate/self-hosting): Build and run a supported single-node deployment.
 - [Health and observability](/docs/guides/operate/observability): Monitor health, query activity, refreshes, and deployments.
@@ -118,6 +119,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Reference](/docs/reference): Find exact syntax and supported contracts.
 - [Environment variable reference](/docs/configuration): Process-wide settings generated from the runtime configuration specification.
 - [Supported capabilities](/docs/reference/capabilities): Review supported resource, data, visual, and integration surfaces.
+- [Typed permission catalog](/docs/reference/permissions): Review canonical typed actions, target scopes, prerequisites, and role expansions.
 - [Data-resource connector capabilities](/docs/reference/data-resource-connectors): Review generated connector locations, approved extensions, target-binding modes, and typed path options.
 - [CLI troubleshooting](/docs/cli/troubleshooting): Diagnose local validation and remote operation failures.
 
@@ -128,14 +130,14 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [add_dashboard_visual](/docs/agent-tools/add_dashboard_visual): Add a governed dashboard visual to a private draft using an exact expected revision.
 - [assign_dashboard_field](/docs/agent-tools/assign_dashboard_field): Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.
 - [catalog_get](/docs/agent-tools/catalog_get): Resolve one exact authorized project resource ID and return compact metadata.
-- [catalog_list](/docs/agent-tools/catalog_list): Browse one authorized project-resource hierarchy level when a parent ref is known.
-- [catalog_search](/docs/agent-tools/catalog_search): Search authorized project resources by stable ID, name, description, or domain metadata.
+- [catalog_list](/docs/agent-tools/catalog_list): Browse authorized project resources from the project ref, or one dependency level from a resource ref.
+- [catalog_search](/docs/agent-tools/catalog_search): Search authorized project resources by stable ID, name, description, semantic metric or dimension names and labels, or domain metadata.
 - [create_dashboard_draft](/docs/agent-tools/create_dashboard_draft): Create a private dashboard draft owned by the authenticated principal.
 - [docs_read](/docs/agent-tools/docs_read): Read a bounded line window from one LeapView document returned by docs_search.
 - [docs_search](/docs/agent-tools/docs_search): Search LeapView's version-matched product documentation.
 - [edit_dashboard_source](/docs/agent-tools/edit_dashboard_source): Apply atomic exact-text replacements to one canonical dashboard YAML revision.
 - [execute_dashboard_command](/docs/agent-tools/execute_dashboard_command): Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision.
-- [export_dashboard_yaml](/docs/agent-tools/export_dashboard_yaml): Export an authorized authored dashboard source as canonical project YAML.
+- [export_dashboard_yaml](/docs/agent-tools/export_dashboard_yaml): Export an authorized dashboard source as canonical project YAML.
 - [fork_dashboard](/docs/agent-tools/fork_dashboard): Fork an authorized project or instance dashboard source into a private draft.
 - [get_dashboard](/docs/agent-tools/get_dashboard): Get one authorized dashboard's governed metadata.
 - [get_dashboard_draft](/docs/agent-tools/get_dashboard_draft): Read the exact current private draft and retained revision for one dashboard.
@@ -160,17 +162,21 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### CLI commands
 
 - [CLI command reference](/docs/cli/reference): Browse every generated LeapView command.
+- [leapview acknowledge-project-claim-publisher](/docs/cli/acknowledge-project-claim-publisher): Acknowledge durable handoff of a Project publisher credential
 - [leapview admin](/docs/cli/admin): Administrative utilities
 - [leapview agent](/docs/cli/agent): Use the LeapView governed BI agent
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation
 - [leapview bootstrap-project](/docs/cli/bootstrap-project): Bootstrap a target with this deployment authority's ProjectUID
 - [leapview build](/docs/cli/build): Build and seal a target-owned delivery plan
+- [leapview completion](/docs/cli/completion): Generate the autocompletion script for the specified shell
 - [leapview config](/docs/cli/config): Inspect and validate process-global configuration
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards
 - [leapview data](/docs/cli/data): Manage project-global data revisions
 - [leapview deploy](/docs/cli/deploy): Review and deliver an exact target-owned deployment operation
 - [leapview dev](/docs/cli/dev): Watch analytics sources and update the local app or a private target candidate
+- [leapview doctor](/docs/cli/doctor): Inspect local development prerequisites or an explicitly selected target
 - [leapview healthcheck](/docs/cli/healthcheck): Check the local LeapView readiness endpoint
+- [leapview help](/docs/cli/help): Help about any command
 - [leapview init](/docs/cli/init): Create a portable analytics project with reproducible sample data
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials
@@ -195,7 +201,8 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Current User](/docs/api/current-user): Current principal, sessions, tokens, and capabilities.
 - [Search](/docs/api/search): Progressive project-graph discovery across governed resources.
 - [BI](/docs/api/bi): Dashboard and semantic model read APIs.
-- [Connections](/docs/api/connections): Target-owned logical connection bindings, tests, refreshes, and redacted health.
+- [Connections](/docs/api/connections): Target-owned logical connection bindings, explicit credential refreshes, and redacted health.
+- [Credentials](/docs/api/credentials): Encrypted connection credential drafts, isolated validation, and metadata-only reads.
 - [Deployments](/docs/api/deployments): Atomic project release deployment.
 - [Refresh Runs](/docs/api/refresh-runs): Headless refresh run operations.
 - [Agent](/docs/api/agent): Headless agent conversation and run operations.
@@ -203,6 +210,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Audit](/docs/api/audit): Project audit event discovery.
 - [Publications](/docs/api/publications): Anonymous public dashboard publication lifecycle.
 - [Managed Data](/docs/api/managed-data): Project-global managed-data revisions and uploads.
+- [Saved Explorations](/docs/api/saved-explorations): Versioned, governed analytical exploration lifecycle.
 
 #### Visuals
 

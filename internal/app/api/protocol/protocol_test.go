@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,6 +98,8 @@ func TestMiddlewareNonBypassedCommandStillClaimsDurableIdempotency(t *testing.T)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/groups", strings.NewReader(`{"name":"group"}`))
 	request.Header.Set("Authorization", "Bearer credential")
 	request.Header.Set("Idempotency-Key", "group-key")
+	// A caller's UI claim cannot change the generated route's replay policy.
+	request.Header.Set("X-LeapView-Operation-ID", "saveTestCredentialDraft")
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	protocol.Middleware(next).ServeHTTP(recorder, request)
@@ -254,7 +257,12 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 	store, _ := postgresProtocolStore(t)
 	var allowed atomic.Bool
 	allowed.Store(true)
-	p, err := Build(t.Context(), Config{Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
+	var authorizationCalls atomic.Int32
+	p, err := Build(t.Context(), Config{Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(r *http.Request) bool {
+		authorizationCalls.Add(1)
+		body, readErr := io.ReadAll(r.Body)
+		return readErr == nil && string(body) == `{"name":"x"}` && allowed.Load()
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,8 +287,15 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 	if got := request().Code; got != http.StatusForbidden {
 		t.Fatalf("revoked/reduced-grant replay status = %d", got)
 	}
+	allowed.Store(true)
+	if got := request().Code; got != http.StatusOK {
+		t.Fatalf("restored-grant replay status = %d", got)
+	}
 	if calls.Load() != 1 {
 		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+	if authorizationCalls.Load() != 2 {
+		t.Fatalf("replay authorization calls = %d, want 2", authorizationCalls.Load())
 	}
 }
 

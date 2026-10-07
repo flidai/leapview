@@ -1,14 +1,27 @@
 # Get started with LeapView
 
-Use this learning path to go from a new LeapView installation to a validated dashboard change. It keeps setup, the guided lesson, and the underlying project model separate so that each page can serve one purpose well.
+Choose a starting point for authoring analytics, operating a server, or contributing to LeapView. The source-checkout tutorial then walks through a validated dashboard change.
 
 ## Choose your starting point
 
-- Start with [Installation](/docs/installation) if LeapView is not running yet. It covers both the public image and a source checkout.
-- Continue with [Build your first dashboard](/docs/first-dashboard) for the guided learning experience. You will run the sample Sales project, trace its resources, change a semantic metric and dashboard note, validate the project, deploy it locally, and verify the result.
-- Read [Project structure](/docs/project-structure) when you are ready to understand how project-wide resources fit together.
+- **Author analytics:** install a published alpha [authoring CLI](https://github.com/flidai/leapview/blob/main/deploy/local/INSTALL.md),
+  then follow the [analytics development workflow](/docs/cli/analytics-development).
+  `leapview init` creates **Sales overview**, a small synthetic project. The CLI
+  manages a checkout-scoped local Docker runtime; no LeapView source checkout
+  or contributor toolchain is required.
+- **Operate a server:** follow [Installation](/docs/installation) for
+  the Compose package and its external PostgreSQL/DuckLake and storage setup.
+  A normal server image does not pre-deploy the repository showcase.
+- **Change LeapView itself:** follow the [contributor setup](/docs/contributing/repository),
+  then [Build your first dashboard](/docs/first-dashboard). That
+  tutorial uses the source checkout's Olist-backed **Executive Sales** project,
+  which is separate from the CLI starter.
 
-The first-dashboard tutorial uses a source checkout because the lesson includes editing the repository project. If you only want to evaluate the running product, use the public-image path in the installation guide. Its explicitly disposable synthetic project is deployed by evaluation mode; the source-authoring showcase is not pre-deployed in the normal server image.
+Read [Project structure](/docs/project-structure) to understand the
+six portable resource kinds. Published packages are alpha software for
+controlled evaluation; package availability does not qualify every host or
+workflow. The authoring guide separates current branch behavior from released
+package evidence.
 
 ## What you will learn
 
@@ -17,7 +30,7 @@ By the end of the tutorial, you will have practiced the complete local authoring
 1. Establish a known-good sample dashboard.
 2. Trace presentation fields back to their semantic definitions.
 3. Make a small change without breaking stable resource identities.
-4. Validate and review the project plan.
+4. Validate the complete resource graph.
 5. Deploy to the development target and verify interactive behavior.
 
 The tutorial optimizes for a successful first experience. After completing it, use the task-oriented [Build dashboards](/docs/guides/build) guides for real project work and [Reference](/docs/reference) for exact resource fields, CLI flags, API operations, and visual contracts.

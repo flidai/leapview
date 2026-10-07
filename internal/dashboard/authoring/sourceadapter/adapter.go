@@ -208,8 +208,8 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 	var err error
 	if draft {
 		// Drafts are repository-backed resources and may not exist in the
-		// immutable serving graph yet. Load only lifecycle metadata, then make
-		// the owner-aware repository-scoped decision before exposing a revision.
+		// immutable serving graph yet. Load only lifecycle metadata, then require
+		// the exact authored-dashboard EDIT grant before exposing draft bytes.
 		lifecycle, err = a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
 	} else {
 		// Published source reads retain the graph-first disclosure boundary.
@@ -231,7 +231,7 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 		return Source{}, err
 	}
 	if draft {
-		if err := a.authorizeAuthoredView(ctx, actorID, ref, lifecycle); err != nil {
+		if err := a.authorizeAuthoredEdit(ctx, actorID, ref, lifecycle); err != nil {
 			return Source{}, err
 		}
 	}
@@ -361,11 +361,11 @@ func (a *Adapter) authorizeProjectView(ctx context.Context, actorID string, ref 
 	})
 }
 
-func (a *Adapter) authorizeAuthoredView(ctx context.Context, actorID string, ref SourceRef, lifecycle authoring.DashboardLifecycle) error {
+func (a *Adapter) authorizeAuthoredEdit(ctx context.Context, actorID string, ref SourceRef, lifecycle authoring.DashboardLifecycle) error {
 	return a.authorizer.Authorize(ctx, service.AuthorizationRequest{
 		ActorID: actorID, ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
-		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility, Action: authoring.AuthorizationActionView,
+		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility, Action: authoring.AuthorizationActionEdit,
 	})
 }
 

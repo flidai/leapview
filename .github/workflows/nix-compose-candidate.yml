@@ -1,0 +1,1354 @@
+name: Protected Nix Compose candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Completed successful release.yml workflow_dispatch run on main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-compose-candidate-${{ inputs.release_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_revision: ${{ steps.authorize.outputs.source_revision }}
+      release_run_id: ${{ steps.authorize.outputs.release_run_id }}
+      release_run_attempt: ${{ steps.authorize.outputs.release_run_attempt }}
+      release_artifact_id: ${{ steps.authorize.outputs.release_artifact_id }}
+      release_artifact_digest: ${{ steps.authorize.outputs.release_artifact_digest }}
+      release_binding_sha256: ${{ steps.binding.outputs.sha256 }}
+      handoff_artifact_id: ${{ steps.handoff.outputs.artifact-id }}
+    steps:
+      - name: Check out the protected verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read and authorize the exact release run and artifact
+        id: authorize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID" > "$RUNNER_TEMP/release-run-api.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml" > "$RUNNER_TEMP/release-workflow-api.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/release-artifact-pages.json"
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts")
+          import nix_compose_qualification as qualification
+
+          run_data = json.loads(Path(os.environ["RUNNER_TEMP"], "release-run-api.json").read_text())
+          workflow_data = json.loads(Path(os.environ["RUNNER_TEMP"], "release-workflow-api.json").read_text())
+          pages = json.loads(Path(os.environ["RUNNER_TEMP"], "release-artifact-pages.json").read_text())
+          if isinstance(pages, dict):
+              pages = [pages]
+          artifacts = [artifact for page in pages for artifact in page.get("artifacts", [])]
+          run = {
+              "repository": run_data.get("repository", {}).get("full_name"),
+              "workflowId": run_data.get("workflow_id"),
+              "runId": run_data.get("id"),
+              "runAttempt": run_data.get("run_attempt"),
+              "event": run_data.get("event"),
+              "status": run_data.get("status"),
+              "conclusion": run_data.get("conclusion"),
+              "branch": run_data.get("head_branch"),
+              "sourceRevision": run_data.get("head_sha"),
+          }
+          workflow = {"id": workflow_data.get("id"), "path": workflow_data.get("path")}
+          expected_name = f"release-candidate-candidate-{run['runId']}-{run['runAttempt']}"
+          matches = [item for item in artifacts if item.get("name") == expected_name]
+          if len(matches) != 1:
+              raise SystemExit("release run does not contain one exact candidate artifact for this attempt")
+          raw = matches[0]
+          workflow_run = raw.get("workflow_run") or {}
+          artifact = {
+              "id": raw.get("id"),
+              "name": raw.get("name"),
+              "digest": raw.get("digest"),
+              "expired": raw.get("expired"),
+              "runId": workflow_run.get("id"),
+              "runAttempt": run["runAttempt"],
+              "repository": run["repository"],
+              "branch": workflow_run.get("head_branch"),
+              "sourceRevision": workflow_run.get("head_sha"),
+          }
+          binding = qualification.verify_release_run(
+              run, workflow, artifact,
+              protected_revision=os.environ["GITHUB_SHA"],
+              source_root=Path("."),
+          )
+          Path("release-run-binding.json").write_text(
+              json.dumps(binding, indent=2) + "\n", encoding="utf-8"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"source_revision={binding['sourceRevision']}\n")
+              output.write(f"release_run_id={binding['releaseRunId']}\n")
+              output.write(f"release_run_attempt={binding['releaseRunAttempt']}\n")
+              output.write(f"release_artifact_id={binding['releaseArtifactId']}\n")
+              output.write(f"release_artifact_digest={binding['releaseArtifactDigest']}\n")
+          PY
+
+      - name: Download and digest-check the exact release artifact ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.authorize.outputs.release_artifact_id }}
+          ARTIFACT_DIGEST: ${{ steps.authorize.outputs.release_artifact_digest }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            --output "$RUNNER_TEMP/release-candidate.zip"
+          python3 scripts/nix_compose_qualification.py extract-release-handoff \
+            --artifact-zip "$RUNNER_TEMP/release-candidate.zip" \
+            --artifact-digest "$ARTIFACT_DIGEST" \
+            --output-dir release-input \
+            --release-authorization release-run-binding.json
+          cp -- release-run-binding.json release-input/release-run-binding.json
+          cp -- "$RUNNER_TEMP/release-candidate.zip" release-input/release-candidate.zip
+
+      - name: Bind the verified protected release input
+        id: binding
+        run: |
+          set -euo pipefail
+          sha256sum release-input/release-run-binding.json | awk '{print "sha256="$1}' >> "$GITHUB_OUTPUT"
+
+      - name: Retain the verified release handoff
+        id: handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-release-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input/
+          if-no-files-found: error
+          retention-days: 14
+
+  preflight:
+    name: Native immutable image admission (${{ matrix.arch }})
+    needs: [authorize, build-bundles]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      packages: read
+    steps:
+      - name: Check out protected OCI admission tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download the exact authorized release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+      - name: Verify binding and image metadata before live admission
+        env:
+          ARCH: ${{ matrix.arch }}
+          EXPECTED_SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+          root = Path("release-input")
+          binding = json.loads((root / "release-run-binding.json").read_text(encoding="utf-8"))
+          identity = json.loads((root / "release-identity.json").read_text(encoding="utf-8"))
+          image_line = (root / "image-reference.txt").read_text(encoding="ascii")
+          expected_image = os.environ["IMAGE_REFERENCE"]
+          expected_revision = os.environ["EXPECTED_SOURCE_REVISION"]
+          if (not image_line.endswith("\n") or image_line.count("\n") != 1
+                  or image_line[:-1] != expected_image
+                  or re.fullmatch(r"ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}", expected_image) is None):
+              raise SystemExit("release handoff image is not the exact immutable image reference")
+          if (set(identity) != {"version", "revision", "buildTime", "dirty", "development", "image"}
+                  or identity["revision"] != expected_revision or identity["image"] != expected_image
+                  or identity["dirty"] is not False or identity["development"] is not False
+                  or re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", identity["buildTime"]) is None
+                  or binding["sourceRevision"] != expected_revision or binding["releaseAdmission"] is not False):
+              raise SystemExit("release identity or authorization differs from the protected handoff")
+          PY
+          mkdir -p "preflight/$ARCH"
+          cp -- release-input/release-identity.json release-input/image-reference.txt \
+            release-input/assembled-image-admission.json release-input/release-run-binding.json \
+            "preflight/$ARCH/"
+      - name: Log in to GHCR for read-only image admission
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Admit the exact immutable release image for this platform
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ needs.build-bundles.outputs.image_reference }}
+          repository: ghcr.io/flidai/leapview
+          expected-workflow: flidai/leapview/.github/workflows/release.yml
+          source-revision: ${{ needs.authorize.outputs.source_revision }}
+          platform: linux/${{ matrix.arch }}
+          output: ${{ runner.temp }}/oci-admission.json
+      - name: Record the actual release image runtime identity
+        env:
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.admission.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          test "$IMAGE_REFERENCE" = "$(cat release-input/image-reference.txt)"
+          test "$(printf '%s' "$IMAGE_REFERENCE" | cut -d@ -f2)" = "$IMAGE_DIGEST"
+          docker pull "$IMAGE_REFERENCE"
+          docker run --rm "$IMAGE_REFERENCE" version --format json > "preflight/$ARCH/image-runtime-identity.json"
+          cp -- "$RUNNER_TEMP/oci-admission.json" "preflight/$ARCH/oci-admission.json"
+      - name: Remove temporary GHCR credentials
+        if: always()
+        run: docker logout ghcr.io >/dev/null 2>&1 || true
+      - name: Retain immutable pre-execution admission and runtime evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-preflight-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: preflight/${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain image admission diagnostics on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-preflight-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/oci-admission.json
+            preflight/${{ matrix.arch }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  controller-evidence:
+    name: Native Compose controller security evidence (${{ matrix.arch }})
+    needs: [authorize, build-bundles]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - name: Check out protected Compose evidence tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out the authorized clean source assets
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+
+      - name: Install pinned protected Nix tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+
+      - name: Download the exact Nix bundle and release handoff artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
+          path: candidate
+      - name: Download the exact release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+
+      - name: Verify source, release identity and original bundle inputs
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          cmp release-input/release-run-binding.json "candidate/$ARCH/release-run-binding.json"
+          cmp release-input/release-identity.json "candidate/$ARCH/release-identity.json"
+          cmp release-input/image-reference.txt "candidate/$ARCH/image-reference.txt"
+          test "$(cat release-input/image-reference.txt)" = "$IMAGE_REFERENCE"
+
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
+
+      - name: Collect native Go, SPDX and isolated host evidence
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          RELEASE_RUN_ID: ${{ needs.authorize.outputs.release_run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ needs.authorize.outputs.release_run_attempt }}
+        run: |
+          set -euo pipefail
+          package="leapview-compose-candidate-${RELEASE_RUN_ID}-${RELEASE_RUN_ATTEMPT}-linux-${ARCH}"
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_compose_controller_evidence.py qualify-controller \
+            --archive "candidate/$ARCH/$package.tar.gz" \
+            --sidecar "candidate/$ARCH/$package.tar.gz.sha256" \
+            --controller-build-identity "candidate/$ARCH/controller-build-identity.json" \
+            --source-root source --release-identity "candidate/$ARCH/release-identity.json" \
+            --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
+            --platform "linux/$ARCH" \
+            --binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+            --evidence-dir "controller-evidence/$ARCH" \
+            --output "controller-evidence/$ARCH/controller-evidence.json"
+
+      - name: Retain successful native controller evidence
+        if: success()
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-controller-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: controller-evidence/${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain controller evidence diagnostics on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-controller-evidence-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: controller-evidence/${{ matrix.arch }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  qualify:
+    name: Native installed Compose candidate (${{ matrix.arch }})
+    needs: [authorize, build-bundles, preflight, controller-evidence]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 270
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out protected qualification tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out the authorized clean source assets
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+
+      - name: Install pinned Nix without signing credentials
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+
+      - name: Download the exact bundle artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
+          path: candidate
+
+      - name: Download the exact release handoff and REST artifact bytes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+
+      - name: Resolve the exact same-run native preflight artifact
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$EXPECTED_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/preflight-artifacts.json"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+          pages = json.loads(Path(os.environ["RUNNER_TEMP"], "preflight-artifacts.json").read_text())
+          if isinstance(pages, dict):
+              pages = [pages]
+          artifacts = [item for page in pages for item in page.get("artifacts", [])]
+          run_id = int(os.environ["EXPECTED_RUN_ID"])
+          attempt = int(os.environ["EXPECTED_RUN_ATTEMPT"])
+          arch = os.environ["ARCH"]
+          revision = os.environ["EXPECTED_SOURCE_REVISION"]
+          expected_name = f"nix-compose-preflight-{run_id}-{attempt}-{arch}"
+          matches = [item for item in artifacts
+              if item.get("name") == expected_name and item.get("expired") is False
+              and re.fullmatch(r"sha256:[0-9a-f]{64}", item.get("digest", ""))
+              and (item.get("workflow_run") or {}).get("id") == run_id
+              and (item.get("workflow_run") or {}).get("head_branch") == "main"
+              and (item.get("workflow_run") or {}).get("head_sha") == revision]
+          if len(matches) != 1 or type(matches[0].get("id")) is not int:
+              raise SystemExit("no unique, immutable same-attempt native preflight artifact exists")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"artifact_id={matches[0]['id']}\n")
+          PY
+
+      - name: Download the exact native preflight artifact by REST ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.preflight.outputs.artifact_id }}
+          path: preflight/${{ matrix.arch }}
+
+      - name: Resolve the exact same-run controller evidence artifact
+        id: controller-evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$EXPECTED_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/controller-evidence-artifacts.json"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+          pages = json.loads(Path(os.environ["RUNNER_TEMP"], "controller-evidence-artifacts.json").read_text())
+          if isinstance(pages, dict):
+              pages = [pages]
+          artifacts = [item for page in pages for item in page.get("artifacts", [])]
+          run_id = int(os.environ["EXPECTED_RUN_ID"])
+          attempt = int(os.environ["EXPECTED_RUN_ATTEMPT"])
+          arch = os.environ["ARCH"]
+          revision = os.environ["EXPECTED_SOURCE_REVISION"]
+          expected_name = f"nix-compose-controller-evidence-{run_id}-{attempt}-{arch}"
+          matches = [item for item in artifacts
+              if item.get("name") == expected_name and item.get("expired") is False
+              and re.fullmatch(r"sha256:[0-9a-f]{64}", item.get("digest", ""))
+              and (item.get("workflow_run") or {}).get("id") == run_id
+              and (item.get("workflow_run") or {}).get("head_branch") == "main"
+              and (item.get("workflow_run") or {}).get("head_sha") == revision]
+          if len(matches) != 1 or type(matches[0].get("id")) is not int:
+              raise SystemExit("no unique, immutable same-attempt native controller evidence artifact exists")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"artifact_id={matches[0]['id']}\n")
+          PY
+
+      - name: Download the exact native controller evidence by REST ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.controller-evidence.outputs.artifact_id }}
+          path: controller-evidence/${{ matrix.arch }}
+
+      - name: Verify authorized source, binding and immutable image
+        env:
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+          ARCH: ${{ matrix.arch }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          cmp release-input/release-run-binding.json "preflight/$ARCH/release-run-binding.json"
+          cmp release-input/release-run-binding.json "candidate/$ARCH/release-run-binding.json"
+          cmp release-input/image-reference.txt "preflight/$ARCH/image-reference.txt"
+          cmp release-input/release-identity.json "preflight/$ARCH/release-identity.json"
+          cmp release-input/assembled-image-admission.json "preflight/$ARCH/assembled-image-admission.json"
+          test "$(cat release-input/image-reference.txt)" = "$IMAGE_REFERENCE"
+          cp -- "preflight/$ARCH/assembled-image-admission.json" "candidate/$ARCH/assembled-image-admission.json"
+          cp -- "preflight/$ARCH/oci-admission.json" "candidate/$ARCH/oci-admission.json"
+          cp -- "preflight/$ARCH/image-runtime-identity.json" "candidate/$ARCH/image-runtime-identity.json"
+
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
+
+      - name: Verify exact bundle and safely extract the installed package
+        env:
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
+          RUNTIME_BUNDLE_BINDING: ${{ runner.temp }}/runtime-bundle-binding.json
+        run: |
+          set -euo pipefail
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_compose_qualification.py verify-bundle \
+            --archive "candidate/${{ matrix.arch }}/$PACKAGE_NAME.tar.gz" \
+            --sidecar "candidate/${{ matrix.arch }}/$PACKAGE_NAME.tar.gz.sha256" \
+            --controller-build-identity candidate/${{ matrix.arch }}/controller-build-identity.json \
+            --source-root source --release-identity candidate/${{ matrix.arch }}/release-identity.json \
+            --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
+            --platform linux/${{ matrix.arch }} --extract-dir extracted-package \
+            --output "$RUNTIME_BUNDLE_BINDING"
+
+      - name: Verify exact controller security evidence before candidate execution
+        env:
+          ARCH: ${{ matrix.arch }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_compose_controller_evidence.py verify-controller-evidence \
+            --archive "candidate/$ARCH/$PACKAGE_NAME.tar.gz" \
+            --sidecar "candidate/$ARCH/$PACKAGE_NAME.tar.gz.sha256" \
+            --controller-build-identity "candidate/$ARCH/controller-build-identity.json" \
+            --source-root source --release-identity "candidate/$ARCH/release-identity.json" \
+            --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
+            --platform "linux/$ARCH" \
+            --evidence-dir "controller-evidence/$ARCH" \
+            --receipt "controller-evidence/$ARCH/controller-evidence.json" \
+            --binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+            > "$RUNNER_TEMP/controller-evidence-verified.json"
+
+      - name: Check the extracted controller runtime identity without credentials
+        env:
+          PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          package_root="extracted-package/$PACKAGE_NAME"
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            "$package_root/leapviewctl" version --format json > controller-runtime-identity.json
+
+      - name: Run the full installed-candidate journey
+        env:
+          PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/compose-qualification-evidence
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          package_root="extracted-package/$PACKAGE_NAME"
+          args=(qualify installed-candidate --bundle "$package_root" --evidence-dir "$EVIDENCE_ROOT" --multi-node-process)
+          env -u GH_TOKEN -u GITHUB_TOKEN "$package_root/leapviewctl" "${args[@]}"
+
+      - name: Verify all native runtime and journey evidence and write the success receipt
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          RELEASE_RUN_ID: ${{ needs.authorize.outputs.release_run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ needs.authorize.outputs.release_run_attempt }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/compose-qualification-evidence
+        run: |
+          set -euo pipefail
+          package="leapview-compose-candidate-${RELEASE_RUN_ID}-${RELEASE_RUN_ATTEMPT}-linux-${ARCH}"
+          mkdir -p "qualified/$ARCH"
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_compose_qualification.py record-qualification \
+            --archive "candidate/$ARCH/$package.tar.gz" \
+            --sidecar "candidate/$ARCH/$package.tar.gz.sha256" \
+            --controller-build-identity "candidate/$ARCH/controller-build-identity.json" \
+            --source-root source \
+            --release-identity "candidate/$ARCH/release-identity.json" \
+            --release-artifact-zip release-input/release-candidate.zip \
+            --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
+            --platform "linux/$ARCH" \
+            --admission-evidence "candidate/$ARCH/oci-admission.json" \
+            --controller-runtime-identity controller-runtime-identity.json \
+            --runtime-identity "candidate/$ARCH/image-runtime-identity.json" \
+            --qualification-report "$EVIDENCE_ROOT/qualification-report.json" \
+            --qualification-evidence-dir "$EVIDENCE_ROOT" \
+            --controller-evidence-dir "controller-evidence/$ARCH" \
+            --controller-binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+            --release-authorization release-input/release-run-binding.json \
+            --signer-revision "$GITHUB_SHA" \
+            --output "qualified/$ARCH/qualification.json"
+          cp -- "candidate/$ARCH/$package.tar.gz" "qualified/$ARCH/"
+          cp -- "candidate/$ARCH/$package.tar.gz.sha256" "qualified/$ARCH/"
+          cp -- "candidate/$ARCH/controller-build-identity.json" "candidate/$ARCH/static-compatibility.json" \
+            "candidate/$ARCH/release-identity.json" "candidate/$ARCH/image-reference.txt" \
+            "candidate/$ARCH/release-artifact-admission.json" "candidate/$ARCH/oci-admission.json" \
+            "candidate/$ARCH/assembled-image-admission.json" \
+            "candidate/$ARCH/release-run-binding.json" "candidate/$ARCH/bundle-binding.json" \
+            controller-runtime-identity.json "candidate/$ARCH/image-runtime-identity.json" "qualified/$ARCH/"
+          cp -R -- "$EVIDENCE_ROOT" "qualified/$ARCH/installed-evidence"
+          cp -R -- "controller-evidence/$ARCH" "qualified/$ARCH/controller-evidence"
+
+      - name: Retain success-qualified exact archive and receipt
+        if: success()
+        id: qualified
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-qualified-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: qualified/${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain native qualification diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: |
+            preflight/${{ matrix.arch }}/
+            controller-evidence/${{ matrix.arch }}/
+            ${{ runner.temp }}/compose-qualification-evidence/
+            controller-runtime-identity.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  host-qualification:
+    name: Fresh Linux host (${{ matrix.guest-os }}, ${{ matrix.arch }}, ${{ matrix.install-mode }})
+    needs: [authorize, build-bundles, preflight, controller-evidence]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        guest-os: [ubuntu2404, debian13]
+        install-mode: [bootstrap, nix-controller]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out protected guest verifier and fixture pins
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out authorized source identity and bootstrap bytes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Install pinned qualification tools without signing credentials
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Download exact original bundle and release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
+          path: candidate
+      - name: Download exact protected release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+      - name: Resolve original controller evidence from this exact run attempt
+        id: controller
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/controller-artifacts.json"
+          python3 - <<'VERIFY'
+          import json, os, re
+          from pathlib import Path
+          pages = json.loads(Path(os.environ['RUNNER_TEMP'], 'controller-artifacts.json').read_text())
+          if isinstance(pages, dict): pages = [pages]
+          name = f"nix-compose-controller-evidence-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}-{os.environ['ARCH']}"
+          matches = [a for page in pages for a in page.get('artifacts', [])
+              if a.get('name') == name and a.get('expired') is False
+              and re.fullmatch(r'sha256:[0-9a-f]{64}', a.get('digest', ''))
+              and (a.get('workflow_run') or {}).get('id') == int(os.environ['GITHUB_RUN_ID'])
+              and (a.get('workflow_run') or {}).get('head_branch') == 'main'
+              and (a.get('workflow_run') or {}).get('head_sha') == os.environ['GITHUB_SHA']]
+          if len(matches) != 1 or type(matches[0].get('id')) is not int:
+              raise SystemExit('expected one original same-attempt controller evidence artifact')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"artifact_id={matches[0]['id']}\n")
+          VERIFY
+      - name: Download original security evidence by immutable artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.controller.outputs.artifact_id }}
+          path: original-controller-evidence
+      - name: Verify authorized inputs and build protected binary verifier
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          cmp release-input/release-run-binding.json "candidate/$ARCH/release-run-binding.json"
+          cmp release-input/release-identity.json "candidate/$ARCH/release-identity.json"
+          cmp release-input/image-reference.txt "candidate/$ARCH/image-reference.txt"
+          test "$(cat release-input/image-reference.txt)" = "$IMAGE_REFERENCE"
+          cp -R original-controller-evidence retained-controller-evidence
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/host-controller-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Build the protected first-publication verifier
+        env:
+          PROTECTED_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PROTECTED_REVISION"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          # The full CLI imports build-only API, signal and SQL packages. Run
+          # their generators from this protected checkout, never from source/.
+          nix develop --no-update-lock-file .#host-verifier -c bash -s <<'VERIFY'
+          set -euo pipefail
+          task generate
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/host-first-publication-verifier" ./cmd/leapviewctl
+          VERIFY
+          chmod 700 "$RUNNER_TEMP/host-first-publication-verifier"
+          sha256sum -- "$RUNNER_TEMP/host-first-publication-verifier"
+      - name: Verify pinned vendor image and qualify a fresh disposable guest
+        env:
+          ARCH: ${{ matrix.arch }}
+          GUEST_OS: ${{ matrix.guest-os }}
+          INSTALL_MODE: ${{ matrix.install-mode }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          PROTECTED_REVISION: ${{ github.sha }}
+          IMAGE_REFERENCE: ${{ needs.build-bundles.outputs.image_reference }}
+          PACKAGE_NAME: leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p host-evidence
+          python3 - <<'DOWNLOAD'
+          import hashlib, json, os, pathlib, urllib.request
+          pins = json.loads(pathlib.Path('nix/guest-images.json').read_text())
+          matches = [x for x in pins['images'] if x['guestOS'] == os.environ['GUEST_OS'] and x['architecture'] == os.environ['ARCH']]
+          if pins['schemaVersion'] != 1 or len(matches) != 1: raise SystemExit('missing exact vendor image pin')
+          pin = matches[0]
+          vendor = hashlib.new(pin['checksum']['algorithm'])
+          sha256 = hashlib.sha256()
+          size = 0
+          with urllib.request.urlopen(pin['url'], timeout=60) as response, open(os.environ['RUNNER_TEMP'] + '/guest.qcow2', 'xb') as output:
+              while chunk := response.read(1024 * 1024):
+                  size += len(chunk)
+                  if size > 4 * 1024**3: raise SystemExit('cloud image exceeds fixture budget')
+                  vendor.update(chunk); sha256.update(chunk); output.write(chunk)
+          if not size or vendor.hexdigest() != pin['checksum']['hex']: raise SystemExit('vendor cloud image checksum mismatch')
+          pathlib.Path('host-evidence/vendor-image.json').write_text(json.dumps(pin | {'sha256': sha256.hexdigest(), 'sizeBytes': size}, indent=2) + '\n')
+          config = {'schemaVersion': 1, 'domain': 'localhost', 'adminEmail': 'qualification@example.test',
+              'environment': 'prod', 'https': True, 'image': os.environ['IMAGE_REFERENCE'], 'targetId': 'nix-host-qualification'}
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'host-config.json'
+          path.write_text(json.dumps(config) + '\n'); path.chmod(0o600)
+          DOWNLOAD
+          image_sha=$(python3 -c 'import json; print(json.load(open("host-evidence/vendor-image.json"))["sha256"])')
+          export GUEST_IMAGE_SHA256="$image_sha"
+          # Explicit TCG works on runners without KVM; receipts record software
+          # virtualization and matching host/guest ISA without a hardware claim.
+          # Expand qualification variables inside the locked shell.
+          # shellcheck disable=SC2016
+          nix develop --no-update-lock-file .#host-qualification -c bash -c '
+            set -euo pipefail
+            firmware=()
+            if [ "$ARCH" = arm64 ]; then firmware=(--firmware "$LEAPVIEW_QUALIFICATION_FIRMWARE"); fi
+            python3 scripts/nix_compose_guest_launcher.py run \
+              --cloud-image "$RUNNER_TEMP/guest.qcow2" --image-sha256 "$GUEST_IMAGE_SHA256" \
+              --guest-os "$GUEST_OS" --architecture "$ARCH" --virtualization-mode tcg \
+              --output-dir host-evidence/guest --launcher-receipt host-evidence/launcher.json \
+              --lifecycle-receipt host-evidence/lifecycle.json "${firmware[@]}" -- \
+              python3 scripts/nix_compose_host_guest.py qualify-guest \
+              --archive "candidate/$ARCH/$PACKAGE_NAME.tar.gz" \
+              --sidecar "candidate/$ARCH/$PACKAGE_NAME.tar.gz.sha256" \
+              --controller-build-identity "candidate/$ARCH/controller-build-identity.json" \
+              --source-root source --release-identity "candidate/$ARCH/release-identity.json" \
+              --source-revision "$SOURCE_REVISION" --image "$IMAGE_REFERENCE" --platform "linux/$ARCH" \
+              --original-controller-evidence original-controller-evidence \
+              --retained-controller-evidence retained-controller-evidence \
+              --controller-binary-verifier "$RUNNER_TEMP/host-controller-binary-verifier" \
+              --protected-root . --protected-revision "$PROTECTED_REVISION" \
+              --first-publication-verifier "$RUNNER_TEMP/host-first-publication-verifier" \
+              --config "$RUNNER_TEMP/host-config.json" --install-mode "$INSTALL_MODE"
+          '
+          python3 scripts/nix_compose_host_guest.py verify-receipt \
+            --receipt host-evidence/guest/host-guest-receipt.json --evidence-dir host-evidence/guest/evidence
+      - name: Retain exact fresh-host receipts and diagnostics without credentials
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-host-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.guest-os }}-${{ matrix.arch }}-${{ matrix.install-mode }}
+          path: host-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  build-bundles:
+    needs: authorize
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.bundles.outputs.artifact-id }}
+      image_reference: ${{ steps.image.outputs.reference }}
+    steps:
+      - name: Check out the protected assembler and verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out the authorized clean source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+
+      - name: Download the exact protected release handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+
+      - name: Verify release identity and immutable image reference
+        id: image
+        env:
+          EXPECTED_SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("release-input")
+          binding = json.loads((root / "release-run-binding.json").read_text(encoding="utf-8"))
+          identity = json.loads((root / "release-identity.json").read_text(encoding="utf-8"))
+          image_line = (root / "image-reference.txt").read_text(encoding="ascii")
+          if not image_line.endswith("\n") or image_line.count("\n") != 1:
+              raise SystemExit("release image reference is not a single canonical line")
+          image = image_line[:-1]
+          if re.fullmatch(r"ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}", image) is None:
+              raise SystemExit("release handoff does not name an immutable LeapView image")
+          if (set(identity) != {"version", "revision", "buildTime", "dirty", "development", "image"}
+                  or identity["revision"] != os.environ["EXPECTED_SOURCE_REVISION"]
+                  or identity["image"] != image or identity["dirty"] is not False
+                  or identity["development"] is not False
+                  or re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", identity["buildTime"]) is None
+                  or binding["sourceRevision"] != identity["revision"]
+                  or binding["releaseAdmission"] is not False):
+              raise SystemExit("release handoff identity differs from its protected authorization")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"reference={image}\n")
+          PY
+
+      - name: Install pinned Nix without signing credentials
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+
+      - name: Build both clean-source Nix Compose controllers
+        env:
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          nix build --no-update-lock-file ./source#leapviewctl-compose-linux-amd64 --out-link result-compose-cli-amd64 -L
+          nix build --no-update-lock-file ./source#leapviewctl-compose-linux-arm64 --out-link result-compose-cli -L
+
+      - name: Assemble and verify with protected tools
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          RELEASE_RUN_ID: ${{ needs.authorize.outputs.release_run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ needs.authorize.outputs.release_run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate/amd64 candidate/arm64
+          for arch in amd64 arm64; do
+            nix_output="result-compose-cli-$arch"
+            package="leapview-compose-candidate-${RELEASE_RUN_ID}-${RELEASE_RUN_ATTEMPT}-linux-${arch}"
+            platform="linux/$arch"
+            archive="candidate/$arch/$package.tar.gz"
+            sidecar="$archive.sha256"
+            receipt="candidate/$arch/controller-build-identity.json"
+            identity="release-input/release-identity.json"
+            cp --dereference "$nix_output/controller-build-identity.json" "$receipt"
+            cp --dereference "$nix_output/static-compatibility.json" "candidate/$arch/static-compatibility.json"
+            python3 scripts/package_compose_bundle.py assemble \
+              --source-root source \
+              --controller "$nix_output/bin/leapviewctl" \
+              --platform "$platform" \
+              --controller-build-identity "$receipt" \
+              --image-reference "$IMAGE_REFERENCE" \
+              --release-identity "$identity" \
+              --package-name "$package" \
+              --output-dir "candidate/$arch/dist"
+            cp -- "candidate/$arch/dist/$package.tar.gz" "$archive"
+            cp -- "candidate/$arch/dist/$package.tar.gz.sha256" "$sidecar"
+            rm -rf -- "candidate/$arch/dist"
+            cp -- "$identity" "candidate/$arch/release-identity.json"
+            cp -- release-input/image-reference.txt "candidate/$arch/image-reference.txt"
+            cp -- release-input/assembled-image-admission.json "candidate/$arch/release-artifact-admission.json"
+            cp -- release-input/release-run-binding.json "candidate/$arch/release-run-binding.json"
+            nix develop --no-update-lock-file .#runtime-security -c \
+              python3 scripts/nix_compose_qualification.py verify-bundle \
+              --archive "$archive" --sidecar "$sidecar" \
+              --controller-build-identity "$receipt" \
+              --source-root source --release-identity "$identity" \
+              --image "$IMAGE_REFERENCE" --source-revision "$SOURCE_REVISION" \
+              --platform "$platform" \
+              --output "candidate/$arch/bundle-binding.json"
+          done
+
+      - name: Retain the assembled bundles and original Nix build receipts
+        id: bundles
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-bundles-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  sign:
+    needs: [authorize, build-bundles, preflight, controller-evidence, qualify]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: leapview-ephemeral-qualification
+    permissions:
+      actions: read
+      contents: read
+      attestations: write
+      id-token: write
+    outputs:
+      artifact_id: ${{ steps.signed.outputs.artifact-id }}
+    steps:
+      - name: Check out protected receipt verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out authorized source assets without execution
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Install pinned Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Resolve exact successful native artifact IDs from this run
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$EXPECTED_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          pages = json.loads(Path(os.environ["RUNNER_TEMP"], "artifacts.json").read_text())
+          if isinstance(pages, dict): pages = [pages]
+          artifacts = [a for page in pages for a in page.get("artifacts", [])]
+          run_id = int(os.environ["EXPECTED_RUN_ID"])
+          attempt = int(os.environ["EXPECTED_RUN_ATTEMPT"])
+          revision = os.environ["EXPECTED_SOURCE_REVISION"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for kind in ("qualified", "preflight", "controller-evidence"):
+                  for arch in ("amd64", "arm64"):
+                      name = f"nix-compose-{kind}-{run_id}-{attempt}-{arch}"
+                      matches = [a for a in artifacts
+                          if a.get("name") == name and a.get("expired") is False
+                          and re.fullmatch(r"sha256:[0-9a-f]{64}", a.get("digest", ""))
+                          and (a.get("workflow_run") or {}).get("id") == run_id
+                          and (a.get("workflow_run") or {}).get("head_branch") == "main"
+                          and (a.get("workflow_run") or {}).get("head_sha") == revision]
+                      if len(matches) != 1 or type(matches[0].get("id")) is not int:
+                          raise SystemExit(f"expected one exact successful {kind} {arch} artifact from this protected run attempt")
+                      output.write(f"{kind.replace('-', '_')}_{arch}_id={matches[0]['id']}\n")
+          PY
+      - name: Download exact amd64 native qualification
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.qualified_amd64_id }}
+          path: qualified/amd64
+      - name: Download exact arm64 native qualification
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.qualified_arm64_id }}
+          path: qualified/arm64
+      - name: Download exact amd64 pre-execution artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.preflight_amd64_id }}
+          path: preflight/amd64
+      - name: Download exact arm64 pre-execution artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.preflight_arm64_id }}
+          path: preflight/arm64
+      - name: Download exact amd64 controller evidence artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_amd64_id }}
+          path: original-controller-evidence/amd64
+      - name: Download exact arm64 controller evidence artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifacts.outputs.controller_evidence_arm64_id }}
+          path: original-controller-evidence/arm64
+      - name: Download exact original Nix bundle artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build-bundles.outputs.artifact_id }}
+          path: original-build
+      - name: Download exact release handoff and original REST ZIP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.authorize.outputs.handoff_artifact_id }}
+          path: release-input
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Recompute receipts offline without executing candidates
+        env:
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" release-input/release-run-binding.json | sha256sum --check --status
+          for arch in amd64 arm64; do
+            package="leapview-compose-candidate-${{ needs.authorize.outputs.release_run_id }}-${{ needs.authorize.outputs.release_run_attempt }}-linux-${arch}"
+            cmp "original-controller-evidence/$arch/controller-evidence.json" \
+              "qualified/$arch/controller-evidence/controller-evidence.json"
+            for file in "$package.tar.gz" "$package.tar.gz.sha256" controller-build-identity.json static-compatibility.json release-identity.json image-reference.txt release-artifact-admission.json release-run-binding.json bundle-binding.json; do
+              cmp "original-build/$arch/$file" "qualified/$arch/$file"
+            done
+            for file in release-identity.json image-reference.txt assembled-image-admission.json release-run-binding.json oci-admission.json image-runtime-identity.json; do
+              cmp "preflight/$arch/$file" "qualified/$arch/$file"
+            done
+            nix develop --no-update-lock-file .#runtime-security -c \
+              python3 scripts/nix_compose_controller_evidence.py compare-controller-evidence \
+              --archive "original-build/$arch/$package.tar.gz" \
+              --sidecar "original-build/$arch/$package.tar.gz.sha256" \
+              --controller-build-identity "original-build/$arch/controller-build-identity.json" \
+              --source-root source --release-identity "original-build/$arch/release-identity.json" \
+              --image "$(cat "original-build/$arch/image-reference.txt")" \
+              --source-revision "$SOURCE_REVISION" --platform "linux/$arch" \
+              --left-evidence-dir "original-controller-evidence/$arch" \
+              --right-evidence-dir "qualified/$arch/controller-evidence" \
+              --binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+              > "$RUNNER_TEMP/controller-evidence-compare-$arch.json"
+            count="$(find "qualified/$arch" -maxdepth 1 -type f -name '*.tar.gz' | wc -l)"
+            test "$count" = 1
+            archive="$(find "qualified/$arch" -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
+            cmp release-input/release-run-binding.json "qualified/$arch/release-run-binding.json"
+            nix develop --no-update-lock-file .#runtime-security -c \
+              python3 scripts/nix_compose_qualification.py verify-qualification \
+              --receipt "qualified/$arch/qualification.json" \
+              --archive "$archive" --sidecar "$archive.sha256" \
+              --controller-build-identity "qualified/$arch/controller-build-identity.json" \
+              --source-root source --release-identity "qualified/$arch/release-identity.json" \
+              --release-artifact-zip release-input/release-candidate.zip \
+              --image "$(cat "qualified/$arch/image-reference.txt")" \
+              --source-revision "$SOURCE_REVISION" --platform "linux/$arch" \
+              --admission-evidence "qualified/$arch/oci-admission.json" \
+              --controller-runtime-identity "qualified/$arch/controller-runtime-identity.json" \
+              --runtime-identity "qualified/$arch/image-runtime-identity.json" \
+              --qualification-report "qualified/$arch/installed-evidence/qualification-report.json" \
+              --qualification-evidence-dir "qualified/$arch/installed-evidence" \
+              --controller-evidence-dir "qualified/$arch/controller-evidence" \
+              --controller-binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+              --release-authorization release-input/release-run-binding.json \
+            --signer-revision "$GITHUB_SHA"
+          done
+      - name: Attest exact amd64 archive
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/amd64/*.tar.gz
+      - name: Attest explicit amd64 non-admission receipt
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/amd64/qualification.json
+      - name: Attest amd64 controller SPDX against exact outer bundle
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/amd64/*.tar.gz
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: qualified/amd64/controller-evidence/sbom.spdx.json
+      - name: Attest exact arm64 archive
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/arm64/*.tar.gz
+      - name: Attest explicit arm64 non-admission receipt
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/arm64/qualification.json
+      - name: Attest arm64 controller SPDX against exact outer bundle
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: qualified/arm64/*.tar.gz
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: qualified/arm64/controller-evidence/sbom.spdx.json
+      - name: Retain exact attested archives and evidence
+        id: signed
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-signed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qualified/amd64/
+            qualified/arm64/
+            release-input/release-candidate.zip
+            release-input/release-run-binding.json
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-attestations:
+    needs: [authorize, sign]
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    steps:
+      - name: Check out protected read-only verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out authorized source assets only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          path: source
+          persist-credentials: false
+      - name: Install protected pinned verification tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Download exact signed artifact by ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.sign.outputs.artifact_id }}
+          path: signed
+      - name: Build the protected Go binary evidence verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/compose-controller-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Recompute receipts and verify attestations read-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXPECTED_BINDING_SHA256: ${{ needs.authorize.outputs.release_binding_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+          test -z "$(git -C source status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$EXPECTED_BINDING_SHA256" signed/release-input/release-run-binding.json | sha256sum --check --status
+          mkdir -p verification
+          for arch in amd64 arm64; do
+            count="$(find "signed/qualified/$arch" -maxdepth 1 -type f -name '*.tar.gz' | wc -l)"
+            test "$count" = 1
+            archive="$(find "signed/qualified/$arch" -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
+            receipt="signed/qualified/$arch/qualification.json"
+            cmp signed/release-input/release-run-binding.json "signed/qualified/$arch/release-run-binding.json"
+            nix develop --no-update-lock-file .#runtime-security -c \
+              python3 scripts/nix_compose_qualification.py verify-qualification \
+              --receipt "$receipt" --archive "$archive" --sidecar "$archive.sha256" \
+              --controller-build-identity "signed/qualified/$arch/controller-build-identity.json" \
+              --source-root source --release-identity "signed/qualified/$arch/release-identity.json" \
+              --release-artifact-zip signed/release-input/release-candidate.zip \
+              --image "$(cat "signed/qualified/$arch/image-reference.txt")" \
+              --source-revision "$SOURCE_REVISION" --platform "linux/$arch" \
+              --admission-evidence "signed/qualified/$arch/oci-admission.json" \
+              --controller-runtime-identity "signed/qualified/$arch/controller-runtime-identity.json" \
+              --runtime-identity "signed/qualified/$arch/image-runtime-identity.json" \
+              --qualification-report "signed/qualified/$arch/installed-evidence/qualification-report.json" \
+              --qualification-evidence-dir "signed/qualified/$arch/installed-evidence" \
+              --controller-evidence-dir "signed/qualified/$arch/controller-evidence" \
+              --controller-binary-verifier "$RUNNER_TEMP/compose-controller-binary-verifier" \
+              --release-authorization signed/release-input/release-run-binding.json \
+              --signer-revision "$GITHUB_SHA" > "verification/$arch-receipt-check.json"
+            archive_before="$(sha256sum "$archive")"
+            receipt_before="$(sha256sum "$receipt")"
+            for subject in "$archive" "$receipt"; do
+              subject_name="$(basename "$subject")"
+              expected_sha256="$(sha256sum "$subject" | awk '{print $1}')"
+              verification_path="verification/$arch-$subject_name-attestation.json"
+              nix develop --no-update-lock-file .#runtime-security -c \
+                gh attestation verify "$subject" \
+                --repo "$GITHUB_REPOSITORY" \
+                --signer-workflow flidai/leapview/.github/workflows/nix-compose-candidate.yml \
+                --source-digest "$GITHUB_SHA" --source-ref refs/heads/main \
+                --deny-self-hosted-runners \
+                --predicate-type https://slsa.dev/provenance/v1 --format json --limit 10 \
+                > "$verification_path"
+              python3 - "$verification_path" "$subject_name" "$expected_sha256" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          records = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if not isinstance(records, list) or not records:
+              raise SystemExit("live attestation verification returned no statements")
+          for record in records:
+              statement = record.get("verificationResult", {}).get("statement", {})
+              subjects = statement.get("subject")
+              if (statement.get("predicateType") != "https://slsa.dev/provenance/v1"
+                      or not isinstance(subjects, list) or len(subjects) != 1
+                      or subjects[0].get("name") != sys.argv[2]
+                      or subjects[0].get("digest") != {"sha256": sys.argv[3]}):
+                  raise SystemExit("live attestation statement subject or digest differs from the exact retained file")
+          PY
+            done
+            spdx_path="signed/qualified/$arch/controller-evidence/sbom.spdx.json"
+            spdx_verification_path="verification/$arch-controller-spdx-attestation.json"
+            archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+            nix develop --no-update-lock-file .#runtime-security -c \
+              gh attestation verify "$archive" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow flidai/leapview/.github/workflows/nix-compose-candidate.yml \
+              --source-digest "$GITHUB_SHA" --source-ref refs/heads/main \
+              --deny-self-hosted-runners \
+              --predicate-type https://spdx.dev/Document/v2.3 --format json --limit 10 \
+              > "$spdx_verification_path"
+            python3 - "$spdx_verification_path" "$(basename "$archive")" "$archive_sha256" "$spdx_path" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          def unique_object(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError("duplicate JSON object key")
+                  value[key] = item
+              return value
+
+          def reject_nonfinite(value):
+              raise ValueError("non-finite JSON number is not allowed")
+
+          def strict_json(path):
+              return json.loads(Path(path).read_text(encoding="utf-8"),
+                                object_pairs_hook=unique_object, parse_constant=reject_nonfinite)
+
+          def canonical_json(value):
+              return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+          records = strict_json(sys.argv[1])
+          expected_spdx = strict_json(sys.argv[4])
+          if not isinstance(records, list) or not records:
+              raise SystemExit("live SPDX attestation verification returned no statements")
+          for record in records:
+              statement = record.get("verificationResult", {}).get("statement", {})
+              subjects = statement.get("subject")
+              if (statement.get("_type") != "https://in-toto.io/Statement/v1"
+                      or statement.get("predicateType") != "https://spdx.dev/Document/v2.3"
+                      or not isinstance(subjects, list) or len(subjects) != 1
+                      or subjects[0].get("name") != sys.argv[2]
+                      or subjects[0].get("digest") != {"sha256": sys.argv[3]}
+                      or canonical_json(statement.get("predicate")) != canonical_json(expected_spdx)):
+                  raise SystemExit("live SPDX attestation differs from exact archive subject or retained SPDX inventory")
+          PY
+            test "$archive_before" = "$(sha256sum "$archive")"
+            test "$receipt_before" = "$(sha256sum "$receipt")"
+          done
+      - name: Retain independent read-only verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-attestation-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: verification/
+          if-no-files-found: warn
+          retention-days: 14

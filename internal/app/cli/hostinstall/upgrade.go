@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
+	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/flidai/leapview/internal/platform/ociref"
 	"github.com/flidai/leapview/internal/release/transitionoperation"
@@ -188,7 +189,7 @@ func (u *Upgrader) completedRetry(ctx context.Context, request UpgradeRequest, o
 	if err != nil {
 		return reject()
 	}
-	installed, _, err := readAndValidateConfig(filepath.Join(u.options.Paths.Root, installMarkerName))
+	installed, _, err := readUpgradeInstallation(u.options.Paths.Root)
 	if err != nil || installed.TargetID == "" || installed.TargetID != request.TargetID {
 		return reject()
 	}
@@ -262,7 +263,10 @@ func (u *Upgrader) upgrade(ctx context.Context, request UpgradeRequest, mutated 
 		return transitionrunner.EffectResult{}, err
 	}
 	defer lock.Release()
-	installed, _, err := readAndValidateConfig(filepath.Join(paths.Root, installMarkerName))
+	if err := hostmaintenance.Check(paths.Root); err != nil {
+		return transitionrunner.EffectResult{}, err
+	}
+	installed, _, err := readUpgradeInstallation(paths.Root)
 	if err != nil {
 		return transitionrunner.EffectResult{}, fmt.Errorf("existing host installation is required: %w", err)
 	}
@@ -384,11 +388,14 @@ func (u *Upgrader) upgrade(ctx context.Context, request UpgradeRequest, mutated 
 			}
 			installed.Image = request.CandidateImage
 			markHostEffect(mutated)
-			marker, err := json.MarshalIndent(installed, "", "  ")
+			marker, err := installationstate.NewMarker(installed, installationstate.PhasePublic)
 			if err != nil {
 				return transitionrunner.EffectResult{}, err
 			}
-			if err := securefs.WritePrivateFileAtomic(filepath.Join(paths.Root, installMarkerName), append(marker, '\n')); err != nil {
+			if marker.Generation != candidateRef.Generation {
+				return transitionrunner.EffectResult{}, errors.New("candidate installation marker generation differs from staged generation")
+			}
+			if err := installationstate.WriteMarker(paths.Root, marker); err != nil {
 				return transitionrunner.EffectResult{}, fmt.Errorf("candidate generation activated but installation marker is uncertain: %w", err)
 			}
 		} else if active != candidateRef.Generation {

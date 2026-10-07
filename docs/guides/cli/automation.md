@@ -2,11 +2,37 @@
 
 Treat validation, plan creation, build, publication, approval, activation, and verification as separate gates. Build one candidate from an exact source-attestation digest and publish that unchanged candidate only from an approved branch or environment. Git is a useful source of change evidence, not LeapView's source of truth: correctness, rollback, and target activation depend on content digests, retained candidates, plans, and deployment evidence.
 
+## Choose output and interaction explicitly
+
+Commands with selectable results use `--format text|json`. The Boolean `--json` flag has been removed. Artifact exports retain their encoding formats; fixed JSON and raw-response commands are identified in the generated reference. There is no global format flag.
+
+Results go to stdout; progress, prompts, and diagnostics go to stderr. Finite JSON results are one complete document. Development watch emits newline-delimited events; `dev --once` returns a finite result. Device login emits challenge and completion events and still needs a person to authorize it.
+
+Pass `--no-input` in automation. JSON output also disables terminal prompts and automatic browser opening. A guided deployment that needs confirmation reports its exact next action and operation handle; preserve both rather than supplying an arbitrary answer.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | The requested operation completed successfully |
+| 1 | Execution, validation, authentication, or a required diagnostic check failed |
+| 2 | Invalid invocation, flags, arguments, or command selection |
+| 3 | Guided deployment awaits confirmation or server approval |
+| 4 | Guided deployment outcome is indeterminate; inspect/resume the retained operation |
+| 130 / 143 | Client interrupted by SIGINT / SIGTERM |
+
+The server command `serve` returns 0 after successfully draining and shutting down on SIGINT or SIGTERM. A shutdown error still fails the command.
+
+When a command already emitted a structured domain failure, the error boundary preserves it without appending a second result. Other failures use stderr, with a JSON error object when JSON output was selected. Deploy success means confirmed activation; build or publish success means that operation completed and does not prove activation.
+
 ## Provide bounded credentials
 
 Use `LEAPVIEW_WORKLOAD_CLIENT_ID`, `LEAPVIEW_WORKLOAD_CLIENT_SECRET`, and `LEAPVIEW_WORKLOAD_PROJECT` for production CI. Inject the service-principal secret from the CI secret manager and prevent pull requests from untrusted forks from reading it. The CLI exchanges it on demand for a short-lived target credential. The validation job does not need target credentials. `LEAPVIEW_API_TOKEN` remains a compatibility option for smaller teams.
 
 The automation principal needs `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, and `RESOURCE_PUBLISH` for its exact project. It must not receive human login, approval, activation, secret-provider administration, connection-secret, or source-data credentials. Target-owned connection resolution and row-level policy evaluation still run under the automation principal. Use a deliberately restricted automation role; do not impersonate an end user to make a candidate pass.
+
+These names are the current short-lived authoring/workload compatibility
+profile. They are not permission choices for newly issued personal API tokens,
+which use explicit typed action-target pairs and currently fail closed for
+delivery operations that have not yet migrated to typed enforcement.
 
 Keep the target and project identity in reviewable pipeline configuration:
 
@@ -20,7 +46,7 @@ export LEAPVIEW_WORKLOAD_PROJECT=analytics
 Compile the complete project first and retain structured diagnostics as a job artifact:
 
 ```sh
-leapview validate --source-root dashboards --json
+leapview validate --source-root dashboards --format json
 ```
 
 Stop the pipeline on any non-zero exit status. Do not allow a later deployment job to replace or edit the project after validation.

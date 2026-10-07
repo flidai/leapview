@@ -1,4 +1,4 @@
-name: Local Docker macOS tests
+name: CI / Local Docker macOS
 
 on:
   pull_request:
@@ -6,10 +6,16 @@ on:
     paths:
       - .github/workflows/localdocker-macos.yml
       - internal/app/cli/localdocker/**
+      - go.mod
+      - go.sum
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: localdocker-macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   endpoint:

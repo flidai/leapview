@@ -126,6 +126,11 @@ type DashboardAuthoringCreateInput struct {
 	Slug            *string `json:"slug,omitempty" yaml:"slug,omitempty"`
 }
 
+type DashboardAuthoringCreateReceipt struct {
+	ID     string `json:"id" yaml:"id"`
+	Status string `json:"status" yaml:"status"`
+}
+
 type DashboardAuthoringDraftGetInput struct {
 	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
 }
@@ -136,8 +141,9 @@ type DashboardAuthoringDraftGetResult struct {
 }
 
 type DashboardAuthoringExportInput struct {
-	SourceKind  string `json:"sourceKind" yaml:"sourceKind"`
-	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
+	SourceKind  string  `json:"sourceKind" yaml:"sourceKind"`
+	DashboardID *string `json:"dashboardId,omitempty" yaml:"dashboardId,omitempty"`
+	StableID    *string `json:"stableId,omitempty" yaml:"stableId,omitempty"`
 }
 
 type DashboardAuthoringExportResult struct {
@@ -342,13 +348,14 @@ type QueryVisualCompleteness struct {
 }
 
 type QueryVisualFieldUsage struct {
-	FieldID  string  `json:"fieldId" yaml:"fieldId"`
-	Role     string  `json:"role" yaml:"role"`
-	Alias    *string `json:"alias,omitempty" yaml:"alias,omitempty"`
-	Label    string  `json:"label" yaml:"label"`
-	DataType *string `json:"dataType,omitempty" yaml:"dataType,omitempty"`
-	Unit     *string `json:"unit,omitempty" yaml:"unit,omitempty"`
-	Format   *string `json:"format,omitempty" yaml:"format,omitempty"`
+	FieldID         string  `json:"fieldId" yaml:"fieldId"`
+	Role            string  `json:"role" yaml:"role"`
+	Alias           *string `json:"alias,omitempty" yaml:"alias,omitempty"`
+	ExplorerFieldID *string `json:"explorerFieldId,omitempty" yaml:"explorerFieldId,omitempty"`
+	Label           string  `json:"label" yaml:"label"`
+	DataType        *string `json:"dataType,omitempty" yaml:"dataType,omitempty"`
+	Unit            *string `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Format          *string `json:"format,omitempty" yaml:"format,omitempty"`
 }
 
 type QueryVisualFilterUsage struct {

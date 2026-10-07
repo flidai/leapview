@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
 
 let server: Server
@@ -56,6 +56,51 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('standalone chart hosts keep the canvas renderer outside the builder', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    const surface = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:400px;height:300px'
+      host.envelope = { ...(window as any).__lvSourceHosts.orders_chart.envelope, status: { kind: 'ready' } }
+      document.body.append(host)
+      await host.ensureMounted()
+      return { canvas: host.shadowRoot.querySelectorAll('.renderer canvas').length, svg: host.shadowRoot.querySelectorAll('.renderer svg').length }
+    })
+    expect(surface).toEqual({ canvas: 1, svg: 0 })
+  } finally { await page.close() }
+})
+
+test('compact KPI cards align their titles regardless of comparison details', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    const offsets = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi.envelope
+      const measure = async (rich: boolean) => {
+        const host = document.createElement('lv-visualization-host') as any
+        host.style.cssText = 'display:block;width:320px;height:170px'
+        const envelope = structuredClone(source)
+        envelope.visualID = rich ? 'rich-kpi' : 'simple-kpi'
+        if (rich) envelope.spec.comparison = { field: { dataset: 'primary', field: 'value' }, reducer: 'first', label: 'Budget' }
+        else envelope.spec.presentation.note = undefined
+        host.envelope = envelope
+        document.body.append(host)
+        await host.ensureMounted()
+        const root = host.shadowRoot as ShadowRoot
+        const card = root.querySelector<HTMLElement>('.lv-kpi-card')!
+        const label = root.querySelector<HTMLElement>('.lv-visualization-label')!
+        return label.getBoundingClientRect().top - card.getBoundingClientRect().top
+      }
+      return { rich: await measure(true), simple: await measure(false) }
+    })
+    expect(Math.abs(offsets.rich - offsets.simple)).toBeLessThan(2)
+  } finally { await page.close() }
+})
+
 test('deferred hosts retain the latest valid envelope and mount once on eligibility', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -91,6 +136,8 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       canvas.attachShadow({ mode: 'open' }).append(viewport)
       canvas.append(deferred)
       document.body.append(canvas)
+      await deferred.updateComplete
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
       await deferred.updateComplete
 
       const observers = (window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }>
@@ -182,6 +229,87 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
   }
 })
 
+test('visualization hosts suspend queued resize work and apply only the latest size on resume', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 })
+  try {
+    await page.addInitScript(() => {
+      const observers: any[] = []
+      class ControlledResizeObserver {
+        target?: Element
+        constructor(private readonly callback: ResizeObserverCallback) { observers.push(this) }
+        observe(target: Element): void { this.target = target }
+        unobserve(): void {}
+        disconnect(): void {}
+        takeRecords(): ResizeObserverEntry[] { return [] }
+        deliver(width: number, height: number): void {
+          if (!this.target) throw new Error('resize observer has no target')
+          this.callback([{ target: this.target, contentRect: { width, height } } as ResizeObserverEntry], this as unknown as ResizeObserver)
+        }
+      }
+      Object.defineProperty(window, 'ResizeObserver', { configurable: true, value: ControlledResizeObserver })
+      Object.defineProperty(window, '__lvResizeObservers', { configurable: true, value: observers })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+
+    const result = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_chart
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      host.envelope = structuredClone(source.envelope)
+      host.style.cssText = 'display:block;width:640px;height:360px'
+      document.body.append(host)
+      await host.ensureMounted()
+
+      const renderer = (host.shadowRoot as ShadowRoot).querySelector('.renderer')!
+      const observer = (window as any).__lvResizeObservers.find((candidate: any) => candidate.target === renderer)
+      if (!observer) throw new Error('visualization renderer ResizeObserver was not installed')
+      const resizes: boolean[] = []
+      host.addEventListener('lv-visualization-observation', (event: CustomEvent) => {
+        if (event.detail?.stage === 'resize') resizes.push(host.resizeSuspended)
+      })
+      const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+      // Queue one ordinary resize, then suspend before its RAF can reach ECharts.
+      observer.deliver(320, 240)
+      host.resizeSuspended = true
+      observer.deliver(344, 240)
+      observer.deliver(368, 240)
+      await nextFrame()
+      await nextFrame()
+      const suspendedResizeCount = resizes.length
+
+      host.resizeSuspended = false
+      // A final ResizeObserver delivery can race with resizestop in the same frame.
+      observer.deliver(380, 260)
+      await nextFrame()
+      await nextFrame()
+      const canvas = renderer.querySelector('canvas') as HTMLCanvasElement | null
+      const applied = { width: canvas?.width ?? 0, height: canvas?.height ?? 0 }
+      const appliedResizeCount = resizes.length
+      host.remove()
+      await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
+      return {
+        suspendedResizeCount,
+        appliedResizeCount,
+        applied,
+        suspendedAfter: host.resizeSuspended,
+        resizeEventDuringSuspension: resizes.some(Boolean),
+      }
+    })
+
+    expect(result).toEqual({
+      suspendedResizeCount: 0,
+      appliedResizeCount: 1,
+      applied: { width: 380, height: 260 },
+      suspendedAfter: false,
+      resizeEventDuringSuspension: false,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('mounted deferred hosts retain current renderer, shell, and actions after stale signals', async () => {
   const page = await browser.newPage()
   try {
@@ -209,8 +337,8 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
       await host.ensureMounted()
       let action: any
       host.addEventListener('lv-visual-action', (event: CustomEvent) => { action = event.detail });
-      (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.visual-options summary')!.click();
-      (host.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.visual-options button')!.click()
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.options-trigger')!.click();
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.visual-options [role="menuitem"]')!.click()
       const state = {
         signalRevision: host.envelope.dataRevision,
         rendererRevision: host.controller.envelope.dataRevision,
@@ -227,6 +355,84 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
     expect(result.fallback).not.toContain('Stale failure')
     expect(result.actionRows).toContain('delivered')
     expect(result.actionRows).not.toContain('obsolete')
+  } finally {
+    await page.close()
+  }
+})
+
+test('Explore appears only when a trusted dashboard link is supplied', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const state = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.envelope = (window as any).__lvSourceHosts.orders_chart.envelope
+      document.body.append(host)
+      await host.updateComplete
+      const before = host.shadowRoot.querySelector('.visual-options a[role="menuitem"]')
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/revenue/explore'
+      await host.updateComplete
+      const link = host.shadowRoot.querySelector('.visual-options a[role="menuitem"]') as HTMLAnchorElement | null
+      const result = { before: Boolean(before), text: link?.textContent?.trim(), href: link?.getAttribute('href') }
+      host.remove()
+      return result
+    })
+    expect(state).toEqual({ before: false, text: 'Explore', href: '/dashboards/sales/pages/overview/visuals/revenue/explore' })
+  } finally { await page.close() }
+})
+
+test('visual option popovers are exclusive, keyboard navigable, and dismiss on Escape or outside input', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
+    // Standalone hosts need the layout tokens normally supplied by the page shell.
+    await page.addStyleTag({ content: ':root { --zIndex-sticky: 100; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-16: 16px; --base-size-24: 24px; } lv-visualization-host { display: block; width: 360px; height: 160px; margin: 24px; }' })
+    await page.evaluate(async () => {
+      const envelope = structuredClone((window as any).__lvSourceHosts.orders_kpi.envelope)
+      const first = document.createElement('lv-visualization-host') as any
+      const second = document.createElement('lv-visualization-host') as any
+      first.id = 'first-options-host'
+      second.id = 'second-options-host'
+      first.envelope = envelope
+      first.exploreHref = '/dashboards/sales/pages/overview/visuals/revenue/explore'
+      second.envelope = { ...structuredClone(envelope), visualID: 'orders_kpi_second' }
+      document.body.append(first, second)
+      await Promise.all([first.updateComplete, second.updateComplete])
+    })
+    const first = page.locator('#first-options-host')
+    const second = page.locator('#second-options-host')
+    const firstMenu = first.getByRole('menu')
+    const secondMenu = second.getByRole('menu')
+    await first.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).toBeVisible()
+    await browserExpect(first).toHaveAttribute('visual-options-open', '')
+    const bounds = await firstMenu.boundingBox()
+    expect(bounds!.width).toBeLessThanOrEqual(220)
+    expect(bounds!.x).toBeGreaterThanOrEqual(0)
+    await browserExpect(first.getByRole('menuitem', { name: 'Show data', exact: true })).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await browserExpect(first.getByRole('menuitem', { name: 'Explore', exact: true })).toBeFocused()
+    await browserExpect(first.getByRole('menuitem', { name: 'Explore', exact: true })).toHaveAttribute('href', '/dashboards/sales/pages/overview/visuals/revenue/explore')
+    await page.keyboard.press('End')
+    await browserExpect(first.getByRole('menuitem', { name: 'Export CSV', exact: true })).toBeFocused()
+
+    await second.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).not.toBeVisible()
+    await browserExpect(first).not.toHaveAttribute('visual-options-open')
+    await browserExpect(secondMenu).toBeVisible()
+    await browserExpect(second).toHaveAttribute('visual-options-open', '')
+    await page.keyboard.press('Escape')
+    await browserExpect(secondMenu).not.toBeVisible()
+    await browserExpect(second).not.toHaveAttribute('visual-options-open')
+    await browserExpect(second.getByRole('button', { name: 'Visual options', exact: true })).toBeFocused()
+
+    await first.getByRole('button', { name: 'Visual options', exact: true }).click()
+    await browserExpect(firstMenu).toBeVisible()
+    await page.mouse.click(1, 1)
+    await browserExpect(firstMenu).not.toBeVisible()
+    await browserExpect(first).not.toHaveAttribute('visual-options-open')
   } finally {
     await page.close()
   }
@@ -419,43 +625,105 @@ test('eager invalid and unknown-renderer envelopes remain visible errors', async
 
 test('pending renderer loads reject stale mount promises after detach and reattach', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const startedAt = Date.now()
+  const lifecycle: Array<{ elapsedMs: number; phase: string; event: string; detail?: unknown }> = []
+  let phase = 'page-created'
+  let omittedLifecycleEvents = 0
+  const record = (event: string, detail?: unknown) => {
+    if (lifecycle.length === 40) {
+      lifecycle.shift()
+      omittedLifecycleEvents++
+    }
+    lifecycle.push({ elapsedMs: Date.now() - startedAt, phase, event, ...(detail === undefined ? {} : { detail }) })
+  }
+  const mark = (next: string) => {
+    phase = next
+    record('phase')
+  }
+  const diagnosticPathKind = (value: string): string => {
+    try {
+      const url = new URL(value)
+      if (url.origin !== baseURL) return 'external'
+      if (url.pathname === '/') return 'document'
+      if (url.pathname.startsWith('/chunks/echarts-')) return 'echarts-renderer-chunk'
+      if (url.pathname.startsWith('/static/vendor/')) return 'vendor-asset'
+      if (url.pathname.endsWith('.js')) return 'script'
+      if (url.pathname.endsWith('.css')) return 'stylesheet'
+      return 'other'
+    } catch { return 'other' }
+  }
+  page.on('framenavigated', (frame) => record('frame-navigated', { mainFrame: frame === page.mainFrame(), path: diagnosticPathKind(frame.url()) }))
+  page.on('framedetached', (frame) => record('frame-detached', { mainFrame: frame === page.mainFrame(), path: diagnosticPathKind(frame.url()) }))
+  page.on('pageerror', (error) => record('page-error', { name: error.name }))
+  page.on('crash', () => record('page-crash'))
+  page.on('requestfailed', (request) => record('request-failed', { resourceType: request.resourceType(), method: request.method(), path: diagnosticPathKind(request.url()) }))
+  const onBrowserDisconnected = () => record('browser-disconnected')
+  browser.on('disconnected', onBrowserDisconnected)
   let releaseRenderer!: () => void
   let rendererRequested!: () => void
   const rendererBlocked = new Promise<void>((resolve) => { releaseRenderer = resolve })
   const rendererRequest = new Promise<void>((resolve) => { rendererRequested = resolve })
   try {
+    mark('route-setup')
     await page.route('**/chunks/echarts-*.js', async (route) => {
+      record('renderer-route-hit')
       rendererRequested()
       await rendererBlocked
       await route.continue()
     })
+    mark('navigation-started')
     await page.goto(baseURL)
+    mark('host-bootstrap-wait')
     await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
-    await page.evaluate(async () => {
+    mark('fixture-hosts-created')
+    await page.evaluate(() => {
       const source = (window as any).__lvSourceHosts.orders_chart
       const deferred = document.createElement('lv-visualization-host') as any
-      deferred.deferMount = true
-      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
-      document.body.append(deferred)
-      await deferred.updateComplete
       const transient = document.createElement('lv-visualization-host') as any
-      transient.deferMount = true
-      transient.envelope = JSON.parse(JSON.stringify(source.envelope))
-      document.body.append(transient)
-      await transient.updateComplete
+      const envelopes = [structuredClone(source.envelope), structuredClone(source.envelope)]
+      deferred.deferMount = transient.deferMount = true
+      deferred.envelope = envelopes[0]
+      transient.envelope = envelopes[1]
+      ;(window as any).__lvMountRace = { deferred, transient, envelopes }
+      document.body.append(deferred, transient)
+    })
+    mark('lazy-validator-wait')
+    // Keep the fixture hosts reachable while their lazy validator and Lit
+    // updates settle, before starting the renderer-load race under test.
+    await page.waitForFunction(() => {
+      const { deferred, transient, envelopes } = (window as any).__lvMountRace
+      return [deferred, transient].every((host, index) =>
+        host.envelope === envelopes[index] && !host.pendingEnvelopeValidation && host.hasUpdated && !host.isUpdatePending,
+      )
+    })
+    mark('lazy-validator-ready')
+    mark('initial-mount-started')
+    await page.evaluate(() => {
+      const { deferred, transient } = (window as any).__lvMountRace
       const transientMount = transient.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
-      await Promise.resolve()
-      const transientController = transient.controller
-      const transientHolder = document.createElement('section')
-      document.body.append(transientHolder)
-      transientHolder.append(transient)
-      await transient.updateComplete
       const stale = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
-      const race = { stale, staleSettled: false, transientMount, transientController, transient, fresh: Promise.resolve('pending'), reattached: false }
+      const race = { stale, staleSettled: false, transientMount, transientController: transient.controller, transient, fresh: Promise.resolve('pending'), reattached: false }
       stale.then(() => { race.staleSettled = true })
       ;(window as any).__lvMountRace = { deferred, race }
-      await Promise.resolve()
+    })
+    mark('renderer-request-wait')
+    await rendererRequest
+    mark('blocked-mounts-wait')
+    // Establish that both hosts reached the blocked renderer load, rather than
+    // detaching a host that is still validating its envelope.
+    await page.waitForFunction(() => {
+      const { deferred, race } = (window as any).__lvMountRace
+      return Boolean(deferred.controller && deferred.pendingApply && race.transient.controller && race.transient.pendingApply)
+    })
+    mark('detach-reattach-started')
+    await page.evaluate(async () => {
+      const { deferred, race } = (window as any).__lvMountRace
+      race.transientController = race.transient.controller
+      const transientHolder = document.createElement('section')
+      document.body.append(transientHolder)
+      transientHolder.append(race.transient)
+      await race.transient.updateComplete
       deferred.remove()
       await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
       document.body.append(deferred)
@@ -463,10 +731,12 @@ test('pending renderer loads reject stale mount promises after detach and reatta
       race.fresh = deferred.ensureMounted().then(() => 'resolved', (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`)
       race.reattached = true
     })
-    await rendererRequest
+    mark('pre-release-state-read')
     const beforeRelease = await page.evaluate(() => (window as any).__lvMountRace.race.staleSettled)
     expect(beforeRelease).toBe(false)
+    mark('renderer-release')
     releaseRenderer()
+    mark('final-state-read')
     const result = await page.evaluate(async () => {
       const { deferred, race } = (window as any).__lvMountRace
       return {
@@ -484,9 +754,14 @@ test('pending renderer loads reject stale mount promises after detach and reatta
     expect(result.fresh).toBe('resolved')
     expect(result.mounted).toBeGreaterThan(0)
     expect(result.controller).toBe(true)
+    mark('assertions-complete')
+  } catch (error) {
+    console.error('[visualization-host lifecycle]', JSON.stringify({ phase, events: lifecycle, omittedLifecycleEvents }))
+    throw error
   } finally {
     releaseRenderer?.()
     await page.close()
+    browser.off('disconnected', onBrowserDisconnected)
   }
 })
 
@@ -515,10 +790,8 @@ test('existing and authoring hosts stay eager by default, including with no inte
       authoring.envelope = JSON.parse(JSON.stringify(source.envelope))
       document.body.append(authoring)
       await authoring.updateComplete
-      // Renderer imports settle after Lit's update; wait for the observable mount.
-      for (let frame = 0; frame < 120 && !authoring.shadowRoot.querySelector('.renderer')?.childElementCount; frame++) {
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-      }
+      await Promise.all([source.pendingApply, authoring.pendingApply])
+      await Promise.all([source.updateComplete, authoring.updateComplete])
       return {
         defaultMounted: ((source.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         authoringMounted: ((authoring.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
@@ -600,6 +873,11 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
       canvas.append(deferred)
       document.body.append(canvas)
+      // Await the fallback's own validation and renderer apply; explicitly
+      // mounting here would hide a broken unsupported-observer fallback.
+      while (deferred.pendingEnvelopeValidation) await deferred.pendingEnvelopeValidation
+      await deferred.updateComplete
+      while (deferred.pendingApply) await deferred.pendingApply
       await deferred.updateComplete
       for (let frame = 0; frame < 120 && !deferred.shadowRoot.querySelector('.renderer')?.childElementCount; frame++) {
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
@@ -618,7 +896,21 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
 for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
   test(`deferred hosts fall back to eager mounting when IntersectionObserver ${failureMode}`, async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    let releaseRendererChunk = () => {}
+    let rendererChunkRequested: Promise<void> | undefined
     try {
+      if (failureMode === 'constructor') {
+        let markRendererChunkRequested!: () => void
+        rendererChunkRequested = new Promise((resolve) => { markRendererChunkRequested = resolve })
+        let continueRendererChunk!: () => void
+        const rendererChunkGate = new Promise<void>((resolve) => { continueRendererChunk = resolve })
+        releaseRendererChunk = continueRendererChunk
+        await page.route('**/chunks/html-*.js', async (route) => {
+          markRendererChunkRequested()
+          await rendererChunkGate
+          await route.continue()
+        })
+      }
       await page.addInitScript((mode) => {
         if (mode === 'missing') {
           Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: undefined })
@@ -633,10 +925,12 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
       }, failureMode)
       await page.goto(baseURL)
       await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+      if (rendererChunkRequested) await rendererChunkRequested
 
-      const mounted = await page.evaluate(async () => {
+      await page.evaluate(async () => {
         const source = (window as any).__lvSourceHosts.orders_kpi
         const deferred = document.createElement('lv-visualization-host') as any
+        deferred.id = 'deferred-fallback'
         deferred.deferMount = true
         deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
         document.body.append(deferred)
@@ -646,8 +940,13 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
         }
         return ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0
       })
-      expect(mounted).toBe(true)
+      const renderer = page.locator('#deferred-fallback .renderer > *')
+      if (rendererChunkRequested) expect(await renderer.count()).toBe(0)
+      releaseRendererChunk()
+      await renderer.waitFor({ state: 'attached' })
+      expect(await renderer.count()).toBeGreaterThan(0)
     } finally {
+      releaseRendererChunk()
       await page.close()
     }
   })
@@ -662,7 +961,7 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
       await page.evaluate(async variant => {
         const host = document.createElement('lv-visualization-host') as any
         host.id = 'focus-test'
-        host.style.cssText = '--base-size-48:48px;display:block;width:600px;height:400px'
+        host.style.cssText = 'display:block;width:600px;height:400px'
         const source = (window as any).__lvSourceHosts[variant === 'table' ? 'orders' : 'orders_chart']
         host.envelope = { ...source.envelope, status: { kind: 'ready' }, spec: { ...source.envelope.spec, titleVisible: variant !== 'headerless chart' } }
         document.body.append(host)
@@ -671,13 +970,25 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
       const host = page.locator('#focus-test')
       const expand = host.getByRole('button', { name: /^Expand / })
       await expand.waitFor({ state: 'visible' })
-      await host.evaluate(element => element.setAttribute('slot', 'focus-visual'))
+      await host.evaluate(element => {
+        element.setAttribute('slot', 'focus-visual')
+        const close = document.createElement('button')
+        close.slot = 'focus-action'
+        close.textContent = 'Close visual'
+        element.append(close)
+      })
       expect(await expand.count()).toBe(0)
       const options = host.getByLabel('Visual options', { exact: true })
       expect(await options.count()).toBe(1)
-      const reserved = await options.evaluate(node => document.querySelector('#focus-test')!.getBoundingClientRect().right - node.getBoundingClientRect().right)
-      expect(reserved).toBeGreaterThanOrEqual(48)
-      await host.evaluate(element => element.removeAttribute('slot'))
+      const close = host.getByRole('button', { name: 'Close visual', exact: true })
+      await close.waitFor({ state: 'visible' })
+      const menuBounds = (await options.boundingBox())!, closeBounds = (await close.boundingBox())!
+      expect(closeBounds.x).toBeGreaterThanOrEqual(menuBounds.x + menuBounds.width)
+      expect(Math.abs(closeBounds.y + closeBounds.height / 2 - menuBounds.y - menuBounds.height / 2)).toBeLessThan(1)
+      await host.evaluate(element => {
+        element.querySelector('[slot="focus-action"]')?.remove()
+        element.removeAttribute('slot')
+      })
       await expand.waitFor({ state: 'visible' })
     } finally { await page.close() }
   })
@@ -699,6 +1010,88 @@ test('narrow chart cards keep long titles and renderer geometry within the card'
       return { card: host.clientWidth, renderer: renderer.clientWidth }
     })
     expect(widths.renderer).toBeLessThanOrEqual(widths.card)
+  } finally { await page.close() }
+})
+
+test('lazy validation leaves empty hosts unloaded and retains the last valid queued envelope', async () => {
+  const page = await browser.newPage()
+  const requests: string[] = []
+  let release!: () => void
+  const blocked = new Promise<void>((resolve) => { release = resolve })
+  try {
+    await page.route(baseURL + '/', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><body><lv-visualization-host></lv-visualization-host><script type="module">import '/visualization-host-under-test.js'; window.__envelopes = ${JSON.stringify(testVisualizationEnvelopes())};</script>` }))
+    await page.route('**/chunks/validate-*.js', async (route) => {
+      requests.push(route.request().url())
+      await blocked
+      await route.continue()
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__envelopes)
+    expect(requests).toHaveLength(0)
+    const pending = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.deferMount = true
+      host.style.cssText = 'display:block;width:320px;height:160px'
+      const first = structuredClone((window as any).__envelopes.orders_kpi)
+      const newer = structuredClone(first)
+      newer.dataRevision = 2
+      newer.dataState.dataRevision = 2
+      for (const dataset of newer.dataState.datasets) dataset.dataRevision = 2
+      const invalid = structuredClone(newer)
+      invalid.spec.kind = 'invalid-kind'
+      host.envelope = first
+      host.envelope = newer
+      host.envelope = invalid
+      host.envelope = first
+      document.body.append(host)
+      ;(window as any).__queuedHost = host
+      ;(window as any).__queuedMount = host.ensureMounted()
+      await host.updateComplete
+      return { envelope: host.envelope ?? null, children: host.shadowRoot.querySelector('.renderer').childElementCount }
+    })
+    expect(pending).toEqual({ envelope: null, children: 0 })
+    release()
+    const accepted = await page.evaluate(async () => {
+      await (window as any).__queuedMount
+      const host = (window as any).__queuedHost
+      return { revision: host.envelope.dataRevision, kind: host.envelope.spec.kind, snapshot: await (await host.snapshot()).text() }
+    })
+    expect(requests).toHaveLength(1)
+    expect(accepted.revision).toBe(2)
+    expect(accepted.kind).toBe('kpi')
+    expect(accepted.snapshot).toContain('Orders')
+  } finally { release(); await page.close() }
+})
+
+test('table menus receive and clear the authorized Explorer link after renderer mount', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const state = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:600px;height:400px'
+      host.envelope = (window as any).__lvSourceHosts.orders.envelope
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/orders/explore'
+      document.body.append(host)
+      await host.ensureMounted()
+      await host.updateComplete
+      const table = host.shadowRoot.querySelector('lv-report-table')
+      await table.updateComplete
+      const href = table.shadowRoot.querySelector('a[role="menuitem"]')?.getAttribute('href')
+      host.exploreHref = undefined
+      await host.updateComplete
+      await table.updateComplete
+      const cleared = !table.shadowRoot.querySelector('a[role="menuitem"]')
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/orders/explore'
+      host.actionsEnabled = false
+      await host.updateComplete
+      await table.updateComplete
+      const disabled = !table.shadowRoot.querySelector('a[role="menuitem"]')
+      host.remove()
+      return { href, cleared, disabled }
+    })
+    expect(state).toEqual({ href: '/dashboards/sales/pages/overview/visuals/orders/explore', cleared: true, disabled: true })
   } finally { await page.close() }
 })
 

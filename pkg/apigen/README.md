@@ -148,14 +148,25 @@ APIGen uses the TypeSpec operation name as the operation ID by default;
 `@operationId` remains available for intentional overrides. Inferred IDs must
 be unique. APIGen also requires stable dotted lower-snake-case audit actions, a
 required `Idempotency-Key` on POST commands, and a required
-`If-Match` on PATCH commands. It emits the normalized value in IR, generated Go
+`If-Match` on PATCH commands. A deliberately narrow exception is authored as
+`@apigen.command(#{ nonReplayable: true, ... })`; it emits
+`idempotency: "forbidden"` and is valid only for a synchronous POST with a
+required JSON body, authenticated or privilege authorization, required
+transactional audit, and no declared `Idempotency-Key` header. HTTP adapters
+must reject that header's presence, including an explicitly empty value; the
+APIGen runtime also rejects non-empty replay keys and does not require an
+idempotency-store dependency. Generated UI actions expose this policy through
+`ReplayForbidden()`. APIGen emits the normalized value in IR, generated Go
 operation registries, aggregate registries, and OpenAPI `x-apigen-command`.
+This policy does not guarantee at-most-once execution: a lost response after a
+commit followed by explicit resubmission can create another draft. Adapters
+must not automatically resend these commands.
 The generated runtime registry is the transport-neutral execution policy:
 API middleware selects commands by generated method/route metadata, while
 direct UI, CLI, agent, and automation adapters call `command.BeginInvocation`
 with the same command identity and invocation inputs. The runtime rejects an
 undeclared surface, missing authorization target, missing idempotency identity,
-or missing concurrency token before domain dispatch. Revisioned mutations call
+forbidden replay key, or missing concurrency token before domain dispatch. Revisioned mutations call
 `Executor.CheckConcurrency` with the canonical revision from inside their
 mutation transaction; a successful generated transport response is rejected
 unless both concurrency and command execution completed.
@@ -482,7 +493,7 @@ go get github.com/Yacobolo/toolbelt/apigen@v0.6.4
 
 ## Contract Notes
 
-JSON IR emits and accepts schema version `v4` only. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint or contract root. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Schema composition uses `base`, `one_of`, and `discriminator`; map value schemas remain in `additional_properties`. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Typed tools live on `Endpoint.tool` and never create `contracts[]` entries.
+JSON IR emits and accepts schema version `v4` only. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint or contract root. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Schema composition uses `base`, `one_of`, and `discriminator`; map value schemas remain in `additional_properties`. Optional `SchemaRef.const`, `min_items`, and `max_items` fields preserve numeric TypeSpec literals and array cardinality across TypeScript, OpenAPI, JSON Schema, and agent-tool output without changing existing v4 documents. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Typed tools live on `Endpoint.tool` and never create `contracts[]` entries.
 
 HTTP targets can declare generator-owned failures explicitly with `@apigen.transportErrors`. Generated strict registration requires a `GenTransportErrorResponder`; the responder owns the authored wire model, media type, request IDs, logging, and other application policy. Generated code supplies a stable failure kind, configured status/code/public detail, and the original cause without exposing that cause to clients.
 

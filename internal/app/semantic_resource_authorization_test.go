@@ -182,15 +182,51 @@ func semanticResourceRuntime(t *testing.T, projectID projectgraph.ResourceID, id
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := access.NewCanonicalGrant(graph, subject, resource, access.CapabilityResourceRead)
+		pair, err := access.NewExactPermissionPair(access.ActionSemanticRead, identity.ProjectID, resource)
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = []accesssnapshot.Grant{{ID: "grant:semantic-read", Name: "semantic_read", Canonical: canonical}}
+		grant, err := accesssnapshot.NewTypedGrant("typed:semantic-read", "semantic_read", subject, []access.PermissionPair{pair})
+		if err != nil {
+			t.Fatal(err)
+		}
+		grants = []accesssnapshot.Grant{grant}
 	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: snapshot}}
+}
+
+func TestAuthorizeDashboardListResourceSemanticHandoff(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	modelID := projectgraph.ResourceID("semantic_sales")
+	resource, err := access.NewResourceRef(modelID, projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, granted := range []bool{false, true} {
+		ctx := accessmodule.WithPrincipal(context.Background(), accessmodule.Principal{ID: "alice"})
+		module := tusAccess{principal: accessmodule.Principal{ID: "alice"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "alice"}}}
+		allowed, err := authorizeDashboardListResource(ctx, module, semanticResourceRuntime(t, projectID, identity, modelID, granted), "alice", projectID, resource, access.CapabilityResourceRead)
+		if err != nil || allowed != granted {
+			t.Fatalf("grant %v: allowed=%v, err=%v", granted, allowed, err)
+		}
+	}
+	ctx := accessmodule.WithPrincipal(context.Background(), accessmodule.Principal{ID: "dev", DevBypass: true})
+	module := tusAccess{principal: accessmodule.Principal{ID: "dev", DevBypass: true}, ok: true}
+	host := semanticResourceRuntime(t, projectID, identity, modelID, false)
+	allowed, err := authorizeDashboardListResource(ctx, module, host, "dev", projectID, resource, access.CapabilityResourceRead)
+	if err != nil || !allowed {
+		t.Fatalf("development handoff: allowed=%v, err=%v", allowed, err)
+	}
+	allowed, err = authorizeDashboardListResource(ctx, module, host, "dev", projectID, resource, access.CapabilityResourceEdit)
+	if err != nil || allowed {
+		t.Fatalf("edit permission: allowed=%v, err=%v", allowed, err)
+	}
 }

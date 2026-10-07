@@ -137,6 +137,10 @@ func catalogError(err error) error {
 	switch {
 	case errors.Is(err, projectcatalog.ErrNotFound):
 		code = "catalog_not_found"
+	case errors.Is(err, projectcatalog.ErrNotTraversable):
+		code = "catalog_not_traversable"
+	case errors.Is(err, projectcatalog.ErrUnsupportedDomain):
+		code = "catalog_domain_unsupported"
 	case errors.Is(err, projectcatalog.ErrInvalidRequest), errors.Is(err, projectcatalog.ErrInvalidCursor):
 		code = "invalid_arguments"
 	case errors.Is(err, projectcatalog.ErrUnavailable):

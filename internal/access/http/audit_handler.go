@@ -27,11 +27,24 @@ func (h Handler) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Re
 }
 
 func (h Handler) listAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, requestedProject string, includeUnscoped bool) {
-	if !h.requirePlatformAdmin(w, r) {
-		return
+	var principalID string
+	if includeUnscoped {
+		if !h.requirePlatformAdmin(w, r) {
+			return
+		}
+	} else {
+		principal, authenticated := h.currentPrincipal(r)
+		if !authenticated {
+			writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
+			return
+		}
+		principalID = principal.ID
 	}
 	projectID, ok := h.auditProjectScope(w, r, requestedProject)
 	if !ok {
+		return
+	}
+	if !includeUnscoped && !h.requireProjectAuditReader(w, r, principalID, projectID) {
 		return
 	}
 	repo, err := h.repository()
@@ -77,6 +90,45 @@ func (h Handler) listAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, r
 		items = append(items, auditEventDTO(row))
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]any{"items": items, "page": map[string]any{"nextCursor": next}})
+}
+
+// requireProjectAuditReader independently enforces the project-scoped typed
+// permission at the handler boundary. The generated API gate performs the
+// same principal authorization, but direct handler callers must not inherit
+// platform-admin authority or bypass an API token's narrower permission set.
+func (h Handler) requireProjectAuditReader(w stdhttp.ResponseWriter, r *stdhttp.Request, principalID string, projectID projectgraph.ResourceID) bool {
+	if strings.TrimSpace(principalID) == "" {
+		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
+		return false
+	}
+	if h.CurrentEffectivePermissionOptions == nil {
+		writeJSONError(w, errors.New("effective typed permission authority is unavailable"), stdhttp.StatusServiceUnavailable)
+		return false
+	}
+	permissions, err := h.CurrentEffectivePermissionOptions(r.Context(), principalID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return false
+	}
+	required, err := access.NewProjectPermissionPair(access.ActionAuditRead, projectID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return false
+	}
+	if !access.PermissionSetAllows(permissions, required) {
+		writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+		return false
+	}
+	if credential, found := h.currentCredential(r); found {
+		currentPrincipal, authenticated := h.currentPrincipal(r)
+		if !authenticated || currentPrincipal.ID != principalID || credential.Principal.ID != principalID || credential.Authoring != nil ||
+			credential.Token.ID == "" || credential.Token.PrincipalID != principalID ||
+			access.ValidateTokenPermissionAttenuation(credential.Token, []access.PermissionPair{required}) != nil {
+			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+			return false
+		}
+	}
+	return true
 }
 
 func (h Handler) auditProjectScope(w stdhttp.ResponseWriter, r *stdhttp.Request, requested string) (projectgraph.ResourceID, bool) {

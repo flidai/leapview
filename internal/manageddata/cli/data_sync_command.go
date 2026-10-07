@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +23,9 @@ func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Depe
 		Short: "Stage a managed data revision",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if format != "text" && format != "json" {
+				return cliapi.NewUsageError(fmt.Errorf("data sync format must be text or json"))
+			}
 			usingDevelopmentInput := strings.TrimSpace(developmentInput) != ""
 			selection, err := resolveDataSelection(cmd, dependencies, projectRoot, developmentInput, sourceRoot, connection, from)
 			if err != nil {
@@ -29,13 +33,13 @@ func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Depe
 			}
 			sourceRoot, connection, from = selection.SourceRoot, selection.Connection, selection.From
 			if usingDevelopmentInput && (!cmd.Flags().Changed("target") || !cmd.Flags().Changed("project-id") || strings.TrimSpace(opts.remote.Target) == "" || strings.TrimSpace(opts.remote.ProjectID) == "") {
-				return fmt.Errorf("--development-input sync requires explicit --target and --project-id; ambient target profiles are not eligible")
+				return cliapi.NewUsageError(fmt.Errorf("--development-input sync requires explicit --target and --project-id; ambient target profiles are not eligible"))
 			}
 			if strings.TrimSpace(connection) == "" {
-				return fmt.Errorf("connection is required")
+				return cliapi.NewUsageError(fmt.Errorf("connection is required"))
 			}
 			if strings.TrimSpace(from) == "" {
-				return fmt.Errorf("from is required")
+				return cliapi.NewUsageError(fmt.Errorf("from is required"))
 			}
 			if dependencies.Client == nil {
 				return fmt.Errorf("Managed Data CLI API client is required")

@@ -1,15 +1,17 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { evaluateAcrossContextTurnover, testDocument } from './dashboard-page-test-fixtures'
+import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
 let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-page-test')
+
+setDefaultTimeout(15_000)
 
 beforeAll(async () => {
   server = createServer(async (request, response) => {
@@ -44,11 +46,11 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: 'Ask' } } })
-    })
-    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    }))
+    const result = await evaluateAcrossContextTurnover(page, () => page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
       const trigger = root.querySelector('.agent-toggle') as HTMLButtonElement
@@ -67,7 +69,7 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
       drawer.open = false
       await drawer.updateComplete
       return { composerFocused, focusReturned: root.activeElement === trigger }
-    })
+    }))
     expect(result).toEqual({ composerFocused: true, focusReturned: true })
   } finally { await page.close() }
 })
@@ -202,6 +204,15 @@ test('dashboard agent drawer carries page context and explicit visual references
       }
     })
     expect(initial).toEqual({ hasToggle: true, toggleHasVisibleSurface: true, open: false, drawerWidth: 0 })
+
+    await page.waitForFunction(() => {
+      const root = document.querySelector('lv-dashboard-page')?.shadowRoot
+      return Boolean(
+        root?.querySelector('[data-visual-id="orders_chart"] lv-visualization-host')
+        && root.querySelector('[data-visual-id="orders_kpi"] lv-visualization-host')
+        && root.querySelector('[data-visual-id="orders"] lv-visualization-host')?.shadowRoot?.querySelector('lv-report-table'),
+      )
+    })
 
     const visualActionsAtRest = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const root = element.shadowRoot
@@ -727,7 +738,7 @@ test('side agent keeps the composer visible and starter prompts never submit aut
     })
     await page.locator('.agent-toggle').click()
     const drawer = page.locator('lv-chat-drawer[open]')
-    await drawer.getByRole('button', { name: 'Summarize the key takeaways on this page.', exact: true }).click()
+    await drawer.getByRole('button', { name: 'Summarize: Summarize the key takeaways on this page.', exact: true }).click()
     expect(await drawer.locator('textarea').inputValue()).toBe('Summarize the key takeaways on this page.')
     expect(await page.evaluate(() => (window as any).sideSubmits)).toBe(0)
     const geometry = await drawer.evaluate(element => ({ bottom: element.getBoundingClientRect().bottom, composerBottom: element.shadowRoot!.querySelector('lv-chat-composer')!.getBoundingClientRect().bottom, viewport: innerHeight }))
@@ -779,3 +790,191 @@ for (const { width, embedded } of [{ width: 1440, embedded: false }, { width: 39
     } finally { await page.close() }
   }, 15000)
 }
+test('dashboard agent opens an eligible query visual with a Save action', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  let savedVisual: Record<string, unknown> | null = null
+  try {
+    await page.route('**/explore/saved', async (route) => {
+      savedVisual = route.request().postDataJSON() as Record<string, unknown>
+      await route.fulfill({ status: 201, contentType: 'application/json', body: '{}' })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-page') && customElements.get('lv-chat-drawer'))
+    const baseVisual = testVisualizationEnvelopes().orders_chart
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async ({ baseVisual }) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const visual = {
+            ...baseVisual,
+            visualID: 'chat-chart',
+            spec: { ...baseVisual.spec, title: 'Revenue by country' },
+            status: { kind: 'ready' },
+      }
+      ;(window as any).__chatDrawerVisual = visual
+      mergePatch({
+        agent: {
+          activeConversationId: 'chat-one',
+          transcript: [{
+            id: 'tool-chart',
+            kind: 'tool',
+            name: 'query_visual',
+            status: 'complete',
+            argumentsJson: JSON.stringify({ semanticModelId: 'semantic:sales', visual: { type: 'bar', query: { type: 'aggregate', dimensions: ['country'], metrics: ['revenue'], limit: 25 } } }),
+            resultJson: JSON.stringify({ ok: true, type: 'bar', id: 'chat-chart', datasetId: 'orders', semanticModelRef: { kind: 'semantic_model', id: 'semantic:sales' }, fields: [
+              { fieldId: 'semantic:sales.country', role: 'dimension', alias: 'country', explorerFieldId: 'orders.country', label: 'Country' },
+              { fieldId: 'semantic:sales.revenue', role: 'metric', alias: 'revenue', label: 'Revenue' },
+            ] }),
+            artifact: { id: 'chat-chart', type: 'bar', summary: 'Created chart.' },
+          }],
+        },
+        agentVisuals: { 'chat-chart': visual },
+      })
+    }, { baseVisual }))
+    await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      element.shadowRoot.querySelector('.agent-toggle').click()
+    })
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelector('[data-visual-id="chat-chart"]')))
+    await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('lv-chat-thread').shadowRoot.querySelector('[data-visual-id="chat-chart"]').click()
+    })
+    await page.waitForFunction(() => {
+      const route = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('.route')
+      const drawer = route?.querySelector('lv-chat-drawer')
+      const panel = drawer?.shadowRoot?.querySelector('lv-chat-visual-panel')
+      if (!drawer || !panel || route?.getAnimations().some(animation => animation.playState === 'running')) return false
+      const panelBounds = panel.getBoundingClientRect()
+      const drawerBounds = drawer.getBoundingClientRect()
+      return panelBounds.left >= drawerBounds.left && panelBounds.right <= drawerBounds.right + 1 && panelBounds.bottom <= drawerBounds.bottom + 1
+    })
+    const panelState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      await drawer.updateComplete
+      const panel = drawer.shadowRoot.querySelector('lv-chat-visual-panel') as any
+      await panel.updateComplete
+      return {
+        title: panel.shadowRoot.querySelector('h2')?.textContent,
+        hasSave: Boolean(panel.shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]')),
+        hasExploreLink: Boolean(panel.shadowRoot.querySelector('a[aria-label="Open visual in Data Explorer"]')),
+        explorerHref: panel.explorerHref,
+        panelBounds: (() => {
+          const panelBounds = panel.getBoundingClientRect()
+          const drawerBounds = drawer.getBoundingClientRect()
+          return {
+            width: Math.round(panelBounds.width),
+            height: Math.round(panelBounds.height),
+            withinDrawer: panelBounds.left >= drawerBounds.left && panelBounds.right <= drawerBounds.right + 1 && panelBounds.bottom <= drawerBounds.bottom + 1,
+          }
+        })(),
+      }
+    })
+    expect(panelState.title).toBe('Revenue by country')
+    expect(panelState.hasSave).toBe(true)
+    expect(panelState.hasExploreLink).toBe(false)
+    expect(panelState.panelBounds.width).toBeGreaterThan(300)
+    expect(panelState.panelBounds.height).toBeGreaterThan(400)
+    expect(panelState.panelBounds.withinDrawer).toBe(true)
+    const explorerURL = new URL(panelState.explorerHref!, 'https://example.test')
+    expect(explorerURL.pathname).toBe('/explore')
+    expect(explorerURL.searchParams.get('mode')).toBe('explore')
+    expect(explorerURL.searchParams.get('v')).toBe('2')
+    expect([...explorerURL.searchParams.keys()].sort()).toEqual(['mode', 'state', 'v'])
+    expect(JSON.parse(explorerURL.searchParams.get('state')!)).toEqual({
+      schemaVersion: 1,
+      modelId: 'semantic:sales',
+      datasetId: 'orders',
+      dimensions: [{ field: 'orders.country' }],
+      metrics: [{ field: 'revenue' }],
+      filters: [],
+      sort: [],
+      limit: 25,
+    })
+
+    const screenshotDir = process.env.LEAPVIEW_DASHBOARD_AGENT_SCREENSHOT_DIR
+    if (screenshotDir) {
+      await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.querySelector('lv-visual-artifact')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('.renderer canvas')))
+      await mkdir(screenshotDir, { recursive: true })
+      await page.screenshot({ path: join(screenshotDir, 'dashboard-agent-visual-details.png'), fullPage: true })
+    }
+
+    await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('lv-chat-visual-panel').shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]').click()
+    })
+    await page.waitForFunction(() => document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
+    expect(savedVisual as unknown).toEqual({ title: 'Revenue by country', explorerUrl: panelState.explorerHref })
+
+    const drawerRemainsOpen = await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      const panel = drawer.shadowRoot.querySelector('lv-chat-visual-panel') as HTMLElement
+      panel.shadowRoot!.querySelector('[aria-label="Close visual details"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }))
+      return drawer.open
+    })
+    expect(drawerRemainsOpen).toBe(true)
+    await page.waitForFunction(() => !document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel'))
+
+    await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('lv-chat-thread').shadowRoot.querySelector('[aria-label="Open visual details: Revenue by country"]').click()
+    })
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')))
+    await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('[aria-label="New chat"]').click()
+    })
+    await page.waitForFunction(() => !document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel'))
+    const afterNewChat = await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      return {
+        open: drawer.open,
+        hasThread: Boolean(drawer.shadowRoot.querySelector('lv-chat-thread')),
+        hasComposer: Boolean(drawer.shadowRoot.querySelector('lv-chat-composer')),
+      }
+    })
+    expect(afterNewChat).toEqual({ open: true, hasThread: true, hasComposer: true })
+
+    await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('lv-chat-thread').shadowRoot.querySelector('[data-visual-id="chat-chart"]').click()
+    })
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')))
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agentVisuals: { 'chat-chart': null } })
+    }))
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')
+      const thread = drawer?.shadowRoot?.querySelector('lv-chat-thread') as HTMLElement | null
+      return Boolean(thread && !thread.hidden && !drawer?.shadowRoot?.querySelector('lv-chat-visual-panel') && drawer?.shadowRoot?.querySelector('lv-chat-composer'))
+    })
+    const afterVisualRemoved = await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      const thread = drawer.shadowRoot.querySelector('lv-chat-thread')
+      return {
+        hasVisualPanel: Boolean(drawer.shadowRoot.querySelector('lv-chat-visual-panel')),
+        threadHidden: thread.hidden,
+        hasComposer: Boolean(drawer.shadowRoot.querySelector('lv-chat-composer')),
+        hasInlineArtifact: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact[artifact-id="chat-chart"]')),
+      }
+    })
+    expect(afterVisualRemoved).toEqual({ hasVisualPanel: false, threadHidden: false, hasComposer: true, hasInlineArtifact: true })
+
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agentVisuals: { 'chat-chart': (window as any).__chatDrawerVisual } })
+    }))
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelector('[data-visual-id="chat-chart"]')))
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { activeConversationId: 'chat-two', transcript: [{ id: 'user-two', kind: 'user', text: 'Second conversation' }] } })
+    }))
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')
+      const thread = drawer?.shadowRoot?.querySelector('lv-chat-thread') as HTMLElement | null
+      return Boolean(thread && !thread.hidden && !drawer?.shadowRoot?.querySelector('lv-chat-visual-panel') && thread.shadowRoot?.textContent?.includes('Second conversation'))
+    })
+    const afterConversationSwitch = await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      return {
+        hasVisualPanel: Boolean(drawer.shadowRoot.querySelector('lv-chat-visual-panel')),
+        threadHidden: drawer.shadowRoot.querySelector('lv-chat-thread').hidden,
+        hasComposer: Boolean(drawer.shadowRoot.querySelector('lv-chat-composer')),
+      }
+    })
+    expect(afterConversationSwitch).toEqual({ hasVisualPanel: false, threadHidden: false, hasComposer: true })
+  } finally { await page.close() }
+})

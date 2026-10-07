@@ -2,7 +2,9 @@ package ci
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -18,17 +20,17 @@ func TestAnalyzeHealth(t *testing.T) {
 		{
 			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 600, QueueSeconds: 20, Conclusion: "success",
 			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
-			Results: healthSuccessfulResults(full),
+			Results: healthSuccessfulExhaustiveResults(),
 		},
 		{
 			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 700, QueueSeconds: 30, Conclusion: "success",
 			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
-			Results: healthSuccessfulResults(full),
+			Results: healthSuccessfulExhaustiveResults(),
 		},
 		{
 			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 800, QueueSeconds: 140, Conclusion: "failure",
 			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
-			Results: healthSuccessfulResults(full),
+			Results: healthSuccessfulExhaustiveResults(),
 		},
 		{
 			Workflow: "ci.yml", Event: "pull_request", DurationSeconds: 240, QueueSeconds: 10, Conclusion: "success",
@@ -45,30 +47,22 @@ func TestAnalyzeHealth(t *testing.T) {
 			}(),
 		},
 	}
-	got := AnalyzeHealth(runs)
+	got := analyzeVerifiedTests(runs)
 	if got.RunCount != 6 || got.Deferred != 1 {
 		t.Fatalf("run count/deferred = %d/%d, want 6/1", got.RunCount, got.Deferred)
 	}
-	if got.Full.P95Seconds != 800 {
-		t.Fatalf("full p95 = %d, want 800", got.Full.P95Seconds)
-	}
-	if got.Selective.P95Seconds != 240 {
-		t.Fatalf("selective p95 = %d, want 240", got.Selective.P95Seconds)
-	}
-	if got.Queue.P95Seconds != 140 {
-		t.Fatalf("queue p95 = %d, want 140", got.Queue.P95Seconds)
+	if got.Full.Count != 3 || got.Full.P95Seconds != nil || got.Selective.Count != 1 || got.Selective.P95Seconds != nil || got.Queue.Count != 5 || got.Queue.P95Seconds != nil {
+		t.Fatalf("small-sample p95 should be unavailable while counts remain: full=%+v selective=%+v queue=%+v", got.Full, got.Selective, got.Queue)
 	}
 	if got.RerunPercent != 20 {
 		t.Fatalf("rerun percentage = %.1f, want 20", got.RerunPercent)
 	}
-	if got.AuditMisses != 1 {
-		t.Fatalf("audit misses = %d, want 1", got.AuditMisses)
+	if got.AuditPotentialMisses != 1 {
+		t.Fatalf("audit potential misses = %d, want 1", got.AuditPotentialMisses)
 	}
 	for _, alert := range []string{
-		"full CI p95 is 13m20s (limit 12m0s)",
-		"queue p95 is 2m20s (limit 2m0s)",
 		"rerun rate is 20.0% (limit 3.0%)",
-		"selection audit detected 1 miss",
+		"selection audit detected 1 potential miss",
 	} {
 		if !slices.Contains(got.Alerts, alert) {
 			t.Errorf("alerts %v do not contain %q", got.Alerts, alert)
@@ -83,7 +77,7 @@ func TestAnalyzeHealthHealthyReportHasNoAlerts(t *testing.T) {
 	t.Parallel()
 
 	jobs := Jobs{Docs: true}
-	got := AnalyzeHealth([]HealthRun{{
+	got := analyzeVerifiedTests([]HealthRun{{
 		Workflow: "ci.yml", Event: "pull_request",
 		DurationSeconds: 120,
 		QueueSeconds:    5,
@@ -93,6 +87,33 @@ func TestAnalyzeHealthHealthyReportHasNoAlerts(t *testing.T) {
 	}})
 	if len(got.Alerts) != 0 {
 		t.Fatalf("alerts = %v, want none", got.Alerts)
+	}
+}
+
+func TestAuditOnlyJobsCountOnlyConclusiveFailuresAsPotentialMisses(t *testing.T) {
+	for _, conclusion := range []string{"failure", "timed_out", "cancelled", "skipped", "missing"} {
+		t.Run(conclusion, func(t *testing.T) {
+			nominal := Jobs{Docs: true}
+			effective := Jobs{Docs: true, SiteImage: true}
+			results := healthSuccessfulResults(effective)
+			if conclusion == "missing" {
+				delete(results, "site-image")
+			} else {
+				results["site-image"] = conclusion
+			}
+			run := verifiedTestContract(HealthRun{
+				Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 30,
+				Plan: Plan{Version: PlanVersion, Audit: true, Nominal: nominal, Effective: effective}, Results: results,
+			})
+			report := AnalyzeHealth([]HealthRun{run})
+			if conclusion == "failure" || conclusion == "timed_out" {
+				if report.AuditPotentialMisses != 1 || report.Incomplete != 0 {
+					t.Fatalf("conclusive audit failure not counted: %+v", report)
+				}
+			} else if report.AuditPotentialMisses != 0 || report.Incomplete != 1 {
+				t.Fatalf("inconclusive audit result was reported as a miss or healthy: %+v", report)
+			}
+		})
 	}
 }
 
@@ -119,8 +140,8 @@ func TestHealthPopulationsAndIncompleteEvidence(t *testing.T) {
 		{Workflow: "ci.yml", Event: "pull_request", Conclusion: "cancelled", Attempt: 2, DurationSeconds: 50, QueueSeconds: -1},
 		{Conclusion: "", DurationSeconds: -1, QueueSeconds: -1},
 	}
-	r := AnalyzeHealth(runs)
-	if r.Selective.Count != 1 || r.Merge.P95Seconds != 800 || r.Nightly.P95Seconds != 900 || r.Unknown.P95Seconds != 50 {
+	r := analyzeVerifiedTests(runs)
+	if r.Selective.Count != 1 || r.Merge.Count != 1 || r.Merge.P50Seconds != 800 || r.Merge.P95Seconds != nil || r.Nightly.Count != 1 || r.Nightly.P50Seconds != 900 || r.Nightly.P95Seconds != nil || r.Unknown.Count != 1 || r.Unknown.P50Seconds != 50 || r.Unknown.P95Seconds != nil {
 		t.Fatalf("populations mixed: %+v", r)
 	}
 	if r.Cancellations != 1 || r.Reruns != 1 || r.UnknownConclusions != 1 || r.MissingDurations != 1 {
@@ -131,53 +152,16 @@ func TestHealthPopulationsAndIncompleteEvidence(t *testing.T) {
 	}
 }
 
-func TestSkippedPRHasNoMissingEvidenceOrExecutionMetrics(t *testing.T) {
-	results := FullPRJobs().Selected()
-	base := HealthRun{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Attempt: 2,
-		DurationSeconds: -1, QueueSeconds: -1, PlanIssue: "missing, expired or invalid ci-plan artifact", Results: map[string]string{"prepare": "skipped", "ci-gate": "skipped"}}
-	for job := range results {
-		base.Results[job] = "skipped"
+func TestColdDraftSkipWithoutPlanRemainsIncomplete(t *testing.T) {
+	results := map[string]string{"prepare": "skipped", "ci-gate": "skipped"}
+	run := HealthRun{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Attempt: 1,
+		DurationSeconds: -1, QueueSeconds: -1, PlanIssue: "missing, expired or invalid ci-plan artifact", Results: results}
+	report := AnalyzeHealth([]HealthRun{run})
+	if report.Incomplete != 1 || report.UnknownSelection != 1 || len(report.Alerts) == 0 {
+		t.Fatalf("cold draft run inferred a healthy skip: %+v", report)
 	}
-	for _, conclusion := range []string{"success", "skipped"} {
-		base.Conclusion = conclusion
-		r := AnalyzeHealth([]HealthRun{base})
-		if len(r.Alerts) != 0 || r.Incomplete != 0 || r.UnknownSelection != 0 || r.MissingDurations != 0 || r.Reruns != 0 || r.PlannedRuns != 0 || r.Runs[0].Category != "skipped_pr" {
-			t.Fatalf("intentional skip treated as execution or missing evidence: %+v", r)
-		}
-		if r.RunCount != 1 || r.SkippedPR != 1 || r.Jobs["prepare"].Skipped != 1 || len(r.Runs[0].Problems) != 0 {
-			t.Fatalf("skip evidence lost: %+v", r)
-		}
-	}
-	for _, scenario := range []string{"missing job", "unknown job", "failed planning", "executed planning", "cancelled", "manual", "merge", "plan present"} {
-		t.Run(scenario, func(t *testing.T) {
-			run := base
-			run.Results = make(map[string]string)
-			for job, result := range base.Results {
-				run.Results[job] = result
-			}
-			switch scenario {
-			case "missing job":
-				delete(run.Results, "ci-gate")
-			case "unknown job":
-				run.Results["unknown/new-job"] = "skipped"
-			case "failed planning":
-				run.Results["prepare"] = "failure"
-			case "executed planning":
-				run.Results["prepare"] = "success"
-			case "cancelled":
-				run.Conclusion = "cancelled"
-			case "manual":
-				run.Event = "workflow_dispatch"
-			case "merge":
-				run.Workflow, run.Event = "merge-validation.yml", "merge_group"
-			case "plan present":
-				run.Plan.Version = PRPlanVersion
-			}
-			r := AnalyzeHealth([]HealthRun{run})
-			if r.SkippedPR != 0 || len(r.Alerts) == 0 {
-				t.Fatalf("untrusted evidence suppressed: %+v", r)
-			}
-		})
+	if report.Runs[0].Category != "unknown" || report.Runs[0].SelectionConfidence != "unknown" {
+		t.Fatalf("cold draft run provenance was not left unknown: %+v", report.Runs[0])
 	}
 }
 
@@ -196,6 +180,32 @@ func healthSuccessfulResults(jobs Jobs) map[string]string {
 	return results
 }
 
+func healthSuccessfulExhaustiveResults() map[string]string {
+	return map[string]string{"ci-gate": "success"}
+}
+
+// verifiedTestContract marks synthetic test runs with explicit immutable
+// workflow metadata. Production analysis never supplies this evidence itself.
+func verifiedTestContract(run HealthRun) HealthRun {
+	run.WorkflowSHA = strings.Repeat("a", 40)
+	run.WorkflowJobs = append([]string(nil), expectedPlanJobs(run.Plan)...)
+	run.WorkflowJobs = append(run.WorkflowJobs, "ci-gate")
+	for job := range run.Results {
+		run.WorkflowJobs = append(run.WorkflowJobs, job)
+	}
+	run.WorkflowRequiredJobs = []string{"ci-gate"}
+	return run
+}
+
+func analyzeVerifiedTests(runs []HealthRun) HealthReport {
+	for index := range runs {
+		if validHealthPlan(runs[index].Plan) || runs[index].Workflow == "merge-validation.yml" || runs[index].Workflow == "nightly.yml" {
+			runs[index] = verifiedTestContract(runs[index])
+		}
+	}
+	return AnalyzeHealth(runs)
+}
+
 func TestHistoricalHealthJSONRemainsReadableWithoutTrustingMissingMetadata(t *testing.T) {
 	var run HealthRun
 	if err := json.Unmarshal([]byte(`{"event":"pull_request","conclusion":"success","duration_seconds":123,"plan":{"version":1,"effective":{"docs":true},"nominal":{"docs":true}},"results":{"docs":"success"}}`), &run); err != nil {
@@ -210,8 +220,56 @@ func TestHistoricalHealthJSONRemainsReadableWithoutTrustingMissingMetadata(t *te
 		t.Fatal(err)
 	}
 	var decoded HealthReport
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Version != 2 || decoded.Unknown.Count != 1 {
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Version != 3 || decoded.Unknown.Count != 1 {
 		t.Fatalf("report roundtrip failed: %s, %v", data, err)
+	}
+}
+
+func TestP95RequiresTwentySamples(t *testing.T) {
+	for _, count := range []int{19, 20} {
+		t.Run(fmt.Sprintf("%d samples", count), func(t *testing.T) {
+			runs := make([]HealthRun, count)
+			for i := range runs {
+				runs[i] = HealthRun{
+					Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "success",
+					DurationSeconds: 800, QueueSeconds: 140, Results: healthSuccessfulExhaustiveResults(),
+				}
+			}
+			report := analyzeVerifiedTests(runs)
+			for name, metric := range map[string]DurationMetric{"merge": report.Merge, "queue": report.Queue} {
+				if metric.Count != count || metric.P50Seconds == 0 {
+					t.Errorf("%s count/p50 = %d/%d, want %d/nonzero", name, metric.Count, metric.P50Seconds, count)
+				}
+				data, err := json.Marshal(metric)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var encoded map[string]json.RawMessage
+				if err := json.Unmarshal(data, &encoded); err != nil {
+					t.Fatal(err)
+				}
+				if count < MinimumP95Samples {
+					if metric.P95Seconds != nil || encoded["p95_seconds"] != nil {
+						t.Errorf("%s p95 at %d samples = %v / %s, want omitted", name, count, metric.P95Seconds, encoded["p95_seconds"])
+					}
+				} else if metric.P95Seconds == nil || encoded["p95_seconds"] == nil {
+					t.Errorf("%s p95 at %d samples = %v / %s, want emitted", name, count, metric.P95Seconds, encoded["p95_seconds"])
+				}
+			}
+			p95Alerts := 0
+			for _, alert := range report.Alerts {
+				if strings.Contains(alert, " p95 is ") {
+					p95Alerts++
+				}
+			}
+			wantAlerts := 0
+			if count == MinimumP95Samples {
+				wantAlerts = 2
+			}
+			if p95Alerts != wantAlerts {
+				t.Errorf("p95 alerts = %d, want %d: %v", p95Alerts, wantAlerts, report.Alerts)
+			}
+		})
 	}
 }
 
@@ -228,8 +286,8 @@ func TestHistoricalV2HealthProjectionRemainsReadOnly(t *testing.T) {
 		},
 	}
 	report := AnalyzeHealth([]HealthRun{run})
-	if report.Selective.Count != 1 || report.Runs[0].SelectionConfidence != "verified" {
-		t.Fatalf("historical v2 plan was not trusted read-only: %+v", report.Runs[0])
+	if report.Selective.Count != 1 || report.Runs[0].SelectionConfidence != "incomplete" {
+		t.Fatalf("historical v2 plan without workflow source was not left incomplete: %+v", report.Runs[0])
 	}
 	if _, present := report.Selection["quality-validation"]; present {
 		t.Fatalf("historical v2 report fabricated quality selection: %+v", report)
@@ -244,20 +302,18 @@ func TestHistoricalV2HealthProjectionRemainsReadOnly(t *testing.T) {
 
 func TestMatrixSkipIsNotProofOfCompleteSelection(t *testing.T) {
 	jobs := Jobs{Frontend: []string{"core", "site"}}
-	report := AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Plan: Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}, Results: map[string]string{"frontend-tests/core": "success", "frontend-tests/site": "skipped"}}})
+	report := analyzeVerifiedTests([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Plan: Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}, Results: map[string]string{"frontend-tests/core": "success", "frontend-tests/site": "skipped"}}})
 	if report.Runs[0].SelectionConfidence != "incomplete" || report.Jobs["frontend-tests/site"].Skipped != 1 || report.Jobs["frontend-tests/site"].Executed != 0 {
 		t.Fatalf("skipped shard accepted: %+v", report)
 	}
 }
 
-func TestExhaustiveWorkflowRegistryDoesNotRequireAPlan(t *testing.T) {
+func TestExhaustiveWorkflowUsesProvidedContractWithoutAPlan(t *testing.T) {
 	t.Parallel()
 
 	results := map[string]string{}
-	for _, job := range ExpectedHealthJobs("merge-validation.yml") {
-		results[job] = "success"
-	}
-	report := AnalyzeHealth([]HealthRun{{
+	results["ci-gate"] = "success"
+	report := analyzeVerifiedTests([]HealthRun{{
 		Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "success",
 		DurationSeconds: 600, QueueSeconds: 3, Results: results,
 	}})
@@ -265,8 +321,22 @@ func TestExhaustiveWorkflowRegistryDoesNotRequireAPlan(t *testing.T) {
 	if report.Incomplete != 0 || report.UnknownSelection != 0 {
 		t.Fatalf("exhaustive workflow treated as missing planner evidence: %+v", report)
 	}
-	if run.ExpectedSource != "workflow_registry" || run.SelectionConfidence != "verified" || len(run.Problems) != 0 {
-		t.Fatalf("workflow registry was not accepted as complete evidence: %+v", run)
+	if run.ExpectedSource != "workflow_contract" || run.SelectionConfidence != "verified" || len(run.Problems) != 0 {
+		t.Fatalf("workflow contract was not accepted as complete evidence: %+v", run)
+	}
+}
+
+func TestHistoricalExhaustiveRunWithoutWorkflowSourceRemainsIncomplete(t *testing.T) {
+	result := AnalyzeHealth([]HealthRun{{
+		Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "success",
+		DurationSeconds: 600, QueueSeconds: 3, Results: map[string]string{"unknown/old gate name": "success"},
+	}})
+	run := result.Runs[0]
+	if run.ExpectedSource != "workflow_contract" || run.SelectionConfidence != "incomplete" || result.Incomplete != 1 {
+		t.Fatalf("missing historical source was treated as a current inventory: %+v", result)
+	}
+	if len(run.ExpectedJobs) != 0 || run.ContractIssue == "" || len(result.Alerts) == 0 {
+		t.Fatalf("unavailable historical workflow evidence was hidden: %+v", result)
 	}
 }
 
@@ -278,7 +348,7 @@ func TestPlanningMetricsOnlyUsePullRequestPlans(t *testing.T) {
 	full := FullJobs()
 	fullPlan := Plan{Version: PlanVersion, Nominal: full, Effective: full}
 	results := healthSuccessfulResults(jobs)
-	report := AnalyzeHealth([]HealthRun{
+	report := analyzeVerifiedTests([]HealthRun{
 		{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 100, QueueSeconds: 1, Plan: plan, Results: results},
 		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 110, QueueSeconds: 1, Plan: fullPlan, Results: healthSuccessfulResults(full)},
 		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 120, QueueSeconds: 1, Plan: plan, Results: results},
@@ -300,12 +370,43 @@ func TestFailedExpectedJobIsCompleteFailureEvidence(t *testing.T) {
 	jobs := Jobs{Docs: true}
 	results := healthSuccessfulResults(jobs)
 	results["docs"] = "failure"
-	report := AnalyzeHealth([]HealthRun{{
+	report := analyzeVerifiedTests([]HealthRun{{
 		Workflow: "ci.yml", Event: "pull_request", Conclusion: "failure",
 		DurationSeconds: 100, QueueSeconds: 1,
 		Plan: Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}, Results: results,
 	}})
 	if report.Incomplete != 0 || report.Failures != 1 || report.Runs[0].SelectionConfidence != "verified" {
 		t.Fatalf("known failure mislabeled as incomplete evidence: %+v", report)
+	}
+}
+
+func TestMandatoryHostRecoveryChildJobsAugmentSelectivePlanEvidence(t *testing.T) {
+	plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	results := map[string]string{}
+	for _, job := range expectedPlanJobs(plan) {
+		results[job] = "success"
+	}
+	planIndependent := []string{"qualification", "qualification/recovery", "qualification/transition"}
+	for _, job := range planIndependent {
+		results[job] = "success"
+	}
+	run := HealthRun{
+		Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 10, QueueSeconds: 1,
+		Plan: plan, Results: results, PlanIndependentJobs: planIndependent,
+	}
+	complete := analyzeVerifiedTests([]HealthRun{run})
+	if complete.Runs[0].SelectionConfidence != "verified" || complete.Incomplete != 0 {
+		t.Fatalf("mandatory host recovery lane was treated as unplanned or incomplete: %+v", complete.Runs[0])
+	}
+	for _, job := range planIndependent {
+		if !slices.Contains(complete.Runs[0].ExpectedJobs, job) {
+			t.Errorf("selective plan omitted workflow-independent evidence %q: %+v", job, complete.Runs[0].ExpectedJobs)
+		}
+	}
+
+	delete(results, "qualification/transition")
+	incomplete := analyzeVerifiedTests([]HealthRun{run})
+	if incomplete.Incomplete != 1 || !slices.Contains(incomplete.Runs[0].UnknownJobs, "qualification/transition") {
+		t.Fatalf("missing workflow-independent child was accepted: %+v", incomplete.Runs[0])
 	}
 }

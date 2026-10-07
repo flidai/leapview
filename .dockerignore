@@ -1,6 +1,9 @@
 .DS_Store
 .git
 .github
+# Local generated-snapshot validation is not an application image input.
+scripts/check_generated_snapshots.sh
+scripts/generated_snapshot_check.test.ts
 .playwright-cli
 .task
 .tmp
@@ -26,6 +29,7 @@ api/gen
 internal/access/api/gen
 internal/agent/api/gen
 internal/analytics/api/gen
+internal/credential/api/gen
 internal/dashboard/api/gen
 internal/deployment/api/gen
 internal/manageddata/api/gen
@@ -57,3 +61,8 @@ static/chunks
 !static/app.input.css
 !static/login-background-loader.js
 !static/theme.js
+
+# Python deployment-adapter bytecode caches
+__pycache__/
+**/__pycache__/
+*.py[cod]

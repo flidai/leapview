@@ -24,10 +24,23 @@ func TestBootstrapIsProviderNeutralAndDelegatesLifecycleToGo(t *testing.T) {
 		"ubuntu:24.04) compose_package=docker-compose-v2",
 		"debian:13) compose_package=docker-compose",
 		"requires Ubuntu 24.04 LTS or Debian 13", "\"$compose_package\"", "docker compose version",
-		"docker pull", "docker create", "docker cp",
-		`leapviewctl" host install`, "repository@sha256",
+		"prepare-host|install", "operator-bootstrap.json", "docker pull", "docker create", "docker cp",
+		"  host install", `--operator-config "$operator_config_file"`, `"$payload_dir/leapviewctl" "${install_arguments[@]}"`, "repository@sha256",
 	} {
 		requireContains(t, bootstrap, required)
+	}
+	prepare := strings.Index(bootstrap, `if [[ "$mode" == "prepare-host" ]]`)
+	installPull := strings.Index(bootstrap, `docker pull "$leapview_image"`)
+	if prepare < 0 || installPull < 0 {
+		t.Fatal("bootstrap must expose distinct prepare-host and install modes")
+	}
+	prepareExit := strings.Index(bootstrap[prepare:], "exit 0")
+	if prepareExit < 0 || installPull < prepare+prepareExit {
+		t.Fatal("prepare-host must finish before the separate pull/install path")
+	}
+	operatorCheck := strings.Index(bootstrap, "Private operator PostgreSQL and physical-pool bootstrap input is missing")
+	if operatorCheck < prepare+prepareExit || operatorCheck > installPull {
+		t.Fatal("install must require private operator input before pulling or mutating the instance")
 	}
 	for _, forbidden := range []string{
 		"docker compose up", "docker compose down", "leapviewctl init", "leapviewctl start", "terraform", "hcloud", "hetzner", "netcup",
@@ -42,10 +55,11 @@ func TestCloudInitOnlyDeliversBootstrapInputs(t *testing.T) {
 	cloudInit := read(t, "cloud-init.yaml.tftpl")
 	for _, required := range []string{
 		"bootstrap_b64", "config_b64", "image_b64", "/usr/local/sbin/leapview-bootstrap",
+		"[/usr/local/sbin/leapview-bootstrap, prepare-host]",
 	} {
 		requireContains(t, cloudInit, required)
 	}
-	for _, forbidden := range []string{"compose.yaml", "Caddyfile", "leapviewctl init", "docker compose"} {
+	for _, forbidden := range []string{"operator-bootstrap.json", "compose.yaml", "Caddyfile", "leapviewctl init", "docker compose"} {
 		if strings.Contains(cloudInit, forbidden) {
 			t.Errorf("cloud-init contains application lifecycle fragment %q", forbidden)
 		}
@@ -65,8 +79,8 @@ func TestProductionImageCarriesCanonicalDeploymentPayload(t *testing.T) {
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	for _, required := range []string{
-		"deploy/host/files/leapviewctl-wrapper",
-		"deploy/host/bootstrap-linux.sh",
+		"python3 scripts/package_compose_bundle.py assemble",
+		`--source-root . --controller "$controller"`,
 	} {
 		requireContains(t, release, required)
 	}
@@ -81,6 +95,54 @@ func TestHostOperationalScriptsAreSyntacticallyValid(t *testing.T) {
 	wrapper := read(t, filepath.Join("files", "leapviewctl-wrapper"))
 	if strings.Contains(wrapper, "LEAPVIEWCTL_BACKUP_HOOK") {
 		t.Fatal("host wrapper must not configure an application backup hook")
+	}
+}
+
+func TestNixOSPrerequisitesModuleDoesNotOwnApplicationLifecycle(t *testing.T) {
+	module := read(t, "nixos.nix")
+	for _, required := range []string{
+		"virtualisation.docker.enable = true;",
+		"virtualisation.docker.enableOnBoot = true;",
+		"python3",
+		"openssl",
+		"coreutils",
+		"findutils",
+		"util-linux",
+		"gnutar",
+		"gzip",
+		"xz",
+		"programs.nix-ld",
+		"pkgs.stdenv.cc.cc.lib",
+		"networking.firewall.allowedTCPPorts = [ 80 443 ];",
+		"networking.firewall.allowedUDPPorts = [ 443 ];",
+		"export LEAPVIEWCTL_ROOT=/opt/leapview",
+		"exec /opt/leapview/leapviewctl \"$@\"",
+	} {
+		requireContains(t, module, required)
+	}
+	for _, forbidden := range []string{
+		"systemd.services",
+		"virtualisation.oci-containers",
+		"docker compose up",
+		"leapviewctl host install",
+		"5432",
+	} {
+		if strings.Contains(module, forbidden) {
+			t.Errorf("NixOS prerequisites module contains lifecycle or public database fragment %q", forbidden)
+		}
+	}
+
+	readme := read(t, "README.md")
+	for _, required := range []string{
+		"NixOS host prerequisites",
+		"inputs.leapview.outPath + \"/deploy/host/nixos.nix\"",
+		"nixos-rebuild switch",
+		"Ubuntu 24.04 and Debian 13",
+		"operator-bootstrap.json",
+		"--operator-config",
+		"sudo -n leapviewctl version",
+	} {
+		requireContains(t, readme, required)
 	}
 }
 

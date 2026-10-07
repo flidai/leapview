@@ -29,6 +29,10 @@ func TestTerraformProductionContracts(t *testing.T) {
 	if strings.Contains(cloudInit, "leapviewctl_b64") {
 		t.Fatal("cloud-init must not embed a source-tree controller script")
 	}
+	if strings.Contains(cloudInit, "operator-bootstrap.json") || strings.Contains(main, "operator-bootstrap.json") || strings.Contains(main, "postgres://") {
+		t.Fatal("provider state and cloud-init must not contain private PostgreSQL bootstrap credentials")
+	}
+	requireContains(t, cloudInit, "[/usr/local/sbin/leapview-bootstrap, prepare-host]")
 	if strings.Contains(cloudInit, "git clone") || strings.Contains(cloudInit, "docker build") {
 		t.Fatal("cloud-init must not clone or build application source")
 	}
@@ -46,7 +50,7 @@ func TestHetznerConsumesGenericComposeLifecycle(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"compose_b64", "compose_https_b64", "caddyfile_b64", "leapviewctl_wrapper_b64",
-		"provision_b64", "docker compose", "leapviewctl init", "leapviewctl start",
+		"provision_b64", "operator-bootstrap.json", "docker compose", "leapviewctl init", "leapviewctl start",
 	} {
 		if strings.Contains(main, forbidden) {
 			t.Fatalf("provider provisioning maintains lifecycle fragment %q", forbidden)
@@ -70,7 +74,7 @@ func TestReleaseWorkflowPublishesComposeArchiveAndAttestedImage(t *testing.T) {
 		"tags:", "needs: [image, authoring-cli, qualify, minio-conformance, plan-gc-conformance]", "gh release create",
 		"packages: write", "attestations: write", "id-token: write",
 		"docker/build-push-action@", "actions/attest@", "push-to-registry: true",
-		"leapview-compose-", "deployment.env.example", ".tar.gz.sha256", "./cmd/leapviewctl",
+		"leapview-compose-", "python3 scripts/package_compose_bundle.py assemble", ".tar.gz.sha256", "./cmd/leapviewctl",
 	} {
 		requireContains(t, workflow, fragment)
 	}
@@ -79,7 +83,7 @@ func TestReleaseWorkflowPublishesComposeArchiveAndAttestedImage(t *testing.T) {
 func TestPublicSiteImagePublicationContract(t *testing.T) {
 	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "site-image.yml"))
 	for _, fragment := range []string{
-		"name: Publish public site image",
+		"name: Build / Public site image",
 		"workflow_dispatch:",
 		"workflow_call:",
 		"IMAGE_NAME: ghcr.io/flidai/leapview-site",
@@ -184,8 +188,8 @@ func TestEphemeralDeploymentExercisesPublicContracts(t *testing.T) {
 	requireContains(t, workflow, `TF_VAR_target_id: leapview-ci-${{ github.run_id }}`)
 	for _, fragment := range []string{
 		"workflow_dispatch:", "environment: leapview-ephemeral-qualification", "terraform apply",
-		"public_ready=false", "--connect-timeout 5", "leapviewctl status", "leapviewctl logs caddy",
-		`.publisherToken`, "if: always()", "terraform destroy",
+		"cloud-init status --wait", "prepare-host", "first-install acceptance pending",
+		"operator-bootstrap.json", "no private", "if: always()", "terraform destroy",
 		"id-token: write",
 		"attestations: read",
 		"source_revision:",
@@ -210,6 +214,8 @@ func TestEphemeralDeploymentExercisesPublicContracts(t *testing.T) {
 	for _, forbidden := range []string{
 		"environment: hetzner-deployment",
 		"secrets.HCLOUD_TOKEN",
+		"public_ready=false",
+		"leapviewctl first-login",
 		"leapviewctl backup",
 		"leapviewctl restore",
 		"leapview-backup-hook",

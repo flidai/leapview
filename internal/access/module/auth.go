@@ -37,6 +37,8 @@ const oidcStateMaxAge = 10 * time.Minute
 const oidcStateClockSkew = time.Minute
 const maxAuthReturnTargetBytes = 2500
 const LocalAuthMaxFormBytes int64 = 8 * 1024
+const defaultBrowserSessionTTL = 8 * time.Hour
+const maxBrowserSessionTTL = 30 * 24 * time.Hour
 
 var (
 	errUnauthorized = errors.New("unauthorized")
@@ -79,6 +81,10 @@ type sessionManager interface {
 	DeleteSession(ctx context.Context, token string) error
 }
 
+type labeledSessionManager interface {
+	CreateSessionWithClientLabel(ctx context.Context, principalID string, ttl time.Duration, clientLabel string) (string, error)
+}
+
 type principalSessionRevoker interface {
 	RevokeSessionsForPrincipal(ctx context.Context, principalID string) error
 }
@@ -101,10 +107,12 @@ type Auth struct {
 	devAPIToken      string
 	apiTokenOnly     bool
 	localAuth        bool
+	developmentLogin bool
 	enabled          bool
 	configured       bool
 	azureTenant      string
 	cookieSecure     bool
+	sessionTTL       time.Duration
 	sessionCookieKey string
 	csrfCookie       string
 	oidcCookie       string
@@ -117,19 +125,22 @@ type Auth struct {
 }
 
 type AuthConfig struct {
-	Disabled        bool
-	DevBypass       bool
-	DevAPIToken     string
-	APITokenOnly    bool
-	LocalAuth       bool
-	AzureClientID   string
-	AzureSecret     string
-	AzureCallback   string
-	AzureTenant     string
-	CSRFKey         string
-	CookieSecure    bool
-	BootstrapTenant string
-	OIDCProviders   []OIDCProviderConfig
+	Disabled          bool
+	DevBypass         bool
+	DevAPIToken       string
+	APITokenOnly      bool
+	LocalAuth         bool
+	DevelopmentLogin  bool
+	AzureClientID     string
+	AzureSecret       string
+	AzureCallback     string
+	AzureTenant       string
+	CSRFKey           string
+	CookieSecure      bool
+	BrowserSessionTTL time.Duration
+	CookieNamespace   string
+	BootstrapTenant   string
+	OIDCProviders     []OIDCProviderConfig
 }
 
 type OIDCProviderConfig struct {
@@ -151,6 +162,16 @@ func NewAuth(repo access.Repository, cfg AuthConfig) (*Auth, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.BrowserSessionTTL < 0 || cfg.BrowserSessionTTL > maxBrowserSessionTTL {
+		return nil, fmt.Errorf("browser session TTL must be between 0 and %s", maxBrowserSessionTTL)
+	}
+	if !validCookieNamespace(cfg.CookieNamespace) {
+		return nil, errors.New("cookie namespace must contain 1 to 16 lowercase letters or digits")
+	}
+	sessionTTL := cfg.BrowserSessionTTL
+	if sessionTTL == 0 {
+		sessionTTL = defaultBrowserSessionTTL
+	}
 	auth := &Auth{
 		repo:             repo,
 		sessions:         repo,
@@ -158,12 +179,14 @@ func NewAuth(repo access.Repository, cfg AuthConfig) (*Auth, error) {
 		devAPIToken:      strings.TrimSpace(cfg.DevAPIToken),
 		apiTokenOnly:     cfg.APITokenOnly,
 		localAuth:        cfg.LocalAuth,
+		developmentLogin: cfg.DevelopmentLogin,
 		azureTenant:      cfg.AzureTenant,
 		cookieSecure:     cfg.CookieSecure,
-		sessionCookieKey: hardenedCookieName(sessionCookieName, cfg.CookieSecure),
-		csrfCookie:       hardenedCookieName(csrfCookieName, cfg.CookieSecure),
-		oidcCookie:       hardenedCookieName(oidcStateCookieName, cfg.CookieSecure),
-		returnCookie:     hardenedCookieName(authReturnCookieName, cfg.CookieSecure),
+		sessionTTL:       sessionTTL,
+		sessionCookieKey: hardenedCookieName(namespacedCookieName(sessionCookieName, cfg.CookieNamespace), cfg.CookieSecure),
+		csrfCookie:       hardenedCookieName(namespacedCookieName(csrfCookieName, cfg.CookieNamespace), cfg.CookieSecure),
+		oidcCookie:       hardenedCookieName(namespacedCookieName(oidcStateCookieName, cfg.CookieNamespace), cfg.CookieSecure),
+		returnCookie:     hardenedCookieName(namespacedCookieName(authReturnCookieName, cfg.CookieNamespace), cfg.CookieSecure),
 	}
 	providers := make([]oidcauth.Config, 0, len(cfg.OIDCProviders))
 	for _, provider := range cfg.OIDCProviders {
@@ -242,6 +265,28 @@ func hardenedCookieName(name string, secure bool) string {
 		return hostCookiePrefix + name
 	}
 	return name
+}
+
+func validCookieNamespace(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > 16 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func namespacedCookieName(name, namespace string) string {
+	if namespace == "" {
+		return name
+	}
+	return name + "_" + namespace
 }
 
 // SessionCookieName returns the environment-appropriate browser session
@@ -342,7 +387,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 			Provider: "oidc", TenantID: issuer, Subject: stableSubject(claims.Subject, email), Email: email, DisplayName: oidcDisplayName(claims),
 		})
 		if mutationErr == nil {
-			token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, 8*time.Hour)
+			token, mutationErr = createBrowserSession(r, txRepo, principal.ID, a.sessionTTL)
 		}
 		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
 	})
@@ -351,7 +396,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": provider})
-	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(8*time.Hour)))
+	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(a.sessionTTL)))
 	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
 }
 
@@ -436,23 +481,223 @@ func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=invalid_credentials", http.StatusSeeOther)
 		return
 	}
-	var token string
-	err = runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, 8*time.Hour)
-		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": "local"}), mutationErr
-	})
+	token, err := a.createBrowserSession(r, principal.ID, "local")
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": "local"})
-	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(8*time.Hour)))
+	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(a.sessionTTL)))
 	if credential.MustChangePassword {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
+}
+
+// DevelopmentLogin creates the same durable, audited browser session as an
+// ordinary local login without moving the development password through the
+// browser. Composition only enables this endpoint for an explicitly
+// loopback-bound, non-production development server.
+func (a *Auth) DevelopmentLogin(w http.ResponseWriter, r *http.Request) {
+	if a == nil || !a.localAuth || !a.developmentLogin {
+		http.NotFound(w, r)
+		return
+	}
+	if a.repo == nil {
+		http.Error(w, "development login is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	principal, err := a.repo.PrincipalByID(r.Context(), DevelopmentPrincipalID)
+	if err != nil || principal.Kind != access.PrincipalKindUser || principal.AccessDisabled() {
+		http.Error(w, "development login is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	token, err := a.createBrowserSession(r, principal.ID, "development")
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(a.sessionTTL)))
+	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
+}
+
+func (a *Auth) createBrowserSession(r *http.Request, principalID, provider string) (string, error) {
+	var token string
+	err := runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		token, mutationErr = createBrowserSession(r, txRepo, principalID, a.sessionTTL)
+		return authAuditInput(r, "session.created", principalID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
+	})
+	if err != nil {
+		return "", err
+	}
+	recordAccessAudit(r, a.repo, "sign_in", principalID, "principal", principalID, "", "success", map[string]any{"provider": provider})
+	return token, nil
+}
+
+func createBrowserSession(r *http.Request, repository access.Repository, principalID string, ttl time.Duration) (string, error) {
+	if labeled, ok := repository.(labeledSessionManager); ok {
+		return labeled.CreateSessionWithClientLabel(r.Context(), principalID, ttl, browserClientLabelFromRequest(r))
+	}
+	return repository.CreateSession(r.Context(), principalID, ttl)
+}
+
+// browserClientLabel intentionally retains only a coarse browser and OS name.
+// Versions, device models, and the raw user-agent are excluded from durable
+// session metadata.
+func browserClientLabel(userAgent string) string {
+	return browserClientLabelWithEvidence(userAgent, "", "")
+}
+
+func browserClientLabelWithEvidence(userAgent, secCHUA, secCHUAPlatform string) string {
+	lower := strings.ToLower(userAgent)
+	browser := browserFromUserAgent(lower)
+	// A specific marker in the UA (such as Vivaldi or Brave) is stronger
+	// evidence than a generic Chromium client-hint brand. Hints refine the
+	// Chrome-shaped UA used by Edge, Opera, and other Chromium browsers.
+	if browser == "" || browser == "Chrome" || browser == "Chromium" || browser == "Safari" {
+		if hintedBrowser := browserFromClientHints(secCHUA); hintedBrowser != "" {
+			browser = hintedBrowser
+		}
+	}
+	osName := operatingSystemFromUserAgent(lower)
+	if osName == "" {
+		osName = operatingSystemFromClientHint(secCHUAPlatform)
+	}
+	if browser != "" && osName != "" {
+		return browser + " on " + osName
+	}
+	if browser != "" {
+		return browser
+	}
+	return "Browser"
+}
+
+func browserClientLabelFromRequest(r *http.Request) string {
+	return browserClientLabelWithEvidence(
+		r.UserAgent(),
+		r.Header.Get("Sec-CH-UA"),
+		r.Header.Get("Sec-CH-UA-Platform"),
+	)
+}
+
+func browserFromClientHints(clientHints string) string {
+	// Brand order is not defined by Sec-CH-UA, and generic brands such as
+	// Chromium may appear alongside a more specific browser brand.
+	brands := make(map[string]struct{})
+	for _, value := range strings.Split(clientHints, ",") {
+		brand, _, found := strings.Cut(strings.TrimSpace(value), ";")
+		if !found {
+			continue
+		}
+		brand = strings.ToLower(strings.Trim(strings.TrimSpace(brand), `"`))
+		brands[brand] = struct{}{}
+	}
+	switch {
+	case hasClientHintBrand(brands, "brave"):
+		return "Brave"
+	case hasClientHintBrand(brands, "microsoft edge"):
+		return "Edge"
+	case hasClientHintBrand(brands, "opera"):
+		return "Opera"
+	case hasClientHintBrand(brands, "vivaldi"):
+		return "Vivaldi"
+	case hasClientHintBrand(brands, "google chrome"):
+		return "Chrome"
+	case hasClientHintBrand(brands, "chromium"):
+		return "Chromium"
+	default:
+		return ""
+	}
+}
+
+func hasClientHintBrand(brands map[string]struct{}, brand string) bool {
+	_, found := brands[brand]
+	return found
+}
+
+func browserFromUserAgent(userAgent string) string {
+	switch {
+	case containsAny(userAgent, "edg/", "edga/", "edgios/", "edge/"):
+		return "Edge"
+	case containsAny(userAgent, "opr/", "opera/", "opios/"):
+		return "Opera"
+	case strings.Contains(userAgent, "samsungbrowser/"):
+		return "Samsung Internet"
+	case strings.Contains(userAgent, "brave"):
+		return "Brave"
+	case strings.Contains(userAgent, "vivaldi/"):
+		return "Vivaldi"
+	case containsAny(userAgent, "yabrowser/", "yowser/"):
+		return "Yandex Browser"
+	case containsAny(userAgent, "duckduckgo/", "ddg/"):
+		return "DuckDuckGo"
+	case containsAny(userAgent, "ucbrowser/", "ucweb/", "ubrowser/"):
+		return "UC Browser"
+	case containsAny(userAgent, "huaweibrowser/", "huawei browser"):
+		return "Huawei Browser"
+	case strings.Contains(userAgent, "miuibrowser/"):
+		return "Xiaomi Browser"
+	case containsAny(userAgent, "qqbrowser/", "mqqbrowser/"):
+		return "QQ Browser"
+	case strings.Contains(userAgent, "silk/"):
+		return "Silk"
+	case containsAny(userAgent, "firefox/", "fxios/", "fennec/", "focus/"):
+		return "Firefox"
+	case containsAny(userAgent, "crios/", "chrome/"):
+		return "Chrome"
+	case strings.Contains(userAgent, "chromium/"):
+		return "Chromium"
+	case strings.Contains(userAgent, "safari/") && strings.Contains(userAgent, "version/"):
+		return "Safari"
+	default:
+		return ""
+	}
+}
+
+func operatingSystemFromUserAgent(userAgent string) string {
+	switch {
+	case strings.Contains(userAgent, "windows"):
+		return "Windows"
+	case strings.Contains(userAgent, "android"):
+		return "Android"
+	case strings.Contains(userAgent, "cros"):
+		return "ChromeOS"
+	case containsAny(userAgent, "iphone", "ipad", "ipod"):
+		return "iOS"
+	case containsAny(userAgent, "macintosh", "mac os x"):
+		return "macOS"
+	case strings.Contains(userAgent, "linux"):
+		return "Linux"
+	default:
+		return ""
+	}
+}
+
+func operatingSystemFromClientHint(platform string) string {
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(platform), `"`)) {
+	case "windows":
+		return "Windows"
+	case "android":
+		return "Android"
+	case "chrome os", "chromeos":
+		return "ChromeOS"
+	case "macos":
+		return "macOS"
+	case "linux":
+		return "Linux"
+	default:
+		return ""
+	}
+}
+
+func containsAny(value string, fragments ...string) bool {
+	for _, fragment := range fragments {
+		if strings.Contains(value, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {
@@ -556,6 +801,8 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
 		if credential != nil {
 			ctx = context.WithValue(ctx, apiCredentialContextKey{}, *credential)
+		} else if evidence, found := a.sessionEvidence(r, principal.ID); found {
+			ctx = withSessionCredentialEvidence(ctx, evidence)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -572,7 +819,7 @@ func (a *Auth) mustChangeLocalPassword(r *http.Request, principalID string, cred
 	if !a.localAuth || r.URL.Path == "/auth/local/password" || r.URL.Path == "/auth/logout" || r.URL.Path == "/auth/logout-all" {
 		return false
 	}
-	if credential != nil && credential.Token.Name == access.APITokenNameInitialPublisher {
+	if credential != nil && credential.Token.Name == access.APITokenNameInitialProjectClaim {
 		return false
 	}
 	local, ok := a.repo.(localCredentialManager)
@@ -580,7 +827,20 @@ func (a *Auth) mustChangeLocalPassword(r *http.Request, principalID string, cred
 		return false
 	}
 	localCredential, err := local.LocalCredential(r.Context(), principalID)
-	return err == nil && localCredential.MustChangePassword
+	if err != nil {
+		// A proven initial publisher must not bypass policy on an unavailable lookup.
+		return credential != nil && credential.InitialPublisher != nil
+	}
+	if !localCredential.MustChangePassword {
+		return false
+	}
+	if credential != nil && credential.InitialPublisher != nil {
+		if reader, ok := a.repo.(access.InitialPublisherPasswordSetupReader); ok {
+			open, err := reader.InitialPublisherPasswordSetupOpen(r.Context(), principalID, credential.Token.ID)
+			return err != nil || !open
+		}
+	}
+	return true
 }
 
 func writeBearerChallenge(w http.ResponseWriter, r *http.Request) {
@@ -1111,5 +1371,9 @@ type OIDCClient = oidcClient
 const AuthReturnCookieName = authReturnCookieName
 
 func (a *Auth) LocalAuthEnabled() bool { return a != nil && a.localAuth }
+
+func (a *Auth) DevelopmentLoginEnabled() bool {
+	return a != nil && a.localAuth && a.developmentLogin
+}
 
 func (a *Auth) SSOConfigured() bool { return a != nil && a.configured }

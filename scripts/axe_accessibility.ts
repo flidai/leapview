@@ -15,6 +15,12 @@ export function blockingAxeViolations<T extends AxeViolation>(violations: readon
   return violations.filter((violation) => violation.impact !== null && violation.impact !== undefined && blockingImpacts.has(violation.impact))
 }
 
+export function nonBlockingAxeViolationDetails(violations: readonly AxeViolation[]): Array<Pick<AxeViolation, 'id' | 'impact' | 'help' | 'helpUrl' | 'nodes'>> {
+  return violations
+    .filter((violation) => violation.impact == null || !blockingImpacts.has(violation.impact))
+    .map(({ id, impact, help, helpUrl, nodes }) => ({ id, impact, help, helpUrl, nodes }))
+}
+
 export function formatAxeViolations(route: { label: string; path: string }, violations: readonly AxeViolation[]): string {
   const findings = violations.flatMap((violation) => violation.nodes.map((node) => [
     `- [${violation.impact ?? 'unknown'}] ${violation.id}: ${violation.help}`,

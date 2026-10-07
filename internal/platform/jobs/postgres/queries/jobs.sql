@@ -3,11 +3,12 @@
 -- name: InsertJobHistory :one
 INSERT INTO jobs.job_history
     (id, kind, workload_class, principal_id, group_ids, partition_key,
-     resource_kind, resource_id, estimated_memory_bytes, payload, request_digest)
+     resource_kind, resource_id, estimated_memory_bytes, payload, request_digest,
+     authority_envelope)
 VALUES (sqlc.arg(id), sqlc.arg(kind), sqlc.arg(workload_class), sqlc.arg(principal_id),
         sqlc.arg(group_ids)::jsonb, sqlc.arg(partition_key), sqlc.arg(resource_kind),
         sqlc.arg(resource_id), sqlc.arg(estimated_memory_bytes),
-        sqlc.arg(payload)::jsonb, sqlc.arg(request_digest))
+        sqlc.arg(payload)::jsonb, sqlc.arg(request_digest), sqlc.arg(authority_envelope)::jsonb)
 ON CONFLICT (id) DO NOTHING
 RETURNING true AS inserted;
 
@@ -24,7 +25,8 @@ WHERE id = sqlc.arg(id) AND river_job_id IS NULL;
 -- name: GetJob :one
 SELECT id, kind, workload_class, principal_id, group_ids::text AS group_ids,
        partition_key, resource_kind, resource_id, estimated_memory_bytes,
-       payload::text AS payload, request_digest, status, attempt_count,
+       payload::text AS payload, request_digest, authority_envelope::text AS authority_envelope,
+       status, attempt_count,
        created_at, started_at, finished_at, river_job_id,
        COALESCE(error, 'null'::jsonb)::text AS error
 FROM jobs.job_history
@@ -69,13 +71,15 @@ UPDATE jobs.job_history
 SET status = sqlc.arg(status), finished_at = clock_timestamp(),
     error = sqlc.arg(problem)::jsonb
 WHERE id = sqlc.arg(id) AND status IN ('queued', 'running')
-  AND (sqlc.arg(fence_generation) = 0 OR attempt_count = sqlc.arg(fence_generation));
+  AND (sqlc.arg(fence_generation) = 0 OR attempt_count = sqlc.arg(fence_generation)
+       OR (attempt_count = 0 AND sqlc.arg(fence_generation) = 1));
 
 -- name: SetJobTerminal :execrows
 UPDATE jobs.job_history
 SET status = sqlc.arg(status), finished_at = clock_timestamp(), error = NULL
 WHERE id = sqlc.arg(id) AND status IN ('queued', 'running')
-  AND (sqlc.arg(fence_generation) = 0 OR attempt_count = sqlc.arg(fence_generation));
+  AND (sqlc.arg(fence_generation) = 0 OR attempt_count = sqlc.arg(fence_generation)
+       OR (attempt_count = 0 AND sqlc.arg(fence_generation) = 1));
 
 -- name: RequeueJobAfterFailure :execrows
 UPDATE jobs.job_history

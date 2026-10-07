@@ -63,7 +63,7 @@ func TestDashboardAuthoringToolCallIdentityIsNativeAndReplayStable(t *testing.T)
 func (f *commandIdentityAuthoring) Create(ctx context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
 	f.create = request
 	f.audit, _ = dashboardauthoring.AuditIntentFromContext(ctx)
-	return authoringservice.Result{}, nil
+	return createResultForTest(), nil
 }
 
 func TestDashboardDraftCreationSuppliesTransactionalAudit(t *testing.T) {
@@ -79,7 +79,7 @@ func TestDashboardDraftCreationSuppliesTransactionalAudit(t *testing.T) {
 	if err != nil || id.Version() != 7 || app.audit.Operation != "createDashboardAuthoringDraft" || app.audit.ActorID != scope.PrincipalID {
 		t.Fatalf("missing native creation audit: %#v", app.audit)
 	}
-	if app.create.IdempotencyKey != call.ID || app.create.ToolCallID != call.ID || app.create.ConversationID != scope.ConversationID {
+	if app.create.IdempotencyKey != app.audit.EventID || app.create.ToolCallID != call.ID || app.create.ConversationID != scope.ConversationID {
 		t.Fatalf("creation replay/provenance changed: %#v", app.create)
 	}
 }
@@ -103,7 +103,7 @@ func TestDashboardForkSuppliesTransactionalAudit(t *testing.T) {
 	if err != nil || id.Version() != 7 || app.audit.Operation != "forkDashboardAuthoringDraft" || app.audit.ActorID != scope.PrincipalID {
 		t.Fatalf("missing fork audit: %#v", app.audit)
 	}
-	if app.fork.IdempotencyKey != call.ID || app.fork.ToolCallID != call.ID || app.fork.ConversationID != scope.ConversationID {
+	if app.fork.IdempotencyKey != app.audit.EventID || app.fork.ToolCallID != call.ID || app.fork.ConversationID != scope.ConversationID {
 		t.Fatalf("fork provenance changed: %#v", app.fork)
 	}
 }

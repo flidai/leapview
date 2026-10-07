@@ -319,6 +319,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
     const page = this.page
     const nextMode = nextThemeMode[this.themeMode]
     const themeLabel = `${themeLabels[this.themeMode]}. Switch to ${themeLabels[nextMode]}.`
+    const developmentLogin = page?.developmentLogin ?? false
     const localAuth = page?.localAuth ?? false
     const ssoAuth = page?.ssoAuth ?? true
     const mustChangePassword = page?.mustChangePassword ?? false
@@ -354,6 +355,13 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
           <p>${mustChangePassword ? 'Choose a new password to continue.' : 'Sign in to LeapView.'}</p>
         </div>
         ${this.status.error ? html`<div class="error" role="alert" aria-live="assertive">${this.status.error}</div>` : ''}
+        ${!mustChangePassword && developmentLogin ? html`
+          <form method="post" action="/auth/development/login">
+            <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>
+            <button class="submit" type="submit">Continue as Local Developer</button>
+          </form>
+        ` : ''}
+        ${!mustChangePassword && developmentLogin && (localAuth || ssoAuth) ? html`<div class="divider" aria-hidden="true">or</div>` : ''}
         ${mustChangePassword ? html`
           <form method="post" action="/auth/local/password">
             <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>

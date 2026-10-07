@@ -16,3 +16,19 @@ export function hasCompiledBuilderPreview(
       : ['line', 'area', 'bar', 'column', 'combo'].includes(renderedType) ? 'cartesian' : undefined
   return kind !== undefined && preview.spec.kind === kind
 }
+
+export function isBuilderVisualTypeSwitchPending(
+  commandPending: boolean,
+  action: string,
+  pending: { pageID: string; visualID: string; toType: string } | null,
+  pageID: string,
+  visual: Pick<DashboardBuilderVisualSignal, 'id' | 'type'>,
+  renderedType: string,
+): boolean {
+  if (!commandPending || renderedType === visual.type.toLowerCase()) return false
+  if (action === 'restore_revision') return true
+  return action === 'set_visual_type'
+    && pending?.pageID === pageID
+    && pending.visualID === visual.id
+    && pending.toType === renderedType
+}

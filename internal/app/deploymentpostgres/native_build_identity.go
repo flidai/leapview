@@ -7,7 +7,6 @@ package deploymentpostgres
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,19 +118,7 @@ func nativeBuildRequestDigest(request deploymentmodule.NativeDeliveryBuildReques
 	if err := validateNativeBuildRequest(request); err != nil {
 		return "", err
 	}
-	canonical := struct {
-		ProjectID, TargetID, Environment, PlanID, PrincipalID, IdempotencyKey string
-	}{
-		ProjectID: request.ProjectID.String(), TargetID: request.TargetID,
-		Environment: request.Environment, PlanID: request.PlanID.String(),
-		PrincipalID: request.PrincipalID, IdempotencyKey: request.IdempotencyKey,
-	}
-	encoded, err := json.Marshal(canonical)
-	if err != nil {
-		return "", fmt.Errorf("marshal native build request identity: %w", err)
-	}
-	sum := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return deploymentmodule.NativeDeliveryBuildRequestDigest(request)
 }
 
 // nativeBuildConsequenceID deterministically derives one UUIDv7-shaped

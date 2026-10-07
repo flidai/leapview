@@ -67,12 +67,29 @@ func TestDevLifecycleCommandSurfaceMatchesAcceptedContract(t *testing.T) {
 func TestLocalDevBrowserHandoffHonorsNoBrowser(t *testing.T) {
 	command := &cobra.Command{Use: "dev"}
 	command.Flags().Bool("no-browser", false, "")
+	command.Flags().String("format", "text", "")
 	openBrowser, err := localDevOpenBrowser(command)
 	require.NoError(t, err)
 	require.True(t, openBrowser)
 
 	require.NoError(t, command.Flags().Set("no-browser", "true"))
 	openBrowser, err = localDevOpenBrowser(command)
+	require.NoError(t, err)
+	require.False(t, openBrowser)
+	require.NoError(t, command.Flags().Set("no-browser", "false"))
+	require.NoError(t, command.Flags().Set("format", "json"))
+	openBrowser, err = localDevOpenBrowser(command)
+	require.NoError(t, err)
+	require.False(t, openBrowser)
+}
+
+func TestLocalDevBrowserHandoffHonorsInheritedNoInput(t *testing.T) {
+	root := &cobra.Command{Use: "leapview"}
+	root.PersistentFlags().Bool("no-input", false, "")
+	command := &cobra.Command{Use: "dev"}
+	root.AddCommand(command)
+	require.NoError(t, root.PersistentFlags().Set("no-input", "true"))
+	openBrowser, err := localDevOpenBrowser(command)
 	require.NoError(t, err)
 	require.False(t, openBrowser)
 }

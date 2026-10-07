@@ -77,6 +77,7 @@ model CommandOptions {
   auditAction?: string;
   guarantee?: "transactional" | "best-effort";
   execution?: AsyncExecutionOptions;
+  nonReplayable?: boolean;
   failures?: CommandFailureOptions[];
   additionalExposures?: ("ui" | "agent" | "automation")[];
   targetParameter?: string;
@@ -86,6 +87,15 @@ model CommandDefaultsOptions {
   guarantee?: "transactional" | "best-effort";
   failures?: CommandFailureOptions[];
   additionalExposures?: ("ui" | "agent" | "automation")[];
+}
+
+// Authorization metadata is intentionally limited to stable opaque names.
+// Product packages own the action vocabulary and domain resolver semantics.
+model AuthzOptions {
+  mode?: string;
+  privilege?: string;
+  action?: string;
+  resolver?: string;
 }
 
 model ResponseShapeOptions {
@@ -180,7 +190,7 @@ extern dec auditInternal(target: ModelProperty);
 extern dec auditPii(target: ModelProperty);
 extern dec auditSecret(target: ModelProperty);
 extern dec query(target: Operation);
-extern dec authz(target: Operation | Interface, value: valueof unknown);
+extern dec authz(target: Operation | Interface, value: valueof AuthzOptions);
 extern dec target(target: ModelProperty);
 extern dec asyncExecution(target: Operation, status: Operation, events: Operation, options: valueof TypedAsyncExecutionOptions);
 extern dec failureDefinition(target: Model, options: valueof CommandFailureOptions);

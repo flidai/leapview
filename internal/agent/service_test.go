@@ -1881,6 +1881,14 @@ func (s *testAgentStore) ListConversations(_ context.Context, principalID string
 	return s.ListConversationsPage(context.Background(), principalID, Page{})
 }
 
+func (s *testAgentStore) ListConversationSummaries(ctx context.Context, principalID string) ([]Conversation, error) {
+	rows, err := s.ListConversations(ctx, principalID)
+	for i := range rows {
+		rows[i].TranscriptJSON = ""
+	}
+	return rows, err
+}
+
 func (s *testAgentStore) ListConversationsPage(_ context.Context, principalID string, page Page) ([]Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

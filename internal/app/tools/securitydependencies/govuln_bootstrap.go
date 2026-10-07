@@ -14,6 +14,32 @@ import (
 )
 
 func (r *runner) commandWithEnv(dir, name string, overrides map[string]string, args ...string) commandResult {
+	return r.commandWithEnvLimited(dir, name, overrides, 0, 0, args...)
+}
+
+// A nonzero capture limit bounds memory while continuing to drain the child.
+// Overflow is a command failure, even when the child reports exit status zero.
+type commandCapture struct {
+	buffer   bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (capture *commandCapture) Len() int       { return capture.buffer.Len() }
+func (capture *commandCapture) Bytes() []byte  { return capture.buffer.Bytes() }
+func (capture *commandCapture) String() string { return capture.buffer.String() }
+
+func (capture *commandCapture) Write(data []byte) (int, error) {
+	size := len(data)
+	if capture.limit > 0 && size > capture.limit-capture.Len() {
+		data = data[:capture.limit-capture.Len()]
+		capture.overflow = true
+	}
+	_, err := capture.buffer.Write(data)
+	return size, err
+}
+
+func (r *runner) commandWithEnvLimited(dir, name string, overrides map[string]string, stdoutLimit, stderrLimit int, args ...string) commandResult {
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, name, args...)
@@ -36,10 +62,14 @@ func (r *runner) commandWithEnv(dir, name string, overrides map[string]string, a
 		}
 		command.Env = environment
 	}
-	var stdout, stderr bytes.Buffer
+	stdout := commandCapture{limit: stdoutLimit}
+	stderr := commandCapture{limit: stderrLimit}
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	err := command.Run()
+	if stdout.overflow || stderr.overflow {
+		err = errors.Join(err, errors.New("scanner output exceeded capture limits"))
+	}
 	status := 0
 	var timedOut, canceled, signaled bool
 	if err != nil {

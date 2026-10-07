@@ -388,5 +388,6 @@ func testRouter(handler Handler) nethttp.Handler {
 	r := chi.NewRouter()
 	r.Get("/dashboards/{dashboard}", handler.Dashboard)
 	r.Get("/dashboards/{dashboard}/pages/{page}", handler.Page)
+	r.Get("/dashboards/{dashboard}/pages/{page}/visuals/{visual}/explore", handler.ExploreVisualization)
 	return r
 }

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -22,7 +23,7 @@ const authoringCredentialService = "com.leapview.cli.authoring.v1"
 type applicationAuthoringAuthentication struct{}
 
 func (applicationAuthoringAuthentication) Login(ctx context.Context, request accesscli.LoginRequest, notify func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error) {
-	authentication, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	authentication, err := defaultAuthoringAuthenticator(defaultCLIHTTPClient)
 	if err != nil {
 		return accesscli.LoginResult{}, err
 	}
@@ -30,7 +31,7 @@ func (applicationAuthoringAuthentication) Login(ctx context.Context, request acc
 }
 
 func (applicationAuthoringAuthentication) Logout(ctx context.Context, name string) error {
-	authentication, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	authentication, err := defaultAuthoringAuthenticator(defaultCLIHTTPClient)
 	if err != nil {
 		return err
 	}
@@ -59,7 +60,7 @@ func resolveLocalProjectAuthority() (localruntime.ProjectAuthority, error) {
 }
 
 func establishLocalAuthoringSessions(ctx context.Context, request localruntime.SessionRequest, out io.Writer) (localruntime.SessionResult, error) {
-	sessionClient, browserCookie, err := establishLocalBrowserSession(ctx, request, http.DefaultClient)
+	sessionClient, browserCookie, err := establishLocalBrowserSession(ctx, request, defaultCLIHTTPClient)
 	if err != nil {
 		return localruntime.SessionResult{}, err
 	}
@@ -90,7 +91,7 @@ func establishLocalAuthoringSessions(ctx context.Context, request localruntime.S
 }
 
 func resetLocalAuthoringSessions(ctx context.Context, request localruntime.SessionRequest) error {
-	authenticator, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	authenticator, err := defaultAuthoringAuthenticator(defaultCLIHTTPClient)
 	if err != nil {
 		return err
 	}
@@ -191,18 +192,27 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 	loginRequest := accesscli.LoginRequest{
 		Name: request.TargetName, Origin: request.Origin, InstanceID: request.InstanceID,
 		Environment: request.Environment, ProjectID: request.ProjectID,
-		Capabilities: []string{"PROJECT_ADMIN", "RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH", "RESOURCE_MANAGE"},
+		Actions: access.DefaultAuthoringActions(),
 	}
 	var notify func(accesscli.DeviceChallenge)
+	var challengeWriteErr error
+	loginContext, cancelLogin := context.WithCancel(ctx)
+	defer cancelLogin()
 	if approval, ok := authenticator.(localSessionAutomaticApproval); ok {
 		loginRequest.Headless = true
 		loginRequest.BeforeExchange = approval.ApproveDeviceAuthorization
 	} else {
 		notify = func(challenge accesscli.DeviceChallenge) {
-			fmt.Fprintf(out, "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode)
+			if _, err := fmt.Fprintf(out, "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode); err != nil {
+				challengeWriteErr = fmt.Errorf("write local login challenge: %w", err)
+				cancelLogin()
+			}
 		}
 	}
-	result, err := authenticator.Login(ctx, loginRequest, notify)
+	result, err := authenticator.Login(loginContext, loginRequest, notify)
+	if challengeWriteErr != nil {
+		return localruntime.SessionResult{}, challengeWriteErr
+	}
 	if err != nil {
 		return localruntime.SessionResult{}, err
 	}
@@ -212,7 +222,7 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 type applicationTargetDiscovery struct{}
 
 func (applicationTargetDiscovery) Discover(ctx context.Context, target string) (accesscli.TargetMetadata, error) {
-	instance, err := newDeploymentCLIClient(http.DefaultClient, target, "").instance(ctx)
+	instance, err := newDeploymentCLIClient(defaultCLIHTTPClient, target, "").instance(ctx)
 	if err != nil {
 		return accesscli.TargetMetadata{}, err
 	}

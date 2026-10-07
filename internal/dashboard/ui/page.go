@@ -270,7 +270,25 @@ func BootstrapSignals(clientID, streamInstanceID string, catalog dashboard.Catal
 }
 
 func BootstrapSignalsWithRouteScope(routes RouteScope, clientID, streamInstanceID string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, definitions map[string]visualizationdefinition.Definition, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) map[string]any {
+	return bootstrapSignalsWithRouteScope(routes, clientID, streamInstanceID, catalog, report, model, definitions, pages, activePage, initialFilters, map[string]bool{}, providers...)
+}
+
+// BootstrapSignalsWithExploreAuthorization includes only the visual handoffs
+// the request has authorized against both the semantic model and project
+// catalog. A nil/absent visual entry is fail-closed.
+func BootstrapSignalsWithExploreAuthorization(routes RouteScope, clientID, streamInstanceID string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, definitions map[string]visualizationdefinition.Definition, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, authorizedVisuals map[string]bool, providers ...webpage.Provider) map[string]any {
+	return bootstrapSignalsWithRouteScope(routes, clientID, streamInstanceID, catalog, report, model, definitions, pages, activePage, initialFilters, authorizedVisuals, providers...)
+}
+
+func bootstrapSignalsWithRouteScope(routes RouteScope, clientID, streamInstanceID string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, definitions map[string]visualizationdefinition.Definition, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, authorizedVisuals map[string]bool, providers ...webpage.Provider) map[string]any {
 	envelope := uisignals.DashboardInitialEnvelope(clientID, streamInstanceID, catalog, report, model, definitions, pages, activePage, initialFilters)
+	uisignals.AttachDashboardExploreHrefs(&envelope, report, model, activePage, initialFilters, routes.BasePath, clientID, streamInstanceID)
+	for visualID, signal := range envelope.Visuals {
+		if !authorizedVisuals[visualID] {
+			signal.ExploreHref = nil
+			envelope.Visuals[visualID] = signal
+		}
+	}
 	if base := strings.TrimSuffix(strings.TrimSpace(routes.BasePath), "/"); base != "" {
 		for index := range envelope.Page.Pages {
 			envelope.Page.Pages[index].Href = base + "/dashboards/" + report.ID + "/pages/" + envelope.Page.Pages[index].ID

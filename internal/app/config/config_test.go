@@ -70,6 +70,42 @@ func TestDevelopmentAuthBypassRequiresExplicitLoopbackListener(t *testing.T) {
 	}
 }
 
+func TestDevelopmentBrowserSessionSettingsRequireLoopbackAndStayOutOfProduction(t *testing.T) {
+	base := withAnalyticalTestDefaults(Config{
+		Addr: "127.0.0.1:8080", LocalAuth: true,
+		CSRFKey:              "development-csrf-key-000000000000",
+		DevBrowserSessionTTL: 30 * 24 * time.Hour, DevCookieNamespace: "12345", DevQuickLogin: true,
+	})
+	if err := base.Validate(ProfileServe); err != nil {
+		t.Fatalf("loopback development session rejected: %v", err)
+	}
+	remote := base
+	remote.Addr = "0.0.0.0:8080"
+	if err := remote.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "explicit loopback") {
+		t.Fatalf("remote development session error = %v", err)
+	}
+	production := base
+	production.Production = true
+	if err := production.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "production") {
+		t.Fatalf("production development session error = %v", err)
+	}
+	tooLong := base
+	tooLong.DevBrowserSessionTTL = 31 * 24 * time.Hour
+	if err := tooLong.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_DEV_BROWSER_SESSION_TTL") {
+		t.Fatalf("unbounded development session error = %v", err)
+	}
+	withoutLocalAuth := base
+	withoutLocalAuth.LocalAuth = false
+	if err := withoutLocalAuth.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "requires local authentication") {
+		t.Fatalf("quick login without local auth error = %v", err)
+	}
+	withBypass := base
+	withBypass.DevAuthBypass = true
+	if err := withBypass.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "without development authentication bypass") {
+		t.Fatalf("quick login with bypass error = %v", err)
+	}
+}
+
 func TestLoadRejectsMalformedWorkloadConfiguration(t *testing.T) {
 	t.Setenv("LEAPVIEW_WORKLOAD_INTERACTIVE_MAX_RUNNING", "many")
 	if _, err := Load(); err == nil {

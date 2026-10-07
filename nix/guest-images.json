@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "images": [
+    {
+      "guestOS": "ubuntu2404",
+      "architecture": "amd64",
+      "url": "https://cloud-images.ubuntu.com/noble/20260926/noble-server-cloudimg-amd64.img",
+      "checksumURL": "https://cloud-images.ubuntu.com/noble/20260926/SHA256SUMS",
+      "checksum": {
+        "algorithm": "sha256",
+        "hex": "6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2"
+      }
+    },
+    {
+      "guestOS": "ubuntu2404",
+      "architecture": "arm64",
+      "url": "https://cloud-images.ubuntu.com/noble/20260926/noble-server-cloudimg-arm64.img",
+      "checksumURL": "https://cloud-images.ubuntu.com/noble/20260926/SHA256SUMS",
+      "checksum": {
+        "algorithm": "sha256",
+        "hex": "1d6bffe64b848468ac97f821d369a4846d983de1800ccf6b5ec8853e85cefc55"
+      }
+    },
+    {
+      "guestOS": "debian13",
+      "architecture": "amd64",
+      "url": "https://cloud.debian.org/images/cloud/trixie/20261001-2618/debian-13-genericcloud-amd64-20261001-2618.qcow2",
+      "checksumURL": "https://cloud.debian.org/images/cloud/trixie/20261001-2618/SHA512SUMS",
+      "checksum": {
+        "algorithm": "sha512",
+        "hex": "f46f0671a6e5bdec5291ab8972bae2f10e5408c2f64a74078f11efc2f06a436a9d0313ed50e0472542eeabf780e9f7c792ac0a314c6c20507fcd9fd81b468c3d"
+      }
+    },
+    {
+      "guestOS": "debian13",
+      "architecture": "arm64",
+      "url": "https://cloud.debian.org/images/cloud/trixie/20261001-2618/debian-13-genericcloud-arm64-20261001-2618.qcow2",
+      "checksumURL": "https://cloud.debian.org/images/cloud/trixie/20261001-2618/SHA512SUMS",
+      "checksum": {
+        "algorithm": "sha512",
+        "hex": "d8470b8c6c38fead046c794b5800a5a7b96672d5bcf543cc230ceb0c4b8ace05ed341a0c8928045422243fde26b2f1f2f58e99244c65709ffda2e3d4b674dd5a"
+      }
+    }
+  ]
+}

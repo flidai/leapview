@@ -20,6 +20,7 @@ import (
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
 
@@ -29,6 +30,7 @@ type qualificationProcess struct {
 	dir         string
 	executable  string
 	environment []string
+	stdoutOnly  bool
 }
 
 type qualificationCommandRequest struct {
@@ -37,6 +39,7 @@ type qualificationCommandRequest struct {
 	Environment []string
 	Stdin       io.Reader
 	Arguments   []string
+	StdoutOnly  bool
 }
 
 type qualificationCommandExecutor interface {
@@ -56,6 +59,17 @@ func (osQualificationCommandExecutor) Execute(
 		command.Env = os.Environ()
 	}
 	command.Stdin = request.Stdin
+	if request.StdoutOnly {
+		// Compose progress is written to stderr. Successful one-shot commands
+		// return machine-readable stdout; retain both streams when they fail.
+		var stderr bytes.Buffer
+		command.Stderr = &stderr
+		output, err := command.Output()
+		if err != nil {
+			return append(output, stderr.Bytes()...), err
+		}
+		return output, nil
+	}
 	return command.CombinedOutput()
 }
 
@@ -72,6 +86,7 @@ func (p qualificationProcess) Run(
 		Directory: p.dir, Executable: p.executable,
 		Environment: append([]string(nil), p.environment...),
 		Stdin:       stdin, Arguments: append([]string(nil), args...),
+		StdoutOnly: p.stdoutOnly,
 	})
 	if err != nil {
 		commandText := string(redactQualificationBytes(
@@ -111,7 +126,7 @@ func composeArguments(root string, args ...string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if project == "" || project != strings.TrimSpace(project) || normalizedQualificationName(project) != project {
+	if !validComposeProjectName(project) {
 		return nil, errors.New("Compose project name must be a normalized identifier")
 	}
 	result := []string{
@@ -121,38 +136,60 @@ func composeArguments(root string, args ...string) ([]string, error) {
 		"--env-file", filepath.Join(root, deploymentEnvName),
 		"--file", filepath.Join(root, "compose.yaml"),
 	}
+	bundledPostgres, err := bundledPostgresSelected(root)
+	if err != nil {
+		return nil, err
+	}
+	if bundledPostgres {
+		result = append(result, "--file", filepath.Join(root, "compose.postgres.yaml"))
+	}
 	if https == "1" {
 		result = append(result, "--file", filepath.Join(root, "compose.https.yaml"))
 	}
 	return append(result, args...), nil
 }
 
-func (c *Controller) qualificationCompose(
-	ctx context.Context,
-	root string,
-	args ...string,
-) ([]byte, error) {
-	if err := c.verifyDockerEndpoint(ctx); err != nil {
-		return nil, err
+func composeArgumentsForPhase(root, phase string, args ...string) ([]string, error) {
+	if phase != installationstate.PhasePrivate && phase != installationstate.PhasePublic {
+		return nil, fmt.Errorf("unsupported host installation phase %q", phase)
 	}
-	commandArgs, err := composeArguments(root, args...)
+	base, err := composeArguments(root)
 	if err != nil {
 		return nil, err
 	}
-	processEnvironment, err := composeProcessEnvironment(root, nil)
-	if err != nil {
-		return nil, err
+	if phase == installationstate.PhasePrivate {
+		base = append(base, "--env-file", filepath.Join(root, "first-install.env"))
+		https, err := envFileValue(filepath.Join(root, deploymentEnvName), "COMPOSE_HTTPS")
+		if err != nil {
+			return nil, err
+		}
+		if https == "1" {
+			base = append(base, "--file", filepath.Join(root, "compose.first-install-bootstrap.yaml"))
+		} else if https != "0" {
+			return nil, fmt.Errorf("COMPOSE_HTTPS must be 0 or 1 during host bootstrap")
+		}
 	}
-	return qualificationProcess{
-		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
-	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
+	return append(base, args...), nil
 }
 
-// qualificationComposeEnvironment supplies operation-only credentials to the
-// Compose process without persisting them in leapview.env or rendering their
-// values in command arguments. Callers pass `run --env NAME` so Compose copies
-// only the named value into the one-shot container.
-func (c *Controller) qualificationComposeEnvironment(
+func validComposeProjectName(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (c *Controller) composeCapture(ctx context.Context, root string, args ...string) ([]byte, error) {
+	return c.composeCaptureWithEnvironment(ctx, root, nil, args...)
+}
+
+func (c *Controller) composeCaptureWithEnvironment(
 	ctx context.Context,
 	root string,
 	environment map[string]string,
@@ -165,21 +202,40 @@ func (c *Controller) qualificationComposeEnvironment(
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(environment))
 	for name := range environment {
 		if strings.TrimSpace(name) == "" || strings.Contains(name, "=") {
-			return nil, fmt.Errorf("qualification operation environment name %q is invalid", name)
+			return nil, fmt.Errorf("Compose operation environment name %q is invalid", name)
 		}
-		names = append(names, name)
 	}
-	sort.Strings(names)
 	processEnvironment, err := composeProcessEnvironment(root, environment)
 	if err != nil {
 		return nil, err
 	}
 	return qualificationProcess{
 		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
+		stdoutOnly: len(args) > 0 && args[0] == "run",
 	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
+}
+
+func (c *Controller) qualificationCompose(
+	ctx context.Context,
+	root string,
+	args ...string,
+) ([]byte, error) {
+	return c.composeCapture(ctx, root, args...)
+}
+
+// qualificationComposeEnvironment supplies operation-only credentials to the
+// Compose process without persisting them in leapview.env or rendering their
+// values in command arguments. Callers pass `run --env NAME` so Compose copies
+// only the named value into the one-shot container.
+func (c *Controller) qualificationComposeEnvironment(
+	ctx context.Context,
+	root string,
+	environment map[string]string,
+	args ...string,
+) ([]byte, error) {
+	return c.composeCaptureWithEnvironment(ctx, root, environment, args...)
 }
 
 // composeProcessEnvironment prevents host shell variables from
@@ -536,30 +592,7 @@ func readQualificationJSON(path string, value any) error {
 }
 
 func appendOrReplaceQualificationEnv(path, key, value string) error {
-	if err := validateEnvLineValue(key, value); err != nil {
-		return err
-	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(contents), "\n")
-	found := false
-	for index, line := range lines {
-		name, _, present := strings.Cut(line, "=")
-		if present && name == key {
-			lines[index] = key + "=" + value
-			found = true
-		}
-	}
-	if !found {
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		lines = append(lines, key+"=", "")
-		lines[len(lines)-2] = key + "=" + value
-	}
-	return securefs.WritePrivateFileAtomic(path, []byte(strings.Join(lines, "\n")))
+	return appendOrReplaceEnvFile(path, key, value)
 }
 
 func qualificationWait(
@@ -597,4 +630,15 @@ func joinQualificationError(primary error, cleanup error) error {
 		return cleanup
 	}
 	return errors.Join(primary, fmt.Errorf("qualification cleanup: %w", cleanup))
+}
+
+// MaintenanceInvocation uses the canonical Compose selection and sanitized
+// environment. Callers must already hold the installation maintenance lock.
+func MaintenanceInvocation(root string, args ...string) ([]string, []string, error) {
+	command, err := composeArguments(root, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	env, err := composeProcessEnvironment(root, nil)
+	return command, env, err
 }

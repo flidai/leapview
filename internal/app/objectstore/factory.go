@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	appconfig "github.com/flidai/leapview/internal/app/config"
 	platformstore "github.com/flidai/leapview/internal/platform/objectstore"
+	"github.com/flidai/leapview/internal/platform/outbound"
 )
 
 // AWSConfigLoader is injectable so factory tests never need to resolve
@@ -208,10 +210,26 @@ func newS3(ctx context.Context, cfg appconfig.Config, instanceID, environment st
 	if strings.TrimSpace(accessKey) != "" {
 		loadOptions = append(loadOptions, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, sessionToken)))
 	}
+	destinationMode := outbound.PublicOnly
+	if endpoint != "" {
+		// A custom S3 origin is an explicit system-owned configuration and may
+		// legitimately be private/on-premises. Special-use and metadata ranges
+		// remain denied by ExplicitPrivate.
+		destinationMode = outbound.ExplicitPrivate
+	}
+	guardedHTTP := outbound.New(destinationMode, outbound.Options{}).HTTPClient(
+		&http.Client{}, outbound.HTTPConfig{
+			AllowedSchemes: []string{"http", "https"}, MaxRedirects: 5,
+			SameOriginRedirects: endpoint != "",
+		},
+	)
+	// Credential discovery is a trusted SDK control-plane operation (including
+	// EC2 IMDS). Apply the destination guard only after its clients are built.
 	awsCfg, err := load(ctx, loadOptions...)
 	if err != nil {
 		return nil, "", fmt.Errorf("initialize object-store S3 client: %w", err)
 	}
+	awsCfg.HTTPClient = guardedHTTP
 	build := options.NewS3Client
 	if build == nil {
 		build = func(config aws.Config, opts ...func(*awss3.Options)) platformstore.S3Client {
@@ -239,7 +257,8 @@ func canonicalEndpoint(raw string) (string, error) {
 		return "", nil
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", fmt.Errorf("object-store S3 endpoint must be an absolute URL without credentials, query, or fragment")
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)

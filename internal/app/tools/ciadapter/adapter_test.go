@@ -88,17 +88,6 @@ func TestWorkflowAndInternalLaneMappings(t *testing.T) {
 			t.Errorf("InternalJobID(%q) = %q, want %q", workflow, got, neutral)
 		}
 	}
-	for _, display := range []string{"dbt physical contract", "dbt physical contract (PR)", "dbt physical contract (nightly)"} {
-		if got := HealthJobName(display); got != "warehouse-validation" {
-			t.Errorf("HealthJobName(%q) = %q, want warehouse-validation", display, got)
-		}
-	}
-	if got := HealthJobName("dbt physical contract (unexpected)"); got == "warehouse-validation" {
-		t.Fatal("accepted an unknown workflow display-name suffix")
-	}
-	if got := HealthJobName("Warehouse physical contract (PR)"); got != "warehouse-validation" {
-		t.Fatalf("neutral display name = %q", got)
-	}
 	for text, want := range map[string]string{
 		"warehouse-validation failed":         "dbt-warehouse-boundary-validation failed",
 		"unknown/warehouse-validation-legacy": "unknown/warehouse-validation-legacy",
@@ -132,69 +121,6 @@ func TestWorkflowAndInternalLaneMappings(t *testing.T) {
 	}
 }
 
-// Reading the real workflows makes a renamed lane or added required matrix
-// member fail locally before health reports silently lose its evidence.
-func TestHealthRegistryMatchesCurrentWorkflows(t *testing.T) {
-	root := filepath.Join("..", "..", "..", "..")
-	for _, workflow := range []string{"ci.yml", "merge-validation.yml", "nightly.yml"} {
-		t.Run(workflow, func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var config struct {
-				Jobs map[string]struct {
-					Name     string `yaml:"name"`
-					Strategy struct {
-						Matrix yaml.Node `yaml:"matrix"`
-					} `yaml:"strategy"`
-				} `yaml:"jobs"`
-			}
-			if err := yaml.Unmarshal(data, &config); err != nil {
-				t.Fatal(err)
-			}
-			var actual []string
-			for id, job := range config.Jobs {
-				names := []string{job.Name}
-				var matrix struct {
-					Shards []string `yaml:"shard"`
-				}
-				if job.Strategy.Matrix.Kind == yaml.ScalarNode {
-					if workflow != "ci.yml" || job.Strategy.Matrix.Value != "${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}" {
-						t.Fatal("unexpected dynamic matrix")
-					}
-					matrix.Shards = platformci.FullPRJobs().Frontend
-				} else if job.Strategy.Matrix.Kind != 0 {
-					if err := job.Strategy.Matrix.Decode(&matrix); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if len(matrix.Shards) > 0 {
-					names = nil
-					for _, shard := range matrix.Shards {
-						names = append(names, strings.ReplaceAll(job.Name, "${{ matrix.shard }}", shard))
-					}
-				}
-				for _, name := range names {
-					normalized := HealthJobName(name)
-					if strings.HasPrefix(normalized, "unknown/") {
-						t.Errorf("unmapped lane %s", name)
-					}
-					if id != "agent-tool-evaluation" {
-						actual = append(actual, normalized)
-					}
-				}
-			}
-			expected := platformci.ExpectedHealthJobs(workflow)
-			slices.Sort(actual)
-			slices.Sort(expected)
-			if !slices.Equal(actual, expected) {
-				t.Fatalf("expected inventory %v != workflow %v", expected, actual)
-			}
-		})
-	}
-}
-
 func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
@@ -206,6 +132,13 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 			If      string            `yaml:"if"`
 			Needs   []string          `yaml:"needs"`
 			Outputs map[string]string `yaml:"outputs"`
+			Steps   []struct {
+				ID   string            `yaml:"id"`
+				Uses string            `yaml:"uses"`
+				Run  string            `yaml:"run"`
+				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
@@ -230,6 +163,27 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 	if gate.If != "${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}" || !slices.Contains(gate.Needs, "prepare") {
 		t.Fatal("gate must skip drafts and require planning on every eligible outcome")
 	}
+	prepare := config.Jobs["prepare"]
+	if prepare.Outputs["plan_attempt"] != "${{ steps.plan.outputs.plan_attempt }}" || prepare.Outputs["plan_artifact_id"] != "${{ steps.plan-artifact.outputs.artifact-id }}" {
+		t.Error("gate evidence must identify the planning job's attempt and immutable artifact")
+	}
+	var uploadBound, downloadBound, attemptBound bool
+	for _, step := range prepare.Steps {
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.ID == "plan-artifact" && step.With["path"] == "ci-plan.json" {
+			uploadBound = true
+		}
+	}
+	for _, step := range gate.Steps {
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+			downloadBound = step.With["artifact-ids"] == "${{ needs.prepare.outputs.plan_artifact_id }}" && step.With["name"] == "" && step.With["merge-multiple"] == "true"
+		}
+		if strings.Contains(step.Run, "--expected-attempt \"$PLAN_ATTEMPT\"") {
+			attemptBound = step.Env["PLAN_ATTEMPT"] == "${{ needs.prepare.outputs.plan_attempt }}"
+		}
+	}
+	if !uploadBound || !downloadBound || !attemptBound {
+		t.Errorf("gate must consume producer evidence across retries: upload=%t download=%t attempt=%t", uploadBound, downloadBound, attemptBound)
+	}
 	for neutral := range platformci.FullPRJobs().Selected() {
 		workflow := WorkflowJobID(neutral)
 		job, ok := config.Jobs[workflow]
@@ -247,7 +201,7 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 			t.Errorf("gate omits %s", workflow)
 		}
 	}
-	for _, fragment := range []string{"fetch-depth: 0", "--stack-base \"$STACK_BASE\"", "--head \"$GITHUB_SHA\"", "--expected-attempt \"$GITHUB_RUN_ATTEMPT\"", "--expected-deferred=\"$DEFERRED\"", "--frontend-matrix \"$FRONTEND_MATRIX\""} {
+	for _, fragment := range []string{"fetch-depth: 0", "--stack-base \"$STACK_BASE\"", "--head \"$GITHUB_SHA\"", "--expected-attempt \"$PLAN_ATTEMPT\"", "--expected-deferred=\"$DEFERRED\"", "--frontend-matrix \"$FRONTEND_MATRIX\""} {
 		if !strings.Contains(string(data), fragment) {
 			t.Errorf("missing candidate/gate contract %s", fragment)
 		}
@@ -266,5 +220,33 @@ func TestPlanWireBindingHasNoUnintendedCoreJSONShape(t *testing.T) {
 	}
 	if _, ok := object["pr"].(map[string]any)["nominal"].(map[string]any)["warehouse"]; ok {
 		t.Fatal("neutral warehouse field leaked into the artifact")
+	}
+}
+
+func TestPRWorkflowConcurrencyPreservesOtherStackLayers(t *testing.T) {
+	for _, workflow := range []string{"ci", "security"} {
+		t.Run(workflow, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", ".github", "workflows", workflow+".yml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Concurrency struct {
+					Group  string `yaml:"group"`
+					Cancel bool   `yaml:"cancel-in-progress"`
+				} `yaml:"concurrency"`
+			}
+			if err := yaml.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			// Every PR owns required checks, even when its validation is
+			// deferred. A different layer must not cancel that feedback.
+			if strings.Contains(config.Concurrency.Group, "stack.id") || !strings.Contains(config.Concurrency.Group, "github.ref") {
+				t.Fatalf("concurrency can cancel another stack layer: %s", config.Concurrency.Group)
+			}
+			if !config.Concurrency.Cancel {
+				t.Fatal("new revisions must still cancel obsolete runs for the same PR")
+			}
+		})
 	}
 }

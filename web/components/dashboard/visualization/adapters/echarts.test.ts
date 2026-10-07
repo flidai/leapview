@@ -54,7 +54,7 @@ test('ECharts label policy truncates by grapheme and preserves selected and thre
 
 test('ECharts renders governed bivariate points, bubbles, labels, color, and stable brushes', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'delivery', rendererID: 'echarts', specRevision: 'sha256:point', dataRevision: 4,
+    schemaVersion: 14, visualID: 'delivery', rendererID: 'echarts', specRevision: 'sha256:point', dataRevision: 4,
     spec: {
       kind: 'point', title: 'Delivery and revenue',
       datasets: [{ id: 'primary', fields: [
@@ -154,7 +154,7 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(selectedDensePoints.series[0].label.formatter({ dataIndex: 0, value: inlineDataState.datasets[0].rows[0] })).toBe('order-0')
 })
 
-test('ECharts formats Cartesian temporal axis ticks as UTC dates and preserves rows and tooltips', () => {
+test('ECharts generates and formats Cartesian temporal axis ticks in UTC and preserves rows and tooltips', () => {
   const envelope = cartesianFixture('area') as any
   const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
   category.dataType = 'date'
@@ -166,6 +166,9 @@ test('ECharts formats Cartesian temporal axis ticks as UTC dates and preserves r
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   const december = Date.UTC(2016, 11, 23)
+  // The formatter alone is insufficient: local-time ticks shift month starts
+  // to the previous UTC day in browsers such as Europe/Berlin.
+  expect(option.useUTC).toBe(true)
   expect(option.xAxis.type).toBe('time')
   expect(option.xAxis.axisLabel.formatter(december)).toBe('2016-12-23')
   expect(option.xAxis.axisLabel.formatter(december)).not.toContain(String(december))
@@ -222,7 +225,7 @@ test('superseded ECharts mounts own isolated renderer frames', () => {
 
 test('ECharts translation uses dataset and encode without native option passthrough', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'revenue', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'revenue', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Revenue', mark: 'line',
       datasets: [{ id: 'primary', fields: [
@@ -247,7 +250,7 @@ test('ECharts translation uses dataset and encode without native option passthro
 
 test('ECharts interactions translate stable IR field mappings without renderer row keys', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'orders', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 7,
+    schemaVersion: 14, visualID: 'orders', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 7,
     spec: {
       kind: 'cartesian', title: 'Orders', mark: 'bar',
       datasets: [{ id: 'primary', fields: [
@@ -289,7 +292,7 @@ test('ECharts gives selectable line and area rows reliable hit targets at either
 
     const option = echartsOption(envelope, defaultRendererContext) as any
     expect(option.series).toHaveLength(2)
-    expect(option.series[0]).toMatchObject({ type: 'line', symbol: 'none' })
+    expect(option.series[0]).toMatchObject({ type: 'line', symbol: 'circle' }) // The singleton stays visible even with authored symbols off.
     expect(option.series[1]).toMatchObject({
       id: 'series:interaction-hit:primary:label:value',
       type: 'scatter',
@@ -314,7 +317,7 @@ test('ECharts gives selectable line and area rows reliable hit targets at either
 
 test('ECharts translation preserves combo series marks and axes', () => {
   const base = {
-    schemaVersion: 9, visualID: 'combo', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'combo', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Combo', mark: 'combo',
       datasets: [{ id: 'primary', fields: [
@@ -375,7 +378,7 @@ test('ECharts translation preserves combo series marks and axes', () => {
 
 test('ECharts translation applies combo marks and axes to multi-measure series', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'combo-measures', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'combo-measures', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Revenue and orders', mark: 'combo',
       datasets: [{ id: 'primary', fields: [
@@ -473,7 +476,7 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
 
 test('ECharts scopes multi-measure combo axes and colors by authored measure', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'combo-mixed-units', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'combo-mixed-units', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Revenue and delivery', mark: 'combo',
       datasets: [{ id: 'primary', fields: [
@@ -560,7 +563,7 @@ test('ECharts normalizes supported document locales and fails closed on unknown 
 
 test('ECharts uses stable IDs, contractual formatting, and resolved theme colors', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'revenue', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'revenue', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Revenue', mark: 'column',
       datasets: [{ id: 'primary', fields: [
@@ -597,7 +600,7 @@ test('ECharts uses stable IDs, contractual formatting, and resolved theme colors
 
 test('ECharts constructs deterministic nested hierarchy data and honors layout presentation', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'tree', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'tree', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'hierarchy', title: 'Tree', mark: 'tree',
       datasets: [{ id: 'primary', fields: [
@@ -737,12 +740,22 @@ test('ECharts incremental context and status plans refresh the renderer-owned AR
   expect(echartsUpdatePlan(Change.Status, option).option.aria).toBe(option.aria)
 })
 
-test('ECharts highlight plans replace series and refresh ARIA for apply and clear', () => {
-  const option = { aria: { enabled: true, description: 'Highlights cleared.' }, series: [{ id: 'series:primary:value', itemStyle: { opacity: 0.2 } }] } as any
+test('ECharts highlight plans replace highlight data and refresh ARIA for apply and clear', () => {
+  const option = {
+    aria: { enabled: true, description: 'Highlight active.' },
+    dataset: [{ source: [['value', 'highlight'], [42, 1]] }],
+    visualMap: [{ type: 'piecewise', dimension: 'highlight', pieces: [{ value: 1, opacity: 1 }] }],
+    series: [{ id: 'series:primary:value', type: 'bar' }],
+  } as any
   const plan = echartsUpdatePlan(Change.Highlight, option)
+  expect(plan.option.dataset).toBe(option.dataset)
+  expect(plan.option.visualMap).toBe(option.visualMap)
   expect(plan.option.series).toBe(option.series)
   expect(plan.option.aria).toBe(option.aria)
-  expect(plan.settings.replaceMerge).toEqual(['series'])
+  expect(plan.settings.replaceMerge).toEqual(['dataset', 'visualMap', 'series'])
+  const cleared = echartsUpdatePlan(Change.Highlight, { ...option, visualMap: undefined })
+  expect(cleared.option.visualMap).toEqual([])
+  expect(cleared.settings.replaceMerge).toContain('visualMap')
 })
 
 test('ECharts completeness ARIA prioritizes partial or truncated empty frames', () => {
@@ -1266,6 +1279,16 @@ test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {
   expect(option.series[0].data[0].__lv_synthetic).toBe(true)
 })
 
+test('ECharts keeps a flat one-node tree focused on its actual category', () => {
+  const envelope = hierarchyFixture('tree') as any
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['Base', null, '11415995.22']]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].data).toEqual([{
+    name: 'Base', value: '11415995.22', __lv_dataset: 'primary', __lv_row_index: 0,
+  }])
+  expect(option.series[0].label.formatter({ data: option.series[0].data[0] })).toBe('Base\n11415995.22')
+})
+
 test('ECharts scopes repeated hierarchy labels to their compiled parent path', () => {
   const envelope = hierarchyFixture('tree') as any
   ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
@@ -1333,6 +1356,7 @@ test('ECharts formats gauges, applies semantic thresholds, and renders status st
     pointer: { show: true }, progress: { show: true, width: 12 },
     data: [{ value: '0.75', __lv_dataset: 'primary', __lv_row_index: 0 }],
   })
+  expect(option.series[0].axisLabel.formatter(0.5)).toBe('50%')
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[0.5, defaultRendererContext.colors.attention], [0.8, defaultRendererContext.colors.danger]])
   expect(option.series[0].detail.formatter(0.75)).toBe('75%')
   const gaugePresentation = envelope.spec.presentation as Extract<VisualizationEnvelope['spec'], { kind: 'polar' }>['presentation']
@@ -1364,11 +1388,39 @@ test('ECharts owns the complete gauge color scale when thresholds are omitted', 
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[1, defaultRendererContext.colors.accent]])
 })
 
-test('ECharts rejects gauge envelopes without an explicit truthful domain', () => {
+test('ECharts derives a truthful gauge domain only when no range was authored', () => {
   const envelope = gaugeFixture() as any
   envelope.spec.presentation.minimum = undefined
   envelope.spec.presentation.maximum = undefined
-  expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(/explicit minimum and maximum/)
+  envelope.spec.presentation.target = undefined
+  envelope.spec.presentation.thresholds = undefined
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0]).toMatchObject({ min: 0, max: 1, data: [{ value: '0.75' }] })
+
+  envelope.spec.datasets[0].fields[0].format = { kind: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['118726350.28']]
+  const readableLargeDomain = echartsOption(envelope, defaultRendererContext) as any
+  expect(readableLargeDomain.series[0]).toMatchObject({ min: 0, max: 200000000, splitNumber: 5 })
+  expect(readableLargeDomain.series[0].axisLabel.formatter(20000000)).toBe('$20M')
+
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['-25346402.8']]
+  const largeNegative = echartsOption(envelope, defaultRendererContext) as any
+  expect(largeNegative.series[0]).toMatchObject({ min: -50000000, max: 0 })
+
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['0']]
+  const zero = echartsOption(envelope, defaultRendererContext) as any
+  expect(zero.series[0]).toMatchObject({ min: 0, max: 1 })
+
+})
+
+test('ECharts rejects incomplete authored gauge domains and auto-domain annotations', () => {
+  const envelope = gaugeFixture() as any
+  envelope.spec.presentation.minimum = undefined
+  expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(/both minimum and maximum/)
+
+  envelope.spec.presentation.maximum = undefined
+  envelope.spec.presentation.target = 0.8
+  expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(/require an explicit minimum and maximum/)
 })
 
 test('ECharts renders an explicit labeled target independently from the metricd value', () => {
@@ -1399,7 +1451,7 @@ test('ECharts renders a visible diagnostic instead of clipping an out-of-domain 
 
 function gaugeFixture(): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'polar', title: 'Gauge', mark: 'gauge', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Rate', format: { kind: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 } }] }], dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Gauge', description: 'Gauge' }, interactions: [], value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, minimum: 0, maximum: 1, showPointer: true, progressWidth: 12, thresholds: [{ value: 0.5, tone: 'warning' }, { value: 0.8, tone: 'danger' }] } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [['0.75']], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as unknown as VisualizationEnvelope

@@ -412,6 +412,7 @@ func (c *Coordinator) emitCurrent(refresh Refresh, event RefreshEvent) bool {
 	event.RefreshID = refresh.ID
 	event.Generation = refresh.Generation
 	event.ServingStateID = refresh.Filters.ServingStateID
+	event.Filters = cloneFilters(refresh.Filters)
 	if refresh.Filters.CompiledState != nil {
 		event.FilterRevision = int64(refresh.Filters.CompiledState.Revision)
 	}

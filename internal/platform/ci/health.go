@@ -4,40 +4,51 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 )
 
 type HealthRun struct {
-	ID         int64  `json:"id"`
-	Workflow   string `json:"workflow"`
-	Event      string `json:"event"`
-	Attempt    int    `json:"attempt"`
-	Conclusion string `json:"conclusion"`
+	ID          int64  `json:"id"`
+	Workflow    string `json:"workflow"`
+	Event       string `json:"event"`
+	Attempt     int    `json:"attempt"`
+	HeadSHA     string `json:"head_sha"`
+	WorkflowSHA string `json:"workflow_sha"`
+	Conclusion  string `json:"conclusion"`
 	// Negative durations denote unavailable timestamps, never zero latency.
-	DurationSeconds     int64             `json:"duration_seconds"`
-	QueueSeconds        int64             `json:"queue_seconds"`
-	Deferred            bool              `json:"deferred,omitempty"`
-	Plan                Plan              `json:"plan"`
-	PlanIssue           string            `json:"plan_issue,omitempty"`
-	Results             map[string]string `json:"results"`
-	Category            string            `json:"category"`
-	SelectionConfidence string            `json:"selection_confidence"`
-	ExpectedSource      string            `json:"expected_source"`
-	PlannedJobs         []string          `json:"planned_jobs"`
-	ExpectedJobs        []string          `json:"expected_jobs"`
-	ExecutedJobs        []string          `json:"executed_jobs"`
-	SkippedJobs         []string          `json:"skipped_jobs"`
-	UnknownJobs         []string          `json:"unknown_jobs"`
-	Problems            []string          `json:"problems"`
+	DurationSeconds      int64             `json:"duration_seconds"`
+	QueueSeconds         int64             `json:"queue_seconds"`
+	Deferred             bool              `json:"deferred,omitempty"`
+	Plan                 Plan              `json:"plan"`
+	PlanIssue            string            `json:"plan_issue,omitempty"`
+	ContractIssue        string            `json:"contract_issue,omitempty"`
+	WorkflowJobs         []string          `json:"workflow_jobs,omitempty"`
+	WorkflowRequiredJobs []string          `json:"workflow_required_jobs,omitempty"`
+	PlanIndependentJobs  []string          `json:"plan_independent_jobs,omitempty"`
+	AuditPotentialMisses int               `json:"audit_potential_misses,omitempty"`
+	Results              map[string]string `json:"results"`
+	Category             string            `json:"category"`
+	SelectionConfidence  string            `json:"selection_confidence"`
+	ExpectedSource       string            `json:"expected_source"`
+	PlannedJobs          []string          `json:"planned_jobs"`
+	ExpectedJobs         []string          `json:"expected_jobs"`
+	ExecutedJobs         []string          `json:"executed_jobs"`
+	SkippedJobs          []string          `json:"skipped_jobs"`
+	UnknownJobs          []string          `json:"unknown_jobs"`
+	Problems             []string          `json:"problems"`
 }
 
 type DurationMetric struct {
-	Count      int   `json:"count"`
-	P50Seconds int64 `json:"p50_seconds"`
-	P95Seconds int64 `json:"p95_seconds"`
+	Count      int    `json:"count"`
+	P50Seconds int64  `json:"p50_seconds"`
+	P95Seconds *int64 `json:"p95_seconds,omitempty"`
 }
+
+// MinimumP95Samples is the smallest sample count at which the report emits p95.
+const MinimumP95Samples = 20
 
 type SelectionMetric struct {
 	Selected int     `json:"selected"`
@@ -61,27 +72,26 @@ type HealthReport struct {
 	Skipped            int       `json:"skipped"`
 	UnknownConclusions int       `json:"unknown_conclusions"`
 	Deferred           int       `json:"deferred"`
-	SkippedPR          int       `json:"skipped_pr"`
 	// Full is retained as a JSON compatibility alias for Merge, not a mixed population.
-	Full             DurationMetric             `json:"full"`
-	Merge            DurationMetric             `json:"merge"`
-	Nightly          DurationMetric             `json:"nightly"`
-	FullPR           DurationMetric             `json:"full_pr"`
-	Selective        DurationMetric             `json:"selective"`
-	Unknown          DurationMetric             `json:"unknown"`
-	Queue            DurationMetric             `json:"queue"`
-	MissingDurations int                        `json:"missing_durations"`
-	Reruns           int                        `json:"reruns"`
-	RerunPercent     float64                    `json:"rerun_percent"`
-	PlannedRuns      int                        `json:"planned_runs"`
-	UnknownSelection int                        `json:"unknown_selection"`
-	Incomplete       int                        `json:"incomplete"`
-	AuditSamples     int                        `json:"audit_samples"`
-	AuditMisses      int                        `json:"audit_misses"`
-	Selection        map[string]SelectionMetric `json:"selection"`
-	Jobs             map[string]JobMetric       `json:"jobs"`
-	Runs             []HealthRun                `json:"runs"`
-	Alerts           []string                   `json:"alerts"`
+	Full                 DurationMetric             `json:"full"`
+	Merge                DurationMetric             `json:"merge"`
+	Nightly              DurationMetric             `json:"nightly"`
+	FullPR               DurationMetric             `json:"full_pr"`
+	Selective            DurationMetric             `json:"selective"`
+	Unknown              DurationMetric             `json:"unknown"`
+	Queue                DurationMetric             `json:"queue"`
+	MissingDurations     int                        `json:"missing_durations"`
+	Reruns               int                        `json:"reruns"`
+	RerunPercent         float64                    `json:"rerun_percent"`
+	PlannedRuns          int                        `json:"planned_runs"`
+	UnknownSelection     int                        `json:"unknown_selection"`
+	Incomplete           int                        `json:"incomplete"`
+	AuditSamples         int                        `json:"audit_samples"`
+	AuditPotentialMisses int                        `json:"audit_potential_misses"`
+	Selection            map[string]SelectionMetric `json:"selection"`
+	Jobs                 map[string]JobMetric       `json:"jobs"`
+	Runs                 []HealthRun                `json:"runs"`
+	Alerts               []string                   `json:"alerts"`
 }
 
 func knownConclusion(result string) bool {
@@ -146,31 +156,6 @@ func healthSelection(plan Plan) map[string]bool {
 	return selection
 }
 
-// A skipped planner leaves the frontend matrix unexpanded and creates no plan.
-// Require the complete known inventory, including both planner and gate, to
-// distinguish this policy skip from missing evidence or a failed execution.
-func skippedPRRun(run HealthRun) bool {
-	if run.Workflow != "ci.yml" || run.Event != "pull_request" || run.Plan.Version != 0 || run.Plan.PR != nil || (run.Conclusion != "success" && run.Conclusion != "skipped") {
-		return false
-	}
-	expected := map[string]bool{}
-	for _, job := range ExpectedHealthJobs("ci.yml") {
-		if strings.HasPrefix(job, "frontend-validation/") {
-			job = "frontend-validation"
-		}
-		expected[job] = true
-	}
-	if len(run.Results) != len(expected) {
-		return false
-	}
-	for job := range expected {
-		if run.Results[job] != "skipped" {
-			return false
-		}
-	}
-	return true
-}
-
 func classifyHealthRun(run HealthRun) HealthRun {
 	run.Category = "unknown"
 	run.SelectionConfidence = "unknown"
@@ -181,17 +166,7 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	run.SkippedJobs = nil
 	run.UnknownJobs = nil
 	run.Problems = nil
-	if skippedPRRun(run) {
-		run.Category = "skipped_pr"
-		run.SelectionConfidence = "verified"
-		run.ExpectedSource = "workflow_registry"
-		run.PlanIssue = ""
-		for job := range run.Results {
-			run.SkippedJobs = append(run.SkippedJobs, job)
-		}
-		sort.Strings(run.SkippedJobs)
-		return run
-	}
+	run.AuditPotentialMisses = 0
 	supported := validHealthPlan(run.Plan) && run.PlanIssue == "" && len(expectedPlanJobs(run.Plan)) > 0
 	exhaustive := false
 	if run.Workflow == "merge-validation.yml" && run.Event == "merge_group" {
@@ -216,10 +191,18 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	if supported {
 		run.ExpectedSource = "plan"
 		run.ExpectedJobs = expectedPlanJobs(run.Plan)
-		if run.Workflow == "ci.yml" && run.Event == "pull_request" {
-			run.PlannedJobs = append([]string(nil), run.ExpectedJobs...)
+		if run.Workflow == "ci.yml" && len(run.PlanIndependentJobs) > 0 {
+			run.ExpectedJobs = append(run.ExpectedJobs, run.PlanIndependentJobs...)
+			run.ExpectedSource = "plan+workflow_contract"
 		}
-		run.SelectionConfidence = "verified"
+		if run.Workflow == "ci.yml" && run.Event == "pull_request" {
+			run.PlannedJobs = expectedPlanJobs(run.Plan)
+		}
+		if run.ContractIssue == "" && run.WorkflowSHA != "" && len(run.WorkflowJobs) > 0 && len(run.WorkflowRequiredJobs) > 0 {
+			run.SelectionConfidence = "verified"
+		} else {
+			run.SelectionConfidence = "incomplete"
+		}
 	} else if !exhaustive {
 		if run.PlanIssue == "" {
 			run.PlanIssue = "missing, empty or unsupported plan"
@@ -230,13 +213,26 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	// historical plan must not redefine their current validation obligations.
 	if run.Category == "merge" || run.Category == "nightly" {
 		run.PlanIssue = ""
-		run.ExpectedSource = "workflow_registry"
-		run.ExpectedJobs = ExpectedHealthJobs(run.Workflow)
-		run.SelectionConfidence = "verified"
+		run.ExpectedSource = "workflow_contract"
+		run.ExpectedJobs = append([]string(nil), run.WorkflowRequiredJobs...)
+		if len(run.ExpectedJobs) > 0 && run.ContractIssue == "" {
+			run.SelectionConfidence = "verified"
+		} else {
+			run.SelectionConfidence = "incomplete"
+		}
 	}
 	if run.Category == "unknown" {
 		run.Problems = append(run.Problems, "execution category unknown")
 		if supported {
+			run.SelectionConfidence = "incomplete"
+		}
+	}
+	if run.WorkflowSHA == "" || run.ContractIssue != "" || len(run.WorkflowJobs) == 0 || len(run.WorkflowRequiredJobs) == 0 {
+		if run.ContractIssue == "" {
+			run.ContractIssue = "exact workflow contract unavailable"
+		}
+		run.Problems = append(run.Problems, "workflow contract unavailable: "+run.ContractIssue)
+		if run.SelectionConfidence != "unknown" {
 			run.SelectionConfidence = "incomplete"
 		}
 	}
@@ -265,6 +261,16 @@ func classifyHealthRun(run HealthRun) HealthRun {
 		}
 	}
 	if supported {
+		knownWorkflowJobs := make(map[string]bool, len(run.WorkflowJobs))
+		for _, job := range run.WorkflowJobs {
+			knownWorkflowJobs[job] = true
+		}
+		for _, job := range run.ExpectedJobs {
+			if !knownWorkflowJobs[job] {
+				run.UnknownJobs = append(run.UnknownJobs, job)
+				run.Problems = append(run.Problems, "workflow contract omits expected job: "+job)
+			}
+		}
 		expected := map[string]bool{}
 		for _, name := range run.ExpectedJobs {
 			expected[name] = true
@@ -277,6 +283,34 @@ func classifyHealthRun(run HealthRun) HealthRun {
 		}
 		if selectionMismatch || len(run.UnknownJobs) > 0 {
 			run.SelectionConfidence = "incomplete"
+		}
+	}
+	if run.Plan.Audit && run.PlanIssue == "" {
+		nominal := map[string]bool{}
+		nominalPlan := Plan{Effective: run.Plan.Nominal}
+		if run.Plan.PR != nil {
+			nominalPlan.Version = run.Plan.Version
+			nominalPlan.PR = &PRPlan{Effective: run.Plan.PR.Nominal}
+		}
+		for _, job := range expectedPlanJobs(nominalPlan) {
+			nominal[job] = true
+		}
+		for _, job := range run.PlannedJobs {
+			if nominal[job] {
+				continue
+			}
+			result, present := run.Results[job]
+			switch result {
+			case "failure", "timed_out":
+				run.AuditPotentialMisses++
+			case "success":
+			default:
+				run.SelectionConfidence = "incomplete"
+				if !present {
+					result = "missing"
+				}
+				run.Problems = append(run.Problems, "selection audit lacks conclusive evidence for "+job+": "+result)
+			}
 		}
 	}
 	if exhaustive && len(run.UnknownJobs) > 0 {
@@ -297,14 +331,12 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	sort.Strings(run.ExecutedJobs)
 	sort.Strings(run.SkippedJobs)
 	sort.Strings(run.UnknownJobs)
+	run.UnknownJobs = slices.Compact(run.UnknownJobs)
 	sort.Strings(run.Problems)
 	return run
 }
 
 func incompleteHealthEvidence(run HealthRun) bool {
-	if run.Category == "skipped_pr" {
-		return false
-	}
 	return run.Category == "unknown" ||
 		run.SelectionConfidence == "unknown" ||
 		run.SelectionConfidence == "incomplete" ||
@@ -314,7 +346,7 @@ func incompleteHealthEvidence(run HealthRun) bool {
 }
 
 func AnalyzeHealth(runs []HealthRun) HealthReport {
-	report := HealthReport{Version: 2, GeneratedAt: time.Now().UTC(), RunCount: len(runs), Selection: map[string]SelectionMetric{}, Jobs: map[string]JobMetric{}}
+	report := HealthReport{Version: 3, GeneratedAt: time.Now().UTC(), RunCount: len(runs), Selection: map[string]SelectionMetric{}, Jobs: map[string]JobMetric{}}
 	populations := map[string][]int64{}
 	var queues []int64
 	for _, input := range runs {
@@ -347,22 +379,9 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 			}
 			if run.Plan.Audit {
 				report.AuditSamples++
-				nominal := map[string]bool{}
-				nominalPlan := Plan{Effective: run.Plan.Nominal}
-				if run.Plan.PR != nil {
-					nominalPlan.Version = run.Plan.Version
-					nominalPlan.PR = &PRPlan{Effective: run.Plan.PR.Nominal}
-				}
-				for _, job := range expectedPlanJobs(nominalPlan) {
-					nominal[job] = true
-				}
-				for _, job := range run.PlannedJobs {
-					if !nominal[job] && run.Results[job] != "success" {
-						report.AuditMisses++
-					}
-				}
+				report.AuditPotentialMisses += run.AuditPotentialMisses
 			}
-		} else if run.Workflow == "ci.yml" && run.Event == "pull_request" && run.Category != "skipped_pr" {
+		} else if run.Workflow == "ci.yml" && run.Event == "pull_request" {
 			report.UnknownSelection++
 		}
 		for _, job := range run.ExpectedJobs {
@@ -384,10 +403,6 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 			m := report.Jobs[job]
 			m.Unknown++
 			report.Jobs[job] = m
-		}
-		if run.Category == "skipped_pr" {
-			report.SkippedPR++
-			continue
 		}
 		if run.Deferred {
 			report.Deferred++
@@ -412,7 +427,7 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 	report.Selective = durationMetric(populations["selective"])
 	report.Unknown = durationMetric(populations["unknown"])
 	report.Queue = durationMetric(queues)
-	if executed := len(runs) - report.Deferred - report.SkippedPR; executed > 0 {
+	if executed := len(runs) - report.Deferred; executed > 0 {
 		report.RerunPercent = float64(report.Reruns) * 100 / float64(executed)
 	}
 	if report.PlannedRuns > 0 {
@@ -430,15 +445,15 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 		{"full PR", report.FullPR, 12 * time.Minute}, {"unknown CI", report.Unknown, 12 * time.Minute},
 		{"selective PR", report.Selective, 6 * time.Minute}, {"queue", report.Queue, 2 * time.Minute},
 	} {
-		if population.metric.Count > 0 && population.metric.P95Seconds > int64(population.limit.Seconds()) {
-			report.Alerts = append(report.Alerts, fmt.Sprintf("%s p95 is %s (limit %s)", population.name, duration(population.metric.P95Seconds), population.limit))
+		if population.metric.P95Seconds != nil && *population.metric.P95Seconds > int64(population.limit.Seconds()) {
+			report.Alerts = append(report.Alerts, fmt.Sprintf("%s p95 is %s (limit %s)", population.name, duration(*population.metric.P95Seconds), population.limit))
 		}
 	}
 	if report.RerunPercent > 3 {
 		report.Alerts = append(report.Alerts, fmt.Sprintf("rerun rate is %.1f%% (limit 3.0%%)", report.RerunPercent))
 	}
-	if report.AuditMisses > 0 {
-		report.Alerts = append(report.Alerts, fmt.Sprintf("selection audit detected %d miss%s", report.AuditMisses, plural(report.AuditMisses)))
+	if report.AuditPotentialMisses > 0 {
+		report.Alerts = append(report.Alerts, fmt.Sprintf("selection audit detected %d potential miss%s", report.AuditPotentialMisses, plural(report.AuditPotentialMisses)))
 	}
 	if report.Incomplete > 0 {
 		report.Alerts = append(report.Alerts, fmt.Sprintf("%d runs have incomplete reporting evidence; health is not established", report.Incomplete))
@@ -450,11 +465,12 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 }
 
 func durationMetric(values []int64) DurationMetric {
-	return DurationMetric{
-		Count:      len(values),
-		P50Seconds: percentile(values, 0.50),
-		P95Seconds: percentile(values, 0.95),
+	metric := DurationMetric{Count: len(values), P50Seconds: percentile(values, 0.50)}
+	if len(values) >= MinimumP95Samples {
+		p95 := percentile(values, 0.95)
+		metric.P95Seconds = &p95
 	}
+	return metric
 }
 
 func percentile(values []int64, p float64) int64 {

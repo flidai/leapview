@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	coreosoidc "github.com/coreos/go-oidc/v3/oidc"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	"golang.org/x/oauth2"
 )
 
@@ -17,6 +20,7 @@ type Config struct {
 	ClientSecret string
 	RedirectURL  string
 	Scopes       []string
+	HTTPClient   *http.Client
 }
 
 type Claims struct {
@@ -46,7 +50,15 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.RedirectURL) == "" {
 		return nil, errors.New("oidc redirect URL is required")
 	}
-	provider, err := coreosoidc.NewProvider(ctx, cfg.IssuerURL)
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = outbound.New(outbound.ExplicitPrivate, outbound.Options{}).HTTPClient(
+			&http.Client{Timeout: 15 * time.Second},
+			outbound.HTTPConfig{AllowedSchemes: []string{"https"}, MaxRedirects: 5, SameOriginRedirects: true},
+		)
+	}
+	providerContext := coreosoidc.ClientContext(ctx, httpClient)
+	provider, err := coreosoidc.NewProvider(providerContext, cfg.IssuerURL)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +95,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 			}, idToken.Nonce, nil
 		},
 		exchange: func(ctx context.Context, code string) (*oauth2.Token, error) {
-			return oauthConfig.Exchange(ctx, code)
+			return oauthConfig.Exchange(coreosoidc.ClientContext(ctx, httpClient), code)
 		},
 	}, nil
 }

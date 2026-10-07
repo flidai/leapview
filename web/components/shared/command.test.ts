@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { headers } from './command'
+import { headers, nonReplayableHeaders } from './command'
 
 describe('shared browser command identity', () => {
   test('generates distinct canonical UUIDv7 identities', () => {
@@ -37,5 +37,42 @@ describe('shared browser command identity', () => {
     } finally {
       Object.defineProperty(globalThis, 'crypto', { configurable: true, value: originalCrypto })
     }
+  })
+
+  test('non-replayable headers retain CSRF and one exact operation claim without an idempotency key', () => {
+    const originalCrypto = globalThis.crypto
+    const originalNow = Date.now
+    const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document')
+    Date.now = () => 0x010203040506
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: { getRandomValues<T extends ArrayBufferView>(bytes: T): T {
+        const view = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+        view.fill(7)
+        return bytes
+      } },
+    })
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { querySelector: () => ({ content: 'csrf-value' }) },
+    })
+    try {
+      const commandHeaders = nonReplayableHeaders('credential.create')
+      expect(commandHeaders).toEqual({
+        'X-CSRF-Token': 'csrf-value',
+        'X-Request-ID': '01020304-0506-7707-8707-070707070707',
+        'X-LeapView-Operation-ID': 'credential.create',
+      })
+      expect(commandHeaders).not.toHaveProperty('Idempotency-Key')
+    } finally {
+      Date.now = originalNow
+      Object.defineProperty(globalThis, 'crypto', { configurable: true, value: originalCrypto })
+      if (documentDescriptor) Object.defineProperty(globalThis, 'document', documentDescriptor)
+      else Reflect.deleteProperty(globalThis, 'document')
+    }
+  })
+
+  test('non-replayable headers reject an empty operation claim', () => {
+    expect(() => nonReplayableHeaders('  ')).toThrow('operation identity is required')
   })
 })

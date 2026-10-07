@@ -95,14 +95,14 @@ func TestPoolDirectoryBoundsRefreshConcurrencyAndTimeout(t *testing.T) {
 	firstDone := make(chan error, 1)
 	go func() {
 		firstDone <- first.Refresh(context.Background(), RefreshRequest{
-			Actor: "principal:operator-1", Operation: RefreshTest,
+			Actor: "principal:operator-1", Operation: RefreshRequested,
 		})
 	}()
 	<-resolvers[binding.ID.String()].started
 
 	start := time.Now()
 	err = other.Refresh(context.Background(), RefreshRequest{
-		Actor: "principal:operator-1", Operation: RefreshTest,
+		Actor: "principal:operator-1", Operation: RefreshRequested,
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("queued refresh error = %v", err)
@@ -140,7 +140,7 @@ func TestPoolDirectoryCloseRetiresManagersAndRejectsNewPools(t *testing.T) {
 	pool, err := directory.Pool(binding)
 	require.NoError(t, err)
 	if err := pool.Refresh(context.Background(), RefreshRequest{
-		Actor: "principal:operator-1", Operation: RefreshTest,
+		Actor: "principal:operator-1", Operation: RefreshRequested,
 	}); err != nil {
 		t.Fatal(err)
 	}

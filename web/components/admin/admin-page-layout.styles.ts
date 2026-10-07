@@ -49,6 +49,10 @@ export const adminPageLayoutStyles = css`
       --lv-settings-content-max-width: 52rem;
     }
 
+    .main-token-list {
+      --lv-settings-content-max-width: var(--lv-page-content-max-width);
+    }
+
     .main-settings .page-title-block {
       display: grid;
       gap: var(--base-size-8);

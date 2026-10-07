@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "syftVersion": "1.52.0",
+  "grypeVersion": "0.119.0",
+  "databaseMaxAgeHours": 120,
+  "assessmentReviewUntil": "2026-12-28",
+  "runtime": {
+    "busybox": {"vendor": "busybox", "product": "busybox", "controlVersion": "1.34.0", "controlCVE": "CVE-2022-48174"},
+    "glibc": {"vendor": "gnu", "product": "glibc", "controlVersion": "2.37-84", "controlCVE": "CVE-2023-4911"},
+    "gcc": {"vendor": "gnu", "product": "gcc", "controlVersion": "7.3.0", "controlCVE": "CVE-2018-12886"},
+    "xgcc": {"vendor": "gnu", "product": "gcc", "controlVersion": "7.3.0", "controlCVE": "CVE-2018-12886"},
+    "libidn2": {"vendor": "gnu", "product": "libidn2", "controlVersion": "2.1.0", "controlCVE": "CVE-2019-18224"},
+    "libunistring": {"vendor": "gnu", "product": "libunistring"}
+  },
+  "nonRuntime": {
+    "iana-etc": "IANA protocol and service data, not executable code",
+    "mailcap": "MIME data, not executable code",
+    "nss-cacert": "CA certificate data; this is not the NSS shared library",
+    "tzdata": "Timezone data, not executable code",
+    "leapview": "Application and Go dependencies retain the existing Trivy admission requirement"
+  },
+  "uncatalogedStoreNames": ["leapview-map-assets"]
+}

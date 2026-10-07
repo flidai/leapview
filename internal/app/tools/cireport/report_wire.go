@@ -46,7 +46,7 @@ func marshalHealthReport(report platformci.HealthReport) ([]byte, error) {
 			if err := rewriteJobMap(run, "results"); err != nil {
 				return nil, err
 			}
-			for _, field := range []string{"planned_jobs", "expected_jobs", "executed_jobs", "skipped_jobs", "unknown_jobs"} {
+			for _, field := range []string{"workflow_jobs", "workflow_required_jobs", "plan_independent_jobs", "planned_jobs", "expected_jobs", "executed_jobs", "skipped_jobs", "unknown_jobs"} {
 				if err := rewriteStringArray(run, field); err != nil {
 					return nil, err
 				}

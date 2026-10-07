@@ -5,7 +5,8 @@ import { canonicalLucideIconNames, lucideIconAliases } from '../../generated/luc
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 
-const colors = ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'] as const
+// Keep picker choices within DashboardAppearanceColor's canonical schema.
+const colors = ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink'] as const
 const rowHeight = 38
 const columnCount = 9
 const viewportHeight = 254

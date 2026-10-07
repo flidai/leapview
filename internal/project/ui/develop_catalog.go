@@ -62,7 +62,7 @@ type projectDocumentExtras struct {
 
 func connectionAdministrationRouteBridge(commands ConnectionCommandBindings) []g.Node {
 	if commands.Create.OperationID() == "" || commands.Update.OperationID() == "" ||
-		commands.Test.OperationID() == "" || commands.Refresh.OperationID() == "" ||
+		commands.Refresh.OperationID() == "" ||
 		commands.Enable.OperationID() == "" || commands.Disable.OperationID() == "" {
 		return nil
 	}
@@ -73,7 +73,6 @@ func connectionAdministrationRouteBridge(commands ConnectionCommandBindings) []g
 		}, "/connections/administration/configuration", "connectionAdmin")
 	lifecycle := "$connectionAdmin.command = evt.detail; $connectionAdmin.status = {loading: true, error: '', message: ''}; " +
 		uiactions.CommandPostSwitch("$connectionAdmin.command.action", map[string]uicommand.Binding{
-			"test":    commands.Test,
 			"refresh": commands.Refresh,
 			"enable":  commands.Enable,
 			"disable": commands.Disable,

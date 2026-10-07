@@ -197,7 +197,7 @@ test('ECharts uses governed static colors for category series and their legends'
   expect(filtered.series.filter((series: any) => !series.silent)[0].itemStyle.color).toBe(defaultRendererContext.colors.data[5])
 })
 
-test('ECharts keeps typed category-series identities distinct through ordering and filters', () => {
+test('ECharts keeps typed category-series identities distinct through ordering and dataset splits', () => {
   const envelope = cartesianSeriesFixture() as any
   envelope.dataState.datasets[0].rows = [
     ['Jan', 1, 10], ['Jan', '1', 20], ['Feb', 1, 30], ['Feb', '1', 40],
@@ -213,7 +213,9 @@ test('ECharts keeps typed category-series identities distinct through ordering a
     defaultRendererContext.colors.success,
     defaultRendererContext.colors.data[0],
   ])
-  expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual(['1', 1])
+  expect(option.dataset.slice(1).map((dataset: any) => dataset.source.slice(1))).toEqual([
+    [['Jan', '1', 20], ['Feb', '1', 40]], [['Jan', 1, 10], ['Feb', 1, 30]],
+  ])
   const reordered = structuredClone(envelope)
   reordered.dataState.datasets[0].rows.reverse()
   expect((echartsOption(reordered, defaultRendererContext) as any).series.filter((candidate: any) => candidate.datasetId).map((candidate: any) => candidate.id)).toEqual(series.map((candidate: any) => candidate.id))
@@ -222,7 +224,9 @@ test('ECharts keeps typed category-series identities distinct through ordering a
   canonical.spec.presentation.seriesIntent = [{ value: '1 [number:1]', order: 0, color: 'danger' }]
   const canonicalOption = echartsOption(canonical, defaultRendererContext) as any
   expect(canonicalOption.series.filter((candidate: any) => candidate.datasetId).map((candidate: any) => candidate.name)).toEqual(['1 [number:1]', '1 [string:1]'])
-  expect(canonicalOption.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([1, '1'])
+  expect(canonicalOption.dataset.slice(1).map((dataset: any) => dataset.source.slice(1))).toEqual([
+    [['Jan', 1, 10], ['Feb', 1, 30]], [['Jan', '1', 20], ['Feb', '1', 40]],
+  ])
 
   envelope.spec.datasets[0].fields[1].role = 'identity'
   envelope.spec.interactions = [{
@@ -234,7 +238,7 @@ test('ECharts keeps typed category-series identities distinct through ordering a
   expect(interactionCommandForRow(envelope, 'primary', envelope.dataState.datasets[0].rows[1])).toMatchObject({ mappings: [{ value: '1' }] })
 })
 
-test('ECharts preserves nullish category-series identities and raw filter values', () => {
+test('ECharts preserves nullish category-series identities and raw dataset values', () => {
   const envelope = cartesianSeriesFixture() as any
   envelope.dataState.datasets[0].rows = [
     ['Jan', null, 10], ['Jan', undefined, 20], ['Feb', null, 30], ['Feb', undefined, 40],
@@ -255,7 +259,9 @@ test('ECharts preserves nullish category-series identities and raw filter values
     defaultRendererContext.colors.success,
     defaultRendererContext.colors.danger,
   ])
-  expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([undefined, null])
+  expect(option.dataset.slice(1).map((dataset: any) => dataset.source.slice(1))).toEqual([
+    [['Jan', undefined, 20], ['Feb', undefined, 40]], [['Jan', null, 10], ['Feb', null, 30]],
+  ])
 })
 
 test('ECharts lets a single numeric category resolve a string series intent', () => {
@@ -267,7 +273,7 @@ test('ECharts lets a single numeric category resolve a string series intent', ()
   const series = option.series.find((candidate: any) => candidate.datasetId)
   expect(series.name).toBe('7')
   expect(series.itemStyle.color).toBe(defaultRendererContext.colors.danger)
-  expect(option.dataset[1].transform.config['=']).toBe(7)
+  expect(option.dataset[1].source.slice(1)).toEqual([['Jan', 7, 10], ['Feb', 7, 20]])
 })
 
 test('ECharts keeps fallback multi-metric colors bound to fields when order changes', () => {
@@ -448,7 +454,7 @@ test('ECharts preserves conditional icon and label color on percent-stack labels
 
 test('ECharts translation emits one multi-value financial series', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
@@ -474,7 +480,7 @@ test('ECharts translation emits one multi-value financial series', () => {
 
 test('ECharts candlestick colors use authored intents and a neutral equal-value fallback', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
@@ -523,7 +529,7 @@ test('ECharts candlestick colors use authored intents and a neutral equal-value 
 
 test('ECharts renders candlestick colors in large mode, including equal-value neutral strokes', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc-large-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc-large-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
@@ -574,7 +580,7 @@ test('ECharts keeps exact decimal candlestick direction in normal rendering abov
   ]
   for (let index = rows.length; index < 601; index++) rows.push([String(index), 1, 2, 0, 3])
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc-exact-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc-exact-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: true, label: id })) }],
@@ -623,7 +629,7 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
   const y = columns.slice(1).map((field) => ({ dataset: 'primary', field }))
   const row = columns.map((id, index) => index === 0 ? 'A' : id === 'row' ? 'R1' : index)
   return {
-    schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as unknown as VisualizationEnvelope
@@ -631,7 +637,7 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
 
 function cartesianSeriesFixture(): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: 'series', rendererID: 'echarts', specRevision: 'sha256:series', dataRevision: 1,
+    schemaVersion: 14, visualID: 'series', rendererID: 'echarts', specRevision: 'sha256:series', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Orders', mark: 'area',
       datasets: [{ id: 'primary', fields: [

@@ -47,6 +47,7 @@ type Module struct {
 	nativeDeliveryMutations   NativeDeliveryMutationPort
 	nativeDeliveryPublication NativeDeliveryPublicationPort
 	nativeDeliveryApproval    NativeDeliveryApprovalPort
+	nativeOperationAuthority  NativeOperationAuthority
 	projectClaimAudit         ProjectClaimAuditAppender
 	projectClaimBootstrap     ProjectClaimBootstrapFunc
 	persistence               *Persistence
@@ -76,6 +77,9 @@ type CandidateRuntimePreparer interface {
 	) (deployment.CandidateRuntimeReceipt, error)
 }
 
+// CandidatePreparationLease remains held through the admitted call and its
+// synchronous failure cleanup. Cancellation alone must not release it. After
+// successful registration, runtime-host retirement owns the registered resources.
 type CandidatePreparationLease interface {
 	Context() context.Context
 	Release()
@@ -363,7 +367,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		bootstrapPolicies:    config.BootstrapPolicies, authorizeBootstrap: config.AuthorizeBootstrap,
 		nativeDeliveryReader:    config.NativeDeliveryReader,
 		nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
-		nativeDeliveryApproval: config.NativeDeliveryApproval,
+		nativeDeliveryApproval: config.NativeDeliveryApproval, nativeOperationAuthority: config.NativeOperationAuthority,
 		projectClaimAudit: func() ProjectClaimAuditAppender {
 			audit, _ := config.Persistence.Audit.(ProjectClaimAuditAppender)
 			return audit

@@ -1,4 +1,4 @@
-name: Main artifacts
+name: Build / Main image
 
 on:
   push:
@@ -158,6 +158,9 @@ jobs:
       contents: read
       packages: read
       attestations: read
+    outputs:
+      image: ${{ steps.admission.outputs.image }}
+      revision: ${{ needs.build-production-image.outputs.revision }}
 
     steps:
       - name: Check out repository
@@ -191,8 +194,20 @@ jobs:
           # workflow event SHA. Candidate identity is checked independently
           # against the image below after the open-PR authorization gate.
           source-revision: ${{ github.sha }}
+          platform: linux/amd64
+          vulnerability-report: ${{ runner.temp }}/oci-vulnerability-report.json
+
+      - name: Upload OCI vulnerability diagnostic
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-vulnerability-diagnostic-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/oci-vulnerability-report.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Qualify the immutable production image
+        id: qualification
         env:
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
           IMAGE_VERSION: ${{ needs.build-production-image.outputs.version }}
@@ -203,7 +218,7 @@ jobs:
           immutable_image="${IMAGE_REFERENCE}"
           [[ "${immutable_image}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
           task image:qualify:production IMAGE="${immutable_image}"
-          identity="$(docker run --rm "${immutable_image}" version --json)"
+          identity="$(docker run --rm "${immutable_image}" version --format json)"
           jq -e \
             --arg version "${IMAGE_VERSION}" \
             --arg revision "${IMAGE_REVISION}" \
@@ -212,19 +227,83 @@ jobs:
             <<<"${identity}" >/dev/null
           printf 'Production image: `%s`\n' "${immutable_image}" >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Record exact image qualification
+      # This typed report contains only image identity and bounded phase
+      # names/results/codes/timings. Never upload the surrounding evidence
+      # directory: it can include credentials, database state and raw logs.
+      - name: Upload failed qualification phase summary
+        if: failure() && steps.qualification.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-image-qualification-failure-${{ github.run_attempt }}
+          path: .tmp/qualification/production-image/image-qualification-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  qualify-historical-transition:
+    name: Qualify schema-32 predecessor transition against exact image
+    needs: build-production-image
+    if: ${{ always() && needs.build-production-image.result == 'success' }}
+    uses: ./.github/workflows/demo-upgrade-qualification.yml
+    with:
+      candidate_image: ghcr.io/flidai/leapview@${{ needs.build-production-image.outputs.digest }}
+      candidate_revision: ${{ needs.build-production-image.outputs.revision }}
+      final_artifact: true
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+
+  record-production-image-qualification:
+    name: Record exact production image and historical transition
+    needs: [build-production-image, qualify-production-image, qualify-historical-transition]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Require both exact-image qualifications
         env:
-          IMAGE: ${{ steps.admission.outputs.image }}
-          REVISION: ${{ needs.build-production-image.outputs.revision }}
+          IMAGE_QUALIFICATION_RESULT: ${{ needs.qualify-production-image.result }}
+          HISTORICAL_TRANSITION_RESULT: ${{ needs.qualify-historical-transition.result }}
+          IMAGE_BUILD_RESULT: ${{ needs.build-production-image.result }}
         run: |
-          jq -n --arg image "$IMAGE" --arg revision "$REVISION" \
-            --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+          set -euo pipefail
+          test "${IMAGE_BUILD_RESULT}" = success
+          test "${IMAGE_QUALIFICATION_RESULT}" = success
+          test "${HISTORICAL_TRANSITION_RESULT}" = success
+
+      - name: Download the exact historical transition receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: historical-transition-${{ github.run_attempt }}
+          path: transition-evidence
+
+      - name: Bind both receipts to this exact workflow attempt
+        env:
+          IMAGE: ${{ needs.qualify-production-image.outputs.image }}
+          REVISION: ${{ needs.qualify-production-image.outputs.revision }}
+        run: |
+          set -euo pipefail
+          [[ "${IMAGE}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
+          [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]
+          jq -e --arg image "${IMAGE}" --arg revision "${REVISION}" \
+            '.version == 1 and .status == "passed" and .candidate.image == $image and .candidate.revision == $revision and .validatorRevision == $revision and (.checks as $checks | ["legacyPublication", "legacyViewer", "typedPolicyCaptured", "independentApproval", "publisherNoSelfApproval", "viewerLeastPrivilege", "realPublicationAdapter", "subsequentDeploy"] | all(.[]; $checks[.] == true))' \
+            transition-evidence/transition.json >/dev/null
+          jq --arg runId "${GITHUB_RUN_ID}" --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            '. + {runId:$runId,runAttempt:$runAttempt}' \
+            transition-evidence/transition.json > transition.json
+          jq -n --arg image "${IMAGE}" --arg revision "${REVISION}" \
+            --arg runId "${GITHUB_RUN_ID}" --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
             '{image:$image,revision:$revision,runId:$runId,runAttempt:$runAttempt,qualified:true}' > qualification.json
 
-      - name: Upload exact image qualification
+      - name: Upload exact image and historical transition qualification
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-image-qualification-${{ github.run_attempt }}
-          path: qualification.json
+          path: |
+            qualification.json
+            transition.json
           if-no-files-found: error
           retention-days: 90

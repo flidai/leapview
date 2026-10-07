@@ -681,6 +681,9 @@ func appendDatabaseSecretEndpoint(parts []string, connection semanticmodel.Conne
 	if connection.Host != "" {
 		parts = append(parts, "HOST '"+sqlString(connection.Host)+"'")
 	}
+	if connection.Kind == "postgres" && connection.ResolvedHost != "" {
+		parts = append(parts, "HOSTADDR '"+sqlString(connection.ResolvedHost)+"'")
+	}
 	if connection.Port > 0 {
 		parts = append(parts, "PORT "+strconv.Itoa(connection.Port))
 	}

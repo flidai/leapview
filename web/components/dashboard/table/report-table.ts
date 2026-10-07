@@ -63,6 +63,7 @@ import {
   ReportTableFormattingController,
   ReportTableSelectionController,
   ReportTableVirtualizationController,
+  ReportTableWindowRetryController,
 } from './report-table-controller'
 
 const reportTableFeatures = tableFeatures({
@@ -125,6 +126,7 @@ function columnVisibilityHandler(column: any, fallback: (checked: boolean) => vo
 export class ReportTable extends LitElement {
   static properties = {
     tableId: { attribute: 'table-id' },
+    exploreHref: { attribute: false },
     table: { attribute: 'table', converter: tableConverter },
     selectedCellKey: { state: true },
     viewportTop: { state: true },
@@ -137,6 +139,7 @@ export class ReportTable extends LitElement {
   }
 
   declare tableId: string
+  declare exploreHref?: string
   declare table: TableSignal
   declare private selectedCellKey: string
   declare private viewportTop: number
@@ -163,6 +166,7 @@ export class ReportTable extends LitElement {
   private resizeDrag?: ColumnResizeDrag
   private tableController = new TableController<typeof reportTableFeatures, TanStackTableRow>(this)
   private readonly virtualizationController = new ReportTableVirtualizationController()
+  private readonly windowRetryController = new ReportTableWindowRetryController()
   private readonly selectionController = new ReportTableSelectionController()
   private readonly columnController = new ReportTableColumnController(() => this.columnSizing)
   private readonly formattingController = new ReportTableFormattingController()
@@ -274,6 +278,7 @@ export class ReportTable extends LitElement {
 
     .visual-actions .icon-action,
     .visual-options summary {
+      box-sizing: border-box;
       width: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
       height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
       min-height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
@@ -326,7 +331,7 @@ export class ReportTable extends LitElement {
       padding: var(--base-size-4);
     }
 
-    .menu button {
+    .menu button, .menu a {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
@@ -340,6 +345,7 @@ export class ReportTable extends LitElement {
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-medium);
       text-align: left;
+      text-decoration: none;
     }
 
     .menu svg {
@@ -353,8 +359,8 @@ export class ReportTable extends LitElement {
       stroke-width: 2;
     }
 
-    .menu button:hover,
-    .menu button:focus-visible {
+    .menu button:hover, .menu a:hover,
+    .menu button:focus-visible, .menu a:focus-visible {
       border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
       background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-control-hover)));
       outline: var(--focus-outline, var(--lv-border-default));
@@ -1008,14 +1014,14 @@ export class ReportTable extends LitElement {
     super.connectedCallback()
     document.addEventListener('pointerdown', this.handleOutsidePointerDown)
     document.addEventListener('keydown', this.handleDocumentKeyDown)
-    if (this.hasUpdated) queueMicrotask(() => this.startViewportObserver())
+    if (this.hasUpdated) queueMicrotask(() => this.startViewportObserver(true))
   }
 
   firstUpdated(): void {
     this.startViewportObserver()
   }
 
-  private startViewportObserver(): void {
+  private startViewportObserver(reconnected = false): void {
     const viewport = this.bodyViewportRef.value
     if (!viewport) return
     this.resizeObserver?.disconnect()
@@ -1026,7 +1032,9 @@ export class ReportTable extends LitElement {
         this.requestUpdate()
       }
       const viewportHeight = viewport.clientHeight
-      if (viewportHeight === this.viewportHeight) return
+      if (viewportHeight === this.viewportHeight && !reconnected) return
+      if (reconnected) this.viewportTop = viewport.scrollTop
+      reconnected = false
       this.viewportHeight = viewportHeight
       this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
       this.scheduleEnsureBlocksForScroll()
@@ -1040,12 +1048,11 @@ export class ReportTable extends LitElement {
     document.removeEventListener('pointerdown', this.handleOutsidePointerDown)
     document.removeEventListener('keydown', this.handleDocumentKeyDown)
     this.resizeObserver?.disconnect()
-    if (this.scrollFrame) {
-      cancelAnimationFrame(this.scrollFrame)
-      this.scrollFrame = 0
-    }
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
     this.clearResizeGuide()
     this.clearJumpTimer()
+    this.windowRetryController.clear()
     super.disconnectedCallback()
   }
 
@@ -1059,6 +1066,7 @@ export class ReportTable extends LitElement {
       this.blockCache = emptyBlocks()
       this.shouldResetScroll = true
       this.expectedBlocks.clear()
+      this.windowRetryController.reset()
       this.latestAcceptedSeq.clear()
       this.clearJumpTimer()
       this.clearLocalSelection()
@@ -1067,6 +1075,13 @@ export class ReportTable extends LitElement {
     // that transition once; already-missing empty results must not retry forever.
     const wasVisibleLoading = this.visibleLoading
     this.mergeIncomingBlocks()
+    if (this.table.error && previousTable && !(previousTable as TableSignal).error && this.expectedBlocks.size > 0) {
+      this.expectedBlocks.clear()
+      this.windowRetryController.stop()
+      this.clearJumpTimer()
+      cancelAnimationFrame(this.scrollFrame)
+      this.scrollFrame = 0
+    }
     this.shouldReconcileViewport = changedProperties.has('table') && !wasVisibleLoading && this.visibleLoading
     if (changedProperties.has('table')) {
       this.syncSelectedRowFromTableSelection()
@@ -1255,6 +1270,7 @@ export class ReportTable extends LitElement {
     this.viewportTop = target.scrollTop
     this.viewportHeight = target.clientHeight
     this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
+    this.windowRetryController.allowRetry()
     this.scheduleEnsureBlocksForScroll()
   }
 
@@ -1263,6 +1279,7 @@ export class ReportTable extends LitElement {
     const direction: SortDirection = current.key === column.key
       ? current.direction === 'asc' ? 'desc' : 'asc'
       : defaultDirection(column)
+    this.windowRetryController.allowRetry()
     this.emitBlock('all', 0, { key: column.key, direction }, this.table.resetVersion + 1)
   }
 
@@ -1645,6 +1662,7 @@ export class ReportTable extends LitElement {
               <summary aria-label="Visual options" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
               <div class="menu" role="menu">
                 <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
+                ${this.exploreHref ? html`<a role="menuitem" href=${this.exploreHref}>${visualMenuIcon('explore')}<span>Explore</span></a>` : null}
                 <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
                 <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
                 <button type="button" role="menuitem" ?disabled=${!hasSelection} @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>
@@ -1671,6 +1689,7 @@ export class ReportTable extends LitElement {
                 </div>
               </div>
             </details>
+            <slot name="focus-action"></slot>
           </div>
         </div>
         ${this.table?.error ? html`<div class="error" role="status" aria-live="polite">${this.table.error}</div>` : nothing}
@@ -1735,7 +1754,7 @@ export class ReportTable extends LitElement {
   }
 
   private scheduleEnsureBlocksForScroll(): void {
-    if (this.scrollFrame) return
+    if (this.windowRetryController.blocked || this.scrollFrame) return
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0
       this.ensureBlocksForScroll()
@@ -1761,6 +1780,19 @@ export class ReportTable extends LitElement {
     this.jumpTimer = 0
   }
 
+  private scheduleWindowRetry(requestSeq: number): void {
+    this.windowRetryController.schedule(requestSeq,
+      () => [...this.expectedBlocks.values()].some((request) => request.requestSeq === requestSeq),
+      () => Boolean(this.table.loadingBlock),
+      (retry) => {
+        const expired = [...this.expectedBlocks].filter(([, request]) => request.requestSeq === requestSeq)
+        for (const [id] of expired) this.expectedBlocks.delete(id)
+        if (expired.length === 0) return
+        this.requestUpdate()
+        if (retry) this.scheduleEnsureBlocksForScroll()
+      })
+  }
+
   private desiredStarts(currentStart: number): number[] {
     return this.virtualizationController.desiredStarts(currentStart, this.availableRows, this.chunkSize)
   }
@@ -1773,9 +1805,11 @@ export class ReportTable extends LitElement {
   private emitBlock(block: BlockID | 'all', start: number, sort = this.table.sort, resetVersion = this.table.resetVersion): void {
     const tableId = this.resolvedTableId()
     if (!tableId) return
+    this.windowRetryController.unblock()
     const count = this.chunkSize
     const requestSeq = ++this.requestSeq
     if (block === 'all') {
+      this.windowRetryController.clear()
       this.expectedBlocks.clear()
       const starts = this.allBlockStarts(start)
       blockIDs.forEach((id, index) => {
@@ -1787,6 +1821,7 @@ export class ReportTable extends LitElement {
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })
     }
+    this.scheduleWindowRetry(requestSeq)
     this.requestUpdate()
     this.dispatchEvent(new CustomEvent<VisualWindowCommand>('lv-visual-window-change', {
       bubbles: true,
@@ -1813,6 +1848,7 @@ export class ReportTable extends LitElement {
 
   private mergeIncomingBlocks(): void {
     const defaults = emptyBlocks()
+    let settled = false
     for (const id of blockIDs) {
       const incoming = this.table.blocks[id]
       if (!incoming) continue
@@ -1832,8 +1868,11 @@ export class ReportTable extends LitElement {
       const expected = this.expectedBlocks.get(id)
       if (expected && this.blockMatchesExpected(incoming, expected)) {
         this.expectedBlocks.delete(id)
+        settled = true
       }
     }
+    this.windowRetryController.settle(new Set([...this.expectedBlocks.values()].map((request) => request.requestSeq)))
+    if (settled) this.windowRetryController.allowRetry()
   }
 
   private shouldAcceptBlock(id: BlockID, incoming: TableBlock): boolean {

@@ -1,7 +1,7 @@
 sections:
   - id: start
     title: Start here
-    summary: Install LeapView, run the sample project, and understand the project layout.
+    summary: Choose analytics authoring, server operations, or source contribution.
     documents:
       - slug: introduction
         title: What is LeapView?
@@ -11,12 +11,12 @@ sections:
       - slug: installation
         title: Installation
         type: how-to
-        summary: Pull the public image locally or prepare a durable production instance.
+        summary: Install the authoring CLI, configure Compose, or set up a source checkout.
         source: articles/start/installation.md
       - slug: getting-started
         title: Get started with LeapView
         type: landing
-        summary: Choose a path from installation through your first validated dashboard change.
+        summary: Choose a workflow and follow the source-checkout dashboard tutorial.
         source: getting-started.md
         breadcrumb: Getting started
       - slug: first-dashboard
@@ -249,6 +249,11 @@ sections:
         type: how-to
         summary: Move private dashboard drafts through development, review, and production with explicit ownership boundaries.
         source: articles/operate/dashboard-authoring.md
+      - slug: guides/operate/exploration-sharing-exports
+        title: Exploration links and exports
+        type: how-to
+        summary: Share access-controlled exploration state and download bounded CSV or Parquet results.
+        source: articles/operate/exploration-sharing-exports.md
       - slug: guides/operate/production-configuration
         title: Production configuration
         type: how-to
@@ -444,6 +449,12 @@ sections:
         type: reference
         summary: Review supported resource, data, visual, and integration surfaces.
         source: articles/reference/capabilities.md
+      - slug: reference/permissions
+        title: Typed permission catalog
+        type: reference
+        summary: Review canonical typed actions, target scopes, prerequisites, and role expansions.
+        source: articles/reference/permissions.md
+        generated: true
       - slug: reference/data-resource-connectors
         title: Data-resource connector capabilities
         type: reference

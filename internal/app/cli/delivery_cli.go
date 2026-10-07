@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -19,12 +18,12 @@ import (
 )
 
 func buildCommand(ctx context.Context) *cobra.Command {
-	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(http.DefaultClient), validateAuthoring: true}
+	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(defaultCLIHTTPClient), validateAuthoring: true}
 	return projectcli.DeliveryBuildCommand(ctx, projectDeliveryBuildOperations{client: client, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())})
 }
 
 func rollbackCommand(ctx context.Context) *cobra.Command {
-	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(http.DefaultClient), validateAuthoring: true}
+	client := capabilityAPIClient{httpClient: authoringRefreshingHTTPClient(defaultCLIHTTPClient), validateAuthoring: true}
 	return projectcli.DeliveryRollbackCommand(ctx, projectDeliveryRollbackOperations{client: client, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())})
 }
 
@@ -44,7 +43,11 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	}
 	targetSelector := strings.TrimSpace(options.Credentials.Target)
 	if targetSelector == "" {
-		targetSelector = strings.TrimSpace(config.MustLoad().Target)
+		cfg, err := config.Load()
+		if err != nil {
+			return projectcli.DeliveryPlanResult{}, err
+		}
+		targetSelector = strings.TrimSpace(cfg.Target)
 	}
 	credentials, err := operations.client.Resolve(ctx, options.Credentials)
 	if err != nil {

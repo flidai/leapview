@@ -20,7 +20,8 @@ import {
   type CartesianCategory,
   type CartesianSpec,
 } from './series-intent'
-import { categoricalFieldValues, configureSecondaryComboAxis, finiteFieldExtent as finiteFieldExtentHelper, heatmapDataZoom, hideCartesianAxes, humanizeCategoryLabel, multiMeasureComboAxes, rawCategoricalFieldValue } from './cartesian-presentation'
+import { categoricalFieldValues, configureSecondaryComboAxis, finiteFieldExtent as finiteFieldExtentHelper, heatmapDataZoom, hideCartesianAxes, humanizeCategoryLabel, multiMeasureComboAxes, needsVisibleLinePoints, rawCategoricalFieldValue } from './cartesian-presentation'
+import { histogramRangeFormatter, histogramTooltipFormatter } from './histogram'
 import { applyDecisionContext } from './decision-context'
 
 export { applyDecisionContext }
@@ -52,8 +53,23 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     // labels on their endpoint ticks lets their text extend beyond the chart
     // edge and be clipped in compact cards. Keep authored rotation intact and
     // align only the category endpoints inward.
-    const histogramXAxis = { ...axes.xAxis, axisLabel: { ...axes.xAxis.axisLabel, alignMinLabel: 'left', alignMaxLabel: 'right' } }
-    return { ...axes, xAxis: histogramXAxis, dataZoom, series: [{ id: seriesID(value?.dataset, value?.field), type: 'bar', encode: { x: spec.x.field, y: value?.field }, ...chartLabel(envelope, value, spec, context) }] }
+    const histogramXAxis = {
+      ...axes.xAxis,
+      axisLabel: {
+        ...axes.xAxis.axisLabel,
+        alignMinLabel: 'left',
+        alignMaxLabel: 'right',
+        formatter: histogramRangeFormatter(envelope, spec, context),
+      },
+    }
+    const tooltip = spec.tooltip === undefined && spec.tooltipItems === undefined
+      ? { formatter: histogramTooltipFormatter(envelope, spec, context) }
+      : undefined
+    return {
+      ...axes, xAxis: histogramXAxis, dataZoom,
+      ...(tooltip ? { tooltip } : {}),
+      series: [{ id: seriesID(value?.dataset, value?.field), type: 'bar', encode: { x: spec.x.field, y: value?.field }, ...chartLabel(envelope, value, spec, context) }],
+    }
   }
   if (spec.mark === 'waterfall') {
     // The generated shape is [start, metric], while older direct IR may use
@@ -214,6 +230,9 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const normalizedField = normalized?.dimensions.get(value.field)
     const combo = comboByField.get(value.field)
     const mark = combo?.mark ?? (spec.mark === 'combo' ? 'line' : spec.mark)
+    const revealSingleton = spec.presentation.showSymbols !== true
+      && (mark === 'line' || mark === 'area')
+      && needsVisibleLinePoints(envelope, spec.x, value)
     const markFill = conditionalItemColor(envelope, value, 'mark_fill', context), seriesFill = conditionalItemColor(envelope, value, 'series_color', context)
     const intent = spec.presentation.seriesIntent?.find((candidate) => candidate.value === value.field)?.color
     const paletteIndex = comboColorSlots.get(value.field) ?? spec.y.findIndex((candidate) => candidate.dataset === value.dataset && candidate.field === value.field)
@@ -222,11 +241,16 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const translatedLabel = normalizedField
       ? percentLabel(envelope, value, spec, context, normalized?.columnIndices.get(value.field))
       : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)
+    if (revealSingleton && (spec.presentation.labelPosition === undefined || spec.presentation.labelPosition === 'automatic')) {
+      translatedLabel.label.position = horizontal ? 'right' : 'top'
+    }
     return {
       id: seriesID(value.dataset, value.field), type: cartesianSeriesType(mark), name: fieldLabel(envelope, value),
       ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
       encode: horizontal ? { x: normalizedField ?? value.field, y: spec.x.field } : { x: spec.x.field, y: normalizedField ?? value.field },
-      smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none', symbolSize: spec.presentation.symbolSize,
+      smooth: spec.presentation.smooth,
+      symbol: revealSingleton ? 'circle' : spec.presentation.showSymbols ? undefined : 'none',
+      symbolSize: revealSingleton ? Math.max(spec.presentation.symbolSize ?? 0, 8) : spec.presentation.symbolSize,
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
         color: markColor,
@@ -395,16 +419,18 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
   for (const intent of intents.filter((item) => item.order === undefined)) appendConfigured(intent.value)
   for (const item of configured) appendConfigured(item.seriesValue)
   for (const category of available) appendConfigured(category.value)
-  const datasets: EChartsTranslation[] = [{ id: `dataset:${dataset.id}`, source: selectedDatasetSource(envelope, dataset) }]
+  const source = selectedDatasetSource(envelope, dataset)
+  const datasets: EChartsTranslation[] = [{ id: `dataset:${dataset.id}`, source }]
   const stack = stackingMode(spec)
   const normalizedSources = stack === 'percent' ? normalizedSeriesSources(envelope, dataset, spec, values) : undefined
   const series: EChartsTranslation[] = values.map((category) => {
     const token = encodeURIComponent(category.key)
     const datasetID = `dataset:series:${spec.series?.field}:${token}`
     const normalized = normalizedSources?.get(category.key)
-    datasets.push(normalized
-      ? { id: datasetID, source: normalized.source }
-      : { id: datasetID, fromDatasetId: `dataset:${dataset.id}`, transform: { type: 'filter', config: { dimension: spec.series?.field, '=': category.value } } })
+    const sourceRowIndices = dataset.rows.flatMap((row, rowIndex) => categoryIdentity(row[seriesIndex]) === category.key ? [rowIndex] : [])
+    // ECharts filter equality coerces numeric strings. Split by governed typed
+    // identity so values such as 1 and '1' remain distinct series.
+    datasets.push({ id: datasetID, source: normalized?.source ?? [source[0], ...sourceRowIndices.map((index) => source[index + 1])] })
     const combo = configured.find((item) => resolveCartesianCategory(categoryLookup, item.seriesValue)?.key === category.key)
     const intent = intents.find((item) => resolveCartesianCategory(categoryLookup, item.value)?.key === category.key)
     const mark = combo?.mark ?? (spec.mark === 'combo' ? 'line' : spec.mark)
@@ -416,7 +442,6 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     const intentColor = intent?.color ? seriesColor(category.key, intent.color, context) : paletteColor
     const fill = conditionalColorChain([markFill, seriesFill], intentColor)
     const markColor = governedSeriesColor ?? fill
-    const sourceRowIndices = dataset.rows.flatMap((row, rowIndex) => categoryIdentity(row[seriesIndex]) === category.key ? [rowIndex] : [])
     return {
       id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: category.name, type: cartesianSeriesType(mark),
       __lv_source_row_indices: sourceRowIndices,

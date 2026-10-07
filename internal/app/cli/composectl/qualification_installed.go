@@ -123,8 +123,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		report.Phases = phases.Evidence()
 		if runErr != nil {
-			report.CompletedAt = qualificationStartedAt(c.now())
-			report.ElapsedSeconds = int64(c.now().Sub(started).Seconds())
+			c.completeInstalledQualificationReport(&report, started)
 			_ = writeQualificationJSON(
 				filepath.Join(evidenceDir, "qualification-report.json"),
 				report,
@@ -282,12 +281,16 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err != nil {
 		return err
 	}
-	if err := c.Initialize(ctx, InitOptions{
+	firstInstall, err := qualificationNativeFirstInstallOptions(nativeTopology, artifacts)
+	if err != nil {
+		return err
+	}
+	if err := c.InitializeFirstInstall(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
 		Image:       imageReference,
-	}); err != nil {
+	}, firstInstall); err != nil {
 		return err
 	}
 	if err := appendOrReplaceQualificationEnv(
@@ -354,29 +357,42 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	if credentials.Email == "" || credentials.TemporaryPassword == "" ||
-		credentials.PublisherToken == "" || credentials.PublisherTokenExpires == "" {
+		credentials.ProjectClaimToken == "" || credentials.ProjectClaimTokenExpiresAt == "" {
 		return fmt.Errorf("initial credential contract is incomplete")
 	}
 	credentials.QualificationPassword, err = randomHex(24)
 	if err != nil {
 		return err
 	}
-	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
-		return err
-	}
-	report.Assertions.OneTimeCredentials = true
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
 		return err
 	}
 
-	if err := bootstrapQualificationProject(
+	bootstrapResult, err := bootstrapQualificationProject(
 		ctx,
 		c.qualificationContainers.Existing(containerID),
 		"http://localhost:8080",
-		credentials.PublisherToken,
-	); err != nil {
+		credentials.ProjectClaimToken,
+		explicitQualificationEnvironment,
+	)
+	if err != nil {
 		return err
 	}
+	credentials.ClaimCredentialID = bootstrapResult.ClaimCredentialID
+	credentials.PublisherToken = bootstrapResult.PublisherToken
+	credentials.PublisherTokenExpires = bootstrapResult.PublisherTokenExpiresAt
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	if err := acknowledgeQualificationProjectClaim(ctx, c.qualificationContainers.Existing(containerID), "http://localhost:8080", credentials.PublisherToken, credentials.ClaimCredentialID); err != nil {
+		return err
+	}
+	credentials.ProjectClaimToken = ""
+	credentials.ProjectClaimTokenExpiresAt = ""
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	report.Assertions.OneTimeCredentials = true
 	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
 		ctx, nil,
 		"env",
@@ -402,6 +418,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	ctx = phases.Begin(rootContext, "enterprise authoring", 30*time.Minute)
 	authoringReport, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      c.root,
+		AssetsRoot:      filepath.Join(c.root, "qualification"),
 		Image:           imageReference,
 		CredentialsFile: credentialsPath,
 		ComposeProject:  primaryProject,
@@ -424,25 +441,22 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := readQualificationJSON(credentialsPath, &credentials); err != nil {
 		return err
 	}
-	workloadToken, err := credentials.workloadToken()
+	tokens, err := credentials.installedTokens()
 	if err != nil {
 		return err
 	}
-	projectDataToken, err := credentials.projectDataToken()
-	if err != nil {
-		return err
-	}
-	recoveryControlToken, err := credentials.recoveryControlToken()
-	if err != nil {
-		return err
-	}
+	workloadToken := tokens.Workload
+	deliveryEvidenceToken := tokens.DeliveryEvidence
+	connectionEvidenceToken := tokens.Connection
+	recoveryUploadToken := tokens.RecoveryUpload
+	recoveryControlToken := tokens.RecoveryControl
 	report.Assertions.BrowserJourney = true
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
 	ctx = phases.Begin(rootContext, "application upgrade", 15*time.Minute)
 	containerID, err = c.runQualificationApplicationUpgrade(
-		ctx, containerID, projectDataToken, authoringReport,
+		ctx, containerID, deliveryEvidenceToken, authoringReport,
 	)
 	if err != nil {
 		return err
@@ -517,20 +531,21 @@ func (c *Controller) QualifyInstalledCandidate(
 	ctx = phases.Begin(rootContext, "interruption recovery", 60*time.Minute)
 
 	recoveryReport, err := c.runQualificationRecovery(ctx, qualificationRecoveryOptions{
-		BundleRoot:           c.root,
-		EvidenceDir:          evidenceDir,
-		PublisherToken:       credentials.PublisherToken,
-		WorkloadToken:        workloadToken,
-		ProjectDataToken:     projectDataToken,
-		RecoveryControlToken: recoveryControlToken,
-		MetricsToken:         metricsToken,
-		AuthorPrincipalID:    credentials.AuthorPrincipalID,
-		ReviewerPrincipalID:  credentials.ReviewerPrincipalID,
-		ContainerID:          containerID,
-		ComposeProject:       primaryProject,
-		ProjectID:            "project:leapview-evaluation",
-		Image:                imageReference,
-		Target:               target,
+		BundleRoot:              c.root,
+		EvidenceDir:             evidenceDir,
+		PublisherToken:          credentials.PublisherToken,
+		WorkloadToken:           workloadToken,
+		ConnectionEvidenceToken: connectionEvidenceToken,
+		RecoveryUploadToken:     recoveryUploadToken,
+		RecoveryControlToken:    recoveryControlToken,
+		MetricsToken:            metricsToken,
+		AuthorPrincipalID:       credentials.AuthorPrincipalID,
+		ReviewerPrincipalID:     credentials.ReviewerPrincipalID,
+		ContainerID:             containerID,
+		ComposeProject:          primaryProject,
+		ProjectID:               "project:leapview-evaluation",
+		Image:                   imageReference,
+		Target:                  target,
 	})
 	if err != nil {
 		return err
@@ -601,8 +616,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	report.Phases = phases.Evidence()
 
 	report.Result = "success"
-	report.CompletedAt = qualificationStartedAt(c.now())
-	report.ElapsedSeconds = int64(c.now().Sub(started).Seconds())
+	c.completeInstalledQualificationReport(&report, started)
 	if err := writeQualificationJSON(
 		filepath.Join(evidenceDir, "qualification-report.json"),
 		report,
@@ -615,6 +629,12 @@ func (c *Controller) QualifyInstalledCandidate(
 		report.ElapsedSeconds,
 	)
 	return err
+}
+
+func (c *Controller) completeInstalledQualificationReport(report *qualificationInstalledReport, started time.Time) {
+	completed := c.now()
+	report.CompletedAt = qualificationStartedAt(completed)
+	report.ElapsedSeconds = int64(completed.Sub(started).Seconds())
 }
 
 func isQualificationLowerHex(value string) bool {
@@ -815,7 +835,7 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 		)
 	}
 	runtimeOutput, err := c.qualificationDocker(
-		ctx, nil, "run", "--rm", imageReference, "version", "--json",
+		ctx, nil, "run", "--rm", imageReference, "version", "--format", "json",
 	)
 	if err != nil {
 		return err
@@ -885,6 +905,7 @@ func (c *Controller) startQualificationPerformanceBrowser(
 		"package.json",
 		"browser.mjs",
 		"performance.mjs",
+		"performance-status.mjs",
 		"performance-policy.json",
 	} {
 		if _, err := browser.CopyTo(

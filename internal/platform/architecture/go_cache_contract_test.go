@@ -50,8 +50,8 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 	if len(setupGo) != 1 {
 		t.Fatalf("setup-ci must have one setup-go step, found %d", len(setupGo))
 	}
-	if setupGo[0].ID != "go" {
-		t.Fatalf("setup-go step must be id go, got %q", setupGo[0].ID)
+	if setupGo[0].If != "inputs.toolchain == 'conventional' || runner.os != 'Linux' || runner.arch != 'X64'" {
+		t.Fatalf("setup-go must be confined to conventional builds and other platforms, got %q", setupGo[0].If)
 	}
 	if setupGo[0].With["go-version-file"] != "go.mod" {
 		t.Fatalf("setup-go must read the root go.mod, got %q", setupGo[0].With["go-version-file"])
@@ -88,11 +88,11 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 		t.Fatalf("setup-ci must have a default-branch writer and a candidate reader, found %d", len(goCaches))
 	}
 	goCache := goCaches[0]
-	if goCache.If != "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" || goCache.Run != "" {
+	if goCache.If != "inputs.profile == 'validation' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch))" || goCache.Run != "" {
 		t.Fatal("only default-branch workloads may publish Go caches")
 	}
 	reader := goCaches[1]
-	if reader.If != "github.ref != format('refs/heads/{0}', github.event.repository.default_branch)" || reader.Run != "" || !regexp.MustCompile(`^actions/cache/restore@[0-9a-f]{40}$`).MatchString(reader.Uses) {
+	if reader.If != "inputs.profile == 'validation' && (github.ref != format('refs/heads/{0}', github.event.repository.default_branch))" || reader.Run != "" || !regexp.MustCompile(`^actions/cache/restore@[0-9a-f]{40}$`).MatchString(reader.Uses) {
 		t.Fatal("candidates must use the complementary restore-only action")
 	}
 	if len(reader.With) != len(goCache.With) {
@@ -107,9 +107,9 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 			t.Fatalf("candidate cache %s differs from producer inputs beyond the explicit read scope", key)
 		}
 	}
-	wantPrefix := "go-validation-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-"
+	wantPrefix := "go-validation-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.toolchain.outputs.go-version }}-${{ hashFiles('flake.lock', 'nix/toolchain.nix') }}-"
 	if strings.TrimSpace(goCache.With["restore-keys"]) != wantPrefix {
-		t.Fatal("fallback must retain workload, OS, architecture, image and compiler identity")
+		t.Fatal("fallback must retain workload, OS, architecture, selected toolchain, image, compiler and locked input identity")
 	}
 	for _, input := range []string{"lookup-only", "save-always", "fail-on-cache-miss", "enableCrossOsArchive"} {
 		if goCache.With[input] != "" {
@@ -120,15 +120,19 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 	if len(path) != 2 || path[0] != "${{ steps.go-cache-paths.outputs.gomodcache }}" || path[1] != "${{ steps.go-cache-paths.outputs.gocache }}" {
 		t.Fatalf("Go cache must contain only GOMODCACHE and GOCACHE, got %q", goCache.With["path"])
 	}
-	wantKey := "go-validation-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.mod', '**/go.sum', 'Taskfile.yml', '.github/actions/setup-ci/action.yml') }}"
+	wantKey := "go-validation-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.toolchain.outputs.go-version }}-${{ hashFiles('flake.lock', 'nix/toolchain.nix') }}-${{ hashFiles('**/go.mod', '**/go.sum', 'Taskfile.yml', '.github/actions/setup-ci/action.yml') }}"
 	if got := goCache.With["key"]; got != wantKey {
 		t.Fatalf("Go validation cache key = %q, want %q", got, wantKey)
 	}
 	if !regexp.MustCompile(`^actions/cache@[0-9a-f]{40}$`).MatchString(goCache.Uses) {
 		t.Fatalf("Go cache action must be pinned to a commit, got %q", goCache.Uses)
 	}
-	if strings.Contains(string(body), "cache-hit") {
-		t.Fatal("setup-ci must not skip work based on a cache-hit output")
+	for _, step := range action.Runs.Steps {
+		// Import may read a hit output, but realization and validation must run
+		// for both hits and misses. Check execution guards, not environment data.
+		if strings.Contains(step.If, "cache-hit") || strings.Contains(step.Run, "cache-hit") {
+			t.Fatalf("setup-ci step %q must not skip work based on a cache-hit output", step.Name)
+		}
 	}
 	setupIndex := -1
 	resolverIndex := -1
@@ -136,7 +140,7 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 	toolIndex := -1
 	for index, step := range action.Runs.Steps {
 		switch {
-		case step.ID == "go":
+		case step.ID == "toolchain":
 			setupIndex = index
 		case step.ID == "go-cache-paths":
 			resolverIndex = index
@@ -288,6 +292,12 @@ func TestPRGoCacheReadersHaveScheduledProducers(t *testing.T) {
 		for id, reader := range read(name) {
 			for _, step := range reader.Steps {
 				if step.Uses != "./.github/actions/setup-ci" {
+					continue
+				}
+				if step.With["profile"] == "orchestration" {
+					if step.With["go-cache-restore-workload"] != "" {
+						t.Fatal("orchestration must not restore application caches")
+					}
 					continue
 				}
 				scope := step.With["go-cache-restore-workload"]

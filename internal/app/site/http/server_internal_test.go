@@ -38,7 +38,7 @@ func TestSiteUnknownRouteReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
+func TestDesktopDownloadPageWithdrawsUnavailablePreview(t *testing.T) {
 	baseURL, err := url.Parse("https://leapview.dev")
 	if err != nil {
 		t.Fatal(err)
@@ -57,9 +57,8 @@ func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<h1>LeapView on your desktop.</h1>`,
-		`Early preview`,
-		`LeapView Desktop 0.1.0-alpha.1`,
-		`These installers are not code-signed.`,
+		`Desktop downloads are temporarily withdrawn.`,
+		`No installer is currently offered.`,
 		`href="/docs/desktop/install"`,
 		`href="/docs/desktop/security"`,
 		`macOS 13 Ventura`,
@@ -73,7 +72,12 @@ func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
 			t.Errorf("download page missing %q:\n%s", want, body)
 		}
 	}
-	for _, forbidden := range []string{`href="https://releases.leapview.dev/`, `unsigned-candidate`} {
+	for _, forbidden := range []string{
+		`href="https://releases.leapview.dev/`,
+		`href="https://github.com/flidai/leapview/releases/`,
+		`download="`,
+		`unsigned-candidate`,
+	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("unpublished download page contains %q:\n%s", forbidden, body)
 		}
@@ -93,7 +97,7 @@ func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"schemaVersion": 1`,
-		`"status": "published"`,
+		`"status": "withdrawn"`,
 		`"applicationId": "dev.leapview.desktop"`,
 		`"name": "preview"`,
 		`"updateOrigin": ""`,
@@ -584,7 +588,8 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 		`/static/site.css`,
 		`/static/site-page.js`,
 		`/static/home/screenshot-hero.css`,
-		`/static/home/home.js`,
+		`data-project-source="semantics"`,
+		`kind: SemanticModel`,
 		`<meta name="view-transition" content="same-origin">`,
 		`<section id="main-content" class="hero"`,
 		`<lv-site-flow-background class="site-flow-field" draw-in aria-hidden="true"></lv-site-flow-background>`,
@@ -1135,7 +1140,7 @@ func TestSiteServesMachineDocumentationArtifacts(t *testing.T) {
 		contains    []string
 	}{
 		{path: "/llms.txt", contentType: "text/plain", contains: []string{"# LeapView", "/mcp", "/docs/cli/manifest.json", "/docs/api/operations.json"}},
-		{path: "/docs/cli/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"id": "publish"`, `"effect": "write"`}},
+		{path: "/docs/cli/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 2`, `"id": "root"`, `"id": "publish"`, `"effect": "write"`, `"output": {`}},
 		{path: "/docs/agent-tools/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"name": "catalog_search"`, `"inputSchema": {`, `"outputSchema": {`}},
 		{path: "/docs/agent-tools/tools/catalog_search.json", contentType: "application/json", contains: []string{`"name": "catalog_search"`, `"privilege": "RESOURCE_READ"`, `"readOnlyHint": true`}},
 		{path: "/docs/agent-tools/tools/catalog_search.md", contentType: "text/markdown", contains: []string{"# `catalog_search`", "## Input schema", "## Output schema"}},
@@ -1202,6 +1207,20 @@ func TestSiteCLIReferenceGroupsSubcommandsAndRedirectsLeafPages(t *testing.T) {
 	if got, want := legacy.Header.Get("Location"), "/docs/cli/semantic-models#query"; got != want {
 		t.Errorf("legacy leaf location = %q, want %q", got, want)
 	}
+}
+
+func TestDocumentationCatalogAcceptsItsDocumentedDefaultLimit(t *testing.T) {
+	_, implicit, err := docsCatalogTool(t.Context(), nil, docsCatalogInput{})
+	require.NoError(t, err)
+	if len(implicit.Items) != 100 {
+		t.Fatalf("default catalog size = %d, want 100", len(implicit.Items))
+	}
+	_, explicit, err := docsCatalogTool(t.Context(), nil, docsCatalogInput{Limit: 100})
+	require.NoError(t, err)
+	require.Equal(t, implicit, explicit)
+	_, capped, err := docsCatalogTool(t.Context(), nil, docsCatalogInput{Limit: 1000})
+	require.NoError(t, err)
+	require.Equal(t, implicit, capped)
 }
 
 func TestSiteDocumentationMCPTools(t *testing.T) {

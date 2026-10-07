@@ -22,9 +22,6 @@ func EncodeConnectionRotationAuditMetadata(event ConnectionRotationAuditEvent) (
 	case connectionbinding.RefreshRequested:
 		encoded, err := analyticsgen.EncodeGenRefreshTargetConnectionBindingAuditPayload(payload)
 		return addBindingMetadata(encoded, event.BindingID.String(), err)
-	case connectionbinding.RefreshTest:
-		encoded, err := analyticsgen.EncodeGenTestTargetConnectionBindingAuditPayload(payload)
-		return addBindingMetadata(encoded, event.BindingID.String(), err)
 	default:
 		background, err := json.Marshal(map[string]any{
 			"operation": event.Operation, "outcome": event.Outcome,

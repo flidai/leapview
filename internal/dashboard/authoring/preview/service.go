@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -60,6 +61,10 @@ type visualizationWindowRuntime interface {
 	QueryVisualizationWindowForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
 }
 
+type visualizationRuntime interface {
+	QueryVisualizationForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, string) (visualizationir.VisualizationEnvelope, error)
+}
+
 // Lease is the exact project-generation capability used by preview. It is
 // deliberately narrower than a host lease so preview cannot resolve another
 // project or acquire another generation behind the caller's back.
@@ -76,6 +81,10 @@ type Options struct {
 	Repository DraftRepository
 	Authorizer authoringservice.Authorizer
 	Provider   PreviewProvider
+	// Governor is the canonical data-query authorization boundary for draft
+	// execution. Compile-only callers may omit it, but Preview requires it so
+	// an authoring credential cannot turn directly into an ungoverned query.
+	Governor dataquery.Governor
 }
 
 // Service executes strict, non-persistent dashboard draft previews.
@@ -83,6 +92,7 @@ type Service struct {
 	repository DraftRepository
 	authorizer authoringservice.Authorizer
 	provider   PreviewProvider
+	governor   dataquery.Governor
 }
 
 func NewService(options Options) (*Service, error) {
@@ -95,7 +105,7 @@ func NewService(options Options) (*Service, error) {
 	if options.Provider == nil {
 		return nil, fmt.Errorf("dashboard preview runtime provider is required")
 	}
-	return &Service{repository: options.Repository, authorizer: options.Authorizer, provider: options.Provider}, nil
+	return &Service{repository: options.Repository, authorizer: options.Authorizer, provider: options.Provider, governor: options.Governor}, nil
 }
 
 // PreviewRequest identifies one exact draft revision and the page to render.
@@ -110,7 +120,10 @@ type PreviewRequest struct {
 	ExpectedRevision authoring.RevisionToken
 	PageID           string
 	Filters          dashboard.Filters
-	Window           *visualizationir.VisualizationWindowRequest
+	// VisualID limits execution to one compiled visual. Builder mutations use
+	// this path so changing one card does not requery and remount the page.
+	VisualID string
+	Window   *visualizationir.VisualizationWindowRequest
 	// BestEffortVisuals is reserved for the interactive builder. It isolates
 	// visual lowering failures while keeping strict structural, semantic,
 	// filter, and layout validation. Headless preview and publish remain strict.
@@ -149,6 +162,12 @@ type Preview struct {
 	VisualErrors     map[string]string              `json:"visualErrors,omitempty"`
 }
 
+// WindowFilterResolver binds an exact compiled draft to its ephemeral filter
+// session before the window query runs. Keeping resolution inside the preview
+// lease lets authoring window reads compile once instead of compiling once for
+// session validation and again for query execution.
+type WindowFilterResolver func(Compilation) (dashboard.Filters, error)
+
 // Compilation is the exact-revision, compile-only draft result. It carries
 // the same serving-state evidence as Preview but intentionally has no page
 // patch because no dashboard consumer query has run.
@@ -186,6 +205,27 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if pageID == "" {
 		return Preview{}, fmt.Errorf("preview page id is required")
 	}
+	if s.governor == nil {
+		return Preview{}, fmt.Errorf("dashboard preview query governor is required")
+	}
+	// The preview runtime is leased directly so it can execute an exact draft
+	// definition. Carry the canonical governor through that runtime boundary;
+	// the materialization runtime performs admission for every generated query.
+	ctx = dataquery.WithGovernor(ctx, s.governor)
+	// Dashboard draft visuals are compiled from authored state and therefore
+	// construct a new semantic query shape. Mark the context before compiling
+	// and querying so the governed runtime applies semantic.query plus its
+	// semantic.consume prerequisite to every participating model. The marker is
+	// intentionally private to draft preview; published dashboard execution
+	// remains on the consume-only path.
+	metadata := dataquery.MetadataFromContext(ctx)
+	metadata.ProjectID = request.ProjectID
+	metadata.Surface = dataquery.SurfaceDashboard
+	metadata.Operation = dataquery.OperationDashboardDraftPreview
+	if metadata.PrincipalID == "" {
+		metadata.PrincipalID = strings.TrimSpace(request.ActorID)
+	}
+	ctx = dataquery.WithMetadata(ctx, metadata)
 	prepared, err := s.prepareCompilation(ctx, CompileRequest{
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
 		DashboardID: request.DashboardID, DraftID: request.DraftID,
@@ -195,32 +235,74 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		return Preview{}, err
 	}
 	defer prepared.release()
+	return previewPrepared(ctx, request, prepared)
+}
+
+// PreviewWindow compiles and queries one draft window through a single runtime
+// lease. The resolver may establish or load revision-scoped filter state from
+// the immutable compilation before any data query is executed.
+func (s *Service) PreviewWindow(ctx context.Context, request PreviewRequest, resolve WindowFilterResolver) (Preview, error) {
+	pageID := strings.TrimSpace(request.PageID)
+	if pageID == "" {
+		return Preview{}, fmt.Errorf("preview page id is required")
+	}
+	if request.Window == nil {
+		return Preview{}, fmt.Errorf("preview window request is required")
+	}
+	if resolve == nil {
+		return Preview{}, fmt.Errorf("preview window filter resolver is required")
+	}
+	prepared, err := s.prepareCompilation(ctx, CompileRequest{
+		ProjectID: request.ProjectID, ActorID: request.ActorID,
+		DashboardID: request.DashboardID, DraftID: request.DraftID,
+		ExpectedRevision: request.ExpectedRevision,
+	}, false, request.BestEffortVisuals)
+	if err != nil {
+		return Preview{}, err
+	}
+	defer prepared.release()
+	request.Filters, err = resolve(prepared.Compilation)
+	if err != nil {
+		return Preview{}, err
+	}
+	return previewPrepared(ctx, request, prepared)
+}
+
+func previewPrepared(ctx context.Context, request PreviewRequest, prepared preparedCompilation) (Preview, error) {
+	pageID := strings.TrimSpace(request.PageID)
 	// Preview executes directly on the leased runtime, bypassing the published
 	// metrics audit wrapper. Retain the authorized actor for scoped data/tile
 	// capabilities, which subsequent HTTP requests redeem as that principal.
-	metadata := dataquery.MetadataFromContext(ctx)
-	if metadata.PrincipalID == "" {
-		metadata.PrincipalID = strings.TrimSpace(request.ActorID)
-		ctx = dataquery.WithMetadata(ctx, metadata)
-	}
 	var patch dashboard.Patch
+	visualID := strings.TrimSpace(request.VisualID)
+	if visualID != "" {
+		visualRuntime, ok := prepared.runtime.(visualizationRuntime)
+		if !ok || visualRuntime == nil {
+			return Preview{}, fmt.Errorf("active runtime does not provide dashboard visual capability")
+		}
+		filters := request.Filters
+		if filters.CompiledState == nil {
+			filters = prepared.Definition.DefaultFilters()
+		}
+		if prepared.VisualErrors[visualID] != "" {
+			return targetedVisualPreview(prepared, filters, visualID, visualizationir.VisualizationEnvelope{}, nil, "query dashboard draft visual")
+		}
+		envelope, queryErr := visualRuntime.QueryVisualizationForDefinition(ctx, prepared.Definition, pageID, filters, visualID)
+		return targetedVisualPreview(prepared, filters, visualID, envelope, queryErr, "query dashboard draft visual")
+	}
 	if request.Window != nil {
 		windowRuntime, ok := prepared.runtime.(visualizationWindowRuntime)
 		if !ok || windowRuntime == nil {
 			return Preview{}, fmt.Errorf("active runtime does not provide dashboard visual window capability")
 		}
+		visualID := strings.TrimSpace(request.Window.VisualID)
+		if prepared.VisualErrors[visualID] != "" {
+			return targetedVisualPreview(prepared, request.Filters, visualID, visualizationir.VisualizationEnvelope{}, nil, "query dashboard draft visual window")
+		}
 		envelope, queryErr := windowRuntime.QueryVisualizationWindowForDefinition(ctx, prepared.Definition, pageID, request.Filters, *request.Window)
-		patch = dashboard.Patch{Filters: request.Filters, Visuals: map[string]visualizationir.VisualizationEnvelope{request.Window.VisualID: envelope}}
-		result := Preview{
-			Revision: prepared.Revision, Definition: prepared.Definition,
-			PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
-		}
-		if queryErr != nil {
-			return result, fmt.Errorf("query dashboard draft visual window: %w", queryErr)
-		}
-		return result, nil
+		return targetedVisualPreview(prepared, request.Filters, visualID, envelope, queryErr, "query dashboard draft visual window")
 	}
-	patch, err = prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
+	patch, err := prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
 	patch = normalizeWindowResetVersions(patch)
 	result := Preview{
 		Revision: prepared.Revision, Definition: prepared.Definition,
@@ -230,6 +312,48 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		return result, fmt.Errorf("query dashboard draft page: %w", err)
 	}
 	return result, nil
+}
+
+func targetedVisualPreview(prepared preparedCompilation, filters dashboard.Filters, visualID string, envelope visualizationir.VisualizationEnvelope, queryErr error, operation string) (Preview, error) {
+	result := Preview{
+		Revision: prepared.Revision, Definition: prepared.Definition,
+		PagePatch:        dashboard.Patch{Filters: filters, Visuals: map[string]visualizationir.VisualizationEnvelope{}},
+		SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
+	}
+	if strings.TrimSpace(prepared.VisualErrors[visualID]) != "" {
+		return result, nil
+	}
+	if queryErr == nil {
+		queryErr = visualizationir.ValidateEnvelope(envelope)
+	}
+	if queryErr != nil {
+		definition, ok := prepared.Definition.Visualizations[visualID]
+		if !ok {
+			return result, fmt.Errorf("%s: %w", operation, queryErr)
+		}
+		errorEnvelope, envelopeErr := visualizationruntime.ErrorEnvelopeFromDefinition(definition, queryErr, 0, 0)
+		if envelopeErr != nil {
+			return result, fmt.Errorf("%s: %w", operation, errors.Join(queryErr, envelopeErr))
+		}
+		result.PagePatch.Visuals[visualID] = errorEnvelope
+		if result.VisualErrors == nil {
+			result.VisualErrors = map[string]string{}
+		} else {
+			result.VisualErrors = cloneVisualErrors(result.VisualErrors)
+		}
+		result.VisualErrors[visualID] = queryErr.Error()
+		return result, nil
+	}
+	result.PagePatch.Visuals[visualID] = envelope
+	return result, nil
+}
+
+func cloneVisualErrors(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for visualID, message := range values {
+		cloned[visualID] = message
+	}
+	return cloned
 }
 
 func (s *Service) prepareCompilation(ctx context.Context, request CompileRequest, filterContractOnly, bestEffortVisuals bool) (preparedCompilation, error) {

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { startAdminPageTestFixture, stopAdminPageTestFixture, type AdminPageTestFixture } from './admin-page.fixture.test'
+import { startAdminPageTestFixture, stopAdminPageTestFixture, type AdminPageTestFixture } from './admin-page.test-fixture'
 
 let fixture: AdminPageTestFixture
 
@@ -24,7 +24,7 @@ test('profile avatar upload surfaces backend validation details', async () => {
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
         tokens: { items: [], capabilities: [] },
       } })
-      window.LeapViewCommand = { headers: () => ({}) }
+      window.LeapViewCommand = { headers: () => ({}), nonReplayableHeaders: () => ({}) }
     })
     const input = page.locator('lv-personal-settings').locator('input.avatar-input')
     await input.setInputFiles({ name: 'avatar.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg></svg>') })

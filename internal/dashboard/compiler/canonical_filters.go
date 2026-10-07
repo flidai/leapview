@@ -626,26 +626,13 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 			}
 			var datasets []string
 			if visualValidation != canonicalFilterVisualValidationNone {
-				if lowered, err := LowerDashboardQueryBinding(visual.Query, model, model.Name); err == nil {
-					datasets = append(datasets, loweredDashboardQueryDatasets(lowered)...)
-					if len(datasets) == 0 {
-						datasets, err = canonicalQueryDatasets(visual.Query, model)
-						if err != nil {
-							if visualValidation == canonicalFilterVisualValidationBestEffort {
-								continue
-							}
-							return fmt.Errorf("visual %q query: %w", component.Visual, err)
-						}
+				var resolveErr error
+				datasets, resolveErr = canonicalVisualQueryDatasets(visual.Query, model)
+				if resolveErr != nil {
+					if visualValidation == canonicalFilterVisualValidationBestEffort {
+						continue
 					}
-				} else {
-					var resolveErr error
-					datasets, resolveErr = canonicalQueryDatasets(visual.Query, model)
-					if resolveErr != nil {
-						if visualValidation == canonicalFilterVisualValidationBestEffort {
-							continue
-						}
-						return fmt.Errorf("visual %q query: %w", component.Visual, resolveErr)
-					}
+					return fmt.Errorf("visual %q query: %w", component.Visual, resolveErr)
 				}
 			}
 			for filterID, definition := range definitions {
@@ -1117,6 +1104,12 @@ func canonicalPredicates(controlType string, operators *[]document.DashboardFilt
 		for _, operator := range allowed {
 			allowedSet[operator] = struct{}{}
 		}
+		// Null checks are a separate expression kind and require explicit
+		// authoring. Ordinary text controls retain their comparison policy.
+		if controlType == "text" {
+			allowedSet[dashboardfilter.OperatorIsNull] = struct{}{}
+			allowedSet[dashboardfilter.OperatorIsNotNull] = struct{}{}
+		}
 		seen := map[dashboardfilter.Operator]struct{}{}
 		allowed = allowed[:0]
 		for _, authored := range *operators {
@@ -1134,7 +1127,25 @@ func canonicalPredicates(controlType string, operators *[]document.DashboardFilt
 			allowed = append(allowed, converted)
 		}
 	}
-	return []dashboardfilter.PredicatePolicy{{Kind: map[string]dashboardfilter.ExpressionKind{"singleSelect": dashboardfilter.ExpressionSet, "multiSelect": dashboardfilter.ExpressionSet, "text": dashboardfilter.ExpressionComparison}[controlType], Operators: allowed}}, nil
+	if controlType == "text" {
+		var comparisons, nullChecks []dashboardfilter.Operator
+		for _, operator := range allowed {
+			if operator == dashboardfilter.OperatorIsNull || operator == dashboardfilter.OperatorIsNotNull {
+				nullChecks = append(nullChecks, operator)
+			} else {
+				comparisons = append(comparisons, operator)
+			}
+		}
+		var policies []dashboardfilter.PredicatePolicy
+		if len(comparisons) > 0 {
+			policies = append(policies, dashboardfilter.PredicatePolicy{Kind: dashboardfilter.ExpressionComparison, Operators: comparisons})
+		}
+		if len(nullChecks) > 0 {
+			policies = append(policies, dashboardfilter.PredicatePolicy{Kind: dashboardfilter.ExpressionNullCheck, Operators: nullChecks})
+		}
+		return policies, nil
+	}
+	return []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionSet, Operators: allowed}}, nil
 }
 
 func canonicalOperator(value document.DashboardFilterOperator) (dashboardfilter.Operator, error) {

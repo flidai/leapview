@@ -2,8 +2,10 @@ package composectl
 
 import (
 	"context"
+	"fmt"
 	"os"
 
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/spf13/cobra"
 )
@@ -22,16 +24,19 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	root.SetOut(controller.stdout)
 	root.SetErr(controller.stderr)
 
-	versionJSON := false
+	versionFormat := "text"
 	version := &cobra.Command{
 		Use:   "version",
 		Short: "Report the leapviewctl build identity",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return buildinfo.Write(command.OutOrStdout(), "leapviewctl", buildinfo.Current(), versionJSON)
+			if versionFormat != "text" && versionFormat != "json" {
+				return cliapi.NewUsageError(fmt.Errorf("version format must be text or json"))
+			}
+			return buildinfo.Write(command.OutOrStdout(), "leapviewctl", buildinfo.Current(), versionFormat == "json")
 		},
 	}
-	version.Flags().BoolVar(&versionJSON, "json", false, "emit machine-readable JSON")
+	version.Flags().StringVar(&versionFormat, "format", versionFormat, "output format: text or json")
 
 	initOptions := InitOptions{Environment: defaultEnvironment}
 	initialize := &cobra.Command{
@@ -54,6 +59,14 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return controller.Start(ctx)
+		},
+	}
+	activateFirstInstall := &cobra.Command{
+		Use:   "activate-first-install",
+		Short: "Enable the public first-install proxy after application readiness",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return controller.ActivateFirstInstall(ctx)
 		},
 	}
 	status := &cobra.Command{
@@ -120,6 +133,18 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyInstalled.Flags().Int64Var(&installedQualification.MinFreeBytes, "minimum-free-bytes", 0, "local-only managed-data free-space override")
 	qualifyInstalled.Flags().BoolVar(&installedQualification.MultiNodeProcess, "multi-node-process", false, "qualify two independent application processes against one native PostgreSQL authority")
 
+	firstPublicationQualification := QualificationFirstPublicationOptions{}
+	qualifyFirstPublication := &cobra.Command{
+		Use:   "first-publication",
+		Short: "Qualify the first protected publication on this fresh installed host",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return controller.QualifyFirstPublication(ctx, firstPublicationQualification)
+		},
+	}
+	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.EvidenceDir, "evidence-dir", "", "new private directory for first-publication evidence")
+	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.AssetsRoot, "assets-root", "", "protected qualification asset directory transferred by the verifier")
+
 	qualify := &cobra.Command{
 		Use:   "qualify",
 		Short: "Run typed production release qualification",
@@ -143,8 +168,8 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.ProjectID, "project-id", "", "target-bound Project identity")
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.SourceRevision, "source-revision", "", "staged source revision")
 
-	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyClientWorker)
+	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyFirstPublication, qualifyClientWorker)
 
-	root.AddCommand(version, initialize, start, status, logs, firstLogin, qualify)
+	root.AddCommand(version, initialize, start, activateFirstInstall, status, logs, firstLogin, qualify)
 	return root
 }

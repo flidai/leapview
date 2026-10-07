@@ -1,0 +1,607 @@
+name: CI / Nix development
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'package.json'
+      - 'bun.lock'
+      - 'Taskfile.yml'
+      - 'scripts/check_nix_development.mjs'
+      - 'scripts/develop.sh'
+      - 'desktop/**'
+      - 'scripts/export_nix_ci_environment.py'
+      - 'scripts/measure_orchestration_cache.py'
+      - 'scripts/tests/test_orchestration_cache.py'
+      - '.github/workflows/orchestration-cache.yml'
+      - 'scripts/nix_ci_contract.test.ts'
+      - 'scripts/nix_compose_candidate_contract.test.ts'
+      - 'scripts/tests/test_nix_ci_environment.py'
+      - '.github/actions/setup-ci/**'
+      - 'scripts/check_nix_image.sh'
+      - 'scripts/check_nix_cli_compatibility.py'
+      - 'scripts/tests/test_nix_cli_compatibility.py'
+      - 'scripts/nix_archive_go_evidence.py'
+      - 'scripts/tests/test_nix_archive_go_evidence.py'
+      - 'scripts/tests/test_nix_cli_go_evidence.py'
+      - 'internal/app/tools/securitydependencies/**'
+      - 'scripts/testdata/nix/**'
+      - 'scripts/check_nix_runtime_security.py'
+      - 'scripts/tests/test_nix_runtime_security.py'
+      - 'scripts/check_nix_site_image.py'
+      - 'scripts/tests/test_nix_site_image.py'
+      - '.github/workflows/nix-site-candidate.yml'
+      - 'scripts/nix_candidate_manifest.py'
+      - 'scripts/tests/test_nix_candidate_manifest.py'
+      - 'scripts/nix_desktop_qualification.py'
+      - 'scripts/tests/test_nix_desktop_qualification.py'
+      - 'scripts/nix_oci_content.py'
+      - 'scripts/tests/test_nix_oci_content.py'
+      - 'scripts/nix_registry_content.py'
+      - 'scripts/tests/test_nix_registry_content.py'
+      - 'scripts/nix_signed_evidence.py'
+      - 'scripts/tests/test_nix_signed_evidence.py'
+      - 'scripts/nix_candidate_publication.py'
+      - 'scripts/tests/test_nix_candidate_publication.py'
+      - 'scripts/nix_candidate_artifacts.py'
+      - 'scripts/tests/test_nix_candidate_artifacts.py'
+      - 'scripts/nix_candidate_authorization.py'
+      - 'scripts/tests/test_nix_candidate_authorization.py'
+      - '.github/workflows/nix-desktop-candidate.yml'
+      - '.github/workflows/nix-candidate.yml'
+      - 'scripts/nix_cli_publication.py'
+      - 'scripts/tests/test_nix_cli_publication.py'
+      - '.github/workflows/nix-cli-candidate.yml'
+      - 'scripts/package_compose_bundle.py'
+      - 'scripts/tests/test_package_compose_bundle.py'
+      - 'scripts/nix_compose_qualification.py'
+      - 'scripts/tests/test_nix_compose_qualification.py'
+      - 'scripts/nix_compose_controller_evidence.py'
+      - 'scripts/tests/test_nix_compose_controller_evidence.py'
+      - 'scripts/nix_compose_host_guest.py'
+      - 'scripts/tests/test_nix_compose_host_guest.py'
+      - 'scripts/nix_compose_guest_launcher.py'
+      - 'scripts/tests/test_nix_compose_guest_launcher.py'
+      - '.github/workflows/nix-compose-candidate.yml'
+      - 'scripts/generate_build_sources.sh'
+      - 'scripts/time_build_phase.sh'
+      - 'pkg/apigen/**'
+      - 'scripts/ensure_playwright*'
+      - '.github/workflows/nix-development.yml'
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: Validation lane (native discovery lanes require an explicit dispatch)
+        type: choice
+        default: all
+        options: [all, development, image, native-application, native-site, native-desktop]
+      contract:
+        description: Existing development contract to qualify (image lane is independent)
+        type: choice
+        default: pr
+        options: [pr, full, nightly]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-development-${{ github.ref }}-${{ inputs.checks || 'all' }}
+  cancel-in-progress: true
+
+jobs:
+  native-desktop:
+    name: Native Desktop .deb qualification on Ubuntu 22.04 x64
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-desktop' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 160
+    env:
+      LEAPVIEW_DESKTOP_DISTRIBUTION: preview
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: 3.13.14
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+            sandbox-fallback = false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install the native GUI test host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb xauth xdg-utils
+      - name: Build the native Linux x64 Desktop package
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          nix build --no-update-lock-file .#leapview-desktop-linux-x64 --out-link result-desktop -L
+          mkdir -p .tmp/native-desktop/evidence
+          cp --dereference result-desktop/leapview-desktop-linux-x64.deb .tmp/native-desktop/leapview-desktop-linux-x64.deb
+      - name: Qualify the unchanged native package using this checkout's tools
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/nix_desktop_qualification.py qualify \
+            --deb .tmp/native-desktop/leapview-desktop-linux-x64.deb \
+            --source-root . --verifier-root . --source-revision "$SOURCE_REVISION" \
+            --evidence-dir .tmp/native-desktop/evidence
+      - name: Retain native Desktop candidate and qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-desktop-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+          path: .tmp/native-desktop/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  native-site:
+    name: Native site image and runtime (${{ matrix.arch }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-site' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build the native standalone site image
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$MACHINE"
+          nix build --no-update-lock-file .#leapview-site-image --out-link result-site-image -L
+          mkdir -p .tmp/native-site
+          cp --dereference result-site-image .tmp/native-site/image.tar
+      - name: Exercise the exact site image with a read-only root
+        run: |
+          python3 scripts/check_nix_site_image.py --archive .tmp/native-site/image.tar \
+            --source-root "$PWD" --evidence-dir .tmp/native-site
+      - name: Retain the image and native runtime receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-site-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/native-site/
+          if-no-files-found: error
+          retention-days: 14
+
+  native-application:
+    name: Native application dependency discovery (${{ matrix.arch }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-application' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build native application tools and derive signed extension supply
+        env:
+          ARCH: ${{ matrix.arch }}
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$MACHINE"
+          mkdir -p .tmp/native-application
+          nix build --no-update-lock-file .#leapview-tools --no-link --json -L \
+            > .tmp/native-application/build.json
+          tools=$(python3 -c 'import json; print(json.load(open(".tmp/native-application/build.json"))[0]["outputs"]["tools"])')
+          # Discovery executes native LOAD/signature verification, not a cross
+          # build or an unverified download. It grants no release admission.
+          "$tools/bin/extensionsupply" --out "$PWD/.tmp/native-application/extensions"
+          find .tmp/native-application/extensions -type d -exec chmod 0755 {} +
+          find .tmp/native-application/extensions -type f -exec chmod 0644 {} +
+          nix hash path --type sha256 --sri .tmp/native-application/extensions \
+            > .tmp/native-application/extensions.nar-sha256
+          TOOLS="$tools" python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path('.tmp/native-application')
+          tool = pathlib.Path(os.environ['TOOLS']) / 'bin/extensionsupply'
+          receipt = {
+              'schemaVersion': 1, 'sourceRevision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'architecture': os.environ['ARCH'], 'machine': os.environ['MACHINE'],
+              'nativeExecution': True, 'releaseAdmission': False,
+              'extensionSupplyToolSHA256': hashlib.file_digest(tool.open('rb'), 'sha256').hexdigest(),
+              'extensionSupplyNARHash': (root / 'extensions.nar-sha256').read_text().strip(),
+          }
+          (root / 'discovery.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+      - name: Retain native derivation evidence and exact extension bytes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-application-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/native-application/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  cli-build:
+    name: Static Linux controller candidates
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install locked Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build both controller architectures without undeclared network access
+        run: |
+          nix build --no-update-lock-file .#leapviewctl-linux-amd64 --out-link result-cli-amd64 -L
+          # Nix appends -arm64 for the selected non-default output.
+          nix build --no-update-lock-file .#leapviewctl-linux-arm64 --out-link result-cli -L
+          nix build --no-update-lock-file .#leapviewctl-compose-linux-amd64 --out-link result-compose-cli-amd64 -L
+          # Nix appends -arm64 for the selected non-default output.
+          nix build --no-update-lock-file .#leapviewctl-compose-linux-arm64 --out-link result-compose-cli -L
+          mkdir -p cli-candidates/amd64 cli-candidates/arm64
+          for arch in amd64 arm64; do
+            cp result-cli-$arch/{leapviewctl-linux-$arch.tar.gz,archive-identity.json,static-compatibility.json} cli-candidates/$arch/
+          done
+          mkdir -p compose-candidates/amd64/bin compose-candidates/arm64/bin
+          for arch in amd64 arm64; do
+            cp result-compose-cli-$arch/{leapviewctl-linux-$arch.tar.gz,archive-identity.json,controller-build-identity.json,static-compatibility.json} compose-candidates/$arch/
+            cp result-compose-cli-$arch/bin/leapviewctl compose-candidates/$arch/bin/
+          done
+      - name: Retain immutable candidate archives
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cli-candidates/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Retain separate Compose controller candidates and static reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-compose-cli-candidates-${{ github.run_id }}-${{ github.run_attempt }}
+          path: compose-candidates/
+          retention-days: 14
+          if-no-files-found: error
+
+  cli-security:
+    name: Exact Go controller evidence (${{ matrix.arch }})
+    needs: cli-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install locked scanner tools
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Retrieve the exact candidate artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.cli-build.outputs.artifact_id }}
+          merge-multiple: true
+          path: cli-candidates
+      - name: Build the read-only qualification verifier
+        run: |
+          nix develop --no-update-lock-file .#runtime-security -c \
+            go build -o "$RUNNER_TEMP/go-binary-verifier" ./internal/app/tools/securitydependencies
+      - name: Scan and reverify the exact archive without executing its controller
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/nix-cli-go-evidence
+          archive="cli-candidates/$ARCH/leapviewctl-linux-$ARCH.tar.gz"
+          identity="cli-candidates/$ARCH/archive-identity.json"
+          nix develop --no-update-lock-file .#runtime-security -c \
+            python3 scripts/nix_archive_go_evidence.py "$archive" --kind cli-archive \
+            --source-root . --source-revision "$(git rev-parse HEAD)" --archive-identity "$identity" \
+            --evidence-dir .tmp/nix-cli-go-evidence/go --binary-verifier "$RUNNER_TEMP/go-binary-verifier"
+          for operation in --output --verify; do
+            nix develop --no-update-lock-file .#runtime-security -c \
+              python3 scripts/nix_candidate_manifest.py "$archive" --kind cli-archive \
+              --archive-identity "$identity" --go-evidence .tmp/nix-cli-go-evidence/go \
+              --binary-verifier "$RUNNER_TEMP/go-binary-verifier" \
+              "$operation" .tmp/nix-cli-go-evidence/candidate-manifest.json
+          done
+      - name: Retain raw Go reports and diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-cli-go-evidence-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/nix-cli-go-evidence/
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
+  cli-compatibility:
+    name: Linux host controller matrix (${{ matrix.arch }})
+    needs: cli-build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up qualification tools
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: 'false'
+      - name: Retrieve the exact candidate artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.cli-build.outputs.artifact_id }}
+          merge-multiple: true
+          path: cli-candidates
+      - name: Qualify the exact controller on the independent Linux host matrix
+        env:
+          ARCH: ${{ matrix.arch }}
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$MACHINE"
+          python3 scripts/nix_cli_publication.py probe-hosts \
+            --archive "cli-candidates/$ARCH/leapviewctl-linux-$ARCH.tar.gz" \
+            --archive-identity "cli-candidates/$ARCH/archive-identity.json" \
+            --source-root . --source-revision "$(git rev-parse HEAD)" \
+            --evidence-dir .tmp/nix-cli-evidence
+      - name: Retain hash-bound compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-cli-compatibility-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/nix-cli-evidence/
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
+  development:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'development') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Check the pinned toolchain and native compiler
+        run: nix flake check --no-update-lock-file -L
+      - name: Check the native ARM runtime-security shell
+        run: test "$(nix eval --raw --no-update-lock-file .#devShells.aarch64-linux.runtime-security.system)" = aarch64-linux
+      - name: Check both native host-verifier shells
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          required = {
+              'Go': lambda name: name.startswith('go-'),
+              'Bun': lambda name: name.startswith('bun-'),
+              'sqlc Go wrapper': lambda name: name == 'go1.26.7',
+              'Node.js': lambda name: name.startswith('nodejs-'),
+              'go-task': lambda name: name.startswith('go-task-'),
+          }
+          for system in ('x86_64-linux', 'aarch64-linux'):
+              shell = f'.#devShells.{system}.host-verifier'
+              selected = subprocess.check_output(
+                  ['nix', 'eval', '--raw', '--no-update-lock-file', f'{shell}.system'], text=True
+              ).strip()
+              if selected != system:
+                  raise SystemExit(f'{shell} resolves to {selected}, expected {system}')
+              inputs = json.loads(subprocess.check_output(
+                  ['nix', 'eval', '--json', '--no-update-lock-file', f'{shell}.nativeBuildInputs'], text=True
+              ))
+              names = [pathlib.Path(path).name.split('-', 1)[1] for path in inputs]
+              missing = [label for label, matches in required.items() if not any(matches(name) for name in names)]
+              if missing:
+                  raise SystemExit(f'{shell} is missing required native tools: {", ".join(missing)}')
+          PY
+      - name: Check formatting
+        run: nix fmt -- --check flake.nix nix/*.nix
+      - name: Exercise the pinned browser and sqlc toolchain
+        run: nix develop --no-update-lock-file -c task nix:smoke
+      - name: Prepare generated and embedded assets for the fresh checkout
+        run: nix develop --no-update-lock-file -c task ci:prepare
+      - name: Set up Terraform for deployment validation
+        if: inputs.contract == 'full' || inputs.contract == 'nightly'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+      - name: Run the selected existing contract with the same development environment
+        env:
+          CONTRACT: ${{ inputs.contract || 'pr' }}
+        run: |
+          case "$CONTRACT" in
+            pr) nix develop --no-update-lock-file -c task ci ;;
+            full) nix develop --no-update-lock-file -c task ci:full ;;
+            nightly) nix develop --no-update-lock-file -c task ci:nightly ;;
+            *) echo "unknown Nix qualification contract: $CONTRACT" >&2; exit 1 ;;
+          esac
+
+  image:
+    name: Application and image
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'image') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build application and container without undeclared network access
+        run: |
+          nix build --no-update-lock-file .#leapview --out-link result-app -L
+          nix build --no-update-lock-file .#leapview-image --out-link result-image -L
+      - name: Qualify the exact image with PostgreSQL and browser workflows
+        run: nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh result-image result-app
+      - name: Test runtime inventory and vulnerability coverage guards
+        run: |
+          python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_candidate_artifacts.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_candidate_authorization.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
+          python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+          python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
+          nix develop --no-update-lock-file .#runtime-security -c \
+            env LEAPVIEW_TEST_NIX_CLI_RUNTIME=1 python3 -m unittest discover -s scripts/tests -p test_nix_cli_publication.py
+          nix develop --no-update-lock-file .#runtime-security -c \
+            env LEAPVIEW_TEST_NIX_REGISTRY=1 python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
+          nix develop --no-update-lock-file .#runtime-security -c \
+            env LEAPVIEW_TEST_NIX_REGISTRY=1 python3 -m unittest discover -s scripts/tests -p test_nix_candidate_publication.py
+      - name: Enforce assessed Nix runtime findings (not release clearance)
+        run: >-
+          nix develop --no-update-lock-file .#runtime-security -c
+          python3 scripts/check_nix_runtime_security.py result-image
+          --kind application-image --source-revision "$(git rev-parse HEAD)"
+          --evidence-dir .tmp/nix-runtime-security
+      - name: Bind exact candidate identity and enforced runtime evidence
+        run: |
+          python3 scripts/nix_candidate_manifest.py result-image --kind application-image \
+            --runtime-evidence .tmp/nix-runtime-security \
+            --output .tmp/nix-runtime-security/candidate-manifest.json
+          python3 scripts/nix_candidate_manifest.py result-image --kind application-image \
+            --runtime-evidence .tmp/nix-runtime-security \
+            --verify .tmp/nix-runtime-security/candidate-manifest.json
+      - name: Bind candidate content to the converted OCI manifest (not release clearance)
+        run: |
+          python3 scripts/nix_oci_content.py export --layout .tmp/nix-exported-oci \
+            --platform linux/amd64 --kind application-image \
+            --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security
+          nix develop --no-update-lock-file .#runtime-security -c \
+            skopeo copy --preserve-digests oci:.tmp/nix-exported-oci:candidate oci:.tmp/nix-candidate-oci:candidate
+          digest=$(python3 -c 'import json; print(json.load(open(".tmp/nix-exported-oci/index.json"))["manifests"][0]["digest"])')
+          python3 scripts/nix_oci_content.py bind --layout .tmp/nix-candidate-oci \
+            --manifest-digest "$digest" --platform linux/amd64 --kind application-image \
+            --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security \
+            --output .tmp/nix-runtime-security/oci-content-binding.json
+          python3 scripts/nix_oci_content.py bind --layout .tmp/nix-candidate-oci \
+            --manifest-digest "$digest" --platform linux/amd64 --kind application-image \
+            --candidate result-image .tmp/nix-runtime-security/candidate-manifest.json .tmp/nix-runtime-security \
+            --verify .tmp/nix-runtime-security/oci-content-binding.json
+      - name: Retain runtime inventory, matching controls and unresolved findings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-runtime-security-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          include-hidden-files: true
+          path: |
+            .tmp/nix-runtime-security/summary.json
+            .tmp/nix-runtime-security/candidate-manifest.json
+            .tmp/nix-runtime-security/oci-content-binding.json
+            .tmp/nix-runtime-security/sbom.syft.json
+            .tmp/nix-runtime-security/sbom.spdx.json
+            .tmp/nix-runtime-security/runtime.syft.json
+            .tmp/nix-runtime-security/runtime.grype.json
+            .tmp/nix-runtime-security/runtime.assessed.grype.json
+            .tmp/nix-runtime-security/assessments.vex.json
+            .tmp/nix-runtime-security/controls.synthetic.syft.json
+            .tmp/nix-runtime-security/controls.grype.json
+            .tmp/nix-runtime-security/syft-config.json
+            .tmp/nix-runtime-security/grype-config.json
+      - name: Retain bounded image qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-image-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          include-hidden-files: true
+          path: |
+            .tmp/nix-image-qualification/evidence/image-qualification-report.json
+            .tmp/nix-image-qualification/evidence/compose.log

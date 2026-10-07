@@ -109,7 +109,7 @@ var (
 		"govulncheck":       {"go-module": true},
 		"bun-audit":         {"js-package": true, "js-lock": true},
 		"npm-audit":         {"js-package": true, "js-lock": true},
-		"trivy":             {"terraform-root": true, "dockerfile": true, "github-actions": true},
+		"trivy":             {"terraform-root": true, "dockerfile": true, "github-actions": true, "ruby-lock": true},
 		"action-pin-policy": {"github-actions": true},
 		"actionlint":        {"github-actions": true},
 	}
@@ -118,14 +118,8 @@ var (
 // ValidateRepository validates all three repository-owned contracts and
 // Dependabot coverage. now is injectable to make expiry checks hermetic.
 func ValidateRepository(root string, now time.Time) error {
-	if strings.TrimSpace(root) == "" {
-		return errors.New("repository root is required")
-	}
-	coverage, err := readYAML[Coverage](filepath.Join(root, coverageFile))
+	coverage, err := LoadValidatedCoverage(root)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", coverageFile, err)
-	}
-	if err := validateCoverage(root, coverage); err != nil {
 		return err
 	}
 	exceptions, err := readYAML[Exceptions](filepath.Join(root, exceptionsFile))
@@ -146,6 +140,22 @@ func ValidateRepository(root string, now time.Time) error {
 		return err
 	}
 	return nil
+}
+
+// LoadValidatedCoverage returns the inventory only after checking it against
+// discovered maintained surfaces. Build/scanner consumers share this authority.
+func LoadValidatedCoverage(root string) (Coverage, error) {
+	if strings.TrimSpace(root) == "" {
+		return Coverage{}, errors.New("repository root is required")
+	}
+	coverage, err := readYAML[Coverage](filepath.Join(root, coverageFile))
+	if err != nil {
+		return Coverage{}, fmt.Errorf("read %s: %w", coverageFile, err)
+	}
+	if err := validateCoverage(root, coverage); err != nil {
+		return Coverage{}, err
+	}
+	return coverage, nil
 }
 
 // LoadValidatedExceptions validates the complete repository security contract
@@ -403,6 +413,7 @@ func validateSurfaceUpdater(surface Surface, where string) error {
 		"go-module":      "gomod",
 		"js-package":     "npm",
 		"js-lock":        "npm",
+		"ruby-lock":      "bundler",
 		"terraform-root": "terraform",
 		"dockerfile":     "docker",
 		"github-actions": "github-actions",
@@ -438,7 +449,7 @@ func validateUpdater(updater Updater, where string) error {
 		return fmt.Errorf("%s updater directory must be a normalized absolute repository path", where)
 	}
 	switch updater.Ecosystem {
-	case "gomod", "npm", "docker", "terraform", "github-actions":
+	case "gomod", "npm", "docker", "terraform", "github-actions", "bundler":
 	default:
 		return fmt.Errorf("%s has unsupported updater ecosystem %q", where, updater.Ecosystem)
 	}
@@ -632,6 +643,8 @@ func discoverSurfaces(root string) (map[string]bool, error) {
 		}
 		base := filepath.Base(rel)
 		switch {
+		case base == "Gemfile.lock":
+			discovered[coverageKey(rel, "ruby-lock")] = true
 		case base == "go.mod":
 			discovered[coverageKey(rel, "go-module")] = true
 		case base == "package.json":
@@ -729,7 +742,7 @@ func normalizeRepoPath(path string) (string, error) {
 
 func isKnownKind(kind string) bool {
 	switch kind {
-	case "go-module", "js-package", "js-lock", "terraform-root", "dockerfile", "github-actions":
+	case "go-module", "js-package", "js-lock", "ruby-lock", "terraform-root", "dockerfile", "github-actions":
 		return true
 	default:
 		return false

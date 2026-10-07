@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -15,17 +16,18 @@ import (
 )
 
 type fakeLocalSessionAuthority struct {
-	profile             cliapi.TargetProfile
-	profileErr          error
-	resolveErr          error
-	loginRequest        accesscli.LoginRequest
-	loginCalls          int
-	notified            bool
-	reboundOrigin       string
-	deletedProfile      *cliapi.TargetProfile
-	deletedAccount      string
-	deleteCredentialErr error
-	deleteProfileErr    error
+	profile              cliapi.TargetProfile
+	profileErr           error
+	resolveErr           error
+	loginRequest         accesscli.LoginRequest
+	loginCalls           int
+	notified             bool
+	loginContextCanceled bool
+	reboundOrigin        string
+	deletedProfile       *cliapi.TargetProfile
+	deletedAccount       string
+	deleteCredentialErr  error
+	deleteProfileErr     error
 }
 
 func (authority *fakeLocalSessionAuthority) Profile(string) (cliapi.TargetProfile, error) {
@@ -43,13 +45,18 @@ func (authority *fakeLocalSessionAuthority) RebindLoopbackOrigin(_ string, expec
 	return nil
 }
 
-func (authority *fakeLocalSessionAuthority) Login(_ context.Context, request accesscli.LoginRequest, notify func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error) {
+func (authority *fakeLocalSessionAuthority) Login(ctx context.Context, request accesscli.LoginRequest, notify func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error) {
 	authority.loginCalls++
 	authority.loginRequest = request
 	notify(accesscli.DeviceChallenge{UserCode: "ABCD-EFGH", VerificationURI: request.Origin + "/device"})
 	authority.notified = true
+	authority.loginContextCanceled = ctx.Err() != nil
 	return accesscli.LoginResult{SessionID: "session-local"}, nil
 }
+
+type localSessionFailingWriter struct{ err error }
+
+func (writer localSessionFailingWriter) Write([]byte) (int, error) { return 0, writer.err }
 
 func (authority *fakeLocalSessionAuthority) DeleteProfile(_ string, expected cliapi.TargetProfile) error {
 	if authority.deleteProfileErr != nil {
@@ -79,8 +86,18 @@ func TestEstablishLocalAuthoringSessionsUsesNormalScopedDeviceAuthority(t *testi
 	require.Equal(t, request.InstanceID, authority.loginRequest.InstanceID)
 	require.Equal(t, request.ProjectID, authority.loginRequest.ProjectID)
 	require.False(t, authority.loginRequest.Headless)
-	require.Equal(t, []string{"PROJECT_ADMIN", "RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH", "RESOURCE_MANAGE"}, authority.loginRequest.Capabilities)
+	require.Equal(t, access.DefaultAuthoringActions(), authority.loginRequest.Actions)
 	require.Contains(t, output.String(), "ABCD-EFGH")
+}
+
+func TestEstablishLocalAuthoringSessionsCancelsOnChallengeWriteFailure(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	authority := &fakeLocalSessionAuthority{profileErr: cliapi.ErrProfileNotFound, resolveErr: errors.New("not signed in")}
+	wantErr := errors.New("stderr unavailable")
+	_, err := establishLocalAuthoringSessionsWith(t.Context(), authority, request, localSessionFailingWriter{err: wantErr})
+	require.ErrorIs(t, err, wantErr)
+	require.True(t, authority.loginContextCanceled)
+	require.Equal(t, 1, authority.loginCalls)
 }
 
 func TestEstablishLocalAuthoringSessionsReusesExactCredential(t *testing.T) {

@@ -2,7 +2,9 @@
 package siteassets
 
 import (
+	"bytes"
 	"embed"
+	"html/template"
 	"io/fs"
 )
 
@@ -17,9 +19,42 @@ var files embed.FS
 // footer while the visual sections remain easy to edit as HTML.
 //
 //go:embed home/home.html
-var homepage string
+var homepageTemplate string
 
-// Homepage returns the authored landing-page sections.
+var homepage = renderHomepage()
+
+// Render the bundled examples once, with HTML escaping, so reading a sample
+// never depends on a second network request. The first file is visible in SSR;
+// inert templates make every other tab available to progressive enhancement.
+func renderHomepage() string {
+	type projectSource struct{ Key, Source string }
+	sources := make([]projectSource, 0, 6)
+	for _, file := range []struct{ key, path string }{
+		{"connection", "connections/olist.yaml"},
+		{"source", "sources/olist.payments.yaml"},
+		{"model", "models/sales_orders.yaml"},
+		{"semantics", "semantic-models/sales.yaml"},
+		{"pipeline", "pipelines/sales-refresh.yaml"},
+		{"dashboard", "dashboards/executive-sales.yaml"},
+	} {
+		source, err := files.ReadFile("static/home/project-files/" + file.path)
+		if err != nil {
+			panic(err)
+		}
+		sources = append(sources, projectSource{file.key, string(source)})
+	}
+	var rendered bytes.Buffer
+	tmpl := template.Must(template.New("homepage").Parse(homepageTemplate))
+	if err := tmpl.Execute(&rendered, struct {
+		InitialSource  string
+		ProjectSources []projectSource
+	}{sources[0].Source, sources}); err != nil {
+		panic(err)
+	}
+	return rendered.String()
+}
+
+// Homepage returns the landing-page sections with embedded project sources.
 func Homepage() string { return homepage }
 
 // Static returns the embedded contents of site/static.

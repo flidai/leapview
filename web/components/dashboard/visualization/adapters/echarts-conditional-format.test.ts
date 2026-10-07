@@ -8,7 +8,7 @@ import { cartesianFixture, proportionalFixture } from './echarts-test-fixtures'
 
 test('ECharts keeps point conditional cues visible for null, first-match, and default outcomes', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'health-points', rendererID: 'echarts', specRevision: 'sha256:health-points', dataRevision: 1,
+    schemaVersion: 14, visualID: 'health-points', rendererID: 'echarts', specRevision: 'sha256:health-points', dataRevision: 1,
     spec: {
       kind: 'point', title: 'Health points', datasets: [{ id: 'primary', fields: [
         { id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Label' },

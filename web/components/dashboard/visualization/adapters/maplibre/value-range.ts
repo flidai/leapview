@@ -1,4 +1,5 @@
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../../generated/visualization'
+import { parseDecimal } from '../../decimal'
 
 export type MapValueRange = Readonly<{
   minimum: number
@@ -20,8 +21,8 @@ export function mapValueRange(
     const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === field.dataset)
     const index = dataset?.columns.indexOf(field.field) ?? -1
     if (dataset && index >= 0) for (const row of dataset.rows) {
-      const value = Number(row[index])
-      if (Number.isFinite(value)) values.push(value)
+      const value = numericMapValue(row[index])
+      if (value !== undefined) values.push(value)
     }
   } else if (envelope.dataState.kind === 'spatial_tiled' && envelope.dataState.schema.id === field.dataset) {
     for (const domain of [...envelope.dataState.rawDomains, ...envelope.dataState.aggregateDomains]) {
@@ -34,12 +35,18 @@ export function mapValueRange(
   const minimum = Math.min(...values), maximum = Math.max(...values)
   if (minimum === maximum) return undefined
   const definition = envelope.spec.datasets.find((candidate) => candidate.id === field.dataset)?.fields.find((candidate) => candidate.id === field.field)
-  const step = definition?.dataType === 'integer' ? 1 : Math.max((maximum - minimum) / 100, Number.EPSILON)
+  const resolution = Number.EPSILON * Math.max(1, Math.abs(minimum), Math.abs(maximum))
+  const step = Math.max(definition?.dataType === 'integer' ? 1 : (maximum - minimum) / 100, resolution)
+  // An untouched full range means "all values", including a replacement data
+  // domain. Retain a user restriction only when it overlaps the new domain;
+  // clamping a disjoint range to one endpoint would silently hide all peers.
+  const restricted = previous && (previous.selectedMinimum > previous.minimum || previous.selectedMaximum < previous.maximum)
+    && previous.selectedMinimum <= maximum && previous.selectedMaximum >= minimum
   return {
     minimum,
     maximum,
-    selectedMinimum: clamp(previous?.selectedMinimum ?? minimum, minimum, maximum),
-    selectedMaximum: clamp(previous?.selectedMaximum ?? maximum, minimum, maximum),
+    selectedMinimum: clamp(restricted ? previous.selectedMinimum : minimum, minimum, maximum),
+    selectedMaximum: clamp(restricted ? previous.selectedMaximum : maximum, minimum, maximum),
     step,
   }
 }
@@ -52,7 +59,11 @@ export function withMapValueSelection(range: MapValueRange, selectedMinimum: num
 
 export function mapValueFilterExpression(property: string, range: MapValueRange): unknown[] | undefined {
   if (range.selectedMinimum <= range.minimum && range.selectedMaximum >= range.maximum) return undefined
-  return ['all', ['has', property], ['>=', ['get', property], range.selectedMinimum], ['<=', ['get', property], range.selectedMaximum]]
+  // Public decimals may be exact strings. Coerce only the rendering/filter
+  // expression, keeping source scalars intact for tooltips and commands.
+  const numeric = ['to-number', ['get', property]]
+  return ['case', ['in', ['typeof', ['get', property]], ['literal', ['number', 'string']]],
+    ['all', ['>=', numeric, range.selectedMinimum], ['<=', numeric, range.selectedMaximum]], false]
 }
 
 export function mapValueFilteredEnvelope(
@@ -82,8 +93,8 @@ export function mapValueFilteredEnvelope(
         return {
           ...dataset,
           rows: dataset.rows.filter((row) => datasetFilters.every(({ index, range }) => {
-            const value = Number(row[index])
-            return Number.isFinite(value) && value >= range.selectedMinimum && value <= range.selectedMaximum
+            const value = numericMapValue(row[index])
+            return value !== undefined && value >= range.selectedMinimum && value <= range.selectedMaximum
           })),
         }
       }),
@@ -109,4 +120,10 @@ export function formatMapRangeValue(value: number): string {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value))
+}
+
+function numericMapValue(value: unknown): number | undefined {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !parseDecimal(value))) return undefined
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : undefined
 }

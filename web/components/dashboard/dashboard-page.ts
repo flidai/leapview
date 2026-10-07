@@ -910,7 +910,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       activeId: page.pageId,
       backAction: this.presentation === 'app' ? { label: 'Back', href: '/', title: 'Back to dashboards' } : undefined,
       searchable: this.presentation === 'app',
-      searchPlaceholder: 'Search pages',
+      searchLabel: 'Search pages',
+      searchPlaceholder: 'Search',
       items: page.pages.map((item: DashboardPageNavSignal) => ({
         id: item.id,
         title: item.title,
@@ -1162,6 +1163,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         return html`<lv-visualization-host
           defer-mount
           .envelope=${visual}
+          .exploreHref=${this.presentation === 'app' && component.visual ? this.visualSignals[component.visual]?.exploreHref : undefined}
           .openVisualFocus=${this.openVisualFocus}
         >${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
       }
@@ -1620,6 +1622,15 @@ class DashboardVisualFrame extends LitElement {
       overflow: visible;
     }
 
+    :host([data-visual-options-open]),
+    :host([data-visual-options-open]) .frame {
+      overflow: visible;
+    }
+
+    :host([data-visual-options-open]) {
+      z-index: var(--zIndex-dropdown, 100);
+    }
+
     ::slotted(*) {
       display: block;
       width: 100%;
@@ -1630,10 +1641,14 @@ class DashboardVisualFrame extends LitElement {
 
   render() {
     return html`
-      <article class="frame">
+      <article class="frame" @lv-visual-options-toggle=${this.handleVisualOptionsToggle}>
         <slot></slot>
       </article>
     `
+  }
+
+  private handleVisualOptionsToggle = (event: CustomEvent<{ open?: boolean }>): void => {
+    this.toggleAttribute('data-visual-options-open', event.detail?.open === true)
   }
 }
 

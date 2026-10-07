@@ -19,6 +19,7 @@ import (
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
+	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 )
 
 // Authorities contains the already-composed sibling capability authorities
@@ -64,8 +65,12 @@ func NewPersistence(control deploymentpostgresql.DBTX, authorities Authorities) 
 	}
 
 	activationAudit := deploymentaudit.NewWithRepository(authorities.Access)
+	credentialAdmission, err := newOrdinaryCredentialPublicationAdmission(deploymentpostgresql.New(control), releasepostgres.New(control))
+	if err != nil {
+		return deploymentmodule.Persistence{}, err
+	}
 	repository := deploymentpostgresql.NewWithOptions(control, deploymentpostgresql.Options{
-		ActivationAudit: activationAudit, Events: authorities.Events, Lineage: authorities.Lineage,
+		ActivationAdmission: credentialAdmission, ActivationAudit: activationAudit, Events: authorities.Events, Lineage: authorities.Lineage,
 	})
 	if authorities.ApprovalAuthorize == nil {
 		return deploymentmodule.Persistence{}, errors.New("deployment PostgreSQL approval authorizer is required")

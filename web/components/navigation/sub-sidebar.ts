@@ -28,6 +28,7 @@ type SubSidebarConfig = {
   numbered?: boolean
   backAction?: { label: string; href: string; title?: string }
   searchable?: boolean
+  searchLabel?: string
   searchPlaceholder?: string
   items?: SubSidebarItem[]
 }
@@ -39,6 +40,7 @@ type ResolvedConfig = Required<Pick<SubSidebarConfig, 'label' | 'railLabel' | 'a
   numbered: boolean
   backAction?: { label: string; href: string; title?: string }
   searchable: boolean
+  searchLabel?: string
   items: SubSidebarItem[]
 }
 
@@ -656,7 +658,7 @@ class SubSidebar extends LitElement {
               <span class="search-icon sidebar-search-icon" aria-hidden="true">${icon('search')}</span>
               <input
                 type="search"
-                aria-label=${config.searchPlaceholder}
+                aria-label=${config.searchLabel || config.searchPlaceholder}
                 placeholder=${config.searchPlaceholder}
                 autocomplete="off"
                 .value=${this.searchQuery}
@@ -714,6 +716,7 @@ class SubSidebar extends LitElement {
       numbered: this.config.numbered !== false,
       backAction: resolvedBackAction(this.config.backAction),
       searchable: Boolean(this.config.searchable),
+      searchLabel: cleanText(this.config.searchLabel),
       searchPlaceholder: cleanText(this.config.searchPlaceholder) || defaultConfig.searchPlaceholder,
       items: Array.isArray(this.config.items) ? this.config.items.filter((item) => cleanText(item.id) !== '') : [],
     }

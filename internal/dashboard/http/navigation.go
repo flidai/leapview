@@ -135,9 +135,10 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 	}
 	catalog := h.catalogWithDashboardAppearance(r.Context(), metrics.Catalog(), dashboardID)
-	bootstrap := reportui.BootstrapSignalsWithRouteScope(
+	authorizedExploreVisuals := h.authorizedExploreVisuals(r, definition, model, targetPage)
+	bootstrap := reportui.BootstrapSignalsWithExploreAuthorization(
 		h.RouteScope, clientID, streamInstanceID, catalog, definition, model, definitions,
-		definition.Pages, targetPage, initialFilters,
+		definition.Pages, targetPage, initialFilters, authorizedExploreVisuals,
 	)
 	if presentation, public := publicPresentationFromContext(r.Context()); public {
 		bootstrap = reportui.PublicBootstrapSignals(

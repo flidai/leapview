@@ -9,9 +9,11 @@ import (
 
 func initCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "init <directory>",
-		Short: "Create a portable analytics project with reproducible sample data",
-		Args:  cobra.ExactArgs(1),
+		Use:     "init <directory>",
+		Short:   "Create a portable analytics project with reproducible sample data",
+		Long:    "Create a portable analytics project in a directory that does not already exist. Change into the new directory and run leapview dev to preview the sample.",
+		Example: "  leapview init ./analytics\n  cd ./analytics && leapview dev",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			root, err := projectinit.Initialize(args[0])
 			if err != nil {

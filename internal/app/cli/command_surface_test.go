@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -36,13 +35,11 @@ func TestRunnableCommandsDeclareDocumentationSafety(t *testing.T) {
 }
 
 func TestRootHelpExposesCanonicalDeploymentLifecycle(t *testing.T) {
-	originalArgs := os.Args
-	t.Cleanup(func() { os.Args = originalArgs })
-
 	help := func(args ...string) string {
-		os.Args = append([]string{"leapview"}, args...)
 		return captureStdout(t, func() {
-			if err := Execute(context.Background()); err != nil {
+			command := NewCommand(context.Background())
+			command.SetArgs(args)
+			if err := command.Execute(); err != nil {
 				t.Fatalf("Execute(%v) error = %v", args, err)
 			}
 		})
@@ -70,8 +67,12 @@ func TestRootHelpExposesCanonicalDeploymentLifecycle(t *testing.T) {
 	if found, _, err := command.Find([]string{"search"}); err != nil || found == command {
 		t.Fatalf("root command does not resolve project-wide search: command=%v err=%v", found, err)
 	}
-	if found, _, err := command.Find([]string{"workspaces"}); err == nil {
+	if found, _, err := command.Find([]string{"workspaces"}); err == nil && found != command {
 		t.Fatalf("removed workspace command is still registered: command=%v err=%v", found, err)
+	}
+	command.SetArgs([]string{"workspaces"})
+	if err := command.Execute(); err == nil {
+		t.Fatal("root command accepted an unknown positional workspace argument")
 	}
 }
 
@@ -129,7 +130,7 @@ func TestVersionReportsDevelopmentIdentityAsJSON(t *testing.T) {
 	command := NewCommand(context.Background())
 	var output strings.Builder
 	command.SetOut(&output)
-	command.SetArgs([]string{"version", "--json"})
+	command.SetArgs([]string{"version", "--format", "json"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}

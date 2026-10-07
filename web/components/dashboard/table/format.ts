@@ -5,8 +5,10 @@ export function formatCell(value: unknown, column: TableColumn, nullMetricAsZero
 	if (column.visualizationFormat) {
 		// TanStack represents null pivot cells with an empty/display placeholder
 		// while creating the cell context. Normalize only those known placeholders;
-		// numeric strings still fail the typed visualization contract.
-		if (value === null || value === undefined || value === '' || value === '-' || value === '—') {
+		// an explicit null is a governed value and must remain visibly null. Numeric
+		// strings still fail the typed visualization contract.
+		if (value === null) return '—'
+		if (value === undefined || value === '' || value === '-' || value === '—') {
 			return nullMetricAsZero && column.role === 'metric'
 				? formatValue('en-US', column.visualizationFormat, 0)
 				: '—'
@@ -23,7 +25,8 @@ export function formatCell(value: unknown, column: TableColumn, nullMetricAsZero
 			throw new Error(`table column ${JSON.stringify(column.key)} cannot format ${valueKind}: ${message}`)
 		}
 	}
-  if (value === null || value === undefined || value === '') {
+	if (value === null) return '-'
+	if (value === undefined || value === '') {
     if (nullMetricAsZero && column.role === 'metric') value = 0
     else return '-'
   }

@@ -3,21 +3,28 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/access"
+	"github.com/spf13/cobra"
 )
 
 type fakeAuthService struct {
-	loginRequest LoginRequest
-	logoutName   string
-	challenge    DeviceChallenge
+	loginRequest             LoginRequest
+	logoutName               string
+	challenge                DeviceChallenge
+	challengeContextCanceled bool
 }
 
-func (service *fakeAuthService) Login(_ context.Context, request LoginRequest, notify func(DeviceChallenge)) (LoginResult, error) {
+func (service *fakeAuthService) Login(ctx context.Context, request LoginRequest, notify func(DeviceChallenge)) (LoginResult, error) {
 	service.loginRequest = request
 	if notify != nil {
 		notify(service.challenge)
 	}
+	service.challengeContextCanceled = ctx.Err() != nil
 	return LoginResult{SessionID: "session-1"}, nil
 }
 
@@ -69,8 +76,9 @@ func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {
 		UserCode: "ABCD-EFGH", VerificationURI: "https://prod.example.com/device",
 	}}
 	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
-	var output strings.Builder
+	var output, errOutput strings.Builder
 	command.SetOut(&output)
+	command.SetErr(&errOutput)
 	command.SetArgs([]string{"https://prod.example.com/", "--no-browser"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
@@ -80,11 +88,14 @@ func TestLoginCommandDiscoversTargetAndProject(t *testing.T) {
 		request.InstanceID != "lvinst_prod" || request.ProjectID != "analytics" || !request.Headless {
 		t.Fatalf("login request = %+v", request)
 	}
-	if strings.Join(request.Capabilities, ",") != "RESOURCE_USE,RESOURCE_READ,RESOURCE_EDIT,RESOURCE_PUBLISH" {
-		t.Fatalf("capabilities = %v", request.Capabilities)
+	if !reflect.DeepEqual(request.Actions, access.DefaultAuthoringActions()) {
+		t.Fatalf("actions = %v, want typed CLI default %v", request.Actions, access.DefaultAuthoringActions())
 	}
-	if !strings.Contains(output.String(), "ABCD-EFGH") || !strings.Contains(output.String(), "session-1") {
-		t.Fatalf("output = %q", output.String())
+	if strings.Contains(output.String(), "ABCD-EFGH") || !strings.Contains(output.String(), "session-1") {
+		t.Fatalf("stdout = %q", output.String())
+	}
+	if !strings.Contains(errOutput.String(), "ABCD-EFGH") {
+		t.Fatalf("stderr = %q", errOutput.String())
 	}
 }
 
@@ -105,9 +116,10 @@ func TestLoginCommandEmitsVersionedJSONEvents(t *testing.T) {
 		UserCode: "ABCD-EFGH", VerificationURI: "https://prod.example.com/device",
 	}}
 	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
-	var output strings.Builder
+	var output, errOutput strings.Builder
 	command.SetOut(&output)
-	command.SetArgs([]string{"https://prod.example.com", "--no-browser", "--format", "json"})
+	command.SetErr(&errOutput)
+	command.SetArgs([]string{"https://prod.example.com", "--format", "json"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +141,44 @@ func TestLoginCommandEmitsVersionedJSONEvents(t *testing.T) {
 		authenticated.SchemaVersion != 1 || authenticated.Type != "authenticated" ||
 		authenticated.SessionID != "session-1" {
 		t.Fatalf("events = %#v, %#v", challenge, authenticated)
+	}
+	if !service.loginRequest.Headless || errOutput.Len() != 0 {
+		t.Fatalf("JSON login was not silent/headless: request=%+v stderr=%q", service.loginRequest, errOutput.String())
+	}
+}
+
+type failingWriter struct{ err error }
+
+func (writer failingWriter) Write([]byte) (int, error) { return 0, writer.err }
+
+func TestLoginChallengeWriteFailureCancelsAuthentication(t *testing.T) {
+	service := &fakeAuthService{challenge: DeviceChallenge{UserCode: "ABCD-EFGH", VerificationURI: "https://example.test/device"}}
+	command := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
+	command.SetOut(failingWriter{err: errors.New("stdout unavailable")})
+	command.SetArgs([]string{"https://prod.example.com", "--format", "json"})
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "write login event") {
+		t.Fatalf("login error = %v", err)
+	}
+	if !service.challengeContextCanceled {
+		t.Fatal("authentication continued after the challenge event could not be written")
+	}
+}
+
+func TestLoginCommandNoInputForcesHeadless(t *testing.T) {
+	service := &fakeAuthService{}
+	root := &cobra.Command{Use: "leapview"}
+	root.PersistentFlags().Bool("no-input", false, "")
+	login := LoginCommand(context.Background(), service, fakeDiscovery{}, fakeProjectResolver{})
+	root.AddCommand(login)
+	var output strings.Builder
+	root.SetOut(&output)
+	root.SetArgs([]string{"login", "https://prod.example.com", "--no-input"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !service.loginRequest.Headless {
+		t.Fatalf("--no-input did not force headless login: %+v", service.loginRequest)
 	}
 }
 

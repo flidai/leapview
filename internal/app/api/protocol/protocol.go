@@ -129,6 +129,12 @@ type apiCursor struct {
 const CursorSnapshotHeader = "X-LeapView-Cursor-Snapshot"
 
 func (p *Protocol) Middleware(next http.Handler) http.Handler {
+	return p.middleware(next, apiaggregate.GetAPIGenOperationContractForRequest)
+}
+
+// The private lookup seam lets tests exercise the complete transport before a
+// new product operation is exposed. Production always uses the generated registry.
+func (p *Protocol) middleware(next http.Handler, lookup func(string, string) (apiaggregate.GenOperationContract, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p != nil && p.config.PublicRequest != nil && p.config.PublicRequest(r) {
 			PrepareRequest(w, r)
@@ -136,6 +142,10 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		if !p.Authenticate(w, r) {
+			return
+		}
+		contract, known := lookup(r.Method, r.URL.Path)
+		if known && contract.Command != nil && contract.Command.Idempotency == "forbidden" && !ValidateNonReplayableRequest(w, r) {
 			return
 		}
 		if snapshot := p.cursorSnapshot(r); strings.TrimSpace(snapshot) != "" {
@@ -146,32 +156,18 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 		if !unwrapAPIPageCursor(w, r) {
 			return
 		}
-		if p.bypassDurableIdempotency(r) {
+		if !known || contract.Command == nil || contract.Command.Idempotency != "required" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !requiresAPIIdempotency(r) {
+		// Only generated replay-required commands may use the separate
+		// handler-owned transactional replay bypass.
+		if _, bypass := p.config.BypassDurableIdempotency[contract.OperationID]; bypass {
 			next.ServeHTTP(w, r)
 			return
 		}
 		p.serveIdempotent(w, r, next)
 	})
-}
-
-// bypassDurableIdempotency resolves the generated operation contract before
-// consulting the explicit composition-owned bypass set. Matching through the
-// generated registry keeps operation identity stable and avoids path
-// substring heuristics.
-func (p *Protocol) bypassDurableIdempotency(r *http.Request) bool {
-	if p == nil || r == nil || len(p.config.BypassDurableIdempotency) == 0 {
-		return false
-	}
-	contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path)
-	if !ok || contract.Command == nil || contract.Command.Idempotency != "required" {
-		return false
-	}
-	_, bypass := p.config.BypassDurableIdempotency[contract.OperationID]
-	return bypass
 }
 
 // BrowserMutationMiddleware applies the same durable idempotency protocol as
@@ -328,16 +324,6 @@ func SignResponseCursor(r *http.Request, body []byte) []byte {
 	return append(encoded, '\n')
 }
 
-func requiresAPIIdempotency(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	if contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path); ok {
-		return contract.Command != nil && contract.Command.Idempotency == "required"
-	}
-	return false
-}
-
 func IsQueryRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodPost {
 		return false
@@ -367,6 +353,9 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 		}
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_REQUEST_BODY", "The request body could not be read", nil)
 		return
+	}
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	digest := apiRequestDigest(r, body)
@@ -507,11 +496,11 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !execute {
-		if !replayAuthorized(r, replayAuthorize) {
-			apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
-			return
-		}
 		if record.Status == 0 {
+			if !replayAuthorized(r, replayAuthorize) {
+				apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
+				return
+			}
 			record, execute, err = waitForAPIIdempotency(r, p.store, scope, digest, owner, p.lease, IdempotencyLifetime, reclaimExpired)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -545,12 +534,7 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 	leaseCtx, stopLease := context.WithCancel(context.Background())
 	leaseLost := make(chan error, 1)
 	go p.renewAPIIdempotencyLease(leaseCtx, scope, digest, owner, record.LeaseGeneration, record.LeaseExpires, func(err error) {
-		p.leaseFailed.Store(true)
-		cancelHandler(err)
-		select {
-		case leaseLost <- err:
-		default:
-		}
+		p.notifyIdempotencyLeaseLost(err, leaseLost, cancelHandler)
 	})
 	capture := newProtocolResponseCapture()
 	var panicValue any
@@ -615,7 +599,25 @@ func canonicalCredentialScope(config Config, r *http.Request) string {
 }
 
 func replayAuthorized(r *http.Request, authorize func(*http.Request) bool) bool {
-	return authorize == nil || authorize(r)
+	if authorize == nil {
+		return true
+	}
+	if r == nil || r.GetBody == nil {
+		return authorize(r)
+	}
+	body, err := r.GetBody()
+	if err != nil {
+		return false
+	}
+	r.Body = body
+	allowed := authorize(r)
+	_ = body.Close()
+	restored, err := r.GetBody()
+	if err != nil {
+		return false
+	}
+	r.Body = restored
+	return allowed
 }
 
 func waitForAPIIdempotency(r *http.Request, store idempotency.Store, scope, digest, owner string, lease, lifetime time.Duration, reclaimExpired bool) (idempotency.Record, bool, error) {
@@ -675,6 +677,17 @@ func (p *Protocol) reclaimsExpiredLease(r *http.Request) bool {
 	}
 	_, allowed := p.config.ReclaimExpiredIdempotency[contract.OperationID]
 	return allowed
+}
+
+func (p *Protocol) notifyIdempotencyLeaseLost(err error, leaseLost chan<- error, cancelHandler context.CancelCauseFunc) {
+	p.leaseFailed.Store(true)
+	// Cancellation may immediately return control from the handler to the
+	// response path, which must already observe this terminal lease failure.
+	select {
+	case leaseLost <- err:
+	default:
+	}
+	cancelHandler(err)
 }
 
 func (p *Protocol) renewAPIIdempotencyLease(ctx context.Context, scope, digest, owner string, generation int64, deadline time.Time, lost func(error)) {

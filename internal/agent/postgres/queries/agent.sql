@@ -30,6 +30,16 @@ WHERE principal_id = sqlc.arg(principal_id) AND status = 'active'
 ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 ELSE 1 END,
          updated_at DESC, created_at DESC, id;
 
+-- name: ListAgentConversationSummaries :many
+SELECT id, principal_id, title, status, metadata_json::text,
+       transcript_revision, created_at, updated_at, archived_at
+FROM agent.conversations
+WHERE principal_id = sqlc.arg(principal_id) AND status = 'active'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') = ''
+ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 ELSE 1 END,
+         updated_at DESC, created_at DESC, id;
+
 -- name: ListArchivedAgentConversations :many
 SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
        transcript_revision, created_at, updated_at, archived_at
@@ -66,7 +76,9 @@ RETURNING id, principal_id, title, status, metadata_json::text, transcript_json:
 
 -- name: UpdateAgentConversationMetadata :one
 UPDATE agent.conversations
-SET metadata_json = sqlc.arg(metadata_json)::jsonb, updated_at = clock_timestamp()
+-- Pinning is navigation management, not conversation activity. Preserve the
+-- activity timestamp so an unpinned chat returns to its previous position.
+SET metadata_json = sqlc.arg(metadata_json)::jsonb
 WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
   AND status = 'active'
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''

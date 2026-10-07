@@ -93,7 +93,7 @@ func (runner *fakeRunner) Run(_ context.Context, environment []string, arguments
 	case strings.HasSuffix(joined, "compose version --short"):
 		return []byte("2.17.0\n"), nil
 	case strings.Contains(joined, "admin initialize --format json"):
-		return json.Marshal(adminoffline.InitialCredentials{Email: "admin@localhost", TemporaryPassword: "temporary", PublisherToken: "publisher", PublisherTokenExpiresAt: "2099-01-01T00:00:00Z"})
+		return json.Marshal(adminoffline.InitialCredentials{Email: "admin@localhost", TemporaryPassword: "temporary", ProjectClaimToken: "project-claim-token", ProjectClaimTokenExpiresAt: "2099-01-01T00:00:00Z"})
 	case strings.Contains(joined, "admin delivery pool qualify"):
 		return adminoffline.MarshalQualificationPoolArtifacts(runner.artifacts)
 	case strings.Contains(joined, "admin delivery pool bootstrap"):

@@ -5,6 +5,13 @@ write_files:
     permissions: "0700"
     encoding: b64
     content: ${bootstrap_b64}
+%{ if revision019_compat_b64 != "" ~}
+  - path: /usr/local/libexec/leapview-revision019-config-compat
+    owner: root:root
+    permissions: "0700"
+    encoding: b64
+    content: ${revision019_compat_b64}
+%{ endif ~}
   - path: /run/leapview/bootstrap.json
     owner: root:root
     permissions: "0600"
@@ -16,4 +23,4 @@ write_files:
     encoding: b64
     content: ${image_b64}
 runcmd:
-  - [/usr/local/sbin/leapview-bootstrap]
+  - [/usr/local/sbin/leapview-bootstrap, prepare-host]

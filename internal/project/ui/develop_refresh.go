@@ -352,12 +352,18 @@ func assetRefreshesTable(refresh AssetRefreshState) recordTable {
 	rows := make([]map[string]any, 0, len(refresh.Runs))
 	for _, run := range refresh.Runs {
 		startedAt := refreshRunStartedAt(run)
+		runHref := ""
+		if strings.TrimSpace(run.PipelineID) != "" && strings.TrimSpace(run.ParentRunID) == "" && strings.TrimSpace(run.ID) != "" {
+			runHref = pipelineRunHref(run.PipelineID, run.ID)
+		}
 		rows = append(rows, map[string]any{
 			"status":           refreshStatusGridValue(run.Status),
 			"started":          formatRefreshTimestamp(startedAt),
 			"duration":         unavailableDash(refreshRunDuration(run)),
 			"trigger":          refreshRunTriggerLabel(run),
 			"triggered_by":     unavailableDash(firstNonEmpty(run.PrincipalDisplayName, principalDisplayLabel(run.PrincipalID))),
+			"run":              shortRefreshRunID(run.ID),
+			"runHref":          runHref,
 			"runId":            run.ID,
 			"environment":      unavailableDash(run.Environment),
 			"modelId":          unavailableDash(run.ModelID),
@@ -376,6 +382,7 @@ func assetRefreshesTable(refresh AssetRefreshState) recordTable {
 		Columns: []recordTableColumn{
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("status"), Width: uisignals.Pointer("140px")},
 			{ID: "started", Header: "Started", Width: uisignals.Pointer("180px")},
+			{ID: "run", Header: "Run", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("runHref"), Width: uisignals.Pointer("150px")},
 			{ID: "duration", Header: "Duration", Width: uisignals.Pointer("110px")},
 			{ID: "trigger", Header: "Trigger", Width: uisignals.Pointer("130px")},
 			{ID: "triggered_by", Header: "Initiated by", Width: uisignals.Pointer("160px")},

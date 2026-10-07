@@ -50,8 +50,12 @@ window.addEventListener('unhandledrejection', (event) => {
 function storedMode() {
   const preference = root.dataset.themePreference;
   if (Object.hasOwn(themes, preference)) return preference;
-  const saved = localStorage.getItem(storageKey);
-  if (Object.hasOwn(themes, saved)) return saved;
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (Object.hasOwn(themes, saved)) return saved;
+  } catch {
+    // Storage can be unavailable; the system theme still works for this page.
+  }
   return 'system';
 }
 
@@ -65,7 +69,13 @@ function setMode(mode, options = {}) {
   root.dataset.lightTheme = theme.lightTheme;
   root.dataset.darkTheme = theme.darkTheme;
   root.style.colorScheme = resolved;
-  localStorage.setItem(storageKey, next);
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem(storageKey, next);
+    } catch {
+      // Keep the in-memory preference and notify controls even if saving fails.
+    }
+  }
   for (const button of document.querySelectorAll('[data-theme-value]')) {
     button.setAttribute('aria-pressed', String(button.dataset.themeValue === next));
   }
@@ -103,7 +113,8 @@ document.addEventListener('leapview-theme-change', (event) => {
 });
 
 media?.addEventListener?.('change', () => {
-  if (storedMode() === 'system') setMode('system');
+  if (storedMode() === 'system') setMode('system', { persist: false });
 });
 
-setMode(storedMode(), { notify: false });
+const initialPreference = root.dataset.themePreference;
+setMode(storedMode(), { notify: false, persist: Object.hasOwn(themes, initialPreference) });

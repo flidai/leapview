@@ -1,14 +1,8 @@
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-
-const execFileAsync = promisify(execFile);
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const tsp = join(root, "node_modules", "@typespec", "compiler", "cmd", "tsp.js");
+import { compileFixture, compileSource, expectCompileFails } from "./compiler.js";
 
 describe("APIGen TypeSpec emitter", () => {
   it("emits JSON IR for the todo fixture", async () => {
@@ -137,6 +131,24 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.Widget.properties.status.schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[0].parameters[0].schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[1].request_body.contents[0].schema).toEqual({ ref: "WidgetStatus" });
+  });
+
+  it("preserves authored model examples in schema IR", async () => {
+    const doc = await compileSource(`
+      using Http;
+      @service(#{ title: "Example API" })
+      namespace ExampleAPI;
+      @example(#{scope: "resource", projectId: "project:analytics"})
+      model PermissionTarget {
+        scope: string;
+        projectId?: string;
+        instanceId?: string;
+      }
+      @route("/permission-target")
+      @get
+      op getPermissionTarget(): PermissionTarget;
+    `);
+    expect(doc.schemas.PermissionTarget.example).toEqual({ scope: "resource", projectId: "project:analytics" });
   });
 
   it("emits inherited scalar patterns and constrained map names", async () => {
@@ -276,7 +288,7 @@ describe("APIGen TypeSpec emitter", () => {
       interface RoleBindings {
         @post
         @operationId("createRoleBinding")
-        @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+        @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS", action: "dashboard.read", resolver: "dashboard" })
         @apigen.ui("workspace.access.role-binding.create")
         @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
         @apigen.command(#{
@@ -307,6 +319,9 @@ describe("APIGen TypeSpec emitter", () => {
         idempotency: "required",
         authz_mode: "privilege",
         privilege: "MANAGE_GRANTS",
+      },
+      extensions: {
+        "x-authz": { mode: "privilege", privilege: "MANAGE_GRANTS", action: "dashboard.read", resolver: "dashboard" },
       },
     });
   });
@@ -1730,6 +1745,35 @@ describe("APIGen TypeSpec emitter", () => {
     });
   });
 
+  it("emits numeric literal constants and array item bounds", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Constrained Contract API" })
+      namespace ConstrainedContractAPI;
+
+      model ExplorationSpec {
+        schemaVersion: 1;
+        @maxItems(100)
+        dimensions: string[];
+      }
+
+      @route("/exploration")
+      @get
+      op getExploration(): ExplorationSpec;
+    `);
+
+    expect(doc.schemas.ExplorationSpec.properties.schemaVersion.schema).toEqual({
+      type: "integer",
+      const: 1,
+    });
+    expect(doc.schemas.ExplorationSpec.properties.dimensions.schema).toEqual({
+      type: "array",
+      items: { type: "string" },
+      max_items: 100,
+    });
+  });
+
   it("fails without writing IR for response status ranges", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
     const irPath = join(outDir, "json-ir.json");
@@ -2125,50 +2169,3 @@ describe("APIGen TypeSpec emitter", () => {
     await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
-
-async function compileFixture(name: string, outputFile: string) {
-  await compileDirectory(join(root, "test", "fixtures", name), outputFile);
-}
-
-async function compileSource(source: string, outputFile?: string, strictOperationKinds = false) {
-  const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
-  const fixtureDir = join(outDir, "source");
-  const irPath = outputFile ?? join(outDir, "json-ir.json");
-  await mkdir(fixtureDir, { recursive: true });
-  await writeFile(join(fixtureDir, "main.tsp"), source);
-  await compileDirectory(fixtureDir, irPath, strictOperationKinds);
-  return JSON.parse(await readFile(irPath, "utf8"));
-}
-
-async function expectCompileFails(source: string, message: string, strictOperationKinds = false) {
-  const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
-  const irPath = join(outDir, "json-ir.json");
-  await expect(compileSource(source, irPath, strictOperationKinds)).rejects.toSatisfy((error: any) =>
-    `${error.stdout}\n${error.stderr}`.includes(message),
-  );
-  await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
-}
-
-async function compileDirectory(sourceDir: string, outputFile: string, strictOperationKinds = false) {
-	const strictOptions = strictOperationKinds
-		? ["--option", "@yacobolo/apigen.require-explicit-operation-kind=true"]
-		: [];
-  await execFileAsync(
-    process.execPath,
-    [
-      tsp,
-      "compile",
-      sourceDir,
-      "--import",
-      root,
-      "--emit",
-      root,
-      "--option",
-      `@yacobolo/apigen.output-file=${outputFile}`,
-      "--option",
-      "@yacobolo/apigen.base-path=/",
-      ...strictOptions,
-    ],
-    { cwd: root },
-  );
-}

@@ -217,6 +217,11 @@ func TestPostgresCatalogUpgradeExistingCatalog(t *testing.T) {
 
 func postgresCatalogUpgradeCredentialBootstrap(t *testing.T, database *postgrestest.Database, role postgrestest.Role) ducklake.CredentialBootstrap {
 	t.Helper()
+	fixture := extensionfixture.New(t, "postgres")
+	admitted, err := fixture.Admission.AdmitExtension(t.Context(), "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
 	parsed, err := url.Parse(postgresTLSURL(t, database.URL(role)))
 	if err != nil {
 		t.Fatal(err)
@@ -227,10 +232,7 @@ func postgresCatalogUpgradeCredentialBootstrap(t *testing.T, database *postgrest
 	}
 	password, _ := parsed.User.Password()
 	return func(ctx context.Context, execer driver.ExecerContext) error {
-		if _, err := execer.ExecContext(ctx, "INSTALL postgres_scanner FROM core", nil); err != nil {
-			return err
-		}
-		if _, err := execer.ExecContext(ctx, "LOAD postgres_scanner", nil); err != nil {
+		if _, err := execer.ExecContext(ctx, "LOAD '"+sqlLiteralForUpgrade(admitted.Path)+"'", nil); err != nil {
 			return err
 		}
 		secret := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET pg_upgrade_secret (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'require')", sqlLiteralForUpgrade(parsed.Hostname()), port, sqlLiteralForUpgrade(parsed.Path[1:]), sqlLiteralForUpgrade(parsed.User.Username()), sqlLiteralForUpgrade(password))

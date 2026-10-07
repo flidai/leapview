@@ -1,4 +1,4 @@
-name: Hosted demo deployment
+name: Deploy / Hosted demo
 
 on:
   workflow_dispatch:
@@ -8,13 +8,17 @@ on:
         type: choice
         required: true
         default: publish
-        options: [publish, deploy]
+        options: [publish, prepare, deploy, upgrade, recover, reconcile]
+      deployment_id:
+        description: 'Reconcile only: original GitHub runtime deployment ID'
+        type: string
+        required: false
       image:
-        description: 'Deploy only: immutable ghcr.io/flidai/leapview@sha256 digest'
+        description: 'Runtime operations: immutable ghcr.io/flidai/leapview@sha256 digest'
         type: string
         required: false
       qualification_run:
-        description: 'Deploy only: successful Main artifacts run ID with qualification receipt'
+        description: 'Runtime operations: successful Build / Main image run ID with qualification receipt'
         type: string
         required: false
 
@@ -39,6 +43,7 @@ jobs:
     outputs:
       publish: ${{ steps.resolve.outputs.publish }}
       revision: ${{ steps.resolve.outputs.revision }}
+      permission_profile: ${{ steps.resolve.outputs.permission_profile }}
     steps:
       - name: Check out the deployment policy
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -54,20 +59,38 @@ jobs:
 
   deploy:
     name: Deploy selected showcase
-    needs: publication-source
-    if: needs.publication-source.outputs.publish == 'true'
+    needs: [publication-source, runtime]
+    if: ${{ always() && (needs.publication-source.outputs.publish == 'true' || (needs.runtime.result == 'success' && contains(fromJSON('["deploy","upgrade"]'), inputs.action))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: leapview-demo
     env:
-      SOURCE_REVISION: ${{ needs.publication-source.outputs.revision }}
+      SOURCE_REVISION: ${{ needs.publication-source.outputs.revision || needs.runtime.outputs.revision }}
       DEMO_DATASET: ${{ vars.DEMO_DATASET || 'olist' }}
+      DEMO_PERMISSION_PROFILE: ${{ needs.publication-source.outputs.permission_profile || needs.runtime.outputs.permission_profile }}
 
     steps:
       - name: Check out the qualified revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.SOURCE_REVISION }}
+      - name: Check out current publication adapter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: .demo-publication-adapter
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/deploy_demo.sh
+            scripts/demo_client_contract.py
+          sparse-checkout-cone-mode: false
+      - name: Install current publication adapter in selected source
+        run: |
+          set -euo pipefail
+          install -m 0755 .demo-publication-adapter/scripts/deploy_demo.sh scripts/deploy_demo.sh
+          install -m 0644 .demo-publication-adapter/scripts/demo_client_contract.py scripts/demo_client_contract.py
+          rm -rf .demo-publication-adapter
 
       - name: Validate pinned dataset support
         run: |
@@ -112,6 +135,7 @@ jobs:
           secret-path: /demo/deployment
 
       - name: Publish the selected showcase
+        id: publication
         env:
           DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
           DEMO_TARGET: https://demo.leapview.dev
@@ -119,6 +143,44 @@ jobs:
           DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
           DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
         run: ./scripts/deploy_demo.sh
+
+      - name: Report incomplete publication without changing the runtime record
+        if: ${{ failure() && steps.publication.outcome == 'failure' }}
+        run: |
+          {
+            echo '### Content publication incomplete'
+            echo
+            printf 'The selected runtime revision remains `%s`. Content publication failed; this does not roll back the running image.\n' "$SOURCE_REVISION"
+            echo 'Correct the publication failure and rerun the publish action. Do not repeat a completed database upgrade.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check out current publication verification policy
+        if: env.DEMO_DATASET == 'cfo'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up CFO browser verification
+        if: env.DEMO_DATASET == 'cfo'
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "true"
+
+      - name: Verify published CFO pages on the selected runtime
+        id: verify-publication
+        if: env.DEMO_DATASET == 'cfo'
+        env:
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+        run: |
+          bun install --frozen-lockfile
+          python3 scripts/demo_compose_deploy.py --verify-publication
+
+      - name: Report failed post-publication validation
+        if: ${{ failure() && steps.verify-publication.outcome == 'failure' }}
+        run: |
+          echo 'Content was published, but CFO browser validation failed. The runtime record is unchanged; inspect the validation failure before declaring the release complete.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record deployed product routes
         if: success()
@@ -138,8 +200,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   runtime:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'deploy'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["prepare","deploy","upgrade","recover"]'), inputs.action)
     name: Deploy qualified application image to demo-02
+    outputs:
+      revision: ${{ steps.reconcile.outputs.running_revision }}
+      permission_profile: ${{ steps.reconcile.outputs.permission_profile }}
     permissions:
       contents: read
       id-token: write
@@ -148,12 +213,16 @@ jobs:
       attestations: read
       deployments: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     environment: leapview-demo
     env:
+      DEMO_ACTION: ${{ inputs.action }}
       DEMO_IMAGE: ${{ inputs.image }}
       QUALIFICATION_RUN: ${{ inputs.qualification_run }}
       DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+      DEMO_DATASET: ${{ vars.DEMO_DATASET || 'cfo' }}
+      DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+      DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -185,29 +254,69 @@ jobs:
           project-slug: leapview
           env-slug: prod
           secret-path: /demo/deployment
+      - name: Check demo upgrade requirements before recording deployment
+        env:
+          SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
+        run: python3 scripts/demo_compose_deploy.py --preflight
       - name: Record runtime deployment in progress
+        if: inputs.action != 'prepare'
         id: record
         env:
           SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
         run: python3 scripts/demo_runtime_record.py start
-      - name: Back up, replace image and validate CFO pages
+      - name: Execute reviewed operation and validate CFO pages
         id: rollout
         env:
+          DEPLOYMENT_ID: ${{ steps.record.outputs.id }}
           SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
         run: python3 scripts/demo_compose_deploy.py
-      - name: Advance verified runtime pin
-        if: success()
+      - name: Reconcile independently verified host outcome
+        id: reconcile
+        if: ${{ always() && steps.record.outputs.id != '' }}
         env:
           DEPLOYMENT_ID: ${{ steps.record.outputs.id }}
-        run: python3 scripts/demo_runtime_record.py success
-      - name: Record incomplete runtime deployment
-        if: ${{ !success() && steps.record.outputs.id != '' }}
-        env:
-          DEPLOYMENT_ID: ${{ steps.record.outputs.id }}
-        run: python3 scripts/demo_runtime_record.py failure
-      - name: Record deployed image
+          SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
+        run: python3 scripts/demo_runtime_record.py reconcile
+      - name: Record operation result
         if: success()
         env:
           SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
         run: |
-          printf 'Deployed `%s` at revision `%s` to https://demo.leapview.dev.\n' "$DEMO_IMAGE" "$SOURCE_REVISION" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Operation `%s` verified for `%s` at revision `%s`.\n' "$DEMO_ACTION" "$DEMO_IMAGE" "$SOURCE_REVISION" >> "$GITHUB_STEP_SUMMARY"
+
+  runtime-reconcile:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'reconcile'
+    name: Reconcile a recorded runtime operation without redeploying
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: leapview-demo
+    permissions:
+      contents: read
+      id-token: write
+      deployments: write
+    env:
+      DEMO_ACTION: reconcile
+      DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+      DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+      DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Inspect the bound host operation and authenticate the running revision
+        id: inspect
+        run: python3 scripts/demo_compose_deploy.py
+      - name: Reconcile verified runtime records
+        if: ${{ always() && steps.inspect.outcome != 'skipped' }}
+        run: python3 scripts/demo_runtime_record.py reconcile

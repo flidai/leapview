@@ -38,9 +38,15 @@ require_mode() {
 
 for required_path in \
   compose.yaml \
+  compose.postgres.yaml \
   compose.https.yaml \
+  compose.first-install-bootstrap.yaml \
   Caddyfile \
+  Caddyfile.first-install-bootstrap \
+  first-install.env \
   leapview.env.example \
+  postgres/bundled-entrypoint.sh \
+  postgres/bundled-init.sh \
   qualification/postgres-init.sh \
   qualification/validate-bundle.sh; do
   require_regular_file "$required_path"
@@ -48,12 +54,49 @@ done
 bundle_validator_path=$(realpath -- "$bundle_root/qualification/validate-bundle.sh")
 
 require_mode qualification/postgres-init.sh 755
+require_mode postgres/bundled-entrypoint.sh 755
+require_mode postgres/bundled-init.sh 755
+require_mode compose.postgres.yaml 644
 require_mode Caddyfile 644
+require_mode Caddyfile.first-install-bootstrap 644
+require_mode compose.first-install-bootstrap.yaml 644
+require_mode first-install.env 644
 require_mode qualification/validate-bundle.sh 755
 
 [[ -s "$bundle_root/compose.https.yaml" ]] || fail "compose.https.yaml is empty"
+grep -qF 'internal: true' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL network must be internal'
+grep -qF 'leapview-postgres-data:/var/lib/postgresql' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL must persist its cluster volume'
+grep -qF 'LEAPVIEW_POSTGRES_SECRET_DIR: /var/lib/postgresql/18/leapview-secrets' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL must keep host credentials outside PGDATA'
+grep -qF 'target: /run/leapview-postgres/bundled-init.sh' "$bundle_root/compose.postgres.yaml" ||
+  fail 'bundled PostgreSQL must mount its retryable provisioner'
+if sed -n '/^  postgres:/,/^volumes:/p' "$bundle_root/compose.postgres.yaml" | grep -Eq '^    (ports|expose):'; then
+  fail 'bundled PostgreSQL must not publish or expose a port'
+fi
+if grep -qF 'ca.key' "$bundle_root/compose.postgres.yaml"; then
+  fail 'the PostgreSQL service must not receive the host-only CA signing key'
+fi
+grep -qiF 'sslmode=verify-full' "$bundle_root/postgres/bundled-init.sh" ||
+  fail 'retryable provisioning must verify the PostgreSQL server certificate and hostname'
+if grep -Eq 'POSTGRES_PASSWORD[^_A-Z].*:-|POSTGRES_PASSWORD:-|leapview-local-' "$bundle_root/compose.postgres.yaml" "$bundle_root/postgres/bundled-entrypoint.sh" "$bundle_root/postgres/bundled-init.sh"; then
+  fail 'bundled PostgreSQL must not define default credentials'
+fi
 grep -qF 'reverse_proxy leapview:8080' "$bundle_root/Caddyfile" ||
   fail 'Caddyfile does not proxy to leapview:8080'
+grep -qF 'tls internal' "$bundle_root/Caddyfile.first-install-bootstrap" ||
+  fail 'first-install Caddyfile does not use its private internal CA'
+grep -qF 'condition: service_started' "$bundle_root/compose.first-install-bootstrap.yaml" ||
+  fail 'first-install Compose overlay does not use liveness-independent startup ordering'
+grep -qFx 'COMPOSE_APP_BIND=127.0.0.1:8080' "$bundle_root/first-install.env" ||
+  fail 'first-install application bind is not loopback-only'
+grep -qFx 'CADDY_HTTP_BIND=127.0.0.1:80' "$bundle_root/first-install.env" ||
+  fail 'first-install HTTP proxy bind is not loopback-only'
+grep -qFx 'CADDY_HTTPS_BIND=127.0.0.1:443' "$bundle_root/first-install.env" ||
+  fail 'first-install HTTPS proxy bind is not loopback-only'
+grep -qFx 'CADDY_HTTPS_UDP_BIND=127.0.0.1:443' "$bundle_root/first-install.env" ||
+  fail 'first-install HTTPS/UDP proxy bind is not loopback-only'
 grep -qFx 'LEAPVIEW_POSTGRES_REQUIRE_TLS=true' "$bundle_root/leapview.env.example" ||
   fail 'leapview.env.example must require PostgreSQL TLS'
 grep -qF 'CREATE ROLE leapview_control_owner' "$bundle_root/qualification/postgres-init.sh" ||
@@ -74,6 +117,9 @@ while IFS= read -r -d '' path; do
   fi
 done < <(
   find "$bundle_root/compose.yaml" "$bundle_root/compose.https.yaml" \
+    "$bundle_root/compose.postgres.yaml" "$bundle_root/postgres" \
+    "$bundle_root/compose.first-install-bootstrap.yaml" "$bundle_root/Caddyfile.first-install-bootstrap" \
+    "$bundle_root/first-install.env" \
     "$bundle_root/leapview.env.example" "$bundle_root/qualification" \
     -type f -print0
 )

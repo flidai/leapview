@@ -18,19 +18,19 @@ type searchOptions struct {
 	pagination cliapi.PaginationOptions
 	kinds      []string
 	domain     string
-	jsonOutput bool
+	format     string
 }
 
 // SearchCommand constructs the project-wide product search command.
 func SearchCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
-	options := &searchOptions{}
+	options := &searchOptions{format: "text"}
 	command := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search accessible product objects",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			if err := options.pagination.Validate(command); err != nil {
-				return err
+				return cliapi.NewUsageError(err)
 			}
 			return runSearch(ctx, client, options, args[0], command.OutOrStdout())
 		},
@@ -39,11 +39,14 @@ func SearchCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
 	options.pagination.AddFlags(command)
 	command.Flags().StringArrayVar(&options.kinds, "kind", nil, "resource kind filter; repeatable or comma-separated")
 	command.Flags().StringVar(&options.domain, "domain", "", "resource domain filter")
-	command.Flags().BoolVar(&options.jsonOutput, "json", false, "print JSON response")
+	command.Flags().StringVar(&options.format, "format", options.format, "output format: text or json")
 	return command
 }
 
 func runSearch(ctx context.Context, client cliapi.Client, options *searchOptions, queryText string, out io.Writer) error {
+	if options.format != "text" && options.format != "json" {
+		return cliapi.NewUsageError(fmt.Errorf("search format must be text or json"))
+	}
 	api, err := projectClient(ctx, client, options.remote.Credentials())
 	if err != nil {
 		return err
@@ -65,7 +68,7 @@ func runSearch(ctx context.Context, client cliapi.Client, options *searchOptions
 	if err != nil {
 		return err
 	}
-	if options.jsonOutput {
+	if options.format == "json" {
 		return json.NewEncoder(out).Encode(response.Body)
 	}
 	return renderSearchResults(out, response.Body)

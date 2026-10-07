@@ -379,7 +379,7 @@ test('ECharts keeps point symbols inside the grid when continuous values reach b
 
 function pointCategoricalFixture(rows: unknown[][]): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: 'point-categories', rendererID: 'echarts', specRevision: 'sha256:point-categories', dataRevision: 1,
+    schemaVersion: 14, visualID: 'point-categories', rendererID: 'echarts', specRevision: 'sha256:point-categories', dataRevision: 1,
     spec: {
       kind: 'point', title: 'Point categories',
       datasets: [{ id: 'primary', fields: [

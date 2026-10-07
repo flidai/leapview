@@ -1,0 +1,93 @@
+name: CI / Managed deployment scaffold
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - deploy/managed/**
+      - .github/workflows/managed-scaffold.yml
+      - Taskfile.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/managed/**
+      - .github/workflows/managed-scaffold.yml
+      - Taskfile.yml
+  workflow_dispatch:
+    inputs:
+      boot_test:
+        description: Also test isolated host updates, rollback, networking and GRUB reboot
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-scaffold-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  infrastructure:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - name: Validate and test mocked infrastructure (no cloud credentials)
+        working-directory: deploy/managed/hetzner
+        run: |
+          tofu init -backend=false -input=false -lockfile=readonly
+          tofu fmt -check -recursive
+          tofu validate
+          tofu test
+  hosts:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Exercise container ingress policy in isolated kernel namespaces
+        run: sudo unshare --mount --net --fork python3 deploy/managed/nixos/tests/docker_firewall_test.py
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Check Nix formatting
+        working-directory: deploy/managed/nixos
+        run: nix fmt -- --check flake.nix inventory.example.nix modules/*.nix tests/*.nix
+      - name: Build both locked host closures and deploy-rs checks
+        working-directory: deploy/managed/nixos
+        run: |
+          nix build .#nixosConfigurations.example-app.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+          nix build .#nixosConfigurations.example-database.config.system.build.toplevel --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+          nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
+      - name: Exercise real Docker forwarding and daemon restart
+        run: |
+          python3 deploy/managed/nixos/tests/namespace_test.py
+          probe_image="$(nix build path:./deploy/managed/nixos#port-probe --no-link --no-update-lock-file --print-out-paths)"
+          docker_package="$(nix build path:./deploy/managed/nixos#nixosConfigurations.example-app.config.virtualisation.docker.package --no-link --no-update-lock-file --print-out-paths)"
+          sudo python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package"
+      - name: Exercise managed-host updates and rollback plus network and GRUB reboot checks
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
+        run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+  application-template:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: ruby:3.4@sha256:c4428c90c4e80ee5848c31912969e73c9f48ac45ec45dfb5f76d1a821358771e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate with pinned Kamal (no SSH or registry access)
+        working-directory: deploy/managed/kamal
+        env:
+          BUNDLE_FROZEN: "true"
+        run: |
+          bundle install
+          bundle exec ruby config_test.rb

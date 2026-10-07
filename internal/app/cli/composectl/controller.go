@@ -16,7 +16,9 @@ import (
 	"time"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
+	"github.com/flidai/leapview/internal/app/cli/installationstate"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/flidai/leapview/internal/platform/ociref"
 )
@@ -25,7 +27,7 @@ const (
 	deploymentEnvName    = "deployment.env"
 	appEnvName           = "leapview.env"
 	credentialsName      = "initial-credentials.json"
-	controllerLockName   = ".leapviewctl.lock"
+	controllerLockName   = hostmaintenance.LockName
 	defaultEnvironment   = "prod"
 	defaultHealthChecks  = 120
 	publicDomainHelpText = "--domain must be a hostname without a scheme, path, port, wildcard, or credentials"
@@ -182,6 +184,10 @@ func (c *Controller) scoped(root string, stdout io.Writer) (*Controller, error) 
 }
 
 func (c *Controller) Initialize(ctx context.Context, options InitOptions) error {
+	return c.initialize(ctx, options, nil)
+}
+
+func (c *Controller) initialize(ctx context.Context, options InitOptions, operationEnvironment map[string]string) error {
 	var err error
 	options, err = NormalizeInitOptions(options)
 	if err != nil {
@@ -229,9 +235,10 @@ func (c *Controller) Initialize(ctx context.Context, options InitOptions) error 
 		httpsValue = "0"
 	}
 	if err := updateEnvFile(c.path(deploymentEnvName), map[string]string{
-		"LEAPVIEW_IMAGE": options.Image,
-		"CADDY_DOMAIN":   options.Domain,
-		"COMPOSE_HTTPS":  httpsValue,
+		"LEAPVIEW_IMAGE":   options.Image,
+		"CADDY_DOMAIN":     options.Domain,
+		"COMPOSE_HTTPS":    httpsValue,
+		"COMPOSE_APP_BIND": privateBootstrapEnvironment["COMPOSE_APP_BIND"],
 	}); err != nil {
 		return err
 	}
@@ -284,7 +291,7 @@ func (c *Controller) Initialize(ctx context.Context, options InitOptions) error 
 		cleanupInitialization()
 		return fmt.Errorf("Compose configuration is invalid; initialization can be retried: %w", err)
 	}
-	if err := c.captureInitialCredentials(ctx); err != nil {
+	if err := c.captureInitialCredentialsWithEnvironment(ctx, operationEnvironment); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(c.stdout, "initialized environment %s; run ./leapviewctl start\n", options.Environment)
@@ -375,6 +382,10 @@ func (c *Controller) FirstLogin() error {
 }
 
 func (c *Controller) captureInitialCredentials(ctx context.Context) error {
+	return c.captureInitialCredentialsWithEnvironment(ctx, nil)
+}
+
+func (c *Controller) captureInitialCredentialsWithEnvironment(ctx context.Context, operationEnvironment map[string]string) error {
 	path := c.path(credentialsName)
 	tmp, err := os.CreateTemp(c.root, ".initial-credentials-*.tmp")
 	if err != nil {
@@ -391,7 +402,12 @@ func (c *Controller) captureInitialCredentials(ctx context.Context) error {
 	if err := tmp.Chmod(0o600); err != nil {
 		return err
 	}
-	if err := c.compose(ctx, nil, tmp, c.stderr, "run", "--rm", "--no-deps", "leapview", "admin", "initialize", "--format", "json"); err != nil {
+	arguments := []string{"run", "--rm", "--no-deps"}
+	for _, name := range sortedEnvironmentNames(operationEnvironment) {
+		arguments = append(arguments, "--env", name)
+	}
+	arguments = append(arguments, "leapview", "admin", "initialize", "--format", "json")
+	if err := c.composeWithEnvironment(ctx, operationEnvironment, nil, tmp, c.stderr, arguments...); err != nil {
 		return fmt.Errorf("instance initialization did not deliver credentials; initialization can be retried: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
@@ -435,6 +451,28 @@ func (c *Controller) acknowledgeCredentials(ctx context.Context) error {
 }
 
 func (c *Controller) startUnlocked(ctx context.Context) error {
+	image, err := c.ConfiguredImage()
+	if err != nil {
+		return err
+	}
+	marker, err := installationstate.RequireForActiveHost(c.root, image)
+	if err != nil {
+		return err
+	}
+	if marker.BootstrapPhase == installationstate.PhasePrivate {
+		if err := validateMarkerHTTPS(c.root, marker); err != nil {
+			return err
+		}
+		return c.startFirstInstallBootstrapAt(ctx, firstInstallAppURL)
+	}
+	if marker.BootstrapPhase == installationstate.PhasePublic {
+		if err := validateMarkerHTTPS(c.root, marker); err != nil {
+			return err
+		}
+		if err := requireLoopbackApplicationBind(c.root); err != nil {
+			return err
+		}
+	}
 	if c.startOverride != nil {
 		return c.startOverride(ctx)
 	}
@@ -503,19 +541,13 @@ func (c *Controller) containerID(ctx context.Context) (string, error) {
 	return strings.TrimSpace(output.String()), nil
 }
 
-func (c *Controller) compose(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
-	if c.composeOverride != nil {
-		return c.composeOverride(ctx, stdin, stdout, stderr, args...)
+func sortedEnvironmentNames(environment map[string]string) []string {
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		names = append(names, name)
 	}
-	commandArgs, err := composeArguments(c.root, args...)
-	if err != nil {
-		return err
-	}
-	processEnvironment, err := composeProcessEnvironment(c.root, nil)
-	if err != nil {
-		return err
-	}
-	return c.dockerWithEnvironment(ctx, stdin, stdout, stderr, processEnvironment, commandArgs...)
+	sort.Strings(names)
+	return names
 }
 
 func (c *Controller) docker(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
@@ -583,6 +615,9 @@ func (c *Controller) withLock(operation func() error) error {
 		return err
 	}
 	defer lock.Release()
+	if err := hostmaintenance.Check(c.root); err != nil {
+		return err
+	}
 	return operation()
 }
 

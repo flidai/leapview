@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
@@ -90,7 +91,38 @@ func TestAuthorizeDashboardManageUsesArchivePolicy(t *testing.T) {
 	}
 }
 
-func newApplicationService(t *testing.T, repo *applicationRepository, auth *applicationAuthorizer) *service.Service {
+func TestExplorationTargetsChecksExactModelReadBeforeListing(t *testing.T) {
+	repo, auth := &applicationRepository{}, &applicationAuthorizer{}
+	app, err := application.New(application.Options{
+		Authoring: newApplicationService(t, repo, auth), Repository: repo, Authorizer: auth,
+		AcquireRuntime: func(context.Context) (projectruntime.Lease, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ExplorationTargets(t.Context(), application.ExplorationTargetsRequest{ProjectID: "sales", ActorID: "actor", SourceModelID: "semantic-model:sales"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(auth.calls) != 1 || auth.calls[0].Target != service.AuthorizationTargetSemanticModel ||
+		auth.calls[0].SemanticModel != "semantic-model:sales" || auth.calls[0].Action != authoring.AuthorizationActionView {
+		t.Fatalf("model-read authorization = %#v", auth.calls)
+	}
+
+	denied := &applicationAuthorizer{err: access.ErrForbidden}
+	deniedRepo := &applicationRepository{}
+	app, err = application.New(application.Options{
+		Authoring: newApplicationService(t, deniedRepo, denied), Repository: deniedRepo, Authorizer: denied,
+		AcquireRuntime: func(context.Context) (projectruntime.Lease, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ExplorationTargets(t.Context(), application.ExplorationTargetsRequest{ProjectID: "sales", ActorID: "actor", SourceModelID: "semantic-model:private"}); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("denied model-read error = %v, want forbidden", err)
+	}
+}
+
+func newApplicationService(t *testing.T, repo *applicationRepository, auth service.Authorizer) *service.Service {
 	t.Helper()
 	svc, err := service.NewService(service.Options{Repository: repo, Authorizer: auth, Compiler: applicationCompiler{}, Now: func() time.Time { return time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC) }, NewDashboardID: func() (authoring.DashboardID, error) { return "dashboard", nil }, NewDraftID: func() (authoring.DraftID, error) { return "draft", nil }, NewRevisionID: func() (authoring.RevisionID, error) { return "revision", nil }})
 	if err != nil {
@@ -101,11 +133,12 @@ func newApplicationService(t *testing.T, repo *applicationRepository, auth *appl
 
 type applicationAuthorizer struct {
 	calls []service.AuthorizationRequest
+	err   error
 }
 
 func (a *applicationAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
 	a.calls = append(a.calls, request)
-	return nil
+	return a.err
 }
 
 type applicationCompiler struct{}
@@ -120,6 +153,9 @@ type applicationRepository struct {
 	commands     map[authoring.CommandID]authoring.CommandResult
 	fingerprints map[authoring.CommandID]string
 	appendCalls  int
+	lastAppend   authoring.AppendDraftInput
+	beforeAppend func()
+	requireAudit bool
 }
 
 func (*applicationRepository) Create(context.Context, authoring.CreateInput) (authoring.DashboardLifecycle, error) {
@@ -154,14 +190,31 @@ func (r *applicationRepository) LookupCommandResult(_ context.Context, _ graph.R
 	}
 	return result, true, nil
 }
+func (r *applicationRepository) LookupCommandReplay(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, id authoring.CommandID) (authoring.CommandResult, bool, error) {
+	result, ok := r.commands[id]
+	return result, ok, nil
+}
 func (*applicationRepository) LookupCreateOperation(context.Context, authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
 	return authoring.CreateOperationResult{}, false, nil
 }
-func (r *applicationRepository) AppendDraft(_ context.Context, input authoring.AppendDraftInput) (authoring.Revision, error) {
+func (r *applicationRepository) AppendDraft(ctx context.Context, input authoring.AppendDraftInput) (authoring.Revision, error) {
+	r.appendCalls++
+	r.lastAppend = input
+	if r.requireAudit {
+		intent, ok := authoring.AuditIntentFromContext(ctx)
+		if !ok || intent.EventID == "" {
+			return authoring.Revision{}, errors.New("dashboard authoring audit intent is required")
+		}
+		if intent.EventID != input.Evidence.ID.String() {
+			return authoring.Revision{}, errors.New("dashboard authoring audit event id does not match command id")
+		}
+	}
+	if r.beforeAppend != nil {
+		r.beforeAppend()
+	}
 	if r.lifecycle.Draft == nil || r.lifecycle.Draft.Revision != input.ExpectedDraftRevision {
 		return authoring.Revision{}, authoring.ErrStaleRevision
 	}
-	r.appendCalls++
 	r.lifecycle = input.Next
 	if r.revisions == nil {
 		r.revisions = map[authoring.RevisionID]authoring.Revision{}

@@ -134,9 +134,6 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	registryContainer := normalizedQualificationName(
-		"leapview-authoring-registry-" + strconv.Itoa(os.Getpid()),
-	)
 	composeProject := normalizedQualificationName(
 		fmt.Sprintf(
 			"leapview-authoring-ci-%s-%d",
@@ -168,65 +165,74 @@ func (c *Controller) QualifyImage(
 	}()
 	cleanup.Add(func(context.Context) error { return os.RemoveAll(bundleRoot) })
 
-	if _, err := c.qualificationDocker(
-		ctx,
-		nil,
-		"run", "--detach",
-		"--name", registryContainer,
-		"--publish", "127.0.0.1::5000",
-		qualificationRegistryImage,
-	); err != nil {
-		return fmt.Errorf("start qualification registry: %w", err)
+	// Republish only local/tag inputs that still need a registry digest.
+	// Already-immutable references must keep their exact signed OCI content.
+	imageReference := options.Image
+	if !qualificationImmutableImagePattern.MatchString(imageReference) {
+		registryContainer := normalizedQualificationName(
+			"leapview-authoring-registry-" + strconv.Itoa(os.Getpid()),
+		)
+		if _, err := c.qualificationDocker(
+			ctx,
+			nil,
+			"run", "--detach",
+			"--name", registryContainer,
+			"--publish", "127.0.0.1::5000",
+			qualificationRegistryImage,
+		); err != nil {
+			return fmt.Errorf("start qualification registry: %w", err)
+		}
+		cleanup.Add(func(cleanupCtx context.Context) error {
+			_, err := c.qualificationDocker(cleanupCtx, nil, "rm", "--force", registryContainer)
+			return ignoreQualificationNotFound(err)
+		})
+		portOutput, err := c.qualificationDocker(
+			ctx,
+			nil,
+			"inspect",
+			"--format", `{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}`,
+			registryContainer,
+		)
+		if err != nil {
+			return err
+		}
+		registryPort := strings.TrimSpace(string(portOutput))
+		if _, err := strconv.Atoi(registryPort); err != nil {
+			return fmt.Errorf("invalid qualification registry port %q", registryPort)
+		}
+		registryTag := "127.0.0.1:" + registryPort + "/leapview:authoring-ci"
+		if _, err := c.qualificationDocker(ctx, nil, "tag", options.Image, registryTag); err != nil {
+			return err
+		}
+		cleanup.Add(func(cleanupCtx context.Context) error {
+			_, err := c.qualificationDocker(cleanupCtx, nil, "image", "rm", "--force", registryTag)
+			return ignoreQualificationNotFound(err)
+		})
+		pushOutput, err := retryQualificationRegistryPush(
+			ctx,
+			3,
+			500*time.Millisecond,
+			func() ([]byte, error) {
+				return c.qualificationDocker(ctx, nil, "push", registryTag)
+			},
+		)
+		if err != nil {
+			return err
+		}
+		digestMatch := qualificationPushedDigestPattern.FindSubmatch(pushOutput)
+		if len(digestMatch) != 2 {
+			return fmt.Errorf("Docker push did not return an immutable digest")
+		}
+		imageReference = "127.0.0.1:" + registryPort + "/leapview@" + string(digestMatch[1])
+		if _, err := c.qualificationDocker(ctx, nil, "pull", imageReference); err != nil {
+			return err
+		}
+		cleanup.Add(func(cleanupCtx context.Context) error {
+			_, err := c.qualificationDocker(cleanupCtx, nil, "image", "rm", "--force", imageReference)
+			return ignoreQualificationNotFound(err)
+		})
 	}
-	cleanup.Add(func(cleanupCtx context.Context) error {
-		_, err := c.qualificationDocker(cleanupCtx, nil, "rm", "--force", registryContainer)
-		return ignoreQualificationNotFound(err)
-	})
-	portOutput, err := c.qualificationDocker(
-		ctx,
-		nil,
-		"inspect",
-		"--format", `{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}`,
-		registryContainer,
-	)
-	if err != nil {
-		return err
-	}
-	registryPort := strings.TrimSpace(string(portOutput))
-	if _, err := strconv.Atoi(registryPort); err != nil {
-		return fmt.Errorf("invalid qualification registry port %q", registryPort)
-	}
-	registryTag := "127.0.0.1:" + registryPort + "/leapview:authoring-ci"
-	if _, err := c.qualificationDocker(ctx, nil, "tag", options.Image, registryTag); err != nil {
-		return err
-	}
-	cleanup.Add(func(cleanupCtx context.Context) error {
-		_, err := c.qualificationDocker(cleanupCtx, nil, "image", "rm", "--force", registryTag)
-		return ignoreQualificationNotFound(err)
-	})
-	pushOutput, err := retryQualificationRegistryPush(
-		ctx,
-		3,
-		500*time.Millisecond,
-		func() ([]byte, error) {
-			return c.qualificationDocker(ctx, nil, "push", registryTag)
-		},
-	)
-	if err != nil {
-		return err
-	}
-	digestMatch := qualificationPushedDigestPattern.FindSubmatch(pushOutput)
-	if len(digestMatch) != 2 {
-		return fmt.Errorf("Docker push did not return an immutable digest")
-	}
-	imageReference := "127.0.0.1:" + registryPort + "/leapview@" + string(digestMatch[1])
-	if _, err := c.qualificationDocker(ctx, nil, "pull", imageReference); err != nil {
-		return err
-	}
-	cleanup.Add(func(cleanupCtx context.Context) error {
-		_, err := c.qualificationDocker(cleanupCtx, nil, "image", "rm", "--force", imageReference)
-		return ignoreQualificationNotFound(err)
-	})
+	report.Image = imageReference
 
 	for _, name := range []string{
 		"Caddyfile",
@@ -388,12 +394,16 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	if err := instanceController.Initialize(ctx, InitOptions{
+	firstInstall, err := qualificationNativeFirstInstallOptions(nativeTopology, artifacts)
+	if err != nil {
+		return err
+	}
+	if err := instanceController.InitializeFirstInstall(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
 		Image:       imageReference,
-	}); err != nil {
+	}, firstInstall); err != nil {
 		return err
 	}
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "instance initialization"); err != nil {
@@ -426,18 +436,12 @@ func (c *Controller) QualifyImage(
 	if err := instanceController.FirstLogin(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(credentialsPath, credentialsOutput.Bytes(), 0o600); err != nil {
-		return err
-	}
 	var credentials qualificationCredentials
 	if err := json.Unmarshal(credentialsOutput.Bytes(), &credentials); err != nil {
 		return fmt.Errorf("decode initial credentials: %w", err)
 	}
 	credentials.QualificationPassword, err = randomHex(24)
 	if err != nil {
-		return err
-	}
-	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
 		return err
 	}
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
@@ -448,12 +452,28 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	if err := bootstrapQualificationProject(
+	bootstrapResult, err := bootstrapQualificationProject(
 		ctx,
 		c.qualificationContainers.Existing(containerID),
 		"http://localhost:8080",
-		credentials.PublisherToken,
-	); err != nil {
+		credentials.ProjectClaimToken,
+		explicitQualificationEnvironment,
+	)
+	if err != nil {
+		return err
+	}
+	credentials.ClaimCredentialID = bootstrapResult.ClaimCredentialID
+	credentials.PublisherToken = bootstrapResult.PublisherToken
+	credentials.PublisherTokenExpires = bootstrapResult.PublisherTokenExpiresAt
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	if err := acknowledgeQualificationProjectClaim(ctx, c.qualificationContainers.Existing(containerID), "http://localhost:8080", credentials.PublisherToken, credentials.ClaimCredentialID); err != nil {
+		return err
+	}
+	credentials.ProjectClaimToken = ""
+	credentials.ProjectClaimTokenExpiresAt = ""
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
 		return err
 	}
 	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
@@ -482,6 +502,7 @@ func (c *Controller) QualifyImage(
 
 	authoringReport, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      bundleRoot,
+		AssetsRoot:      filepath.Join(bundleRoot, "qualification"),
 		Image:           imageReference,
 		ClientBaseImage: options.Image,
 		CredentialsFile: credentialsPath,
@@ -598,5 +619,5 @@ func ignoreQualificationNotFound(err error) error {
 }
 
 func qualificationStartedAt(now time.Time) string {
-	return now.UTC().Format(time.RFC3339)
+	return now.UTC().Format(time.RFC3339Nano)
 }

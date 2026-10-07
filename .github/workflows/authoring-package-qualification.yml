@@ -1,6 +1,17 @@
-name: Released authoring package qualification
+name: Qualification / Authoring package
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Exact published server release tag to qualify
+        required: true
+        type: string
+      run_lifecycle:
+        description: Run the optional authoring lifecycle
+        required: false
+        default: false
+        type: boolean
   release:
     types: [published]
   workflow_dispatch:
@@ -10,7 +21,7 @@ on:
         required: true
         type: string
       run_lifecycle:
-        description: Run init and one local dev lifecycle (requires manual device approval)
+        description: Run init and local dev restart with automatic scoped local authentication
         required: false
         default: false
         type: boolean
@@ -20,6 +31,7 @@ permissions:
 
 jobs:
   qualify:
+    if: inputs.release_tag != '' || github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'desktop-')
     name: Qualify released authoring package (linux-${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -32,7 +44,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     concurrency:
-      group: released-authoring-package-${{ github.event.release.tag_name || inputs.release_tag }}-${{ matrix.arch }}
+      group: released-authoring-package-${{ inputs.release_tag || github.event.release.tag_name }}-${{ matrix.arch }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -44,10 +56,17 @@ jobs:
       - name: Download exact public authoring archive
         id: package
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_INPUTS: ${{ toJSON(inputs) }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
+          if jq -e 'has("release_tag")' <<< "$RELEASE_INPUTS" >/dev/null; then
+            RELEASE_TAG="$INPUT_RELEASE_TAG"
+          else
+            RELEASE_TAG="$EVENT_RELEASE_TAG"
+          fi
           case "$RELEASE_TAG" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *) printf 'invalid release tag: %s\n' "$RELEASE_TAG" >&2; exit 1 ;;
@@ -63,6 +82,12 @@ jobs:
             "https://github.com/flidai/leapview/releases/download/$RELEASE_TAG/$package.tar.gz.sha256"
           printf 'archive=%s\n' "$root/$package.tar.gz" >> "$GITHUB_OUTPUT"
 
+      - name: Install optional lifecycle keyring dependencies
+        if: inputs.run_lifecycle == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends dbus gnome-keyring
+
       - name: Run required package qualification and optional lifecycle
         env:
           ARCHIVE: ${{ steps.package.outputs.archive }}
@@ -77,21 +102,23 @@ jobs:
             --required
           )
           if [ "$RUN_LIFECYCLE" = true ]; then
-            # Required mode deliberately fails closed if this socket, Compose,
-            # or the human device-approval prerequisite is unavailable.
+            # Required mode deliberately fails closed if this socket or
+            # Compose is unavailable. Local scoped authentication is automatic.
             args+=(
               --run-lifecycle
-              --manual-prerequisites-confirmed
               --docker-host unix:///var/run/docker.sock
             )
+            python3 ./deploy/local/qualification/with_keyring.py \
+              ./deploy/local/qualification/qualify.sh "${args[@]}"
+          else
+            ./deploy/local/qualification/qualify.sh "${args[@]}"
           fi
-          ./deploy/local/qualification/qualify.sh "${args[@]}"
 
       - name: Upload bounded qualification evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: released-authoring-package-${{ github.event.release.tag_name || inputs.release_tag }}-${{ matrix.arch }}
+          name: released-authoring-package-${{ inputs.release_tag || github.event.release.tag_name }}-${{ matrix.arch }}
           retention-days: 14
           if-no-files-found: warn
           path: |

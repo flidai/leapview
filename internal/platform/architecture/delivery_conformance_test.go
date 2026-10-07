@@ -37,6 +37,7 @@ func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 	// SQLite authority is intentionally absent from the application graph.
 	productionRoots := []string{
 		"internal/deployment", "internal/app/runtimefactory", "internal/app/build.go", "internal/app/postgres_build.go",
+		"internal/app/postgres_build_helpers.go", "internal/app/postgres_lifecycle.go",
 	}
 	forbidden := []string{
 		"file_membership", "table_membership", "reference_count",
@@ -133,6 +134,8 @@ func TestPostgresRuntimeRootsDoNotReachLocalCatalogConstructors(t *testing.T) {
 		"internal/app/build.go",
 		"internal/app/composition.go",
 		"internal/app/postgres_build.go",
+		"internal/app/postgres_build_helpers.go",
+		"internal/app/postgres_lifecycle.go",
 		"internal/app/runtimefactory/postgres.go",
 	}
 	forbiddenCalls := map[string]struct{}{

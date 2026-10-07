@@ -12,11 +12,15 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
+// ErrNoActiveServingState indicates that no serving generation is available.
+// Instance administration can remain available before the first publication.
+var ErrNoActiveServingState = errors.New("no active LeapView serving state")
+
 func (m *Manager) Acquire(context.Context) (Lease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.current == nil || m.current.closing {
-		return nil, errors.New("no active LeapView serving state")
+		return nil, ErrNoActiveServingState
 	}
 	m.current.refs++
 	return &runtimeLease{manager: m, managed: m.current}, nil
@@ -77,14 +81,23 @@ func (m *Manager) LeasedSnapshots() []int64 {
 	return snapshotKeys(set)
 }
 func (m *Manager) Close() error {
-	return m.close(false)
+	waiting, cleanupErr := m.closeRuntimeGenerations()
+	if cleanupErr != nil {
+		// Standalone managers own their queue shutdown. Registries instead wait
+		// for both active generations and private candidates before closing it.
+		go m.closeReleaseQueueAfterCleanup(waiting)
+		return cleanupErr
+	}
+	if m.releaseQueue != nil {
+		return m.releaseQueue.close(m.releaseShutdownTimeout)
+	}
+	return nil
 }
 
-func (m *Manager) closeWithoutReleaseQueue() error {
-	return m.close(true)
-}
-
-func (m *Manager) close(skipReleaseQueue bool) error {
+// closeRuntimeGenerations retires active generations without taking ownership
+// of the shared release queue. The caller must retain it until every returned
+// generation's cleanupDone channel closes, even when the bounded wait fails.
+func (m *Manager) closeRuntimeGenerations() ([]*managedRuntime, error) {
 	// Activation holds this same fence from its stale check through durable
 	// completion and process-local publication.  Marking the manager closed
 	// before draining prevents an activation that began before Registry.Close
@@ -103,19 +116,7 @@ func (m *Manager) close(skipReleaseQueue bool) error {
 	// readers.
 	m.cutoverMu.Unlock()
 	m.cleanupRetired(targets)
-	cleanupErr := m.waitForCleanup(waiting)
-	if cleanupErr != nil {
-		// Keep the release queue alive while reader-draining generations still
-		// own persistent snapshot leases. A later Release can then enqueue its
-		// cleanup after the caller resolves the shutdown timeout.
-		go m.closeReleaseQueueAfterCleanup(waiting)
-		return cleanupErr
-	}
-	var queueErr error
-	if !skipReleaseQueue && m.releaseQueue != nil {
-		queueErr = m.releaseQueue.close(m.releaseShutdownTimeout)
-	}
-	return errors.Join(cleanupErr, queueErr)
+	return waiting, m.waitForCleanup(waiting)
 }
 
 func (m *Manager) closeReleaseQueueAfterCleanup(targets []*managedRuntime) {
@@ -169,6 +170,7 @@ type managedRuntime struct {
 	managedData             ManagedDataLifetime
 	snapshotLease           *persistentSnapshotLease
 	runtimeLifetime         RuntimeLifetime
+	leaseHealth             *runtimeLeaseHealth
 	snapshotID              int64
 	sealed                  bool
 	refs                    int
@@ -303,6 +305,7 @@ func (m *Manager) closeManagedResources(runtime *managedRuntime) []cleanupResult
 		if err := closeRuntimeLifetime(runtime.runtimeLifetime); err != nil {
 			out = append(out, cleanupResult{CleanupResourceDependency, err})
 		}
+		runtime.leaseHealth.close()
 		runtime.cleanupResults = out
 	})
 	return append([]cleanupResult(nil), runtime.cleanupResults...)

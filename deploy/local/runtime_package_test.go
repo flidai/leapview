@@ -179,17 +179,11 @@ func TestLocalRuntimeUsesCanonicalPostgresAuthority(t *testing.T) {
 
 	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
 	for _, required := range []string{
-		`cp deploy/local/compose.yaml deploy/local/README.md deploy/local/runtime-package.schema.json "$local_runtime_dir/"`,
-		`cp deploy/postgres/init.sh "$local_runtime_dir/postgres-init.sh"`,
-		`"schemaVersion": 1`,
-		`"persistentStateSchemaVersion": 1`,
-		`"composeMinimumVersion": "2.17.0"`,
-		`"image": os.environ["IMAGE_REFERENCE"]`,
-		`"major": 18`,
-		`"image": os.environ["POSTGRES_IMAGE"]`,
+		"python3 scripts/package_compose_bundle.py",
+		`--image-reference "$IMAGE_REFERENCE" --release-identity release-identity.json`,
 	} {
 		if !strings.Contains(workflow, required) {
-			t.Errorf("release workflow missing local runtime package contract %q", required)
+			t.Errorf("release workflow missing shared local runtime packaging contract %q", required)
 		}
 	}
 

@@ -1,5 +1,5 @@
 import type { SavedVisualLibrarySignal } from '../../generated/signals'
-import { uuidv7 } from '../shared/command'
+import { uuidv7 } from '../shared/command-identity'
 
 export const savedVisualDragType = 'application/x-leapview-saved-visual'
 export type SavedVisualLibraryMessage =

@@ -1,17 +1,34 @@
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdir, open, readFile, rm } from 'node:fs/promises'
+import { chromium } from '@playwright/test'
+import { appendCapturedOutput, drainProcessOutput, formatManagedStartupFailure } from './qa_ui_framework_process'
 
 const portFile = '.tmp/dev-server.port'
 const qaHome = '.tmp/qa-ui-framework/home'
+const qaSessionPath = `${qaHome}/browser-session.json`
 const qaPostgresEnv = {
   LEAPVIEW_POSTGRES_PROJECT_SUFFIX: '-qa-ui-framework',
   LEAPVIEW_POSTGRES_TEST_MODE: '1',
   LEAPVIEW_POSTGRES_DEV_ENV_FILE: `${qaHome}/postgres-dev.env`,
 }
+const qaRuntimeEnv = {
+  LEAPVIEW_HOME: qaHome,
+  LEAPVIEW_CLI_CONFIG: `${qaHome}/cli.json`,
+  LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
+  LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
+}
+// `task dev` installs and may extract pinned map assets before it can start
+// the server. Give that full task startup its own bounded budget while keeping
+// the server's readiness and publication waits at their existing limits.
 const managedServerReadyAttempts = 1800
+const managedTaskStartupAttempts = 9_000
 let startedServer = false
 let cleanedUp = false
 let devTask: Bun.Subprocess | null = null
 let devTaskExitCode: number | null = null
+let devTaskOutput = ''
+let devTaskOutputReaders: Promise<void>[] = []
+let devTaskOutputReaderHandles: ReadableStreamDefaultReader<Uint8Array>[] = []
+let createdSessionState = false
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
@@ -29,12 +46,18 @@ try {
 async function main(): Promise<void> {
   try {
     const baseURL = await resolveBaseURL()
+    const storageState = await prepareBrowserSession(baseURL)
+    const browserEnv = {
+      LEAPVIEW_BASE_URL: baseURL,
+      ...(storageState ? { LEAPVIEW_QA_STORAGE_STATE: storageState } : {}),
+      LEAPVIEW_QA_DISPOSABLE: startedServer ? '1' : '0',
+    }
     const qaScope = Bun.env.LEAPVIEW_UI_QA_SCOPE?.trim() || 'all'
     if (qaScope !== 'all' && qaScope !== 'visual') {
       throw new Error(`Unsupported LEAPVIEW_UI_QA_SCOPE=${JSON.stringify(qaScope)}; expected "all" or "visual"`)
     }
     if (qaScope === 'all') {
-      await run(['bun', 'run', 'qa:datastar-lit-routes'], { LEAPVIEW_BASE_URL: baseURL })
+      await run(['bun', 'run', 'qa:datastar-lit-routes'], browserEnv)
     }
     const visualCommand = [
       'bun',
@@ -44,13 +67,56 @@ async function main(): Promise<void> {
       '--config',
       'scripts/playwright.visual.config.ts',
     ]
-    const visualEnv = { LEAPVIEW_BASE_URL: baseURL }
+    const visualEnv = browserEnv
     if (Bun.env.LEAPVIEW_UPDATE_VISUAL_BASELINES === '1') {
       await run([...visualCommand, '--update-snapshots'], visualEnv)
     }
     await run(visualCommand, visualEnv)
   } finally {
     await cleanup()
+  }
+}
+
+async function prepareBrowserSession(baseURL: string): Promise<string | null> {
+  const supplied = Bun.env.LEAPVIEW_QA_STORAGE_STATE?.trim()
+  if (supplied) return supplied
+  const address = new URL(baseURL)
+  if (address.protocol !== 'http:' || !['localhost', '127.0.0.1', '::1'].includes(address.hostname)) return null
+
+  const browser = await chromium.launch()
+  try {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    const response = await page.goto(new URL('/login', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`QA development login returned HTTP ${response?.status() ?? 'unknown'}`)
+    if (new URL(page.url()).pathname === '/login') {
+      const shortcut = page.getByRole('button', { name: 'Continue as Local Developer', exact: true })
+      if (!await shortcut.isVisible()) {
+        throw new Error('Local QA requires the managed development quick login or LEAPVIEW_QA_STORAGE_STATE')
+      }
+      await shortcut.click()
+      await page.waitForURL((url) => url.pathname !== '/login')
+    }
+    const root = await page.goto(new URL('/', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!root?.ok() || new URL(page.url()).pathname !== '/') {
+      throw new Error('QA browser session cannot open Insights after local sign-in')
+    }
+    await page.locator('lv-catalog-page').waitFor()
+    const state = await context.storageState()
+    if (state.cookies.length === 0) return null
+    await mkdir(qaHome, { recursive: true, mode: 0o700 })
+    await chmod(qaHome, 0o700)
+    const file = await open(qaSessionPath, 'w', 0o600)
+    try {
+      await file.chmod(0o600)
+      await file.writeFile(JSON.stringify(state))
+    } finally {
+      await file.close()
+    }
+    createdSessionState = true
+    return qaSessionPath
+  } finally {
+    await browser.close()
   }
 }
 
@@ -65,13 +131,15 @@ async function resolveBaseURL(): Promise<string> {
   await prepareManagedHome()
   devTask = spawn(['task', 'dev'], {
     ...qaPostgresEnv,
+    ...qaRuntimeEnv,
     LEAPVIEW_DEV_LOG_LINES: '0',
     LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts),
     LEAPVIEW_DEV_SKIP_PUBLISH: '1',
-    LEAPVIEW_HOME: qaHome,
-    LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
-    LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
-  }, 'ignore')
+  }, 'pipe')
+  devTaskOutputReaders = [
+    captureProcessOutput(readableProcessOutput(devTask.stdout)),
+    captureProcessOutput(readableProcessOutput(devTask.stderr)),
+  ]
   void devTask.exited.then((code) => {
     devTaskExitCode = code
   })
@@ -99,11 +167,13 @@ async function removeManagedHome(): Promise<void> {
 }
 
 async function deployManagedProject(): Promise<void> {
-  const command = ['task', 'dev:publish']
+  // A disposable QA database has no pinned managed-data revision yet. The
+  // ordinary dev:publish task skips data sync and is only safe after seeding.
+  const command = ['./scripts/dev-server.sh', 'publish']
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await run(command, qaPostgresEnv)
+      await run(command, { ...qaPostgresEnv, ...qaRuntimeEnv, LEAPVIEW_DEV_SKIP_DATA_SYNC: '0' })
       return
     } catch (error) {
       lastError = error
@@ -114,7 +184,7 @@ async function deployManagedProject(): Promise<void> {
 }
 
 async function waitForManagedServer(): Promise<string> {
-  for (let attempt = 0; attempt < managedServerReadyAttempts; attempt++) {
+  for (let attempt = 0; attempt < managedTaskStartupAttempts; attempt++) {
     const baseURL = await managedBaseURL()
     if (baseURL) {
       // The application root intentionally remains unavailable until a
@@ -125,11 +195,11 @@ async function waitForManagedServer(): Promise<string> {
       if (await reachable(healthURL)) return baseURL
     }
     if (devTaskExitCode !== null) {
-      throw new Error(`task dev exited before the managed server became reachable with status ${devTaskExitCode}`)
+      throw await exitedManagedStartupFailure(`task dev exited before the managed server became reachable with status ${devTaskExitCode}`)
     }
     await sleep(200)
   }
-  throw new Error('managed dev server did not become reachable')
+  throw managedStartupFailure('managed dev server did not become reachable')
 }
 
 async function waitForProjectReady(baseURL: string): Promise<void> {
@@ -137,11 +207,51 @@ async function waitForProjectReady(baseURL: string): Promise<void> {
   for (let attempt = 0; attempt < managedServerReadyAttempts; attempt++) {
     if (await reachable(exploreURL)) return
     if (devTaskExitCode !== null) {
-      throw new Error(`task dev exited before the published project became reachable with status ${devTaskExitCode}`)
+      throw await exitedManagedStartupFailure(`task dev exited before the published project became reachable with status ${devTaskExitCode}`)
     }
     await sleep(200)
   }
-  throw new Error('published project did not become reachable')
+  throw managedStartupFailure('published project did not become reachable')
+}
+
+async function exitedManagedStartupFailure(message: string): Promise<Error> {
+  await drainProcessOutput(devTaskOutputReaders, async () => {
+    await Promise.all(devTaskOutputReaderHandles.map(async (reader) => {
+      try {
+        await reader.cancel()
+      } catch {
+        // The stream may have closed while the drain deadline elapsed.
+      }
+    }))
+  })
+  return managedStartupFailure(message)
+}
+
+function managedStartupFailure(message: string): Error {
+  return new Error(formatManagedStartupFailure(message, devTaskOutput))
+}
+
+async function captureProcessOutput(stream: ReadableStream<Uint8Array> | null): Promise<void> {
+  if (!stream) return
+  const reader = stream.getReader()
+  devTaskOutputReaderHandles.push(reader)
+  const decoder = new TextDecoder()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      devTaskOutput = appendCapturedOutput(devTaskOutput, decoder.decode(value, { stream: true }))
+    }
+    devTaskOutput = appendCapturedOutput(devTaskOutput, decoder.decode())
+  } catch {
+    devTaskOutput = appendCapturedOutput(devTaskOutput, '\n[task dev output capture stopped unexpectedly]\n')
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function readableProcessOutput(stream: Bun.Subprocess['stdout']): ReadableStream<Uint8Array> | null {
+  return stream !== undefined && typeof stream !== 'number' ? stream : null
 }
 
 async function managedBaseURL(): Promise<string | null> {
@@ -167,24 +277,29 @@ async function reachable(baseURL: string): Promise<boolean> {
 }
 
 async function cleanup(): Promise<void> {
-  if (!startedServer || cleanedUp) return
+  if (cleanedUp) return
   cleanedUp = true
   try {
+    if (!startedServer) return
     await run(['task', 'dev:stop'])
   } finally {
-    if (devTask && devTaskExitCode === null) {
-      const exited = await Promise.race([
-        devTask.exited.then(() => true),
-        sleep(5000).then(() => false),
-      ])
-      if (!exited) {
-        devTask.kill()
-      }
-    }
     try {
-      await destroyManagedPostgres()
+      if (startedServer) {
+        if (devTask && devTaskExitCode === null) {
+          const exited = await Promise.race([
+            devTask.exited.then(() => true),
+            sleep(5000).then(() => false),
+          ])
+          if (!exited) devTask.kill()
+        }
+        try {
+          await destroyManagedPostgres()
+        } finally {
+          await removeManagedHome()
+        }
+      }
     } finally {
-      await removeManagedHome()
+      if (createdSessionState) await rm(qaSessionPath, { force: true })
     }
   }
 }
@@ -197,7 +312,7 @@ async function run(command: string[], extraEnv: Record<string, string> = {}): Pr
   }
 }
 
-function spawn(command: string[], extraEnv: Record<string, string> = {}, stdio: 'inherit' | 'ignore'): Bun.Subprocess {
+function spawn(command: string[], extraEnv: Record<string, string> = {}, stdio: 'inherit' | 'ignore' | 'pipe'): Bun.Subprocess {
   return Bun.spawn(command, {
     cwd: process.cwd(),
     env: { ...Bun.env, ...extraEnv },

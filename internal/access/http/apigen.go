@@ -58,6 +58,12 @@ func (d *APIGenDispatcher) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *std
 func (d *APIGenDispatcher) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenCreateCurrentAPITokenHeaders) {
 	d.handler.CreateCurrentAPIToken(w, r)
 }
+func (d *APIGenDispatcher) UpdateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenUpdateCurrentAPITokenHeaders) {
+	d.handler.UpdateCurrentAPIToken(w, r)
+}
+func (d *APIGenDispatcher) RotateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenRotateCurrentAPITokenHeaders) {
+	d.handler.RotateCurrentAPIToken(w, r)
+}
 func (d *APIGenDispatcher) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.RevokeCurrentAPIToken(w, r)
 }
@@ -154,11 +160,32 @@ func (d *APIGenDispatcher) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhtt
 func (d *APIGenDispatcher) ListProjectRoleBindings(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListProjectRoleBindingsParams) {
 	d.handler.ListProjectRoleBindings(w, r)
 }
+func (d *APIGenDispatcher) ExchangeProjectClaimPublisher(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenExchangeProjectClaimPublisherHeaders) {
+	d.handler.ExchangeProjectClaimPublisher(w, r)
+}
+func (d *APIGenDispatcher) AcknowledgeProjectClaimPublisher(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenAcknowledgeProjectClaimPublisherHeaders) {
+	d.handler.AcknowledgeProjectClaimPublisher(w, r)
+}
 func (d *APIGenDispatcher) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenCreateProjectRoleBindingHeaders) {
 	if headers.IdempotencyKey != "" {
 		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
 	}
 	d.handler.CreateProjectRoleBinding(w, r)
+}
+func (d *APIGenDispatcher) IssueResourceShareGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenIssueResourceShareGrantHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.IssueResourceShareGrant(w, r)
+}
+func (d *APIGenDispatcher) RevokeResourceShareGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.RevokeResourceShareGrant(w, r)
+}
+func (d *APIGenDispatcher) DeleteProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenDeleteProjectRoleBindingHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.DeleteProjectRoleBinding(w, r)
 }
 func (d *APIGenDispatcher) ListGroupSemanticAttributeAssignments(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGroupSemanticAttributeAssignmentsParams) {
 	d.handler.ListGroupSemanticAttributeAssignments(w, r)

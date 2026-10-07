@@ -3,14 +3,45 @@ package composectl
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 
-	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
+
+func qualificationNativeFirstInstallOptions(
+	topology *qualificationNativePostgresTopology,
+	artifacts physicalPoolBootstrapArtifacts,
+) (FirstInstallOptions, error) {
+	if err := validateQualificationNativePostgresEnvironmentTopology(topology); err != nil {
+		return FirstInstallOptions{}, err
+	}
+	if err := validatePhysicalPoolBootstrapArtifacts(artifacts); err != nil {
+		return FirstInstallOptions{}, err
+	}
+	options := FirstInstallOptions{
+		Profile: FirstInstallPostgresExternal,
+		Postgres: FirstInstallPostgres{
+			ControlURL:             topology.ControlURL,
+			ControlMigratorURL:     topology.ControlMigratorURL,
+			ControlMaintenanceURL:  topology.ControlMaintenanceURL,
+			DuckLakeURL:            topology.DuckLakeURL,
+			DuckLakeMaintenanceURL: topology.DuckLakeMaintenanceURL,
+			DuckLakeMigratorURL:    topology.DuckLakeMigratorURL,
+		},
+		PhysicalPool: FirstInstallPhysicalPool{
+			Pool: artifacts.Pool,
+			Evidence: physicalpool.EvidenceArtifact{
+				SchemaVersion: physicalpool.EvidenceArtifactSchemaVersion,
+				Evidence:      artifacts.Evidence,
+			},
+		},
+	}
+	if err := options.Validate(); err != nil {
+		return FirstInstallOptions{}, err
+	}
+	return options, nil
+}
 
 // seedQualificationNativeEnvironment copies the packaged application
 // environment example into the qualification bundle. Compose resolves
@@ -18,29 +49,7 @@ import (
 // network preparation phase.  The destination is always written atomically
 // with private permissions; no values are synthesized here.
 func seedQualificationNativeEnvironment(bundleRoot string) error {
-	bundleRoot = strings.TrimSpace(bundleRoot)
-	if bundleRoot == "" {
-		return errors.New("qualification environment bundle root is required")
-	}
-	root, err := filepath.Abs(bundleRoot)
-	if err != nil {
-		return fmt.Errorf("resolve qualification environment bundle root: %w", err)
-	}
-	source := filepath.Join(root, "leapview.env.example")
-	if err := requireNonEmptyFile(source); err != nil {
-		return fmt.Errorf("qualification application environment example: %w", err)
-	}
-	contents, err := os.ReadFile(source)
-	if err != nil {
-		return fmt.Errorf("read qualification application environment example: %w", err)
-	}
-	if len(contents) == 0 {
-		return fmt.Errorf("qualification application environment example is empty: %s", source)
-	}
-	if err := securefs.WritePrivateFileAtomic(filepath.Join(root, appEnvName), contents); err != nil {
-		return fmt.Errorf("seed qualification application environment: %w", err)
-	}
-	return nil
+	return seedApplicationEnvironment(bundleRoot)
 }
 
 // seedQualificationNativePostgresEnvironment is a Controller convenience
@@ -63,19 +72,27 @@ func qualificationNativePostgresServingEnvironment(
 	if err := validateQualificationNativePostgresEnvironmentTopology(topology); err != nil {
 		return nil, err
 	}
-	return map[string]string{
-		"LEAPVIEW_POSTGRES_CONTROL_URL":               topology.ControlURL,
-		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL":      topology.ControlMigratorURL,
-		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE":     qualificationNativePostgresControlMigratorRole,
-		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE":      qualificationNativePostgresControlRuntimeRole,
-		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL":   topology.ControlMaintenanceURL,
-		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE":  qualificationNativePostgresControlMaintenanceRole,
-		"LEAPVIEW_POSTGRES_DUCKLAKE_URL":              topology.DuckLakeURL,
-		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE":     qualificationNativePostgresDuckLakeRuntimeRole,
-		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL":  topology.DuckLakeMaintenanceURL,
-		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": qualificationNativePostgresDuckLakeMaintenanceRole,
-		"LEAPVIEW_POSTGRES_REQUIRE_TLS":               "true",
-	}, nil
+	values, err := postgresServingEnvironment(
+		topology.ControlURL, topology.ControlMaintenanceURL,
+		topology.DuckLakeURL, topology.DuckLakeMaintenanceURL,
+	)
+	if err != nil {
+		return nil, err
+	}
+	values["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"] = postgresControlMigratorRole
+	if strings.TrimSpace(topology.ControlReadonlyURL) != "" {
+		readonlyURL, err := canonicalPostgresConnectionURL(postgresConnection{
+			name: "control readonly", value: topology.ControlReadonlyURL,
+			role:     qualificationNativePostgresControlReadonlyRole,
+			database: qualificationNativePostgresControlDatabase,
+		})
+		if err != nil {
+			return nil, err
+		}
+		values["LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"] = readonlyURL
+		values["LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"] = qualificationNativePostgresControlReadonlyRole
+	}
+	return values, nil
 }
 
 // writeQualificationNativePostgresEnvironment replaces the serving values in
@@ -90,19 +107,34 @@ func writeQualificationNativePostgresEnvironment(
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(environmentPath) == "" {
-		return errors.New("qualification application environment path is required")
+	const readonlyURLKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"
+	const readonlyRoleKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"
+	readonlyURL, hasReadonlyURL := values[readonlyURLKey]
+	readonlyRole, hasReadonlyRole := values[readonlyRoleKey]
+	delete(values, readonlyURLKey)
+	delete(values, readonlyRoleKey)
+	if hasReadonlyURL != hasReadonlyRole {
+		return errors.New("qualification PostgreSQL readonly serving URL and role must be configured together")
 	}
-	if err := requireNonEmptyFile(environmentPath); err != nil {
-		return fmt.Errorf("qualification application environment: %w", err)
+	if err := writePostgresServingEnvironment(
+		environmentPath, values,
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
+	); err != nil {
+		return err
 	}
-	if err := updateEnvFile(environmentPath, values); err != nil {
-		return fmt.Errorf("write qualification PostgreSQL serving environment: %w", err)
+	if hasReadonlyURL {
+		if err := appendOrReplaceEnvFile(environmentPath, readonlyURLKey, readonlyURL); err != nil {
+			return fmt.Errorf("write qualification PostgreSQL readonly serving URL: %w", err)
+		}
+		if err := appendOrReplaceEnvFile(environmentPath, readonlyRoleKey, readonlyRole); err != nil {
+			return fmt.Errorf("write qualification PostgreSQL readonly serving role: %w", err)
+		}
+	} else if err := removePostgresEnvironmentURLs(environmentPath, readonlyURLKey, readonlyRoleKey); err != nil {
+		return fmt.Errorf("remove qualification PostgreSQL readonly serving credentials: %w", err)
 	}
-	// A packaged example does not contain operation URLs.  Remove any stale
-	// values if a caller supplied a pre-existing file, ensuring the serving
-	// environment can never persist owner-capable credentials.
-	return removeQualificationNativeOperationURLs(environmentPath)
+	return nil
 }
 
 // qualificationNativePostgresOperationEnvironment returns the only values
@@ -117,18 +149,7 @@ func qualificationNativePostgresOperationEnvironment(
 	if topology == nil || strings.TrimSpace(topology.DuckLakeMigratorURL) == "" {
 		return nil, errors.New("qualification PostgreSQL DuckLake migrator URL is required")
 	}
-	if _, err := validateQualificationNativePostgresURL(
-		topology.DuckLakeMigratorURL,
-		qualificationNativePostgresDuckLakeMigratorRole,
-		qualificationNativePostgresDuckLakeDatabase,
-		"DuckLake migrator",
-	); err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL":  topology.DuckLakeMigratorURL,
-		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE": qualificationNativePostgresDuckLakeMigratorRole,
-	}, nil
+	return postgresPoolBootstrapEnvironment(topology.ControlMigratorURL, topology.DuckLakeMigratorURL)
 }
 
 func (c *Controller) writeQualificationNativePostgresEnvironment(
@@ -198,63 +219,24 @@ func validateQualificationNativePostgresEnvironmentTopology(
 		{"DuckLake migrator", topology.DuckLakeMigratorURL, qualificationNativePostgresDuckLakeMigratorRole, qualificationNativePostgresDuckLakeDatabase, false},
 		{"DuckLake maintenance", topology.DuckLakeMaintenanceURL, qualificationNativePostgresDuckLakeMaintenanceRole, qualificationNativePostgresDuckLakeDatabase, true},
 	}
-	seenURLs := make(map[string]string, len(urls))
-	seenPasswords := make(map[string]string, len(urls))
+	connections := make([]postgresConnection, 0, len(urls))
 	for _, connection := range urls {
 		value := strings.TrimSpace(connection.value)
 		if value == "" && !connection.required {
 			continue
 		}
-		identity, err := validateQualificationNativePostgresURL(value, connection.role, connection.database, connection.name)
-		if err != nil {
-			return err
-		}
-		if previous, exists := seenURLs[identity]; exists {
-			return fmt.Errorf("qualification PostgreSQL %s URL aliases %s URL", connection.name, previous)
-		}
-		seenURLs[identity] = connection.name
-		parsed, _ := url.Parse(value)
-		password, _ := parsed.User.Password()
-		if previous, exists := seenPasswords[password]; exists {
-			return fmt.Errorf("qualification PostgreSQL %s credential aliases %s credential", connection.name, previous)
-		}
-		seenPasswords[password] = connection.name
+		connections = append(connections, postgresConnection{
+			name: connection.name, value: value, role: connection.role, database: connection.database,
+		})
 	}
-	return nil
+	return validateDistinctPostgresConnections(connections)
 }
 
 func validateQualificationNativePostgresURL(raw, expectedRole, expectedDatabase, label string) (string, error) {
-	value := strings.TrimSpace(raw)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed == nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Hostname() == "" || parsed.Fragment != "" || parsed.User == nil {
-		return "", fmt.Errorf("qualification PostgreSQL %s URL is malformed", label)
-	}
-	if parsed.Path != "/"+expectedDatabase {
-		return "", fmt.Errorf("qualification PostgreSQL %s URL targets an unexpected database", label)
-	}
-	username := parsed.User.Username()
-	password, hasPassword := parsed.User.Password()
-	if username != expectedRole || !hasPassword || password == "" {
-		return "", fmt.Errorf("qualification PostgreSQL %s URL has an invalid role identity", label)
-	}
-	query, err := url.ParseQuery(parsed.RawQuery)
-	if err != nil || len(query["sslmode"]) != 1 || strings.TrimSpace(query["sslmode"][0]) != "verify-full" {
-		return "", fmt.Errorf("qualification PostgreSQL %s URL must set sslmode=verify-full", label)
-	}
-	port := 5432
-	if parsed.Port() != "" {
-		parsedPort, portErr := strconv.Atoi(parsed.Port())
-		if portErr != nil || parsedPort < 1 || parsedPort > 65535 {
-			return "", fmt.Errorf("qualification PostgreSQL %s URL has an invalid port", label)
-		}
-		port = parsedPort
-	}
-	for _, component := range []string{parsed.Hostname(), expectedDatabase, username, password} {
-		if strings.ContainsAny(component, "\x00\r\n") {
-			return "", fmt.Errorf("qualification PostgreSQL %s URL contains invalid characters", label)
-		}
-	}
-	return strings.ToLower(parsed.Hostname()) + "|" + strconv.Itoa(port) + "|" + expectedDatabase + "|" + username + "|" + password, nil
+	identity, _, err := validatePostgresConnection(postgresConnection{
+		name: "qualification " + label, value: raw, role: expectedRole, database: expectedDatabase,
+	})
+	return identity, err
 }
 
 // assertQualificationNativeServingCredentialBoundary verifies that the
@@ -276,6 +258,7 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {}, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {},
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE": {}, "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {},
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {}, "LEAPVIEW_POSTGRES_CONTROL_URL": {},
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE": {},
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL": {},
 		"LEAPVIEW_POSTGRES_DUCKLAKE_URL": {}, "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL": {},
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL": {},
@@ -291,6 +274,13 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 		}
 		seenKeys[name] = struct{}{}
 	}
+	const readonlyURLKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL"
+	const readonlyRoleKey = "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE"
+	_, hasReadonlyURL := seenKeys[readonlyURLKey]
+	_, hasReadonlyRole := seenKeys[readonlyRoleKey]
+	if hasReadonlyURL != hasReadonlyRole {
+		return errors.New("qualification serving environment must configure the readonly URL and role together")
+	}
 	values := environmentValues(string(contents))
 	if !strings.EqualFold(strings.TrimSpace(values["LEAPVIEW_POSTGRES_REQUIRE_TLS"]), "true") {
 		return errors.New("qualification serving environment must require PostgreSQL TLS")
@@ -302,6 +292,9 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE":     qualificationNativePostgresDuckLakeRuntimeRole,
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": qualificationNativePostgresDuckLakeMaintenanceRole,
 	}
+	if hasReadonlyRole {
+		roles[readonlyRoleKey] = qualificationNativePostgresControlReadonlyRole
+	}
 	for key, expected := range roles {
 		if strings.TrimSpace(values[key]) != expected {
 			return fmt.Errorf("qualification serving environment role %s must be %q", key, expected)
@@ -311,30 +304,27 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 		key, role, database string
 	}{
 		{"LEAPVIEW_POSTGRES_CONTROL_URL", qualificationNativePostgresControlRuntimeRole, qualificationNativePostgresControlDatabase},
-		{"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL", qualificationNativePostgresControlMigratorRole, qualificationNativePostgresControlDatabase},
 		{"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL", qualificationNativePostgresControlMaintenanceRole, qualificationNativePostgresControlDatabase},
 		{"LEAPVIEW_POSTGRES_DUCKLAKE_URL", qualificationNativePostgresDuckLakeRuntimeRole, qualificationNativePostgresDuckLakeDatabase},
 		{"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL", qualificationNativePostgresDuckLakeMaintenanceRole, qualificationNativePostgresDuckLakeDatabase},
 	}
-	seenIdentities := make(map[string]string, len(urls))
-	seenPasswords := make(map[string]string, len(urls))
+	connections := make([]postgresConnection, 0, len(urls))
 	for _, connection := range urls {
-		identity, err := validateQualificationNativePostgresURL(values[connection.key], connection.role, connection.database, connection.key)
-		if err != nil {
-			return err
-		}
-		if previous, exists := seenIdentities[identity]; exists {
-			return fmt.Errorf("qualification serving environment URL %s aliases %s", connection.key, previous)
-		}
-		seenIdentities[identity] = connection.key
-		parsed, _ := url.Parse(values[connection.key])
-		password, _ := parsed.User.Password()
-		if previous, exists := seenPasswords[password]; exists {
-			return fmt.Errorf("qualification serving environment credential %s aliases %s", connection.key, previous)
-		}
-		seenPasswords[password] = connection.key
+		connections = append(connections, postgresConnection{
+			name: connection.key, value: values[connection.key], role: connection.role, database: connection.database,
+		})
+	}
+	if hasReadonlyURL {
+		connections = append(connections, postgresConnection{
+			name: "control readonly", value: values[readonlyURLKey],
+			role: qualificationNativePostgresControlReadonlyRole, database: qualificationNativePostgresControlDatabase,
+		})
+	}
+	if err := validateDistinctPostgresConnections(connections); err != nil {
+		return err
 	}
 	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
 	} {
@@ -346,29 +336,10 @@ func assertQualificationNativeServingCredentialBoundary(path string) error {
 }
 
 func removeQualificationNativeOperationURLs(environmentPath string) error {
-	contents, err := os.ReadFile(environmentPath)
-	if err != nil {
-		return err
-	}
-	forbidden := map[string]struct{}{
-		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL":           {},
-		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL": {},
-	}
-	lines := strings.Split(string(contents), "\n")
-	filtered := make([]string, 0, len(lines))
-	changed := false
-	for _, line := range lines {
-		name, _, present := strings.Cut(line, "=")
-		if present {
-			if _, remove := forbidden[name]; remove {
-				changed = true
-				continue
-			}
-		}
-		filtered = append(filtered, line)
-	}
-	if !changed {
-		return nil
-	}
-	return securefs.WritePrivateFileAtomic(environmentPath, []byte(strings.Join(filtered, "\n")))
+	return removePostgresEnvironmentURLs(
+		environmentPath,
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
+	)
 }

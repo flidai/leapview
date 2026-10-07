@@ -15,7 +15,6 @@ import (
 type ConnectionUICommandBindings struct {
 	Create  uicommand.Binding
 	Update  uicommand.Binding
-	Test    uicommand.Binding
 	Refresh uicommand.Binding
 	Enable  uicommand.Binding
 	Disable uicommand.Binding
@@ -34,7 +33,6 @@ func (*Module) ConnectionUICommandBindings() ConnectionUICommandBindings {
 	return ConnectionUICommandBindings{
 		Create:  analyticsgen.GenUIActionCreateTargetConnectionBinding(),
 		Update:  analyticsgen.GenUIActionUpdateTargetConnectionBinding(),
-		Test:    analyticsgen.GenUIActionTestTargetConnectionBinding(),
 		Refresh: analyticsgen.GenUIActionRefreshTargetConnectionBinding(),
 		Enable:  analyticsgen.GenUIActionEnableTargetConnectionBinding(),
 		Disable: analyticsgen.GenUIActionDisableTargetConnectionBinding(),
@@ -49,9 +47,6 @@ func (*Module) BeginConnectionUICommand(ctx context.Context, invocation Connecti
 		return started, err
 	case "update":
 		started, _, err := analyticsgen.BeginGenUpdateTargetConnectionBindingCommand(ctx, analyticsgen.GenUpdateTargetConnectionBindingCommandInvocation{Surface: surface, Connection: invocation.Connection, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
-		return started, err
-	case "test":
-		started, _, err := analyticsgen.BeginGenTestTargetConnectionBindingCommand(ctx, analyticsgen.GenTestTargetConnectionBindingCommandInvocation{Surface: surface, Connection: invocation.Connection, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
 		return started, err
 	case "refresh":
 		started, _, err := analyticsgen.BeginGenRefreshTargetConnectionBindingCommand(ctx, analyticsgen.GenRefreshTargetConnectionBindingCommandInvocation{Surface: surface, Connection: invocation.Connection, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})

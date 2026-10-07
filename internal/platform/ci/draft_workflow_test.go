@@ -59,6 +59,17 @@ func TestAllPRWorkflowsSkipDraftsAndAllowRequestedRuns(t *testing.T) {
 				switch job.If {
 				case "${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}",
 					"${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}",
+					// Manual lane selection may further restrict jobs, while the
+					// complete draft gate remains mandatory on the left of &&.
+					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'image') }}",
+					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'development') }}",
+					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all') }}",
+					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'development') }}",
+					"${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks == 'all' || inputs.checks == 'image') }}",
+					// Dependency discovery only runs when explicitly dispatched.
+					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-application' }}",
+					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-site' }}",
+					"${{ github.event_name == 'workflow_dispatch' && inputs.checks == 'native-desktop' }}",
 					"${{ github.event_name != 'pull_request' }}", "${{ github.event_name == 'push' }}":
 				default:
 					t.Errorf("job %s can start on a draft PR: %q", id, job.If)

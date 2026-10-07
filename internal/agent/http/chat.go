@@ -139,7 +139,7 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !ok {
 		return
 	}
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.options.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
@@ -180,7 +180,7 @@ func (h *Handler) ChatStop(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !ok {
 		return
 	}
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.options.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
@@ -250,7 +250,7 @@ func (h *Handler) ChatStop(w nethttp.ResponseWriter, r *nethttp.Request) {
 		h.writeChatStopFailure(w, r, err)
 		return
 	}
-	embedded := strings.EqualFold(strings.TrimSpace(signals.AgentContext.Surface), "dashboard") || strings.EqualFold(strings.TrimSpace(signals.AgentContext.Surface), "data")
+	embedded := isEmbeddedAgentSurface(signals.AgentContext.Surface)
 	signal := h.chatSignalWith(stopCtx, scope, conversationID, state.Transcript, state.Artifacts, "", false)
 	// The transport owns the settled stop boundary. Keep the explicit status
 	// invariant even when a composition supplies a minimal signal builder.
@@ -364,7 +364,7 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	scope := h.chatScope(r)
 	signal, view := h.chatBootstrapSignal(r, scope)
 	projectID := ""
-	clientID, ok := webtransport.RequireClientID(w, r)
+	clientID, ok := h.options.ClientIDs.Require(w, r)
 	if !ok {
 		return
 	}
@@ -384,7 +384,7 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h *Handler) renderChat(w nethttp.ResponseWriter, r *nethttp.Request, view string, signal ui.ChatViewState) {
-	if _, ok := webtransport.RequireClientID(w, r); !ok {
+	if _, ok := h.options.ClientIDs.Require(w, r); !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -430,7 +430,7 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 	}
 	h.recordLegacyCommandAudit(r.WithContext(createCtx), createAgentConversationOperation, scope, "conversation", conversation.ID)
 	prompt := agent.PromptInput{
-		Scope:          scope,
+		Scope:          builderToolScope(scope, turnContext),
 		ConversationID: conversation.ID,
 		Input:          input,
 		Context:        turnContext,
@@ -518,7 +518,7 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		runCtx = withIntent.Context()
 	}
 	prompt := agent.PromptInput{
-		Scope:          scope,
+		Scope:          builderToolScope(scope, turnContext),
 		ConversationID: conversationID,
 		EditMessageID:  editMessageID,
 		Input:          input,
@@ -740,7 +740,7 @@ func chatSignalPatch(signal ui.ChatViewState, embedded bool) pagestream.SignalPa
 
 func (h *Handler) resolveChatTurnContext(r *nethttp.Request, scope agent.Scope, candidate agent.TurnContext) (*agent.TurnContext, bool, error) {
 	surface := strings.ToLower(strings.TrimSpace(candidate.Surface))
-	embedded := surface == "dashboard" || surface == "data"
+	embedded := isEmbeddedAgentSurface(surface)
 	if surface == "" || (surface == "chat" && len(candidate.References) == 0) {
 		return nil, false, nil
 	}
@@ -752,6 +752,24 @@ func (h *Handler) resolveChatTurnContext(r *nethttp.Request, scope agent.Scope, 
 		return nil, embedded, err
 	}
 	return &resolved, embedded, nil
+}
+
+func builderToolScope(scope agent.Scope, turnContext *agent.TurnContext) agent.Scope {
+	scope.BuilderDashboardID, scope.BuilderDraftID = "", ""
+	if turnContext != nil && turnContext.Surface == "dashboard_builder" {
+		scope.BuilderDashboardID = turnContext.DashboardID
+		scope.BuilderDraftID = turnContext.DraftID
+	}
+	return scope
+}
+
+func isEmbeddedAgentSurface(surface string) bool {
+	switch strings.ToLower(strings.TrimSpace(surface)) {
+	case "dashboard", "dashboard_builder", "data":
+		return true
+	default:
+		return false
+	}
 }
 
 func firstNonEmptyString(values ...string) string {

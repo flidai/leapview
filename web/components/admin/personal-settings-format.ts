@@ -49,5 +49,6 @@ export function formatRelativeActivity(value: string): string {
 export function humanizeSessionKind(value: string): string {
   const normalized = value.trim().replace(/[._-]+/g, ' ')
   if (!normalized) return 'Session'
+  if (normalized === 'cli' || normalized === 'human cli') return 'CLI'
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }

@@ -1,0 +1,68 @@
+{
+  "version": 5,
+  "artifact": {
+    "sourceDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "projectDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "contentDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "compilerVersion": "compiler:v1",
+    "schemaVersion": 1
+  },
+  "candidate": {
+    "id": "candidate_1",
+    "revision": 1,
+    "ownerId": "principal_1"
+  },
+  "plan": {
+    "identity": {
+      "projectId": "project_1",
+      "environment": "prod",
+      "generationId": "generation_2"
+    },
+    "targetId": "target_1",
+    "runtimeVersion": "runtime:v1",
+    "policyDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "policyRevision": 1,
+    "authorizationDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "dataRevision": "sources:1",
+    "dataMode": "refresh_sources",
+    "managedDataPins": [
+      {
+        "connectionId": "connection_1",
+        "revisionId": "revision_1"
+      }
+    ],
+    "bindings": [
+      {
+        "bindingId": "binding_1",
+        "connectionId": "connection_1",
+        "connectorKind": "postgres",
+        "revision": 1,
+        "validatedVersion": "provider:v1",
+        "endpointConfigHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ],
+    "authoredConnections": null,
+    "gateEvidence": {
+      "version": 1,
+      "candidateId": "candidate_1",
+      "sourceDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bindingGeneration": "sha256:927353f3dac55a410ffcb81266faf3cc8844df36af2fc8b1bbb920bc5a22a982",
+      "runtimeVersion": "runtime:v1",
+      "duckdbVersion": "duckdb:test",
+      "bounds": {
+        "maxRows": 100,
+        "maxQueries": 10,
+        "maxMillis": 1000
+      },
+      "outcome": "success",
+      "evaluatedAt": "2026-08-18T12:00:00Z",
+      "queries": 0,
+      "observedRows": 0,
+      "durationMillis": 0,
+      "digest": "sha256:ff61db4ad70d3f7ae86c5dd08cb6d927c7b5a134959a3ba1f250206257776c16"
+    }
+  },
+  "artifactProvenanceDigest": "sha256:35e828d289732d505094f92745017d6604cfb287002ac6ab67849f4f5cf2203d",
+  "planDigest": "sha256:3e6d66d1d9db5950b28d77962843563cc5382b8e76d159498eb4c5bd6a496aa7",
+  "digest": "sha256:e801981ee796e0f12c630383e7740b188e9b91827daaaba9e53355da9775dcd1"
+}

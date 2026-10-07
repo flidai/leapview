@@ -462,13 +462,36 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private renderInput() {
+    const comparisonOperators = this.definition?.predicates.find(predicate => predicate.kind === 'comparison')?.operators ?? []
+    const nullOperators = this.definition?.predicates
+      .filter(predicate => predicate.kind === 'null_check')
+      .flatMap(predicate => predicate.operators)
+      .filter((operator): operator is 'is_null' | 'is_not_null' => operator === 'is_null' || operator === 'is_not_null') ?? []
     const comparison = this.expression.kind === 'comparison' ? this.expression : undefined
     const operator = comparison?.operator ?? firstComparisonOperator(this.definition)
     return html`
       <div class="input-control">
-        <span class="operator">${operatorLabel(operator)}</span>
+        ${nullOperators.length > 0 ? html`
+          <select
+            aria-label=${`${this.presentation?.ariaLabel || this.definition?.label || 'Filter'} blank values`}
+            .value=${this.expression.kind === 'null_check' ? this.expression.operator : ''}
+            ?disabled=${this.stale}
+            @change=${(event: Event) => {
+              const selected = (event.currentTarget as HTMLSelectElement).value
+              if (selected === '') this.commit(unfiltered)
+              else if ((selected === 'is_null' || selected === 'is_not_null') && nullOperators.includes(selected)) {
+                this.commit({ kind: 'null_check', operator: selected })
+              }
+            }}
+          >
+            <option value="" ?selected=${this.expression.kind !== 'null_check'}>All values</option>
+            ${nullOperators.map(allowed => html`<option value=${allowed} ?selected=${this.expression.kind === 'null_check' && this.expression.operator === allowed}>${allowed === 'is_null' ? 'Blank values' : 'Non-blank values'}</option>`)}
+          </select>
+        ` : nothing}
+        ${comparisonOperators.length > 0 ? html`<span class="operator">${operatorLabel(operator)}</span>
         <input
           type=${this.definition?.valueKind === 'integer' || this.definition?.valueKind === 'decimal' ? 'number' : 'text'}
+          step=${this.definition?.valueKind === 'decimal' ? 'any' : nothing}
           .value=${comparison ? String(comparison.value.value) : ''}
           placeholder="Enter value"
           aria-label=${`${this.presentation?.ariaLabel || this.definition?.label || 'Filter value'}, ${operatorLabel(operator)}`}
@@ -479,6 +502,7 @@ export class DashboardFilterLeaf extends LitElement {
             })
           }}
         >
+        ` : nothing}
       </div>
     `
   }

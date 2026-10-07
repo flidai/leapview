@@ -73,6 +73,9 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(reader.requests) != 1 || !reader.requests[0].IncludeEditableDrafts {
+		t.Fatalf("dashboard discovery must request editable drafts: %#v", reader.requests)
+	}
 	if len(options.Dashboards) != 3 {
 		t.Fatalf("dashboards = %#v", options.Dashboards)
 	}
@@ -337,7 +340,7 @@ func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
 	h := &BrowserHandler{
 		Environment: "dev",
 		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
-			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:semantic", Status: "succeeded", TriggerType: "schedule"}},
+			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:semantic", PipelineID: "pipeline:sales", Status: "succeeded", TriggerType: "schedule"}},
 			LatestSuccessful: refreshpresentation.AssetRefreshRun{ID: "run:semantic", Status: "succeeded"},
 		}, requestedSemanticModelID: &requestedSemanticModelID},
 	}
@@ -347,7 +350,7 @@ func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Runs) != 1 || state.Runs[0].ID != "run:semantic" || state.LatestSuccessful.ID != "run:semantic" {
+	if len(state.Runs) != 1 || state.Runs[0].ID != "run:semantic" || state.Runs[0].PipelineID != "pipeline:sales" || state.LatestSuccessful.ID != "run:semantic" {
 		t.Fatalf("semantic model refresh state = %#v", state)
 	}
 	if requestedSemanticModelID != "semantic-model:sales" {
@@ -443,9 +446,11 @@ type browserDataQueryStub struct {
 	query  dataquery.Query
 	result dataquery.Result
 	err    error
+	calls  int
 }
 
 func (s *browserDataQueryStub) ExecuteDataQuery(_ context.Context, query dataquery.Query) (dataquery.Result, error) {
+	s.calls++
 	s.query = query
 	return s.result, s.err
 }
@@ -993,14 +998,18 @@ func TestDataExplorerSignalPatchRefreshesAgentContext(t *testing.T) {
 	}
 
 	patch := dataExplorerSignalPatch(page, explorer)
-	context, ok := patch["agentContext"].(projectsignals.AgentContextSignal)
-	if !ok {
-		t.Fatalf("agent context patch = %#v", patch["agentContext"])
+	rawContext, err := json.Marshal(patch["agentContext"])
+	if err != nil {
+		t.Fatalf("marshal agent context: %v", err)
+	}
+	var context projectsignals.AgentContextSignal
+	if err := json.Unmarshal(rawContext, &context); err != nil {
+		t.Fatalf("decode agent context: %v", err)
 	}
 	if context.Surface != "data" || context.ModelID != "semantic-model:visuals" || projectsignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)
 	}
-	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Dimensions[0] != "orders.status" || len(context.Exploration.Metrics) != 1 || context.Exploration.Metrics[0] != "revenue" {
+	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Dimensions[0].Field != "orders.status" || len(context.Exploration.Metrics) != 1 || context.Exploration.Metrics[0].Field != "revenue" {
 		t.Fatalf("agent exploration = %#v", context.Exploration)
 	}
 }
@@ -1036,18 +1045,23 @@ func TestDataExplorerPreviewExecutesGovernedModelQuery(t *testing.T) {
 }
 
 func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
+	model := browserSemanticExploreTestModel()
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	executor := &browserDataQueryStub{result: dataquery.Result{
 		Columns: []dataquery.Column{{Name: "status"}, {Name: "orders"}},
 		Rows:    []dataquery.Row{{"status": "paid", "orders": int64(7)}}, SQL: "select status, count(*)", DurationMS: 12,
 	}}
-	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
+	command, result := dataExplorerSemanticResult(t.Context(), executor, testDataExplorerQueryLowerer, "project:test", projectsignals.DataExploreCommand{
 		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"),
 		Dimensions: []string{"orders.status"}, Metrics: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
 		Sort: []projectsignals.DataExploreSortSignal{{Field: "orders", Direction: "desc"}}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		{ID: "orders.status", Label: "Status", Kind: "dimension", DatasetID: "orders", Compatible: true},
 		{ID: "orders", Label: "Orders", Kind: "metric", DatasetID: "orders", Compatible: true},
-	})
+	}, model, compiled)
 
 	if result.Error != nil || result.RowsReturned != 1 || len(result.Rows) != 1 {
 		t.Fatalf("result = %#v", result)
@@ -1064,18 +1078,23 @@ func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
 }
 
 func TestDataExplorerSemanticExploreUnscopesMultiRootMetric(t *testing.T) {
+	model := browserSemanticExploreTestModel()
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	executor := &browserDataQueryStub{result: dataquery.Result{
 		Columns: []dataquery.Column{{Name: "order_share"}},
 		Rows:    []dataquery.Row{{"order_share": 0.5}}, SQL: "select order_share",
 	}}
-	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
+	command, result := dataExplorerSemanticResult(t.Context(), executor, testDataExplorerQueryLowerer, "project:test", projectsignals.DataExploreCommand{
 		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("customers"),
 		Metrics: []string{"order_share"}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		// An empty datasetId is the projection contract for a derived/ratio
 		// metric whose dependencies span more than one physical dataset.
 		{ID: "order_share", Label: "Order share", Kind: "metric", Compatible: true},
-	})
+	}, model, compiled)
 
 	if result.Error != nil {
 		t.Fatalf("result error = %q", *result.Error)
@@ -1110,7 +1129,7 @@ func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 			Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
 			SemanticModels: map[string]*semanticmodel.Model{"semantic-model:sales": model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
 		}, compiled: map[string]*semanticquery.CompiledModel{"semantic-model:sales": compiled}},
-		QueryExecutor: executor, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		QueryExecutor: executor, ExplorationQueryLowerer: testDataExplorerQueryLowerer, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
 		Environment: "dev", CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
 	}
 	for _, test := range []struct {
@@ -1435,7 +1454,7 @@ func TestSourcesRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Open your profile") {
 		t.Fatalf("forbidden source recovery body = %q", body)
 	}
 }
@@ -1451,7 +1470,7 @@ func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Open your profile") {
 		t.Fatalf("forbidden Explorer recovery body = %q", body)
 	}
 }

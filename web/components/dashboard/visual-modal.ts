@@ -1,4 +1,4 @@
-import { LitElement, css, html, nothing } from 'lit'
+import { LitElement, css, html, nothing, render } from 'lit'
 import { state } from 'lit/decorators.js'
 import { X } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -39,8 +39,10 @@ export class VisualModal extends LitElement {
   @state() private notice = ''
   private focusMount: VisualFocusMount<HTMLElement> | null = null
   private focusSource: HTMLElement | null = null
+  private focusClose: HTMLButtonElement | null = null
   private restoreFocusTo: HTMLElement | null = null
   private actionEventTarget: Node | null = null
+  private noticeTimer: number | undefined
 
   static styles = css`
     :host {
@@ -48,40 +50,52 @@ export class VisualModal extends LitElement {
       font-family: var(--fontStack-system);
     }
 
-    .backdrop {
+    .dialog {
+      box-sizing: border-box;
       position: fixed;
       inset: 0;
-      z-index: var(--zIndex-modal);
-      display: grid;
-      place-items: center;
-      background: var(--lv-modal-backdrop);
-      padding: var(--base-size-28);
-    }
-
-    .dialog {
-      display: grid;
-      width: min(1120px, 100%);
-      max-height: min(760px, calc(100vh - 56px));
-      min-height: min(420px, calc(100vh - 56px));
+      margin: auto;
+      padding: 0;
+      width: min(1120px, calc(100% - 56px));
+      max-height: min(760px, calc(100dvh - 56px));
+      min-height: min(420px, calc(100dvh - 56px));
       grid-template-rows: auto minmax(0, 1fr);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-panel);
       background: var(--lv-bg-overlay);
+      color: inherit;
       box-shadow: var(--shadow-floating-large);
       overflow: hidden;
     }
 
+    .dialog[open] { display: grid; }
+    .dialog::backdrop { background: var(--lv-modal-backdrop); }
+    .focus-dialog::backdrop { background: var(--lv-bg-page); }
+
+    .data-dialog.is-single,
+    .data-dialog.is-compact {
+      width: min(30rem, calc(100% - 56px));
+    }
+
+    .data-dialog.is-medium {
+      width: min(54rem, calc(100% - 56px));
+    }
+
+    .data-dialog.is-compact lv-record-table .record-table {
+      margin-inline: 0;
+      table-layout: auto;
+    }
+
     .focus-dialog {
-      position: relative;
-      width: min(1420px, 100%);
-      height: min(920px, calc(100vh - 56px));
-      max-height: calc(100vh - 56px);
-      min-height: min(520px, calc(100vh - 56px));
+      width: min(1420px, calc(100% - 56px));
+      height: min(920px, calc(100dvh - 56px));
+      max-height: calc(100dvh - 56px);
+      min-height: min(520px, calc(100dvh - 56px));
       grid-template-rows: minmax(0, 1fr);
       background: var(--lv-chart-surface);
     }
 
-    .focus-dialog.tabular {
+    .focus-dialog.focus-table-dialog {
       height: auto;
       min-height: 0;
     }
@@ -151,17 +165,6 @@ export class VisualModal extends LitElement {
     .close {
       width: calc(var(--lv-control-small) + var(--base-size-2));
       padding: 0;
-    }
-
-    .focus-close {
-      position: absolute;
-      top: var(--lv-space-md);
-      right: var(--lv-space-md);
-      z-index: var(--zIndex-popover, 300);
-      display: grid;
-      place-items: center;
-      background: var(--lv-bg-overlay);
-      box-shadow: var(--shadow-floating-small);
     }
 
     .close svg {
@@ -250,13 +253,14 @@ export class VisualModal extends LitElement {
     super.connectedCallback()
     this.actionEventTarget = this.getRootNode()
     this.actionEventTarget.addEventListener('lv-visual-action', this.handleVisualAction as EventListener, { capture: true })
-    window.addEventListener('keydown', this.handleKeydown)
   }
 
   disconnectedCallback(): void {
     this.actionEventTarget?.removeEventListener('lv-visual-action', this.handleVisualAction as EventListener, { capture: true })
     this.actionEventTarget = null
-    window.removeEventListener('keydown', this.handleKeydown)
+    window.clearTimeout(this.noticeTimer)
+    this.noticeTimer = undefined
+    this.renderRoot.querySelector<HTMLDialogElement>('dialog')?.close()
     this.restoreFocusedVisual(false)
     super.disconnectedCallback()
   }
@@ -264,15 +268,14 @@ export class VisualModal extends LitElement {
   render() {
     return html`
       ${this.detail && this.mode ? this.renderDialog(this.detail, this.mode) : nothing}
-      ${this.notice ? html`<div class="notice" role="status">${this.notice}</div>` : nothing}
+      ${!this.mode ? this.renderNotice() : nothing}
     `
   }
 
   private renderDialog(detail: VisualActionDetail, mode: ModalMode) {
     if (mode === 'focus') return this.renderFocusDialog(detail)
     return html`
-      <div class="backdrop" @click=${this.closeFromBackdrop}>
-        <section class="dialog" role="dialog" aria-modal="true" aria-label=${detail.title}>
+      <dialog class=${`dialog data-dialog ${this.dataDialogSize(detail.columns.length)}`} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
           <header>
             <div class="title">
               <p class="eyebrow">Show data · ${detail.visualType}</p>
@@ -287,25 +290,33 @@ export class VisualModal extends LitElement {
           <div class="body">
             ${this.renderData(detail)}
           </div>
-        </section>
-      </div>
+        ${this.renderNotice()}
+      </dialog>
     `
   }
 
   private renderFocusDialog(detail: VisualActionDetail) {
+    const isTable = detail.visualType === 'table'
+    const availableRows = detail.table?.availableRows
+    const rowHeight = detail.table?.rowHeight
+    const rows = typeof availableRows === 'number' && Number.isFinite(availableRows) ? Math.max(0, availableRows) : detail.rows.length
+    const height = Math.min(920, Math.max(360, 150 + rows * (typeof rowHeight === 'number' && rowHeight > 0 ? rowHeight : 34)))
     return html`
-      <div class="backdrop" @click=${this.closeFromBackdrop}>
-        <section class=${`dialog focus-dialog${detail.visualType === 'table' ? ' tabular' : ''}`} role="dialog" aria-modal="true" aria-label=${detail.title}>
-          <button class="close focus-close" type="button" aria-label="Close visual modal" @click=${this.close}>${lucideIcon(X)}</button>
+      <dialog class=${`dialog focus-dialog${isTable ? ' focus-table-dialog' : ''}`} style=${isTable ? `height:min(${height}px, calc(100dvh - 56px))` : ''} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
           <div class="focus-slot"><slot name="focus-visual"></slot></div>
-        </section>
-      </div>
+        ${this.renderNotice()}
+      </dialog>
     `
+  }
+
+  private renderNotice() {
+    return this.notice ? html`<div class="notice" role="status">${this.notice}</div>` : nothing
   }
 
   private renderData(detail: VisualActionDetail) {
     const columns = detail.columns ?? []
     const rows = detail.rows ?? []
+    const compactColumns = columns.length === 2
     if (columns.length === 0 || rows.length === 0) return html`
       <div class="data-shell">
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
@@ -317,6 +328,7 @@ export class VisualModal extends LitElement {
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
         <div class="data-scroll">
           <lv-record-table
+            variant="data"
             .table=${{
               columns: columns.map((column) => ({
                 id: column.key,
@@ -325,12 +337,21 @@ export class VisualModal extends LitElement {
               })),
               rows,
               empty: 'No visual data',
-              minWidth: `${Math.max(columns.length * 160, 520)}px`,
+              width: compactColumns ? '100%' : '',
+              minWidth: compactColumns ? '100%' : columns.length > 4 ? `${columns.length * 160}px` : '0',
+              density: 'tight',
             }}
           ></lv-record-table>
         </div>
       </div>
     `
+  }
+
+  private dataDialogSize(columnCount: number): string {
+    if (columnCount <= 1) return 'is-single'
+    if (columnCount <= 2) return 'is-compact'
+    if (columnCount <= 4) return 'is-medium'
+    return 'is-wide'
   }
 
   private handleVisualAction = (event: CustomEvent<VisualActionDetail>): void => {
@@ -349,28 +370,38 @@ export class VisualModal extends LitElement {
       return
     }
     if (detail.action === 'show-data') {
-      const focusToRestore = this.deepActiveElement()
+      const focusToRestore = this.restoreFocusTo ?? this.deepActiveElement()
       this.restoreFocusedVisual(false)
       this.restoreFocusTo = focusToRestore
       this.detail = detail
       this.mode = 'show-data'
-      void this.updateComplete.then(() => this.focusInitialControl())
+      void this.updateComplete.then(() => {
+        if (!this.isConnected || this.mode !== 'show-data') return
+        this.showDialog()
+        this.focusInitialControl()
+      })
     }
   }
 
-  private handleKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') {
-      this.close()
-      return
-    }
-    if (event.key === 'Tab' && this.mode) this.trapFocus(event)
+  private cancel = (event: Event): void => {
+    event.preventDefault()
+    this.close()
   }
 
-  private closeFromBackdrop = (event: Event): void => {
-    if (event.target === event.currentTarget) this.close()
+  private closeFromBackdrop = (event: MouseEvent): void => {
+    const dialog = event.currentTarget as HTMLDialogElement
+    if (event.target !== dialog) return
+    const bounds = dialog.getBoundingClientRect()
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) this.close()
+  }
+
+  private showDialog(): void {
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>('dialog')
+    if (dialog && !dialog.open) dialog.showModal()
   }
 
   private close = (): void => {
+    this.renderRoot.querySelector<HTMLDialogElement>('dialog')?.close()
     this.restoreFocusedVisual(true)
     this.mode = ''
     this.detail = null
@@ -393,19 +424,52 @@ export class VisualModal extends LitElement {
     this.detail = detail
     this.mode = 'focus'
     this.focusSource = source
-    void this.updateComplete.then(() => {
+    void this.updateComplete.then(async () => {
+      if (!this.isConnected || this.mode !== 'focus' || this.focusSource !== source) return
       this.mountFocusedVisual(source)
+      if (source instanceof LitElement) await source.updateComplete
+      if (!this.isConnected || this.mode !== 'focus' || this.focusSource !== source) return
+      this.showDialog()
       this.focusInitialControl()
+      // Table mounting replaces the temporary action slot. Restore initial
+      // focus after that move, unless the user has already begun interacting.
+      const dialog = this.renderRoot.querySelector<HTMLDialogElement>('dialog')!
+      const listeners = new AbortController()
+      let interacted = false
+      const markInteraction = () => { interacted = true }
+      dialog.addEventListener('pointerdown', markInteraction, { capture: true, signal: listeners.signal })
+      dialog.addEventListener('keydown', markInteraction, { capture: true, signal: listeners.signal })
+      try {
+        await (source as HTMLElement & { ensureMounted?: () => Promise<void> }).ensureMounted?.()
+      } catch {
+        // The host renders its own error; its close action remains available.
+      } finally {
+        listeners.abort()
+      }
+      if (!interacted && this.isConnected && this.mode === 'focus' && this.focusSource === source && this.renderRoot.querySelector('dialog') === dialog) this.focusInitialControl()
     })
   }
 
   private mountFocusedVisual(source: HTMLElement): void {
     if (this.mode !== 'focus' || this.focusSource !== source || this.focusMount) return
     this.focusMount = mountVisualFocus(source, this, { slot: 'focus-visual' })
+    if (!this.focusMount) return
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.slot = 'focus-action'
+    close.className = 'focus-close'
+    close.setAttribute('aria-label', 'Close visual modal')
+    close.title = 'Close visual modal'
+    close.addEventListener('click', this.close)
+    render(lucideIcon(X, { size: 16 }), close)
+    source.append(close)
+    this.focusClose = close
   }
 
   private restoreFocusedVisual(restoreFocus: boolean): void {
     const focusToRestore = this.restoreFocusTo
+    this.focusClose?.remove()
+    this.focusClose = null
     if (this.focusMount) restoreVisualFocus(this.focusMount)
     this.focusMount = null
     this.removeAttribute('tabular-focus')
@@ -417,56 +481,8 @@ export class VisualModal extends LitElement {
   }
 
   private focusInitialControl(): void {
-    this.renderRoot.querySelector<HTMLButtonElement>('.focus-close, .dialog .close')?.focus({ preventScroll: true })
-  }
-
-  private trapFocus(event: KeyboardEvent): void {
-    const focusable = this.focusableElements()
-    if (focusable.length === 0) {
-      event.preventDefault()
-      return
-    }
-
-    const active = this.deepActiveElement()
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    const activeInsideModal = Boolean(active && focusable.includes(active))
-    if (event.shiftKey && (!activeInsideModal || active === first)) {
-      event.preventDefault()
-      last.focus({ preventScroll: true })
-      return
-    }
-    if (!event.shiftKey && (!activeInsideModal || active === last)) {
-      event.preventDefault()
-      first.focus({ preventScroll: true })
-    }
-  }
-
-  private focusableElements(): HTMLElement[] {
-    return [
-      ...this.deepFocusableElements(this.renderRoot),
-      ...(this.focusMount ? this.deepFocusableElements(this.focusMount.element) : []),
-    ]
-  }
-
-  private deepFocusableElements(root: ParentNode): HTMLElement[] {
-    const selector = [
-      'button:not([disabled])',
-      'a[href]',
-      'input:not([disabled])',
-      'select:not([disabled])',
-      'textarea:not([disabled])',
-      '[tabindex]:not([tabindex="-1"])',
-    ].join(',')
-    const elements: HTMLElement[] = []
-    root.querySelectorAll<HTMLElement>(selector).forEach((element) => {
-      elements.push(element)
-      if (element.shadowRoot) elements.push(...this.deepFocusableElements(element.shadowRoot))
-    })
-    root.querySelectorAll<HTMLElement>('*').forEach((element) => {
-      if (element.shadowRoot) elements.push(...this.deepFocusableElements(element.shadowRoot))
-    })
-    return [...new Set(elements)]
+    const close = this.focusClose ?? this.renderRoot.querySelector<HTMLButtonElement>('.dialog .close')
+    close?.focus({ preventScroll: true })
   }
 
   private deepActiveElement(): HTMLElement | null {
@@ -492,7 +508,8 @@ export class VisualModal extends LitElement {
     area.setAttribute('readonly', '')
     area.style.position = 'fixed'
     area.style.opacity = '0'
-    document.body.append(area)
+    const target = this.renderRoot.querySelector('dialog[open]') ?? document.body
+    target.append(area)
     area.select()
     document.execCommand('copy')
     area.remove()
@@ -512,9 +529,11 @@ export class VisualModal extends LitElement {
   }
 
   private flash(message: string): void {
+    window.clearTimeout(this.noticeTimer)
     this.notice = message
-    window.setTimeout(() => {
-      if (this.notice === message) this.notice = ''
+    this.noticeTimer = window.setTimeout(() => {
+      this.notice = ''
+      this.noticeTimer = undefined
     }, 1800)
   }
 }

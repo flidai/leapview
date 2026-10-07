@@ -8,6 +8,10 @@ surfaces:
     kind: go-module
     updater: {ecosystem: gomod, directory: /}
     scanners: [govulncheck]
+  - path: deploy/kamal-trial/go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /deploy/kamal-trial}
+    scanners: [govulncheck]
   - path: pkg/apigen/go.mod
     kind: go-module
     updater: {ecosystem: gomod, directory: /pkg/apigen}
@@ -58,6 +62,19 @@ surfaces:
     updater: {ecosystem: npm, directory: /pkg/apigen/typespec}
     scanners: [npm-audit]
 
+  - path: deploy/kamal-site/Gemfile.lock
+    kind: ruby-lock
+    updater: {ecosystem: bundler, directory: /deploy/kamal-site}
+    scanners: [trivy]
+  - path: deploy/kamal-trial/Gemfile.lock
+    kind: ruby-lock
+    updater: {ecosystem: bundler, directory: /deploy/kamal-trial}
+    scanners: [trivy]
+  - path: deploy/managed/kamal/Gemfile.lock
+    kind: ruby-lock
+    updater: {ecosystem: bundler, directory: /deploy/managed/kamal}
+    scanners: [trivy]
+
   - path: deploy/hetzner
     kind: terraform-root
     updater: {ecosystem: terraform, directory: /deploy/hetzner}
@@ -66,15 +83,19 @@ surfaces:
     kind: terraform-root
     updater: {ecosystem: terraform, directory: /deploy/hetzner-site}
     scanners: [trivy]
+  - path: deploy/managed/hetzner
+    kind: terraform-root
+    updater: {ecosystem: terraform, directory: /deploy/managed/hetzner}
+    scanners: [trivy]
 
   - path: Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /}
     scanners: [trivy]
     images:
-      - gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc
-      - golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
-      - node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4
+      - gcr.io/distroless/cc-debian13:debug-nonroot@sha256:984d31d4bd6e71bb9469353d93e73c68f7b3c17142b2aec45f2a960489095b22
+      - golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
+      - node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
       - oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
   - path: Dockerfile.site
     kind: dockerfile
@@ -82,26 +103,26 @@ surfaces:
     scanners: [trivy]
     images:
       - gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
-      - golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
-      - node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4
+      - golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
+      - node:26-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
       - oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
   - path: deploy/compose/qualification/Dockerfile.authoring-client
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
     scanners: [trivy]
-    images: ["${LEAPVIEW_IMAGE}", "debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"]
+    images: ["${LEAPVIEW_IMAGE}", "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251"]
   - path: deploy/postgres/ha/Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/postgres/ha}
     scanners: [trivy]
     images:
-      - docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+      - docker.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
   - path: internal/platform/testminio/Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/platform/testminio}
     scanners: [trivy]
     images:
-      - golang:1.24.6-bookworm@sha256:ab1d1823abb55a9504d2e3e003b75b36dbeb1cbcc4c92593d85a84ee46becc6c
+      - golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}
@@ -154,6 +175,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/demo-upgrade-qualification.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/desktop-preview-release.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
@@ -178,7 +203,39 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/managed-scaffold.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/nightly.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-cli-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-compose-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-development.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-desktop-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-site-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/orchestration-cache.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
@@ -199,6 +256,10 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/workflows/security.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/site-kamal-trial.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

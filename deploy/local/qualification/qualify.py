@@ -4,8 +4,9 @@
 The package checks in this module are deliberately independent of the source
 checkout.  A normal invocation verifies an archive, its two checksum layers,
 the package/runtime manifests, and the installed command identity.  The
-optional lifecycle lane is opt-in because local authentication is a human
-prerequisite and preview/deploy qualification is not released yet.
+optional lifecycle lane is opt-in because it creates and resets a temporary
+Docker runtime. Local bootstrap authentication is automatic; preview/deploy
+measurements remain outside this lane.
 """
 
 from __future__ import annotations
@@ -767,6 +768,95 @@ def require_command_help(command_name: str, result: dict[str, Any]) -> None:
         raise QualificationError(f"cli-help-{command_name} did not return recognizable command-specific help")
 
 
+def require_grouped_root_help(result: dict[str, Any]) -> None:
+    """Require the public grouped discovery surface and its authoring examples."""
+
+    output = str(result.get("output", ""))
+    required_groups = (
+        "Authoring:",
+        "Delivery:",
+        "Data and Query:",
+        "Access:",
+        "Operations:",
+        "Reference:",
+    )
+    missing_groups = [group for group in required_groups if group not in output]
+    output_lines = {line.strip() for line in output.splitlines()}
+    required_examples = (
+        "leapview init ./analytics",
+        "cd ./analytics && leapview dev",
+        "leapview validate",
+        "leapview help deploy",
+    )
+    missing_examples = [example for example in required_examples if example not in output_lines]
+    if missing_groups or missing_examples:
+        raise QualificationError(
+            "cli-root-help omitted required grouped discovery content "
+            f"(groups={missing_groups}, examples={missing_examples})"
+        )
+
+
+LOCAL_DOCTOR_CHECK_IDS = frozenset({
+    "local.identity",
+    "local.platform",
+    "local.runtime_package",
+    "local.docker_endpoint",
+    "local.docker_compose",
+    "local.runtime_state",
+    "project.compiler",
+    "project.profile",
+    "project.credentials",
+})
+
+
+def require_local_doctor_result(result: dict[str, Any]) -> None:
+    """Validate the read-only local doctor JSON and its exit-status contract."""
+
+    exit_code = result.get("exitCode")
+    if type(exit_code) is not int or exit_code not in (0, 1):
+        raise QualificationError("cli-doctor exited outside the documented 0/1 result contract")
+    try:
+        report = json.loads(str(result.get("output", "")))
+    except json.JSONDecodeError as exc:
+        raise QualificationError("cli-doctor did not return one complete JSON report") from exc
+    if not isinstance(report, dict) or report.get("schemaVersion") != 1:
+        raise QualificationError("cli-doctor JSON report has an unsupported schemaVersion")
+    status = report.get("status")
+    if status not in {"pass", "warn", "fail"}:
+        raise QualificationError("cli-doctor JSON report has an invalid overall status")
+    if not isinstance(report.get("summary"), str) or not report["summary"]:
+        raise QualificationError("cli-doctor JSON report has no summary")
+    checks = report.get("checks")
+    if not isinstance(checks, list):
+        raise QualificationError("cli-doctor JSON report has no check list")
+    check_ids: set[str] = set()
+    check_statuses: list[str] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            raise QualificationError("cli-doctor JSON report contains an invalid check")
+        check_id = check.get("id")
+        check_status = check.get("status")
+        if not isinstance(check_id, str) or not check_id or check_id in check_ids:
+            raise QualificationError("cli-doctor JSON report contains a missing or duplicate check ID")
+        if check_status not in {"pass", "warn", "fail", "skip"}:
+            raise QualificationError(f"cli-doctor check {check_id!r} has an invalid status")
+        if not isinstance(check.get("summary"), str) or not check["summary"]:
+            raise QualificationError(f"cli-doctor check {check_id!r} has no summary")
+        check_ids.add(check_id)
+        check_statuses.append(check_status)
+    missing_checks = sorted(LOCAL_DOCTOR_CHECK_IDS - check_ids)
+    if missing_checks:
+        raise QualificationError(f"cli-doctor omitted required local check IDs: {missing_checks}")
+    if (
+        (status == "fail" and "fail" not in check_statuses)
+        or (status == "warn" and ("warn" not in check_statuses or "fail" in check_statuses))
+        or (status == "pass" and ({"warn", "fail"} & set(check_statuses)))
+        or (exit_code == 0 and status not in {"pass", "warn"})
+        or (exit_code == 1 and status != "fail")
+    ):
+        raise QualificationError("cli-doctor exit status disagrees with the overall report status")
+
+
 def require_happy_path_dev_output(name: str, result: dict[str, Any]) -> None:
     """Require the observable init -> dev contract, not only exit status 0."""
 
@@ -1059,18 +1149,42 @@ def main(argv: list[str]) -> int:
             binary = package_root / "leapview"
             if not binary.is_file() or not os.access(binary, os.X_OK):
                 raise QualificationError("authoring package command is missing or not executable")
-            version_result = run_command("cli-version", [str(binary), "version", "--json"], raw_results, args.timeout_seconds, command_home)
+            # Establish the isolated XDG directories before taking the state
+            # snapshot. Every subsequent binary probe, including version and
+            # command help, must leave the command home unchanged.
+            command_environment(None, command_home)
+            discovery_state = sorted(str(path.relative_to(command_home)) for path in command_home.rglob("*"))
+            version_result = run_command("cli-version", [str(binary), "version", "--format", "json"], raw_results, args.timeout_seconds, command_home)
             try:
                 actual_identity = json.loads(version_result["output"])
             except json.JSONDecodeError as exc:
-                raise QualificationError("authoring CLI version --json did not return JSON") from exc
+                raise QualificationError("authoring CLI version --format json did not return JSON") from exc
             for field in ("version", "revision", "buildTime", "dirty", "development"):
                 if actual_identity.get(field) != package_metadata["identity"][field]:
                     raise QualificationError(f"authoring CLI identity mismatch in {field}")
             evidence["package"]["cliIdentity"] = {field: actual_identity.get(field) for field in ("version", "revision", "buildTime", "dirty", "development")}
-            for command_name in ("init", "dev", "plan", "build", "publish", "deploy"):
+            for command_name in ("init", "dev", "plan", "build", "publish", "deploy", "doctor", "completion"):
                 help_result = run_command(f"cli-help-{command_name}", [str(binary), command_name, "--help"], raw_results, args.timeout_seconds, command_home)
                 require_command_help(command_name, help_result)
+
+            root_help = run_command("cli-root-help", [str(binary)], raw_results, args.timeout_seconds, command_home)
+            require_command_help("", root_help)
+            require_grouped_root_help(root_help)
+            guidance = run_command("cli-agent-guidance", [str(binary), "--llms"], raw_results, args.timeout_seconds, command_home)
+            if not str(guidance.get("output", "")).startswith("# LeapView CLI agent guide\n"):
+                raise QualificationError("cli-agent-guidance did not return recognizable offline guidance")
+            doctor_result = run_command(
+                "cli-doctor",
+                [str(binary), "doctor", "--format", "json", "--timeout", "10s"],
+                raw_results,
+                args.timeout_seconds,
+                command_home,
+                cwd=package_root,
+                check=False,
+            )
+            require_local_doctor_result(doctor_result)
+            if sorted(str(path.relative_to(command_home)) for path in command_home.rglob("*")) != discovery_state:
+                raise QualificationError("offline CLI checks created local CLI state")
 
             if run_lifecycle:
                 raw_host = args.docker_host or ""
@@ -1128,6 +1242,9 @@ def main(argv: list[str]) -> int:
                     if not confirmation:
                         raise QualificationError("cleanup reset plan did not return an exact ownership confirmation; the temporary runtime was retained")
                     run_command("cleanup-reset", [str(binary), "dev", "reset", "--docker-host", docker_host, "--confirm", confirmation.group(1)], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host)
+    except KeyboardInterrupt:
+        evidence["failures"].append("qualification interrupted")
+        evidence["result"] = "failed"
     except QualificationSkip as exc:
         evidence["skipped"].append(str(exc))
         evidence["result"] = "skipped"

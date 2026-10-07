@@ -113,6 +113,29 @@ test('configuration viewer toggles between outline and authored YAML/JSON', asyn
   }
 })
 
+test('configuration viewer can open on Source while keeping Outline available', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const state = await page.locator('lv-config-viewer').evaluate(async (element: any) => {
+      element.defaultView = 'raw'
+      element.configuration = 'kind: Pipeline\n'
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const source = {
+        pressed: root.querySelector('button[data-mode="raw"]')?.getAttribute('aria-pressed'),
+        code: (root.querySelector('lv-code-block') as any)?.code,
+      }
+      root.querySelector<HTMLButtonElement>('button[data-mode="outline"]')!.click()
+      await element.updateComplete
+      return { source, outlinePressed: root.querySelector('button[data-mode="outline"]')?.getAttribute('aria-pressed') }
+    })
+    expect(state).toEqual({ source: { pressed: 'true', code: 'kind: Pipeline\n' }, outlinePressed: 'true' })
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   return `
     <!doctype html>

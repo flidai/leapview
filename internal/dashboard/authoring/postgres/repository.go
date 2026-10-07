@@ -597,6 +597,40 @@ func (r *Repository) LookupCommandResult(ctx context.Context, projectID graph.Re
 	return result, true, nil
 }
 
+// LookupCommandReplay returns a command's retained result without a caller
+// supplied fingerprint. It is only used by the chat visual import boundary,
+// which then validates the original artifact and selected page against the
+// immutable result revision before treating the request as a replay.
+func (r *Repository) LookupCommandReplay(ctx context.Context, projectID graph.ResourceID, dashboardID authoring.DashboardID, commandID authoring.CommandID) (authoring.CommandResult, bool, error) {
+	if err := projectID.Validate(); err != nil {
+		return authoring.CommandResult{}, false, fmt.Errorf("project id is required: %w", err)
+	}
+	if err := dashboardID.Validate(); err != nil {
+		return authoring.CommandResult{}, false, err
+	}
+	if err := commandID.Validate(); err != nil {
+		return authoring.CommandResult{}, false, err
+	}
+	if err := validateNativeUUIDv7Boundary(string(commandID), "command id"); err != nil {
+		return authoring.CommandResult{}, false, err
+	}
+	row, err := dashboarddb.New(r.db).GetCommand(ctx, dashboarddb.GetCommandParams{ProjectID: projectID.String(), DashboardID: dashboardID.String(), CommandID: nativeUUIDValue(commandID.String())})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return authoring.CommandResult{}, false, nil
+	}
+	if err != nil {
+		return authoring.CommandResult{}, false, err
+	}
+	result := authoring.CommandResult{}
+	if row.ResultRevisionID != "" && row.ResultRevisionNumber != nil && row.ResultContentHash != nil {
+		result.Revision = authoring.RevisionToken{RevisionID: authoring.RevisionID(row.ResultRevisionID), Number: uint64(*row.ResultRevisionNumber), ContentHash: *row.ResultContentHash}
+		if err := result.Revision.Validate(); err != nil {
+			return authoring.CommandResult{}, false, err
+		}
+	}
+	return result, true, nil
+}
+
 // LookupCreateOperation returns the immutable result retained for a create or
 // fork retry. It is intentionally independent of dashboard identity so a
 // generated dashboard ID can be recovered after a process restart. The stored
@@ -606,7 +640,7 @@ func (r *Repository) LookupCreateOperation(ctx context.Context, operation author
 	if !operation.Enabled() {
 		return authoring.CreateOperationResult{}, false, nil
 	}
-	if err := validateCreateOperationKey(operation); err != nil {
+	if err := operation.ValidateKey(); err != nil {
 		return authoring.CreateOperationResult{}, false, err
 	}
 	row, err := dashboarddb.New(r.db).GetCreateOperation(ctx, dashboarddb.GetCreateOperationParams{ProjectID: operation.ProjectID.String(), ActorID: operation.ActorID, OperationKind: operation.Kind, IdempotencyKey: operation.IdempotencyKey})

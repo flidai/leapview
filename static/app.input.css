@@ -206,6 +206,7 @@
   --z-index-sidebar: 20;
   --z-index-report-sidebar: 19;
   --z-index-inspector: 99999;
+  --z-index-toast: 1000;
   --z-index-behind: var(--zIndex-behind);
   --z-index-default: var(--zIndex-default);
   --z-index-sticky: var(--zIndex-sticky);
@@ -688,7 +689,8 @@ body:has(lv-dashboard-page[data-agent-open]) datastar-inspector {
   display: none;
 }
 
-/* Keep the development inspector launcher above the dashboard builder composer. */
+/* Keep the development inspector launcher clear of dashboard footer actions. */
+body:has(lv-dashboard-page) datastar-inspector,
 body:has(lv-dashboard-builder) datastar-inspector {
   --ds-toggle-bottom: var(--base-size-80);
 }
