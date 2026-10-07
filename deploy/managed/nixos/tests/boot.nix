@@ -35,6 +35,9 @@ pkgs.testers.runNixOSTest {
   defaults = {
     virtualisation.memorySize = pkgs.lib.mkDefault 1024;
     virtualisation.graphics = false;
+    # These isolated guests use prebuilt closures; SSH copy must not wait for
+    # public substituters that are unreachable on the test network.
+    nix.settings.substituters = pkgs.lib.mkForce [ ];
     system.stateVersion = "26.05";
   };
   nodes = {
@@ -179,7 +182,6 @@ pkgs.testers.runNixOSTest {
             "nix-command"
             "flakes"
           ];
-          substituters = pkgs.lib.mkForce [ ];
         };
         environment.systemPackages = [
           deployRs.packages.${system}.default
@@ -340,9 +342,11 @@ pkgs.testers.runNixOSTest {
           assert previous == "${targets.appUpdate.system.build.toplevel}"
           out = operator.fail("deploy --file ${deploymentFile} --targets app-failed-activation", timeout=120)
           assert "candidate-activation-started" in app.succeed("cat /var/lib/leapview/managed-update-attempt"), out
+          # The client returns when its cancellation waiter fails; remote
+          # deactivation may still be running. Require bounded state recovery.
+          app.wait_until_succeeds("grep -qx updated /etc/leapview-managed-generation", timeout=60)
           assert app.succeed("readlink -f /run/current-system").strip() == previous, out
           assert app.succeed("readlink -f /nix/var/nix/profiles/system").strip() == previous_profile, out
-          app.succeed("grep -qx updated /etc/leapview-managed-generation")
           assert app.succeed("cat /var/lib/leapview/managed-update-state").strip() == "app-state"
           app.wait_for_unit("docker.service", timeout=120)
           operator.succeed("ssh root@192.168.1.1 true")
