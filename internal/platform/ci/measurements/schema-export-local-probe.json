@@ -1,0 +1,70 @@
+{
+  "status": "observational local screen; not accepted",
+  "adoption_qualified": false,
+  "source": "5f98533d6d4dee5dac6bc4eaef066020fbb0ea68",
+  "receipt_sha256": "e9ac41d71277247c4614d25a27290947a5e5491366e0d08e862aebc96fd04662",
+  "source_archive_sha256": "9cf1602967fdd2bc8c0d48ef628991711a7450f2f090d55f334c52faccd89363",
+  "toolchain": {
+    "CC": "gcc",
+    "CGO_ENABLED": "1",
+    "GOARCH": "amd64",
+    "GOFLAGS": "-p=4",
+    "GOOS": "linux",
+    "GOTOOLCHAIN": "local",
+    "GOVERSION": "go1.27.1"
+  },
+  "pairs": 1,
+  "adapter_sha256": "49bae7943a93e67ac6ccd176f267e8bbdfb3e5b83077f5968393be4f2c2e7192",
+  "prototype_source": "package main\n\nimport (\n\t\"flag\"\n\t\"fmt\"\n\tprojectcli \"github.com/flidai/leapview/internal/project/cli\"\n\t\"os\"\n)\n\nfunc main() {\n\tout := flag.String(\"out\", \"schemas/json\", \"output directory\")\n\tflag.Parse()\n\tif err := projectcli.ExportSchema(\"json-schema\", *out); err != nil {\n\t\tfmt.Fprintln(os.Stderr, err)\n\t\tos.Exit(1)\n\t}\n}\n",
+  "samples": [
+    {
+      "pair": 1,
+      "mode": "baseline",
+      "schema_seconds": 121.50410884403391,
+      "app_build_seconds": [
+        126.9206972020329,
+        9.33246203197632
+      ],
+      "combined_seconds": 257.7572680780431
+    },
+    {
+      "pair": 1,
+      "mode": "treatment",
+      "schema_seconds": 53.073800743964966,
+      "app_build_seconds": [
+        143.9137768400251,
+        5.717579092015512
+      ],
+      "combined_seconds": 202.70515667600557
+    }
+  ],
+  "matching_schema_files": 8,
+  "schema_manifest": {
+    "analytics-development-inputs.schema.json": "f7ccd57346567f40b6564cdbeb8f876dab40da5c473d5d6c5bf6d0027be9157f",
+    "analytics-development-profile.schema.json": "e85a7765ee0c9913243cec9928e8987c7306a8e9a6b4c043a8ffff3282a97460",
+    "connection.schema.json": "ae981ca23ce3dd985037f7cce5332679f7677e336898f93d7bfb45f2e82e480a",
+    "dashboard-document.schema.json": "6390c09f37540968f7006a168ff59cc7b5c5b0bacd1f9ea2628e7fc420c59a26",
+    "model.schema.json": "c8f40ef3d5ae9abcdaf53458926190e96659d8e7258aa7ceeac71a1723f7cbcc",
+    "pipeline.schema.json": "3e5211d56e6b5f7bb770e8f8160b55a4efe846cbd0a902bf70dd54050fac6d0f",
+    "semantic-model.schema.json": "70f8cf340082bafda4e5e8689a7a22f7e3fc109a23845d4f09610e4c7e528564",
+    "source.schema.json": "3d83732be80b7bb67d03b8904d65f49b9461d5cc0843ed9d6b21d968c053e3db"
+  },
+  "binary_hashes": {
+    "pair-1-baseline-leapviewctl": "4077e5e262148e518fb746be7a79902355604e2a32c6a15a2f233cd412bf805e",
+    "pair-1-treatment-leapview": "cb116f77325f090cdee4847fdf512af2c76d914f3170c444da6a989b8677ad08",
+    "pair-1-baseline-leapview": "cb116f77325f090cdee4847fdf512af2c76d914f3170c444da6a989b8677ad08",
+    "pair-1-treatment-leapviewctl": "4077e5e262148e518fb746be7a79902355604e2a32c6a15a2f233cd412bf805e"
+  },
+  "other_cost_screen_passed": false,
+  "limits": [
+    "Local locked Nix Go 1.27.1 screen, not production Docker environment or full-image acceptance.",
+    "Only Go compilation caches are cold; module downloads are seeded equally.",
+    "GOMAXPROCS=4 and GOFLAGS=-p=4 bound shared-VPS resource use.",
+    "Further pair skipped because it would likely exceed the total wall-time bound.",
+    "Parent reported a full canonical task ci starting about 2026-10-07 12:43 UTC with GOMAXPROCS=2 on the same VPS. This uncontrolled concurrent workload overlaps the bounded local schema screen. Results are feasibility observations only, not a representative hosted or statistically controlled speedup claim.",
+    "One sequential matched pair; no replicated or hosted acceptance result.",
+    "Observed downstream compile cost increased 9.8%, exceeding the unchanged 5% other-cost screen.",
+    "Missing-C-compiler preparation failed before measurement and remains retained separately.",
+    "No production schema entry point or generator command changed."
+  ]
+}
