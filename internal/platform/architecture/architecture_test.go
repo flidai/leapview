@@ -3001,7 +3001,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"qualify-production-image:",
 		"name: Qualify production image",
 		"needs: build-production-image",
-		"if: ${{ always() && needs.build-production-image.result == 'success' }}",
+		"if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}",
 		"uses: ./.github/actions/setup-ci",
 		"task image:qualify:production IMAGE=\"${immutable_image}\"",
 	} {
