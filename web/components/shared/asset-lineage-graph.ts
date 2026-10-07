@@ -764,7 +764,8 @@ function FitLineage({ viewportState, signature, scope, selectedID, anchorID }: {
         }
         const nodes = getNodes()
         const fitted = getViewportForBounds(getNodesBounds(nodes), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
-        const anchor = (selectedID ? getNode(selectedID) : undefined) ?? nodes[0]
+        const preferredAnchorID = selectedID ?? anchorID
+        const anchor = (preferredAnchorID ? getNode(preferredAnchorID) : undefined) ?? nodes[0]
         // Automatic views keep an asset readable; Fit graph explicitly requests the complete overview.
         void setViewport(viewportState.mode === 'automatic' && fitted.zoom < FIT_OPTIONS.maxZoom && anchor
           ? getViewportForBounds(getNodesBounds([anchor]), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
