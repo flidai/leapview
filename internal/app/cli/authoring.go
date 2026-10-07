@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
@@ -34,6 +35,7 @@ type candidateSynchronizationTransport struct {
 	principalClient        *accessgen.GenClient
 	canonicalOrigin        string
 	developmentInputDigest string
+	localDevelopment       *localDevelopmentSession
 }
 
 type projectDevRemoteFactory struct {
@@ -334,6 +336,7 @@ func (factory projectDevRemoteFactory) Remote(
 	if !localDevelopment {
 		return remote, nil
 	}
+	nativeTransport.localDevelopment = &local
 	bootstrap := factory.bootstrapOwnerPolicy
 	if bootstrap == nil {
 		bootstrap = bootstrapLocalOwnerPolicy
@@ -538,6 +541,17 @@ func (transport *candidateSynchronizationTransport) SynchronizeNative(
 		ownerID, request.Snapshot.CandidateKey, retained.SourceDigest,
 		retained.SourceAttestationDigest, transport.developmentInputDigest,
 	)
+	var localRevision int64
+	if transport.localDevelopment != nil {
+		localRevision, err = transport.localDeliveryTargetRevision(ctx, retained)
+		if err != nil {
+			return projectdevloop.Candidate{}, err
+		}
+		// Retries against one target revision replay the same plan. After a
+		// publication, returning to earlier source must plan against the new
+		// revision instead of replaying its now inactive candidate.
+		planKey = deploymentIdempotencyKey("local-dev-delivery-plan", planKey, strconv.FormatInt(localRevision, 10))
+	}
 	planResponse, err := transport.client.CreateDeliveryPlan(
 		ctx,
 		deploymentgen.GenCreateDeliveryPlanClientRequest{
@@ -555,6 +569,9 @@ func (transport *candidateSynchronizationTransport) SynchronizeNative(
 		return projectdevloop.Candidate{}, fmt.Errorf("create native delivery plan: %w", err)
 	}
 	plan := planResponse.Body
+	if transport.localDevelopment != nil && plan.BaseTargetRevision != localRevision {
+		return projectdevloop.Candidate{}, errors.New("local target revision changed while planning; retry synchronization against the current target")
+	}
 	if plan.Id == "" || plan.Status != deploymentgen.DeliveryPlanStatusPlanned || plan.Operation != deploymentgen.DeliveryOperationKindCodeChange || plan.ProjectId != projectID || plan.TargetId != retained.TargetID ||
 		plan.Environment != retained.Environment || plan.SourceDigest != retained.SourceDigest ||
 		plan.SourceAttestationDigest != retained.SourceAttestationDigest || plan.PlanDigest == "" ||
