@@ -290,3 +290,51 @@ test('mobile account menu fits above the footer and keeps search available after
     }
   } finally { await page.close() }
 }, 30_000)
+
+test('repeated deletions keep the next delete confirmation through an earlier undo expiry refresh', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      ;(window as any).managementLoads = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.addEventListener('lv-chat-management-load', (event: Event) => (window as any).managementLoads.push((event as CustomEvent).detail))
+      ;(window as any).testMergePatch({ chrome: { sidebar: { history: { items: Array.from({ length: 7 }, (_, index) => ({ id: `delete-${index + 1}`, title: `Chat ${index + 1}`, href: `/chats/delete-${index + 1}` })) } } } })
+    })
+    for (let index = 1; index <= 5; index++) {
+      const row = page.locator('.history-row').filter({ hasText: `Chat ${index}` })
+      await row.hover()
+      await row.getByRole('button', { name: `Delete Chat ${index}`, exact: true }).click()
+      await page.getByRole('dialog', { name: 'Delete chat?', exact: true }).getByRole('button', { name: 'Delete', exact: true }).click()
+      await page.waitForFunction(count => (window as any).chatActions.length === count, index)
+      await page.evaluate(index => {
+        const requestId = (window as any).chatActions[index - 1].requestId
+        ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 20_000).toISOString(), archivedConversations: [] } })
+      }, index)
+      await page.locator(`button.undo[data-conversation-id="delete-${index}"]`).waitFor()
+    }
+    const sixth = page.locator('.history-row').filter({ hasText: 'Chat 6' })
+    await sixth.hover()
+    await sixth.getByRole('button', { name: 'Delete Chat 6', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Delete chat?', exact: true })
+    await dialog.waitFor()
+    await page.locator('lv-chat-manager').evaluate((manager: any) => manager.commitUndo((window as any).chatActions[0].requestId))
+    await page.waitForFunction(() => (window as any).managementLoads.length === 1)
+    await page.evaluate(() => {
+      const requestId = (window as any).managementLoads[0].requestId
+      ;(window as any).testMergePatch({ chatManagement: { action: '', completedRequestId: requestId, archivedConversations: [] } })
+    })
+    await page.locator('lv-chat-manager').evaluate(async (manager: any) => { await manager.updateComplete; await manager.updateComplete })
+    expect(await dialog.isVisible()).toBe(true)
+    expect(await dialog.textContent()).toContain('Chat 6')
+    expect(await page.getByRole('dialog', { name: 'Archived chats', exact: true }).count()).toBe(0)
+    await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
+    await page.waitForFunction(() => (window as any).chatActions.length === 6)
+    expect(await page.evaluate(() => (window as any).chatActions.map((action: any) => ({ action: action.action, conversationId: action.conversationId })))).toEqual(
+      Array.from({ length: 6 }, (_, index) => ({ action: 'delete_pending', conversationId: `delete-${index + 1}` })),
+    )
+  } finally { await page.close() }
+}, 15_000)
