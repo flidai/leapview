@@ -67,7 +67,7 @@ export function checkUICommandBoundaries(root = process.cwd()): UICommandBoundar
 	.filter((endpoint) => endpoint.command?.ui != null)
 	.map((endpoint) => endpoint.operation_id ?? '')
 	.filter(Boolean))
-  const files = ts.sys.readDirectory(webRoot, ['.ts', '.tsx'], ['**/*.test.ts', '**/*.dom.test.ts', '**/generated/**', '**/benchmarks/**'])
+  const files = ts.sys.readDirectory(webRoot, ['.ts', '.tsx'], ['**/*.test.ts', '**/*.dom.test.ts', '**/*.test-fixture.ts', '**/generated/**', '**/benchmarks/**'])
   return files.flatMap((file) => inspectUICommandSource(relative(root, file), ts.sys.readFile(file) ?? '', generatedUIOperations))
 }
 
