@@ -352,16 +352,20 @@ func (r *Registry) Close() error {
 		}
 	}
 	if r.manager != nil {
-		if candidateCleanupErr != nil {
-			errs = append(errs, r.manager.closeWithoutReleaseQueue())
+		managerTargets, managerCleanupErr := r.manager.closeRuntimeGenerations()
+		errs = append(errs, managerCleanupErr)
+		if candidateCleanupErr != nil || managerCleanupErr != nil {
+			// The caller's bounded drain waits do not end lease ownership. One
+			// registry-owned waiter keeps the shared queue open until both private
+			// candidates and manager generations actually finish cleanup.
 			go func() {
-				_ = r.waitForCandidateCleanup(candidateTargets)
-				if r.manager.releaseQueue != nil {
-					_ = r.manager.releaseQueue.close(r.manager.releaseShutdownTimeout)
+				for _, candidate := range candidateTargets {
+					<-candidate.cleanupDone
 				}
+				r.manager.closeReleaseQueueAfterCleanup(managerTargets)
 			}()
-		} else {
-			errs = append(errs, r.manager.Close())
+		} else if r.manager.releaseQueue != nil {
+			errs = append(errs, r.manager.releaseQueue.close(r.manager.releaseShutdownTimeout))
 		}
 	}
 	r.closeErr = errors.Join(errs...)
