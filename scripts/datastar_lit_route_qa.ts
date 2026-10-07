@@ -621,7 +621,7 @@ async function verifyFilterShowcase(): Promise<void> {
           await minimum.fill('0')
           await minimum.press('Tab')
           await maximum.fill('60')
-          await maximum.press('Tab')
+          await maximum.press('Enter')
         },
         expressionKind: 'range',
       },
@@ -635,7 +635,7 @@ async function verifyFilterShowcase(): Promise<void> {
           await minimum.fill('1.25')
           await minimum.press('Tab')
           await maximum.fill('1000.50')
-          await maximum.press('Tab')
+          await maximum.press('Enter')
         },
         expressionKind: 'range',
       },
