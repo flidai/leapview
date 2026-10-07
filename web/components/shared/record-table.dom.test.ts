@@ -117,6 +117,71 @@ test('record table renders cells and sorts through TanStack headers', async () =
   }
 })
 
+test('record headings share cell alignment and multiline rows stay vertically centered', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 620 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    await page.locator('lv-record-table').evaluate(async (element: any) => {
+      element.table = {
+        columns: [
+          { id: 'name', header: 'Asset', kind: 'entity', width: '280px' },
+          { id: 'identifier', header: 'Identifier', kind: 'number', align: 'left', width: '160px' },
+          { id: 'count', header: 'Count', kind: 'number', width: '140px' },
+          { id: 'status', header: 'Status', kind: 'badge', align: 'center', width: '160px' },
+        ],
+        rows: [{ name: { label: 'Daily orders', description: 'analytics.daily_orders', icon: 'database' }, identifier: 10001, count: 1250, status: { label: 'Ready', tone: 'success' } }],
+      }
+      await element.updateComplete
+    })
+    for (const density of ['normal', 'tight']) {
+      await page.locator('lv-record-table').evaluate(async (element: any, density) => {
+        element.table = { ...element.table, density }
+        await element.updateComplete
+      }, density)
+      for (const sorted of [false, true]) {
+        if (sorted) {
+          await page.locator('lv-record-table th:nth-child(3) button').click()
+          await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+        }
+        const geometry = await page.locator('lv-record-table').evaluate(element => {
+          const textBounds = (node: Element) => {
+            const range = document.createRange()
+            range.selectNodeContents(node)
+            return range.getBoundingClientRect()
+          }
+          const headings = element.querySelectorAll('.record-table-header-label')
+          const cells = element.querySelectorAll('tbody tr:first-child td')
+          const leftHeading = textBounds(headings[1]!)
+          const leftValue = textBounds(cells[1]!.querySelector('.record-number')!)
+          const rightHeading = textBounds(headings[2]!)
+          const rightValue = textBounds(cells[2]!.querySelector('.record-number')!)
+          const centerHeading = textBounds(headings[3]!)
+          const centerValue = textBounds(cells[3]!.querySelector('.record-badge')!)
+          const row = element.querySelector('tbody tr')!.getBoundingClientRect()
+          const identity = element.querySelector('.record-entity')!.getBoundingClientRect()
+          return {
+            leftDelta: Math.abs(leftHeading.left - leftValue.left),
+            rightDelta: Math.abs(rightHeading.right - rightValue.right),
+            centerDelta: Math.abs((centerHeading.left + centerHeading.right - centerValue.left - centerValue.right) / 2),
+            valueCenterDelta: Math.abs((rightValue.top + rightValue.bottom - row.top - row.bottom) / 2),
+            identityHeight: identity.height,
+            verticalAlign: getComputedStyle(cells[2]!).verticalAlign,
+            numericLeft: getComputedStyle(cells[1]!).textAlign,
+          }
+        })
+        expect(geometry.leftDelta).toBeLessThan(1)
+        expect(geometry.rightDelta).toBeLessThan(1)
+        expect(geometry.centerDelta).toBeLessThan(1)
+        expect(geometry.identityHeight).toBeGreaterThan(30)
+        expect(geometry.valueCenterDelta).toBeLessThan(3)
+        expect(geometry.verticalAlign).toBe('middle')
+        expect(geometry.numericLeft).toBe('left')
+      }
+    }
+  } finally { await page.close() }
+})
+
 test('mobile record tables expose a horizontal-scroll affordance without changing desktop chrome', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 620 } })
   try {
@@ -505,6 +570,38 @@ test('record table renders tight expandable query rows', async () => {
   }
 })
 
+test('query rows without explicit IDs expand and stay attached to their record after sorting', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    await page.locator('lv-record-table').evaluate(async (element: any) => {
+      element.table = {
+        columns: [{ id: 'query', header: 'Query', kind: 'query' }],
+        rows: [
+          { query: { label: 'Zulu', expandedContent: 'select 2 as zulu' } },
+          { query: { label: 'Alpha', expandedContent: 'select 1 as alpha' } },
+          { query: { label: 'Zulu', expandedContent: 'select 2 as zulu' } },
+        ],
+      }
+      await element.updateComplete
+    })
+    await page.getByRole('button', { name: 'Expand query text' }).first().click()
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await page.locator('.record-query-expanded-row').count()).toBe(1)
+    expect(await page.locator('.record-query-expanded-row').evaluate(row => row.previousElementSibling?.textContent)).toContain('Zulu')
+    await page.getByRole('button', { name: 'Sort by Query' }).click()
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await page.locator('.record-row').first().textContent()).toContain('Alpha')
+    expect(await page.locator('.record-query-expanded-row').evaluate(row => row.previousElementSibling?.textContent)).toContain('Zulu')
+    await page.getByRole('button', { name: 'Collapse query text' }).click()
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await page.locator('.record-query-expanded-row').count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('record table emits configured row actions without stealing interactive controls', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 620 } })
   try {
@@ -516,6 +613,8 @@ test('record table emits configured row actions without stealing interactive con
         columns: [
           { id: 'query', header: 'Query', kind: 'query', width: '520px', toggleable: false },
           { id: 'runtime', header: 'Runtime', width: '160px' },
+          { id: 'name', header: 'Asset', kind: 'entity' },
+          { id: 'actions', header: 'Actions', kind: 'actions' },
         ],
         rows: [{
           id: 'query_1',
@@ -527,6 +626,8 @@ test('record table emits configured row actions without stealing interactive con
             expandedContent: 'select *\nfrom orders',
           },
           runtime: 'sales',
+          name: { label: 'Orders', href: '#orders' },
+          actions: [{ label: 'Refresh', action: 'refresh' }],
         }],
       }
       ;(window as any).recordTableActions = []
@@ -552,6 +653,26 @@ test('record table emits configured row actions without stealing interactive con
     await page.keyboard.press('Space')
     await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
     expect(await rowActionState(page)).toEqual({ count: 3, action: 'detail', rowID: 'query_1', expanded: true })
+
+    const expand = page.getByRole('button', { name: 'Collapse query text' })
+    await expand.focus()
+    await page.keyboard.press('Enter')
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await rowActionState(page)).toEqual({ count: 3, action: 'detail', rowID: 'query_1', expanded: false })
+    await page.keyboard.press('Space')
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await rowActionState(page)).toEqual({ count: 3, action: 'detail', rowID: 'query_1', expanded: true })
+
+    await page.getByRole('button', { name: 'Refresh' }).focus()
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Space')
+    expect(await rowActionState(page)).toEqual({ count: 5, action: 'refresh', rowID: 'query_1', expanded: true })
+    await page.getByRole('link', { name: 'Orders' }).click()
+    expect(new URL(page.url()).hash).toBe('#orders')
+    expect(await rowActionState(page)).toEqual({ count: 5, action: 'refresh', rowID: 'query_1', expanded: true })
+    await page.getByRole('link', { name: 'Orders' }).focus()
+    await page.keyboard.press('Enter')
+    expect(await rowActionState(page)).toEqual({ count: 5, action: 'refresh', rowID: 'query_1', expanded: true })
 
     await page.locator('lv-record-table').evaluate((element: any) => {
       element.table = {

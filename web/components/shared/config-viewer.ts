@@ -156,6 +156,7 @@ class ConfigViewer extends LitElement {
     .node { min-width: 0; }
 
     .row {
+      box-sizing: border-box;
       display: flex;
       width: 100%;
       min-width: 0;
@@ -176,6 +177,11 @@ class ConfigViewer extends LitElement {
     button.row:focus-visible {
       background: var(--lv-bg-control-hover);
       outline: 0;
+    }
+
+    button.row:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
     }
 
     .sql-row {
@@ -260,7 +266,7 @@ class ConfigViewer extends LitElement {
 
   render() {
     return html`
-      <div class="viewer" aria-label=${this.viewMode === 'raw' ? `Source ${languageLabel(this.language)} configuration` : 'Configuration outline'}>
+      <div class="viewer" role="region" aria-label=${this.viewMode === 'raw' ? `Source ${languageLabel(this.language)} configuration` : 'Configuration outline'}>
         <div class="toolbar">
           ${this.viewMode === 'outline' ? html`
             <div class="outline-tools">
@@ -288,7 +294,7 @@ class ConfigViewer extends LitElement {
       ? html`<div class="message error" role="alert">${this.parseError}</div>`
       : this.documentValue === null
         ? html`<div class="message">Loading configuration…</div>`
-        : html`<div class="tree" role="tree">${this.renderRootValue(this.documentValue)}</div>`
+        : html`<div class="tree">${this.renderRootValue(this.documentValue)}</div>`
   }
 
   private renderRootValue(value: ConfigValue): TemplateResult | TemplateResult[] {
@@ -303,7 +309,7 @@ class ConfigViewer extends LitElement {
     if (!branch && typeof value === 'string' && path.endsWith('.sql')) {
       return [html`
         <div class="node">
-          <div class="row sql-row" style=${`padding-left:${depth * 15 + 6}px`} role="treeitem">
+          <div class="row sql-row" style=${`padding-left:${depth * 15 + 6}px`}>
             <span class="key">${displayKey(key, path)}</span><span class="separator">:</span>
             <lv-code-block inline compact dense format copy language="sql" .code=${value}></lv-code-block>
           </div>
@@ -324,7 +330,7 @@ class ConfigViewer extends LitElement {
         </div>
       `
     const childRows = branch && open
-      ? html`<div class="group" role="group">${entries(value).flatMap(([childKey, child]) => this.renderNode(childKey, child, joinPath(path, childKey), depth + 1))}</div>`
+      ? html`<div class="group">${entries(value).flatMap(([childKey, child]) => this.renderNode(childKey, child, joinPath(path, childKey), depth + 1))}</div>`
       : nothing
     return [html`<div class="node">${row}${childRows}</div>`]
   }

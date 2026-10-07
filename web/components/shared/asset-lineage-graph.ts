@@ -1,18 +1,23 @@
 import { LitElement, html } from 'lit'
 import { property } from 'lit/decorators.js'
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
+import { Maximize, Minimize } from 'lucide'
+import { layoutLineageGraph, LINEAGE_NODE_WIDTH, LINEAGE_NODE_HEIGHT } from './asset-lineage-layout'
 import { createRoot, type Root } from 'react-dom/client'
 import '@xyflow/react/dist/style.css'
 import {
   Background,
-  Controls,
+  ReactFlowProvider,
   Handle,
   MarkerType,
   Position,
   ReactFlow,
+  useStore,
+  getViewportForBounds,
+  useReactFlow,
+  type ReactFlowInstance,
   type Edge,
   type Node,
-  type ReactFlowInstance,
 } from '@xyflow/react'
 
 type LineageGraph = {
@@ -22,6 +27,7 @@ type LineageGraph = {
 
 type LineageScope = 'focused' | 'full'
 type LineageScopeMode = 'dependencies' | 'run'
+type LineageViewportState = { mode: 'automatic' | 'overview' | 'manual' }
 
 type LineageNode = {
   id: string
@@ -38,7 +44,6 @@ type LineageNode = {
   usedByCount?: number
   containedCount?: number
   containedSummary?: string
-  // Run-only overlay. Definition and Overview graphs do not supply this.
   runStatus?: string
   runStatusLabel?: string
   runAnimate?: boolean
@@ -50,14 +55,6 @@ type LineageEdge = {
   target: string
   label?: string
   kind: string
-}
-
-type LineageLayout = {
-  rankIndex: Map<number, number>
-  nodeIndex: Map<string, number>
-  rankNodeCount: Map<number, number>
-  maxNodeCount: number
-  nodeGapY: number
 }
 
 type LineagePathState = {
@@ -72,74 +69,131 @@ type LineageNodeData = LineageNode & {
   onSelect: (id: string) => void
 }
 
-const NODE_GAP_X = 260
-const NODE_GAP_Y = 124
-const DENSE_NODE_GAP_Y = 88
-const NODE_OFFSET_X = 96
-const NODE_MIN_Y = 48
-const NARROW_FOCUS_GAP_Y = 132
-const FIT_MIN_ZOOM = 0.4
-const FIT_MAX_ZOOM = 1
-const NARROW_GRAPH_WIDTH = 460
+const FIT_OPTIONS = { padding: 0.16, minZoom: 0.02, maxZoom: 1 }
+const nodeTypes = { lineageNode: LineageNodeComponent }
+type Direction = 'all' | 'upstream' | 'downstream'
 
 class AssetLineageGraph extends LitElement {
   @property({ type: Object }) graph: LineageGraph | null = null
   @property({ attribute: false }) scope: LineageScope = 'focused'
   @property({ attribute: 'scope-mode' }) scopeMode: LineageScopeMode = 'dependencies'
   @property({ attribute: false }) dialogTitle = ''
+  private userSelectedNodeID?: string
   private root?: Root
   private mount?: HTMLDivElement
-  private initialFitScope?: LineageScope
-  private flow?: ReactFlowInstance
-  private resizeObserver?: ResizeObserver
-  private fitFrame?: number
   private selectedNodeID?: string
-  private userSelectedNodeID?: string
   private selectionCleared = false
-  private lastFitKey = ''
-  private skipScopeFit = false
+  private direction: Direction = 'all'
+  private flow?: ReactFlowInstance
+  private inline?: HTMLDivElement
+  private dialog?: HTMLDialogElement
   private expanded = false
-  private restoreFocusTo?: HTMLElement
+  private previousOverflow = ''
+  private viewportState: LineageViewportState = { mode: 'automatic' }
+
+  private changeViewportMode = (mode: LineageViewportState['mode']): void => {
+    if (this.viewportState.mode === mode) return
+    this.viewportState.mode = mode
+    this.renderFlow()
+  }
+
+  private expand(): void {
+    if (!this.dialog || !this.mount || this.expanded) return
+    this.previousOverflow = this.ownerDocument.documentElement.style.overflow
+    this.ownerDocument.documentElement.style.overflow = 'hidden'
+    this.expanded = true
+    // Move the React-owned container into the top layer without remounting it.
+    // This preserves the current selection, direction and all live controls.
+    this.dialog.append(this.mount)
+    this.dialog.showModal()
+    this.renderFlow()
+    this.mount.querySelector<HTMLButtonElement>('.asset-lineage-expand')?.focus()
+  }
+
+  private collapse(restoreFocus = true): void {
+    if (!this.expanded) return
+    this.expanded = false
+    this.dialog?.close()
+    if (this.mount) this.inline?.append(this.mount)
+    this.ownerDocument.documentElement.style.overflow = this.previousOverflow
+    if (this.isConnected) this.renderFlow()
+    if (restoreFocus) this.mount?.querySelector<HTMLButtonElement>('.asset-lineage-expand')?.focus()
+  }
+
+  private cancelExpanded(event: Event): void {
+    event.preventDefault()
+    this.collapse()
+  }
+
+  private trapDialogFocus(event: KeyboardEvent): void {
+    if (!this.expanded || event.key !== 'Tab' || !this.dialog) return
+    const focusable = Array.from(this.dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter(element => element.getClientRects().length > 0)
+    const root = this.getRootNode()
+    const active = root instanceof ShadowRoot ? root.activeElement : this.ownerDocument.activeElement
+    const index = focusable.indexOf(active as HTMLElement)
+    if (event.shiftKey && index <= 0) {
+      event.preventDefault()
+      focusable.at(-1)?.focus()
+    } else if (!event.shiftKey && (index < 0 || index === focusable.length - 1)) {
+      event.preventDefault()
+      focusable[0]?.focus()
+    }
+  }
+
+  private closedExpanded(): void {
+    if (!this.dialog?.open) this.collapse()
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback()
+    if (this.mount && !this.root) {
+      this.root = createRoot(this.mount)
+      this.renderFlow()
+    }
+  }
 
   createRenderRoot(): HTMLElement {
     return this
   }
 
   firstUpdated(): void {
-    this.initialFitScope = this.scope
-    this.mount = this.renderRoot.querySelector('.asset-lineage-root') as HTMLDivElement | null ?? undefined
+    this.inline = this.renderRoot.querySelector('.asset-lineage-inline') as HTMLDivElement
+    this.dialog = this.renderRoot.querySelector('.asset-lineage-dialog') as HTMLDialogElement
+    this.mount = this.ownerDocument.createElement('div')
+    this.mount.className = 'asset-lineage-root'
+    this.inline.append(this.mount)
     if (this.mount) {
       this.root = createRoot(this.mount)
-      this.resizeObserver = new ResizeObserver(() => {
-        this.renderFlow()
-        if (this.expanded) this.scheduleCenterSelectedAtCurrentZoom(this.selectedNodeID)
-      })
-      this.resizeObserver.observe(this)
-      this.resizeObserver.observe(this.mount)
       this.renderFlow()
     }
   }
 
   updated(changed: Map<string, unknown>): void {
     if (changed.has('graph')) {
-      this.selectionCleared = false
-      const nodes = this.resolvedGraph.nodes
-      this.userSelectedNodeID = this.userSelectedNodeID && nodes.some((node) => node.id === this.userSelectedNodeID)
-        ? this.userSelectedNodeID
-        : undefined
-      this.selectedNodeID = this.userSelectedNodeID ?? nodes.find((node) => node.selected)?.id
+      const previousGraph = changed.get('graph') as LineageGraph | null | undefined
+      const previousAnchor = previousGraph?.nodes.find(node => node.selected)?.id
+      const nextAnchor = this.graph?.nodes.find(node => node.selected)?.id
+      // Keep an intentional clear through status refreshes, but honor a new
+      // anchor chosen by an external control such as the run's model list.
+      if (previousAnchor !== nextAnchor) this.selectionCleared = false
+      if (!this.userSelectedNodeID && !this.selectionCleared) this.selectedNodeID = this.graph?.nodes.find(node => node.selected)?.id
+      if (this.selectedNodeID !== undefined && !this.graph?.nodes.some((node) => node.id === this.selectedNodeID)) {
+        this.selectedNodeID = undefined
+        this.userSelectedNodeID = undefined
+        this.selectionCleared = false
+        this.direction = 'all'
+      }
     }
-    if (changed.has('graph') || changed.has('scope') || changed.has('scopeMode') || changed.has('dialogTitle')) {
-      this.renderFlow()
-    }
+    if (changed.has('graph') || changed.has('scope') || changed.has('scopeMode') || changed.has('dialogTitle')) this.renderFlow()
   }
 
   disconnectedCallback(): void {
-    this.resizeObserver?.disconnect()
-    if (this.fitFrame !== undefined) cancelAnimationFrame(this.fitFrame)
-    const dialog = this.querySelector<HTMLDialogElement>('.asset-lineage-dialog')
-    if (dialog?.open) dialog.close()
+    this.collapse(false)
     this.root?.unmount()
+    this.root = undefined
+    this.flow = undefined
     super.disconnectedCallback()
   }
 
@@ -148,243 +202,121 @@ class AssetLineageGraph extends LitElement {
       <style>
         ${assetLineageGraphStyles}
       </style>
-      <div class="asset-lineage-root"></div>
+      <div class="asset-lineage-inline"></div>
+      <dialog class="asset-lineage-dialog" aria-label=${this.dialogTitle.trim() || "Full-page lineage explorer"}
+        @cancel=${this.cancelExpanded} @close=${this.closedExpanded} @keydown=${this.trapDialogFocus}></dialog>
     `
   }
 
   private renderFlow(): void {
     if (!this.root) return
-    const dialogTitle = this.dialogTitle.trim() || 'Expanded dependency graph'
     const graph = this.resolvedGraph
-    const layout = createLineageLayout(graph.nodes)
-    const nodeRanks = new Map(graph.nodes.map((node) => [node.id, nodeRank(node)]))
     const selectedNode = this.selectionCleared ? undefined : selectedLineageNode(graph.nodes, this.selectedNodeID)
     this.selectedNodeID = selectedNode?.id
     const pathState = createPathState(graph, this.selectedNodeID)
-    const narrow = this.clientWidth > 0 && this.clientWidth <= NARROW_GRAPH_WIDTH
-    const scopeAnchorID = this.selectedNodeID ?? selectedLineageNode(graph.nodes)?.id
-    const visibleNodeIDs = this.nodeIDsInScope(graph, scopeAnchorID)
-    const visibleNodeSet = new Set(visibleNodeIDs)
-    const focusPositions = this.scope === 'focused' && this.selectedNodeID
-      ? createFocusedPositions(graph, layout, this.selectedNodeID, narrow)
-      : undefined
-    const fitKey = `${this.selectedNodeID ?? '*'}:${narrow}`
-    const shouldRefit = this.lastFitKey !== '' && this.lastFitKey !== fitKey && this.scope === 'focused' && !this.skipScopeFit
-    this.skipScopeFit = false
-    this.lastFitKey = fitKey
+    const scopeIDs = new Set(this.scope === 'full' ? graph.nodes.map(node => node.id) : focusedLineageNodeIDs(graph, this.selectedNodeID ?? selectedLineageNode(graph.nodes)?.id))
+    const visibleIDs = this.direction === 'all' ? new Set(graph.nodes.map((node) => node.id))
+      : new Set([...(this.direction === 'upstream' ? pathState.upstream : pathState.downstream), ...(this.selectedNodeID ? [this.selectedNodeID] : [])])
+    const nodes = graph.nodes.filter((node) => visibleIDs.has(node.id) && scopeIDs.has(node.id))
+    const includedIDs = new Set(nodes.map(node => node.id))
+    const edges = graph.edges.filter((edge) => includedIDs.has(edge.source) && includedIDs.has(edge.target))
+    const positions = layoutLineageGraph(nodes, edges)
+    const nodeRanks = new Map(nodes.map((node) => [node.id, positions.get(node.id)?.x ?? 0]))
     const clearSelection = () => {
-      if (!this.selectedNodeID && this.selectionCleared) return
       this.selectedNodeID = undefined
       this.userSelectedNodeID = undefined
       this.selectionCleared = true
+      this.direction = 'all'
       this.renderFlow()
     }
-    this.root.render(
-      React.createElement(
-        'dialog',
-        {
-          className: 'asset-lineage-dialog',
-          tabIndex: -1,
-          role: this.expanded ? 'dialog' : 'presentation',
-          'aria-modal': this.expanded ? 'true' : undefined,
-          'aria-label': this.expanded ? dialogTitle : undefined,
-          onCancel: (event: React.SyntheticEvent<HTMLDialogElement>) => {
-            event.preventDefault()
-            this.closeExpanded()
-          },
-          onClick: (event: React.MouseEvent<HTMLDialogElement>) => {
-            const target = event.target
-            if (!(target instanceof Element)) return
-            if (this.expanded && target === event.currentTarget) {
-              this.closeExpanded()
-              return
-            }
-            if (!this.expanded && !target.closest('.react-flow__node, button')) clearSelection()
-          },
-          onKeyDown: this.handleDialogKeyDown,
-        },
-        React.createElement(
-          'div',
-          { className: 'asset-lineage-layout' },
-          React.createElement('h2', { className: 'asset-lineage-dialog-title', hidden: !this.expanded }, dialogTitle),
-          React.createElement(
-            'div',
-            { className: 'asset-lineage-actions', role: 'group', 'aria-label': 'Graph actions' },
-            React.createElement('button', {
-              type: 'button',
-              title: this.scope === 'full' ? 'Show the focused path for the selected asset' : 'Show the complete dependency graph',
-              onClick: () => this.toggleScope(),
-            }, this.scopeActionLabel),
-            React.createElement('button', {
-              type: 'button',
-              title: 'Fit currently included nodes in the viewport without changing graph scope',
-              'aria-description': 'Adjusts the viewport to show included nodes; graph scope stays the same.',
-              onClick: () => this.fitToScope(graph, this.selectedNodeID),
-            }, 'Fit'),
-            this.expanded
-              ? React.createElement('button', { type: 'button', onClick: () => this.closeExpanded() }, 'Close graph')
-              : React.createElement('button', {
-                type: 'button',
-                'aria-pressed': 'false',
-                onClick: () => this.openExpanded(),
-              }, 'Expand graph'),
-          ),
-          React.createElement(
-            'div',
-            { className: 'asset-lineage-flow', 'aria-label': 'Asset lineage graph' },
-            React.createElement(ReactFlow, {
-              nodes: graph.nodes.filter((node) => visibleNodeSet.has(node.id)).map((node) => toFlowNode(node, layout, pathState, (id) => {
-                this.selectedNodeID = id
-                this.userSelectedNodeID = id
-                this.selectionCleared = false
-                this.renderFlow()
-                this.dispatchEvent(new CustomEvent('lv-lineage-select', { bubbles: true, composed: true, detail: { id } }))
-              }, focusPositions?.get(node.id), focusPositions !== undefined && narrow)),
-              edges: graph.edges
-                .filter((edge) => visibleNodeSet.has(edge.source) && visibleNodeSet.has(edge.target))
-                .map((edge) => toFlowEdge(edge, pathState, nodeRanks)),
-              nodeTypes: { lineageNode: LineageNodeComponent },
-              onInit: (instance: ReactFlowInstance) => {
-                this.flow = instance
-                const initialFitScope = this.initialFitScope
-                this.initialFitScope = undefined
-                if (initialFitScope && initialFitScope === this.scope) {
-                  this.scheduleFit(this.resolvedGraph, this.selectedNodeID, initialFitScope)
-                }
-              },
-              fitView: false,
-              minZoom: 0.25,
-              maxZoom: 1.35,
-              nodesDraggable: false,
-              nodesConnectable: false,
-              elementsSelectable: true,
-              panOnDrag: true,
-              zoomOnScroll: false,
-              preventScrolling: false,
-              onPaneClick: clearSelection,
-              children: [
-                React.createElement(Background, { key: 'background', gap: 18, size: 1 }),
-                React.createElement(Controls, { key: 'controls', showFitView: false, showInteractive: false }),
-              ],
-            }),
-          ),
+    const select = (id: string) => {
+      this.selectedNodeID = id
+      this.userSelectedNodeID = id
+      this.selectionCleared = false
+      this.direction = 'all'
+      this.renderFlow()
+      this.dispatchEvent(new CustomEvent('lv-lineage-select', { bubbles: true, composed: true, detail: { id } }))
+    }
+    const button = (label: string, onClick: () => void, options = {}) => React.createElement('button', {
+      type: 'button', onClick, ...options,
+    }, label)
+    const signature = JSON.stringify([nodes.map((node) => node.id).sort(), edges.map((edge) => [edge.source, edge.target]).sort()])
+    this.root.render(React.createElement(ReactFlowProvider, null, React.createElement('div', {
+      className: 'asset-lineage-layout',
+      onClick: (event: React.MouseEvent) => {
+        if (event.target instanceof Element && event.target.matches('.react-flow__renderer')) clearSelection()
+      },
+      onKeyDown: (event: React.KeyboardEvent) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        if (this.expanded) this.collapse()
+        else clearSelection()
+      },
+    },
+      React.createElement('div', { className: 'asset-lineage-toolbar', 'aria-label': 'Lineage controls' },
+        this.expanded && this.dialogTitle.trim() ? React.createElement('h2', { className: 'asset-lineage-dialog-title' }, this.dialogTitle.trim()) : null,
+        React.createElement('label', { className: 'asset-lineage-search' },
+          'Find asset',
+          React.createElement('select', {
+            'aria-label': 'Find asset', value: this.selectedNodeID ?? '',
+            onChange: (event: React.ChangeEvent<HTMLSelectElement>) => event.target.value ? select(event.target.value) : clearSelection(),
+          }, React.createElement('option', { value: '' }, 'Select an asset…'),
+          ...[...graph.nodes].sort((a, b) => a.label.localeCompare(b.label)).map((node) =>
+            React.createElement('option', { key: node.id, value: node.id }, `${node.label} · ${kindLabel(node.kind)}`))),
         ),
+        React.createElement('div', { className: 'asset-lineage-directions', role: 'group', 'aria-label': 'Trace dependencies in this view' },
+          button('Show all', () => { this.changeScope('full'); clearSelection() }, { 'aria-pressed': this.direction === 'all' && this.scope === 'full' }),
+          ...(['upstream', 'downstream'] as const).map((direction) => button(
+            `${direction === 'upstream' ? 'Upstream' : 'Downstream'} (${[...pathState[direction]].filter(id => scopeIDs.has(id)).length})`,
+            () => { this.direction = direction; this.renderFlow() },
+            { key: direction, 'aria-pressed': this.direction === direction, disabled: !selectedNode || ![...pathState[direction]].some(id => scopeIDs.has(id)) },
+          )),
+        ),
+        button(this.scopeActionLabel, () => this.changeScope(this.scope === 'full' ? 'focused' : 'full'), { className: 'asset-lineage-scope' }),
+        button('Focus selected', () => {
+          const node = selectedNode ? this.flow?.getNode(selectedNode.id) : undefined
+          if (node) {
+            this.changeViewportMode('manual')
+            void this.flow?.setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: FIT_OPTIONS.maxZoom })
+          }
+        }, { disabled: !selectedNode }),
       ),
-    )
-    if (shouldRefit) this.scheduleFit(graph, this.selectedNodeID, this.scope)
+      React.createElement('div', { className: 'asset-lineage-flow', 'aria-label': 'Asset lineage graph' },
+        nodes.length ? React.createElement(ReactFlow, {
+          nodes: nodes.map((node) => toFlowNode(node, positions, pathState, select)),
+          edges: edges.map((edge) => toFlowEdge(edge, pathState, nodeRanks)),
+          nodeTypes,
+          onInit: (flow: ReactFlowInstance) => { this.flow = flow },
+          minZoom: FIT_OPTIONS.minZoom, maxZoom: 2,
+          nodesDraggable: false, nodesConnectable: false, nodesFocusable: false,
+          edgesFocusable: false, elementsSelectable: true,
+          panOnDrag: true, zoomOnScroll: false, preventScrolling: false,
+          onPaneClick: clearSelection,
+          onMoveStart: (event: MouseEvent | TouchEvent | null) => { if (event) this.changeViewportMode('manual') },
+          children: [
+            React.createElement(Background, { key: 'background', gap: 18, size: 1 }),
+            React.createElement(FitLineage, { key: 'fit', viewportState: this.viewportState, signature, scope: this.scope, selectedID: this.selectedNodeID, anchorID: selectedLineageNode(graph.nodes)?.id }),
+          ],
+        }) : React.createElement('div', { className: 'asset-lineage-empty', role: 'status' }, 'No assets in this lineage.'),
+      ),
+      nodes.length ? React.createElement(LineageViewportControls, { viewportState: this.viewportState, onModeChange: this.changeViewportMode, expanded: this.expanded, onToggleExpanded: () => this.expanded ? this.collapse() : this.expand() }) : null,
+      React.createElement('div', { className: 'asset-lineage-summary', role: 'status' },
+        React.createElement('span', null, `${nodes.length} of ${graph.nodes.length} assets in this view · ${edges.length} connections`),
+        selectedNode ? React.createElement('span', { className: 'asset-lineage-selection' },
+          React.createElement('strong', null, selectedNode.label),
+          selectedNode.containedSummary ? React.createElement('span', null, selectedNode.containedSummary) : null,
+          selectedNode.href ? React.createElement('a', { href: selectedNode.href }, 'Open asset') : null,
+        ) : React.createElement('span', null, 'Select an asset to trace its dependencies. Data flows left to right.'),
+      ),
+    )))
   }
 
-  private scheduleFit(graph: LineageGraph, selectedID: string | undefined, scope: LineageScope): void {
-    if (this.fitFrame !== undefined) cancelAnimationFrame(this.fitFrame)
-    this.fitFrame = requestAnimationFrame(() => {
-      this.fitFrame = requestAnimationFrame(() => {
-        this.fitFrame = undefined
-        this.fitToScope(graph, selectedID, scope, 0)
-      })
-    })
-  }
-
-  private fitToScope(graph: LineageGraph, selectedID?: string, scope = this.scope, duration = 180): void {
-    const ids = this.nodeIDsInScope(graph, selectedID ?? selectedLineageNode(graph.nodes)?.id, scope)
-    void this.flow?.fitView({
-      nodes: ids.map((id) => ({ id })),
-      padding: 0.08,
-      minZoom: FIT_MIN_ZOOM,
-      maxZoom: FIT_MAX_ZOOM,
-      duration,
-    })
-  }
-
-  private toggleScope(): void {
-    const graph = this.resolvedGraph
-    const selectedID = this.selectedNodeID ?? selectedLineageNode(graph.nodes)?.id
-    if (this.fitFrame !== undefined) cancelAnimationFrame(this.fitFrame)
-    this.fitFrame = undefined
-    this.initialFitScope = undefined
-    this.scope = this.scope === 'focused' ? 'full' : 'focused'
-    this.skipScopeFit = true
+  private changeScope(scope: LineageScope): void {
+    if (scope === this.scope) return
+    this.scope = scope
+    this.direction = 'all'
+    this.dispatchEvent(new CustomEvent('lv-lineage-scope-change', { bubbles: true, composed: true, detail: { scope } }))
     this.renderFlow()
-    this.dispatchEvent(new CustomEvent('lv-lineage-scope-change', {
-      bubbles: true,
-      composed: true,
-      detail: { scope: this.scope },
-    }))
-    this.scheduleCenterSelectedAtCurrentZoom(selectedID)
-  }
-
-  private scheduleCenterSelectedAtCurrentZoom(selectedID?: string): void {
-    if (!selectedID || !this.flow) return
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const node = this.flow?.getNode(selectedID)
-      if (!node) return
-      const zoom = this.flow?.getZoom() ?? 1
-      const width = node.measured?.width ?? node.width ?? 200
-      const height = node.measured?.height ?? node.height ?? 96
-      void this.flow?.setCenter(node.position.x + width / 2, node.position.y + height / 2, { zoom, duration: 0 })
-    }))
-  }
-
-  private openExpanded(): void {
-    if (this.expanded) return
-    this.restoreFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-    const dialog = this.querySelector<HTMLDialogElement>('.asset-lineage-dialog')
-    if (!dialog) return
-    this.expanded = true
-    dialog.showModal()
-    this.renderFlow()
-    this.scheduleCenterSelectedAtCurrentZoom(this.selectedNodeID)
-    requestAnimationFrame(() => this.querySelector<HTMLButtonElement>('.asset-lineage-actions button:last-child')?.focus())
-  }
-
-  private closeExpanded(): void {
-    if (!this.expanded) return
-    this.expanded = false
-    const dialog = this.querySelector<HTMLDialogElement>('.asset-lineage-dialog')
-    if (dialog?.open) dialog.close()
-    this.renderFlow()
-    this.scheduleCenterSelectedAtCurrentZoom(this.selectedNodeID)
-    const restoreFocusTo = this.restoreFocusTo
-    this.restoreFocusTo = undefined
-    requestAnimationFrame(() => restoreFocusTo?.focus())
-  }
-
-  private readonly handleDialogKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>): void => {
-    if (this.expanded && event.key === 'Tab') {
-      const dialog = event.currentTarget
-      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )).filter((element) => element.getClientRects().length > 0)
-      if (!focusable.length) {
-        event.preventDefault()
-        dialog.focus()
-        return
-      }
-      const root = dialog.getRootNode()
-      const active = root instanceof ShadowRoot ? root.activeElement : document.activeElement
-      const activeIndex = focusable.findIndex((element) => element === active)
-      if (event.shiftKey && activeIndex <= 0) {
-        event.preventDefault()
-        focusable[focusable.length - 1]?.focus()
-      } else if (!event.shiftKey && (activeIndex === focusable.length - 1 || activeIndex < 0)) {
-        event.preventDefault()
-        focusable[0]?.focus()
-      }
-      return
-    }
-    if (event.key === 'Escape' && !this.expanded) {
-      event.preventDefault()
-      if (!this.selectedNodeID && this.selectionCleared) return
-      this.selectedNodeID = undefined
-      this.userSelectedNodeID = undefined
-      this.selectionCleared = true
-      this.renderFlow()
-    }
-  }
-
-  private nodeIDsInScope(graph: LineageGraph, selectedID?: string, scope = this.scope): string[] {
-    if (scope === 'full') return graph.nodes.map((node) => node.id)
-    const anchorID = selectedID ?? selectedLineageNode(graph.nodes)?.id
-    return focusedLineageNodeIDs(graph, anchorID)
   }
 
   private get scopeActionLabel(): string {
@@ -404,66 +336,61 @@ class AssetLineageGraph extends LitElement {
 }
 
 const assetLineageGraphStyles = `
-  lv-asset-lineage-graph .asset-lineage-dialog:not([open]) {
-    position: static;
-    inset: auto;
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    height: 100%;
+  lv-asset-lineage-graph .asset-lineage-inline { height: 100%; min-height: 0; }
+  lv-asset-lineage-graph .asset-lineage-dialog {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
     max-width: none;
     max-height: none;
     margin: 0;
     border: 0;
     padding: 0;
-    overflow: visible;
-    background: transparent;
-    color: inherit;
-  }
-
-  lv-asset-lineage-graph .asset-lineage-dialog[open] {
-    position: fixed;
-    inset: 0;
-    z-index: var(--zIndex-modal, 1200);
-    box-sizing: border-box;
-    display: block;
-    width: 100vw;
-    height: 100svh;
-    max-width: none;
-    max-height: none;
-    margin: 0;
-    border: 0;
-    padding: var(--base-size-16, 16px);
     overflow: hidden;
-    background: transparent;
-    color: inherit;
-  }
-
-  lv-asset-lineage-graph .asset-lineage-dialog::backdrop {
-    background: var(--lv-modal-backdrop, rgb(0 0 0 / 56%));
-  }
-
-  lv-asset-lineage-graph .asset-lineage-dialog[open] .asset-lineage-root {
-    box-sizing: border-box;
-    overflow: hidden;
-    border: var(--lv-border-default, 1px solid var(--lv-line-muted));
-    border-radius: var(--lv-radius-panel, var(--borderRadius-default));
+    overscroll-behavior: contain;
     background: var(--lv-bg-panel);
-    box-shadow: var(--shadow-floating-large, 0 12px 36px rgb(0 0 0 / 24%));
-  }
-
-  lv-asset-lineage-graph .asset-lineage-dialog[open] .asset-lineage-layout {
-    grid-template-rows: auto auto minmax(0, 1fr);
-    background: var(--lv-bg-panel);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-dialog-title {
-    margin: 0;
-    padding: var(--base-size-12) var(--base-size-16) var(--base-size-4);
     color: var(--lv-fg-default);
-    font: var(--lv-type-body);
-    font-weight: var(--base-text-weight-semibold);
-    overflow-wrap: anywhere;
+  }
+  lv-asset-lineage-graph .asset-lineage-dialog::backdrop { background: var(--lv-bg-panel); }
+
+  lv-asset-lineage-graph { container-type: inline-size; }
+  lv-asset-lineage-graph .asset-lineage-toolbar,
+  lv-asset-lineage-graph .asset-lineage-summary {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+    padding: 12px 16px; background: var(--lv-bg-panel); font: var(--lv-type-caption);
+    color: var(--lv-fg-muted);
+  }
+  lv-asset-lineage-graph .asset-lineage-dialog-title { margin: 0; flex-basis: 100%; font: var(--lv-type-body); color: var(--lv-fg-default); }
+  lv-asset-lineage-graph .asset-lineage-toolbar { border-bottom: var(--lv-border-default); }
+  lv-asset-lineage-graph .asset-lineage-summary { justify-content: space-between; border-top: var(--lv-border-default); }
+  lv-asset-lineage-graph .asset-lineage-search { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 180px; white-space: nowrap; }
+  lv-asset-lineage-graph .asset-lineage-search select { min-width: 0; width: 100%; max-width: 280px; }
+  lv-asset-lineage-graph .asset-lineage-directions { display: flex; gap: 4px; }
+  lv-asset-lineage-graph .asset-lineage-toolbar button,
+  lv-asset-lineage-graph .asset-lineage-toolbar select {
+    border: var(--lv-border-default); border-radius: var(--borderRadius-default);
+    background: var(--lv-bg-panel); color: var(--lv-fg-default); font: inherit;
+    min-height: 32px; padding: 6px 10px;
+  }
+  lv-asset-lineage-graph button { cursor: pointer; }
+  lv-asset-lineage-graph button:disabled { cursor: default; opacity: .45; }
+  lv-asset-lineage-graph .asset-lineage-toolbar button[aria-pressed="true"] {
+    color: var(--lv-fg-link); border-color: var(--lv-line-accent);
+    background: color-mix(in srgb, var(--lv-line-accent) 8%, var(--lv-bg-panel));
+  }
+  lv-asset-lineage-graph button:focus-visible,
+  lv-asset-lineage-graph select:focus-visible,
+  lv-asset-lineage-graph a:focus-visible { outline: 2px solid var(--lv-line-accent); outline-offset: 2px; }
+  lv-asset-lineage-graph .asset-lineage-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  lv-asset-lineage-graph .asset-lineage-selection strong { color: var(--lv-fg-default); overflow-wrap: anywhere; }
+  lv-asset-lineage-graph .asset-lineage-selection a { color: var(--lv-fg-link); white-space: nowrap; }
+  lv-asset-lineage-graph .asset-lineage-empty { display: grid; height: 100%; place-content: center; color: var(--lv-fg-muted); }
+  @container (max-width: 600px) {
+    lv-asset-lineage-graph .asset-lineage-search { flex-basis: 100%; }
+    lv-asset-lineage-graph .asset-lineage-search select { max-width: none; }
+    lv-asset-lineage-graph .asset-lineage-toolbar { padding: 8px; gap: 6px; }
+    lv-asset-lineage-graph .asset-lineage-toolbar button { padding: 6px; }
   }
 
   lv-asset-lineage-graph .asset-lineage-root,
@@ -475,31 +402,10 @@ const assetLineageGraphStyles = `
 
   lv-asset-lineage-graph .asset-lineage-layout {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(120px, 1fr) auto auto;
+    overflow: auto;
     outline: 0;
-  }
-
-  lv-asset-lineage-graph .asset-lineage-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--base-size-8);
-    padding: var(--base-size-4) var(--base-size-8);
-  }
-
-  lv-asset-lineage-graph .asset-lineage-actions button {
-    min-height: var(--control-medium-size, 2rem);
-    border: var(--lv-border-muted, 1px solid var(--lv-line-muted));
-    border-radius: var(--lv-radius-default, var(--borderRadius-default));
-    background: var(--lv-bg-panel);
-    color: var(--lv-fg-default);
-    padding: 0 var(--base-size-12);
-    font: var(--lv-type-body-compact);
-    cursor: pointer;
-  }
-
-  lv-asset-lineage-graph .asset-lineage-actions button:focus-visible {
-    outline: var(--focus-outline, 2px solid var(--lv-line-accent));
-    outline-offset: var(--focus-outline-offset, 2px);
   }
 
   lv-asset-lineage-graph .asset-lineage-flow {
@@ -615,19 +521,8 @@ const assetLineageGraphStyles = `
     transform: translate(50%, -50%);
   }
 
-  lv-asset-lineage-graph .react-flow__handle-top {
-    top: 0;
-    left: 50%;
-    transform: translate(-50%, -50%);
-  }
-
-  lv-asset-lineage-graph .react-flow__handle-bottom {
-    bottom: 0;
-    left: 50%;
-    transform: translate(-50%, 50%);
-  }
-
   lv-asset-lineage-graph .react-flow__panel {
+    pointer-events: all;
     position: absolute;
     z-index: 5;
     margin: var(--base-size-16);
@@ -641,52 +536,56 @@ const assetLineageGraphStyles = `
     bottom: 0;
   }
 
-  lv-asset-lineage-graph .react-flow__controls {
-    display: flex;
-    flex-direction: column;
-  }
+  lv-asset-lineage-graph .react-flow__attribution { display: none; }
 
-  lv-asset-lineage-graph .react-flow__controls.horizontal {
-    flex-direction: row;
-  }
-
-  lv-asset-lineage-graph .react-flow__controls-button {
+  lv-asset-lineage-graph .asset-lineage-viewport-controls {
+    justify-self: start;
+    margin: var(--base-size-12);
     display: flex;
-    width: 26px;
-    height: 26px;
     align-items: center;
-    justify-content: center;
-    border: 0;
+    gap: 2px;
     padding: 4px;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  lv-asset-lineage-graph .react-flow__controls-button svg {
-    width: 100%;
-    max-width: 12px;
-    max-height: 12px;
-    fill: currentColor;
-  }
-
-  lv-asset-lineage-graph .react-flow__attribution {
-    display: none;
-  }
-
-  lv-asset-lineage-graph .react-flow__controls {
     border: var(--lv-border-default);
+    border-radius: var(--borderRadius-default);
     background: var(--lv-bg-panel);
     box-shadow: var(--shadow-resting-small);
+    color: var(--lv-fg-default);
+    font: var(--lv-type-caption);
   }
-
-  lv-asset-lineage-graph .react-flow__controls-button {
-    border-bottom-color: var(--lv-line-muted);
+  lv-asset-lineage-graph .asset-lineage-viewport-controls button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    min-width: 36px;
+    border: 0;
+    border-radius: var(--borderRadius-default);
+    padding: 0 8px;
     background: var(--lv-bg-panel);
     color: var(--lv-fg-default);
+    font: inherit;
+  }
+  lv-asset-lineage-graph .asset-lineage-viewport-controls button:not(:disabled):hover {
+    background: var(--lv-bg-panel-muted);
+  }
+  lv-asset-lineage-graph .asset-lineage-zoom-level {
+    width: 44px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  lv-asset-lineage-graph .asset-lineage-viewport-controls .asset-lineage-fit {
+    border-left: var(--lv-border-default);
+    border-radius: 0;
+    padding-inline: 12px;
   }
 
   lv-asset-lineage-graph .asset-lineage-node {
-    width: 200px;
+    box-sizing: border-box;
+    width: ${LINEAGE_NODE_WIDTH}px;
+    height: ${LINEAGE_NODE_HEIGHT}px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
     border: var(--borderWidth-default) solid var(--lineage-node-border);
     border-left: var(--borderWidth-thicker) solid var(--lineage-node-accent);
     border-radius: var(--borderRadius-default);
@@ -708,7 +607,7 @@ const assetLineageGraphStyles = `
   }
 
   lv-asset-lineage-graph .asset-lineage-node-unrelated {
-    opacity: 1;
+    filter: saturate(0.35);
   }
 
   lv-asset-lineage-graph .asset-lineage-node-upstream,
@@ -724,10 +623,11 @@ const assetLineageGraphStyles = `
 
   lv-asset-lineage-graph .asset-lineage-node-title {
     display: block;
+    overflow: hidden;
     margin-top: var(--base-size-4);
     color: var(--lv-fg-default);
-    overflow-wrap: anywhere;
-    white-space: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font: var(--lv-type-body-compact);
     font-weight: var(--base-text-weight-semibold);
     text-decoration: none;
@@ -741,10 +641,11 @@ const assetLineageGraphStyles = `
   }
 
   lv-asset-lineage-graph .asset-lineage-node-meta {
+    overflow: hidden;
     margin-top: var(--base-size-6);
     color: var(--lv-fg-muted);
-    overflow-wrap: anywhere;
-    white-space: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font: var(--lv-type-caption);
   }
 
@@ -780,71 +681,118 @@ const assetLineageGraphStyles = `
 
 `
 
-function toFlowNode(
-  node: LineageNode,
-  layout: LineageLayout,
-  pathState: LineagePathState,
-  onSelect: (id: string) => void,
-  position?: { x: number; y: number },
-  verticalFocus = false,
-): Node<LineageNodeData> {
-  const { x, y } = position ?? positionFor(node, layout)
+const ZOOM_LEVELS = [0.02, 0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]
+
+function LineageViewportControls({ viewportState, onModeChange, expanded, onToggleExpanded }: { viewportState: LineageViewportState; onModeChange: (mode: LineageViewportState['mode']) => void; expanded: boolean; onToggleExpanded: () => void }) {
+  const { getNodes, getNodesBounds, getViewport, setViewport } = useReactFlow()
+  const zoom = useStore((state) => state.transform[2])
+  const x = useStore((state) => state.transform[0])
+  const y = useStore((state) => state.transform[1])
+  const width = useStore((state) => state.width)
+  const height = useStore((state) => state.height)
+  const bounds = getNodesBounds(getNodes())
+  const fitted = getViewportForBounds(bounds, width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
+  const isFitted = Math.abs(fitted.x - x) < 1 && Math.abs(fitted.y - y) < 1 && Math.abs(fitted.zoom - zoom) < 0.001
+  // Read the latest viewport inside each click so rapid clicks cannot reuse a
+  // stale zoom or queue competing animations. Keep the viewport centre fixed.
+  const zoomTo = (next: number) => {
+    onModeChange('manual')
+    const current = getViewport()
+    const ratio = next / current.zoom
+    void setViewport({
+      x: width / 2 - (width / 2 - current.x) * ratio,
+      y: height / 2 - (height / 2 - current.y) * ratio,
+      zoom: next,
+    })
+  }
+  const step = (direction: 'in' | 'out') => {
+    const current = getViewport().zoom
+    const levels = direction === 'in' ? ZOOM_LEVELS : [...ZOOM_LEVELS].reverse()
+    const next = levels.find(level => direction === 'in' ? level > current + 0.001 : level < current - 0.001)
+    if (next !== undefined) zoomTo(next)
+  }
+  const control = (text: string, label: string, title: string, onClick: () => void, disabled: boolean, className?: string) =>
+    React.createElement('button', { type: 'button', 'aria-label': label, title, onClick, disabled, className }, text)
+  return React.createElement('div', { className: 'asset-lineage-viewport-controls', role: 'group', 'aria-label': 'Graph view' },
+    control('−', 'Zoom out', 'Zoom out to see more of the graph', () => step('out'), zoom <= ZOOM_LEVELS[0]! + 0.001),
+    React.createElement('output', { className: 'asset-lineage-zoom-level', role: 'status', 'aria-label': 'Zoom level', 'aria-live': 'polite' }, `${Math.round(zoom * 100)}%`),
+    control('+', 'Zoom in', 'Zoom in to read asset details', () => step('in'), zoom >= 2 - 0.001),
+    control('Fit graph', 'Fit graph', isFitted && viewportState.mode === 'overview' ? 'All visible assets already fit in the graph' : 'Centre and fit all visible assets', () => { onModeChange('overview'); void setViewport(fitted) }, isFitted && viewportState.mode === 'overview', 'asset-lineage-fit'),
+    React.createElement('button', {
+      type: 'button', className: 'asset-lineage-expand', onClick: onToggleExpanded,
+      'aria-label': expanded ? 'Exit full page' : 'Expand to full page', 'aria-expanded': expanded,
+      title: expanded ? 'Exit full page (Esc)' : 'Expand lineage to the full page',
+    }, React.createElement('svg', {
+      width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+      strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
+    }, ...(expanded ? Minimize : Maximize).map(([tag, attrs], key) => React.createElement(tag, { ...attrs, key })))),
+  )
+}
+
+function FitLineage({ viewportState, signature, scope, selectedID, anchorID }: { viewportState: LineageViewportState; signature: string; scope: LineageScope; selectedID?: string; anchorID?: string }) {
+  const { getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport } = useReactFlow()
+  const previous = useRef<{ signature: string; scope: LineageScope; selectedID?: string } | undefined>(undefined)
+  const dimensions = useRef<{ width: number; height: number } | undefined>(undefined)
+  const domNode = useStore((state) => state.domNode)
+  useEffect(() => {
+    if (!domNode) return
+    let frame = 0
+    const scopeChanged = previous.current !== undefined && previous.current.scope !== scope
+    const selectionChanged = previous.current !== undefined && previous.current.selectedID !== selectedID
+    const topologyChanged = previous.current?.signature !== signature
+    previous.current = { signature, scope, selectedID }
+    let centerChangedSelection = scopeChanged || Boolean(selectedID && topologyChanged && (selectionChanged || viewportState.mode === 'manual'))
+    const resize = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const { width, height } = domNode.getBoundingClientRect()
+        if (!width || !height) return
+        const oldDimensions = dimensions.current
+        dimensions.current = { width, height }
+        if (centerChangedSelection) {
+          centerChangedSelection = false
+          const node = selectedID || anchorID ? getNode((selectedID ?? anchorID)!) : undefined
+          if (node) {
+            void setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: getViewport().zoom })
+            return
+          }
+        }
+        if (viewportState.mode === 'manual' && oldDimensions) {
+          const current = getViewport()
+          void setViewport({ ...current, x: current.x + (width - oldDimensions.width) / 2, y: current.y + (height - oldDimensions.height) / 2 })
+          return
+        }
+        const nodes = getNodes()
+        const fitted = getViewportForBounds(getNodesBounds(nodes), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
+        const anchor = (selectedID ? getNode(selectedID) : undefined) ?? nodes[0]
+        // Automatic views keep an asset readable; Fit graph explicitly requests the complete overview.
+        void setViewport(viewportState.mode === 'automatic' && fitted.zoom < FIT_OPTIONS.maxZoom && anchor
+          ? getViewportForBounds(getNodesBounds([anchor]), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
+          : fitted)
+      })
+    }
+    let observedWidth = domNode.clientWidth
+    let observedHeight = domNode.clientHeight
+    const observer = new ResizeObserver(() => {
+      if (domNode.clientWidth === observedWidth && domNode.clientHeight === observedHeight) return
+      observedWidth = domNode.clientWidth
+      observedHeight = domNode.clientHeight
+      resize()
+    })
+    observer.observe(domNode)
+    if (topologyChanged || scopeChanged) resize()
+    return () => { observer.disconnect(); cancelAnimationFrame(frame) }
+  }, [viewportState, signature, scope, selectedID, anchorID, getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport, domNode])
+  return null
+}
+
+function toFlowNode(node: LineageNode, positions: Map<string, { x: number; y: number }>, pathState: LineagePathState, onSelect: (id: string) => void): Node<LineageNodeData> {
   return {
-    id: node.id,
-    type: 'lineageNode',
-    position: { x, y },
-    sourcePosition: verticalFocus ? Position.Bottom : Position.Right,
-    targetPosition: verticalFocus ? Position.Top : Position.Left,
+    id: node.id, type: 'lineageNode', width: LINEAGE_NODE_WIDTH, height: LINEAGE_NODE_HEIGHT, position: positions.get(node.id) ?? { x: 0, y: 0 },
+    sourcePosition: Position.Right, targetPosition: Position.Left,
     className: `asset-lineage-flow-node asset-lineage-flow-node-${nodePathState(node.id, pathState)}`,
-    data: {
-      ...node,
-      selected: node.id === pathState.selectedID,
-      pathState: nodePathState(node.id, pathState),
-      onSelect,
-    },
+    data: { ...node, selected: node.id === pathState.selectedID, pathState: nodePathState(node.id, pathState), onSelect },
   }
-}
-
-function focusedLineageNodeIDs(graph: LineageGraph, selectedID?: string): string[] {
-  if (!selectedID) return graph.nodes.map((node) => node.id)
-  const focused = new Set([selectedID])
-  for (const edge of graph.edges) {
-    if (edge.source === selectedID) focused.add(edge.target)
-    if (edge.target === selectedID) focused.add(edge.source)
-  }
-  return graph.nodes.filter((node) => focused.has(node.id)).map((node) => node.id)
-}
-
-function createFocusedPositions(graph: LineageGraph, layout: LineageLayout, selectedID: string, narrow: boolean): Map<string, { x: number; y: number }> {
-  const positions = new Map<string, { x: number; y: number }>()
-  const nodeIDs = new Set(graph.nodes.map((node) => node.id))
-  const upstream = [...new Set(graph.edges.filter((edge) => edge.target === selectedID).map((edge) => edge.source))]
-    .filter((id) => nodeIDs.has(id))
-  const downstream = [...new Set(graph.edges.filter((edge) => edge.source === selectedID).map((edge) => edge.target))]
-    .filter((id) => nodeIDs.has(id))
-  const focus = new Set([selectedID, ...upstream, ...downstream])
-  if (narrow) {
-    const x = NODE_OFFSET_X
-    upstream.forEach((id, index) => positions.set(id, { x, y: NODE_MIN_Y + index * NARROW_FOCUS_GAP_Y }))
-    const selectedY = NODE_MIN_Y + upstream.length * NARROW_FOCUS_GAP_Y
-    positions.set(selectedID, { x, y: selectedY })
-    downstream.forEach((id, index) => positions.set(id, { x, y: selectedY + (index + 1) * NARROW_FOCUS_GAP_Y }))
-  } else {
-    const selectedY = NODE_MIN_Y + Math.max(0, upstream.length - 1) * NARROW_FOCUS_GAP_Y / 2
-    upstream.forEach((id, index) => positions.set(id, { x: NODE_OFFSET_X, y: NODE_MIN_Y + index * NARROW_FOCUS_GAP_Y }))
-    positions.set(selectedID, { x: NODE_OFFSET_X + NODE_GAP_X, y: selectedY })
-    downstream.forEach((id, index) => positions.set(id, {
-      x: NODE_OFFSET_X + NODE_GAP_X * 2,
-      y: selectedY + (index - (downstream.length - 1) / 2) * NARROW_FOCUS_GAP_Y,
-    }))
-  }
-  const offscreenX = NODE_OFFSET_X + Math.max(layout.rankIndex.size + 2, 4) * NODE_GAP_X
-  for (const node of graph.nodes) {
-    if (focus.has(node.id)) continue
-    const position = positionFor(node, layout)
-    positions.set(node.id, { x: position.x + offscreenX, y: position.y })
-  }
-  return positions
 }
 
 function toFlowEdge(edge: LineageEdge, pathState: LineagePathState, nodeRanks: Map<string, number>): Edge {
@@ -880,6 +828,16 @@ function toFlowEdge(edge: LineageEdge, pathState: LineagePathState, nodeRanks: M
   }
 }
 
+function focusedLineageNodeIDs(graph: LineageGraph, selectedID?: string): string[] {
+  if (!selectedID) return graph.nodes.map((node) => node.id)
+  const focused = new Set([selectedID])
+  for (const edge of graph.edges) {
+    if (edge.source === selectedID) focused.add(edge.target)
+    if (edge.target === selectedID) focused.add(edge.source)
+  }
+  return graph.nodes.filter((node) => focused.has(node.id)).map((node) => node.id)
+}
+
 function selectedLineageNode(nodes: LineageNode[], selectedID?: string): LineageNode | undefined {
   return nodes.find((node) => node.id === selectedID) ?? nodes.find((node) => node.selected) ?? nodes[0]
 }
@@ -902,6 +860,8 @@ function createPathState(graph: LineageGraph, selectedID?: string): LineagePathS
   }
   walkLineagePath(selectedID, incoming, 'source', state.upstream, state.connectedEdges)
   walkLineagePath(selectedID, outgoing, 'target', state.downstream, state.connectedEdges)
+  state.upstream.delete(selectedID)
+  state.downstream.delete(selectedID)
   return state
 }
 
@@ -912,12 +872,17 @@ function walkLineagePath(
   seenNodes: Set<string>,
   seenEdges: Set<string>,
 ): void {
-  for (const edge of edgesByNode.get(nodeID) ?? []) {
-    const peerID = edge[peerKey]
-    seenEdges.add(edge.id)
-    if (seenNodes.has(peerID)) continue
-    seenNodes.add(peerID)
-    walkLineagePath(peerID, edgesByNode, peerKey, seenNodes, seenEdges)
+  const pending = [nodeID]
+  const expanded = new Set<string>()
+  while (pending.length) {
+    const current = pending.pop()!
+    if (expanded.has(current)) continue
+    expanded.add(current)
+    for (const edge of edgesByNode.get(current) ?? []) {
+      seenEdges.add(edge.id)
+      seenNodes.add(edge[peerKey])
+      if (!expanded.has(edge[peerKey])) pending.push(edge[peerKey])
+    }
   }
 }
 
@@ -929,58 +894,18 @@ function nodePathState(id: string, pathState: LineagePathState): 'neutral' | 'se
   return 'unrelated'
 }
 
-function createLineageLayout(nodes: LineageNode[]): LineageLayout {
-  const ranks = Array.from(new Set(nodes.map(nodeRank))).sort((left, right) => left - right)
-  const rankIndex = new Map(ranks.map((rank, index) => [rank, index]))
-  const nodeIndex = new Map<string, number>()
-  const rankNodeCount = new Map<number, number>()
-  let maxNodeCount = 0
-
-  for (const rank of ranks) {
-    const rankNodes = nodes
-      .filter((candidate) => nodeRank(candidate) === rank)
-      .sort((left, right) => nodeSortKey(left).localeCompare(nodeSortKey(right)))
-    rankNodeCount.set(rank, rankNodes.length)
-    maxNodeCount = Math.max(maxNodeCount, rankNodes.length)
-    rankNodes.forEach((candidate, index) => {
-      if (!nodeIndex.has(candidate.id)) nodeIndex.set(candidate.id, index)
-    })
-  }
-
-  return {
-    rankIndex,
-    nodeIndex,
-    rankNodeCount,
-    maxNodeCount,
-    nodeGapY: maxNodeCount >= 8 ? DENSE_NODE_GAP_Y : NODE_GAP_Y,
-  }
-}
-
-function positionFor(node: LineageNode, layout: LineageLayout): { x: number; y: number } {
-  const rank = nodeRank(node)
-  const rankIndex = layout.rankIndex.get(rank) ?? 0
-  const index = layout.nodeIndex.get(node.id) ?? 0
-  const rankNodeCount = layout.rankNodeCount.get(rank) ?? 1
-  const rankOffsetY = Math.max(0, layout.maxNodeCount - rankNodeCount) * layout.nodeGapY / 2
-  return {
-    x: NODE_OFFSET_X + rankIndex * NODE_GAP_X,
-    y: NODE_MIN_Y + rankOffsetY + index * layout.nodeGapY,
-  }
-}
-
-function nodeRank(node: LineageNode): number {
-  if (typeof node.rank === 'number' && Number.isFinite(node.rank)) return node.rank
-  if (node.selected || node.side === 'selected') return 0
-  if (node.side === 'upstream') return -1
-  return 1
-}
-
-function nodeSortKey(node: LineageNode): string {
-  return `${node.kind}:${node.label}:${node.id}`
-}
-
 function LineageNodeComponent({ data }: { data: LineageNodeData }) {
   const styles = nodeStyle(data)
+  const { getNode, getViewport, setCenter } = useReactFlow()
+  const onFocus = (event: React.FocusEvent<HTMLDivElement>) => {
+    // Pointer focus must not move the target before its click completes.
+    if (!event.currentTarget.matches(':focus-visible')) return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const surface = event.currentTarget.closest('.asset-lineage-flow')?.getBoundingClientRect()
+    if (!surface || (bounds.left >= surface.left && bounds.right <= surface.right && bounds.top >= surface.top && bounds.bottom <= surface.bottom)) return
+    const node = getNode(data.id)
+    if (node) void setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: getViewport().zoom })
+  }
   const runStatus = visibleRunStatus(data.runStatus)
   const className = [
     'asset-lineage-node',
@@ -1000,6 +925,7 @@ function LineageNodeComponent({ data }: { data: LineageNodeData }) {
       'aria-pressed': data.selected ? 'true' : 'false',
       'aria-label': `${kindLabel(data.kind)} ${data.label}${runStatus ? `, ${data.runStatusLabel || runStatus}` : ''}`,
       onClick: select,
+      onFocus,
       onKeyDown: (event: React.KeyboardEvent) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()
@@ -1063,7 +989,7 @@ function edgeStroke(kind: string): string {
   if (kind.startsWith('uses')) return 'var(--lv-line-accent)'
   if (kind.startsWith('reads')) return 'var(--lv-fg-warning)'
   if (kind.startsWith('filters')) return 'var(--lv-fg-success)'
-  return 'var(--lv-line-muted)'
+  return 'var(--lv-fg-muted)'
 }
 
 function kindLabel(kind: string): string {

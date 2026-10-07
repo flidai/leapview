@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -134,10 +135,11 @@ func TestAssetLineagePreservesVisibleBranchesThroughSameLayerConvergence(t *test
 
 	lineage := assetLineage("project:test", source, assets, edges)
 	wantEdges := map[string]bool{
-		source.ID + "->" + modelA.ID:   true,
-		source.ID + "->" + modelB.ID:   true,
-		modelA.ID + "->" + semantic.ID: true,
-		modelB.ID + "->" + semantic.ID: true,
+		source.ID + "->" + modelA.ID:        true,
+		source.ID + "->" + modelB.ID:        true,
+		modelA.ID + "->" + sharedModel.ID:   true,
+		modelB.ID + "->" + sharedModel.ID:   true,
+		sharedModel.ID + "->" + semantic.ID: true,
 	}
 	for _, edge := range lineage.Graph.Edges {
 		delete(wantEdges, edge.Source+"->"+edge.Target)
@@ -147,7 +149,7 @@ func TestAssetLineagePreservesVisibleBranchesThroughSameLayerConvergence(t *test
 	}
 }
 
-func TestAssetLineageCollapsesSameLayerDependenciesAroundSelectedModel(t *testing.T) {
+func TestAssetLineagePreservesSameLayerDependenciesAroundSelectedModel(t *testing.T) {
 	connection := projectview.DevelopAssetView{ID: "connection:finance", Type: "connection"}
 	source := projectview.DevelopAssetView{ID: "source:finance", Type: "source"}
 	selected := projectview.DevelopAssetView{ID: "model:forecast", Type: "model"}
@@ -165,8 +167,104 @@ func TestAssetLineageCollapsesSameLayerDependenciesAroundSelectedModel(t *testin
 	for _, node := range lineage.Graph.Nodes {
 		seen[node.ID] = true
 	}
-	if !seen[connection.ID] || !seen[source.ID] || !seen[selected.ID] || !seen[semantic.ID] || seen[intermediate.ID] {
+	if !seen[connection.ID] || !seen[source.ID] || !seen[selected.ID] || !seen[semantic.ID] || !seen[intermediate.ID] {
 		t.Fatalf("projected model lineage nodes = %#v", lineage.Graph.Nodes)
+	}
+	for _, node := range lineage.Graph.Nodes {
+		if node.ID == intermediate.ID && (node.Side != "upstream" || uisignals.ValueOrZero(node.Selected)) {
+			t.Fatalf("upstream model incorrectly marked as selected: %#v", node)
+		}
+	}
+	if len(lineage.Uses.Rows) != 1 || lineage.Uses.Rows[0]["assetHref"] != lineageAssetHref("project:test", intermediate, edges) {
+		t.Fatalf("selected model uses rows = %#v, want its immediate model dependency", lineage.Uses.Rows)
+	}
+}
+
+func TestAssetLineagePreservesResourceDependenciesAndCollapsesContainedAssets(t *testing.T) {
+	source := projectview.DevelopAssetView{ID: "source:orders", Type: "source"}
+	modelA := projectview.DevelopAssetView{ID: "model:raw", Type: "model"}
+	modelB := projectview.DevelopAssetView{ID: "model:clean", Type: "model"}
+	semantic := projectview.DevelopAssetView{ID: "semantic:sales", Type: "semantic_model"}
+	field := projectview.DevelopAssetView{ID: "field:revenue", Type: "field", ParentID: semantic.ID}
+	dashboard := projectview.DevelopAssetView{ID: "dashboard:sales", Type: "dashboard"}
+	page := projectview.DevelopAssetView{ID: "page:overview", Type: "page", ParentID: dashboard.ID}
+	visual := projectview.DevelopAssetView{ID: "visual:revenue", Type: "visual", ParentID: page.ID}
+	pipeline := projectview.DevelopAssetView{ID: "pipeline:sales", Type: "pipeline"}
+	unrelated := projectview.DevelopAssetView{ID: "model:unrelated", Type: "model"}
+	assets := []projectview.DevelopAssetView{source, modelA, modelB, semantic, field, dashboard, page, visual, pipeline, unrelated}
+	edges := []projectview.DevelopEdgeView{
+		{FromAssetID: modelA.ID, ToAssetID: source.ID, Type: "reads_source"},
+		{FromAssetID: modelB.ID, ToAssetID: modelA.ID, Type: "uses_model"},
+		{FromAssetID: field.ID, ToAssetID: modelB.ID, Type: "uses_model"},
+		{FromAssetID: visual.ID, ToAssetID: field.ID, Type: "uses_field"},
+		{FromAssetID: pipeline.ID, ToAssetID: semantic.ID, Type: "refreshes"},
+		{FromAssetID: semantic.ID, ToAssetID: field.ID, Type: "contains"},
+		{FromAssetID: dashboard.ID, ToAssetID: page.ID, Type: "contains"},
+		{FromAssetID: page.ID, ToAssetID: visual.ID, Type: "contains"},
+	}
+	for _, selected := range []projectview.DevelopAssetView{source, semantic, field} {
+		t.Run(selected.ID, func(t *testing.T) {
+			lineage := assetLineage("project:test", selected, assets, edges)
+			gotNodes := map[string]bool{}
+			for _, node := range lineage.Graph.Nodes {
+				gotNodes[node.ID] = true
+			}
+			wantNodes := map[string]bool{source.ID: true, modelA.ID: true, modelB.ID: true, semantic.ID: true, dashboard.ID: true, pipeline.ID: true}
+			if !reflect.DeepEqual(gotNodes, wantNodes) {
+				t.Fatalf("lineage nodes = %v, want %v", gotNodes, wantNodes)
+			}
+			gotEdges := map[string]bool{}
+			for _, edge := range lineage.Graph.Edges {
+				gotEdges[edge.Source+"->"+edge.Target] = true
+			}
+			wantEdges := map[string]bool{source.ID + "->" + modelA.ID: true, modelA.ID + "->" + modelB.ID: true, modelB.ID + "->" + semantic.ID: true, semantic.ID + "->" + dashboard.ID: true, semantic.ID + "->" + pipeline.ID: true}
+			if !reflect.DeepEqual(gotEdges, wantEdges) {
+				t.Fatalf("lineage edges = %v, want %v", gotEdges, wantEdges)
+			}
+		})
+	}
+}
+
+func TestAssetLineagePreservesCyclesAndDependenciesAcrossTypeOrder(t *testing.T) {
+	model := projectview.DevelopAssetView{ID: "model:orders", Type: "model"}
+	source := projectview.DevelopAssetView{ID: "source:orders", Type: "source"}
+	assets := []projectview.DevelopAssetView{model, source}
+	edges := []projectview.DevelopEdgeView{
+		{FromAssetID: model.ID, ToAssetID: source.ID, Type: "reads_source"},
+		{FromAssetID: source.ID, ToAssetID: model.ID, Type: "uses_model"},
+	}
+	lineage := assetLineage("project:test", model, assets, edges)
+	got := map[string]bool{}
+	for _, edge := range lineage.Graph.Edges {
+		got[edge.Source+"->"+edge.Target] = true
+	}
+	want := map[string]bool{source.ID + "->" + model.ID: true, model.ID + "->" + source.ID: true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("lineage cycle edges = %v, want %v", got, want)
+	}
+}
+
+func TestAssetLineageTableUsesReadableRelationshipLabels(t *testing.T) {
+	tests := []struct{ kind, explicit, want string }{
+		{kind: "lineage_connection_source", want: "Provides source"},
+		{kind: "lineage_source_model", want: "Feeds model"},
+		{kind: "lineage_model_semantic_model", want: "Provides model"},
+		{kind: "lineage_semantic_model_dashboard", want: "Powers dashboard"},
+		{kind: "lineage_semantic_model_pipeline", want: "Refreshes semantic model"},
+		{kind: "lineage_semantic_model_refresh_pipeline", want: "Refreshes semantic model"},
+		{kind: "lineage_pipeline_dashboard", want: "Feeds dashboard"},
+		{kind: "lineage_refresh_pipeline_dashboard", want: "Feeds dashboard"},
+		{kind: "lineage_future_relationship", want: "Data dependency"},
+		{kind: "uses_model", want: "Uses model"},
+		{kind: "lineage_source_model", explicit: "Prepared sales data", want: "Prepared sales data"},
+	}
+	for _, test := range tests {
+		t.Run(test.kind+test.explicit, func(t *testing.T) {
+			row := lineageGraphTableRow("project:test", assetLineageEdge{Kind: test.kind, Label: uisignals.Optional(test.explicit)}, projectview.DevelopAssetView{ID: "model:sales", Type: "model"}, nil)
+			if got := row["relation"]; got != test.want {
+				t.Fatalf("relationship = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

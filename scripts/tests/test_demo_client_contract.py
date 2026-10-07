@@ -196,6 +196,42 @@ class ClientContractTests(unittest.TestCase):
                 pass
 
         with tempfile.TemporaryDirectory() as certdir:
+            source = r'''package main
+import (
+    "context"
+    "crypto/tls"
+    "net"
+    "net/http"
+    "os"
+    "time"
+)
+func main() {
+    transport := &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+        if address == "demo.leapview.dev:443" || address == "public-sentinel.invalid:443" { address = os.Getenv("DEMO_SENTINEL") }
+        return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, network, address)
+    }}
+    client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+    response, err := client.Get("https://demo.leapview.dev/go")
+    if err != nil { return }
+    if response.StatusCode != 403 { os.Exit(3) }
+    response.Body.Close()
+}
+'''
+            main_file = pathlib.Path(certdir) / 'main.go'
+            main_file.write_text(source)
+            go_client = pathlib.Path(certdir) / 'go-client'
+            # Build before opening the transport fixtures, using the caller's
+            # cached toolchain and packages. A fresh HOME/GOCACHE forces cold
+            # standard-library compilation (and can trigger a toolchain fetch).
+            # Compilation has its own bounded budget; the client below only
+            # gets five seconds, including its three-second HTTP timeout.
+            build_env = dict(os.environ, GOPROXY='off')
+            build_result = subprocess.run([go, 'build', '-o', str(go_client), str(main_file)],
+                                          cwd=SCRIPTS.parent, env=build_env,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          timeout=300, check=False)
+            self.assertEqual(build_result.returncode, 0,
+                             build_result.stderr.decode(errors='replace'))
             key, certificate = pathlib.Path(certdir) / 'key.pem', pathlib.Path(certdir) / 'cert.pem'
             subprocess.run([openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
                             '-subj', '/CN=demo.leapview.dev', '-keyout', str(key), '-out', str(certificate)],
@@ -233,36 +269,9 @@ class ClientContractTests(unittest.TestCase):
                     self.assertGreater(proxy.hits, 0, curl_result.stderr.decode(errors='replace'))
                     self.assertEqual(sentinel.hits, 0)
 
-                    source = r'''package main
-import (
-    "context"
-    "crypto/tls"
-    "net"
-    "net/http"
-    "os"
-    "time"
-)
-func main() {
-    transport := &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-        if address == "demo.leapview.dev:443" || address == "public-sentinel.invalid:443" { address = os.Getenv("DEMO_SENTINEL") }
-        return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, network, address)
-    }}
-    client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-    response, err := client.Get("https://demo.leapview.dev/go")
-    if err != nil { return }
-    if response.StatusCode != 403 { os.Exit(3) }
-    response.Body.Close()
-}
-'''
-                    with tempfile.TemporaryDirectory() as directory:
-                        env['HOME'] = directory
-                        env['GOCACHE'] = str(pathlib.Path(directory) / 'go-cache')
-                        pathlib.Path(env['GOCACHE']).mkdir()
-                        main_file = pathlib.Path(directory) / 'main.go'
-                        main_file.write_text(source)
-                        go_result = subprocess.run([go, 'run', str(main_file)], env=env,
-                                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                   timeout=60, check=False)
+                    go_result = subprocess.run([str(go_client)], env=env,
+                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                               timeout=5, check=False)
                     self.assertEqual(go_result.returncode, 0, go_result.stderr.decode(errors='replace'))
                     self.assertGreater(proxy.hits, 1, go_result.stderr.decode(errors='replace'))
                     self.assertEqual(sentinel.hits, 0)

@@ -54,7 +54,7 @@
     "test:topology-background": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts topology-background && bun test web/components/login/topology-background.dom.test.ts",
     "test:production-assets": "bun test scripts/build_assets.test.ts",
     "test:record-table": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts record-table && bun test web/components/shared/record-table.dom.test.ts",
-    "test:asset-lineage": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts asset-lineage && bun test web/components/shared/asset-lineage-graph.dom.test.ts",
+    "test:asset-lineage": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts asset-lineage && bun test web/components/shared/asset-lineage-layout.test.ts web/components/shared/asset-lineage-graph.dom.test.ts",
     "test:semantic-model-graph": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts semantic-model-graph && bun test web/components/shared/semantic-model-graph.dom.test.ts",
     "qa:datastar-lit-routes": "node scripts/ensure_playwright.mjs && bun scripts/datastar_lit_route_qa.ts",
     "qa:dashboard-performance": "node scripts/ensure_playwright.mjs && bun scripts/dashboard_performance.ts",
