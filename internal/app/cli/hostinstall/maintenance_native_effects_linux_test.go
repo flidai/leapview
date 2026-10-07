@@ -97,7 +97,7 @@ func TestNativeCandidateMarkerCarriesExactRevision019Binding(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("c", 64)
-	marker, err := candidatePublicMarker(root, candidate)
+	marker, err := nativeCandidatePublicMarker(root, NativeRequest{PredecessorImage: legacy.Image, CandidateImage: candidate})
 	if err != nil {
 		t.Fatalf("bound predecessor was rejected: %v", err)
 	}
@@ -255,6 +255,9 @@ func TestReopeningAfterRebootRestartsPostgresBeforeExposingTraffic(t *testing.T)
 		if strings.Contains(call, "max(version_id)") {
 			return "28", nil
 		}
+		if strings.Contains(call, "version --help") {
+			return "Flags:\n      --json   emit machine-readable JSON\n", nil
+		}
 		if strings.Contains(call, "version --json") || strings.Contains(call, "version --format json") {
 			raw, _ := json.Marshal(buildinfo.Identity{Revision: e.request.PredecessorRevision})
 			return string(raw), nil
@@ -385,6 +388,9 @@ func TestNativeFailedCandidateRestoresPairedFilesAndConfiguration(t *testing.T) 
 						if strings.Contains(call, "max(version_id)") {
 							raw, err := os.ReadFile(filepath.Join(pgRoots[args[1]], "state"))
 							return string(raw), err
+						}
+						if strings.Contains(call, "version --help") {
+							return "Flags:\n      --format string   output format: text or json\n", nil
 						}
 						if strings.Contains(call, "version --json") || strings.Contains(call, "version --format json") {
 							revision := e.request.PredecessorRevision

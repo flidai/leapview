@@ -59,6 +59,22 @@ def run(*args, **kwargs):
 
 def out(*args): return subprocess.check_output(args, text=True, stderr=LOG).strip()
 
+def runtime_version():
+    command = ('docker', 'exec', APP, 'leapview', 'version')
+    help_text = out(*command, '--help')
+    if re.search(r'(?m)^\s+--format\s+string\b', help_text):
+        arguments = ('--format', 'json')
+    elif re.search(r'(?m)^\s+--json(?:\s|$)', help_text):
+        arguments = ('--json',)
+    else:
+        raise RuntimeError('Installed runtime does not advertise a supported JSON version command')
+    identity = json.loads(out(*command, *arguments))
+    if (not isinstance(identity, dict) or identity.get('dirty') is not False or
+            not isinstance(identity.get('revision'), str) or
+            not re.fullmatch(r'[0-9a-f]{40}', identity['revision'])):
+        raise ValueError('Runtime source identity is invalid')
+    return identity
+
 def replace_image(data, old, new):
     lines = data.splitlines(keepends=True)
     pins = [i for i, line in enumerate(lines) if line.startswith(b'LEAPVIEW_IMAGE=')]
@@ -113,7 +129,7 @@ def inspect():
             raise RuntimeError('Backup target does not match application database binding')
     image = info['Config']['Image']
     if not re.fullmatch(IMAGE_RE, image): raise RuntimeError('Predecessor must use an immutable image')
-    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--format', 'json'))
+    version = runtime_version()
     if version['dirty']: raise RuntimeError('Dirty predecessor')
     ready()
     return {'image': image, 'revision': version['revision']}
@@ -294,7 +310,7 @@ def _runtime_outcome_evidence():
     image_info = json.loads(out('docker', 'image', 'inspect', image))[0]
     if info.get('Image') != image_info.get('Id') or image not in image_info.get('RepoDigests', []):
         raise ValueError('Container content does not match its immutable image reference')
-    version = json.loads(out('docker', 'exec', APP, 'leapview', 'version', '--format', 'json'))
+    version = runtime_version()
     if version.get('dirty') is not False or not re.fullmatch(r'[0-9a-f]{40}', version.get('revision', '')):
         raise ValueError('Runtime source identity is invalid')
     env = dict(v.split('=', 1) for v in info['Config']['Env'] if '=' in v)

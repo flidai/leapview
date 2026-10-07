@@ -169,14 +169,3 @@ func readNativeInstallation(root string) (validatedNativeInstallation, error) {
 	}
 	return validatedNativeInstallation{Config: installed, Marker: &marker}, nil
 }
-
-// candidatePublicMarker validates the saved predecessor config and its target
-// authority before deriving the current public marker for the candidate image.
-func candidatePublicMarker(root, image string) (installationstate.Marker, error) {
-	installed, err := readNativeInstallation(root)
-	if err != nil {
-		return installationstate.Marker{}, err
-	}
-	installed.Config.Image = image
-	return installationstate.NewMarker(installed.Config, installationstate.PhasePublic)
-}
