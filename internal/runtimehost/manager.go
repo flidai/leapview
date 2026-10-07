@@ -396,28 +396,6 @@ func (m *Manager) BindClaimedProject(projectID projectgraph.ResourceID, environm
 	}
 	return nil
 }
-func (m *Manager) LeaseRenewalError() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var errs []error
-	for _, e := range m.leaseRenewalErrors {
-		errs = append(errs, e)
-	}
-	if m.current != nil {
-		if health, ok := m.current.runtime.(RuntimeLeaseHealth); ok {
-			errs = append(errs, health.LeaseRenewalError())
-		}
-	}
-	for _, retired := range m.retired {
-		if retired == nil {
-			continue
-		}
-		if health, ok := retired.runtime.(RuntimeLeaseHealth); ok {
-			errs = append(errs, health.LeaseRenewalError())
-		}
-	}
-	return errors.Join(errs...)
-}
 func (m *Manager) setLeaseRenewalError(id string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

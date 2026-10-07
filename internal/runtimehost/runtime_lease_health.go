@@ -1,5 +1,7 @@
 package runtimehost
 
+import "errors"
+
 // Legacy snapshot heartbeats are keyed by their durable lease ID. Factory
 // callbacks instead belong to one actual runtime preparation; two runtimes can
 // attach the same serving generation without sharing their lease health.
@@ -48,4 +50,27 @@ func (h *runtimeLeaseHealth) close() {
 	h.closed = true
 	delete(m.leaseRenewalErrors, leaseHealthKey{runtime: h})
 	m.mu.Unlock()
+}
+
+func (m *Manager) LeaseRenewalError() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var errs []error
+	for _, e := range m.leaseRenewalErrors {
+		errs = append(errs, e)
+	}
+	if m.current != nil {
+		if health, ok := m.current.runtime.(RuntimeLeaseHealth); ok {
+			errs = append(errs, health.LeaseRenewalError())
+		}
+	}
+	for _, retired := range m.retired {
+		if retired == nil {
+			continue
+		}
+		if health, ok := retired.runtime.(RuntimeLeaseHealth); ok {
+			errs = append(errs, health.LeaseRenewalError())
+		}
+	}
+	return errors.Join(errs...)
 }
