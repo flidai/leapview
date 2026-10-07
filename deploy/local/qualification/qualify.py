@@ -4,8 +4,9 @@
 The package checks in this module are deliberately independent of the source
 checkout.  A normal invocation verifies an archive, its two checksum layers,
 the package/runtime manifests, and the installed command identity.  The
-optional lifecycle lane is opt-in because local authentication is a human
-prerequisite and preview/deploy qualification is not released yet.
+optional lifecycle lane is opt-in because it creates and resets a temporary
+Docker runtime. Local bootstrap authentication is automatic; preview/deploy
+measurements remain outside this lane.
 """
 
 from __future__ import annotations

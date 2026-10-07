@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       run_lifecycle:
-        description: Run init and one local dev lifecycle (requires manual device approval)
+        description: Run init and local dev restart with automatic scoped local authentication
         required: false
         default: false
         type: boolean
@@ -96,11 +96,10 @@ jobs:
             --required
           )
           if [ "$RUN_LIFECYCLE" = true ]; then
-            # Required mode deliberately fails closed if this socket, Compose,
-            # or the human device-approval prerequisite is unavailable.
+            # Required mode deliberately fails closed if this socket or
+            # Compose is unavailable. Local scoped authentication is automatic.
             args+=(
               --run-lifecycle
-              --manual-prerequisites-confirmed
               --docker-host unix:///var/run/docker.sock
             )
           fi
