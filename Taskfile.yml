@@ -1679,7 +1679,7 @@ tasks:
       - nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
 
   managed:hosts:boot-test:
-    desc: Boot isolated NixOS guests and verify TLS, filtering and reboot persistence
+    desc: Exercise managed-host updates and rollback plus network and baseline reboot checks in NixOS guests
     cmds:
       - nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
 
