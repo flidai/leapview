@@ -314,7 +314,7 @@ test('repeated deletions keep the next delete confirmation through an earlier un
         const requestId = (window as any).chatActions[index - 1].requestId
         ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 20_000).toISOString(), archivedConversations: [] } })
       }, index)
-      await page.locator(`button.undo[data-conversation-id="delete-${index}"]`).waitFor()
+      await page.locator(`lv-toast[data-conversation-id="delete-${index}"] button.action`).waitFor()
     }
     const sixth = page.locator('.history-row').filter({ hasText: 'Chat 6' })
     await sixth.hover()
