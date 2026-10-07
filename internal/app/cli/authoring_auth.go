@@ -199,10 +199,10 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 	loginRequest := accesscli.LoginRequest{
 		Name: request.TargetName, Origin: request.Origin, InstanceID: request.InstanceID,
 		Environment: request.Environment, ProjectID: request.ProjectID,
-		// Local dev establishes and verifies its own initial Project policy.
+		// Local dev establishes its initial policy and development profile.
 		// These remain token ceilings, independently checked against the local
 		// principal's bootstrap authority. Remote login keeps its normal scope.
-		Actions: append(access.DefaultAuthoringActions(), access.ActionProjectAccessRead, access.ActionProjectAccessManage),
+		Actions: append(access.DefaultAuthoringActions(), localBootstrapActions()...),
 	}
 	var notify func(accesscli.DeviceChallenge)
 	var challengeWriteErr error

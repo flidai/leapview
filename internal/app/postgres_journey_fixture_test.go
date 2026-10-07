@@ -24,6 +24,8 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
@@ -63,6 +65,8 @@ type PostgresJourneyFixtureOptions struct {
 	BrowserSessionAuth bool
 	// ProjectClaimBootstrap wires the real durable claim into pre-publication authorization.
 	ProjectClaimBootstrap bool
+	// LocalDevelopment enables the native empty-connection profile and session stores.
+	LocalDevelopment bool
 
 	// SkipRouteAssembly leaves the graph and native capability handles
 	// available without constructing HTTP routes. The default assembles routes.
@@ -303,6 +307,40 @@ func (f *PostgresJourneyFixture) assembleRoutes(t *testing.T, options PostgresJo
 	}
 	if options.ProjectClaimBootstrap {
 		runtimeConfig.DeliveryTargetReader = appdeploymentpostgres.NewTargetReader(f.Graph.DeploymentRepository)
+	}
+	if options.LocalDevelopment {
+		host, err := runtimehostmodule.Build(t.Context(), runtimehostmodule.Config{
+			States: f.Graph.ServingState, ProjectID: options.ProjectID, Environment: "prod",
+			Factory: testRuntimeFactory{},
+		})
+		if err != nil {
+			t.Fatalf("build PostgreSQL local development empty runtime: %v", err)
+		}
+		t.Cleanup(func() { _ = host.Close() })
+		runtimeConfig.RuntimeHost = host
+		analytics, err := analyticsmodule.Build(t.Context(), analyticsmodule.Config{
+			ConnectionBindings: f.Graph.ConnectionBinding, DisableProcessEnvironment: true,
+			RuntimeCacheEntries: 8, RuntimeCacheBytes: 1 << 20, NodeCacheEntries: 16, NodeCacheBytes: 2 << 20,
+			CredentialMode:        analyticsmodule.CredentialModeDevelopmentEnvironment,
+			CredentialTargetID:    options.TargetID,
+			CredentialEnvironment: "prod", CredentialEnvironmentVersionKey: []byte(strings.Repeat("k", 32)),
+		})
+		if err != nil {
+			t.Fatalf("build PostgreSQL local development analytics: %v", err)
+		}
+		t.Cleanup(func() { _ = analytics.Close() })
+		capabilities.AnalyticsModule = analytics
+		capabilities.ProfileApplications = f.Graph.ProfileApplication
+		capabilities.DevelopmentSessions = f.Graph.DevelopmentSession
+		runtimeConfig.LocalCheckoutID = "journey-checkout"
+		runtimeConfig.LocalRuntimeID = "journey-runtime"
+		runtimeConfig.DevelopmentProfileName = "local"
+		runtimeConfig.DevelopmentGraphDigest = "sha256:" + strings.Repeat("a", 64)
+		runtimeConfig.DevelopmentProfileDigest, err = connectionbinding.DevelopmentProfileDigest("local", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimeConfig.IdempotencyProjectIDResolver = postgresAuthoringProjectIDResolver(f.Graph.DeploymentRepository, f.Graph.ServingState, options.TargetID, "prod")
 	}
 	if runtimeConfig.ServingSnapshotResolver == nil {
 		runtimeConfig.ServingSnapshotResolver = func(context.Context) (string, error) {

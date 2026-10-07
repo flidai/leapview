@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -20,7 +21,7 @@ import (
 // writer with the same native device credential used by local authoring.
 func TestLocalAuthoringClaimBootstrapPolicyJourney(t *testing.T) {
 	const instanceID = "lvinst_0123456789abcdefghijklmnopqrstuv"
-	f := NewPostgresJourneyFixture(t, PostgresJourneyFixtureOptions{TargetID: instanceID, BrowserSessionAuth: true, ProjectClaimBootstrap: true})
+	f := NewPostgresJourneyFixture(t, PostgresJourneyFixtureOptions{TargetID: instanceID, BrowserSessionAuth: true, ProjectClaimBootstrap: true, LocalDevelopment: true})
 	repo, ctx := f.Graph.Access, t.Context()
 	initial, err := repo.InitializeInstance(ctx, access.InstanceInitializationInput{InstanceID: instanceID, Email: "local-author@example.test", Environment: "prod"}, nil)
 	if err != nil {
@@ -120,6 +121,64 @@ func TestLocalAuthoringClaimBootstrapPolicyJourney(t *testing.T) {
 	if len(policy.RoleBindings) != 3 || len(policy.Grants) != 1 {
 		t.Fatalf("persisted bootstrap policy: %+v", policy)
 	}
+
+	// The installed CLI reaches profile application immediately after staging
+	// its declared fixture. The former local ceiling included policy management
+	// but omitted both project-settings actions required by these generated routes.
+	profilePath := "/targets/" + instanceID + "/development-profile-application"
+	request(http.MethodGet, profilePath, "", token, "", http.StatusForbidden)
+	profileDigest, err := connectionbinding.DevelopmentProfileDigest("local", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	profileBody := fmt.Sprintf(`{"applicationId":"profile_journey","mode":"new","sourceDigest":%q,"graphDigest":%q,"profileDigest":%q,"connections":[]}`, digest, digest, profileDigest)
+	request(http.MethodPost, profilePath, profileBody, token, "denied-profile-scope", http.StatusForbidden)
+	profileScope := scope
+	localActions := append(access.DefaultAuthoringActions(), access.ActionProjectAccessRead, access.ActionProjectAccessManage)
+	profileScope.Permissions, err = access.ProjectPermissionPairsForActions(postgresJourneyProject, localActions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyToken := issueBootstrapJourneyDeviceCredential(t, f, owner, profileScope, "legacy-local")
+	request(http.MethodGet, profilePath, "", legacyToken, "", http.StatusForbidden)
+	request(http.MethodPost, profilePath, profileBody, legacyToken, "denied-legacy-profile", http.StatusForbidden)
+	profileScope.Permissions, err = access.ProjectPermissionPairsForActions(postgresJourneyProject, append(localActions, access.ActionProjectSettingsRead, access.ActionProjectSettingsUpdate))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileToken := issueBootstrapJourneyDeviceCredential(t, f, owner, profileScope, "profile-owner")
+	otherTargetProfile := profileScope
+	otherTargetProfile.TargetID = "lvinst_another"
+	request(http.MethodGet, profilePath, "", issueBootstrapJourneyDeviceCredential(t, f, owner, otherTargetProfile, "profile-other-target"), "", http.StatusForbidden)
+	readProfile := profileScope
+	readProfile.Permissions, err = access.ProjectPermissionPairsForActions(postgresJourneyProject, []access.Action{access.ActionProjectSettingsRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readProfileToken := issueBootstrapJourneyDeviceCredential(t, f, owner, readProfile, "profile-read-only")
+	request(http.MethodGet, profilePath, "", readProfileToken, "", http.StatusNotFound)
+	request(http.MethodPost, profilePath, profileBody, readProfileToken, "denied-profile-read-only", http.StatusForbidden)
+	request(http.MethodGet, profilePath, "", profileToken, "", http.StatusNotFound)
+	request(http.MethodPost, profilePath, profileBody, profileToken, "profile-apply", http.StatusOK)
+	profile := request(http.MethodGet, profilePath, "", profileToken, "", http.StatusOK)
+	if profile["lastCompletedApplicationId"] != "profile_journey" {
+		t.Fatalf("profile application was not durably completed: %v", profile)
+	}
+
+	// A synchronization attempt is persisted before a valid candidate exists;
+	// native authentication must reach this exact owner-scoped session route.
+	sessionPath := "/targets/" + instanceID + "/development-session/"
+	request(http.MethodGet, sessionPath, "", profileToken, "", http.StatusNotFound)
+	attempt := fmt.Sprintf(`{"revision":0,"attempted":{"artifactDigest":%q,"graphDigest":%q},"diagnostics":[{"code":"COMPILING","message":"First synchronization"}]}`, digest, digest)
+	updated := request(http.MethodPut, sessionPath, attempt, profileToken, "", http.StatusOK)
+	session := request(http.MethodGet, sessionPath, "", profileToken, "", http.StatusOK)
+	if updated["revision"] != float64(1) || session["id"] != updated["id"] {
+		t.Fatalf("development session did not retain its first attempt: updated=%v session=%v", updated, session)
+	}
+	request(http.MethodGet, sessionPath, "", otherToken, "", http.StatusNotFound)
+	request(http.MethodGet, "/targets/lvinst_another/development-session/", "", profileToken, "", http.StatusForbidden)
+	request(http.MethodGet, sessionPath+"candidate", "", profileToken, "", http.StatusNotFound)
 }
 
 func issueBootstrapJourneyDeviceCredential(t *testing.T, f *PostgresJourneyFixture, principal string, scope access.AuthoringScope, suffix string) string {

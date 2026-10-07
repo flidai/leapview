@@ -12,6 +12,15 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+// localBootstrapActions covers the initial policy and development profile that
+// local dev manages. Use the same ceiling for login and retained-session checks.
+func localBootstrapActions() []access.Action {
+	return []access.Action{
+		access.ActionProjectAccessRead, access.ActionProjectAccessManage,
+		access.ActionProjectSettingsRead, access.ActionProjectSettingsUpdate,
+	}
+}
+
 // CheckBootstrapScope reads the authenticated session's ceiling before reusing
 // a local credential. Older CLI sessions can be renewed through the ordinary
 // local device flow; inspection failures must not silently replace credentials.
@@ -30,7 +39,7 @@ func checkLocalBootstrapScope(ctx context.Context, client *accessgen.GenClient, 
 	if err != nil {
 		return err
 	}
-	required, err := access.ProjectPermissionPairsForActions(project, []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage})
+	required, err := access.ProjectPermissionPairsForActions(project, localBootstrapActions())
 	if err != nil {
 		return err
 	}

@@ -26,6 +26,11 @@ func TestLocalRetainedAuthoringScopeUsesCurrentExactSession(t *testing.T) {
 			require.NoError(t, err)
 			session["permissions"] = permissions
 		}, wantDenied: true, wantError: true},
+		{name: "policy bootstrap without profile scope", mutate: func(session map[string]any) {
+			permissions, err := access.ProjectPermissionPairsForActions("lvproject_test", []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage})
+			require.NoError(t, err)
+			session["permissions"] = permissions
+		}, wantDenied: true, wantError: true},
 		{name: "read only scope", mutate: func(session map[string]any) {
 			permissions, err := access.ProjectPermissionPairsForActions("lvproject_test", []access.Action{access.ActionProjectAccessRead})
 			require.NoError(t, err)
@@ -39,7 +44,7 @@ func TestLocalRetainedAuthoringScopeUsesCurrentExactSession(t *testing.T) {
 		{name: "malformed permissions", mutate: func(session map[string]any) { session["permissions"] = []map[string]any{{"action": "unknown"}} }, wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			permissions, err := access.ProjectPermissionPairsForActions(projectgraph.ResourceID("lvproject_test"), []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage})
+			permissions, err := access.ProjectPermissionPairsForActions(projectgraph.ResourceID("lvproject_test"), []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage, access.ActionProjectSettingsRead, access.ActionProjectSettingsUpdate})
 			require.NoError(t, err)
 			session := map[string]any{
 				"id": "session-retained", "current": true, "targetId": "instance-local", "projectId": "lvproject_test",

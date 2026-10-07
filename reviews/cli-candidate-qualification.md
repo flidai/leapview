@@ -132,5 +132,46 @@ candidate preview of the evaluation dashboard with 24 governed order rows
 before publishing. Reuse that observed Compose/runtime preview evidence.
 It does not establish local `init`'s Sales fixture rendering, live-edit behavior,
 cold/warm/edit-to-visible measurements, macOS provider lifecycle, or public
-released-archive qualification. The local preview/edit observation driver is
-still missing; the product already implements candidate preview and live updates.
+released-archive qualification. The product already implements candidate preview
+and live updates. A temporary local observation driver is prepared but has not
+yet reached these scenarios.
+
+## Native static matrix and profile-scope follow-up
+
+[Candidate build 37603015624](https://github.com/flidai/leapview/actions/runs/37603015624)
+ran the installed static qualification harness successfully in all four native
+archive jobs. Both Linux doctors returned 0; both macOS doctors reported missing
+Docker prerequisites, an allowed static result that does not prove lifecycle
+acceptance. All four reports correctly remain `partial`.
+
+| Field | Linux AMD64 lifecycle artifact |
+| --- | --- |
+| Archive | `leapview-cli-candidate-37603015624-1-linux-amd64.tar.gz` |
+| Archive SHA-256 | `776d8c91af45a1d0cbefc2f0f8dd09ee777825f040164dad31d377fe336d4fb0` |
+| Revision | `475c75abf44373f482bf9491a88a289240e56219` |
+| Embedded version / build time | `0.3.0-alpha.1` / `2026-10-07T09:46:51Z` |
+| Development / dirty | `false` / `false` |
+| Runtime image | `ghcr.io/flidai/leapview@sha256:4c3edcaa11bf245941faee7e6b39188694349817e6d0316836bb75cbb968fcc3` |
+| Host / Docker / Compose | NixOS Linux AMD64 / `29.8.0` / `5.5.1` |
+
+The isolated-keyring lifecycle now passes native login and initial policy
+bootstrap, then stages the declared sample successfully. Reading the retained
+development-profile application returns HTTP 403 before synchronization. Local
+login also needs `project.settings.read` and `project.settings.update`; the
+server already admits these operations through its scoped bootstrap path.
+The remaining delivery, upload and session operations were audited against
+the existing default authoring ceiling.
+
+The exact reset exited 0 and removed the checkout-owned containers, volumes and
+network. The failed report now consistently records `endpointPinned: false`
+and `pinState: not-proven`. Reports remain under
+`.tmp/qualification/candidate-37603015624-1/{native-static,lifecycle}/`.
+Restart, local browser observations and timing were not reached. This candidate
+is preserved as failed; a newly matched archive/runtime must prove the added
+profile permissions before lifecycle acceptance can advance.
+
+The same candidate's `prepublication-candidate-37603015624-1-amd64` report
+records success against the exact `4c3edcaa` image digest above, including
+`browserJourney`, `governedQuery` and `restartPersistence`. This refreshes the
+existing Compose evaluation-dashboard evidence; it does not substitute for
+local Sales preview, live-edit scenarios or timing observations.

@@ -97,7 +97,7 @@ func TestEstablishLocalAuthoringSessionsUsesNormalScopedDeviceAuthority(t *testi
 	require.NoError(t, err)
 	scope, err := access.NewAuthoringScope(request.InstanceID, project, permissions)
 	require.NoError(t, err)
-	for _, action := range []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage} {
+	for _, action := range []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage, access.ActionProjectSettingsRead, access.ActionProjectSettingsUpdate} {
 		pair, pairErr := access.NewProjectPermissionPair(action, project)
 		require.NoError(t, pairErr)
 		require.NoError(t, scope.AuthorizePairs(request.InstanceID, request.ProjectID, []access.PermissionPair{pair}))
@@ -105,7 +105,7 @@ func TestEstablishLocalAuthoringSessionsUsesNormalScopedDeviceAuthority(t *testi
 		require.Error(t, scope.AuthorizePairs(request.InstanceID, "foreign-project", []access.PermissionPair{pair}))
 		require.NotContains(t, access.DefaultAuthoringActions(), action, "remote login defaults must remain unchanged")
 	}
-	require.ElementsMatch(t, append(access.DefaultAuthoringActions(), access.ActionProjectAccessRead, access.ActionProjectAccessManage), authority.loginRequest.Actions)
+	require.ElementsMatch(t, append(access.DefaultAuthoringActions(), access.ActionProjectAccessRead, access.ActionProjectAccessManage, access.ActionProjectSettingsRead, access.ActionProjectSettingsUpdate), authority.loginRequest.Actions)
 	require.Contains(t, output.String(), "ABCD-EFGH")
 }
 
@@ -121,6 +121,8 @@ func TestEstablishLocalAuthoringSessionsRenewsInsufficientRetainedScope(t *testi
 	require.Equal(t, 1, authority.loginCalls)
 	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectAccessRead)
 	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectAccessManage)
+	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectSettingsRead)
+	require.Contains(t, authority.loginRequest.Actions, access.ActionProjectSettingsUpdate)
 }
 
 func TestEstablishLocalAuthoringSessionsPreservesCredentialOnScopeInspectionFailure(t *testing.T) {

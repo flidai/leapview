@@ -304,3 +304,20 @@ check waiver is included. Logs are retained in
 `.tmp/fai-1133/task-ci-consolidated-clean.log` and
 `.tmp/fai-1133/record-table-timeout-recheck.log`. Exact-head hosted checks and the
 normal merge queue remain required for #899.
+
+The rebased #899 head passed hosted CI/security. Its matching candidate
+37603015624 passed required static qualification on all four native archive
+hosts. The installed Linux AMD64 lifecycle passed native authentication,
+initial policy and sample staging, then returned 403 for development-profile
+application. The local login and retained-session ceiling now also require
+project settings read/update, shared through one helper. Fresh-login and
+retained-session regressions reproduced the omission before the fix; the full
+CLI suite passes afterward. Remaining delivery/upload/session requirements
+were audited against the existing default ceiling. The exact failed artifact,
+schema-consistent failure report and successful cleanup are recorded in the
+candidate evidence. Keep this follow-up in #899 and validate a newly matched
+artifact before claiming lifecycle, browser or measurement acceptance.
+The real PostgreSQL regression also reproduces the old ceiling's 403 and proves
+profile application plus native session persistence with the added scope. Native
+and existing REST bootstrap journeys pass together (14.213s); full CLI passes
+(43.857s). Independent review of the shared local ceiling found no issue.
