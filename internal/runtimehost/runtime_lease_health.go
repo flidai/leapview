@@ -2,14 +2,6 @@ package runtimehost
 
 import "errors"
 
-// Legacy snapshot heartbeats are keyed by their durable lease ID. Factory
-// callbacks instead belong to one actual runtime preparation; two runtimes can
-// attach the same serving generation without sharing their lease health.
-type leaseHealthKey struct {
-	snapshotLeaseID string
-	runtime         *runtimeLeaseHealth
-}
-
 // runtimeLeaseHealth follows ownership from preparation through publication or
 // candidate registration, then remains live while readers and cleanup drain.
 // Its closed flag and callback updates use the manager lock so late callbacks
@@ -20,25 +12,30 @@ type runtimeLeaseHealth struct {
 }
 
 func (h *runtimeLeaseHealth) report(err error) {
+	if h.update(err) && err != nil && h.manager.onLeaseRenewalFailure != nil {
+		h.manager.onLeaseRenewalFailure(err)
+	}
+}
+
+// update admits a health change only while its resource owner is live. Snapshot
+// heartbeats also notify successful renewals, unlike factory failure callbacks.
+func (h *runtimeLeaseHealth) update(err error) bool {
 	if h == nil || h.manager == nil {
-		return
+		return false
 	}
 	m := h.manager
 	m.mu.Lock()
 	if h.closed {
 		m.mu.Unlock()
-		return
+		return false
 	}
-	key := leaseHealthKey{runtime: h}
 	if err == nil {
-		delete(m.leaseRenewalErrors, key)
+		delete(m.leaseRenewalErrors, h)
 	} else {
-		m.leaseRenewalErrors[key] = err
+		m.leaseRenewalErrors[h] = err
 	}
 	m.mu.Unlock()
-	if err != nil && m.onLeaseRenewalFailure != nil {
-		m.onLeaseRenewalFailure(err)
-	}
+	return true
 }
 
 func (h *runtimeLeaseHealth) close() {
@@ -48,7 +45,7 @@ func (h *runtimeLeaseHealth) close() {
 	m := h.manager
 	m.mu.Lock()
 	h.closed = true
-	delete(m.leaseRenewalErrors, leaseHealthKey{runtime: h})
+	delete(m.leaseRenewalErrors, h)
 	m.mu.Unlock()
 }
 
