@@ -36,6 +36,7 @@ const promptStarters: Array<{ label: string; prompt: string; icon: IconNode }> =
 
 class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
+  private searchDraftApplied = false
   @state() private selectedVisualID = ''
   @state() private selectedExplorerHref = ''
   @state() private selectedVisualTitle = ''
@@ -88,6 +89,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		this.syncEditState()
 		this.syncOptimisticTurn()
     if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
+    this.applySearchDraft()
     this.navigateFromDraft()
   }
 
@@ -124,6 +126,22 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		this.trackedConversationID = conversationID
 		this.trackedAcceptedRunID = acceptedRunID
 	}
+
+  private applySearchDraft(): void {
+    if (this.searchDraftApplied || this.page?.view !== 'new') return
+    const parameters = new URLSearchParams(window.location.hash.slice(1))
+    const draft = parameters.get('prompt')
+    if (draft === null) return
+    const composer = this.shadowRoot?.querySelector<LitElement & { setDraft(value: string): void; getDraft(): string }>('lv-chat-composer')
+    if (!composer) return
+    this.searchDraftApplied = true
+    void composer.updateComplete.then(() => {
+      if (!composer.getDraft()) composer.setDraft(draft)
+      parameters.delete('prompt')
+      const hash = parameters.toString()
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}${hash ? `#${hash}` : ''}`)
+    })
+  }
 
   private navigateFromDraft(): void {
     const conversationID = this.agent.activeConversationId?.trim()
