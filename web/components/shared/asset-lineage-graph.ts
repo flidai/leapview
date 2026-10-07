@@ -398,6 +398,7 @@ const assetLineageGraphStyles = `
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(120px, 1fr) auto auto;
+    overflow: auto;
     outline: 0;
   }
 

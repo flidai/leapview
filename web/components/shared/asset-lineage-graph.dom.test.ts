@@ -103,6 +103,36 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
   }
 })
 
+test('short narrow lineage previews scroll to usable viewport controls', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate(element => {
+      element.style.width = '360px'
+      element.style.height = '260px'
+      element.style.overflow = 'hidden'
+    })
+    const expand = graph.getByRole('button', { name: 'Expand to full page' })
+    await expand.scrollIntoViewIfNeeded()
+    await browserExpect.poll(() => expand.evaluate(button => {
+      const bounds = button.getBoundingClientRect()
+      const layout = button.closest('.asset-lineage-layout')!.getBoundingClientRect()
+      return bounds.top >= layout.top && bounds.bottom <= layout.bottom
+    })).toBe(true)
+    await expand.click()
+    await browserExpect(graph.getByRole('dialog')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await browserExpect(graph.getByRole('dialog')).toBeHidden()
+    await browserExpect(expand).toBeFocused()
+    await graph.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await browserExpect(graph.getByRole('button', { name: 'Zoom out', exact: true })).toBeEnabled()
+  } finally {
+    await page.close()
+  }
+})
+
 test('asset lineage selection clears from the background and Escape', async () => {
   const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
   try {
