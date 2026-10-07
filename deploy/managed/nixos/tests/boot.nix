@@ -66,7 +66,12 @@ pkgs.testers.runNixOSTest {
         };
       };
       virtualisation.writableStore = true;
-      boot.loader.grub.enable = lib.mkForce false;
+      # Boot the installed disk through BIOS GRUB so a reboot selects the
+      # generation written by deploy-rs, rather than QEMU's initial kernel/initrd.
+      virtualisation.useBootLoader = true;
+      virtualisation.directBoot.enable = false;
+      virtualisation.diskSize = 8192;
+      boot.loader.timeout = 1;
       # The test network supplies a static private interface, not Hetzner DHCP.
       virtualisation.vlans = [
         1
@@ -125,7 +130,12 @@ pkgs.testers.runNixOSTest {
         };
       };
       virtualisation.writableStore = true;
-      boot.loader.grub.enable = lib.mkForce false;
+      # Boot the installed disk through BIOS GRUB so a reboot selects the
+      # generation written by deploy-rs, rather than QEMU's initial kernel/initrd.
+      virtualisation.useBootLoader = true;
+      virtualisation.directBoot.enable = false;
+      virtualisation.diskSize = 8192;
+      boot.loader.timeout = 1;
       # The test network supplies a static private interface, not Hetzner DHCP.
       systemd.network.networks."10-public".linkConfig.RequiredForOnline = lib.mkForce false;
       systemd.network.networks."20-private" = {
@@ -289,8 +299,8 @@ pkgs.testers.runNixOSTest {
           database.succeed("sudo -u postgres psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE probe LOGIN PASSWORD 'disposable-test-only'\"")
           database.succeed("sudo -u postgres psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE leapview_control OWNER probe'")
           ca = database.succeed("cat /var/lib/leapview-postgres-tls/server.crt")
-          app.succeed("cat > /tmp/database-ca.crt <<'CERT'\n" + ca + "CERT\n")
-          connection = "host=192.168.1.2 dbname=leapview_control user=probe sslmode=verify-full sslrootcert=/tmp/database-ca.crt connect_timeout=5"
+          app.succeed("cat > /var/lib/leapview/database-ca.crt <<'CERT'\n" + ca + "CERT\n")
+          connection = "host=192.168.1.2 dbname=leapview_control user=probe sslmode=verify-full sslrootcert=/var/lib/leapview/database-ca.crt connect_timeout=5"
           assert app.succeed("PGPASSWORD=disposable-test-only psql -XAt \"" + connection + "\" -c 'select ssl from pg_stat_ssl where pid=pg_backend_pid()'").strip() == "t"
           app.fail("PGPASSWORD=disposable-test-only psql -XAt \"" + connection.replace("verify-full", "disable") + "\" -c 'select 1'")
           outsider.fail("nc -z -w 3 192.168.1.2 5432")
@@ -306,8 +316,6 @@ pkgs.testers.runNixOSTest {
           outsider.succeed("nc -z -w 3 192.168.2.1 80")
           outsider.fail("nc -z -w 3 192.168.1.1 8080")
 
-      # This QEMU harness reboots from its test image. Post-update assertions below
-      # cover the active system generation and rollback, not bootloader selection.
       with subtest("deploy-rs updates installed app and database hosts"):
           app.succeed("echo app-state > /var/lib/leapview/managed-update-state")
           database.succeed("sudo -u postgres psql -d leapview_control -v ON_ERROR_STOP=1 -c 'CREATE TABLE managed_update_state (value text NOT NULL); GRANT SELECT ON managed_update_state TO probe'")
@@ -334,6 +342,36 @@ pkgs.testers.runNixOSTest {
           outsider.fail("nc -z -w 3 192.168.1.1 8080")
           outsider.fail("nc -z -w 3 192.168.1.2 5432")
           assert app.succeed("PGPASSWORD=disposable-test-only psql -XAt \"" + connection + "\" -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
+
+      def reboot_updated_hosts():
+          app.reboot()
+          database.reboot()
+          app.wait_for_unit("docker.service", timeout=600)
+          app.wait_for_unit("sshd.service")
+          database.wait_for_unit("postgresql.service", timeout=600)
+          database.wait_for_unit("sshd.service")
+          # booted-system records the system selected by GRUB, independently of
+          # the active-system/profile symlinks checked during online activation.
+          assert app.succeed("readlink -f /run/booted-system").strip() == "${targets.appUpdate.system.build.toplevel}"
+          assert database.succeed("readlink -f /run/booted-system").strip() == "${targets.databaseUpdate.system.build.toplevel}"
+          assert app.succeed("readlink -f /run/current-system").strip() == "${targets.appUpdate.system.build.toplevel}"
+          assert database.succeed("readlink -f /run/current-system").strip() == "${targets.databaseUpdate.system.build.toplevel}"
+          app.succeed("grep -qx updated /etc/leapview-managed-generation")
+          database.succeed("grep -qx updated /etc/leapview-managed-generation")
+          assert app.succeed("cat /var/lib/leapview/managed-update-state").strip() == "app-state"
+          assert database.succeed("sudo -u postgres psql -d leapview_control -XAt -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
+          operator.succeed("ssh root@192.168.1.1 true")
+          operator.succeed("ssh root@192.168.1.2 true")
+          app.wait_until_succeeds("curl -s -o /dev/null http://127.0.0.1:8080")
+          outsider.succeed("nc -z -w 3 192.168.2.1 80")
+          outsider.succeed("nc -z -w 3 192.168.2.1 443")
+          outsider.fail("nc -z -w 3 192.168.1.1 8080")
+          outsider.fail("nc -z -w 3 192.168.2.1 9090")
+          outsider.fail("nc -z -w 3 192.168.1.2 5432")
+          assert app.succeed("PGPASSWORD=disposable-test-only psql -XAt \"" + connection + "\" -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
+
+      with subtest("GRUB boots the deployed generations from the installed disks"):
+          reboot_updated_hosts()
 
       with subtest("deploy-rs autoRollback restores a failed activation"):
           app.succeed("rm -f /var/lib/leapview/managed-update-attempt")
@@ -373,5 +411,7 @@ pkgs.testers.runNixOSTest {
           operator.succeed("ssh root@192.168.1.2 true")
           outsider.fail("nc -z -w 3 192.168.1.2 5432")
           assert app.succeed("PGPASSWORD=disposable-test-only psql -XAt \"" + connection + "\" -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
+      with subtest("GRUB boots the recovered generations after both rollback paths"):
+          reboot_updated_hosts()
     '';
 }

@@ -85,16 +85,20 @@ to update both installed host roles over SSH with pinned host keys. The test
 injects a failed application activation and withholds database activation
 confirmation to exercise autoRollback and magicRollback. It checks the active
 system and persistent profile, application files, database rows, SSH access,
-Docker ingress and verified database TLS after updates and recovery.
+Docker ingress and verified database TLS after updates and recovery. Both host
+roles boot their installed disks through BIOS GRUB. After the successful updates
+and again after both rollback paths, the test reboots the hosts and verifies
+`/run/booted-system` selects the expected updated generation, then repeats the
+state, SSH, ingress and verified database TLS checks.
 
 The test uses generated fixture TLS and upstream public test SSH keys only.
-It never contacts a provider or imports private inventory. QEMU reboots from its
-test image, so the reboot checks establish baseline persistence; the update and
-rollback assertions establish running-system and profile recovery, not firmware
-selection of an updated boot generation or recovery from actual network loss.
+It never contacts a provider or imports private inventory. The boot checks cover
+BIOS GRUB selection on the disposable guest disks, including selection after
+rollback; they do not qualify UEFI, provider rescue, or recovery from actual
+network loss.
 KVM is optional; software emulation is much slower. The emulated fixture
 starts containerd separately to avoid dockerd's short internal startup deadline.
-It does not exercise Disko, firmware boot or Hetzner networking.
+It does not exercise Disko installation, provider firmware or Hetzner networking.
 
 ## Infrastructure and private inventory
 
