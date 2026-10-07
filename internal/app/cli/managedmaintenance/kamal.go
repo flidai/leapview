@@ -114,8 +114,11 @@ func (k *KamalEffects) kamal(ctx context.Context, release Release, args ...strin
 	if err != nil {
 		return err
 	}
-	argv := []string{"exec", "ruby", "-r", "./maintenance_adapter.rb", "-S", "kamal", "--config-file", "deploy.yml", "--version", release.Revision, "--skip-hooks"}
-	_, err = k.command(ctx, "bundle", append(argv, args...), env)
+	// Thor resolves the command before its options. Placing --version before
+	// the subcommand selects Kamal's root help/version parser instead.
+	argv := append([]string{"exec", "ruby", "-r", "./maintenance_adapter.rb", "-S", "kamal"}, args...)
+	argv = append(argv, "--config-file", "deploy.yml", "--version", release.Revision, "--skip-hooks")
+	_, err = k.command(ctx, "bundle", argv, env)
 	return err
 }
 func (k *KamalEffects) projection(ctx context.Context, release Release) (renderedProfile, error) {
@@ -477,19 +480,44 @@ func (k *KamalEffects) publicReadiness(ctx context.Context) error {
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+k.Profile.Hostname+"/readyz", nil)
+	return waitPublishedReadiness(ctx, client, "https://"+k.Profile.Hostname+"/readyz")
+}
+func waitPublishedReadiness(ctx context.Context, client *http.Client, endpoint string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
+	// Kamal's proxy reboot returns after detached Docker start. Listening and
+	// persisted route restoration can finish later, within this phase's deadline.
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	var lastFailure error
+	deadlineError := func() error {
+		if lastFailure != nil {
+			return fmt.Errorf("published proxy readiness failed (%v): %w", lastFailure, ctx.Err())
+		}
+		return fmt.Errorf("published proxy readiness failed: %w", ctx.Err())
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return errors.New("published proxy readiness failed")
+	for {
+		if err := ctx.Err(); err != nil {
+			return deadlineError()
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return ctx.Err()
+			}
+			lastFailure = fmt.Errorf("HTTP status %d", response.StatusCode)
+		} else {
+			lastFailure = err
+		}
+		select {
+		case <-ctx.Done():
+			return deadlineError()
+		case <-ticker.C:
+		}
 	}
-	return nil
 }
 func (k *KamalEffects) FinalizeWork(ctx context.Context, r Release) error {
 	status, err := k.control(ctx, "finalize", r)

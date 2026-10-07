@@ -12,6 +12,10 @@ surfaces:
     kind: go-module
     updater: {ecosystem: gomod, directory: /deploy/kamal-trial}
     scanners: [govulncheck]
+  - path: deploy/managed/nixos/tests/testdata/go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /deploy/managed/nixos/tests/testdata}
+    scanners: [govulncheck]
   - path: pkg/apigen/go.mod
     kind: go-module
     updater: {ecosystem: gomod, directory: /pkg/apigen}
