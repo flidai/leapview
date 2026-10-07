@@ -1,5 +1,3 @@
-//go:build ignore
-
 // Disposable transport protocol fixture. This is not LeapView and does not
 // qualify application/database admission, jobs, credentials, or production use.
 package main
