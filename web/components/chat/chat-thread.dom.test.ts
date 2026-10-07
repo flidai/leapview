@@ -1034,6 +1034,7 @@ test('dashboard replies keep a short summary and reveal the full explanation on 
       e.status = { enabled: true, running: false }
       e.transcript = [
         { id: 'user', kind: 'user', text: 'Create a dashboard' },
+        { id: 'retry', kind: 'tool', name: 'edit_dashboard_source', status: 'error', error: 'Earlier draft needed correction.' },
         { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', runId: 'run', status: 'complete' },
         { id: 'answer', kind: 'assistant', markdown: answer },
       ]
@@ -1046,10 +1047,12 @@ test('dashboard replies keep a short summary and reveal the full explanation on 
       expect(await summary.first().isVisible()).toBe(true)
       expect(await summary.last().isVisible()).toBe(false)
       expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(false)
+      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).isVisible()).toBe(false)
       expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
       const disclosure = thread.locator('.run-steps')
       await disclosure.locator('summary').click()
       expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
+      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).isVisible()).toBe(true)
       expect(await page.getByText('Country and reporting period are available.', { exact: true }).isVisible()).toBe(true)
       expect(await summary.first().isVisible()).toBe(false)
       expect(await summary.last().isVisible()).toBe(true)

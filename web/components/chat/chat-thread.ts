@@ -218,7 +218,8 @@ class ChatThread extends LitElement {
     // Its opening paragraph is a preview, hidden while the full answer is open.
     const summary = answerText.split(/\r?\n[ \t]*\r?\n/, 1)[0]
     const compactAnswer = summary && summary.length < answerText.trimEnd().length ? answer : undefined
-    const context = displayedItems.filter(item => (hasVisualResult && item !== answer && (item.kind === 'assistant' || item.kind === 'summary')) || item === compactAnswer)
+    const context = displayedItems.filter(item => (hasVisualResult && item !== answer && (item.kind === 'assistant' || item.kind === 'summary')) || item === compactAnswer
+      || (answer && item.kind === 'tool' && this.toolStatus(item) === 'error' && allItems.indexOf(item) < allItems.indexOf(lastPreview!)))
     const lastAnswerOrTool = [...allItems].reverse().find(item => item.kind === 'tool' || (item.kind === 'assistant' && Boolean(item.markdown || item.text)))
     const noFinalAnswer = !running && !this.status.error && !allItems.some(item => item.kind === 'error' || (item.kind === 'tool' && Boolean(item.artifact) && this.toolStatus(item) === 'complete'))
       && allItems.some(item => item.kind === 'tool' && this.toolStatus(item) === 'error')
