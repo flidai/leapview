@@ -20,6 +20,22 @@ import time
 sys.dont_write_bytecode = True
 from docker_daemon_test import namespace_ids, verify_namespaces
 
+HIDDEN_ROOTS = (Path("/root"), Path("/run"), Path("/var"))
+
+
+def validate_visible_paths(paths):
+    for path in paths:
+        if any(Path(path).resolve().is_relative_to(hidden) for hidden in HIDDEN_ROOTS):
+            raise SystemExit("source, archives, tools and evidence must remain outside fixture-hidden roots")
+
+
+def prepare_private_var(root):
+    # Pinned Nix OpenSSH requires /var/empty even when the runner's distro uses
+    # another privilege-separation directory. /var is already a private tmpfs.
+    (root / "empty").mkdir(mode=0o755)
+    (root / "lib").mkdir(mode=0o755)
+    (root / "run").symlink_to("/run")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -30,10 +46,9 @@ def main():
     if os.geteuid() != 0:
         raise SystemExit("root required; fixture creates isolated namespaces")
     evidence_dir = args.evidence_dir.resolve()
-    hidden_roots = (Path("/root"), Path("/run"), Path("/var/lib"))
-    for visible_path in (Path(__file__).resolve(), evidence_dir, *(getattr(args, key + "_image").resolve() for key in ("predecessor", "candidate", "proxy"))):
-        if any(visible_path.is_relative_to(path) for path in hidden_roots):
-            raise SystemExit("source, archives and evidence must remain outside fixture-hidden roots")
+    validate_visible_paths((Path(__file__).resolve(), evidence_dir, args.tools, args.docker_package, *(getattr(args, key + "_image") for key in ("predecessor", "candidate", "proxy"))))
+    if args.bundle_root.resolve().is_relative_to("/var"):
+        raise SystemExit("bundle cache must remain outside fixture-hidden /var")
     evidence_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     evidence = {"scope": "synthetic-kamal-transport-only", "fullManagedProfileQualified": False, "passed": False, "cleanupCompleted": False}
     (evidence_dir / "transport.json").write_text(json.dumps(evidence) + "\n")
@@ -50,7 +65,7 @@ def main():
     kamal_source = Path(__file__).resolve().parents[2] / "kamal"
     bundle_source = args.bundle_root.resolve()
     staged_bundle = None
-    if any(bundle_source.is_relative_to(path) for path in ("/root", "/run", "/var/lib")):
+    if any(bundle_source.is_relative_to(path) for path in ("/root", "/run")):
         staged_bundle = tempfile.TemporaryDirectory(prefix="managed-transport-bundle-", dir="/tmp")
         shutil.copytree(bundle_source, Path(staged_bundle.name) / "bundle")
         bundle_source = Path(staged_bundle.name) / "bundle"
@@ -81,8 +96,9 @@ def main():
     if {x["ifname"] for x in json.loads(run("ip", "-j", "link", "show").stdout)} != {"lo"}:
         raise SystemExit("isolated network was not empty")
     run("mount", "--make-rprivate", "/")
-    for path in ("/run", "/root", "/var/lib"):
+    for path in ("/run", "/root", "/var"):
         run("mount", "-t", "tmpfs", "tmpfs", path)
+    prepare_private_var(Path("/var"))
     os.chmod("/root", 0o700)
     if str(nix_system).startswith("/nix/store/"):
         Path("/run/current-system").symlink_to(nix_system)
@@ -146,6 +162,9 @@ def main():
     def public(path="/readyz", *extra, check=True):
         return run("ip", "netns", "exec", "public", "curl", "--noproxy", "*", "--silent", "--show-error", "--fail", "--connect-timeout", "2", "--max-time", "10", "--cacert", "/root/tls.crt", "--resolve", "managed.fixture.invalid:443:198.18.0.1", *extra, "https://managed.fixture.invalid" + path, check=check)
     try:
+        # Fail immediately with the daemon's diagnostic, rather than polling a
+        # listener for a minute when the runner lacks an OpenSSH prerequisite.
+        run(shutil.which("sshd"), "-t", "-f", "/root/sshd_config")
         launch([dockerd_bin, "--config-file=/root/daemon.json", "--host=unix:///var/run/docker.sock", "--data-root=/var/lib/docker", "--exec-root=/run/docker", "--pidfile=/run/docker.pid", "--firewall-backend=iptables", "--userland-proxy=false", "--exec-opt=native.cgroupdriver=cgroupfs"], "docker", env=env)
         wait(lambda: docker("info", check=False).returncode == 0)
         launch([shutil.which("sshd"), "-D", "-e", "-f", "/root/sshd_config"], "ssh", env=env)

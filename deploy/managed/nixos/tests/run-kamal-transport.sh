@@ -13,7 +13,7 @@ fi
 evidence_dir="$(realpath -m "$evidence_dir")"
 for visible_path in "$repo_root" "$evidence_dir"; do
   case "$visible_path/" in
-    /root/*|/run/*|/var/lib/*)
+    /root/*|/run/*|/var/*)
       echo "checkout and evidence must remain outside fixture-hidden roots" >&2
       exit 2
       ;;
@@ -40,6 +40,12 @@ export PATH="$transport_tools/bin:$PATH"
 # Frozen resolution uses the repository's exact Kamal lock, with no ambient
 # Bundler configuration or changes to the working tree.
 bundle_root="${XDG_CACHE_HOME:-$HOME/.cache}/leapview/kamal-transport-gems"
+case "$(realpath -m "$bundle_root")/" in
+  /var/*)
+    echo "bundle cache must remain outside fixture-hidden /var" >&2
+    exit 2
+    ;;
+esac
 env BUNDLE_IGNORE_CONFIG=1 BUNDLE_FROZEN=1 BUNDLE_PATH="$bundle_root" \
   BUNDLE_GEMFILE="$repo_root/deploy/managed/kamal/Gemfile" bundle install --jobs 2
 

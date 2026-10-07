@@ -171,6 +171,9 @@ Docker's detached startup is not itself evidence that the proxy is ready.
 loopback SSH against a dedicated Docker daemon and kamal-proxy. It requires Nix
 and root (or sudo) on Linux. The runner verifies fresh mount, network and PID
 namespaces before hiding the host runtime, root home and application storage.
+Keep the checkout, artifacts and evidence outside `/root`, `/run` and `/var`;
+the fixture replaces these directories privately and provisions its own SSH
+privilege-separation directory, independent of the host distribution.
 It builds two synthetic protocol images, preloads the digest-pinned proxy and
 locked gems, then stops its local fixture registry before exercising the
 candidate and predecessor. Public probes use a separate network namespace and
