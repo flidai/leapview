@@ -951,6 +951,13 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	}
 	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, refreshChanges, runtimeLifecycle}
 	application := newApplication(handler, components)
+	if cfg.MaintenanceSocket != "" {
+		application.configureMaintenance(buildinfo.Current().Revision, runtimeLifecycle, platform.health, bootstrap.Start,
+			func(context.Context) error { return platform.workers.CheckPrepared() },
+			func(ctx context.Context) error {
+				return credentialmodule.CheckSetup(ctx, graph.Bootstrap, instanceID, cfg.CredentialKeyringFile)
+			})
+	}
 	transitionExecute := func(transitionCtx context.Context, request AccessTransitionExecutionRequest) (AccessTransitionExecutionResult, error) {
 		if routes.deploymentModule == nil {
 			return AccessTransitionExecutionResult{}, errors.New("native deployment module is unavailable for access transition")

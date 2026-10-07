@@ -18,6 +18,17 @@ type Lock struct {
 	file *os.File
 }
 
+// InheritedFile borrows the held lock descriptor for os/exec.Cmd.ExtraFiles.
+// The caller must not close it or release the lock while the child is running.
+// Inheriting the open file description lets the child prove controller ownership
+// and keeps exclusion intact if the controller dies before its child exits.
+func (l *Lock) InheritedFile() *os.File {
+	if l == nil {
+		return nil
+	}
+	return l.file
+}
+
 func Acquire(home string) (*Lock, error) {
 	return AcquireNamed(home, FileName)
 }

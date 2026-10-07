@@ -1,5 +1,7 @@
 import json
 import subprocess
+import os
+import shutil
 from pathlib import Path
 import sys
 import urllib.parse
@@ -912,6 +914,59 @@ class HostGuestReceiptTests(unittest.TestCase):
 
 
 class FirstInstallGuestFixtureTests(unittest.TestCase):
+    def test_prerequisite_timeout_retains_progress_and_rejects_success(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                return subprocess.run(["bash", "-c", command], check=True, capture_output=True).stdout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "download failed \\(124\\)"):
+                host_guest._guest_prerequisite(
+                    Guest(), evidence, "download", "printf 'layer downloaded\\n'; sleep 30", timeout=1,
+                )
+            self.assertEqual((evidence / "prerequisite-download.log").read_bytes(), b"layer downloaded\n")
+            self.assertEqual((evidence / "prerequisite-download-exit-code.txt").read_bytes(), b"124\n")
+
+    def test_openssl_setup_skips_apt_when_available_and_propagates_install_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            shell = shutil.which("bash")
+            openssl = fixture / "openssl"
+            openssl.write_text(f"#!{shell}\nprintf 'OpenSSL fixture\\n'\n")
+            openssl.chmod(0o755)
+            apt = fixture / "apt-get"
+            apt.write_text(f"#!{shell}\nexit 99\n")
+            apt.chmod(0o755)
+            command = host_guest._openssl_setup_command()
+            environment = dict(os.environ, PATH=str(fixture))
+            present = subprocess.run([shell, "-c", command], env=environment, capture_output=True)
+            self.assertEqual(present.returncode, 0)
+            self.assertEqual(present.stdout, b"OpenSSL fixture\n")
+            openssl.unlink()
+            missing = subprocess.run([shell, "-c", command], env=environment, capture_output=True)
+            self.assertEqual(missing.returncode, 99)
+
+    def test_incomplete_image_pull_cannot_produce_identity_evidence(self):
+        class Guest:
+            def run(self, command, **kwargs):
+                if "docker pull" not in command:
+                    raise AssertionError("image inspection must not follow a failed pull")
+                return b"124\nlayer: Download complete\n"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with self.assertRaisesRegex(host_guest.HostGuestError, "candidate-image-pull failed \\(124\\)"):
+                host_guest._pull_payload(
+                    Guest(), evidence, image_reference=IMAGE, docker_env="DOCKER_CONFIG=/tmp/empty",
+                    payload_path="/tmp/payload", nonce="3" * 32,
+                )
+            self.assertEqual(
+                (evidence / "prerequisite-candidate-image-pull.log").read_bytes(), b"layer: Download complete\n",
+            )
+            self.assertFalse((evidence / "oci-repo-digests.json").exists())
+            self.assertFalse((evidence / "oci-image-id.txt").exists())
+
     def test_prerequisite_failure_retains_bounded_diagnostics_and_stops_setup(self):
         commands = []
 

@@ -180,3 +180,22 @@ with open(sys.argv[1], 'a+') as f:
 		t.Fatal("lock remained held after close:", err)
 	}
 }
+
+func TestJournalRejectsUnfinishedManagedImageHandoff(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "managed-image-operation.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"phase":"committed"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenJournal(root, identity()); err == nil {
+		t.Fatal("paired maintenance overlapped unfinished image handoff")
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"phase":"succeeded"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := OpenJournal(root, identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+}

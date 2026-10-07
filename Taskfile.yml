@@ -558,18 +558,38 @@ tasks:
     cmds:
       - node scripts/audit_inventory.mjs {{.CLI_ARGS}}
 
+  audit:controller-catalogs:
+    desc: Inventory explicit controller commands for both shipped builds without executing them
+    deps:
+      - node:deps
+      - db:generate
+      - config:generate
+      - api:generate
+      - ui-signals:generate
+    cmds:
+      # Bind the source before compilation as well as during construction.
+      - node scripts/controller_catalogs.mjs {{.CLI_ARGS}}
+
+  audit:go-receipt:
+    desc: Capture bounded fresh named Go executions and bind their source, inputs, command and raw logs
+    deps: [node:deps]
+    cmds:
+      # Prepare generated sources before capturing; keep logs in ignored/external storage.
+      - node scripts/go_receipts.mjs {{.CLI_ARGS}}
+
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
-      - node --test scripts/audit_inventory.test.mjs
+      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
       - bun test scripts/nix_ci_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
       - python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
       - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
@@ -1716,6 +1736,7 @@ tasks:
     dir: deploy/managed/kamal
     cmds:
       - bundle exec ruby config_test.rb
+      - bundle exec ruby maintenance_test.rb
 
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures
