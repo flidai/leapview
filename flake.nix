@@ -216,6 +216,23 @@
           ];
           inherit (nativeToolchain) GOTOOLCHAIN;
         };
+      hostVerifierShell =
+        platform:
+        let
+          nativePkgs = nixpkgs.legacyPackages.${platform};
+          nativeToolchain = import ./nix/toolchain.nix {
+            pkgs = nativePkgs;
+            inherit playwright-nixpkgs;
+          };
+        in
+        nativePkgs.mkShell {
+          packages = nativeToolchain.packages;
+          buildInputs = [ nativePkgs.stdenv.cc.cc.lib ];
+          # Bun's native Parcel watcher loads the locked C++ runtime at execution.
+          LD_LIBRARY_PATH = nativePkgs.lib.makeLibraryPath [ nativePkgs.stdenv.cc.cc.lib ];
+          inherit (nativeToolchain) GOTOOLCHAIN;
+          BUN_FEATURE_FLAG_NO_ORPHANS = "1";
+        };
       hostQualificationShell =
         platform:
         let
@@ -241,6 +258,7 @@
       packages = pkgs.lib.genAttrs linuxSystems packagesFor;
       devShells.${system} = {
         host-qualification = hostQualificationShell system;
+        host-verifier = hostVerifierShell system;
         orchestration = pkgs.mkShellNoCC {
           packages = toolchain.orchestrationPackages;
           inherit (toolchain) GOTOOLCHAIN;
@@ -259,6 +277,7 @@
       };
       devShells.aarch64-linux.runtime-security = runtimeSecurityShell "aarch64-linux";
       devShells.aarch64-linux.host-qualification = hostQualificationShell "aarch64-linux";
+      devShells.aarch64-linux.host-verifier = hostVerifierShell "aarch64-linux";
       checks.${system}.toolchain = import ./nix/check-toolchain.nix {
         inherit pkgs toolchain;
       };

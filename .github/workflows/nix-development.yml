@@ -445,6 +445,36 @@ jobs:
         run: nix flake check --no-update-lock-file -L
       - name: Check the native ARM runtime-security shell
         run: test "$(nix eval --raw --no-update-lock-file .#devShells.aarch64-linux.runtime-security.system)" = aarch64-linux
+      - name: Check both native host-verifier shells
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          required = {
+              'Go': lambda name: name.startswith('go-'),
+              'Bun': lambda name: name.startswith('bun-'),
+              'sqlc Go wrapper': lambda name: name == 'go1.26.7',
+              'Node.js': lambda name: name.startswith('nodejs-'),
+              'go-task': lambda name: name.startswith('go-task-'),
+          }
+          for system in ('x86_64-linux', 'aarch64-linux'):
+              shell = f'.#devShells.{system}.host-verifier'
+              selected = subprocess.check_output(
+                  ['nix', 'eval', '--raw', '--no-update-lock-file', f'{shell}.system'], text=True
+              ).strip()
+              if selected != system:
+                  raise SystemExit(f'{shell} resolves to {selected}, expected {system}')
+              inputs = json.loads(subprocess.check_output(
+                  ['nix', 'eval', '--json', '--no-update-lock-file', f'{shell}.nativeBuildInputs'], text=True
+              ))
+              names = [pathlib.Path(path).name.split('-', 1)[1] for path in inputs]
+              missing = [label for label, matches in required.items() if not any(matches(name) for name in names)]
+              if missing:
+                  raise SystemExit(f'{shell} is missing required native tools: {", ".join(missing)}')
+          PY
       - name: Check formatting
         run: nix fmt -- --check flake.nix nix/*.nix
       - name: Exercise the pinned browser and sqlc toolchain

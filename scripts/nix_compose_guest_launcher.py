@@ -240,7 +240,7 @@ def _cloud_config(*, client_public_key: bytes, host_private_key: bytes, host_pub
         "disable_root": False,
         "ssh_pwauth": False,
         "ssh_deletekeys": True,
-        "ssh_genkeytypes": [],
+        "ssh_genkeytypes": ["ed25519"],
         "ssh_keys": {
             "ed25519_private": host_private_key.decode("ascii"),
             "ed25519_public": host_public_key.decode("ascii"),
@@ -290,21 +290,29 @@ def _wait_ready(*, process, port: int, identity: Path, known_hosts: Path,
         "sha256sum " + MANIFEST_PATH + " | grep -q '^" + manifest_sha256.removeprefix("sha256:") + "[[:space:]]'"
     )
     deadline = time.monotonic() + timeout
+    last_probe = "SSH readiness command was not attempted"
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise LauncherError("QEMU exited before cloud-init and the guest manifest became ready")
+        completed = None
         try:
             completed = subprocess.run(
                 _ssh_command(port=port, identity=identity, known_hosts=known_hosts, command=command),
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=max(1, deadline - time.monotonic()), check=False,
             )
-        except (OSError, subprocess.SubprocessError):
-            completed = None
+        except subprocess.TimeoutExpired:
+            last_probe = "SSH readiness command timed out"
+        except OSError:
+            last_probe = "SSH readiness command could not run (OS error)"
+        except subprocess.SubprocessError:
+            last_probe = "SSH readiness command could not run (subprocess error)"
+        else:
+            last_probe = f"SSH readiness command exited {completed.returncode}"
         if completed is not None and completed.returncode == 0:
             return
         time.sleep(min(5, max(0, deadline - time.monotonic())))
-    raise LauncherError("guest readiness timed out before cloud-init completed")
+    raise LauncherError("guest readiness timed out before cloud-init completed (" + last_probe + ")")
 
 
 def _terminate(process) -> bool:

@@ -121,7 +121,11 @@ class GuestLauncherTests(unittest.TestCase):
                 output.write_bytes(b"mock cidata iso")
                 return subprocess.CompletedProcess(command, 0, b"", b"")
             if command[0] == "ssh":
-                return subprocess.CompletedProcess(command, 0 if ready else 255, b"", b"")
+                if ready == "schema-error":
+                    return subprocess.CompletedProcess(command, 2, b"", b"")
+                if ready is False:
+                    return subprocess.CompletedProcess(command, 255, b"", b"Connection timed out during banner exchange\n")
+                return subprocess.CompletedProcess(command, 0, b"", b"")
             if "--install-mode" in command:
                 collector_calls.append((command, kwargs))
                 guest = self.processes[-1]
@@ -231,12 +235,28 @@ class GuestLauncherTests(unittest.TestCase):
         receipt, error, _, collector_calls, _ = self._run_launch(ready=False)
         self.assertIsNone(receipt)
         self.assertRegex(str(error), "readiness timed out")
+        self.assertRegex(str(error), r"SSH readiness command exited 255")
         self.assertEqual(collector_calls, [])
         lifecycle = json.loads(self.lifecycle_receipt.read_text())
         self.assertEqual(lifecycle["failurePhase"], "readiness")
         self.assertIsNone(lifecycle["launcherReceiptSHA256"])
         self.assertTrue(lifecycle["qemuTerminated"])
         self.assertTrue(lifecycle["tempDirectoryRemoved"])
+
+    def test_readiness_error_reports_guest_command_exit_code(self):
+        receipt, error, _, collector_calls, _ = self._run_launch(ready="schema-error")
+        self.assertIsNone(receipt)
+        self.assertRegex(str(error), r"SSH readiness command exited 2")
+        self.assertEqual(collector_calls, [])
+
+    def test_cloud_config_uses_only_ed25519_host_key_generation(self):
+        config = launcher._cloud_config(
+            client_public_key=b"ssh-ed25519 AAAAclient client",
+            host_private_key=b"-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----\n",
+            host_public_key=b"ssh-ed25519 AAAAhost host",
+            manifest_bytes=b"{}\n",
+        ).split(b"\n", 1)[1]
+        self.assertEqual(json.loads(config)["ssh_genkeytypes"], ["ed25519"])
 
     def test_wrong_image_digest_fails_before_tools_or_qemu(self):
         self.args = self._args(expected_digest="0" * 64)
