@@ -180,6 +180,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview init](/docs/cli/init): Create a portable analytics project with reproducible sample data
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials
+- [leapview maintenance](/docs/cli/maintenance): Control a local managed maintenance process through its private socket
 - [leapview plan](/docs/cli/plan): Capture an exact source snapshot and create a target-owned delivery plan
 - [leapview publish](/docs/cli/publish): Publish an exact candidate through target policy
 - [leapview rollback](/docs/cli/rollback): Governed rollback to a retained serving generation

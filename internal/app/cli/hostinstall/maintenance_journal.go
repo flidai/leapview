@@ -41,6 +41,10 @@ func OpenJournal(root string, id Identity) (*FileJournal, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err = hostmaintenance.CheckManaged(root); err != nil {
+		_ = lock.Release()
+		return nil, err
+	}
 	journal := &FileJournal{path: filepath.Join(root, JournalName), lock: lock}
 	state, err := journal.Load(context.Background())
 	if errors.Is(err, os.ErrNotExist) {

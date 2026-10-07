@@ -83,10 +83,24 @@ func runServe(ctx context.Context, opts *rootOptions) error {
 		_ = application.Shutdown(context.Background())
 		return err
 	}
+	controlErr := make(chan error, 1)
+	if cfg.MaintenanceSocket != "" {
+		listener, control, err := maintenanceListener(cfg.MaintenanceSocket, application.MaintenanceHandler())
+		if err != nil {
+			_ = application.Shutdown(context.Background())
+			return err
+		}
+		defer listener.Close()
+		defer control.Close()
+		go func() { controlErr <- control.Serve(listener) }()
+	}
 	fatalErr := make(chan error, 1)
 	go func() {
 		select {
 		case <-serveCtx.Done():
+		case err := <-controlErr:
+			fatalErr <- err
+			stopServe()
 		case err := <-application.Fatal():
 			fatalErr <- err
 			stopServe()
