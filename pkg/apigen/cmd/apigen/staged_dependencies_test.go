@@ -14,7 +14,7 @@ func TestCopyTypeSpecProjectSkipsLinkedDependencies(t *testing.T) {
 	if err := os.Symlink(deps, filepath.Join(src, "node_modules")); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyTypeSpecProject(src, dst); err != nil {
+	if err := copyTypeSpecProject(src, dst, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(dst, "node_modules")); !os.IsNotExist(err) {
