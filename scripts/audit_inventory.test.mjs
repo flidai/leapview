@@ -8,6 +8,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { classifyFile, inventoryFiles, collectFeatures, attachHistoricalEvidence, loadControllerCatalogs, sourceFilesSHA256 } from './audit_inventory.mjs'
+import { captureGoReceipt } from './go_receipts.mjs'
 
 function fixture() {
   return {
@@ -170,7 +171,7 @@ test('historical passes and exclusions remain separate from current dispositions
   assert.throws(() => attachHistoricalEvidence(features, {}), /invalid historical ledger/)
 })
 
-test('the command emits deterministic inventories and reports deleted tracked files', () => {
+test('the command emits deterministic inventories, verifies execution receipts and reports deleted tracked files', async () => {
   const root = mkdtempSync(join(tmpdir(), 'leapview-inventory-command-'))
   try {
     const input = fixture()
@@ -181,6 +182,8 @@ test('the command emits deterministic inventories and reports deleted tracked fi
       'docs/reference/cli/manifest.json': JSON.stringify({ schemaVersion: 2, commands: [{ path: [], runnable: true }] }),
       'Taskfile.yml': JSON.stringify({ tasks: { 'ci:lane:frontend': { cmds: [] }, 'ci:lane:frontend:shard': { cmds: [] } } }),
       'package.json': JSON.stringify({ scripts: {} }),
+      'go.mod': 'module example/inventory\n\ngo 1.22\n',
+      'receipt-fixture/receipt_test.go': 'package receipt\nimport "testing"\nfunc TestNamed(t *testing.T) {}\n',
       '.gitignore': '.tmp/\n',
       'deleted.go': 'package deleted',
     }
@@ -206,8 +209,12 @@ test('the command emits deterministic inventories and reports deleted tracked fi
       return path
     })
     const out = join(root, '.tmp', 'inventory')
+    const receiptOut = join(root, '.tmp', 'go-receipt')
+    const captured = await captureGoReceipt({ root, out: receiptOut, packages: ['./receipt-fixture'], run: '^TestNamed$', cgo: '0', timeout: '30s' })
+    assert.equal(captured.execution.exitCode, 0)
+    const receiptPath = join(receiptOut, 'receipt.json')
     const script = fileURLToPath(new URL('./audit_inventory.mjs', import.meta.url))
-    const run = () => execFileSync(process.execPath, [script, '--root', root, '--out', out, '--controller-catalog-dir', catalogDir], { stdio: 'pipe' })
+    const run = () => execFileSync(process.execPath, [script, '--root', root, '--out', out, '--controller-catalog-dir', catalogDir, '--go-receipt', receiptPath], { stdio: 'pipe' })
     run()
     const first = readFileSync(join(out, 'files.json'), 'utf8')
     const summaryBytes = readFileSync(join(out, 'summary.json'), 'utf8')
@@ -228,6 +235,17 @@ test('the command emits deterministic inventories and reports deleted tracked fi
       assert.equal(summary.controllerCatalogs.find(input => input.path === path).sha256, checksum(readFileSync(path)))
     }
     assert.equal(existsSync(join(out, 'frontend-registration.json')), true)
+    const execution = JSON.parse(readFileSync(join(out, 'go-execution.json')))
+    assert.equal(execution.length, 1)
+    assert.ok(execution[0].index.tests.some(row => row.test === 'TestNamed' && row.fresh))
+    assert.equal(summary.goReceipts[0].sha256, checksum(readFileSync(receiptPath)))
+    assert.equal(summary.goReceipts[0].freshNamedTests, 1)
+    assert.equal(summary.featuresWithExecutionEvidence, 0)
+    assert.ok(features.every(feature => feature.executionEvidence.length === 0))
+    const stderr = readFileSync(join(receiptOut, 'stderr.log'))
+    writeFileSync(join(receiptOut, 'stderr.log'), 'changed')
+    assert.throws(run, /checksum mismatch/)
+    writeFileSync(join(receiptOut, 'stderr.log'), stderr)
     writeFileSync(join(root, 'untracked.go'), 'package changed')
     assert.throws(run, /source workingTreeStatus differs|source sourceFilesSHA256 differs/)
     const before = sourceFilesSHA256(root)

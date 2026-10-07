@@ -1,13 +1,14 @@
 // Maintained version of the October audit's build_inventory.py catalog scan.
 // This command inventories declarations; it never executes product tests.
-import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { parse } from 'yaml'
 import { auditFrontendTestRegistration } from './frontend_test_registration.mjs'
+import { sha256, git, inventoryFileRows, checkoutSnapshot, sourceFilesSHA256 } from './audit_source.mjs'
+import { loadGoReceipt, attachGoEvidence } from './go_receipts.mjs'
+export { checkoutSnapshot, sourceFilesSHA256 } from './audit_source.mjs'
 
 const owners = {
   access: 'FAI-1089', compiler: 'FAI-1090', data: 'FAI-1091', analytics: 'FAI-1092',
@@ -31,7 +32,6 @@ const apiOwners = {
   Deployments: 'lifecycle', Delivery: 'lifecycle', Releases: 'lifecycle', 'Refresh Runs': 'lifecycle',
   Instance: 'lifecycle', System: 'lifecycle', Projects: 'compiler', Search: 'compiler',
 }
-const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const domainFor = path => domainPrefixes.find(([prefix]) => path.startsWith(prefix))?.[1] ?? 'shared'
 const sorted = values => [...values].sort()
 const counts = values => Object.fromEntries(sorted(new Set(values)).map(value => [value, values.filter(item => item === value).length]))
@@ -52,21 +52,7 @@ export function classifyFile(path, body) {
 }
 
 export function inventoryFiles(root, paths) {
-  return sorted(new Set(paths)).map(path => {
-    const target = join(root, path)
-    let bytes, state
-    try {
-      const stat = lstatSync(target)
-      if (stat.isSymbolicLink()) { state = 'symlink'; bytes = Buffer.from(readlinkSync(target)) }
-      else if (stat.isFile()) { state = 'present'; bytes = readFileSync(target) }
-      else state = 'non_file'
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-      state = 'missing'
-    }
-    return { path, ...classifyFile(path, bytes?.toString('utf8', 0, 400) ?? ''), state,
-      bytes: bytes?.length ?? null, sha256: bytes ? sha256(bytes) : null, review: 'inventory-only' }
-  })
+  return inventoryFileRows(root, paths, classifyFile)
 }
 
 function routeDomain(path) {
@@ -228,17 +214,6 @@ export function validateControllerCatalog(manifest) {
   }
 }
 
-export function sourceFilesSHA256(root) {
-  const paths = git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z').split('\0').filter(Boolean)
-  const rows = inventoryFiles(root, paths).sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)))
-  return sha256(rows.map(row => `${row.path}\0${row.state}\0${row.sha256 ?? ''}\n`).join(''))
-}
-
-export function checkoutSnapshot(root) {
-  return { commit: git(root, 'rev-parse', 'HEAD').trim(), workingTreeStatus: git(root, 'status', '--porcelain=v1', '-z'),
-    trackedDiffSHA256: sha256(git(root, 'diff', '--no-ext-diff', '--binary', 'HEAD')), sourceFilesSHA256: sourceFilesSHA256(root) }
-}
-
 export function loadControllerCatalogs(directory, snapshot) {
   const catalogs = [], missingVariants = []
   for (const variant of ['standalone', 'host-payload']) {
@@ -275,15 +250,13 @@ export function attachHistoricalEvidence(features, previous) {
   })
 }
 
-function git(root, ...args) {
-  return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
-}
 function main() {
   const { values } = parseArgs({ options: {
-    root: { type: 'string' }, out: { type: 'string' }, 'previous-ledger': { type: 'string' }, 'controller-catalog-dir': { type: 'string' }, help: { type: 'boolean' },
+    root: { type: 'string' }, out: { type: 'string' }, 'previous-ledger': { type: 'string' }, 'controller-catalog-dir': { type: 'string' },
+    'go-receipt': { type: 'string', multiple: true }, help: { type: 'boolean' },
   } })
   if (values.help) {
-    console.log('Usage: node scripts/audit_inventory.mjs [--root REPO] [--out DIR] [--previous-ledger JSON] [--controller-catalog-dir DIR]\nGenerate files, feature declarations, component CI registration, and a summary. Runs no tests.\nPrepare with bun install --frozen-lockfile; task cli-docs:generate supplies the optional runtime CLI catalog; task audit:controller-catalogs supplies both shipped controller build variants.')
+    console.log('Usage: node scripts/audit_inventory.mjs [--root REPO] [--out DIR] [--previous-ledger JSON] [--controller-catalog-dir DIR] [--go-receipt JSON ...]\nGenerate files, feature declarations, component CI registration, named Go execution indexes, and a summary. Runs no product tests.\nPrepare with bun install --frozen-lockfile; task cli-docs:generate supplies the optional runtime CLI catalog; task audit:controller-catalogs supplies both shipped controller build variants. task audit:go-receipt captures explicit named Go executions. Imported receipts must match the current checkout, toolchain, selected environment and Go inputs; route evidence covers registration/access parity only.')
     return
   }
   const root = resolve(values.root ?? dirname(dirname(fileURLToPath(import.meta.url))))
@@ -304,8 +277,13 @@ function main() {
     visuals: readJSON('docs/visuals/catalog.json'), agentManifest: readJSON('docs/reference/agent-tools/manifest.json'), cliManifest,
     controllerCatalogs: controllerInputs.catalogs })
   const previousBytes = values['previous-ledger'] ? readFileSync(resolve(values['previous-ledger'])) : undefined
-  const features = (previousBytes ? attachHistoricalEvidence(catalogs.features, JSON.parse(previousBytes)) : catalogs.features)
-    .map(feature => ({ ...feature, sourcePresent: existsSync(join(root, feature.source)) }))
+  const goInputs = [...new Set((values['go-receipt'] ?? []).map(path => resolve(path)))].sort().map(path => loadGoReceipt(path, root, snapshot))
+  const features = attachGoEvidence((previousBytes ? attachHistoricalEvidence(catalogs.features, JSON.parse(previousBytes)) : catalogs.features)
+    .map(feature => ({ ...feature, sourcePresent: existsSync(join(root, feature.source)) })), goInputs)
+  const goExecution = goInputs.map(({ path, sha256, receipt, inputManifest, index }) => ({ path, sha256,
+    source: receipt.source, command: receipt.command, options: receipt.options, toolchain: receipt.toolchain, execution: receipt.execution,
+    artifacts: receipt.artifacts, inputScope: inputManifest.scope, inputsComplete: inputManifest.complete, inputFileCount: inputManifest.files.length,
+    limitations: receipt.limitations, index }))
   const taskfileBytes = readFileSync(join(root, 'Taskfile.yml'))
   const packageBytes = readFileSync(join(root, 'package.json'))
   const registration = auditFrontendTestRegistration({ taskfile: parse(taskfileBytes.toString()), packageJson: JSON.parse(packageBytes),
@@ -324,9 +302,20 @@ function main() {
     runtimeCLIManifestSHA256: cliBytes ? sha256(cliBytes) : null,
     controllerCatalogs: controllerInputs.catalogs.map(({ manifest, path, sha256 }) => ({ path, sha256, build: manifest.build, scope: manifest.scope, commandCount: manifest.commands.length })),
     missingControllerVariants: controllerInputs.missingVariants,
+    goReceipts: goInputs.map(({ path, sha256, receipt, inputManifest, index }) => ({ path, sha256,
+      execution: receipt.execution, inputsComplete: inputManifest.complete, namedTests: index.tests.length,
+      freshNamedTests: index.tests.filter(row => row.fresh).length, cachedPackages: index.packages.filter(row => row.cached).length,
+      namedOutcomes: counts(index.tests.map(row => row.outcome)), parseErrors: index.errors.length })),
+    featuresWithExecutionEvidence: features.filter(feature => feature.executionEvidence.length > 0).length,
     commandInputs: { taskfileSHA256: sha256(taskfileBytes), packageJSONSHA256: sha256(packageBytes) },
     limitations: [...catalogs.limitations, 'Historical receipts retain their original identities and do not set current dispositions.',
-      'Frontend component registration uses the maintained Taskfile reachability audit. Other test/command mappings remain to be reviewed.'],
+      'Frontend component registration uses the maintained Taskfile reachability audit. Other test/command mappings remain to be reviewed.',
+      'Named Go executions are imported only through explicit current-source receipts; cached, incomplete or unstable runs do not qualify as fresh named execution.',
+      'TestRouteInventory associations establish mounted route/access contract parity only. Feature journey dispositions remain not_run; other Go test/feature mappings remain unassigned.',
+      ...new Set(goInputs.flatMap(input => input.receipt.limitations))],
+  }
+  if (goInputs.some(input => loadGoReceipt(input.path, root, snapshot).sha256 !== input.sha256)) {
+    throw new Error('Go receipt changed while generating the inventory; rerun with stable inputs')
   }
   if (git(root, 'rev-parse', 'HEAD').trim() !== head || git(root, 'status', '--porcelain=v1', '-z') !== workingTreeStatus ||
     sha256(git(root, 'diff', '--no-ext-diff', '--binary', 'HEAD')) !== trackedDiffSHA256 || sourceFilesSHA256(root) !== sourceFilesChecksum ||
@@ -334,7 +323,7 @@ function main() {
     throw new Error('source changed while generating the inventory; rerun on a stable checkout')
   }
   mkdirSync(out, { recursive: true })
-  for (const [name, data] of Object.entries({ files, features, 'frontend-registration': registration, summary })) {
+  for (const [name, data] of Object.entries({ files, features, 'frontend-registration': registration, 'go-execution': goExecution, summary })) {
     writeFileSync(join(out, `${name}.json`), `${JSON.stringify(data, null, 2)}\n`)
   }
   console.log(JSON.stringify({ output: out, sourceCommit: head, trackedFiles: files.length, features: features.length,

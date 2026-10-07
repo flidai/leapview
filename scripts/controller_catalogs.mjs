@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { checkoutSnapshot } from './audit_inventory.mjs'
+import { checkoutSnapshot } from './audit_source.mjs'
 
 const hash = value => createHash('sha256').update(value).digest('hex')
 export function sourceFingerprint(snapshot) {
