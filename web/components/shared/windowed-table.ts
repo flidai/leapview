@@ -463,6 +463,7 @@ class WindowedTable extends LitElement {
     }
 
     .header-cell:hover .column-resizer::after,
+    .column-resizer:focus-visible::after,
     .column-resizer.resizing::after {
       background: var(--lv-fg-link);
     }
@@ -701,7 +702,7 @@ class WindowedTable extends LitElement {
               >
                 ${this.resizeGuide >= 0 ? html`<span class="resize-guide" style=${`--lv-windowed-resize-guide-x:${this.resizeGuide}px`}></span>` : nothing}
                 ${table.showHeader ? html`<div class="head" role="row" aria-rowindex="1">
-                  ${columns.map((column) => html`
+                  ${columns.map((column, index) => html`
                     <div class=${`header-cell ${column.align === 'right' ? 'right' : ''}`} role="columnheader" aria-sort=${sort.key === column.key ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
                       <button type="button" title=${column.label || column.key} ?disabled=${column.sortable === false} @click=${() => this.sortColumn(table, column)}>
                         <span class="header-label">${column.label || column.key}</span>
@@ -709,6 +710,13 @@ class WindowedTable extends LitElement {
                       </button>
                       <span
                         class=${`column-resizer ${this.resizeDrag?.columnKey === column.key ? 'resizing' : ''}`}
+                        role="separator"
+                        tabindex="0"
+                        aria-label=${`Resize ${column.label || column.key} column`}
+                        aria-orientation="vertical"
+                        aria-valuemin=${this.minColumnWidth(column)}
+                        aria-valuenow=${widths[index]}
+                        @keydown=${(event: KeyboardEvent) => this.resizeColumnByKeyboard(table, column, event)}
                         @mousedown=${(event: MouseEvent) => this.beginColumnResize(table, column, event)}
                         @touchstart=${(event: TouchEvent) => this.beginColumnResize(table, column, event)}
                       ></span>
@@ -989,6 +997,26 @@ class WindowedTable extends LitElement {
       }
     }
     return out
+  }
+
+  private resizeColumnByKeyboard(table: Required<WindowedTablePayload>, column: WindowedTableColumn, event: KeyboardEvent): void {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    event.stopPropagation()
+    const columns = this.visibleColumns(table)
+    const displayedWidths = this.displayColumnWidths(table, columns)
+    const current = displayedWidths[columns.findIndex((item) => item.key === column.key)]
+    const width = current + (event.key === 'ArrowRight' ? 16 : -16)
+    this.localColumnWidths = {
+      ...this.localColumnWidths,
+      ...Object.fromEntries(columns.map((item, index) => [item.key, displayedWidths[index]])),
+      [column.key]: Math.max(this.minColumnWidth(column), width),
+    }
+    this.dispatchEvent(new CustomEvent('lv-windowed-table-column-widths', {
+      bubbles: true,
+      composed: true,
+      detail: { columnWidths: this.currentColumnWidths(table) },
+    }))
   }
 
   private beginColumnResize(table: Required<WindowedTablePayload>, column: WindowedTableColumn, event: MouseEvent | TouchEvent): void {

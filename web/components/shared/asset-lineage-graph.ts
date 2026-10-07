@@ -172,6 +172,12 @@ class AssetLineageGraph extends LitElement {
 
   updated(changed: Map<string, unknown>): void {
     if (changed.has('graph')) {
+      const previousGraph = changed.get('graph') as LineageGraph | null | undefined
+      const previousAnchor = previousGraph?.nodes.find(node => node.selected)?.id
+      const nextAnchor = this.graph?.nodes.find(node => node.selected)?.id
+      // Keep an intentional clear through status refreshes, but honor a new
+      // anchor chosen by an external control such as the run's model list.
+      if (previousAnchor !== nextAnchor) this.selectionCleared = false
       if (!this.userSelectedNodeID && !this.selectionCleared) this.selectedNodeID = this.graph?.nodes.find(node => node.selected)?.id
       if (this.selectedNodeID !== undefined && !this.graph?.nodes.some((node) => node.id === this.selectedNodeID)) {
         this.selectedNodeID = undefined

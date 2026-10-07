@@ -161,6 +161,28 @@ test('outline disclosure buttons support keyboard expansion and filtering', asyn
   }
 })
 
+test('nested configuration rows and SQL stay inside the narrow viewer', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-config-viewer'))
+    await page.locator('lv-config-viewer').evaluate(async (element: any) => {
+      element.configuration = 'name: report\nmodel:\n  source: orders\n  transform:\n    sql: SELECT region, SUM(revenue) AS revenue FROM orders GROUP BY region\n'
+      await element.updateComplete
+    })
+    await page.locator('lv-config-viewer .sql-row lv-code-block pre').waitFor()
+    const bounds = await page.locator('lv-config-viewer').evaluate((element) => {
+      const right = element.getBoundingClientRect().right
+      return [...element.shadowRoot!.querySelectorAll('.row, .sql-row lv-code-block')]
+        .map((row) => row.getBoundingClientRect().right - right)
+    })
+    expect(bounds.length).toBeGreaterThan(0)
+    expect(Math.max(...bounds)).toBeLessThanOrEqual(0.5)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   return `
     <!doctype html>

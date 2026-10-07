@@ -155,6 +155,31 @@ test('asset lineage selection clears from the background and Escape', async () =
   }
 })
 
+test('cleared lineage selection survives refresh but follows a changed incoming anchor', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(1)
+    await graph.getByRole('button', { name: 'Show all', exact: true }).click()
+    await browserExpect(graph.getByLabel('Find asset')).toHaveValue('')
+    await graph.evaluate(async (element: HTMLElement & { graph: any; updateComplete: Promise<unknown> }) => {
+      element.graph = structuredClone(element.graph)
+      await element.updateComplete
+    })
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(0)
+    await browserExpect(graph.getByRole('button', { name: 'Focus selected', exact: true })).toBeDisabled()
+    const anchor = await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      const next = element.graph.nodes.find((node: any) => !node.selected).id
+      element.graph = { ...element.graph, nodes: element.graph.nodes.map((node: any) => ({ ...node, selected: node.id === next })) }
+      return next
+    })
+    await browserExpect(graph.getByLabel('Find asset')).toHaveValue(anchor)
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(1)
+    await browserExpect(graph.getByRole('button', { name: 'Focus selected', exact: true })).toBeEnabled()
+  } finally { await page.close() }
+})
+
 test('asset lineage keeps the complete upstream and downstream path highlighted when an intermediate model is selected', async () => {
   const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
   try {

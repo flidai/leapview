@@ -63,6 +63,14 @@ class SemanticModelGraphElement extends LitElement {
   private manualPositions = new Map<string, NodePosition>()
   private lastLayoutKey = ''
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    if (this.mount && !this.root) {
+      this.root = createRoot(this.mount)
+      this.renderFlow()
+    }
+  }
+
   createRenderRoot(): HTMLElement {
     return this
   }
@@ -81,6 +89,7 @@ class SemanticModelGraphElement extends LitElement {
 
   disconnectedCallback(): void {
     this.root?.unmount()
+    this.root = undefined
     super.disconnectedCallback()
   }
 
@@ -525,6 +534,9 @@ function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
         'aria-label': relationshipLabel,
         style: {
           transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+          // Keep descriptive labels inside the gap between datasets so they
+          // cannot cover field names or cardinality markers at either end.
+          maxWidth: !data?.sameRank ? Math.max(30, Math.abs(props.targetX - props.sourceX) - 12) : undefined,
         },
       }, data?.label ?? ''),
       React.createElement('div', {

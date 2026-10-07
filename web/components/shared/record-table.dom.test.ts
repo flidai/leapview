@@ -570,6 +570,38 @@ test('record table renders tight expandable query rows', async () => {
   }
 })
 
+test('query rows without explicit IDs expand and stay attached to their record after sorting', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    await page.locator('lv-record-table').evaluate(async (element: any) => {
+      element.table = {
+        columns: [{ id: 'query', header: 'Query', kind: 'query' }],
+        rows: [
+          { query: { label: 'Zulu', expandedContent: 'select 2 as zulu' } },
+          { query: { label: 'Alpha', expandedContent: 'select 1 as alpha' } },
+          { query: { label: 'Zulu', expandedContent: 'select 2 as zulu' } },
+        ],
+      }
+      await element.updateComplete
+    })
+    await page.getByRole('button', { name: 'Expand query text' }).first().click()
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await page.locator('.record-query-expanded-row').count()).toBe(1)
+    expect(await page.locator('.record-query-expanded-row').evaluate(row => row.previousElementSibling?.textContent)).toContain('Zulu')
+    await page.getByRole('button', { name: 'Sort by Query' }).click()
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await page.locator('.record-row').first().textContent()).toContain('Alpha')
+    expect(await page.locator('.record-query-expanded-row').evaluate(row => row.previousElementSibling?.textContent)).toContain('Zulu')
+    await page.getByRole('button', { name: 'Collapse query text' }).click()
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    expect(await page.locator('.record-query-expanded-row').count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('record table emits configured row actions without stealing interactive controls', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 620 } })
   try {

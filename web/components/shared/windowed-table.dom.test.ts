@@ -358,6 +358,70 @@ test('windowed table resizes columns and emits width state', async () => {
   }
 })
 
+test('windowed table column resizing is keyboard accessible and publishes clamped widths', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+    await page.evaluate(async () => {
+      const element = document.createElement('lv-windowed-table') as any
+      element.table = {
+        columns: [{ key: 'id', label: 'ID', width: 180, minWidth: 164 }],
+        fillWidth: false,
+        totalRows: 1,
+        availableRows: 1,
+        blocks: { a: { start: 0, rows: [{ id: 0 }] } },
+      }
+      ;(window as any).widthEvents = []
+      element.addEventListener('lv-windowed-table-column-widths', (event: CustomEvent) => (window as any).widthEvents.push(event.detail.columnWidths))
+      document.body.append(element)
+      await element.updateComplete
+    })
+    const resizer = page.getByRole('separator', { name: 'Resize ID column' })
+    expect(await resizer.count()).toBe(1)
+    await resizer.focus()
+    await page.keyboard.press('ArrowRight')
+    expect(await resizer.getAttribute('aria-valuenow')).toBe('196')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    expect(await resizer.getAttribute('aria-valuenow')).toBe('164')
+    expect(await page.evaluate(() => (window as any).widthEvents)).toEqual([{ id: 196 }, { id: 180 }, { id: 164 }, { id: 164 }])
+    await page.locator('lv-windowed-table').evaluate(async (element: any) => {
+      element.table = { ...element.table, fillWidth: true }
+      await element.updateComplete
+    })
+    const filledWidth = Number(await resizer.getAttribute('aria-valuenow'))
+    expect(filledWidth).toBeGreaterThan(164)
+    await resizer.focus()
+    await page.keyboard.press('ArrowRight')
+    expect(Number(await resizer.getAttribute('aria-valuenow'))).toBe(filledWidth + 16)
+    await page.locator('lv-windowed-table').evaluate(async (element: any) => {
+      element.table = { ...element.table, columns: [
+        { key: 'a', label: 'A', width: 120 },
+        { key: 'b', label: 'B', width: 120 },
+        { key: 'c', label: 'C', width: 120 },
+      ] }
+      await element.updateComplete
+    })
+    const filledResizer = page.getByRole('separator', { name: 'Resize A column' })
+    const header = page.getByRole('columnheader').first()
+    const originalWidth = (await header.boundingBox())!.width
+    await filledResizer.focus()
+    await page.keyboard.press('ArrowLeft')
+    const narrowerWidth = (await header.boundingBox())!.width
+    expect(narrowerWidth).toBeLessThan(originalWidth)
+    const widths = await page.evaluate(() => (window as any).widthEvents.at(-1))
+    expect(widths.a).toBe(originalWidth - 16)
+    expect(widths.b).toBe(originalWidth)
+    expect(widths.c).toBe(originalWidth)
+    await page.keyboard.press('ArrowRight')
+    expect((await header.boundingBox())!.width).toBeGreaterThan(narrowerWidth)
+  } finally {
+    await page.close()
+  }
+})
+
 test('windowed table clears cached rows when table key changes without reset version change', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
   try {

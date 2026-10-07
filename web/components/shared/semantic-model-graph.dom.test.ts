@@ -410,6 +410,24 @@ test('semantic model graph anchors composite endpoints and shows one-to-one mark
   }
 })
 
+test('long relationship labels fit between dataset fields without obscuring endpoints', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-semantic-model-graph')
+    await browserExpect(graph.locator('.react-flow__edge')).toHaveCount(1)
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      element.graph = { ...element.graph, edges: element.graph.edges.map((edge: any) => ({ ...edge, label: '1:1 · composite key' })) }
+    })
+    await browserExpect(graph.locator('.semantic-model-edge-label')).toHaveText('1:1 · composite key')
+    const label = await graph.locator('.semantic-model-edge-label').boundingBox()
+    const source = await graph.locator('.react-flow__node[data-id="orders"]').boundingBox()
+    const target = await graph.locator('.react-flow__node[data-id="customers"]').boundingBox()
+    expect(label!.x).toBeGreaterThanOrEqual(source!.x + source!.width)
+    expect(label!.x + label!.width).toBeLessThanOrEqual(target!.x)
+  } finally { await page.close() }
+})
+
 test('semantic model graph uses curved routes for cyclic same-rank relationships', async () => {
   const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
   try {
@@ -460,6 +478,32 @@ test('Related and All retain keyboard focus inside a shadow host while fields up
       await browserExpect(stateField).toHaveCount(fields)
       await browserExpect(button).toBeFocused()
     }
+  } finally { await page.close() }
+})
+
+test('semantic model graph reconnects and accepts refreshed graph data', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-semantic-model-graph')
+    await browserExpect(graph.locator('.semantic-model-node')).toHaveCount(2)
+    await page.evaluate(() => {
+      const graph = document.querySelector('lv-semantic-model-graph')!
+      const parent = graph.parentElement!
+      graph.remove()
+      parent.append(graph)
+    })
+    await browserExpect(graph.locator('.semantic-model-node')).toHaveCount(2)
+    await graph.getByRole('button', { name: 'All', exact: true }).click()
+    await browserExpect(graph.locator('.semantic-model-field-name').filter({ hasText: /^state$/ })).toHaveCount(1)
+    await page.evaluate(() => {
+      const graph = document.querySelector('lv-semantic-model-graph') as HTMLElement & { graph: any }
+      graph.graph = { ...graph.graph, nodes: graph.graph.nodes.slice(0, 1), edges: [] }
+    })
+    await browserExpect(graph.locator('.semantic-model-node')).toHaveCount(1)
+    expect(errors).toEqual([])
   } finally { await page.close() }
 })
 

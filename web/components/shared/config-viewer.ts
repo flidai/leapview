@@ -156,6 +156,7 @@ class ConfigViewer extends LitElement {
     .node { min-width: 0; }
 
     .row {
+      box-sizing: border-box;
       display: flex;
       width: 100%;
       min-width: 0;

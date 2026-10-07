@@ -142,6 +142,7 @@ class RecordTable extends LitElement {
   private tableController = new TableController<typeof recordTableFeatures, RecordRow>(this)
   private columnVisibilityKey = ''
   private columnVisibilityFingerprint = ''
+  private fallbackRowIDs = new WeakMap<RecordRow, string>()
 
   createRenderRoot(): HTMLElement {
     return this
@@ -149,6 +150,7 @@ class RecordTable extends LitElement {
 
   render() {
     const table = this.resolvedTable
+    this.fallbackRowIDs = new WeakMap(table.rows.map((row, index) => [row, `row-${index}`]))
     this.syncColumnVisibility(table)
     const columns = this.visibleColumns(table)
     const model = this.tanstackTable({ ...table, columns })
@@ -203,7 +205,7 @@ class RecordTable extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${rows.map((row, index) => this.renderRow(row, columns, table.rowAction, index))}
+            ${rows.map((row) => this.renderRow(row, columns, table.rowAction))}
           </tbody>
         </table>
       </div>
@@ -338,7 +340,7 @@ class RecordTable extends LitElement {
       header: column.header,
       cell: (info: any) => this.renderCell(column, info.getValue(), info.row.original),
       enableSorting: column.sortable !== false && column.kind !== 'actions',
-      sortingFn: (left: any, right: any, columnID: string) => {
+      sortFn: (left: any, right: any, columnID: string) => {
         const leftValue = sortPrimitive(left.original[columnID])
         const rightValue = sortPrimitive(right.original[columnID])
         return typeof leftValue === 'number' && typeof rightValue === 'number'
@@ -414,8 +416,8 @@ class RecordTable extends LitElement {
     `
   }
 
-  private renderRow(row: RecordRow, columns: RecordColumn[], rowAction: string, index: number): TemplateResult {
-    const rowID = this.rowID(row, index)
+  private renderRow(row: RecordRow, columns: RecordColumn[], rowAction: string): TemplateResult {
+    const rowID = this.rowID(row)
     const expandedContent = this.rowExpandedContent(row, columns)
     const expanded = Boolean(expandedContent) && this.expandedRowIDs.includes(rowID)
     const actionable = Boolean(rowAction)
@@ -595,10 +597,11 @@ class RecordTable extends LitElement {
     }
   }
 
-  private rowID(row: RecordRow, index = -1): string {
+  private rowID(row: RecordRow): string {
     const id = row.id
     if (id != null && id !== '') return String(id)
-    return index >= 0 ? `row-${index}` : JSON.stringify(row)
+    // Use the source position so equal records remain distinct after sorting.
+    return this.fallbackRowIDs.get(row) ?? JSON.stringify(row)
   }
 
   private rowAriaLabel(row: RecordRow, columns: RecordColumn[]): string {
