@@ -110,8 +110,10 @@ samples are populated only from observed commands or browser measurements;
 planned repetitions have `executed: 0`, an empty `samplesMs` array, and a
 reason. The semantic, model, dashboard, presentation, and invalid edit
 scenarios, including cold uncached/cached, warm restart, and edit-to-visible
-measurements, remain `not-run` until the released preview surface provides a
-supported observation contract. This lane never fabricates those values.
+measurements, remain `not-run` until browser qualification records those
+scenarios and measurements against the identified artifact. The product's
+preview routes and live updates do not themselves establish these observations.
+This lane never fabricates those values.
 
 The machine-readable source is
 [`qualification-contract.json`](qualification-contract.json). It records the

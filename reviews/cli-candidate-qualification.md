@@ -120,3 +120,17 @@ the evidence schema. The harness now promotes both fields together only after
 successful development and restart identity checks; the original report is
 preserved rather than rewritten. A newly built matching archive/runtime is
 required for the next lifecycle attempt.
+
+### Existing candidate browser evidence
+
+The same run retains artifact
+`prepublication-candidate-37585063372-1-amd64`. Its report records `success`,
+successful enterprise authoring, and `browserJourney: true` against the same
+`d449452ac6e97059cce88a3a49ff5ef88fd424412ea7d27e84ec3ff596f27244`
+image digest. The installed-candidate journey requires authenticated private
+candidate preview of the evaluation dashboard with 24 governed order rows
+before publishing. Reuse that observed Compose/runtime preview evidence.
+It does not establish local `init`'s Sales fixture rendering, live-edit behavior,
+cold/warm/edit-to-visible measurements, macOS provider lifecycle, or public
+released-archive qualification. The local preview/edit observation driver is
+still missing; the product already implements candidate preview and live updates.

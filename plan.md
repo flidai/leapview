@@ -291,3 +291,16 @@ No additional implementation PR is planned. Merge the parent through the normal
 queue, retarget/rebase the child onto main, then validate a newly matched
 candidate. Public release/platform, preview, and measurement acceptance remain
 open; merging these PRs alone does not complete FAI-1133.
+
+PR #898 merged through the normal queue at 09:36:58 UTC, with PR and merge
+CI/security plus Electron proof passing. PR #899 was rebased without conflicts
+onto that merged main; the rebase required no implementation changes. The latest
+local `task ci` passed generator tests (73 TypeScript tests), Go packages,
+PostgreSQL application and package conformance, and quality/coverage checks.
+It did not complete: the reports browser lane hit its watchdog, then the
+unchanged record-table column-selector test exceeded five seconds on retry.
+That test also timed out alone, and its source matches main. No frontend fix or
+check waiver is included. Logs are retained in
+`.tmp/fai-1133/task-ci-consolidated-clean.log` and
+`.tmp/fai-1133/record-table-timeout-recheck.log`. Exact-head hosted checks and the
+normal merge queue remain required for #899.

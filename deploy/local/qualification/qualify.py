@@ -59,9 +59,10 @@ SCENARIOS = (
     "invalid",
 )
 REPETITIONS = ("coldUncached", "coldCached", "warmRestart", "editToVisible")
-PREVIEW_NOT_RELEASED = (
-    "preview/deploy implementation and browser observation are planned in "
-    "ADR-0021; this package lane does not fabricate edit-to-visible samples"
+PREVIEW_NOT_OBSERVED = (
+    "This archive/lifecycle lane does not execute preview/edit scenarios or "
+    "browser timing observations; those gates remain not-run until separately "
+    "observed against the identified artifact."
 )
 # The qualification subprocesses are intentionally given a small, explicit
 # process environment.  In particular, Docker context/configuration and
@@ -1058,11 +1059,11 @@ def qualification_document(required: bool, started_at: str) -> dict[str, Any]:
             "hardware": hardware_metadata(),
             "fixture": None,
             "network": {"mode": "not-measured", "endpoint": None, "conditions": None},
-            "warmup": {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_RELEASED},
-            "repetitions": {name: empty_measurement(PREVIEW_NOT_RELEASED, 3 if name != "editToVisible" else 5) for name in REPETITIONS},
+            "warmup": {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_OBSERVED},
+            "repetitions": {name: empty_measurement(PREVIEW_NOT_OBSERVED, 3 if name != "editToVisible" else 5) for name in REPETITIONS},
         },
         "package": None,
-        "scenarios": {name: empty_measurement(PREVIEW_NOT_RELEASED, 1) for name in SCENARIOS},
+        "scenarios": {name: empty_measurement(PREVIEW_NOT_OBSERVED, 1) for name in SCENARIOS},
         "rawResults": [],
         "skipped": [],
         "failures": [],
@@ -1230,7 +1231,7 @@ def main(argv: list[str]) -> int:
                     docker["serverPost"] = post_restart_identity
                     docker["endpointPinned"] = True
                     docker["pinState"] = "verified-pre-post"
-                    evidence["metadata"]["warmup"] = {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_RELEASED}
+                    evidence["metadata"]["warmup"] = {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_OBSERVED}
                 finally:
                     # Reset is intentionally bounded and recorded. If dev
                     # fails after creating state, cleanup still uses the
