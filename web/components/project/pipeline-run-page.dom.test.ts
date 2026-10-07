@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
 
 let server: Server
 let baseURL = ''
@@ -338,7 +338,7 @@ test('run graph keeps scope separate from Fit and expansion', async () => {
     expect((await heading.textContent())?.trim()).toBe('Dependencies')
     expect(await graph.locator('.react-flow__node').count()).toBe(3)
     await graph.getByRole('button', { name: 'Show focused path' }).click()
-    expect(await graph.locator('.react-flow__node').count()).toBe(1)
+    await browserExpect(graph.locator('.react-flow__node')).toHaveCount(1)
     expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Prepared model')
   } finally {
     await page.close()

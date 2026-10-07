@@ -63,9 +63,10 @@ export const settingsLayoutStyles = css`
   .settings-input { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: var(--base-size-4) var(--base-size-8); color: var(--lv-fg-default); background: var(--lv-bg-input); font: var(--lv-type-body-compact); }
   .settings-button { display: inline-flex; box-sizing: border-box; min-height: var(--control-medium-size); align-items: center; justify-content: center; gap: var(--base-size-6); border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: var(--base-size-4) var(--base-size-12); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); cursor: pointer; text-decoration: none; font: var(--lv-type-body-compact); }
   .settings-button.primary { border-color: var(--lv-bg-accent); color: var(--lv-fg-on-accent); background: var(--lv-bg-accent); }
-  .settings-button.danger { color: var(--lv-fg-danger); }
+  .settings-button.danger { color: var(--button-danger-fgColor-rest, var(--lv-fg-danger)); }
   .settings-button:hover:not(:disabled):not(.disabled) { background: var(--lv-button-bg-hover, var(--lv-button-bg-rest)); }
   .settings-button.primary:hover:not(:disabled) { background: var(--lv-button-accent-bg-hover, var(--lv-bg-accent)); }
+  .settings-button.danger:hover:not(:disabled):not(.disabled) { color: var(--button-danger-fgColor-hover, var(--lv-fg-danger)); background: var(--button-danger-bgColor-hover, var(--lv-button-bg-hover)); border-color: var(--button-danger-borderColor-hover, var(--lv-line-default)); }
   .settings-input:focus-visible, .settings-button:focus-visible, .settings-button:focus-within { outline: var(--borderWidth-thick) solid var(--focus-outlineColor, var(--lv-fg-accent)); outline-offset: var(--borderWidth-thick); }
   .settings-button:disabled, .settings-button.disabled { cursor: not-allowed; opacity: .55; }
   @container settings (max-width: 30rem) {

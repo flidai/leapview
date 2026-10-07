@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 
 let server: Server
 let baseURL = ''
@@ -431,6 +431,36 @@ test('semantic model graph uses curved routes for cyclic same-rank relationships
   } finally {
     await page.close()
   }
+})
+
+test('Related and All retain keyboard focus inside a shadow host while fields update', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.locator('lv-semantic-model-graph .semantic-model-node').first().waitFor()
+    await page.evaluate(() => {
+      const original = document.querySelector('lv-semantic-model-graph') as HTMLElement & { graph: any }
+      const host = document.createElement('div')
+      host.id = 'semantic-shadow-host'
+      const root = host.attachShadow({ mode: 'open' })
+      const graph = document.createElement('lv-semantic-model-graph') as HTMLElement & { graph: any }
+      graph.style.cssText = 'display:block;width:980px;height:460px'
+      graph.graph = original.graph
+      original.replaceWith(host)
+      root.append(graph)
+    })
+    const graph = page.locator('#semantic-shadow-host').locator('lv-semantic-model-graph')
+    const stateField = graph.locator('.semantic-model-field-name').filter({ hasText: /^state$/ })
+    await browserExpect(graph.locator('.semantic-model-hidden-fields')).toHaveCount(2)
+    for (const [name, key, fields] of [['All', 'Enter', 1], ['Related', 'Space', 0]] as const) {
+      const button = graph.getByRole('button', { name, exact: true })
+      await button.focus()
+      await button.press(key)
+      await browserExpect(button).toHaveAttribute('aria-pressed', 'true')
+      await browserExpect(stateField).toHaveCount(fields)
+      await browserExpect(button).toBeFocused()
+    }
+  } finally { await page.close() }
 })
 
 function testDocument(): string {

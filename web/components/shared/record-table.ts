@@ -31,26 +31,22 @@ import {
 } from '@tanstack/lit-table'
 import { lucideIcon } from './lucide-icons'
 import { assetPresentation } from './asset-presentation'
+import {
+  cellAction,
+  cellDescription,
+  cellHref,
+  cellIcon,
+  cellIconTreatment,
+  cellLabel,
+  cellTone,
+  sortPrimitive,
+  statusIcon,
+  type RecordCell,
+  type RecordColumn,
+  type RecordRow,
+  type RecordStatusIcon,
+} from './record-table-cells'
 import './code-block'
-
-type RecordCellTone = 'default' | 'accent' | 'success' | 'attention' | 'danger' | 'muted'
-type RecordStatusIcon = 'check' | 'x' | 'clock' | 'dot'
-
-type RecordCell = {
-  label?: string
-  value?: string | number
-  description?: string
-  href?: string
-  icon?: string
-  iconTreatment?: 'plain' | 'framed'
-  tone?: RecordCellTone
-  action?: string
-  statusLabel?: string
-  expandedContent?: string
-  copyLabel?: string
-  additions?: number
-  deletions?: number
-}
 
 type RecordAction = {
   label: string
@@ -60,18 +56,6 @@ type RecordAction = {
   disabled?: boolean
 }
 
-type RecordColumn = {
-  id: string
-  header: string
-  kind?: 'text' | 'code' | 'expression' | 'badge' | 'status' | 'query' | 'diff' | 'number' | 'link' | 'tags' | 'entity' | 'button' | 'actions'
-  align?: 'left' | 'center' | 'right'
-  hrefKey?: string
-  width?: string
-  sortable?: boolean
-  toggleable?: boolean
-  mobileHidden?: boolean
-}
-
 type RecordColumnSelector = {
   enabled?: boolean
   storageKey?: string
@@ -79,7 +63,6 @@ type RecordColumnSelector = {
   defaultColumns?: string[]
 }
 
-type RecordRow = Record<string, unknown>
 type RecordTableDensity = 'normal' | 'tight'
 type RecordTablePayload = {
   columns?: RecordColumn[]
@@ -110,71 +93,6 @@ const emptyRecordTable: NormalizedRecordTable = {
   rowAction: '',
 }
 
-function cellLabel(value: unknown): string {
-  if (value == null || value === '') return '-'
-  if (typeof value === 'object' && 'label' in value) {
-    const label = (value as RecordCell).label ?? (value as RecordCell).value
-    return label == null || label === '' ? '-' : String(label)
-  }
-  return String(value)
-}
-
-function cellDescription(value: unknown): string {
-  return typeof value === 'object' && value && 'description' in value ? String((value as RecordCell).description ?? '') : ''
-}
-
-function cellHref(column: RecordColumn, value: unknown, row: RecordRow): string {
-  if (typeof value === 'object' && value && 'href' in value) return String((value as RecordCell).href ?? '')
-  return column.hrefKey ? cellLabel(row[column.hrefKey]) : ''
-}
-
-function cellIcon(value: unknown): string {
-  return typeof value === 'object' && value && 'icon' in value ? String((value as RecordCell).icon ?? '') : ''
-}
-
-function cellIconTreatment(value: unknown): 'plain' | 'framed' {
-  if (typeof value === 'object' && value && 'iconTreatment' in value) {
-    return (value as RecordCell).iconTreatment ?? 'framed'
-  }
-  return 'framed'
-}
-
-function cellTone(value: unknown): RecordCellTone {
-  if (typeof value === 'object' && value && 'tone' in value) {
-    return (value as RecordCell).tone ?? 'default'
-  }
-  return 'default'
-}
-
-function cellAction(value: unknown): string {
-  return typeof value === 'object' && value && 'action' in value ? String((value as RecordCell).action ?? '') : ''
-}
-
-function statusIcon(value: unknown, label: string): RecordStatusIcon {
-  if (typeof value === 'object' && value && 'icon' in value) {
-    return ((value as RecordCell).icon as RecordStatusIcon | undefined) ?? 'dot'
-  }
-  switch (label.toLowerCase()) {
-    case 'succeeded':
-      return 'check'
-    case 'failed':
-      return 'x'
-    case 'running':
-    case 'queued':
-      return 'clock'
-    default:
-      return 'dot'
-  }
-}
-
-function sortPrimitive(value: unknown): string | number {
-  if (typeof value === 'number') return value
-  if (typeof value === 'object' && value && 'value' in value && typeof (value as RecordCell).value === 'number') {
-    return (value as RecordCell).value as number
-  }
-  return cellLabel(value).toLowerCase()
-}
-
 function normalizeTable(table: RecordTablePayload): NormalizedRecordTable {
   return {
     columns: table.columns ?? [],
@@ -198,8 +116,9 @@ function applyUpdater<T>(updater: unknown, current: T): T {
 }
 
 function columnAlignClass(column: RecordColumn): string {
+  const align = column.align ?? (column.kind === 'number' ? 'right' : 'left')
   return [
-    column.align === 'center' ? 'is-center' : column.align === 'right' || column.kind === 'number' ? 'is-right' : '',
+    align === 'center' ? 'is-center' : align === 'right' ? 'is-right' : '',
     column.mobileHidden ? 'is-mobile-hidden' : '',
   ].filter(Boolean).join(' ')
 }
@@ -270,7 +189,7 @@ class RecordTable extends LitElement {
                         ?disabled=${!sortable}
                         @click=${() => sortable ? this.toggleSort(column.id) : undefined}
                       >
-                        <span>${column.header}</span>
+                        <span class="record-table-header-label">${column.header}</span>
                         <span class=${direction ? 'record-table-sort-indicator is-active' : 'record-table-sort-indicator'} aria-hidden="true">${sortable ? this.sortIndicator(direction) : nothing}</span>
                       </button>
                     </span>
@@ -484,7 +403,7 @@ class RecordTable extends LitElement {
     const additions = Number((value as RecordCell).additions ?? 0)
     const deletions = Number((value as RecordCell).deletions ?? 0)
     return html`
-      <span class="record-diff" aria-label=${label}>
+      <span class="record-diff" role="img" aria-label=${label}>
         <span class="record-diff-additions">+${additions}</span>
         <span class="record-diff-deletions">-${deletions}</span>
       </span>
@@ -560,7 +479,7 @@ class RecordTable extends LitElement {
         </span>
       </span>
     `
-    return href && href !== '-' ? html`<a class="record-entity-link" href=${href}>${content}</a>` : content
+    return href && href !== '-' ? html`<a class="record-entity-link" href=${href} @click=${(event: Event) => event.stopPropagation()}>${content}</a>` : content
   }
 
   private renderButton(column: RecordColumn, value: unknown, row: RecordRow) {
@@ -591,7 +510,7 @@ class RecordTable extends LitElement {
     const icon = statusIcon(value, statusLabel)
     return html`
       <span class="record-query">
-        <span class=${`record-query-status record-status-${tone}`} title=${statusLabel} aria-label=${statusLabel}>
+        <span class=${`record-query-status record-status-${tone}`} role="img" title=${statusLabel} aria-label=${statusLabel}>
           <span aria-hidden="true">${this.renderStatusIcon(icon)}</span>
         </span>
         ${content ? html`
@@ -733,7 +652,7 @@ class RecordTable extends LitElement {
   }
 
   private handleRowKeydown(event: KeyboardEvent, action: string, row: RecordRow): void {
-    if (!action) return
+    if (!action || event.target !== event.currentTarget) return
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     this.emitAction(action, row)
@@ -973,6 +892,7 @@ const recordTableStyles = `
   lv-record-table .record-table td {
     color: var(--lv-fg-default);
     font: var(--lv-type-body);
+    vertical-align: middle;
   }
 
   lv-record-table .variant-primary .record-table td {
@@ -1006,7 +926,6 @@ const recordTableStyles = `
 
   lv-record-table .record-table th.is-center,
   lv-record-table .record-table td.is-center { text-align: center; }
-  lv-record-table .record-table th.is-center .record-table-sort { justify-content: center; }
   lv-record-table .record-table tbody tr:last-child td {
     border-bottom: 0;
   }
@@ -1034,12 +953,10 @@ const recordTableStyles = `
   }
 
   lv-record-table .record-table-sort {
-    display: inline-flex;
+    position: relative;
+    display: block;
     width: 100%;
     min-width: 0;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--base-size-6);
     border: 0;
     background: transparent;
     color: inherit;
@@ -1049,6 +966,25 @@ const recordTableStyles = `
     letter-spacing: inherit;
     text-align: inherit;
     text-transform: inherit;
+  }
+
+  lv-record-table .record-table-header-label {
+    display: block;
+    box-sizing: border-box;
+    min-width: 0;
+    padding-inline-end: calc(var(--base-size-16) + var(--base-size-6));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  lv-record-table th.is-right .record-table-header-label {
+    padding-inline-start: calc(var(--base-size-16) + var(--base-size-6));
+    padding-inline-end: 0;
+  }
+
+  lv-record-table th.is-center .record-table-header-label {
+    padding-inline-start: calc(var(--base-size-16) + var(--base-size-6));
   }
 
   lv-record-table .record-table-header-content {
@@ -1071,11 +1007,20 @@ const recordTableStyles = `
   }
 
   lv-record-table .record-table-sort-indicator {
+    position: absolute;
+    inset-inline-end: 0;
+    top: 50%;
+    transform: translateY(-50%);
     display: inline-flex;
     min-width: var(--base-size-16);
     justify-content: flex-end;
     color: var(--lv-fg-muted);
     opacity: 0;
+  }
+
+  lv-record-table th.is-right .record-table-sort-indicator {
+    inset-inline-start: 0;
+    inset-inline-end: auto;
   }
 
   lv-record-table .record-table-sort:hover .record-table-sort-indicator,
@@ -1370,6 +1315,9 @@ const recordTableStyles = `
     flex-wrap: wrap;
     gap: var(--base-size-4);
   }
+
+  lv-record-table td.is-right .record-tags { justify-content: flex-end; }
+  lv-record-table td.is-center .record-tags { justify-content: center; }
 
   lv-record-table .record-tags span {
     display: inline-flex;

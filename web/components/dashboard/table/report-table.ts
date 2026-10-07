@@ -558,7 +558,7 @@ export class ReportTable extends LitElement {
       background: transparent;
       color: inherit;
       cursor: pointer;
-      padding: 0 var(--base-size-8);
+      padding: 0;
       font: inherit;
       text-align: inherit;
     }
@@ -596,6 +596,19 @@ export class ReportTable extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .header-cell.right .header-button {
+      flex-direction: row-reverse;
+      text-align: right;
+    }
+
+    .density-compact button.header-button {
+      padding-inline: var(--base-size-6);
+    }
+
+    .density-spacious button.header-button {
+      padding-inline: var(--base-size-12);
     }
 
     button.header-button:hover,
@@ -919,6 +932,7 @@ export class ReportTable extends LitElement {
 
     .right {
       justify-content: end;
+      text-align: right;
       font-variant-numeric: tabular-nums;
     }
 
@@ -1436,7 +1450,7 @@ export class ReportTable extends LitElement {
           const sortMark = lucideIcon(this.table?.sort?.direction === 'asc' ? ArrowUp : ArrowDown, { size: 12, strokeWidth: 2 })
           return html`
             <div
-              class=${`header-cell ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${sorted ? 'sorted' : ''}`}
+              class=${`header-cell ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${column.align === 'right' ? 'right' : ''} ${sorted ? 'sorted' : ''}`}
               role="columnheader"
               style=${this.pinnedCellStyle(header.column)}
             >

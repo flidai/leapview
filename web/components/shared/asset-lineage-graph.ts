@@ -289,7 +289,7 @@ class AssetLineageGraph extends LitElement {
           onMoveStart: (event: MouseEvent | TouchEvent | null) => { if (event) this.changeViewportMode('manual') },
           children: [
             React.createElement(Background, { key: 'background', gap: 18, size: 1 }),
-            React.createElement(FitLineage, { key: 'fit', viewportState: this.viewportState, signature, scope: this.scope, selectedID: this.selectedNodeID }),
+            React.createElement(FitLineage, { key: 'fit', viewportState: this.viewportState, signature, scope: this.scope, selectedID: this.selectedNodeID, anchorID: selectedLineageNode(graph.nodes)?.id }),
           ],
         }) : React.createElement('div', { className: 'asset-lineage-empty', role: 'status' }, 'No assets in this lineage.'),
       ),
@@ -722,7 +722,7 @@ function LineageViewportControls({ viewportState, onModeChange, expanded, onTogg
   )
 }
 
-function FitLineage({ viewportState, signature, scope, selectedID }: { viewportState: LineageViewportState; signature: string; scope: LineageScope; selectedID?: string }) {
+function FitLineage({ viewportState, signature, scope, selectedID, anchorID }: { viewportState: LineageViewportState; signature: string; scope: LineageScope; selectedID?: string; anchorID?: string }) {
   const { getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport } = useReactFlow()
   const previous = useRef<{ signature: string; scope: LineageScope; selectedID?: string } | undefined>(undefined)
   const dimensions = useRef<{ width: number; height: number } | undefined>(undefined)
@@ -734,7 +734,7 @@ function FitLineage({ viewportState, signature, scope, selectedID }: { viewportS
     const selectionChanged = previous.current !== undefined && previous.current.selectedID !== selectedID
     const topologyChanged = previous.current?.signature !== signature
     previous.current = { signature, scope, selectedID }
-    let centerChangedSelection = Boolean(selectedID && (scopeChanged || (topologyChanged && (selectionChanged || viewportState.mode === 'manual'))))
+    let centerChangedSelection = scopeChanged || Boolean(selectedID && topologyChanged && (selectionChanged || viewportState.mode === 'manual'))
     const resize = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
@@ -744,7 +744,7 @@ function FitLineage({ viewportState, signature, scope, selectedID }: { viewportS
         dimensions.current = { width, height }
         if (centerChangedSelection) {
           centerChangedSelection = false
-          const node = selectedID ? getNode(selectedID) : undefined
+          const node = selectedID || anchorID ? getNode((selectedID ?? anchorID)!) : undefined
           if (node) {
             void setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: getViewport().zoom })
             return
@@ -775,7 +775,7 @@ function FitLineage({ viewportState, signature, scope, selectedID }: { viewportS
     observer.observe(domNode)
     if (topologyChanged || scopeChanged) resize()
     return () => { observer.disconnect(); cancelAnimationFrame(frame) }
-  }, [viewportState, signature, scope, selectedID, getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport, domNode])
+  }, [viewportState, signature, scope, selectedID, anchorID, getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport, domNode])
   return null
 }
 

@@ -198,10 +198,17 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
 
       const rows = Array.from(root.querySelectorAll('.row[role="row"]')).map((row) => ({
         busy: row.getAttribute('aria-busy'),
+        rowIndex: Number(row.getAttribute('aria-rowindex')),
         text: row.textContent?.replace(/\s+/g, ' ').trim(),
       }))
       return {
         firstRequest,
+        accessibleTable: {
+          name: root.querySelector('[role="table"]')?.getAttribute('aria-label'),
+          rows: root.querySelector('[role="table"]')?.getAttribute('aria-rowcount'),
+          headerIndex: root.querySelector('.head')?.getAttribute('aria-rowindex'),
+          indices: rows.map(row => row.rowIndex),
+        },
         delayedFrameHeld: Boolean(delayedFrame),
         requestBeforeFrameRelease: Boolean(requestBeforeFrameRelease),
         staleAccepted: staleText.includes('stale'),
@@ -210,6 +217,11 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
       }
     })
 
+    expect(state.accessibleTable.name).toBe('Customers')
+    expect(state.accessibleTable.rows).toBe('201')
+    expect(state.accessibleTable.headerIndex).toBe('1')
+    expect(state.accessibleTable.indices[0]).toBeGreaterThan(100)
+    expect(state.accessibleTable.indices.every((index, position, indices) => position === 0 || index === indices[position - 1] + 1)).toBe(true)
     expect(state.firstRequest.block).toBeTruthy()
     expect(state.firstRequest.count).toBe(50)
     expect(state.delayedFrameHeld).toBe(true)
@@ -673,8 +685,12 @@ test('long numeric headings keep their beginning visible and null cells differ f
     await page.waitForFunction(() => customElements.get('lv-windowed-table'))
     await page.evaluate(async () => {
       const table = document.createElement('lv-windowed-table') as any
+      table.style.cssText = '--base-size-6:6px;--base-size-8:8px;--base-size-16:16px;--control-small-size:28px;--lv-type-caption:400 12px/1.25 system-ui;--lv-type-body:400 14px/1.5 system-ui;'
       table.table = {
-        columns: [{ key: 'base_supplier_payments', label: 'Base supplier payments', align: 'right', width: 128 }],
+        columns: [
+          { key: 'base_supplier_payments', label: 'Base supplier payments', align: 'right', width: 128 },
+          { key: 'notes', label: 'Notes', width: 1000, sortable: false },
+        ],
         totalRows: 2, availableRows: 2,
         sort: { key: 'base_supplier_payments', direction: 'asc' },
         blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: { key: 'base_supplier_payments', direction: 'asc' }, rows: [{base_supplier_payments: null}, {base_supplier_payments: 0}] } },
@@ -682,17 +698,66 @@ test('long numeric headings keep their beginning visible and null cells differ f
       document.body.append(table)
       await table.updateComplete
     })
-    const geometry = await page.locator('.header-cell button').evaluate(button => {
+    const geometry = await page.locator('.header-cell button').first().evaluate(button => {
       const label = button.querySelector('span')!
       const sort = button.querySelector('.sort')!
-      return { labelLeft: label.getBoundingClientRect().left, buttonLeft: button.getBoundingClientRect().left, labelRight: label.getBoundingClientRect().right, sortLeft: sort.getBoundingClientRect().left, ellipsis: getComputedStyle(label).textOverflow, title: button.getAttribute('title') }
+      const root = button.getRootNode() as ShadowRoot
+      const cells = root.querySelectorAll('.row .cell:first-child')
+      const value = document.createRange()
+      value.selectNodeContents(cells[1]!.querySelector('span')!)
+      const prefix = document.createRange()
+      const labelText = Array.from(label.childNodes).find(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
+      if (!labelText) throw new Error('numeric header label has no text node')
+      prefix.setStart(labelText, 0)
+      prefix.setEnd(labelText, 4)
+      return {
+        labelLeft: label.getBoundingClientRect().left,
+        labelRight: label.getBoundingClientRect().right,
+        sortRight: sort.getBoundingClientRect().right,
+        prefixLeft: prefix.getBoundingClientRect().left,
+        prefixRight: prefix.getBoundingClientRect().right,
+        truncated: label.scrollWidth > label.clientWidth,
+        valueRight: value.getBoundingClientRect().right,
+        nullBottom: cells[0]!.getBoundingClientRect().bottom,
+        nextTop: cells[1]!.getBoundingClientRect().top,
+        ellipsis: getComputedStyle(label).textOverflow,
+        title: button.getAttribute('title'),
+      }
     })
-    expect(geometry.labelLeft).toBeGreaterThanOrEqual(geometry.buttonLeft)
-    expect(geometry.labelRight).toBeLessThanOrEqual(geometry.sortLeft)
+    expect(geometry.sortRight).toBeLessThanOrEqual(geometry.labelLeft)
+    expect(geometry.prefixLeft).toBeGreaterThanOrEqual(geometry.labelLeft - 1)
+    expect(geometry.prefixRight).toBeLessThanOrEqual(geometry.labelRight + 1)
+    expect(geometry.truncated).toBe(true)
+    expect(Math.abs(geometry.labelRight - geometry.valueRight)).toBeLessThan(1)
+    expect(geometry.nullBottom).toBeLessThanOrEqual(geometry.nextTop + 1)
     expect(geometry.ellipsis).toBe('ellipsis')
     expect(geometry.title).toBe('Base supplier payments')
     expect(await page.locator('.cell').first().getAttribute('title')).toBe('No value')
-    expect((await page.locator('.cell').nth(1).textContent())?.trim()).toBe('0')
+    expect((await page.locator('.row').nth(1).locator('.cell').first().textContent())?.trim()).toBe('0')
+    expect(await page.locator('.header-cell').first().getAttribute('aria-sort')).toBe('ascending')
+    expect(await page.locator('.header-cell').nth(1).getAttribute('aria-sort')).toBe('none')
+    expect(await page.locator('.header-cell button').nth(1).isDisabled()).toBe(true)
+    const commands = await page.locator('lv-windowed-table').evaluate((element: any) => {
+      let requests = 0
+      element.addEventListener('lv-windowed-table-request', () => requests++)
+      element.shadowRoot.querySelectorAll('.header-cell button')[1].click()
+      return requests
+    })
+    expect(commands).toBe(0)
+    const shortHeading = await page.locator('lv-windowed-table').evaluate(async (element: any) => {
+      element.table = { ...element.table, columns: element.table.columns.map((column: any, index: number) => index === 0 ? { ...column, label: 'Amount' } : column) }
+      await element.updateComplete
+      const textBounds = (node: Element) => {
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        return range.getBoundingClientRect()
+      }
+      const root = element.shadowRoot as ShadowRoot
+      const heading = textBounds(root.querySelector('.header-label')!)
+      const value = textBounds(root.querySelectorAll('.row')[1]!.querySelector('.cell span')!)
+      return Math.abs(heading.right - value.right)
+    })
+    expect(shortHeading).toBeLessThan(1)
   } finally { await page.close() }
 })
 

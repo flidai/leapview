@@ -385,11 +385,15 @@ class WindowedTable extends LitElement {
       text-transform: uppercase;
     }
 
-    .header-cell button:hover,
+    .header-cell button:not(:disabled):hover,
     .header-cell button:focus-visible {
       background: var(--lv-bg-control-hover);
       color: var(--lv-fg-default);
       outline: 0;
+    }
+
+    .header-cell button:disabled {
+      cursor: default;
     }
 
     :host([compact]) .header-cell button {
@@ -402,7 +406,7 @@ class WindowedTable extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      text-align: left;
+      text-align: inherit;
     }
 
     .sort {
@@ -488,6 +492,10 @@ class WindowedTable extends LitElement {
       font-variant-numeric: tabular-nums;
     }
 
+    .header-cell.right button {
+      flex-direction: row-reverse;
+    }
+
     .cell code,
     .cell > span:not(.muted):not(.skeleton) {
       display: block;
@@ -506,8 +514,11 @@ class WindowedTable extends LitElement {
 
     .muted, .empty, .error {
       color: var(--lv-fg-muted);
-      padding: var(--base-size-16);
       font: var(--lv-type-body);
+    }
+
+    .empty, .error {
+      padding: var(--base-size-16);
     }
 
     .error {
@@ -620,6 +631,7 @@ class WindowedTable extends LitElement {
     const visibleRows = this.visibleRows(table)
     const rowRange = this.rowRangeText(table)
     const loading = Boolean(table.loadingBlock) || this.visibleLoading(table)
+    const sort = normalizeSort(table.sort)
 
     return html`
       <section class="shell">
@@ -656,13 +668,14 @@ class WindowedTable extends LitElement {
             <div class="scrollport" role="region" aria-label=${`Scrollable ${table.title || 'data'} table`} tabindex="0" ${ref(this.viewportRef)} @scroll=${this.handleScroll}>
               <div
                 class="plane"
+                role="table" aria-label=${table.title || 'Data'} aria-rowcount=${Math.max(table.totalRows, availableRows) + 1}
                 style=${`--lv-windowed-table-columns:${widths.map((width) => `${width}px`).join(' ')};--lv-windowed-table-width:${tableWidth}px;--lv-windowed-row-height:${table.rowHeight}px`}
               >
                 ${this.resizeGuide >= 0 ? html`<span class="resize-guide" style=${`--lv-windowed-resize-guide-x:${this.resizeGuide}px`}></span>` : nothing}
-                <div class="head" role="row">
+                <div class="head" role="row" aria-rowindex="1">
                   ${columns.map((column) => html`
-                    <div class=${`header-cell ${column.align === 'right' ? 'right' : ''}`} role="columnheader">
-                      <button type="button" title=${column.label || column.key} @click=${() => this.sortColumn(table, column)}>
+                    <div class=${`header-cell ${column.align === 'right' ? 'right' : ''}`} role="columnheader" aria-sort=${sort.key === column.key ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>
+                      <button type="button" title=${column.label || column.key} ?disabled=${column.sortable === false} @click=${() => this.sortColumn(table, column)}>
                         <span class="header-label">${column.label || column.key}</span>
                         <span class="sort">${sortMarker(table.sort, column.key)}</span>
                       </button>
@@ -677,7 +690,7 @@ class WindowedTable extends LitElement {
                 <div class="canvas" role="rowgroup" style=${`height:${Math.max(table.rowHeight, availableRows * table.rowHeight)}px`}>
                   ${visibleRows.map((slot) => slot.row
                     ? html`
-                      <div class="row" role="row" style=${`top:${slot.index * table.rowHeight}px`}>
+                      <div class="row" role="row" aria-rowindex=${slot.index + 2} style=${`top:${slot.index * table.rowHeight}px`}>
                         ${columns.map((column) => html`
                           <div class=${`cell ${column.align === 'right' ? 'right' : ''}`} role="cell" title=${slot.row?.[column.key] == null || slot.row?.[column.key] === '' ? 'No value' : cellLabel(slot.row?.[column.key], column)}>
                             ${renderCell(slot.row?.[column.key], column)}
@@ -686,7 +699,7 @@ class WindowedTable extends LitElement {
                       </div>
                     `
                     : html`
-                      <div class="row" role="row" aria-busy="true" style=${`top:${slot.index * table.rowHeight}px`}>
+                      <div class="row" role="row" aria-rowindex=${slot.index + 2} aria-busy="true" style=${`top:${slot.index * table.rowHeight}px`}>
                         ${columns.map((column) => html`<div class=${`cell ${column.align === 'right' ? 'right' : ''}`} role="cell"><span class="skeleton"></span></div>`)}
                       </div>
                     `)}

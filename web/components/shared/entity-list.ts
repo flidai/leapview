@@ -306,6 +306,7 @@ const entityListStyles = `
     align-items: center;
     gap: var(--base-size-4);
     border: 0;
+    padding: 0;
     border-radius: var(--lv-radius-default);
     background: transparent;
     color: inherit;
@@ -328,13 +329,24 @@ const entityListStyles = `
   }
 
   .entity-list-sort-button.is-right {
-    justify-content: flex-end;
+    flex-direction: row-reverse;
+    justify-content: flex-start;
     width: 100%;
   }
 
   .entity-list-sort-button.is-center {
+    position: relative;
     justify-content: center;
     width: 100%;
+    padding-inline: calc(var(--base-size-12) + var(--base-size-4));
+    box-sizing: border-box;
+  }
+
+  .entity-list-sort-button.is-center .entity-list-sort-indicator {
+    position: absolute;
+    inset-inline-end: 0;
+    top: 50%;
+    transform: translateY(-50%);
   }
 
   .entity-list-sort-indicator {
