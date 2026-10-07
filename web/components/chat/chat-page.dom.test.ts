@@ -991,6 +991,13 @@ for (const createNew of [false, true]) {
       expect(membership.pageId).toBe(createNew ? 'overview' : 'details')
       expect(membership.copy).toEqual({ id: 'imported-chart-component', pageId: createNew ? 'overview' : 'details' })
       expect(membership.href).toContain(`page=${createNew ? 'overview' : 'details'}`)
+      if (!createNew) {
+        await picker.getByRole('button', { name: 'Done', exact: true }).click()
+        await page.getByRole('button', { name: 'Remove from dashboard', exact: true }).waitFor()
+        expect(await page.getByRole('button', { name: 'Add to dashboard', exact: true }).count()).toBe(0)
+        expect(await page.locator('lv-chat-visual-panel').count()).toBe(0)
+        return
+      }
       await page.locator('lv-chat-composer').evaluate((element: any) => element.setDraft('Show margin by product', false))
       await picker.getByRole('button', { name: 'Add another visual' }).click()
       await page.locator('div.dashboard-destination').waitFor()
