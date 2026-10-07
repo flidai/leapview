@@ -114,8 +114,11 @@ func (k *KamalEffects) kamal(ctx context.Context, release Release, args ...strin
 	if err != nil {
 		return err
 	}
-	argv := []string{"exec", "ruby", "-r", "./maintenance_adapter.rb", "-S", "kamal", "--config-file", "deploy.yml", "--version", release.Revision, "--skip-hooks"}
-	_, err = k.command(ctx, "bundle", append(argv, args...), env)
+	// Thor resolves the command before its options. Placing --version before
+	// the subcommand selects Kamal's root help/version parser instead.
+	argv := append([]string{"exec", "ruby", "-r", "./maintenance_adapter.rb", "-S", "kamal"}, args...)
+	argv = append(argv, "--config-file", "deploy.yml", "--version", release.Revision, "--skip-hooks")
+	_, err = k.command(ctx, "bundle", argv, env)
 	return err
 }
 func (k *KamalEffects) projection(ctx context.Context, release Release) (renderedProfile, error) {
@@ -488,9 +491,16 @@ func waitPublishedReadiness(ctx context.Context, client *http.Client, endpoint s
 	// persisted route restoration can finish later, within this phase's deadline.
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	var lastFailure error
+	deadlineError := func() error {
+		if lastFailure != nil {
+			return fmt.Errorf("published proxy readiness failed (%v): %w", lastFailure, ctx.Err())
+		}
+		return fmt.Errorf("published proxy readiness failed: %w", ctx.Err())
+	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("published proxy readiness failed: %w", err)
+			return deadlineError()
 		}
 		response, err := client.Do(request)
 		if err == nil {
@@ -498,10 +508,13 @@ func waitPublishedReadiness(ctx context.Context, client *http.Client, endpoint s
 			if response.StatusCode == http.StatusOK {
 				return ctx.Err()
 			}
+			lastFailure = fmt.Errorf("HTTP status %d", response.StatusCode)
+		} else {
+			lastFailure = err
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("published proxy readiness failed: %w", ctx.Err())
+			return deadlineError()
 		case <-ticker.C:
 		}
 	}

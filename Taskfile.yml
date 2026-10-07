@@ -1738,6 +1738,12 @@ tasks:
       - bundle exec ruby config_test.rb
       - bundle exec ruby maintenance_test.rb
 
+  managed:kamal:transport-test:
+    desc: Exercise pinned Kamal, Docker and TLS in isolated namespaces (requires sudo; transport evidence only)
+    cmds:
+      - python3 deploy/managed/nixos/tests/kamal_transport_contract_test.py
+      - bash deploy/managed/nixos/tests/run-kamal-transport.sh
+
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures
     cmds:

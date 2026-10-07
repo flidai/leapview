@@ -72,6 +72,37 @@
       };
       packages.${system} = {
         port-probe = import ./tests/port-probe.nix { inherit pkgs; };
+        kamal-transport-predecessor = import ./tests/kamal-transport-image.nix { inherit pkgs; };
+        kamal-transport-candidate = import ./tests/kamal-transport-image.nix {
+          inherit pkgs;
+          revision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        };
+        kamal-transport-proxy = pkgs.dockerTools.pullImage {
+          imageName = "basecamp/kamal-proxy";
+          imageDigest = "sha256:826a6f66c6ba26ac26197ac8755804403c9bb617b90cfac25c7972154c5328ab";
+          hash = "sha256-TDOr33IYV0+TmNBIgepu1S7dhYnYwvVkUnatp+r3QOQ=";
+          finalImageName = "basecamp/kamal-proxy";
+          finalImageTag = "v0.9.2";
+          os = "linux";
+          arch = "amd64";
+        };
+        kamal-transport-tools = pkgs.symlinkJoin {
+          name = "leapview-kamal-transport-tools";
+          paths = with pkgs; [
+            distribution
+            openssh
+            openssl
+            ruby
+            bundler
+            python3
+            iproute2
+            iptables
+            util-linux
+            curl
+            coreutils
+            bash
+          ];
+        };
         boot-test = import ./tests/boot.nix {
           inherit pkgs;
           modules = self.nixosModules;

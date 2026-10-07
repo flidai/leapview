@@ -93,6 +93,17 @@ class ManagedKamalMaintenanceTest < Minitest::Test
     assert_equal "dash.example.com", options.fetch(:"health-check-host")
   end
 
+  def test_controller_command_order_reaches_the_pinned_kamal_subcommand
+    output, error, status = Open3.capture3(RbConfig.ruby, "-W0", "-r", File.join(__dir__, "maintenance_adapter.rb"), "-S", "kamal", "proxy", "reboot", "--help", "--config-file", "deploy.yml", "--version", "c" * 40, "--skip-hooks")
+    assert status.success?, error
+    assert_includes output, "kamal proxy reboot"
+    # The old ordering was accepted by command doubles but Thor interpreted it
+    # as root help. Preserve the real parser failure that the live fixture found.
+    old_output, old_error, old_status = Open3.capture3(RbConfig.ruby, "-W0", "-r", File.join(__dir__, "maintenance_adapter.rb"), "-S", "kamal", "--config-file", "deploy.yml", "--version", "c" * 40, "--skip-hooks", "proxy", "reboot", "--confirmed")
+    refute old_status.success?
+    assert_includes old_output + old_error, '"kamal help" was called with arguments'
+  end
+
   def test_publication_requires_explicit_durable_true
     subject = config
     File.write("gate.json", JSON.generate(publish: true))

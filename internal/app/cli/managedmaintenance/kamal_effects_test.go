@@ -226,7 +226,8 @@ func TestKamalCloseIngressRecreatesMissingProxyWithInheritedLock(t *testing.T) {
 		if bin == "docker" {
 			return d.docker(args)
 		}
-		if bin != "bundle" || !reflect.DeepEqual(args[len(args)-3:], []string{"proxy", "reboot", "--confirmed"}) {
+		want := []string{"exec", "ruby", "-r", "./maintenance_adapter.rb", "-S", "kamal", "proxy", "reboot", "--confirmed", "--config-file", "deploy.yml", "--version", k.Request.Predecessor.Revision, "--skip-hooks"}
+		if bin != "bundle" || !reflect.DeepEqual(args, want) {
 			t.Fatalf("unexpected maintenance command: %s %v", bin, args)
 		}
 		gate, err := os.ReadFile(filepath.Join(k.Profile.StateRoot, "ingress.json"))
@@ -279,7 +280,8 @@ func TestKamalRollbackBootUsesRetainedPredecessorAndVerifiesPreparedIdentity(t *
 		if bin == "docker" {
 			return d.docker(args)
 		}
-		if bin != "bundle" || !reflect.DeepEqual(args[len(args)-2:], []string{"app", "boot"}) {
+		want := []string{"exec", "ruby", "-r", "./maintenance_adapter.rb", "-S", "kamal", "app", "boot", "--config-file", "deploy.yml", "--version", k.Request.Predecessor.Revision, "--skip-hooks"}
+		if bin != "bundle" || !reflect.DeepEqual(args, want) {
 			t.Fatalf("rollback attempted unsupported mutation: %s %v", bin, args)
 		}
 		values := strings.Join(env, "\n")
