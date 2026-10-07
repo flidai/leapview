@@ -47,10 +47,9 @@ export async function assertExploreTablePresentationReset(page: Page): Promise<v
   }
   expect((await header.boundingBox())!.width).toBe(220)
   await drag()
-  await page.evaluate(async () => {
+  await explorer.evaluate(async (element: any) => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-    const explorer = document.querySelector('#reset-table') as any
-    const spec = { ...explorer.dataExplorer.explore.command.spec, table: { columns: [{ field: 'orders.status', width: 180 }] } }
+    const spec = { ...element.dataExplorer.explore.command.spec, table: { columns: [{ field: 'orders.status', width: 180 }] } }
     mergePatch({ savedExplorations: { current: { revision: { revisionId: 'revision-2' }, spec } }, dataExplorer: { explore: { command: { spec } } } })
   })
   await page.waitForFunction(() => {
@@ -65,7 +64,7 @@ export async function assertExploreTablePresentationReset(page: Page): Promise<v
   expect((await header.boundingBox())!.width).toBe(180)
 
   await drag()
-  await page.evaluate(async () => {
+  await explorer.evaluate(async () => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
     mergePatch({ dataExplorer: { explore: { result: { error: 'Query failed' }, status: { state: 'error' } } } })
   })
