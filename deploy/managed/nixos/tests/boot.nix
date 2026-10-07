@@ -360,7 +360,7 @@ pkgs.testers.runNixOSTest {
           assert previous == "${targets.databaseUpdate.system.build.toplevel}"
           operator.succeed("nix copy --to ssh://root@192.168.1.2 ${unconfirmedDatabaseActivation} --no-check-sigs", timeout=120)
           out = operator.fail(
-              "ssh root@192.168.1.2 ${unconfirmedDatabaseActivation}/activate-rs activate ${unconfirmedDatabaseActivation} --profile-path /nix/var/nix/profiles/system --temp-path /tmp/deploy-rs-managed-update-test --confirm-timeout 2 --magic-rollback --auto-rollback",
+              "ssh root@192.168.1.2 ${unconfirmedDatabaseActivation}/activate-rs activate ${unconfirmedDatabaseActivation} --profile-path /nix/var/nix/profiles/system --temp-path /tmp/deploy-rs-managed-update-test --confirm-timeout 2 --magic-rollback --auto-rollback 2>&1",
               timeout=60,
           )
           assert "Timeout elapsed for confirmation" in out, out
