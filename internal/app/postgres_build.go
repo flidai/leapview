@@ -966,7 +966,7 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 			return preparedReadiness(checkCtx, platform.health)
 		}
 		gate := newMaintenanceAdmission(buildinfo.Current().Revision, prepare, runtimeLifecycle.startPreparedWorkers, runtimeLifecycle.Stop)
-		application.maintenance = gate
+		application.lifecycle.maintenance = gate
 		application.handler = gate.wrap(handler, func(checkCtx context.Context) error { return preparedReadiness(checkCtx, platform.health) })
 	}
 	transitionExecute := func(transitionCtx context.Context, request AccessTransitionExecutionRequest) (AccessTransitionExecutionResult, error) {

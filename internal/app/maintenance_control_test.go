@@ -21,7 +21,7 @@ import (
 
 func TestMaintenanceControlBindsRevisionAndOperation(t *testing.T) {
 	gate := newMaintenanceAdmission("revision", func(context.Context) error { return nil }, func(context.Context) error { return nil }, func(context.Context) error { return nil })
-	application := &Application{maintenance: gate}
+	application := &Application{lifecycle: &applicationLifecycleOwner{maintenance: gate}}
 	handler := application.MaintenanceHandler()
 	operation := "sha256:" + strings.Repeat("a", 64)
 	invoke := func(path, revision, operation string) int {
@@ -95,7 +95,7 @@ func TestMaintenanceControllerKilledAfterOpenExpiresWork(t *testing.T) {
 		}
 		return nil
 	})
-	server := &http.Server{Handler: (&Application{maintenance: gate}).MaintenanceHandler()}
+	server := &http.Server{Handler: (&Application{lifecycle: &applicationLifecycleOwner{maintenance: gate}}).MaintenanceHandler()}
 	go server.Serve(listener)
 	defer server.Close()
 	command := exec.Command(os.Args[0], "-test.run=^TestMaintenanceControllerKilledAfterOpenExpiresWork$")

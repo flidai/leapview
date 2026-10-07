@@ -22,10 +22,10 @@ type maintenanceControlRequest struct {
 // Filesystem ownership is the local operator boundary; no TCP control route is
 // added to the public router. Every mutation independently binds the process SHA.
 func (a *Application) MaintenanceHandler() http.Handler {
-	if a == nil || a.maintenance == nil {
+	if a == nil || a.lifecycle == nil || a.lifecycle.maintenance == nil {
 		return nil
 	}
-	g := a.maintenance
+	g := a.lifecycle.maintenance
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/status" {
 			w.Header().Set("Content-Type", "application/json")
