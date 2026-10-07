@@ -81,7 +81,7 @@ function routeDomain(path) {
   return 'shared'
 }
 
-export function collectFeatures({ texts, openapi, visuals, agentManifest, cliManifest }) {
+export function collectFeatures({ texts, openapi, visuals, agentManifest, cliManifest, controllerCatalogs = [] }) {
   const features = [], ids = new Set(), limitations = []
   function add(kind, name, source, domain = domainFor(source), detail = {}) {
     if (typeof name !== 'string' || !name.trim()) throw new Error(`invalid ${kind} name`)
@@ -161,11 +161,105 @@ export function collectFeatures({ texts, openapi, visuals, agentManifest, cliMan
         { runnable: command.runnable, effect: command.effect, confirmation: command.confirmation })
     }
   } else limitations.push('Missing runtime CLI catalog: run task cli-docs:generate, then regenerate this inventory.')
+  const controllerVariants = new Set()
+  for (const { manifest, sha256: catalogSHA256 } of controllerCatalogs) {
+    validateControllerCatalog(manifest)
+    const { variant } = manifest.build
+    if (controllerVariants.has(variant)) throw new Error(`duplicate controller catalog variant: ${variant}`)
+    if (!/^[a-f0-9]{64}$/.test(catalogSHA256)) throw new Error('invalid controller catalog checksum')
+    controllerVariants.add(variant)
+    for (const command of manifest.commands) {
+      add('controller-command', `${['leapviewctl', ...command.path].join(' ')} [${variant}]`, 'cmd/leapviewctl/main.go', 'lifecycle',
+        { ...command, build: manifest.build, catalogSHA256, scope: manifest.scope })
+    }
+  }
+  for (const variant of ['standalone', 'host-payload']) {
+    if (!controllerVariants.has(variant)) limitations.push(`Missing controller catalog: ${variant}; run task audit:controller-catalogs, then regenerate this inventory.`)
+  }
   limitations.push('Static CLI Uses are source declarations; the runtime manifest resolves reachable parent paths.',
-    'leapviewctl and hostinstaller have static declarations only; their full constructed command trees need separate runtime inventories.',
+    'Controller catalogs inspect the explicit constructor tree without execution; Cobra implicit help/completion commands are excluded. Handler presence includes help callbacks and does not classify effects.',
+    'Controller build catalogs cover their recorded OS/architecture; they do not establish execution or equivalence on other platforms.',
     'Public-site routes are source literals; TestRouteInventory covers the main application.',
     'Source presence and test registration do not establish feature execution or exhaustive behavior coverage.')
   return { features: features.sort((a, b) => a.id.localeCompare(b.id, 'en')), limitations }
+}
+
+export function validateControllerCatalog(manifest) {
+  const fail = reason => { throw new Error(`invalid controller catalog: ${reason}`) }
+  const token = value => typeof value === 'string' && value.length > 0 && !/\s/.test(value)
+  const checksum = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+  const keys = (object, allowed) => object && typeof object === 'object' && Object.keys(object).every(key => allowed.includes(key))
+  if (manifest?.schemaVersion !== 1 || manifest.product !== 'leapviewctl' || manifest.scope !== 'constructed-explicit-commands') fail('schema/product/scope')
+  const build = manifest.build, source = manifest.source
+  if (!build || build.goos !== 'linux' || !['amd64', 'arm64'].includes(build.goarch) || !Array.isArray(build.tags)) fail('build target')
+  if (!keys(build, ['variant', 'goos', 'goarch', 'cgoEnabled', 'tags'])) fail('unsafe build metadata')
+  if (!((build.variant === 'standalone' && build.cgoEnabled === false && build.tags.length === 0) ||
+    (build.variant === 'host-payload' && build.cgoEnabled === true && JSON.stringify(build.tags) === '["duckdb_arrow"]'))) fail('unshipped build variant')
+  if (!source || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source.commit) || typeof source.workingTreeStatus !== 'string' ||
+    !checksum(source.trackedDiffSHA256) || !checksum(source.sourceFilesSHA256)) fail('source identity')
+  if (!Array.isArray(manifest.commands) || manifest.commands.length === 0) fail('empty command tree')
+  const paths = new Map()
+  for (const command of manifest.commands) {
+    if (!keys(command, ['path', 'pathText', 'use', 'aliases', 'hidden', 'effectiveHidden', 'hasHandler', 'disableFlagParsing', 'flags', 'inheritedFlags'])) fail('unsafe command metadata')
+    if (!Array.isArray(command.path) || !command.path.every(token) || command.pathText !== command.path.join(' ')) fail('command path')
+    if (paths.has(command.pathText)) fail(`duplicate command path ${command.pathText}`)
+    paths.set(command.pathText, command)
+    if (typeof command.use !== 'string' || command.use.split(/\s/)[0] !== (command.path.at(-1) ?? 'leapviewctl')) fail('command use')
+    for (const field of ['hidden', 'effectiveHidden', 'hasHandler', 'disableFlagParsing']) {
+      if (typeof command[field] !== 'boolean') fail(`command ${field}`)
+    }
+    if (!Array.isArray(command.aliases) || !command.aliases.every(token) || new Set(command.aliases).size !== command.aliases.length) fail('command aliases')
+    for (const field of ['flags', 'inheritedFlags']) {
+      if (!Array.isArray(command[field])) fail(`command ${field}`)
+      const names = new Set()
+      for (const flag of command[field]) {
+        if (!flag || Object.keys(flag).some(key => !['name', 'shorthand', 'type', 'hidden', 'required'].includes(key)) ||
+          !token(flag.name) || !token(flag.type) || typeof flag.shorthand !== 'string' || flag.shorthand.length > 1 ||
+          typeof flag.hidden !== 'boolean' || typeof flag.required !== 'boolean' || names.has(flag.name)) fail('unsafe or malformed flag metadata')
+        names.add(flag.name)
+      }
+    }
+  }
+  if (!paths.has('')) fail('missing root')
+  for (const command of manifest.commands) {
+    const parent = command.path.length ? paths.get(command.path.slice(0, -1).join(' ')) : null
+    if (command.path.length && !parent) fail('missing parent')
+    if (command.effectiveHidden !== (command.hidden || (parent?.effectiveHidden ?? false))) fail('effective visibility')
+  }
+}
+
+export function sourceFilesSHA256(root) {
+  const paths = git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z').split('\0').filter(Boolean)
+  const rows = inventoryFiles(root, paths).sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)))
+  return sha256(rows.map(row => `${row.path}\0${row.state}\0${row.sha256 ?? ''}\n`).join(''))
+}
+
+export function checkoutSnapshot(root) {
+  return { commit: git(root, 'rev-parse', 'HEAD').trim(), workingTreeStatus: git(root, 'status', '--porcelain=v1', '-z'),
+    trackedDiffSHA256: sha256(git(root, 'diff', '--no-ext-diff', '--binary', 'HEAD')), sourceFilesSHA256: sourceFilesSHA256(root) }
+}
+
+export function loadControllerCatalogs(directory, snapshot) {
+  const catalogs = [], missingVariants = []
+  for (const variant of ['standalone', 'host-payload']) {
+    const path = join(directory, `leapviewctl-${variant}.json`)
+    let stat
+    try { stat = lstatSync(path) } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+      missingVariants.push(variant)
+      continue
+    }
+    if (!stat.isFile()) throw new Error(`invalid controller catalog file: ${path}`)
+    const bytes = readFileSync(path)
+    const manifest = JSON.parse(bytes)
+    validateControllerCatalog(manifest)
+    if (manifest.build.variant !== variant) throw new Error(`controller catalog variant does not match filename: ${path}`)
+    for (const field of ['commit', 'workingTreeStatus', 'trackedDiffSHA256', 'sourceFilesSHA256']) {
+      if (manifest.source[field] !== snapshot[field]) throw new Error(`stale controller catalog ${path}: source ${field} differs; regenerate it`)
+    }
+    catalogs.push({ manifest, path, sha256: sha256(bytes) })
+  }
+  return { catalogs, missingVariants }
 }
 
 export function attachHistoricalEvidence(features, previous) {
@@ -186,17 +280,16 @@ function git(root, ...args) {
 }
 function main() {
   const { values } = parseArgs({ options: {
-    root: { type: 'string' }, out: { type: 'string' }, 'previous-ledger': { type: 'string' }, help: { type: 'boolean' },
+    root: { type: 'string' }, out: { type: 'string' }, 'previous-ledger': { type: 'string' }, 'controller-catalog-dir': { type: 'string' }, help: { type: 'boolean' },
   } })
   if (values.help) {
-    console.log('Usage: node scripts/audit_inventory.mjs [--root REPO] [--out DIR] [--previous-ledger JSON]\nGenerate files, feature declarations, component CI registration, and a summary. Runs no tests.\nPrepare with bun install --frozen-lockfile; task cli-docs:generate supplies the optional runtime CLI catalog.')
+    console.log('Usage: node scripts/audit_inventory.mjs [--root REPO] [--out DIR] [--previous-ledger JSON] [--controller-catalog-dir DIR]\nGenerate files, feature declarations, component CI registration, and a summary. Runs no tests.\nPrepare with bun install --frozen-lockfile; task cli-docs:generate supplies the optional runtime CLI catalog; task audit:controller-catalogs supplies both shipped controller build variants.')
     return
   }
   const root = resolve(values.root ?? dirname(dirname(fileURLToPath(import.meta.url))))
   const out = resolve(values.out ?? join(root, '.tmp/audit/inventory'))
-  const head = git(root, 'rev-parse', 'HEAD').trim()
-  const workingTreeStatus = git(root, 'status', '--porcelain=v1', '-z')
-  const trackedDiffSHA256 = sha256(git(root, 'diff', '--no-ext-diff', '--binary', 'HEAD'))
+  const snapshot = checkoutSnapshot(root)
+  const { commit: head, workingTreeStatus, trackedDiffSHA256, sourceFilesSHA256: sourceFilesChecksum } = snapshot
   const paths = git(root, 'ls-files', '-z').split('\0').filter(Boolean)
   const files = inventoryFiles(root, paths)
   const texts = Object.fromEntries(files.filter(row => row.state === 'present' && /\.go$|\.schema\.json$/.test(row.path))
@@ -205,8 +298,11 @@ function main() {
   const cliPath = 'docs/reference/cli/manifest.json'
   const cliBytes = existsSync(join(root, cliPath)) ? readFileSync(join(root, cliPath)) : undefined
   const cliManifest = cliBytes ? JSON.parse(cliBytes) : undefined
+  const controllerInputs = loadControllerCatalogs(resolve(values['controller-catalog-dir'] ?? join(root, '.tmp/audit/controller-catalogs')),
+    snapshot)
   const catalogs = collectFeatures({ texts, openapi: parse(readFileSync(join(root, 'docs/api/openapi.yaml'), 'utf8')),
-    visuals: readJSON('docs/visuals/catalog.json'), agentManifest: readJSON('docs/reference/agent-tools/manifest.json'), cliManifest })
+    visuals: readJSON('docs/visuals/catalog.json'), agentManifest: readJSON('docs/reference/agent-tools/manifest.json'), cliManifest,
+    controllerCatalogs: controllerInputs.catalogs })
   const previousBytes = values['previous-ledger'] ? readFileSync(resolve(values['previous-ledger'])) : undefined
   const features = (previousBytes ? attachHistoricalEvidence(catalogs.features, JSON.parse(previousBytes)) : catalogs.features)
     .map(feature => ({ ...feature, sourcePresent: existsSync(join(root, feature.source)) }))
@@ -216,7 +312,7 @@ function main() {
     componentTestFiles: paths.filter(path => path.startsWith('web/components/') && path.endsWith('.test.ts')) })
   const modules = paths.filter(path => /(^|\/)go\.mod$/.test(path))
   const summary = {
-    schemaVersion: 1, sourceCommit: head, workingTreeStatus, trackedDiffSHA256,
+    schemaVersion: 1, sourceCommit: head, workingTreeStatus, trackedDiffSHA256, sourceFilesSHA256: sourceFilesChecksum,
     fileManifestSHA256: sha256(JSON.stringify(files)), trackedFiles: files.length,
     filesByState: counts(files.map(row => row.state)), filesByCategory: counts(files.map(row => row.category)),
     filesByDomain: counts(files.map(row => row.domain)), goModules: sorted(modules),
@@ -226,12 +322,15 @@ function main() {
     historicalLedgerSHA256: previousBytes ? sha256(previousBytes) : null,
     historicalLedgerPath: previousBytes ? resolve(values['previous-ledger']) : null,
     runtimeCLIManifestSHA256: cliBytes ? sha256(cliBytes) : null,
+    controllerCatalogs: controllerInputs.catalogs.map(({ manifest, path, sha256 }) => ({ path, sha256, build: manifest.build, scope: manifest.scope, commandCount: manifest.commands.length })),
+    missingControllerVariants: controllerInputs.missingVariants,
     commandInputs: { taskfileSHA256: sha256(taskfileBytes), packageJSONSHA256: sha256(packageBytes) },
     limitations: [...catalogs.limitations, 'Historical receipts retain their original identities and do not set current dispositions.',
       'Frontend component registration uses the maintained Taskfile reachability audit. Other test/command mappings remain to be reviewed.'],
   }
   if (git(root, 'rev-parse', 'HEAD').trim() !== head || git(root, 'status', '--porcelain=v1', '-z') !== workingTreeStatus ||
-    sha256(git(root, 'diff', '--no-ext-diff', '--binary', 'HEAD')) !== trackedDiffSHA256) {
+    sha256(git(root, 'diff', '--no-ext-diff', '--binary', 'HEAD')) !== trackedDiffSHA256 || sourceFilesSHA256(root) !== sourceFilesChecksum ||
+    controllerInputs.catalogs.some(input => sha256(readFileSync(input.path)) !== input.sha256)) {
     throw new Error('source changed while generating the inventory; rerun on a stable checkout')
   }
   mkdirSync(out, { recursive: true })

@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
-	"github.com/flidai/leapview/internal/app/cli/hostinstall"
+	"github.com/flidai/leapview/internal/app/cli/ctl"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func run(ctx context.Context) error {
 		root = filepath.Dir(executable)
 	}
 	dockerBin := os.Getenv("LEAPVIEWCTL_DOCKER_BIN")
-	controller, err := composectl.New(composectl.Options{
+	command, err := ctl.NewCommand(ctx, composectl.Options{
 		Root:      root,
 		DockerBin: dockerBin,
 		Stdin:     os.Stdin,
@@ -42,13 +42,5 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	command := composectl.Command(ctx, controller)
-	command.AddCommand(hostinstall.Command(ctx, hostinstall.CommandOptions{
-		Root:      root,
-		DockerBin: dockerBin,
-		Stdin:     os.Stdin,
-		Stdout:    os.Stdout,
-		Stderr:    os.Stderr,
-	}))
 	return command.Execute()
 }
