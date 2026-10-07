@@ -95,6 +95,7 @@ test('windowed tables expose loading progress and stale state', async () => {
         totalRows: 10,
         availableRows: 10,
         loading: true,
+        showHeader: false,
         progressPercent: 42,
         stale: true,
         blocks: { a: { start: 0, requestSeq: 1, resetVersion: 1, sort: {}, rows: [{ id: '1' }] } },
@@ -104,10 +105,13 @@ test('windowed tables expose loading progress and stale state', async () => {
       const root = element.shadowRoot!
       return {
         busy: root.querySelector('.shell')?.getAttribute('aria-busy'),
+        headerCount: root.querySelectorAll('[role="columnheader"]').length,
+        rowCount: root.querySelector('[role="table"]')?.getAttribute('aria-rowcount'),
+        firstRowIndex: root.querySelector('.row')?.getAttribute('aria-rowindex'),
         footer: root.querySelector('.footer')?.textContent?.replace(/\s+/g, ' ').trim(),
       }
     })
-    expect(state).toEqual({ busy: 'true', footer: '1-1 of 10 · loading 42% · stale' })
+    expect(state).toEqual({ busy: 'true', headerCount: 0, rowCount: '10', firstRowIndex: '1', footer: '1-1 of 10 · loading 42% · stale' })
   } finally {
     await page.close()
   }
