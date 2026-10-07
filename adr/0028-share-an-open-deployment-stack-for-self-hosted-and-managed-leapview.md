@@ -4,13 +4,15 @@ Status: proposed
 
 Decision date: 2026-09-28
 
-Review: target architecture agreed; record remains proposed pending PR review
+Review: [PR #744](https://github.com/flidai/leapview/pull/744) approved at its final
+head and merged on 2026-10-07; architecture acceptance remains a separate decision
 
 Proposal date: 2026-09-25
 
-Last revised: 2026-10-05
+Last revised: 2026-10-07
 
-Implementation: pending; this proposal does not establish production readiness
+Implementation: in progress; combined profile qualification and production
+adoption remain pending
 
 Deciders: LeapView maintainers
 
@@ -52,8 +54,10 @@ requiring candidate-first process overlap to allowing a bounded maintenance
 interruption. ADR-0027's proposed single-supervised-process stop/start lifecycle is
 within this boundary, but its component evidence does not qualify the combined
 managed profile. The deployment completion roadmap is approved; this amendment asks
-reviewers to update its release gate. ADR-0028 acceptance and this amendment remain
-pending review, and neither enables production deployment.
+reviewers to update its release gate. The amendment PR received independent
+approval and merged on 2026-10-07 while explicitly retaining this record's
+proposed status. ADR-0028 architecture acceptance, implementation qualification
+and production adoption remain separate gates.
 
 [`serve`](../internal/app/cli/serve.go) takes the exclusive
 [`LEAPVIEW_HOME` instance lock](../internal/platform/locking/lock.go) before

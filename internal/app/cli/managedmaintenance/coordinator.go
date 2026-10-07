@@ -15,7 +15,9 @@ import (
 // runtime, worker dependency/role/configuration health and credential key coverage.
 // OpenWork is the explicit work authorization boundary: it starts workers and
 // keeps product HTTP closed on a partial startup failure. OpenIngress follows
-// successful running-worker health. Neither forward nor recovery restores data.
+// successful worker Start; runtime readiness is then checked through the proxy.
+// Prepared dependency health does not claim workers ran before authorization.
+// Neither forward nor recovery restores data.
 type Effects interface {
 	Preflight(context.Context) error
 	CloseAdmission(context.Context) error
