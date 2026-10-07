@@ -1168,6 +1168,18 @@ def _postgres_readiness_command(container_name: str) -> str:
     return "set -eu; " + "; ".join(checks)
 
 
+def _postgres_readiness_wait_command(container_name: str, docker_env: str) -> str:
+    # A separate shell keeps the probe's errexit active when its exit status is
+    # tested by `if`. Retain only one complete, successful two-role TLS probe.
+    probe = "sh -ec " + shlex.quote(_postgres_readiness_command(container_name))
+    return (
+        "set -eu; i=0; while [ \"$i\" -lt 60 ]; do i=$((i+1)); "
+        "if env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(container_name) +
+        " 2>/dev/null | grep -qx running; then if readiness=$(" + probe +
+        " 2>/dev/null); then printf '%s\\n' \"$readiness\"; exit 0; fi; fi; sleep 2; done; exit 1"
+    )
+
+
 def _compose_command(project_dir: str, docker_env: str) -> str:
     return (
         "env " + docker_env + " docker compose --project-name leapview --project-directory " + shlex.quote(project_dir) +
@@ -1373,12 +1385,7 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
     ))
     guest.run(postgres_start, timeout=120)
     guest.run("rm -f -- " + shlex.quote(fixture_dir + "/postgres.env"))
-    readiness = (
-        "set -eu; i=0; while [ \"$i\" -lt 60 ]; do i=$((i+1)); "
-        "if env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(postgres_name) +
-        " 2>/dev/null | grep -qx running; then if " + _postgres_readiness_command(postgres_name) +
-        " >/dev/null 2>&1; then " + _postgres_readiness_command(postgres_name) + "; exit 0; fi; fi; sleep 2; done; exit 1"
-    )
+    readiness = _postgres_readiness_wait_command(postgres_name, docker_env)
     role_probe = _record(evidence, "postgres-tls-role-probes-before-install.txt", guest.run(readiness, timeout=150))
     expected_probe = "\n".join(TLS_ROLE_EXPECTATIONS.values())
     if role_probe.decode("utf-8").strip() != expected_probe:
