@@ -12,6 +12,21 @@ import (
 
 var maintenanceOperationPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
+func (a *Application) configureMaintenance(revision string, runtime *runtimeLifecycle, health *health, checks ...func(context.Context) error) {
+	runtime.deferredWorkers = true
+	prepare := func(ctx context.Context) error {
+		for _, check := range checks {
+			if err := check(ctx); err != nil {
+				return err
+			}
+		}
+		return preparedReadiness(ctx, health)
+	}
+	gate := newMaintenanceAdmission(revision, prepare, runtime.startPreparedWorkers, runtime.Stop)
+	a.lifecycle.maintenance = gate
+	a.handler = gate.wrap(a.handler, func(ctx context.Context) error { return preparedReadiness(ctx, health) })
+}
+
 type maintenanceControlRequest struct {
 	Revision          string `json:"revision"`
 	Operation         string `json:"operation"`

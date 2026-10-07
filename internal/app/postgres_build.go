@@ -952,22 +952,11 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, refreshChanges, runtimeLifecycle}
 	application := newApplication(handler, components)
 	if cfg.MaintenanceSocket != "" {
-		runtimeLifecycle.deferredWorkers = true
-		prepare := func(checkCtx context.Context) error {
-			if err := bootstrap.Start(checkCtx); err != nil {
-				return err
-			}
-			if err := platform.workers.CheckPrepared(); err != nil {
-				return err
-			}
-			if err := credentialmodule.CheckSetup(checkCtx, graph.Bootstrap, instanceID, cfg.CredentialKeyringFile); err != nil {
-				return err
-			}
-			return preparedReadiness(checkCtx, platform.health)
-		}
-		gate := newMaintenanceAdmission(buildinfo.Current().Revision, prepare, runtimeLifecycle.startPreparedWorkers, runtimeLifecycle.Stop)
-		application.lifecycle.maintenance = gate
-		application.handler = gate.wrap(handler, func(checkCtx context.Context) error { return preparedReadiness(checkCtx, platform.health) })
+		application.configureMaintenance(buildinfo.Current().Revision, runtimeLifecycle, platform.health, bootstrap.Start,
+			func(context.Context) error { return platform.workers.CheckPrepared() },
+			func(ctx context.Context) error {
+				return credentialmodule.CheckSetup(ctx, graph.Bootstrap, instanceID, cfg.CredentialKeyringFile)
+			})
 	}
 	transitionExecute := func(transitionCtx context.Context, request AccessTransitionExecutionRequest) (AccessTransitionExecutionResult, error) {
 		if routes.deploymentModule == nil {
