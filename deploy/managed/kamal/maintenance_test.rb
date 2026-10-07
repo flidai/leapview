@@ -193,8 +193,72 @@ class ManagedKamalMaintenanceTest < Minitest::Test
       lock.flock(File::LOCK_EX)
       ENV["LEAPVIEW_MANAGED_LOCK_FD"] = lock.fileno.to_s
       ENV["LEAPVIEW_MANAGED_LOCK_PATH"] = File.join(@directory, "controller.lock")
-      assert_equal :mutated, subject.send(:modify, lock: true) { :mutated }
+      ENV.delete("LEAPVIEW_MANAGED_DEADLINE_UNIX_MS")
+      assert_raises(KeyError) { subject.send(:modify, lock: true) { flunk "unbounded mutation" } }
     end
+  end
+
+  def test_mutation_rejects_expired_and_unbounded_deadlines
+    [Time.now.to_i * 1000 - 1000, (Time.now.to_i + 25 * 60 * 60) * 1000].each do |deadline|
+      ENV["LEAPVIEW_MANAGED_DEADLINE_UNIX_MS"] = deadline.to_s
+      assert_raises(ArgumentError) { LeapViewManagedMaintenance.with_controller_deadline { flunk "invalid deadline admitted" } }
+    end
+  end
+
+  def test_mutation_rejects_a_shared_process_group
+    env = {"LEAPVIEW_MANAGED_DEADLINE_UNIX_MS" => ((Time.now.to_f + 30) * 1000).to_i.to_s}
+    code = "require #{File.join(__dir__, 'maintenance_adapter.rb').inspect}; LeapViewManagedMaintenance.with_controller_deadline { puts 'unsafe' }"
+    output, error, status = Open3.capture3(env, RbConfig.ruby, "-W0", "-e", code)
+    refute status.success?
+    assert_empty output
+    assert_includes error, "isolated process group"
+  end
+
+  def test_child_deadline_releases_inherited_lock_without_controller_cancellation
+    lock = File.open("controller.lock", File::RDWR | File::CREAT, 0o600)
+    lock.flock(File::LOCK_EX)
+    deadline = ((Time.now.to_f + 5) * 1000).to_i
+    env = {
+      "LEAPVIEW_MANAGED_LOCK_FD" => "3",
+      "LEAPVIEW_MANAGED_LOCK_PATH" => File.join(@directory, "controller.lock"),
+      "LEAPVIEW_MANAGED_DEADLINE_UNIX_MS" => deadline.to_s
+    }
+    code = <<~RUBY
+      require #{File.join(__dir__, 'maintenance_adapter.rb').inspect}
+      parent = Class.new do
+        def modify(lock: false)
+          raise 'native directory lock requested' if lock
+          yield
+        end
+      end
+      subject = Class.new(parent) { prepend LeapViewManagedMaintenance::ControllerLock }.new
+      subject.send(:modify, lock: true) do
+        $stdout.sync = true
+        puts 'mutation-started'
+        sleep 60
+      end
+    RUBY
+    Open3.popen3(env, RbConfig.ruby, "-W0", "-e", code, 3 => lock, pgroup: true) do |input, output, error, child|
+      input.close
+      begin
+        assert IO.select([output], nil, nil, 10), "child did not enter bounded mutation"
+        assert_equal "mutation-started\n", output.gets
+        # Model losing the controller's copy. The child alone now keeps flock.
+        lock.close
+        File.open("controller.lock", File::RDWR) do |contender|
+          refute contender.flock(File::LOCK_EX | File::LOCK_NB), "child dropped its operation lock"
+          assert child.join(8), "orphaned child retained lock beyond its own deadline"
+          assert child.value.signaled?, error.read
+          assert_equal Signal.list.fetch("KILL"), child.value.termsig
+          assert_operator Time.now.to_f * 1000, :<, deadline + 2000
+          assert contender.flock(File::LOCK_EX | File::LOCK_NB), "dead child retained controller lock"
+        end
+      ensure
+        Process.kill("KILL", -child.pid) if child.alive?
+      end
+    end
+  ensure
+    lock&.close unless lock&.closed?
   end
 
   def test_proxy_removal_is_exact_idempotent_and_preserves_docker_failures

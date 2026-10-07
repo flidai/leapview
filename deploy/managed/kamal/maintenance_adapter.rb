@@ -68,6 +68,27 @@ module LeapViewManagedMaintenance
     true
   end
 
+  def self.with_controller_deadline
+    deadline = Integer(ENV.fetch("LEAPVIEW_MANAGED_DEADLINE_UNIX_MS"), 10)
+    remaining = deadline.fdiv(1000) - Time.now.to_f
+    raise ArgumentError, "managed mutation requires a live bounded deadline" unless remaining.positive? && remaining <= 24 * 60 * 60
+    raise ArgumentError, "managed mutation requires an isolated process group" unless Process.getpgrp == Process.pid
+    # Go also cancels this process group. This independent watchdog remains when
+    # the controller itself is killed, so a stalled local SSH client cannot hold
+    # its inherited flock indefinitely. Remote commands still require the app's
+    # startup admission and home lock; killing this group is not a remote kill.
+    watchdog = Thread.new do
+      sleep remaining
+      Process.kill("KILL", -Process.pid)
+    end
+    begin
+      yield
+    ensure
+      watchdog.kill
+      watchdog.join
+    end
+  end
+
   module Configuration
     def initialize(...)
       super
@@ -126,7 +147,7 @@ module LeapViewManagedMaintenance
 
     def modify(lock: false, &block)
       LeapViewManagedMaintenance.require_controller_lock!
-      super(lock: false, &block)
+      LeapViewManagedMaintenance.with_controller_deadline { super(lock: false, &block) }
     end
   end
 end
