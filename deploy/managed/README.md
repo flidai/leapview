@@ -1,6 +1,6 @@
 # Managed deployment scaffold
 
-First implementation of the [target deployment architecture (ADR-0025, PR #744)](https://github.com/flidai/leapview/pull/744).
+First implementation of the [target deployment architecture (ADR-0028, PR #744)](https://github.com/flidai/leapview/pull/744).
 This is an **operator scaffold, not a qualified production installation**. It
 creates no live resources through CI. Keep using the existing deployment path
 until the lifecycle integration and recovery exercises below are complete.
@@ -276,24 +276,44 @@ and a loopback `/readyz` 503-to-200 transition. A rebuilt candidate and hosted
 guest run are still required to verify the new private-to-public proxy transition.
 This slice does not qualify the full enterprise lifecycle.
 
-The current shared application home permits one process owner. Ordinary Kamal
-replacement starts another container before stopping the old one. `serve` takes
-the exclusive home lock before app build, and `/readyz` requires an active runtime
-lease, so an overlapping candidate cannot become ready on the shared home. The
-owner-selected bounded-maintenance direction remains pending ADR review and
-qualification; it is not an accepted lifecycle contract. The previous stop-first
-rehearsal does not qualify that sequence. Preserve a restart rollback path and
-measure interruption. An old image is usable only while database and
-application-state compatibility still permits it; container retention is not a
-database downgrade mechanism.
+Every managed application revision mounts the same `LEAPVIEW_HOME`.
+[`serve`](../../internal/app/cli/serve.go) acquires the exclusive
+[`.instance.lock`](../../internal/platform/locking/lock.go) before building or
+starting the application; startup begins workers before opening the HTTP listener,
+and [`/readyz`](../../internal/app/health.go) checks an active runtime lease. The
+proposed ADR-0028 v1 lifecycle uses
+a serialized maintenance handoff for this shared-home owner: preflight the exact
+artifact and compatibility while the current release serves, close public and
+work admission, drain active effects and consumer leases, stop the predecessor,
+and confirm process exit and lock release before starting the candidate. Keep the
+candidate externally and internally admission-gated while it starts from committed
+state; verify readiness, worker ownership/health and credential state before
+reopening service. The startup ordering means qualification must show how work
+remains gated while workers initialize.
+
+This proposal changes the earlier candidate-overlap gate and remains subject to
+ADR review and qualification. Ordinary Kamal replacement may start a candidate
+before stopping the old container, so its normal sequence does not satisfy this
+shared-home contract. Do not assume undocumented Kamal hooks. The previous
+stop-first rehearsal is historical component evidence, not qualification of the
+full handoff. Record finite, measured phase and end-to-end interruption budgets;
+template timeout values are not an end-to-end service guarantee. Preflight
+failure/timeout or runner loss before closure leaves the predecessor serving. After closure begins,
+timeout or runner loss keeps admission closed for reconciliation; never start a
+second owner before exit and lock release. Compatible rollback uses the same
+handoff. An incompatible format requires its separately reviewed recovery
+procedure; container retention is not a database or credential downgrade
+mechanism.
 
 **Do not use this as a production `kamal deploy` runbook yet.** Kamal's ordinary image
-reference is `repository:version`. The adapter must verify the approved digest,
-reuse LeapView's compatibility/migration/target-binding checks, admit the configured
-physical pool and coordinate mutating workers before enabling releases. The current
-`leapviewctl` path is Compose-specific; invoking it over Kamal would introduce two
-container lifecycle owners. This scaffold intentionally adds no deploy/apply workflow
-or custom hooks that bypass those checks.
+reference is `repository:version`. A qualified adapter/operating sequence must verify
+the approved digest, reuse LeapView's compatibility/migration/target-binding checks,
+admit the configured physical pool, perform the stop-first owner/lock handoff, and
+coordinate worker and credential verification before reopening service. Demonstrate
+the sequence with operations supported by the pinned Kamal version; this scaffold
+does not claim custom hooks or a production adapter. The current `leapviewctl` path
+is Compose-specific; invoking it over Kamal would introduce two container lifecycle
+owners. No deploy/apply workflow bypassing those checks is included.
 
 The direct kamal-proxy TLS path has explicit readiness, buffering and timeout
 settings. Cloudflare, certificate renewal, long-lived `/updates`, reconnects,
