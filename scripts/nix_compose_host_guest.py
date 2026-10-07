@@ -944,22 +944,47 @@ def _remote_path(directory: str, name: str) -> str:
     return directory + "/" + name
 
 
-def _guest_package_setup(guest: SSHGuest, guest_os: str) -> None:
+def _guest_prerequisite(guest: SSHGuest, evidence: Path, stage: str, command: str, *, timeout: int) -> None:
+    # Use only for credential-free host prerequisites, before the PostgreSQL
+    # fixture exists. Keep general SSH/installer output private by default.
+    probe = (
+        "set +e; umask 077; log=$(mktemp) || exit 1; trap 'rm -f -- \"$log\"' EXIT; "
+        "( " + command + " ) >\"$log\" 2>&1; result=$?; "
+        "printf '%s\\n' \"$result\"; tail -c 65536 \"$log\"; exit 0"
+    )
+    try:
+        result = guest.run(probe, timeout=timeout)
+    except HostGuestError as exc:
+        raise HostGuestError(f"guest prerequisite {stage}: {exc}") from exc
+    status, separator, diagnostic = result.partition(b"\n")
+    if not separator or re.fullmatch(rb"[0-9]{1,3}", status) is None or int(status) > 255:
+        raise HostGuestError(f"guest prerequisite {stage} returned an invalid exit status")
+    _record(evidence, f"prerequisite-{stage}-exit-code.txt", status + b"\n")
+    _record(evidence, f"prerequisite-{stage}.log", diagnostic)
+    if int(status) != 0:
+        raise HostGuestError(f"guest prerequisite {stage} failed ({int(status)}); see retained prerequisite-{stage}.log")
+
+
+def _guest_package_setup(guest: SSHGuest, guest_os: str, *, evidence: Path) -> None:
     compose_package, extra_packages = {
         "ubuntu2404": ("docker-compose-v2", []),
         "debian13": ("docker-compose", ["docker-cli"]),
     }[guest_os]
     packages = ["ca-certificates", "docker.io", compose_package, *extra_packages, "openssl", "unattended-upgrades"]
     package_list = " ".join(shlex.quote(package) for package in packages)
-    command = (
-        "set +e; DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && "
-        "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends " + package_list +
-        " >/dev/null 2>&1 && systemctl enable --now docker >/dev/null 2>&1 && "
-        "docker version >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; "
-        "result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+    steps = (
+        ("apt-update", "DEBIAN_FRONTEND=noninteractive apt-get update"),
+        ("apt-install", "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends " + package_list),
+        ("docker-enable", "systemctl enable --now docker || { result=$?; journalctl -u docker --no-pager -n 50; exit \"$result\"; }"),
+        ("docker-version", "docker version"),
+        ("compose-version", "docker compose version"),
     )
-    if _one_line(guest.run(command, timeout=600), "guest package setup result") != "0":
-        raise HostGuestError("Nix-controller guest Docker and Compose fixture setup failed")
+    deadline = time.monotonic() + 600
+    for stage, command in steps:
+        remaining = int(deadline - time.monotonic())
+        if remaining <= 0:
+            raise HostGuestError(f"guest prerequisite {stage}: package setup timed out")
+        _guest_prerequisite(guest, evidence, stage, command, timeout=remaining)
 
 
 POSTGRES_PASSWORD_KEYS = {
@@ -1180,10 +1205,7 @@ def _host_install_command(*, mode: str, docker_env: str, controller_path: str, c
 
 
 def _bootstrap_prepare_command(bootstrap_path: str, docker_env: str) -> str:
-    return (
-        "set +e; env " + docker_env + " bash " + shlex.quote(bootstrap_path) +
-        " prepare-host >/dev/null 2>&1; result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
-    )
+    return "env " + docker_env + " bash " + shlex.quote(bootstrap_path) + " prepare-host"
 
 
 def _assert_no_secrets_in_evidence(evidence: Path, secrets_to_check: list[str]) -> None:
@@ -1549,7 +1571,7 @@ def _install_and_collect(args) -> dict:
         driver = "nix-archive" if args.install_mode == "nix-controller" else "source-bootstrap-linux.sh"
         bootstrap_sha = None
         if args.install_mode == "nix-controller":
-            _guest_package_setup(guest, args.guest_os)
+            _guest_package_setup(guest, args.guest_os, evidence=evidence)
         else:
             bootstrap_path = source_root / "deploy/host/bootstrap-linux.sh"
             bootstrap_info = bootstrap_path.lstat()
@@ -1571,13 +1593,14 @@ def _install_and_collect(args) -> dict:
             guest.run("chmod 600 /run/leapview/bootstrap.json")
             guest.run("cat > /run/leapview/image-reference", input_bytes=(args.image + "\n").encode())
             guest.run("chmod 600 /run/leapview/image-reference")
-            prepare_result = guest.run(
-                _bootstrap_prepare_command(paths["bootstrap"], docker_env),
+            _guest_prerequisite(
+                guest, evidence, "bootstrap-prepare", _bootstrap_prepare_command(paths["bootstrap"], docker_env),
                 timeout=900,
             )
-            if _one_line(prepare_result, "source bootstrap prepare-host result") != "0":
-                raise HostGuestError("source bootstrap prepare-host phase failed")
-            guest.run("set -eu; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl >/dev/null 2>&1")
+            _guest_prerequisite(
+                guest, evidence, "openssl-install",
+                "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl", timeout=30,
+            )
         guest.run("mkdir -m 700 -- " + shlex.quote(paths["payload"]))
         repo_digests, pulled_image_id, payload_sha = _pull_payload(
             guest, evidence, image_reference=args.image, docker_env=docker_env,
