@@ -936,7 +936,47 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	case "data":
 		surface := r.URL.Query().Get("surface")
 		if surface == "explore" {
-			page, explorer, ok := h.dataExplorerSignalsForURL(w, r, true)
+			// A resumed stream carries the current browser command. The original
+			// stream URL describes only the initial deep link, so replaying it
+			// would discard edits whenever the user returns to this tab.
+			var resumed struct {
+				Command  *projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
+				Agent    any                                 `json:"agent"`
+				Explorer *struct {
+					Explore struct {
+						Status struct {
+							State string `json:"state"`
+						} `json:"status"`
+					} `json:"explore"`
+					Preview struct {
+						Columns []any `json:"columns"`
+					} `json:"preview"`
+				} `json:"dataExplorer"`
+			}
+			_ = pagestream.ReadSignals(r, &resumed)
+			if resumed.Command != nil && resumed.Explorer != nil {
+				state := resumed.Explorer.Explore.Status.State
+				mounted := strings.TrimSpace(projectsignals.ValueOrZero(resumed.Command.ClientID)) != "" ||
+					state == "success" || state == "error" || state == "cancelled" || len(resumed.Explorer.Preview.Columns) > 0
+				if mounted {
+					// Commands deliver their own results. Resuming the idle page
+					// stream must preserve pending edits, results and saved-view drafts.
+					stream := pagestream.NewSignalStream(w, streamRequest)
+					if err := stream.Patch(pagestream.SignalPatch{"pageStreamRecovery": false}); err != nil {
+						return
+					}
+					stream.Wait(streamRequest.Context())
+					return
+				}
+			}
+			var page projectsignals.DataExplorerPageSignal
+			var explorer projectsignals.DataExplorerSignal
+			var ok bool
+			if resumed.Command != nil {
+				page, explorer, ok = h.dataExplorerSignalsForCommand(w, r, *resumed.Command)
+			} else {
+				page, explorer, ok = h.dataExplorerSignalsForURL(w, r, true)
+			}
 			if !ok {
 				return
 			}
@@ -947,6 +987,10 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
 			}
 			patch = projectui.DataExplorerBootstrapSignalsWithSavedExplorations(h.navigationCatalog(r), page, explorer, savedState, h.layout(r))
+			if resumed.Agent != nil {
+				delete(patch, "agent")
+				delete(patch, "agentVisuals")
+			}
 		} else if surface == "asset" {
 			if assetPatch, ok := h.assetBootstrap(w, r); ok {
 				patch = assetPatch

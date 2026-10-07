@@ -33,7 +33,10 @@ func TestRenderPageIncludesLiteralUpdatesInitMainAttrsAndBody(t *testing.T) {
 		`<main id="root" class="app-shell"`,
 		`/updates?route=test`,
 		`/assets/datastar.js?v=test`,
-		`data-init="@get(&#39;/updates?route=test&#39;, {openWhenHidden: true})"`,
+		`data-init="el._pagestreamAbort?.abort(); if (!document.hidden) { el._pagestreamAbort = new AbortController(); @get(&#39;/updates?route=test&#39;, {openWhenHidden: true, requestCancellation: el._pagestreamAbort}) }"`,
+		`data-on:visibilitychange__document=`,
+		`data-on:pagehide__window=`,
+		`data-on:pageshow__window=`,
 		`<div id="content">Hello</div>`,
 	} {
 		if !strings.Contains(html, want) {

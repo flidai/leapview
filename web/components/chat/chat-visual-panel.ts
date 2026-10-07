@@ -112,7 +112,7 @@ export class ChatVisualPanel extends LitElement {
           </div>
         </div>
         <div class="content">
-          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()} .explorerHref=${this.auditHref}></lv-visual-artifact>
+          <lv-visual-artifact type=${this.payload?.spec.kind ?? ''} artifact-id=${this.artifactId} .payload=${this.visualDisplayPayload()} .explorerHref=${this.explorerHref} .auditHref=${this.auditHref}></lv-visual-artifact>
           ${this.saveError ? html`<p class="feedback error" role="alert">${this.saveError}</p>` : nothing}
           ${this.saved ? html`<p class="feedback" role="status">Saved to Data Explorer.</p>` : nothing}
         </div>

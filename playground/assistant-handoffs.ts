@@ -2,7 +2,7 @@ import { LitElement, css, html } from 'lit'
 import { state } from 'lit/decorators.js'
 import type { ChatTranscriptItemSignal } from '../web/generated/signals'
 import { createArtifactFixture } from './content-fixtures'
-import { visualExplorerHref } from '../web/components/chat/visual-action-links'
+import { visualDataExplorerHref, visualExplorerHref } from '../web/components/chat/visual-action-links'
 import '../web/components/chat/chat-thread'
 import '../web/components/chat/chat-visual-panel'
 
@@ -48,7 +48,7 @@ class AssistantHandoffs extends LitElement {
           .transcript=${this.transcript} .visuals=${{ [this.envelope.visualID]: this.envelope }}
           @lv-chat-visual-open=${() => { this.visualOpen = true }}></lv-chat-thread>
         ${this.visualOpen ? html`<lv-chat-visual-panel title="Regional revenue" .artifactId=${this.envelope.visualID}
-          .payload=${this.envelope} .auditHref=${visualExplorerHref('demo-conversation', this.envelope.visualID, 'demo-run')}
+          .payload=${this.envelope} .explorerHref=${visualDataExplorerHref(this.transcript[0])} .auditHref=${visualExplorerHref('demo-conversation', this.envelope.visualID, 'demo-run')}
           @lv-chat-visual-close=${() => { this.visualOpen = false }}></lv-chat-visual-panel>` : null}
       </div>`
   }

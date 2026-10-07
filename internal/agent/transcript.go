@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	toon "github.com/toon-format/toon-go"
 )
 
 // activeTranscriptEntry links a model snapshot message to its immutable
@@ -494,7 +495,7 @@ type ToolResultPreview struct {
 // PreviewToolResult applies the durable transcript result limits and summaries
 // before an in-flight result is published to the browser.
 func PreviewToolResult(result, displayJSON string) ToolResultPreview {
-	if preview, ok := previewVisualDisplayResult(displayJSON); ok {
+	if preview, ok := previewVisualDisplayResult(displayJSON, result); ok {
 		preview.Summary = toolSummary(result)
 		preview.Error = toolErrorSummary(result)
 		return preview
@@ -512,14 +513,31 @@ func PreviewToolResult(result, displayJSON string) ToolResultPreview {
 	}
 }
 
-func previewVisualDisplayResult(raw string) (ToolResultPreview, bool) {
+func previewVisualDisplayResult(raw, content string) (ToolResultPreview, bool) {
 	var display struct {
 		ID     string          `json:"id"`
 		Patch  json.RawMessage `json:"patch"`
 		Result json.RawMessage `json:"result"`
 	}
-	if err := json.Unmarshal([]byte(raw), &display); err != nil || display.ID == "" || len(display.Patch) == 0 || len(display.Result) == 0 {
+	if err := json.Unmarshal([]byte(raw), &display); err != nil || display.ID == "" || len(display.Patch) == 0 {
 		return ToolResultPreview{}, false
+	}
+	// Older retained visuals stored the compact result only in model content.
+	// Recover that receipt before applying browser preview limits.
+	if len(display.Result) == 0 {
+		if json.Valid([]byte(content)) {
+			display.Result = json.RawMessage(content)
+		} else {
+			var decoded any
+			if err := toon.UnmarshalString(content, &decoded); err != nil {
+				return ToolResultPreview{}, false
+			}
+			encoded, err := json.Marshal(decoded)
+			if err != nil {
+				return ToolResultPreview{}, false
+			}
+			display.Result = encoded
+		}
 	}
 	var result struct {
 		ID string `json:"id"`

@@ -212,7 +212,7 @@ test('chat visual card opens a side panel with the chart and Save action', async
         hasExploreLink: Boolean(panel?.shadowRoot.querySelector('a[aria-label="Open visual in Data Explorer"]')),
         explorerHref: panel?.explorerHref,
         auditHref: panel?.auditHref,
-        visualAuditHref: panel?.shadowRoot.querySelector('lv-visual-artifact')?.explorerHref,
+        visualExplorerHref: panel?.shadowRoot.querySelector('lv-visual-artifact')?.explorerHref,
       }
     })
     expect(state.open).toBe(true)
@@ -224,7 +224,7 @@ test('chat visual card opens a side panel with the chart and Save action', async
     expect(state.hasExploreLink).toBe(false)
     expect(state.explorerHref).toContain('/explore?')
     expect(state.auditHref).toContain('/visuals/chart-1/explore')
-    expect(state.visualAuditHref).toBe(state.auditHref)
+    expect(state.visualExplorerHref).toBe(state.explorerHref)
     const screenshotDir = process.env.LEAPVIEW_CHAT_SCREENSHOT_DIR
     if (screenshotDir) {
       await page.waitForFunction(() => Boolean(document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.querySelector('lv-visual-artifact')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('.renderer canvas')))

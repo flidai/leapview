@@ -425,6 +425,19 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	projectID := project.String()
 	dashboardID := strings.TrimSpace(r.URL.Query().Get("dashboard"))
+	var mounted struct {
+		Builder *struct {
+			DashboardID      string                                   `json:"dashboardId"`
+			DraftID          string                                   `json:"draftId"`
+			Revision         uisignals.DashboardBuilderRevisionSignal `json:"revision"`
+			SelectedPageID   *string                                  `json:"selectedPageId"`
+			SelectedVisualID *string                                  `json:"selectedVisualId"`
+		} `json:"builder"`
+		Runtime     uisignals.RouteRuntimeSignal `json:"runtime"`
+		FilterState json.RawMessage              `json:"builderFilterState"`
+	}
+	mountedOK := pagestream.ReadSignals(r, &mounted) == nil && mounted.Builder != nil && mounted.Builder.DashboardID == dashboardID
+
 	actorID := h.currentActor(r)
 	if projectID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
 		writeBuilderError(w, r, access.ErrForbidden)
@@ -445,6 +458,14 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	selectedPageID := strings.TrimSpace(r.URL.Query().Get("page"))
 	selectedVisualID := strings.TrimSpace(r.URL.Query().Get("visual"))
+	if mountedOK {
+		if mounted.Builder.SelectedPageID != nil {
+			selectedPageID = strings.TrimSpace(*mounted.Builder.SelectedPageID)
+		}
+		if mounted.Builder.SelectedVisualID != nil {
+			selectedVisualID = strings.TrimSpace(*mounted.Builder.SelectedVisualID)
+		}
+	}
 	if snapshot && snapshotSignals.Refresh.DashboardID == dashboardID {
 		if strings.TrimSpace(snapshotSignals.Refresh.PageID) != "" {
 			selectedPageID = strings.TrimSpace(snapshotSignals.Refresh.PageID)
@@ -477,6 +498,25 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		streamInstanceID = clientID
 	}
 	updates := pagestream.NewSignalStream(w, r)
+	// Builder commands update the mounted signals through their own responses.
+	// Reopening this idle page stream must not replace pending browser edits,
+	// selections, or filters with the initial URL's bootstrap.
+
+	if r.URL.Query().Get("snapshot") != "1" && mountedOK &&
+		mounted.Builder.DashboardID == dashboardID && mounted.Builder.DraftID == builder.DraftID &&
+		mounted.Builder.Revision == builder.Revision &&
+		mounted.Runtime.ClientID != nil && *mounted.Runtime.ClientID == clientID &&
+		mounted.Runtime.StreamInstanceID != nil && *mounted.Runtime.StreamInstanceID == streamInstanceID {
+		if err := h.resumeBuilderFilterSession(r, project, actorID, builder, mounted.Runtime, mounted.FilterState); err != nil {
+			writeBuilderError(w, r, err)
+			return
+		}
+		if err := updates.Patch(pagestream.SignalPatch{"pageStreamRecovery": false}); err != nil {
+			return
+		}
+		updates.Wait(r.Context())
+		return
+	}
 	if !snapshot {
 		if err := updates.Patch(builderLoadingPatch(builder)); err != nil {
 			return

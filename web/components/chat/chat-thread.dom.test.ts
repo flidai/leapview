@@ -396,7 +396,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
   await page.close()
 })
 
-test('chat thread keeps unsupported queries inspectable through chart menus without inline Explorer links', async () => {
+test('chat thread explains unsupported queries and offers saved visuals separately from Explore', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -431,7 +431,9 @@ test('chat thread keeps unsupported queries inspectable through chart menus with
   await page.waitForFunction(() => document.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll('lv-visual-artifact').length === 5)
   const actions = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => Boolean(artifact.shadowRoot.querySelector('lv-visualization-host')?.querySelector('[slot="agent-action"]'))))
   expect(actions).toEqual([false, false, false, false, false])
-  const auditLinks = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => artifact.explorerHref))
+  const exploreLinks = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => artifact.explorerHref))
+  expect(exploreLinks).toEqual(['', '', '', '', ''])
+  const auditLinks = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => artifact.shadowRoot.querySelector('a')?.getAttribute('href')))
   expect(auditLinks).toEqual(['filtered', 'secondary', 'records', 'input-only', 'unqualified'].map(id => `/chats/conversation-1/visuals/${id}/explore`))
   await page.close()
 })

@@ -8,6 +8,7 @@ class VisualArtifact extends LitElement {
   @property({ attribute: 'artifact-id' }) artifactId = ''
   @property({ attribute: false }) payload?: VisualizationEnvelope
   @property({ attribute: false }) explorerHref = ''
+  @property({ attribute: false }) auditHref = ''
 
   static styles = css`
     :host {
@@ -43,6 +44,7 @@ class VisualArtifact extends LitElement {
     }
 
     .limit-notice { margin: 0; padding: 6px 10px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .limit-notice a { color: var(--lv-fg-accent); }
 
     .state {
       display: grid;
@@ -70,6 +72,7 @@ class VisualArtifact extends LitElement {
     return html`
       <div class=${`artifact ${isTabularVisualType(this.payload.spec.kind) ? 'table' : 'chart'}`}>
         <lv-visualization-host .envelope=${this.payload} .exploreHref=${this.explorerHref}></lv-visualization-host>
+        ${!this.explorerHref && this.auditHref ? html`<p class="limit-notice" role="note">This query cannot yet be edited in Data Explorer. <a href=${this.auditHref}>View saved visual</a></p>` : null}
         ${limitNotice || limited ? html`<p class="limit-notice" role="note">${limitNotice || `Showing up to ${budget} rows. More data may exist.`}</p>` : null}
       </div>
     `

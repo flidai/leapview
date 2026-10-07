@@ -320,7 +320,7 @@ class ChatThread extends LitElement {
         <span class="artifact-card-chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 18 })}</span>
       </button>`
     }
-    return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null} .explorerHref=${retainedVisualExplorerHref(this.conversationId, displayedItem, this.status)}></lv-visual-artifact>`
+    return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null} .explorerHref=${explorerHref} .auditHref=${retainedVisualExplorerHref(this.conversationId, displayedItem, this.status)}></lv-visual-artifact>`
   }
 
   private openVisual(artifactId: string, explorerHref: string, title: string): void {
