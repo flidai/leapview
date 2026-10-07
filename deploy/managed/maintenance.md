@@ -162,8 +162,10 @@ cross-controller exclusion, compatibility checks, Unix control protocol,
 startup-closed HTTP, SSE/request draining, database privilege changes and loss of
 the controller during provisional admission. Run `task ci` before promotion.
 
-Protected managed-profile qualification still needs a real dedicated host run
-covering update, failure before/after publication, rollback after acknowledged
-writes, reboot, TLS renewal, uploads and public SSE reconnects. Schema/credential
-transitions belong to D12; coordinated data/provider recovery belongs to D13;
-production observation and retirement belong to D14.
+Remaining D11 work includes qualified migration-authority coordination for
+schema-changing releases, capacity/retention evidence, and a real dedicated host
+run covering update, failure before/after publication, rollback after acknowledged
+writes, reboot, TLS renewal, uploads and public SSE reconnects. This command
+rejects schema-changing requests. D12 owns credential activation/rotation/recovery;
+D13 owns coordinated data/provider recovery; D14 owns production observation and
+retirement.
