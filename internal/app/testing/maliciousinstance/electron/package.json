@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test policy.test.mjs manifest-proof.test.mjs proof-lifecycle.test.mjs result-file.test.mjs"
+    "test": "node --test policy.test.mjs manifest-proof.test.mjs proof-lifecycle.test.mjs result-file.test.mjs storage-diagnostics.test.mjs"
   },
   "devDependencies": {
     "electron": "44.4.3"
