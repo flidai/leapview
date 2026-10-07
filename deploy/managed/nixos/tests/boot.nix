@@ -154,12 +154,26 @@ pkgs.testers.runNixOSTest {
         # Keep this node after database in the harness's name ordering so the
         # database retains its explicitly configured 192.168.1.2 address.
         virtualisation.writableStore = true;
-        virtualisation.additionalPaths = map activate [
-          targets.appUpdate
-          targets.databaseUpdate
-          targets.appFailedActivation
-          targets.databaseUnconfirmed
-        ];
+        # deploy-rs builds from drvPath even when the activation output is
+        # prebuilt. Register derivations and their inputs for offline guest Nix.
+        virtualisation.additionalPaths =
+          pkgs.lib.concatMap
+            (
+              config:
+              let
+                activation = activate config;
+              in
+              [
+                activation
+                activation.drvPath
+              ]
+            )
+            [
+              targets.appUpdate
+              targets.databaseUpdate
+              targets.appFailedActivation
+              targets.databaseUnconfirmed
+            ];
         nix.settings = {
           experimental-features = [
             "nix-command"
