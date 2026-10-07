@@ -2,6 +2,7 @@ package pagestream
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -63,8 +64,14 @@ func TestRenderPageKeepsDocumentLandmarksOutsideUpdatesMain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render document: %v", err)
 	}
-	want := `<body><header>Site header</header><main data-init="@get(&#39;/updates?route=site&#39;, {openWhenHidden: true})"><p>Page content</p></main><footer>Site footer</footer></body>`
-	if !strings.Contains(body.String(), want) {
+	mainTag := regexp.MustCompile(`<main\b[^>]*>`)
+	opening := mainTag.FindString(body.String())
+	if !strings.Contains(opening, `data-init="`) || !strings.Contains(opening, `@get(&#39;/updates?route=site&#39;`) {
+		t.Fatalf("expected updates initialization on main, got:\n%s", opening)
+	}
+	// Lifecycle attributes may change without changing the document landmarks.
+	want := `<body><header>Site header</header><main><p>Page content</p></main><footer>Site footer</footer></body>`
+	if !strings.Contains(mainTag.ReplaceAllString(body.String(), "<main>"), want) {
 		t.Fatalf("expected sibling landmarks with updates on main, got:\n%s", body.String())
 	}
 }

@@ -432,6 +432,9 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 			Revision         uisignals.DashboardBuilderRevisionSignal `json:"revision"`
 			SelectedPageID   *string                                  `json:"selectedPageId"`
 			SelectedVisualID *string                                  `json:"selectedVisualId"`
+			Preview          *struct {
+				Loading *bool `json:"loading"`
+			} `json:"preview"`
 		} `json:"builder"`
 		Runtime     uisignals.RouteRuntimeSignal `json:"runtime"`
 		FilterState json.RawMessage              `json:"builderFilterState"`
@@ -497,26 +500,32 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	if streamInstanceID == "" {
 		streamInstanceID = clientID
 	}
-	updates := pagestream.NewSignalStream(w, r)
 	// Builder commands update the mounted signals through their own responses.
 	// Reopening this idle page stream must not replace pending browser edits,
-	// selections, or filters with the initial URL's bootstrap.
+	// selections, or filters with the initial URL's bootstrap. An interrupted
+	// loading patch has the current revision but still needs its full preview.
 
 	if r.URL.Query().Get("snapshot") != "1" && mountedOK &&
 		mounted.Builder.DashboardID == dashboardID && mounted.Builder.DraftID == builder.DraftID &&
 		mounted.Builder.Revision == builder.Revision &&
+		mounted.Builder.Preview != nil && mounted.Builder.Preview.Loading != nil && !*mounted.Builder.Preview.Loading &&
 		mounted.Runtime.ClientID != nil && *mounted.Runtime.ClientID == clientID &&
 		mounted.Runtime.StreamInstanceID != nil && *mounted.Runtime.StreamInstanceID == streamInstanceID {
-		if err := h.resumeBuilderFilterSession(r, project, actorID, builder, mounted.Runtime, mounted.FilterState); err != nil {
+		resumed, err := h.resumeBuilderFilterSession(r, project, actorID, builder, mounted.Runtime, mounted.FilterState)
+		if err != nil {
 			writeBuilderError(w, r, err)
 			return
 		}
-		if err := updates.Patch(pagestream.SignalPatch{"pageStreamRecovery": false}); err != nil {
+		if resumed {
+			updates := pagestream.NewSignalStream(w, r)
+			if err := updates.Patch(pagestream.SignalPatch{"pageStreamRecovery": false}); err != nil {
+				return
+			}
+			updates.Wait(r.Context())
 			return
 		}
-		updates.Wait(r.Context())
-		return
 	}
+	updates := pagestream.NewSignalStream(w, r)
 	if !snapshot {
 		if err := updates.Patch(builderLoadingPatch(builder)); err != nil {
 			return
