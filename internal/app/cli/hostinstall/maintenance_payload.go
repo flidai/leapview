@@ -47,14 +47,14 @@ func validateMaintenanceBasePayloadTransition(installed, predecessor, candidate 
 	return nil
 }
 
-// validateRevision019MaintenancePayloadTransition is limited to the exact
-// pinned historical image that predates the optional bundled PostgreSQL
+// validateLegacyMaintenancePayloadTransition is limited to the exact
+// pinned historical images that predate the optional bundled PostgreSQL
 // payload. It verifies the old installed topology and admits the adapter files
-// as new immutable candidate payload only on that one predecessor transition.
-func validateRevision019MaintenancePayloadTransition(installed, predecessor, candidate map[string][]byte) error {
+// as new immutable candidate payload only on those predecessor transitions.
+func validateLegacyMaintenancePayloadTransition(installed, predecessor, candidate map[string][]byte) error {
 	for _, name := range []string{"compose.postgres.yaml", "postgres/bundled-entrypoint.sh", "postgres/bundled-init.sh"} {
 		if len(installed[name]) != 0 || len(predecessor[name]) != 0 || len(candidate[name]) == 0 {
-			return fmt.Errorf("revision 019 PostgreSQL adapter payload is invalid: %s", name)
+			return fmt.Errorf("historical PostgreSQL adapter payload is invalid: %s", name)
 		}
 	}
 	return validateMaintenanceBasePayloadTransition(

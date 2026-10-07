@@ -60,8 +60,12 @@ func extractCandidatePayload(ctx context.Context, dockerBin, image string, stder
 		return nil, err
 	}
 	payload, err := readPayload(directory)
-	if err == nil || image != revision019PredecessorImage {
+	if err == nil || !legacyMaintenancePayloadImage(image) {
 		return payload, err
 	}
-	return readRevision019Payload(directory)
+	return readLegacyPayload(directory)
+}
+
+func legacyMaintenancePayloadImage(image string) bool {
+	return image == revision019PredecessorImage || image == legacyPublicImage
 }

@@ -68,6 +68,30 @@ to the same images, source identities, installation profile and access intent.
 It captures a fresh recovery point; it never restores the older rehearsal copy
 over subsequently acknowledged writes.
 
+Runtime identity inspection selects the JSON version flag advertised by the
+installed executable: older images use `version --json`, while current images
+use `version --format json`. Unsupported help, failed commands, dirty builds,
+and malformed identities fail without trying another identity source. Recovery
+uses the same selection for the predecessor image.
+
+The native maintenance controller also retains one exact public-installation
+boundary: image `sha256:cae683fbdf86032adf78213b88f83612eb545307791adc1a5e040f9402ba41ff`
+at source `77ecf56bec6ee4f9a4018c869c802ee545285583`. Its installer predates
+explicit bootstrap phases. Its private, strictly parsed marker must retain
+its provisioned target and match that exact image; source, active generation,
+payload and topology checks still apply. Capture and recovery preserve the
+original marker bytes. Candidate activation writes the current public-phase
+marker. This exception does not accept arbitrary phase-less markers, partially
+written lifecycle fields, or a private first installation.
+
+That predecessor also uses the original six-file runtime payload. Extraction
+accepts that layout only for the pinned historical images. Staging adds links
+for candidate-owned private-bootstrap and PostgreSQL adapter files without
+changing the active generation or guarded maintenance controller. The original
+Compose/proxy settings must still match the predecessor exactly. The added
+links expose the complete candidate payload at cutover and support the next
+ordinary deployment; recovery retains the original predecessor files.
+
 Maintenance verifies installed deployment files against the immutable predecessor
 image before staging the candidate. The application healthcheck command may move
 to the canonical `CMD /usr/local/bin/leapview healthcheck`; all other Compose
