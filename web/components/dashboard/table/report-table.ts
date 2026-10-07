@@ -561,7 +561,7 @@ export class ReportTable extends LitElement {
       background: transparent;
       color: inherit;
       cursor: pointer;
-      padding: 0;
+      padding: 0 var(--base-size-8);
       font: inherit;
       text-align: inherit;
     }
