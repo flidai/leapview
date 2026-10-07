@@ -2786,7 +2786,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
         canvasWidth: getComputedStyle(canvas).width,
         canvasBackground: getComputedStyle(canvas).backgroundColor,
         canvasGuides: getComputedStyle(canvas).backgroundImage,
-        workspaceBackground: getComputedStyle(scroll).backgroundColor,
+        surfaceBackground: getComputedStyle(scroll).backgroundColor,
         emptyPreview: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
         addPageHasIcon: Boolean(root.querySelector('button[aria-label="Add page"] svg[data-lucide="icon"]')),
       }
@@ -2799,7 +2799,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
     expect(state.canvasWidth).toBe('1200px')
     expect(state.canvasBackground).toBe('rgb(251, 252, 254)')
     expect(state.canvasGuides).toBe('none')
-    expect(state.chat-layoutBackground).toBe('rgb(238, 241, 244)')
+    expect(state.surfaceBackground).toBe('rgb(238, 241, 244)')
     expect(state.emptyPreview).toContain('Add fields')
     expect(state.addPageHasIcon).toBe(true)
   } finally {
