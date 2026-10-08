@@ -640,8 +640,7 @@ describe("APIGen TypeSpec emitter", () => {
     `, "require @apigen.command or an explicit @apigen.query exemption", true);
   });
 
-  it("rejects invalid command contracts before writing IR", async () => {
-    const cases = [
+  it.each([
       {
         message: "must be a stable dotted lower-kebab-case name",
         operation: `
@@ -782,8 +781,7 @@ describe("APIGen TypeSpec emitter", () => {
           op finalize(@header("Idempotency-Key") key: string): string;
         `,
       },
-    ];
-    for (const testCase of cases) {
+  ])("rejects invalid command contracts before writing IR: $message", async (testCase) => {
       await expectCompileFails(`
         using Http;
         using OpenAPI;
@@ -793,7 +791,6 @@ describe("APIGen TypeSpec emitter", () => {
           ${testCase.operation}
         }
       `, testCase.message);
-    }
   });
 
   it("emits closed discriminated inheritance with explicit composition", async () => {
