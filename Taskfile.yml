@@ -587,6 +587,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
       - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_desktop_candidate_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
       - bun test scripts/managed_admission_contract.test.ts
       - bun test scripts/managed_application_contract.test.ts
@@ -603,6 +604,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_attestation.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py

@@ -628,7 +628,23 @@ exercises the same host floor without publication credentials.
 
 The receipt binds the archive hash, source revision, protected verifier revision,
 policy files, reports and host identity and keeps `releaseAdmission: false`. It
-records install, reinstall, protocol registration and removal checks; upgrade,
-rollback, recovery and profile observation remain pending. It does not sign,
-publish or adopt Desktop releases, and conventional desktop release workflows
-remain authoritative.
+records install, reinstall, protocol registration and removal checks.
+
+The protected signer downloads both the original builder artifact and the exact
+native qualification artifact by their producing job's immutable artifact ID.
+It verifies archive identity and the closed, hash-bound evidence inventory with
+protected code, reauthorizes the source, then attests the archive's provenance,
+its exact SPDX predicate and the qualification receipt. This credentialed job
+never installs or runs candidate code. A separate read-only job independently
+downloads all three original and signed artifacts, requires identical archive and
+evidence bytes, and verifies live attestations for the exact protected workflow,
+main source revision and hosted runner. It retains a domain-separated signed
+evidence binding while preserving `releaseAdmission: false`.
+
+These GitHub artifact attestations leave the Debian distribution metadata at
+`unsigned-candidate` and `productionEligible: false`. The new protected signing
+and live verification path still needs its first successful run after merge.
+Canonical release identity, upgrade, rollback, recovery, profile observation and
+exact promotion remain pending. Conventional desktop release workflows remain
+authoritative; follow the [profile handover record](../deploy/adoption.md) before
+changing any production caller.
