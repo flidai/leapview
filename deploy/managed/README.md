@@ -1,6 +1,9 @@
 # Managed deployment scaffold
 
-First implementation of the [target deployment architecture (ADR-0028, PR #744)](https://github.com/flidai/leapview/pull/744).
+Initial scaffold based on the [deployment proposal in PR #744](https://github.com/flidai/leapview/pull/744).
+That proposal has been removed from main pending renewed review. This revert does
+not remove the separately merged infrastructure or maintenance implementation,
+and their presence does not establish architecture acceptance.
 This is an **operator scaffold, not a qualified production installation**. It
 creates no live resources through CI. Keep using the existing deployment path
 until the lifecycle integration and recovery exercises below are complete.
@@ -284,7 +287,7 @@ The current shared application home permits one process owner. Ordinary Kamal
 replacement starts another container before stopping the old one. `serve` takes
 the exclusive home lock before app build, and `/readyz` requires an active runtime
 lease, so an overlapping candidate cannot become ready on the shared home. The
-reviewed bounded-maintenance proposal now has a [host-local compatible-image
+bounded-maintenance implementation includes a [host-local compatible-image
 controller](maintenance.md), including closed startup admission, draining and
 restart recovery. Full managed-profile qualification remains outstanding. The
 previous stop-first rehearsal does not qualify that sequence. Preserve a restart rollback path and
