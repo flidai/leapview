@@ -478,6 +478,7 @@ pkgs.testers.runNixOSTest {
           assert app.succeed("PGPASSWORD=disposable-test-only psql -XAt \"" + connection + "\" -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
           reboot_updated_hosts()
 
+      recovery_postgres_bin = "${pkgs.postgresql_18}/bin"
       ${builtins.readFile ./recovery-journey.py}
     '';
 }

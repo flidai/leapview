@@ -114,7 +114,11 @@ with subtest("replacement recovers exact database, jobs, files and publication a
     recovery_write(app, "/var/lib/recovery-test/restored-pg/pg_hba.conf", "local all postgres peer\n")
     app.succeed("chown postgres:postgres /var/lib/recovery-test/restored-pg/postgresql.conf /var/lib/recovery-test/restored-pg/pg_hba.conf")
     try:
-        app.succeed("sudo -u postgres pg_ctl -D /var/lib/recovery-test/restored-pg -l /var/lib/recovery-test/postgresql.log "
+        # The merged system profile links binaries without PostgreSQL's full
+        # share tree. Its launcher must retain the locked package prefix to
+        # resolve postgres and timezonesets, as the production service does.
+        app.succeed("sudo -u postgres " + shlex.quote(recovery_postgres_bin + "/pg_ctl")
+                    + " -D /var/lib/recovery-test/restored-pg -l /var/lib/recovery-test/postgresql.log "
                     "-o \"-p 55432 -k /var/lib/recovery-test/socket -c listen_addresses=127.0.0.1 -c ssl=off -c archive_mode=off\" -w start", timeout=120)
         # pg_ctl readiness can mean hot-standby read-only acceptance while PITR
         # is still promoting. Replacement writes require completed promotion.
