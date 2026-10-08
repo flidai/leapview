@@ -240,12 +240,16 @@ func (c *Controller) runQualificationAuthoring(
 		return report, err
 	}
 
+	browserEvidence, err := prepareQualificationBrowserEvidence(options, &cleanup)
+	if err != nil {
+		return report, err
+	}
 	browser, err := c.qualificationContainers.Start(ctx, qualificationContainerRequest{
 		Name: browserContainer, Image: browserImage, NetworkMode: "host",
 		NoPull: options.PreloadedBrowserImage != "",
 		Volumes: []qualificationContainerVolume{
 			{Source: qualificationRoot, Target: "/qualification", ReadOnly: true},
-			{Source: options.EvidenceDir, Target: "/evidence"},
+			{Source: browserEvidence, Target: "/evidence"},
 		},
 		Environment: map[string]string{
 			"QUALIFICATION_URL":           options.Target,
