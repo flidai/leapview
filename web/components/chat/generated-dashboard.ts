@@ -14,7 +14,7 @@ export function generatedDashboardHref(transcript: ChatTranscriptItemSignal[], r
   if (!created && !dashboardID) return ''
   // A preceding preview may belong to a different dashboard inspected in the
   // same run. Require a preview after the latest edit to that dashboard.
-  const lastEdit = [...tools].reverse().find(item => item.name === 'edit_dashboard_source'
+  const lastEdit = [...tools].reverse().find(item => ['edit_dashboard_source', 'add_dashboard_page', 'add_dashboard_visual', 'assign_dashboard_field'].includes(item.name ?? '')
     && (!dashboardID || dashboardActionIdentity(item) === dashboardID))
   const after = Math.max(tools.indexOf(authored), lastEdit ? tools.indexOf(lastEdit) : -1)
   const preview = tools.slice(after + 1).reverse().find(item => item.name === 'preview_dashboard_draft'

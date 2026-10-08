@@ -31,3 +31,19 @@ test('a recovery run opens the newly completed dashboard after creation in an ea
 test('an edit after preview requires a fresh preview before opening',()=>{
  expect(generatedDashboardHref([tool('create_dashboard_draft'),tool('preview_dashboard_draft'),tool('edit_dashboard_source')],'run-new','conversation')).toBe('')
 })
+
+test('compact create receipt identifies its dashboard and rejects another dashboard preview',()=>{
+ const created=tool('create_dashboard_draft',{resultJson:'{"id":"dashboard-a","status":"draft"}'})
+ const own=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ const other=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-b"}'})
+ expect(generatedDashboardHref([created,other],'run-new','conversation')).toBe('')
+ expect(generatedDashboardHref([created,own],'run-new','conversation')).toContain('createdBy=create_dashboard_draft')
+})
+
+test('field edits after preview require validation again',()=>{
+ const created=tool('create_dashboard_draft',{resultJson:'{"id":"dashboard-a","status":"draft"}'})
+ const preview=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ const field=tool('assign_dashboard_field',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ expect(generatedDashboardHref([created,preview,field],'run-new','conversation')).toBe('')
+ expect(generatedDashboardHref([created,field,preview],'run-new','conversation')).toContain('createdBy=create_dashboard_draft')
+})

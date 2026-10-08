@@ -96,6 +96,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private enterBuilder(): void {
+		this.closeVisual(false)
     this.sidebarScroll = this.shadowRoot?.querySelector<HTMLElement>('.preview-scroll')?.scrollTop ?? 0
     this.chatScroll = this.chatThread?.captureScroll() ?? null
     this.dashboardPreview = true
@@ -456,6 +457,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private async openDashboardPreview(event?: CustomEvent<{ artifactId?: string }>): Promise<void> {
+		this.closeVisual(false)
     const fromBuilder = this.builderOpen
     const position = fromBuilder ? this.chatScroll : this.chatThread?.captureScroll()
     this.builderOpen = false
@@ -770,7 +772,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         </div>
         <div class="titlebar-actions">
           ${!this.dashboardPreview && this.previewArtifacts.length ? html`<button class="preview-action open-preview" type="button" @click=${() => this.openDashboardPreview()}>${lucideIcon(LayoutDashboard)} Visuals (${this.previewArtifacts.length})</button>` : null}
-          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" ?disabled=${this.savingDashboard} @click=${() => this.saveDashboard(true)}>${lucideIcon(Minimize2)}</button>` : null}
+          ${this.savedBuilderHref ? html`<button class="preview-action" type="button" @click=${() => this.enterBuilder()}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
+          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" @click=${() => this.openDashboardPreview()}>${lucideIcon(Minimize2)}</button>` : null}
         </div>
       </div>
     `
@@ -892,6 +895,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private openVisual(event: CustomEvent<{ artifactId: string; explorerHref: string; title: string }>): void {
     const artifactId = event.detail?.artifactId ?? ''
     if (!artifactId || !this.visuals[artifactId]) return
+    if (this.dashboardPreview) {
+      void this.openDashboardPreview(new CustomEvent('lv-chat-dashboard-preview', { detail: { artifactId } }))
+      return
+    }
     this.dashboardPickerOpen = false
     this.selectedVisualID = artifactId
     this.selectedExplorerHref = event.detail.explorerHref ?? ''
