@@ -19,7 +19,12 @@ Production Docker/Nix/generator files are unchanged.
 
 Producers export only to `sqlc-image-screen-RUN-ATTEMPT-MODE` GHA v2 scopes.
 Consumers read only their matching producer scope and never write a cache.
-The caller caps producer tokens at write-only and consumers at read-only.
+The caller grants producers `write` (read and save) and caps consumers at read-only.
+BuildKit's GHA exporter reads its mutable cache index even without `cache-from`,
+so save-only tokens cannot publish a complete cache. Producers still have no
+image cache import. A tiny scratch-image export checks the same backend before
+the expensive build, using a separate run-scoped `-access-probe` cache. Its
+overhead is outside the measured image-build clock and included in full job cost.
 Neither mode imports production image caches or exports mutable compiler mounts.
 A harmless source marker changes between producer and consumer so generation
 must execute; a consumer cannot pass on a completely cached image. Sample pair
@@ -50,6 +55,74 @@ fresh attempt creates fresh cache scopes; preserve both attempts and explain
 any concrete fix or retry rationale. An unsuccessful producer blocks consumers;
 the comparison still runs to record missing/failed evidence. No automatic retry
 or relaxed qualification contract is introduced.
+
+## First hosted attempt and cache-access correction
+
+[Run 37621062598](https://github.com/flidai/leapview/actions/runs/37621062598),
+attempt 1 at `5f98533d6d4dee5dac6bc4eaef066020fbb0ea68`, built both images
+but failed both GHA cache exports with `permission_denied`. All six consumers
+were skipped and the comparison failed. Neither image qualification nor generated
+output comparison ran. The [compact failed receipt](measurements/sqlc-hosted-screen-failure.json)
+retains the source, attempt, failure population and raw-log hashes. Its clocks
+include failed exports and are not successful producer or speedup measurements.
+
+The pinned BuildKit exporter always calls
+[`SaveMutable` for its index](https://github.com/moby/buildkit/blob/dddd5621af04ea57823085c93a063383f71d3173/cache/remotecache/gha/gha.go#L316),
+which begins with a
+[`Load` lookup](https://github.com/moby/buildkit/blob/dddd5621af04ea57823085c93a063383f71d3173/vendor/github.com/tonistiigi/go-actions-cache/cache.go#L411).
+GitHub's [`write-only` mode](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#controlling-cache-access-with-cache-mode)
+denies reads, even for export metadata. The first denied request is not identified
+in the hosted logs, but the exporter/read incompatibility is established by the
+pinned source. Producer `write` access repairs that incompatibility without adding
+an image cache import. The new scratch export probe detects backend access failure
+before full-image work; an unsuccessful probe blocks the measured build.
+
+After the correction is reviewed and merged, dispatch a fresh screen and retain
+this original failure. The correction has not yet demonstrated successful hosted
+cache publication, consumer hits, image qualification or adoption. Probe caches
+also count toward repository cache retention; no eviction or billing attribution
+is inferred from local inventory bytes.
+
+## Remaining whole-CI work
+
+The two successful merge runs immediately before this screen are observations,
+not matched performance samples or a new p95 cohort:
+
+| Boundary | [Cumulative candidate `5f98533d6`](https://github.com/flidai/leapview/actions/runs/37618840756) | [Direct candidate `1b535b902`](https://github.com/flidai/leapview/actions/runs/37618768857) |
+|---|---:|---:|
+| Complete CI run | 18m24s | 19m41s |
+| Historical-transition job | 16m39s | 19m27s |
+| Image build | 471s | 579s |
+| SQLC source generation | 59s | 86s |
+| JSON-schema source generation | 63s | 93s |
+| Historical fixture step, including preparation | 323s | 420s |
+
+In the cumulative run, full merge validation finished two seconds after the
+transition job. Accelerating SQLC alone therefore would not have advanced that
+run's gate with other lanes held unchanged. Full validation also contains a long
+runtime-test tail. Preserve both
+paths and all required coverage when evaluating the remaining 12-minute target;
+do not infer whole-CI completion from one generator optimization.
+
+The next bounded generator candidate is invoking the existing schema exporter
+through a small build tool rather than compiling the full application CLI.
+It must preserve output and be measured together with the later application
+build: reduced compiler warming can shift costs downstream. This is an
+investigation candidate, not an adopted change. Retain the rejected cache-mount
+and recovery-concurrency decisions. Bundle related generator evidence and
+justified changes into a coherent follow-up instead of opening a PR per phase.
+
+A [bounded local probe](measurements/schema-export-local-probe.json) at
+`5f98533d6` completed one sequential pair using Go
+1.27.1, separate cold compilation caches, equally seeded module downloads and
+the existing `internal/project/cli.ExportSchema` function. All eight schema
+files and both later application binaries matched byte-for-byte. Export time
+was 121.50s versus 53.07s; subsequent `-tags=duckdb_arrow -trimpath` binary builds
+were 136.25s versus 149.63s; combined time was 257.76s versus 202.71s. Concurrent
+VPS CI work, one pair and the non-Docker environment prevent attribution or
+adoption. The observed 9.8% downstream increase exceeds the unchanged 5%
+other-cost screen; do not describe the 21.4% combined difference as an accepted
+optimization. No schema adapter or production generator change is included.
 
 ## Evidence and interpretation
 

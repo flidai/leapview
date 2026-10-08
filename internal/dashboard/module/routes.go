@@ -119,12 +119,14 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	)
 	r.Get("/dashboards/{dashboard}/fork", forkHandler)
 	r.Post("/dashboards/{dashboard}/fork", forkHandler)
+	// Personal visual definitions use the same project authoring permission as
+	// draft creation; their storage remains scoped to the current principal.
+	r.Get("/visuals/saved", protectResourceAction(access.CapabilityResourceEdit, access.ActionDashboardCreate, dashboardhttp.ProjectObjectRefs, h.SavedVisualLibrary))
+	r.Post("/visuals/saved/remove", protectResourceAction(access.CapabilityResourceEdit, access.ActionDashboardCreate, dashboardhttp.ProjectObjectRefs, h.UnsaveVisual))
+	r.Post("/visuals/saved", protectResourceAction(access.CapabilityResourceEdit, access.ActionDashboardCreate, dashboardhttp.ProjectObjectRefs, h.SaveVisual))
 	// Builder documents and mutations are edit-scoped. The application
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
-	r.Get("/visuals/saved", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.SavedVisualLibrary))
-	r.Post("/visuals/saved/remove", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.UnsaveVisual))
-	r.Post("/visuals/saved", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.SaveVisual))
 	r.Get("/dashboards/{dashboard}/edit", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilder))
 	r.Post("/dashboards/{dashboard}/archive", protectAuthoringAction(access.CapabilityResourceManage, access.ActionDashboardDelete, h.DashboardArchive))
 	r.Post("/dashboards/{dashboard}/delete", protectAuthoringAction(access.CapabilityResourceManage, access.ActionDashboardDelete, h.DashboardDelete))

@@ -34,6 +34,10 @@ candidate_image="$(build_output kamal-transport-candidate)"
 proxy_image="$(build_output kamal-transport-proxy)"
 transport_tools="$(build_output kamal-transport-tools)"
 docker_package="$(build_output nixosConfigurations.example-app.config.virtualisation.docker.package)"
+# Use the actual statically built controller, including its canonical generated
+# sources, even on a clean hosted checkout. This development binary grants no
+# artifact admission or production-profile qualification authority.
+controller_package="$(nix build .#leapviewctl-linux-amd64 --no-link --no-update-lock-file --print-out-paths)"
 export PATH="$transport_tools/bin:$PATH"
 
 # Install as the invoking user before entering the network-isolated fixture.
@@ -59,6 +63,7 @@ fi
   --candidate-image "$candidate_image" \
   --proxy-image "$proxy_image" \
   --docker-package "$docker_package" \
+  --controller "$controller_package/bin/leapviewctl" \
   --tools "$transport_tools" \
   --bundle-root "$bundle_root" \
   --evidence-dir "$evidence_dir"
