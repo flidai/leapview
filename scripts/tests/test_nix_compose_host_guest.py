@@ -921,6 +921,52 @@ class HostGuestReceiptTests(unittest.TestCase):
 
 
 class FirstInstallGuestFixtureTests(unittest.TestCase):
+    def test_postgres_readiness_retries_failed_psql_and_retains_one_complete_probe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shell = shutil.which("bash")
+            docker = root / "docker"
+            docker.write_text(f"#!{shell}\n" + r'''
+if [ "$1" = inspect ]; then printf 'running\n'; exit 0; fi
+count=0
+if [ -f "$PROBE_COUNTER" ]; then count=$(cat "$PROBE_COUNTER"); fi
+count=$((count+1))
+printf '%s\n' "$count" > "$PROBE_COUNTER"
+if [ "$count" -le 3 ]; then printf 'postgres is starting\n' >&2; exit 2; fi
+case "$*" in
+  *--username=leapview_control_runtime*) printf 'leapview_control_runtime|leapview_control|true\n' ;;
+  *--username=leapview_ducklake_runtime*) printf 'leapview_ducklake_runtime|leapview_ducklake|%s\n' "$PROBE_TLS" ;;
+  *) exit 99 ;;
+esac
+''')
+            docker.chmod(0o700)
+            sleep = root / "sleep"
+            sleep.write_text(f"#!{shell}\nexit 0\n")
+            sleep.chmod(0o700)
+            environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                               PROBE_COUNTER=str(root / "probes"), PROBE_TLS="true")
+            result = subprocess.run(
+                ["bash", "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
+                env=environment, capture_output=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(result.stderr, b"")
+            self.assertEqual(result.stdout.decode(), "\n".join(host_guest.TLS_ROLE_EXPECTATIONS.values()) + "\n")
+            self.assertEqual((root / "probes").read_text().strip(), "5")
+
+            # A successful first role must not expose partial evidence or admit
+            # a second role that never establishes verified TLS.
+            environment["PROBE_TLS"] = "false"
+            (root / "probes").write_text("3\n")
+            rejected = subprocess.run(
+                ["bash", "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
+                env=environment, capture_output=True, timeout=10,
+            )
+            self.assertEqual(rejected.returncode, 1)
+            self.assertEqual(rejected.stdout, b"")
+            self.assertEqual(rejected.stderr, b"")
+            self.assertEqual((root / "probes").read_text().strip(), "123")
+
     def test_postgres_init_transfer_rejects_changed_bytes(self):
         class Guest:
             def run(self, command, **kwargs):

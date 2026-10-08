@@ -196,6 +196,11 @@ jobs:
           source-revision: ${{ github.sha }}
           platform: linux/amd64
           vulnerability-report: ${{ runner.temp }}/oci-vulnerability-report.json
+          # PR-dispatch provenance names the protected workflow SHA rather
+          # than the image source, so it cannot issue canonical owner receipts.
+          admission-bundle: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('{0}/managed-admission', runner.temp) || '' }}
+          release-id: main-${{ needs.build-production-image.outputs.revision }}
+          release-version: ${{ needs.build-production-image.outputs.version }}
 
       - name: Upload OCI vulnerability diagnostic
         if: always()
@@ -204,6 +209,16 @@ jobs:
           name: oci-vulnerability-diagnostic-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/oci-vulnerability-report.json
           if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Retain canonical image admission and verified evidence
+        id: admission-bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-admission-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+          path: ${{ runner.temp }}/managed-admission
+          if-no-files-found: error
           retention-days: 14
 
       - name: Qualify the immutable production image

@@ -34,6 +34,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify trusted measurement authority
         run: |
@@ -42,6 +43,18 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Verify historical qualification source
+        run: |
+          predecessor=$(sed -nE 's/^[[:space:]]*(const[[:space:]]+)?qualificationHistoricalPredecessorRevision[[:space:]]*=[[:space:]]*"([a-f0-9]{40})"[[:space:]]*$/\2/p' internal/app/cli/composectl/qualification_historical_transition.go)
+          if [[ ! "$predecessor" =~ ^[a-f0-9]{40}$ ]]; then
+            echo 'Expected one pinned historical qualification predecessor revision' >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$predecessor^{commit}" ||
+             ! git archive --output=/dev/null "$predecessor" dashboards/experiments/cfo-demo; then
+            echo 'Historical qualification source is unavailable; fetch the required Git history before building' >&2
+            exit 1
+          fi
       - name: Prepare exact source and experimental recipe
         id: prepare
         run: |
@@ -61,6 +74,22 @@ jobs:
           version: v0.33.0
           driver: docker-container
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Prepare cache access probe
+        if: inputs.kind == 'producer'
+        run: |
+          mkdir -p "$SCREEN_DIR/cache-probe"
+          printf 'FROM scratch\nCOPY marker /marker\n' > "$SCREEN_DIR/cache-probe/Dockerfile"
+          printf 'sqlc-cache-access-probe\n' > "$SCREEN_DIR/cache-probe/marker"
+      - name: Verify producer cache export access
+        if: inputs.kind == 'producer'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          builder: ${{ steps.builder.outputs.name }}
+          context: ${{ env.SCREEN_DIR }}/cache-probe
+          file: ${{ env.SCREEN_DIR }}/cache-probe/Dockerfile
+          platforms: linux/amd64
+          outputs: type=cacheonly
+          cache-to: type=gha,version=2,mode=max,scope=${{ env.SCREEN_SCOPE }}-access-probe
       - name: Start full image build clock
         run: date +%s > "$SCREEN_DIR/build-start.txt"
       - name: Build full runtime image with scoped hosted cache
@@ -84,7 +113,7 @@ jobs:
           cache-from: ${{ inputs.kind == 'consumer' && format('type=gha,version=2,scope={0}', env.SCREEN_SCOPE) || '' }}
           cache-to: ${{ inputs.kind == 'producer' && format('type=gha,version=2,mode=max,scope={0}', env.SCREEN_SCOPE) || '' }}
       - name: Retain exact measured build history
-        if: always() && steps.builder.outcome == 'success'
+        if: always() && steps.builder.outcome == 'success' && steps.build.outcome != 'skipped'
         env:
           BUILDER: ${{ steps.builder.outputs.name }}
           BUILD_METADATA: ${{ steps.build.outputs.metadata }}

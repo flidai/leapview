@@ -1,9 +1,12 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -20,6 +23,35 @@ class SQLCHostedScreenTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.docker = (SCRIPTS.parent / "Dockerfile").read_text()
         self.script = (SCRIPTS / "generate_build_sources.sh").read_text()
+
+    def test_prepare_creates_private_historical_evidence_parent_under_normal_umask(self):
+        repo = self.root / "repo"
+        (repo / "scripts").mkdir(parents=True)
+        (repo / "Dockerfile").write_text(self.docker)
+        (repo / "scripts/generate_build_sources.sh").write_text(self.script)
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        subprocess.run(["git", "-C", repo, "add", "."], check=True)
+        subprocess.run(["git", "-C", repo, "-c", "user.name=Test", "-c",
+                        "user.email=test@example.invalid", "commit", "-qm", "fixture"], check=True)
+        source = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
+        for mask in [0o000, 0o022, 0o077]:
+            with self.subTest(umask=oct(mask)):
+                output = self.root / f"screen-{mask:o}"
+                args = SimpleNamespace(repo=repo, output=output, source=source,
+                                       mode="baseline", kind="producer")
+                previous = os.umask(mask)
+                try:
+                    hosted.prepare(args)
+                finally:
+                    os.umask(previous)
+                # The required Go fixture rejects group/other access to this
+                # parent before it will qualify the image or write transition.json.
+                self.assertFalse(output.is_symlink())
+                self.assertEqual(output.stat().st_mode & 0o777, 0o700)
+                self.assertFalse((output / "transition.json").exists())
+                self.assertEqual(json.loads((output / "receipt.json").read_text())["status"], "prepared")
+                with self.assertRaisesRegex(ValueError, "new external output directory"):
+                    hosted.prepare(args)
 
     def test_baseline_retains_complete_recipe_and_original_generators(self):
         recipe, script, paths = hosted.render(self.docker, self.script, "baseline")

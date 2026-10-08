@@ -740,8 +740,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 144 {
-		t.Fatalf("UI signal IR contracts = %d, want 144", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 146 {
+		t.Fatalf("UI signal IR contracts = %d, want 146", len(irDoc.Contracts))
 	}
 	// Saved lifecycle roots are additive to the existing UI contract catalog.
 	savedExplorationRoles := map[string]string{
@@ -754,6 +754,7 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		"SavedExplorationListSignal":       "signal",
 		"SavedExplorationStateSignal":      "signal",
 	}
+	foundSavedVisualLibrary := false
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
 	foundDashboardVisualizationSignal := false
@@ -761,6 +762,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	foundRefreshRunDrawerSignal := false
 	foundAssetVersionDrawerSignal := false
 	for _, contract := range irDoc.Contracts {
+		if contract.Name == "SavedVisualLibrarySignal" && contract.Kind == "ui-signal" {
+			foundSavedVisualLibrary = true
+		}
 		if role, ok := savedExplorationRoles[contract.Name]; ok {
 			if contract.Kind != "ui-signal" || contract.Extensions["x-leapview-contract-role"] != role || contract.Extensions["x-leapview-surface"] != "saved_explorations" {
 				t.Fatalf("saved exploration contract metadata was not preserved: %#v", contract)
@@ -785,6 +789,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		if contract.Name == "AssetVersionDrawerSignal" && contract.Kind == "ui-signal" {
 			foundAssetVersionDrawerSignal = true
 		}
+	}
+	if !foundSavedVisualLibrary {
+		t.Fatal("UI signals do not emit the saved visual library")
 	}
 	if len(savedExplorationRoles) != 0 {
 		t.Fatalf("UI signals are missing saved exploration lifecycle contracts: %v", savedExplorationRoles)

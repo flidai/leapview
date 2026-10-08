@@ -356,7 +356,9 @@ export class ChatManager extends DatastarLit(LitElement) {
     }
     if (!action) this.emitRemovalPending()
     this.feedback = result.message || ''
-    this.confirmation = null
+    // Background list refreshes may finish while the next Delete confirmation
+    // is open. Only a completed mutation can consume that confirmation.
+    if (action) this.confirmation = null
     if (action && !this.archivesOpen) this.close()
     if (action && ['archive', 'delete', 'archive_all', 'delete_active', 'delete_all'].includes(action.action)) {
       const current = window.location.pathname.match(/^\/chats\/([^/]+)$/)?.[1]

@@ -17,7 +17,8 @@ concurrency:
 jobs:
   producers:
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
-    cache-mode: write-only
+    # BuildKit export reads its mutable cache index even with no cache-from.
+    cache-mode: write
     strategy:
       fail-fast: false
       max-parallel: 2

@@ -249,7 +249,7 @@ export class EChartsHandle implements RendererHandle {
 
   private applyResponsiveLayout(force: boolean): void {
     const envelope = this.envelope
-    if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
+    if (!envelope || !this.responsiveOption || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
     const focused = visualizationHostIsFocused(this.container)
     const option = this.responsiveOption ?? echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>
@@ -323,6 +323,7 @@ export class EChartsHandle implements RendererHandle {
     this.chart.off('mouseover', this.handleMouseOver)
     this.chart.off('mouseout', this.handleMouseOut)
     this.chart.dispose()
+    this.responsiveOption = undefined
     removeEChartsRendererFrame(this.container, this.frame)
   }
 

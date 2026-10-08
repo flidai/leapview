@@ -34,7 +34,7 @@ func ChatPage(projectID, csrfToken, view string, state ChatViewState, providers 
 			g.Attr("view", view),
 			g.Attr("data-indicator", "agentTurnPending"),
 			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(agentgen.GenUIActionCancelAgentRun(), "/chats/stop", "agent", "agentContext")),
-			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; "+turnCommand),
+			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.surface = evt.detail.surface || 'chat'; $agentContext.references = evt.detail.references; "+turnCommand),
 		),
 	})
 }
@@ -46,7 +46,16 @@ func ChatBootstrapSignals(projectID, view string, state ChatViewState, providers
 
 func ChatSignalPatch(state ChatViewState) pagestream.SignalPatch {
 	patch := ChatConversationsPatch(state.Agent.Conversations, state.Agent.ActiveConversationID)
-	patch["agent"] = state.Agent
+	// Signal patches merge into existing state. Explicit nulls clear optional
+	// run controls and errors from the previous turn instead of retaining them.
+	patch["agent"] = struct {
+		ChatSignal
+		Status map[string]any `json:"status"`
+	}{state.Agent, map[string]any{
+		"enabled": state.Agent.Status.Enabled, "running": state.Agent.Status.Running,
+		"error": state.Agent.Status.Error, "runId": state.Agent.Status.RunID,
+		"canContinue": state.Agent.Status.CanContinue,
+	}}
 	patch["visuals"] = state.Visuals
 	return patch
 }

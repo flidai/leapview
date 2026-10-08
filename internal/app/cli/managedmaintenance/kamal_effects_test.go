@@ -29,7 +29,8 @@ func adapterFixture(t *testing.T) (*KamalEffects, containerInfo, containerInfo) 
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	p := HostProfile{Version: 1, Target: "fixture", Root: filepath.Join(root, "operator"), StateRoot: filepath.Join(root, "controller"), Home: filepath.Join(root, "home"), Service: "leapview", Hostname: "dash.example.com", ProxyImage: "basecamp/kamal-proxy@sha256:" + strings.Repeat("c", 64), AdmissionRoot: filepath.Join(root, "admission")}
 	p.Socket = filepath.Join(p.Home, "maintenance.sock")
-	for _, path := range []string{p.Root, p.StateRoot, p.Home, p.AdmissionRoot} {
+	p.Capacity = &CapacityPolicy{DockerRootDir: filepath.Join(root, "docker"), Home: CapacityReserve{1, 1}, StateRoot: CapacityReserve{1, 1}, Docker: CapacityReserve{1, 1}}
+	for _, path := range []string{p.Root, p.StateRoot, p.Home, p.AdmissionRoot, p.Capacity.DockerRootDir} {
 		if err := os.MkdirAll(path, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -112,12 +113,13 @@ func TestKamalPrivateControlBindsRevisionOperationAndLease(t *testing.T) {
 }
 
 type inventoryDouble struct {
-	t         *testing.T
-	items     []containerInfo
-	stopCount int
-	exitCode  int
-	oom       bool
-	commands  []string
+	t          *testing.T
+	items      []containerInfo
+	stopCount  int
+	exitCode   int
+	oom        bool
+	commands   []string
+	dockerRoot string
 }
 
 func (d *inventoryDouble) docker(args []string) ([]byte, error) {
@@ -128,6 +130,8 @@ func (d *inventoryDouble) docker(args []string) ([]byte, error) {
 	args = args[2:]
 	d.commands = append(d.commands, strings.Join(args, " "))
 	switch {
+	case reflect.DeepEqual(args, []string{"info", "--format", "{{json .DockerRootDir}}"}):
+		return json.Marshal(d.dockerRoot)
 	case reflect.DeepEqual(args, []string{"container", "ls", "--all", "--quiet", "--no-trunc"}):
 		var ids []string
 		for _, item := range d.items {
@@ -274,7 +278,7 @@ func TestManagedAdapterInheritedLockProcess(t *testing.T) {
 
 func TestKamalRollbackBootUsesRetainedPredecessorAndVerifiesPreparedIdentity(t *testing.T) {
 	k, app, proxy := adapterFixture(t)
-	d := &inventoryDouble{t: t, items: []containerInfo{proxy}}
+	d := &inventoryDouble{t: t, items: []containerInfo{proxy}, dockerRoot: k.Profile.Capacity.DockerRootDir}
 	booted := false
 	k.run = func(_ context.Context, bin string, args, env []string, _ string) ([]byte, error) {
 		if bin == "docker" {

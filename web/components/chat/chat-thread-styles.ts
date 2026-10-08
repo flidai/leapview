@@ -1,6 +1,20 @@
 import { css } from 'lit'
 
 export const chatThreadStyles = css`
+  .tool-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+  .tool-actions a { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: var(--lv-border-default); border-radius: 6px; color: var(--lv-accent); font: var(--lv-type-caption); text-decoration: none; }
+  .tool-actions a:hover { background: var(--lv-bg-control-hover); text-decoration: underline; }
+  .tool-actions a:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
+  .artifact-actions { display:flex; gap:8px; margin:6px 0 12px; }
+  .artifact-actions button { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; font:inherit; font-size: var(--text-body-size-small); color:var(--lv-fg-muted); background:transparent; border:var(--lv-border-default); border-radius:6px; cursor:pointer; }
+  .artifact-actions button:hover { background:var(--lv-bg-control-hover); color:var(--lv-fg-default); }
+  .artifact-actions button:disabled { opacity:.6; cursor:default; }
+  .artifact-actions svg { width:14px; height:14px; }
+
+  .message-attachment { margin-top: 8px; text-align: left; font: var(--lv-type-caption); }
+  .message-attachment summary { cursor: pointer; }
+  .message-attachment summary svg { width: 14px; height: 14px; vertical-align: middle; }
+  .message-attachment pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
     :host {
       box-sizing: border-box;
       display: block;
@@ -19,6 +33,7 @@ export const chatThreadStyles = css`
 
     .thread {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
       height: 100%;
       min-height: 0;
       grid-template-rows: minmax(0, 1fr);
@@ -28,6 +43,7 @@ export const chatThreadStyles = css`
 
     .scroll {
       height: 100%;
+      min-width: 0;
       min-height: 0;
       overflow: auto;
       overscroll-behavior: contain;
@@ -36,6 +52,8 @@ export const chatThreadStyles = css`
 
     .stack {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
       width: min(100%, var(--lv-chat-stack-width));
       margin-inline: auto;
       gap: var(--lv-chat-stack-gap);
@@ -118,6 +136,8 @@ export const chatThreadStyles = css`
 
     .message {
       display: grid;
+      min-width: 0;
+      grid-template-columns: minmax(0, 1fr);
       max-width: min(var(--lv-chat-message-width), 100%);
     }
 
@@ -151,6 +171,7 @@ export const chatThreadStyles = css`
 
     .agent-turn {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
       width: 100%;
       min-width: 0;
       max-width: min(var(--lv-chat-message-width), 100%);
@@ -168,8 +189,17 @@ export const chatThreadStyles = css`
     .copy-error { color: var(--lv-fg-danger); font: var(--lv-type-caption); padding: 8px; }
     @media (hover: none) { .user .message-actions { opacity: 1; } .message-actions button { width: 36px; height: 36px; } }
 
+    .run-activity { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .run-activity > summary { display: flex; align-items: center; gap: 6px; width: fit-content; cursor: pointer; list-style: none; padding: 4px 0; }
+    .run-activity > summary::-webkit-details-marker { display: none; }
+    .run-activity[open] > summary svg { transform: rotate(90deg); }
+    .run-activity > summary:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; border-radius: 4px; }
+    .run-activity-steps { display: grid; gap: 8px; padding: 8px 0; }
+
     .agent-stack {
       display: grid;
+      min-width: 0;
+      grid-template-columns: minmax(0, 1fr);
       gap: var(--lv-chat-agent-item-gap);
     }
 
@@ -177,6 +207,10 @@ export const chatThreadStyles = css`
       min-width: 0;
       color: var(--lv-fg-muted);
       font: var(--lv-type-secondary);
+    }
+
+    .agent-stack:has(> .run-steps[open]) > .dashboard-summary {
+      display: none;
     }
 
     .run-steps summary {
@@ -210,6 +244,7 @@ export const chatThreadStyles = css`
 
     .agent-markdown {
       display: block;
+      min-width: 0;
     }
 
     .user .bubble {
@@ -219,6 +254,8 @@ export const chatThreadStyles = css`
 
 		.user-turn-bubble {
 			display: grid;
+			min-width: 0;
+			grid-template-columns: minmax(0, 1fr);
 			gap: var(--lv-space-sm);
 		}
 
@@ -307,6 +344,34 @@ export const chatThreadStyles = css`
     .artifact-card-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--lv-type-body-compact); }
     .artifact-card-copy > span { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .artifact-card-chevron { color: var(--lv-fg-muted); }
+
+    .page-visuals { display: grid; gap: 8px; min-width: 0; }
+    .page-visuals h3 { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .visual-reference {
+      display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
+      padding: 12px; border: var(--lv-border-default); border-radius: var(--lv-radius-large);
+      background: var(--lv-bg-panel); color: var(--lv-fg-default); text-align: left; cursor: pointer;
+      font: var(--lv-type-body-compact);
+    }
+    .visual-reference:hover { background: var(--lv-bg-control-hover); }
+    .visual-reference:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
+    .visual-reference[aria-pressed='true'] { border-color: var(--lv-accent); }
+    .visual-reference-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); color: var(--lv-accent); }
+    .visual-reference-icon svg, .visual-reference-chevron svg { width: 16px; height: 16px; }
+    .visual-reference-copy { display: grid; min-width: 0; gap: 3px; flex: 1; }
+    .visual-reference-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .visual-reference-hint { font: var(--lv-type-caption); color: var(--lv-fg-muted); }
+    .visual-reference-chevron { color: var(--lv-fg-muted); }
+
+    .dashboard-preview-link {
+      display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+      margin-top: 8px; padding: 8px 10px; border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default); background: var(--lv-bg-panel);
+      color: var(--lv-fg-default); font: var(--lv-type-body-compact); text-align: left; cursor: pointer;
+    }
+    .dashboard-preview-link svg { flex-shrink: 0; width: 16px; height: 16px; color: var(--lv-accent); }
+    .dashboard-preview-link:hover { background: var(--lv-bg-control-hover); }
+    .dashboard-preview-link:focus-visible { outline: 2px solid var(--lv-accent); outline-offset: 2px; }
 
     lv-visual-artifact {
       display: block;

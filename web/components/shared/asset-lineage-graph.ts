@@ -730,7 +730,7 @@ function LineageViewportControls({ viewportState, onModeChange, expanded, onTogg
 }
 
 function FitLineage({ viewportState, signature, scope, selectedID, anchorID }: { viewportState: LineageViewportState; signature: string; scope: LineageScope; selectedID?: string; anchorID?: string }) {
-  const { getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport } = useReactFlow()
+  const { getNodes, getNode, getNodesBounds, getViewport, setViewport } = useReactFlow()
   const previous = useRef<{ signature: string; scope: LineageScope; selectedID?: string } | undefined>(undefined)
   const dimensions = useRef<{ width: number; height: number } | undefined>(undefined)
   const domNode = useStore((state) => state.domNode)
@@ -753,7 +753,14 @@ function FitLineage({ viewportState, signature, scope, selectedID, anchorID }: {
           centerChangedSelection = false
           const node = selectedID || anchorID ? getNode((selectedID ?? anchorID)!) : undefined
           if (node) {
-            void setCenter(node.position.x + LINEAGE_NODE_WIDTH / 2, node.position.y + LINEAGE_NODE_HEIGHT / 2, { zoom: getViewport().zoom })
+            const { zoom } = getViewport()
+            // React Flow's resize observer can still hold the previous canvas
+            // dimensions. Center against the DOM dimensions measured above.
+            void setViewport({
+              x: width / 2 - (node.position.x + LINEAGE_NODE_WIDTH / 2) * zoom,
+              y: height / 2 - (node.position.y + LINEAGE_NODE_HEIGHT / 2) * zoom,
+              zoom,
+            })
             return
           }
         }
@@ -764,7 +771,8 @@ function FitLineage({ viewportState, signature, scope, selectedID, anchorID }: {
         }
         const nodes = getNodes()
         const fitted = getViewportForBounds(getNodesBounds(nodes), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
-        const anchor = (selectedID ? getNode(selectedID) : undefined) ?? nodes[0]
+        const preferredAnchorID = selectedID ?? anchorID
+        const anchor = (preferredAnchorID ? getNode(preferredAnchorID) : undefined) ?? nodes[0]
         // Automatic views keep an asset readable; Fit graph explicitly requests the complete overview.
         void setViewport(viewportState.mode === 'automatic' && fitted.zoom < FIT_OPTIONS.maxZoom && anchor
           ? getViewportForBounds(getNodesBounds([anchor]), width, height, FIT_OPTIONS.minZoom, FIT_OPTIONS.maxZoom, FIT_OPTIONS.padding)
@@ -782,7 +790,7 @@ function FitLineage({ viewportState, signature, scope, selectedID, anchorID }: {
     observer.observe(domNode)
     if (topologyChanged || scopeChanged) resize()
     return () => { observer.disconnect(); cancelAnimationFrame(frame) }
-  }, [viewportState, signature, scope, selectedID, anchorID, getNodes, getNode, getNodesBounds, getViewport, setCenter, setViewport, domNode])
+  }, [viewportState, signature, scope, selectedID, anchorID, getNodes, getNode, getNodesBounds, getViewport, setViewport, domNode])
   return null
 }
 

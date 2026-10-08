@@ -17,9 +17,32 @@ import (
 )
 
 func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
-	for _, variant := range []string{"valid", "receipt-replaced", "configuration-drift", "credential-drift", "candidate-env-drift", "missing-image", "running-candidate", "closed-predecessor"} {
+	for _, variant := range []string{"valid", "receipt-replaced", "configuration-drift", "credential-drift", "candidate-env-drift", "missing-image", "running-candidate", "closed-predecessor", "capacity-bytes", "capacity-inodes", "capacity-policy-missing", "legacy-recovery", "capacity-policy-drift", "capacity-docker-drift",
+		"enroll-empty", "enroll-closed", "enroll-admitted", "enroll-prepared", "enroll-other-operation", "enroll-published-proxy", "enroll-open-gate", "enroll-missing-gate", "enroll-malformed-gate", "enroll-wrong-content", "enroll-recover-closed", "enroll-recover-own-operation", "enroll-recover-admitted", "enroll-recover-other-operation", "enroll-recover-unbound-admitted", "enroll-recover-capacity-missing"} {
 		t.Run(variant, func(t *testing.T) {
 			k, app, proxy := adapterFixture(t)
+			enrollment := strings.HasPrefix(variant, "enroll-")
+			if enrollment {
+				k.Request.Operation = "enroll"
+				k.recovering = strings.HasPrefix(variant, "enroll-recover-")
+				app.Image = "content"
+			}
+			dockerRoot := k.Profile.Capacity.DockerRootDir
+			if variant == "capacity-policy-missing" || variant == "legacy-recovery" || variant == "enroll-recover-capacity-missing" {
+				k.Profile.Capacity = nil
+				k.recovering = variant != "capacity-policy-missing"
+			}
+			if variant == "capacity-bytes" || variant == "capacity-inodes" {
+				k.capacityProbe = func(string) (filesystemCapacity, error) {
+					m := filesystemCapacity{Device: "1", FreeBytes: 100, FreeInodes: 100}
+					if variant == "capacity-bytes" {
+						m.FreeBytes = 2
+					} else {
+						m.FreeInodes = 2
+					}
+					return m, nil
+				}
+			}
 			for _, name := range profileFiles {
 				if name == "environment.json" {
 					continue
@@ -57,12 +80,35 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if enrollment {
+				k.Request.Candidate = k.Request.Predecessor
+				if variant != "enroll-missing-gate" {
+					if err = writeGate(k.Profile, variant == "enroll-open-gate" || variant == "enroll-recover-admitted"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if variant == "enroll-malformed-gate" {
+					if err = os.WriteFile(filepath.Join(k.Profile.StateRoot, "ingress.json"), []byte(`{}`), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if variant == "enroll-published-proxy" || variant == "enroll-recover-admitted" {
+					proxy.HostConfig.PortBindings = map[string][]portBinding{"443/tcp": {{HostPort: "443"}}}
+				}
+				if variant == "enroll-wrong-content" {
+					app.Image = "different-content"
+				}
+			}
 			environment := map[string]string{}
 			for _, v := range app.Config.Env {
 				key, value, _ := strings.Cut(v, "=")
 				environment[key] = value
 			}
 			switch variant {
+			case "capacity-policy-drift":
+				k.Profile.Capacity.Home.FreeBytes++
+			case "capacity-docker-drift":
+				dockerRoot = filepath.Join(t.TempDir(), "another-daemon-root")
 			case "configuration-drift":
 				if err = os.WriteFile(filepath.Join(k.Profile.Root, "deploy.yml"), []byte("changed"), 0600); err != nil {
 					t.Fatal(err)
@@ -78,10 +124,26 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 					t.Error("preflight mutated private control")
 				}
 				state := "admitted"
+				operation := ""
+				if enrollment {
+					state = "closed"
+					switch variant {
+					case "enroll-admitted", "enroll-recover-admitted", "enroll-recover-unbound-admitted":
+						state = "admitted"
+					case "enroll-prepared", "enroll-recover-own-operation":
+						state = "prepared"
+					}
+					if variant == "enroll-other-operation" || variant == "enroll-recover-other-operation" {
+						operation = "sha256:" + strings.Repeat("f", 64)
+					}
+					if variant == "enroll-recover-own-operation" || variant == "enroll-recover-admitted" {
+						operation, _ = k.Request.Digest()
+					}
+				}
 				if variant == "closed-predecessor" {
 					state = "closed"
 				}
-				_ = json.NewEncoder(w).Encode(controlStatus{Revision: k.Request.Predecessor.Revision, State: state})
+				_ = json.NewEncoder(w).Encode(controlStatus{Revision: k.Request.Predecessor.Revision, State: state, Operation: operation})
 			})
 			k.run = func(_ context.Context, bin string, args, env []string, _ string) ([]byte, error) {
 				encode := func(value any) ([]byte, error) { return json.Marshal(value) }
@@ -108,6 +170,8 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 				}
 				action := strings.Join(args[2:], " ")
 				switch {
+				case action == "info --format {{json .DockerRootDir}}":
+					return encode(dockerRoot)
 				case strings.HasPrefix(action, "image inspect "):
 					reference := args[len(args)-1]
 					revision := k.Request.Predecessor.Revision
@@ -121,6 +185,9 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 					}
 					return encode([]imageInfo{info})
 				case action == "container ls --all --quiet --no-trunc":
+					if variant == "enroll-empty" {
+						return nil, nil
+					}
 					return []byte("app-id\nproxy-id\n"), nil
 				case action == "container inspect app-id proxy-id":
 					return encode([]containerInfo{app, proxy})
@@ -130,8 +197,17 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 				}
 			}
 			err = k.Preflight(t.Context())
-			if (err == nil) != (variant == "valid") {
+			wantOK := variant == "valid" || variant == "legacy-recovery" || variant == "enroll-empty" || variant == "enroll-closed" || variant == "enroll-recover-closed" || variant == "enroll-recover-own-operation" || variant == "enroll-recover-admitted"
+			if (err == nil) != wantOK {
 				t.Fatalf("Preflight = %v", err)
+			}
+			if strings.HasPrefix(variant, "capacity-") || (enrollment && !wantOK) {
+				// Exercise the production adapter through the coordinator: failed
+				// resource admission must precede private RPCs or any closure.
+				journal := &memoryJournal{}
+				if err := (&Coordinator{Request: k.Request, Journal: journal, Effects: k}).Run(t.Context()); err == nil || journal.exists {
+					t.Fatalf("capacity rejection mutated operation: %v, %+v", err, journal)
+				}
 			}
 		})
 	}

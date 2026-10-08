@@ -97,6 +97,7 @@ model AddChatVisualToDashboardRequest {
 }
 
 model AddChatVisualToDashboardResponse {
+  componentId?: string;
   dashboardId: string;
   title: string;
   href: string;

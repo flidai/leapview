@@ -17,7 +17,7 @@ import (
 // artifact admission by supplying runtime booleans or a mutable image tag.
 func Command(ctx context.Context) *cobra.Command {
 	command := &cobra.Command{Use: "managed-release", Short: "Maintain a compatible image on an enrolled managed application host"}
-	for _, action := range []string{"run", "recover", "status", "inspect"} {
+	for _, action := range []string{"run", "enroll", "recover", "status", "inspect", "capacity"} {
 		var profilePath, requestPath, image, revision string
 		child := &cobra.Command{Use: action, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS != "linux" || os.Geteuid() != 0 {
@@ -26,6 +26,9 @@ func Command(ctx context.Context) *cobra.Command {
 			var profile HostProfile
 			if err := readPrivateJSON(profilePath, &profile); err != nil {
 				return err
+			}
+			if action == "capacity" {
+				return capacityDiagnostic(ctx, cmd, profile)
 			}
 			if err := profile.Validate(); err != nil {
 				return err
@@ -70,6 +73,9 @@ func Command(ctx context.Context) *cobra.Command {
 			if err := request.Validate(); err != nil {
 				return err
 			}
+			if err := validateRequestAction(action, request); err != nil {
+				return err
+			}
 			if request.Target != profile.Target {
 				return errors.New("request does not bind this managed target")
 			}
@@ -99,19 +105,51 @@ func Command(ctx context.Context) *cobra.Command {
 			return coordinator.Run(ctx)
 		}}
 		child.Flags().StringVar(&profilePath, "profile", "", "private enrolled host profile")
-		child.Flags().StringVar(&requestPath, "request", "", "private authenticated release-producer request")
-		child.Flags().StringVar(&image, "image", "", "retained immutable image to inspect")
-		child.Flags().StringVar(&revision, "revision", "", "exact source revision to inspect")
+		if action != "capacity" {
+			child.Flags().StringVar(&requestPath, "request", "", "private authenticated release-producer request")
+			child.Flags().StringVar(&image, "image", "", "retained immutable image to inspect")
+			child.Flags().StringVar(&revision, "revision", "", "exact source revision to inspect")
+		}
 		_ = child.MarkFlagRequired("profile")
 		if action == "inspect" {
 			_ = child.MarkFlagRequired("image")
 			_ = child.MarkFlagRequired("revision")
-		} else {
+		} else if action != "capacity" {
 			_ = child.MarkFlagRequired("request")
 		}
 		command.AddCommand(child)
 	}
 	return command
+}
+
+func validateRequestAction(action string, request Request) error {
+	if action == "enroll" && request.Operation != "enroll" {
+		return errors.New("enroll requires an explicit enrollment request")
+	}
+	if action == "run" && request.Operation == "enroll" {
+		return errors.New("initial managed admission requires the enroll command")
+	}
+	return nil
+}
+
+func capacityDiagnostic(ctx context.Context, cmd *cobra.Command, profile HostProfile) error {
+	report := CapacityReport{Policy: profile.Capacity}
+	err := profile.Validate()
+	if err == nil {
+		err = privateOperatorRoot(profile.Root, false)
+	}
+	if err == nil {
+		err = privateOperatorRoot(profile.StateRoot, false)
+	}
+	if err == nil {
+		bounded, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		report, err = (&KamalEffects{Profile: profile}).Capacity(bounded)
+	}
+	if err != nil {
+		report.Error = err.Error()
+	}
+	return errors.Join(err, json.NewEncoder(cmd.OutOrStdout()).Encode(report))
 }
 func readPrivateJSON(path string, out any) error {
 	if !filepath.IsAbs(path) {

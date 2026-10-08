@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	nethttp "net/http"
 	"net/url"
 	"sort"
@@ -23,7 +24,6 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/document"
-	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
@@ -74,6 +74,10 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeBuilderError(w, r, authoring.ErrStaleRevision)
 		return
 	}
+	if r.URL.Query().Get("builderReceipt") == "1" {
+		h.renderBuilderSessionReceipt(w, r, project, actorID, builder)
+		return
+	}
 	envelope := dashboardBuilderEnvelope(builder)
 	csrfToken := ""
 	if h.CSRFToken != nil {
@@ -83,11 +87,16 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}
 	}
+	returnChat := builderReturnChat(r)
+	backHref := "/"
+	if returnChat != "" {
+		backHref = "/chats/" + url.PathEscape(returnChat)
+	}
 	if err := ui.DashboardBuilderPage(envelope, csrfToken, ui.DashboardBuilderActionBindings{
-		BackHref:          "/",
-		PreviewHref:       dashboardBuilderPreviewPath(dashboardID, builder),
+		BackHref:          backHref,
+		PreviewHref:       withBuilderReturnChat(dashboardBuilderPreviewPath(dashboardID, builder), returnChat),
 		ExportYAMLHref:    dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/export.yaml"),
-		PageBaseHref:      dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"),
+		PageBaseHref:      withBuilderReturnChat(dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"), returnChat),
 		CommandPath:       dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/command"),
 		CommandBinding:    dashboardBuilderCommandBinding,
 		FilterCommandPath: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter"),
@@ -121,6 +130,7 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeBuilderError(w, r, errors.New("dashboard authoring create operation is unavailable"))
 		return
 	}
+	r.Body = nethttp.MaxBytesReader(w, r.Body, 4<<20)
 	if err := r.ParseForm(); err != nil {
 		writeBuilderError(w, r, fmt.Errorf("read dashboard draft form: %w", err))
 		return
@@ -128,6 +138,22 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 	idempotencyKey, err := browserFormRequestID(r)
 	if err != nil {
 		writeBuilderError(w, r, err)
+		return
+	}
+	if savedID := r.FormValue("savedVisualId"); savedID != "" {
+		if h.SavedVisuals == nil {
+			writeBuilderError(w, r, access.ErrForbidden)
+			return
+		}
+		saved, err := h.SavedVisuals.SavedVisual(r.Context(), project.String(), h.currentActor(r), savedID)
+		if err != nil {
+			writeBuilderError(w, r, err)
+			return
+		}
+		r.Form.Set("chatVisuals", "["+saved.DefinitionJSON+"]")
+	}
+	if r.FormValue("chatVisuals") != "" {
+		h.createChatDashboard(w, r, project, idempotencyKey)
 		return
 	}
 	semanticModel, err := projectgraph.NewResourceID(strings.TrimSpace(r.FormValue("semanticModel")))
@@ -166,7 +192,11 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 	if result.Lifecycle.Draft != nil {
 		draftID = result.Lifecycle.Draft.ID.String()
 	}
-	nethttp.Redirect(w, r, dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit"), nethttp.StatusSeeOther)
+	href := dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit")
+	if r.FormValue("embed") == "chat" {
+		href += "&embed=chat"
+	}
+	nethttp.Redirect(w, r, href, nethttp.StatusSeeOther)
 }
 
 type dashboardSemanticModelOption struct {
@@ -571,8 +601,9 @@ func (h Handler) dashboardBuilderSnapshotEnvelope(r *nethttp.Request, project pr
 		if loadErr != nil {
 			return uisignals.DashboardBuilderEnvelope{}, loadErr
 		}
-		if _, err := dashboardfilter.RestoreMachine(compiled.Definition.FilterApplication.WithDefaults().Mode, compiled.Definition.FilterBindingSpecs(), record.State.Filters); err != nil {
-			return uisignals.DashboardBuilderEnvelope{}, authoring.ErrStaleRevision
+		record, err = h.reconcileBuilderFilterSession(r.Context(), record, compiled.Definition)
+		if err != nil {
+			return uisignals.DashboardBuilderEnvelope{}, err
 		}
 		state := record.State.Filters.State
 		filters = dashboard.Filters{CompiledState: &state, ActivePageID: firstBuilderPage(builder), ServingStateID: servingStateID}
@@ -714,7 +745,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
-	if command.SetPlacements != nil || command.UpdatePageLayout != nil {
+	if (command.SetPlacements != nil && !command.SetPlacements.FillMissingFields) || command.UpdatePageLayout != nil {
 		// Moving, resizing, or changing the page canvas cannot change a visual's
 		// query or renderer envelope. Leave the existing preview and filter signals
 		// untouched in the browser. Republishing (and
@@ -913,7 +944,7 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		backValues := url.Values{}
 		backValues.Set("draft", string(request.DraftID))
 		backValues.Set("page", request.PageID)
-		backHref := dashboardBuilderBasePath(dashboardID) + "/edit?" + backValues.Encode()
+		backHref := withBuilderReturnChat(dashboardBuilderBasePath(dashboardID)+"/edit?"+backValues.Encode(), builderReturnChat(r))
 		var providers []webpage.Provider
 		if h.Layout != nil {
 			providers = []webpage.Provider{h.Layout(r)}
@@ -967,7 +998,7 @@ func (h Handler) writeDashboardBuilderPreviewRevisionChanged(w nethttp.ResponseW
 	backValues := url.Values{}
 	backValues.Set("draft", string(request.DraftID))
 	backValues.Set("page", request.PageID)
-	backHref := dashboardBuilderBasePath(dashboardID) + "/edit?" + backValues.Encode()
+	backHref := withBuilderReturnChat(dashboardBuilderBasePath(dashboardID)+"/edit?"+backValues.Encode(), builderReturnChat(r))
 	var providers []webpage.Provider
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}
@@ -1099,6 +1130,7 @@ type dashboardBuilderCommandSignal struct {
 	Color                     string                            `json:"color"`
 	Placement                 *document.DashboardPlacement      `json:"placement,omitempty"`
 	Placements                []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
+	FillMissingFields         bool                              `json:"fillMissingFields,omitempty"`
 	Compact                   bool                              `json:"compact,omitempty"`
 	Column                    int32                             `json:"column,omitempty"`
 	Row                       int32                             `json:"row,omitempty"`
@@ -1220,7 +1252,7 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 				Column: s.Column, Row: s.Row, ColumnSpan: s.ColumnSpan, RowSpan: s.RowSpan, Col: s.Col, ColSpan: s.ColSpan,
 			}.placementUpdate())
 		}
-		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements, Compact: s.Compact}
+		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements, FillMissingFields: s.FillMissingFields, Compact: s.Compact}
 	case "add_filter":
 		command.AddFilter = &authoring.AddFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Dimension: strings.TrimSpace(s.FieldID), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType)}
 	case "add_slicer":
@@ -1643,6 +1675,9 @@ func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) 
 		return
 	}
 	message := "dashboard builder unavailable"
+	if status == nethttp.StatusInternalServerError {
+		slog.ErrorContext(r.Context(), "dashboard builder request failed", "path", r.URL.Path, "error", err)
+	}
 	switch status {
 	case nethttp.StatusForbidden:
 		message = "forbidden"

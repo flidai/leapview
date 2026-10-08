@@ -184,6 +184,8 @@ func (a *Agent) Transcript() []Message {
 
 func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 	result := RunResult{RunID: run.runID}
+	truncationRetries := 0
+	recoverTruncation := false
 	for result.Turns < a.def.Limits.MaxTurns {
 		result.Turns++
 		turnID := a.def.IDGenerator.NewID("turn")
@@ -200,7 +202,8 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 
 		messageID := a.def.IDGenerator.NewID("msg")
 		stream := &eventModelStream{run: run, turnID: turnID, messageID: messageID}
-		resp, err := a.completeTurn(ctx, run, turnID, stream, false)
+		resp, err := a.completeTurn(ctx, run, turnID, stream, false, recoverTruncation)
+		recoverTruncation = false
 		if err != nil {
 			// Keep text already shown to the user when they stop generation.
 			// Incomplete tool calls are deliberately excluded from the transcript.
@@ -218,6 +221,11 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 			return result, err
 		}
 		finish := NormalizeFinishReason(resp.FinishReason)
+		if finish == FinishReasonTruncated {
+			// Partial calls have not run and cannot be replayed as completed work.
+			resp.ToolCalls = nil
+			resp.ProviderState = nil
+		}
 		textPart := stream.finish(ctx, resp.Content)
 		toolCalls := a.declareToolOutputParts(ctx, run, turnID, messageID, resp.ToolCalls)
 		assistant := Message{
@@ -236,6 +244,13 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 		result.FinalMessage = assistant
 
 		if finish == FinishReasonTruncated {
+			if truncationRetries < a.def.Limits.MaxTruncationRetries && result.Turns < a.def.Limits.MaxTurns && ctx.Err() == nil {
+				truncationRetries++
+				recoverTruncation = true
+				_ = run.emit(ctx, Event{Type: EventTypeModelRetry, Severity: SeverityInfo, TurnID: turnID, StopReason: StopReasonTruncated})
+				_ = run.emit(ctx, Event{Type: EventTypeTurnEnd, Severity: SeverityWarn, TurnID: turnID})
+				continue
+			}
 			result.StopReason = StopReasonTruncated
 			_ = run.emit(ctx, Event{Type: EventTypeTurnEnd, Severity: SeverityWarn, TurnID: turnID, StopReason: result.StopReason})
 			return result, nil
@@ -275,8 +290,13 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 	return result, nil
 }
 
-func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, stream *eventModelStream, retried bool) (ModelResponse, error) {
+func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, stream *eventModelStream, retried, recoverTruncation bool) (ModelResponse, error) {
 	req := a.buildModelRequest(run, turnID)
+	if recoverTruncation {
+		const guidance = "\n\nYour last response was cut off by the output limit. Continue the original request using smaller, complete tool calls and concise text. No tool calls from that cut-off response were executed. Retain completed work from earlier tool results; do not recreate or repeat it."
+		req.SystemPrompt += guidance
+		req.Messages[0].Content += guidance
+	}
 	_ = run.emit(ctx, Event{Type: EventTypeModelRequest, Severity: SeverityDebug, TurnID: turnID})
 	resp, err := a.def.Model.Complete(ctx, req, stream)
 	if err != nil {
@@ -286,7 +306,7 @@ func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, 
 			if a.estimateModelInputTokens(a.snapshotTranscript()) > a.def.Limits.HardInputLimitTokens {
 				return ModelResponse{}, errContextLimitStop
 			}
-			return a.completeTurn(ctx, run, turnID, stream, true)
+			return a.completeTurn(ctx, run, turnID, stream, true, recoverTruncation)
 		}
 		return ModelResponse{}, NewError(ErrorCodeModel, "model request failed", err)
 	}
@@ -341,6 +361,15 @@ func (a *Agent) modelMessagesFrom(transcript []Message) []Message {
 		}
 		if message.Role == RoleSystem {
 			continue
+		}
+		if message.Role == RoleAssistant && NormalizeFinishReason(message.FinishReason) == FinishReasonTruncated {
+			// Older persisted runs may contain unfinished calls. They have no
+			// tool results and must not enter the next provider request.
+			message.ToolCalls = nil
+			message.ProviderState = nil
+			if strings.TrimSpace(message.Content) == "" {
+				continue
+			}
 		}
 		message.DisplayContent = nil
 		messages = append(messages, message)

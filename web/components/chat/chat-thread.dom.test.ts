@@ -125,6 +125,35 @@ test('chat thread uses the surrounding app surface background', async () => {
   await page.close()
 })
 
+test('narrow chat wraps messages and keeps long context and visual cards inside the panel', async () => {
+  const page = await browser.newPage({ viewport: { width: 340, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    const layout = await page.locator('lv-chat-thread').evaluate(async (element: any) => {
+      element.style.height = '700px'
+      element.style.setProperty('--lv-chat-stack-width', '100%')
+      element.status = { enabled: true, running: false }
+      element.transcript = [
+        { id: 'user-1', kind: 'user', text: 'Review this dashboard', references: [{ reference: { kind: 'dashboard', id: 'finance' }, name: 'Actual, budget, and forecast revenue dashboard for the finance team', href: '/dashboards/finance', hierarchy: [], locations: [], context: [] }] },
+        { id: 'tool-1', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'revenue', type: 'combo', summary: 'Actual, budget, and forecast revenue for the finance team' } },
+        { id: 'assistant-1', kind: 'assistant', text: 'The dashboard and this conversation are still available. Review revenue and cash together.' },
+      ]
+      element.conversationId = 'conversation-1'
+      element.dashboardPreviewAvailable = true
+      await element.updateComplete
+      const scroll = element.shadowRoot.querySelector('.scroll') as HTMLElement
+      const card = element.shadowRoot.querySelector('.visual-reference') as HTMLElement
+      return { width: scroll.clientWidth, scrollWidth: scroll.scrollWidth, cardRight: card.getBoundingClientRect().right }
+    })
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width + 1)
+    expect(layout.cardRight).toBeLessThanOrEqual(340)
+    expect(await page.getByRole('link', { name: 'Open in Explorer' }).count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat thread distinguishes unavailable, empty, and working states', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
@@ -285,16 +314,16 @@ test('chat thread renders visual artifacts with dashboard web components', async
     const field = (id: string, role: string, dataType: string, label: string) => ({ id, role, dataType, nullable: false, label })
     thread.visuals = {
       agent_chart_1: {
-        schemaVersion: 4, visualID: 'agent_chart_1', rendererID: 'echarts', specRevision: 'sha256:chat-chart', dataRevision: 1,
+        schemaVersion: 14, visualID: 'agent_chart_1', rendererID: 'echarts', specRevision: 'sha256:chat-chart', dataRevision: 1,
         spec: { kind: 'cartesian', mark: 'bar', title: 'Orders', datasets: [{ id: 'primary', fields: [field('label', 'dimension', 'string', 'Status'), field('value', 'metric', 'decimal', 'Orders')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders by status' }, interactions: [], x: { dataset: 'primary', field: 'label' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
         dataState: { kind: 'inline', specRevision: 'sha256:chat-chart', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:chat-chart', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['delivered', 42]], completeness: 'complete' }] },
-        selection: [], status: { kind: 'ready' }, diagnostics: [],
+        selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
       },
       agent_table_1: {
-        schemaVersion: 4, visualID: 'agent_table_1', rendererID: 'tanstack', specRevision: 'sha256:chat-table', dataRevision: 1,
-        spec: { kind: 'table', title: 'Orders', datasets: [{ id: 'primary', fields: [field('order_id', 'identity', 'string', 'Order')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], columns: [{ field: { dataset: 'primary', field: 'order_id' }, label: 'Order' }], defaultSort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }], presentation: { rowHeight: 34, striped: true, showHeader: true } },
+        schemaVersion: 14, visualID: 'agent_table_1', rendererID: 'tanstack', specRevision: 'sha256:chat-table', dataRevision: 1,
+        spec: { kind: 'table', title: 'Orders', datasets: [{ id: 'primary', fields: [field('order_id', 'identity', 'string', 'Order')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], columns: [{ field: { dataset: 'primary', field: 'order_id' }, label: 'Order', formatting: [] }], defaultSort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }], presentation: { rowHeight: 34, striped: true, showHeader: true } },
         dataState: { kind: 'windowed', specRevision: 'sha256:chat-table', dataRevision: 1, generation: 1, schema: { id: 'primary', fields: [field('order_id', 'identity', 'string', 'Order')] }, cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 50, chunkSize: 50, resetVersion: 0, sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }], blocks: { a: { id: 'a', start: 0, rows: [['o1']], requestSeq: 0, resetVersion: 0, sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }] } } },
-        selection: [], status: { kind: 'ready' }, diagnostics: [],
+        selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
       },
     }
     thread.transcript = [
@@ -335,12 +364,13 @@ test('chat thread renders visual artifacts with dashboard web components', async
       .shadowRoot!
       .querySelector('.artifact-card[data-visual-id="agent_chart_1"]'),
   ))
+  await page.locator('lv-visual-artifact[artifact-id="agent_table_1"]').scrollIntoViewIfNeeded()
   await page.waitForFunction(() => Boolean(
     document.querySelector('lv-chat-thread')!
       .shadowRoot!
       .querySelector('lv-visual-artifact[artifact-id="agent_table_1"]')
       ?.shadowRoot
-      ?.querySelector('lv-visualization-host'),
+      ?.querySelector<any>('lv-visualization-host')?.envelope?.spec?.kind === 'table',
   ))
 
   const rendered = await page.evaluate(() => {
@@ -403,10 +433,10 @@ test('chat thread hides Explorer action when aggregate query has unsupported sta
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
     thread.visuals = Object.fromEntries(['filtered', 'secondary', 'records', 'input-only', 'unqualified'].map((id) => [id, {
-      schemaVersion: 4, visualID: id, rendererID: 'echarts', specRevision: `sha256:${id}`, dataRevision: 1,
+      schemaVersion: 14, visualID: id, rendererID: 'echarts', specRevision: `sha256:${id}`, dataRevision: 1,
       spec: { kind: 'cartesian', mark: 'bar', title: 'Orders', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Orders' }] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], x: { dataset: 'primary', field: 'value' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
       dataState: { kind: 'inline', specRevision: `sha256:${id}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${id}`, dataRevision: 1, generation: 1, columns: ['value'], rows: [[42]], completeness: 'complete' }] },
-      selection: [], status: { kind: 'ready' }, diagnostics: [],
+      selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
     }]))
     const args = (extraVisual: Record<string, unknown> = {}, filters?: unknown[]) => JSON.stringify({
       semanticModelId: 'semantic:sales',
@@ -520,7 +550,7 @@ test('chat thread expands completed steps with an elapsed label while keeping an
   await page.close()
 })
 
-test('chat thread keeps visual context inside Worked while leaving the chart card visible', async () => {
+test('visual replies keep a summary and every chart visible while details stay collapsed', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   const thread = page.locator('lv-chat-thread')
@@ -529,16 +559,20 @@ test('chat thread keeps visual context inside Worked while leaving the chart car
     element.transcript = [
       { id: 'u1', kind: 'user', text: 'Show revenue by state', createdAt: '2026-09-28T10:00:00Z' },
       { id: 't1', kind: 'tool', name: 'query_visual', status: 'complete', createdAt: '2026-09-28T10:00:02Z', artifact: { type: 'bar', id: 'revenue-by-state', summary: 'Revenue by State' } },
-      { id: 'a1', kind: 'assistant', markdown: '### Underlying values\n\n| State | Revenue |\n| --- | ---: |\n| SP | 5,998,226.96 |\n\nData freshness: current.', createdAt: '2026-09-28T10:00:14Z' },
+      { id: 't2', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'pie', id: 'revenue-mix', summary: 'Revenue mix' } },
+      { id: 'a1', kind: 'assistant', markdown: 'Created revenue by state and revenue mix.\n\n| State | Revenue |\n| --- | ---: |\n| SP | 5,998,226.96 |\n\nData freshness: current.', createdAt: '2026-09-28T10:00:14Z' },
     ]
     await element.updateComplete
   })
   const details = thread.locator('.run-steps')
   expect(await details.locator('summary').textContent()).toContain('Worked for 14s')
-  expect(await thread.locator('lv-visual-artifact').isVisible()).toBe(true)
-  expect(await thread.locator('.agent-markdown').isVisible()).toBe(false)
+  expect(await thread.locator('lv-visual-artifact').count()).toBe(2)
+  for (const card of await thread.locator('lv-visual-artifact').all()) expect(await card.isVisible()).toBe(true)
+  expect(await page.getByText('Created revenue by state and revenue mix.', {exact:true}).first().isVisible()).toBe(true)
+  expect(await details.locator('.agent-markdown').isVisible()).toBe(false)
   expect(await details.locator('.agent-markdown').count()).toBe(1)
   await details.locator('summary').click()
+  expect(await thread.locator('.dashboard-summary').isVisible()).toBe(false)
   expect(await details.locator('.agent-markdown').isVisible()).toBe(true)
   expect(await details.locator('.agent-markdown').evaluate((node: any) => node.value)).toContain('Data freshness: current.')
   await page.close()
@@ -668,7 +702,7 @@ test('chat thread hides failed tool lookups once the turn produces a visual', as
       visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
     }
   })
-  expect(state).toEqual({ topLevelErrors: 0, workedErrors: [], numberedSteps: 0, toolLabels: false, visual: true })
+  expect(state).toEqual({ topLevelErrors: 0, workedErrors: [], numberedSteps: 0, toolLabels: undefined, visual: true })
   await page.close()
 })
 
@@ -988,5 +1022,145 @@ test('message edit action ignores a transcript item without a persisted ID', asy
     await page.locator('.message.user').hover()
     await page.getByRole('button', { name: 'Edit message' }).click()
     expect(await page.evaluate(() => (window as any).reuseCount)).toBe(0)
+  } finally { await page.close() }
+})
+
+
+test('dashboard replies keep a short summary and reveal the full explanation on demand', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    const answer = 'Created your dashboard on the selected page. One requested metric is unavailable.\n\n## Visuals\n\n- Revenue by month\n- Revenue by country\n\n## Filters\n\nCountry and reporting period are available.'
+    await page.locator('lv-chat-thread').evaluate(async (e: any, answer: string) => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).copied = text } } })
+      e.conversationId = 'conversation'
+      e.status = { enabled: true, running: false }
+      e.transcript = [
+        { id: 'user', kind: 'user', text: 'Create a dashboard' },
+        { id: 'retry', kind: 'tool', name: 'edit_dashboard_source', status: 'error', error: 'Earlier draft needed correction.' },
+        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', runId: 'run', status: 'complete' },
+        { id: 'answer', kind: 'assistant', markdown: answer },
+      ]
+      await e.updateComplete
+    }, answer)
+    const thread = page.locator('lv-chat-thread')
+    for (const surface of ['page', 'drawer']) {
+      await thread.evaluate(async (e: any, surface: string) => { e.surface = surface; await e.updateComplete }, surface)
+      const summary = page.getByText('Created your dashboard on the selected page. One requested metric is unavailable.', { exact: true })
+      expect(await summary.first().isVisible()).toBe(true)
+      expect(await summary.last().isVisible()).toBe(false)
+      expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(false)
+      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).isVisible()).toBe(false)
+      expect(await page.getByRole('link', { name: 'Open in Builder' }).count()).toBe(1)
+      const disclosure = thread.locator('.run-steps')
+      await disclosure.locator('summary').click()
+      expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
+      expect(await page.getByText('Earlier draft needed correction.', { exact: true }).isVisible()).toBe(true)
+      expect(await page.getByText('Country and reporting period are available.', { exact: true }).isVisible()).toBe(true)
+      expect(await summary.first().isVisible()).toBe(false)
+      expect(await summary.last().isVisible()).toBe(true)
+      await disclosure.locator('summary').click()
+    }
+    expect(await thread.locator('.run-steps summary').textContent()).toContain('View details')
+    await page.getByRole('group', { name: 'Answer actions' }).getByRole('button', { name: 'Copy message' }).click()
+    expect(await page.evaluate(() => (window as any).copied)).toBe(answer)
+    await thread.evaluate(async (e: any) => {
+      e.transcript = e.transcript.filter((item: any) => item.kind !== 'tool')
+      await e.updateComplete
+    })
+    expect(await thread.locator('.run-steps').count()).toBe(0)
+    expect(await page.getByText('Revenue by country', { exact: true }).isVisible()).toBe(true)
+    await thread.evaluate(async (e: any) => {
+      e.dashboardPreviewAvailable = true
+      e.transcript = [
+        { id: 'user', kind: 'user', text: 'Create a dashboard' },
+        { id: 'visual', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'revenue', type: 'bar', summary: 'Revenue' } },
+        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', status: 'complete' },
+        { id: 'answer', kind: 'assistant', text: 'Dashboard ready on the selected page.' },
+      ]
+      await e.updateComplete
+    })
+    expect(await page.getByText('Dashboard ready on the selected page.', { exact: true }).isVisible()).toBe(true)
+    expect(await thread.locator('.run-steps').count()).toBe(0)
+  } finally { await page.close() }
+})
+
+test('a preview action appears once while other dashboard destinations remain in steps', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.conversationId = 'conversation'
+      e.status = { enabled: true, running: false }
+      e.transcript = [
+        { id: 'user', kind: 'user', text: 'Build the dashboard' },
+        { id: 'source', kind: 'tool', name: 'get_dashboard_draft', toolCallId: 'source', runId: 'run', status: 'complete' },
+        { id: 'preview', kind: 'tool', name: 'preview_dashboard_draft', toolCallId: 'preview', runId: 'run', status: 'complete' },
+        { id: 'answer', kind: 'assistant', text: 'Dashboard ready.' },
+      ]
+      await e.updateComplete
+    })
+    const thread = page.locator('lv-chat-thread')
+    expect(await thread.locator('a[href*="/actions/preview/open"]').count()).toBe(1)
+    expect(await thread.locator('.run-steps a[href*="/actions/source/open"]').count()).toBe(1)
+    expect(await thread.locator('.agent-stack > .tool-actions a[href*="/actions/preview/open"]').count()).toBe(1)
+    await thread.evaluate(async (e: any) => {
+      e.transcript = e.transcript.filter((item: any) => item.id !== 'source')
+      await e.updateComplete
+    })
+    expect(await thread.locator('.run-steps').count()).toBe(0)
+    expect(await thread.locator('a[href*="/actions/preview/open"]').count()).toBe(1)
+  } finally { await page.close() }
+})
+
+test('builder chat opens each dashboard visual individually without duplicate add actions', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.dashboardPreviewAvailable = true
+      e.transcript = [{id:'t',kind:'tool',name:'query_visual',status:'complete',artifact:{id:'chart-one',type:'bar',summary:'Revenue'}}]
+      e.dashboardVisualIds = ['chart-one']
+      e.addEventListener('lv-chat-dashboard-preview', (event: CustomEvent) => { (window as any).selectedVisual = event.detail.artifactId })
+      await e.updateComplete
+    })
+    expect(await page.getByRole('button',{name:'Add to dashboard',exact:true}).count()).toBe(0)
+    await page.getByRole('button',{name:'Open Revenue in visuals sidebar',exact:true}).click()
+    expect(await page.evaluate(() => (window as any).selectedVisual)).toBe('chart-one')
+  } finally {await page.close()}
+})
+
+test('chat keeps retries in collapsed activity while showing the final answer', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-thread')
+      const thread = document.querySelector('lv-chat-thread') as any
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [
+        {id:'u',kind:'user',text:'Create a dashboard'},
+        {id:'t1',kind:'tool',name:'query_semantic_model',argumentsJson:'{"modelId":"sales"}',status:'error',error:'Unknown field'},
+        {id:'t2',kind:'tool',name:'query_semantic_model',argumentsJson:'{"modelId":"sales"}',status:'complete'},
+        {id:'a',kind:'assistant',text:'Your dashboard is ready.'},
+      ]
+      await thread.updateComplete
+    })
+    expect(await page.getByRole('button', { name: /Query Semantic Model/ }).count()).toBe(0)
+    expect(await page.getByText('Your dashboard is ready.', { exact: true }).isVisible()).toBe(true)
+    expect(await page.getByRole('alert').count()).toBe(0)
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.transcript = e.transcript.filter((item: any) => item.kind !== 'assistant')
+      await e.updateComplete
+    })
+    expect(await page.getByText('This request stopped before a final answer was ready. You can ask the agent to continue.', {exact:true}).isVisible()).toBe(true)
+    await page.locator('lv-chat-thread').evaluate(async (e: any) => {
+      e.status = { enabled: true, running: false, error: 'Unable to finish this request.' }
+      await e.updateComplete
+    })
+    expect(await page.getByRole('alert').getByText('Unable to finish this request.', {exact:true}).isVisible()).toBe(true)
   } finally { await page.close() }
 })

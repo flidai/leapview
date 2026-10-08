@@ -256,9 +256,12 @@ type PlacementUpdate struct {
 // components. Components not listed retain their existing placement.
 // Placement coordinates are canonical 1-based column/row values.
 type SetPlacementsPayload struct {
-	PageID     string            `json:"pageId"`
-	Placements []PlacementUpdate `json:"placements"`
-	Compact    bool              `json:"compact,omitempty"`
+	PageID            string            `json:"pageId"`
+	Placements        []PlacementUpdate `json:"placements"`
+	FillMissingFields bool              `json:"fillMissingFields,omitempty"`
+	// ResolvedFields are governed additions prepared by the application, never supplied by a client.
+	ResolvedFields []AssignFieldPayload `json:"-"`
+	Compact        bool                 `json:"compact,omitempty"`
 }
 
 func (SetPlacementsPayload) authoringPayload() {}
@@ -517,6 +520,8 @@ type AddFilterPayload struct {
 	Dimension   string `json:"dimension"`
 	Dataset     string `json:"dataset,omitempty"`
 	ControlType string `json:"controlType"`
+	// ResolvedTargets is derived by the application from the active model.
+	ResolvedTargets []string `json:"-"`
 }
 
 func (AddFilterPayload) authoringPayload() {}

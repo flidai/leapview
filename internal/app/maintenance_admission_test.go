@@ -71,8 +71,18 @@ func TestMaintenancePartialStartAndLeaseExpiryCloseWork(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("lost runner left worker admission open")
 			}
-			if got := gate.status().State; got != "failed" && got != "closed" {
-				t.Fatal(got)
+			// The stop callback can wake this test before lease expiry finishes
+			// closing admission. Partial startup failure is already synchronous.
+			deadline := time.Now().Add(time.Second)
+			for {
+				status := gate.status()
+				if status.State == "failed" && (fail || status.Drained) {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("maintenance shutdown did not complete: %+v", status)
+				}
+				time.Sleep(time.Millisecond)
 			}
 			if gate.finalize("operation") == nil {
 				t.Fatal("finalized closed admission")

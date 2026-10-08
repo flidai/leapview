@@ -162,7 +162,10 @@ export class ChatDashboardPicker extends LitElement {
     this.error = ''
     try {
       const result = await addChatVisualToDashboard(this.conversationId, this.artifactId, choice, this.attempt.key)
-      if (this.isConnected) this.result = result
+      if (this.isConnected) {
+        this.result = result
+        this.dispatchEvent(new CustomEvent('lv-chat-dashboard-added', { bubbles: true, composed: true, detail: result }))
+      }
     } catch (error) {
       if (this.isConnected) this.error = error instanceof Error ? error.message : 'Could not add this visual. Please try again.'
     } finally { this.saving = false }

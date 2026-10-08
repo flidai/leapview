@@ -152,6 +152,18 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if err != nil {
 		return nil, err
 	}
+	if hasUnansweredTurn(initial) {
+		// Queued cancellations and older failed runs may have terminalized
+		// before any assistant message was persisted. Close that historical
+		// model turn while preserving genuine prepared/running prompts.
+		runs, err := s.repo.ListRunsPage(ctx, input.Scope.PrincipalID, input.ConversationID, Page{Limit: 1})
+		if err != nil {
+			return nil, err
+		}
+		if len(runs) > 0 && (runs[0].Status == RunStatusCanceled || runs[0].Status == RunStatusFailed) {
+			initial = closeUnansweredTurn(initial, runs[0].Status)
+		}
+	}
 	systemPrompt, err := s.systemPrompt(ctx)
 	if err != nil {
 		return nil, err
@@ -222,7 +234,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				if promptErr != nil {
 					return nil, promptErr
 				}
-				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", SystemPrompt: systemPrompt, Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
+				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", Limits: dashboardAgentLimits(), SystemPrompt: withDashboardFieldGuidance(withBuilderAuthoringGuidance(systemPrompt)), Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
 				if prepErr != nil {
 					return nil, prepErr
 				}
@@ -310,7 +322,8 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	}
 	prepared, err := agentcore.New(agentcore.Definition{
 		Name:              "leapview-governed",
-		SystemPrompt:      systemPrompt,
+		Limits:            dashboardAgentLimits(),
+		SystemPrompt:      withDashboardFieldGuidance(withBuilderAuthoringGuidance(systemPrompt)),
 		Model:             runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: initial,
@@ -533,7 +546,8 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 	sink := &storeEventSink{repo: s.repo, scope: input.Scope, conversationID: input.ConversationID, runID: p.RunID, onEvent: input.OnEvent}
 	def := agentcore.Definition{
 		Name:              "leapview-governed",
-		SystemPrompt:      p.systemPrompt,
+		Limits:            dashboardAgentLimits(),
+		SystemPrompt:      withDashboardFieldGuidance(withBuilderAuthoringGuidance(p.systemPrompt)),
 		Model:             p.runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: p.initial,
@@ -555,6 +569,9 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		return PromptResult{}, err
 	}
 	result, promptErr := harness.RunPreparedPrompt(executionContext, agentcore.PreparedPromptRequest{CorrelationID: input.CorrelationID})
+	if promptErr == nil {
+		promptErr = incompletePromptError(result.StopReason)
+	}
 	// A durable worker losing its lease or being shut down must leave the
 	// domain run recoverable. The queue runner intentionally retains the job;
 	// a later worker will resume it. Explicit user cancellation cancels only
@@ -594,6 +611,11 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		}
 	} else if errors.Is(promptErr, context.DeadlineExceeded) {
 		cause = RunCauseDeadlineExceeded
+	}
+	if status == RunStatusCanceled || status == RunStatusFailed {
+		// A stopped turn with no assistant output otherwise looks like a
+		// prepared prompt on the next request, preventing Continue or retry.
+		transcript = closeUnansweredTurn(transcript, status)
 	}
 	atomicCompletion := false
 	if p.claimID != "" && s.runWorkflowAvailable() {
@@ -671,6 +693,30 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		StopReason:     result.StopReason,
 		Content:        result.FinalMessage.Content,
 	}, nil
+}
+
+func closeUnansweredTurn(transcript []agentcore.Message, status string) []agentcore.Message {
+	if !hasUnansweredTurn(transcript) {
+		return transcript
+	}
+	text := "Response stopped."
+	if status == RunStatusFailed {
+		text = "The response could not be completed."
+	}
+	return append(transcript, agentcore.Message{ID: newID("msg"), Role: agentcore.RoleAssistant, Content: text, FinishReason: agentcore.FinishReasonTruncated})
+}
+
+func hasUnansweredTurn(transcript []agentcore.Message) bool {
+	for i := len(transcript) - 1; i >= 0; i-- {
+		message := transcript[i]
+		if message.Role == agentcore.RoleAssistant {
+			return false
+		}
+		if message.Role == agentcore.RoleUser && message.Kind != agentcore.MessageKindExternalContext {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *StartedPrompt) Abort(ctx context.Context, runErr error) error {

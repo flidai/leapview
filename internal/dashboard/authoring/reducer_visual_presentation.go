@@ -97,15 +97,15 @@ func canonicalVisualSwitchQuery(target document.DashboardQuery, visualType docum
 
 func boundedVisualSwitchFields(fields []string, visualType document.DashboardVisualType, role FieldRole) []string {
 	maximum := int32(0)
-	found := false
+	supported := false
 	for _, limit := range CanonicalVisualRoleLimits(visualType) {
 		if limit.Role == string(role) {
+			supported = true
 			maximum = limit.Maximum
-			found = true
 			break
 		}
 	}
-	if !found {
+	if !supported {
 		return nil
 	}
 	result := make([]string, 0, len(fields))
@@ -234,4 +234,32 @@ func mergeCompatiblePresentation(target *document.DashboardVisual, source docume
 	}
 	base.Type, err = target.Presentation.Type()
 	return err
+}
+
+// completePendingPointBindings replaces only the new-scatter placeholders.
+// Existing authored axes, identity and aliases are never remapped by Fix.
+func completePendingPointBindings(visual *document.DashboardVisual) {
+	if visual == nil || visual.Type != document.DashboardVisualTypeScatter {
+		return
+	}
+	query, ok := visual.Query.Value.(*document.AggregateDashboardQuery)
+	if !ok {
+		return
+	}
+	point, ok := visual.Presentation.Value.(*document.PointDashboardPresentation)
+	if !ok {
+		return
+	}
+	if len(query.Dimensions) > 0 && (len(point.Identity) == 0 || len(point.Identity) == 1 && point.Identity[0] == "pending_identity") {
+		_, alias := canonicalDimensionSelection(query.Dimensions[0])
+		if alias != "" {
+			point.Identity = []string{alias}
+		}
+	}
+	if len(query.Metrics) > 0 && (point.X == "" || point.X == "pending_x") {
+		_, point.X = canonicalMetricSelection(query.Metrics[0])
+	}
+	if len(query.Metrics) > 1 && (point.Y == "" || point.Y == "pending_y") {
+		_, point.Y = canonicalMetricSelection(query.Metrics[1])
+	}
 }

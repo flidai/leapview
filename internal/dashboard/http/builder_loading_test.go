@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -157,6 +158,44 @@ func TestDashboardBuilderAgentSnapshotDropsWhenManualSaveRacesPreview(t *testing
 	}
 }
 
+func TestDashboardBuilderReceiptRejectsWhenManualSaveRacesPreview(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			oldBuilder := uisignals.DashboardBuilderSignal{
+				ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-7",
+				SelectedPageID: uisignals.Optional("details"), SelectedVisualID: uisignals.Optional("chart-1"),
+				Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-1", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+			}
+			newBuilder := oldBuilder
+			newBuilder.Revision = uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: "sha256:" + strings.Repeat("b", 64)}
+			fake := &revisionRacingBuilderFake{builderAuthoringFake: &builderAuthoringFake{builder: oldBuilder}, latestBuilder: newBuilder}
+			h := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*http.Request) string { return "principal-1" }}
+			values := url.Values{"builderReceipt": {"1"}, "page": {"details"}, "pageId": {"details"}, "visual": {"chart-1"}}
+			request := httptest.NewRequest(method, "/dashboards/revenue/edit?"+values.Encode(), nil)
+			if method == http.MethodPost {
+				request = httptest.NewRequest(method, "/dashboards/revenue/draft/saved-visual", strings.NewReader(values.Encode()))
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
+			request = withBuilderURLParams(request, "sales", "revenue")
+			recorder := httptest.NewRecorder()
+			if method == http.MethodGet {
+				h.DashboardBuilder(recorder, request)
+			} else {
+				h.savedVisualImportReceipt(recorder, request, "revenue")
+			}
+			if recorder.Code != http.StatusConflict || strings.Contains(recorder.Body.String(), "data-receipt") {
+				t.Fatalf("stale receipt: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if fake.previewCalls != 1 || fake.builderReads != 2 {
+				t.Fatalf("preview calls=%d builder reads=%d, want one preview and a revision fence", fake.previewCalls, fake.builderReads)
+			}
+			if fake.builderReq.SelectedPageID != "details" || fake.builderReq.SelectedVisualID != "chart-1" {
+				t.Fatalf("revision check changed the selection: %#v", fake.builderReq)
+			}
+		})
+	}
+}
+
 func TestDashboardBuilderAgentSnapshotPreservesAppliedFiltersAndSelection(t *testing.T) {
 	const pageID = "details"
 	const generation = "generation-11"
@@ -253,6 +292,73 @@ func TestDashboardBuilderAgentSnapshotPreservesAppliedFiltersAndSelection(t *tes
 	runtimePatch := bootstrap["runtime"].(map[string]any)
 	if runtimePatch["servingStateId"] != activeServingStateID {
 		t.Fatalf("snapshot serving state = %#v, want retained session identity", runtimePatch["servingStateId"])
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run("receipt/"+method, func(t *testing.T) {
+			encodedRuntime, err := json.Marshal(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := url.Values{"builderReceipt": {"1"}, "builderRuntime": {string(encodedRuntime)}, "page": {pageID}, "pageId": {pageID}, "visual": {selectedVisual}}
+			request := httptest.NewRequest(method, "/dashboards/revenue/edit?"+values.Encode(), nil)
+			if method == http.MethodPost {
+				request = httptest.NewRequest(method, "/dashboards/revenue/draft/saved-visual", strings.NewReader(values.Encode()))
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
+			request = withBuilderURLParams(request, "sales", "revenue")
+			recorder := httptest.NewRecorder()
+			if method == http.MethodGet {
+				h.DashboardBuilder(recorder, request)
+			} else {
+				h.savedVisualImportReceipt(recorder, request, "revenue")
+			}
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			_, rest, found := strings.Cut(recorder.Body.String(), `data-receipt="`)
+			if !found {
+				t.Fatal("missing receipt")
+			}
+			payload, _, _ := strings.Cut(rest, `"`)
+			var receipt struct {
+				Envelope uisignals.DashboardBuilderEnvelope `json:"envelope"`
+			}
+			if err := json.Unmarshal([]byte(html.UnescapeString(payload)), &receipt); err != nil {
+				t.Fatal(err)
+			}
+			if receipt.Envelope.BuilderFilterState.Revision != int64(selected.State.Revision) || fake.previewReq.Filters.CompiledState == nil {
+				t.Fatalf("receipt discarded applied filters: %#v", receipt.Envelope.BuilderFilterState)
+			}
+			actual, err := json.Marshal(receipt.Envelope.BuilderFilterState.AppliedControls["status"].Expression)
+			if err != nil || !strings.Contains(string(actual), `"value":"open"`) {
+				t.Fatalf("receipt discarded selected status: %s (%v)", actual, err)
+			}
+			if optionalRuntimeValue(receipt.Envelope.Runtime.ServingStateID) != activeServingStateID || optionalRuntimeValue(receipt.Envelope.Runtime.PageID) != pageID {
+				t.Fatalf("receipt discarded session/page identity: %#v", receipt.Envelope.Runtime)
+			}
+		})
+	}
+	// Saved visuals may bring additional authored controls. Keep existing
+	// selections, initialize the new control, and persist a usable session.
+	definition.FilterDefinitions["imported-status"] = definition.FilterDefinitions["status"]
+	definition.FilterBindings["imported-status"] = dashboardfilter.Binding{Key: "imported-status", ID: "imported-status", Filter: "imported-status", Scope: dashboardfilter.ScopeReport, Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered}, Selection: dashboardfilter.SelectionPolicy{Mode: dashboardfilter.SelectionSingle}}
+	envelope, err := h.dashboardBuilderSnapshotEnvelope(request, "sales", "principal-1", builder, runtime)
+	if err != nil {
+		t.Fatalf("refresh after importing a filter: %v", err)
+	}
+	if envelope.BuilderFilterState.Revision <= int64(selected.State.Revision) || len(envelope.BuilderFilterState.AppliedControls) != 2 {
+		t.Fatalf("rebased controls: %#v", envelope.BuilderFilterState)
+	}
+	record, err := store.Load(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dashboardfilter.RestoreMachine(definition.FilterApplication.WithDefaults().Mode, definition.FilterBindingSpecs(), record.State.Filters); err != nil {
+		t.Fatalf("imported controls left an unusable session: %v", err)
+	}
+	actual, err := json.Marshal(envelope.BuilderFilterState.AppliedControls["status"].Expression)
+	if err != nil || !strings.Contains(string(actual), `"value":"open"`) {
+		t.Fatalf("import discarded existing selection: %s (%v)", actual, err)
 	}
 }
 

@@ -936,3 +936,15 @@ DO $$ BEGIN
   GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_delete_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_backup;
  END IF;
 END $$;
+CREATE TABLE IF NOT EXISTS dashboard.saved_visuals (
+ project_id text NOT NULL,
+ principal_id uuid NOT NULL,
+ id uuid NOT NULL,
+ source_key text NOT NULL CHECK (octet_length(source_key) BETWEEN 1 AND 512),
+ title text NOT NULL CHECK (octet_length(title) BETWEEN 1 AND 512),
+ semantic_model_id text NOT NULL,
+ definition_json jsonb NOT NULL CHECK (jsonb_typeof(definition_json) = 'object'),
+ saved_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY (project_id, principal_id, id),
+ UNIQUE (project_id, principal_id, source_key)
+);

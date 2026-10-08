@@ -12,6 +12,21 @@ SELECT id,
 FROM access.principal
 WHERE id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
 
+-- name: GetPrincipalForUpdate :one
+SELECT id,
+       principal_type,
+       status,
+       COALESCE(email, '') AS email,
+       display_name,
+       disabled_at,
+       blocked_at,
+       last_seen_at,
+       created_at,
+       updated_at
+FROM access.principal
+WHERE id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL
+FOR UPDATE;
+
 -- name: ListPrincipals :many
 SELECT id,
        principal_type,

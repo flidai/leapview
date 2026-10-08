@@ -33,6 +33,7 @@ type ResponseBuffer struct {
 	body       bytes.Buffer
 	status     int
 	committed  bool
+	trailers   []string
 }
 
 func NewResponseBuffer(w http.ResponseWriter, r *http.Request) *ResponseBuffer {
@@ -64,12 +65,12 @@ func (w *ResponseBuffer) Write(data []byte) (int, error) {
 	return w.body.Write(data)
 }
 
-// Flush implements http.Flusher for generated SSE handlers. Once a stream
+// Flush implements http.Flusher for generated SSE and Arrow handlers. Once a stream
 // has been committed, only newly written bytes are sent; previously flushed
 // bytes are never replayed.
 func (w *ResponseBuffer) Flush() {
-	if w.isEventStream() {
-		w.flushEventStream()
+	if w.isEventStream() || w.isArrowStream() {
+		w.flushStream()
 		return
 	}
 	status := w.status
@@ -124,7 +125,12 @@ func (w *ResponseBuffer) isEventStream() bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(w.header.Get("Content-Type"))), "text/event-stream")
 }
 
-func (w *ResponseBuffer) flushEventStream() {
+func (w *ResponseBuffer) isArrowStream() bool {
+	mediaType, _, _ := strings.Cut(w.header.Get("Content-Type"), ";")
+	return strings.EqualFold(strings.TrimSpace(mediaType), "application/vnd.apache.arrow.stream")
+}
+
+func (w *ResponseBuffer) flushStream() {
 	if !w.committed {
 		status := w.status
 		if status == 0 {
@@ -143,7 +149,21 @@ func (w *ResponseBuffer) flushEventStream() {
 			}
 		}
 		w.downstream.WriteHeader(status)
+		for _, declaration := range w.header.Values("Trailer") {
+			for _, name := range strings.Split(declaration, ",") {
+				if name = http.CanonicalHeaderKey(strings.TrimSpace(name)); name != "" {
+					w.trailers = append(w.trailers, name)
+				}
+			}
+		}
 		w.committed = true
+	}
+	// Stream trailers can become known after the headers have been committed.
+	// Forward only declared trailers; ordinary headers are already immutable.
+	for _, name := range w.trailers {
+		if values, ok := w.header[name]; ok {
+			w.downstream.Header()[name] = append([]string(nil), values...)
+		}
 	}
 	if w.body.Len() > 0 {
 		_, _ = w.downstream.Write(w.body.Bytes())

@@ -610,13 +610,38 @@ test('run graph preserves status overlays, run scope labels, custom dialog title
   } finally { await page.close() }
 })
 
-test('external lineage scope changes keep the anchor visible and narrow Full Fit contains every node', async () => {
+test('changed lineage anchors center in the current canvas before resize observers deliver', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
   try {
+    await page.addInitScript(() => {
+      const NativeResizeObserver = window.ResizeObserver
+      let paused = false
+      const pending = new Map<ResizeObserver, () => void>()
+      window.ResizeObserver = class extends NativeResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          super((entries, observer) => {
+            if (paused) pending.set(observer, () => callback(entries, observer))
+            else callback(entries, observer)
+          })
+        }
+      }
+      Object.defineProperty(window, 'lineageResizeGate', { value: {
+        pause: () => { paused = true },
+        release: () => {
+          paused = false
+          const callbacks = [...pending.values()]
+          pending.clear()
+          for (const callback of callbacks) callback()
+        },
+      } })
+    })
     await page.goto(baseURL)
     const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
     await graph.locator('.react-flow__node').first().waitFor()
+    await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
+    const zoom = await graph.getByRole('status', { name: 'Zoom level' }).textContent()
     await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      ;(window as unknown as { lineageResizeGate: { pause(): void } }).lineageResizeGate.pause()
       element.style.width = '346px'
       element.graph = {
         nodes: [-2, -1, 0, 1, 2].map(rank => ({ id: `asset-${rank}`, label: `Asset ${rank}`, kind: 'model', rank, selected: rank === 0 })),
@@ -624,44 +649,153 @@ test('external lineage scope changes keep the anchor visible and narrow Full Fit
       }
     })
     await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveText(/Asset 0/)
+    await browserExpect.poll(() => graph.evaluate(element => {
+      const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+      const anchor = element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect()
+      return Math.max(Math.abs(anchor.left + anchor.width / 2 - (flow.left + flow.width / 2)),
+        Math.abs(anchor.top + anchor.height / 2 - (flow.top + flow.height / 2)))
+    }), { timeout: 2_000, message: 'Changed anchor must use current canvas dimensions before ResizeObserver delivery' }).toBeLessThanOrEqual(0.5)
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText(zoom!)
+    await page.evaluate(() => {
+      ;(window as unknown as { lineageResizeGate: { release(): void } }).lineageResizeGate.release()
+    })
+  } finally { await page.close() }
+})
+
+test('external lineage scope changes keep the anchor visible and narrow Full Fit contains every node', async () => {
+  const startedAt = performance.now()
+  const events: Array<{ elapsedMs: number; phase: string; event: string; detail?: unknown }> = []
+  let phase = 'new-page'
+  let omittedEvents = 0
+  let slow = false
+  const emit = (reason: string) => console.error('[asset-lineage lifecycle]', JSON.stringify({
+    reason, elapsedMs: performance.now() - startedAt, phase, events, omittedEvents,
+  }))
+  const record = (event: string, detail?: unknown) => {
+    if (events.length === 40) { events.shift(); omittedEvents++ }
+    events.push({ elapsedMs: performance.now() - startedAt, phase, event, ...(detail === undefined ? {} : { detail }) })
+    if (slow) emit('progress-after-deadline-warning')
+  }
+  const mark = (next: string) => { phase = next; record('phase') }
+  // Bun aborts a timed-out test without reliably reaching catch/finally. Emit
+  // before its unchanged five-second deadline, without waiting on the page.
+  const warning = setTimeout(() => { slow = true; emit('deadline-approaching') }, 4_000)
+  warning.unref()
+  const disconnected = () => record('browser-disconnected')
+  browser.on('disconnected', disconnected)
+  let page: Awaited<ReturnType<Browser['newPage']>> | undefined
+  try {
+    page = await browser.newPage({ viewport: { width: 390, height: 720 } })
+    page.on('crash', () => record('page-crash'))
+    page.on('close', () => record('page-close'))
+    page.on('pageerror', error => record('page-error', { name: error.name }))
+    page.on('requestfailed', request => record('request-failed', { resourceType: request.resourceType() }))
+    page.on('console', message => {
+      const prefix = 'lineage-test-progress:'
+      if (message.type() === 'debug' && message.text().startsWith(prefix)) {
+        record('browser-progress', JSON.parse(message.text().slice(prefix.length)))
+      }
+    })
+    mark('navigation')
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    mark('initial-node')
+    await graph.locator('.react-flow__node').first().waitFor()
+    mark('replace-graph')
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      element.style.width = '346px'
+      element.graph = {
+        nodes: [-2, -1, 0, 1, 2].map(rank => ({ id: `asset-${rank}`, label: `Asset ${rank}`, kind: 'model', rank, selected: rank === 0 })),
+        edges: [-2, -1, 0, 1].map(rank => ({ id: `edge-${rank}`, source: `asset-${rank}`, target: `asset-${rank + 1}`, kind: 'uses_model' })),
+      }
+    })
+    mark('selected-text')
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveText(/Asset 0/)
     for (const cleared of [false, true]) {
       if (cleared) {
+        mark('clear-selection')
         await graph.locator('.react-flow__renderer').dispatchEvent('click')
+        mark('selection-cleared')
         await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(0)
+        mark('resize-frames')
+        const resized = await graph.evaluate(async element => {
+          element.style.width = '330px'
+          for (let frame = 0; frame < 3; frame++) {
+            console.debug('lineage-test-progress:' + JSON.stringify({ frame, state: 'before' }))
+            await new Promise(requestAnimationFrame)
+            console.debug('lineage-test-progress:' + JSON.stringify({ frame, state: 'after' }))
+          }
+          return {
+            flow: element.querySelector('.react-flow')!.getBoundingClientRect().toJSON(),
+            anchor: element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect().toJSON(),
+          }
+        })
+        record('resize-bounds', resized)
+        expect(resized.anchor.left).toBeGreaterThanOrEqual(resized.flow.left)
+        expect(resized.anchor.right).toBeLessThanOrEqual(resized.flow.right)
+        mark('pan-bounds')
         const flow = (await graph.locator('.react-flow').boundingBox())!
+        mark('pan-start')
         await page.mouse.move(flow.x + flow.width - 16, flow.y + flow.height - 20)
+        mark('pan-down')
         await page.mouse.down()
+        mark('pan-drag')
         await page.mouse.move(flow.x + 4, flow.y + flow.height - 20, { steps: 4 })
+        mark('pan-up')
         await page.mouse.up()
-        await browserExpect.poll(() => graph.evaluate(element => {
-          const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
-          return element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect().right < flow.left
-        }), { message: 'Pan must move the fallback asset out of view' }).toBe(true)
-      }
-      for (const scope of cleared ? ['focused', 'full'] : ['full']) {
-        await graph.evaluate((element: HTMLElement & { scope: string }, value) => { element.scope = value }, scope)
-        await browserExpect(graph.locator('.react-flow__node')).toHaveCount(scope === 'full' ? 5 : 3)
+        mark('pan-out-of-view')
         await browserExpect.poll(() => graph.evaluate(element => {
           const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
           const anchor = element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect()
+          console.debug('lineage-test-progress:' + JSON.stringify({ flow: flow.toJSON(), anchor: anchor.toJSON() }))
+          return anchor.right < flow.left
+        }), { message: 'Pan must move the fallback asset out of view' }).toBe(true)
+      }
+      for (const scope of cleared ? ['focused', 'full'] : ['full']) {
+        const context = `${cleared ? 'fallback' : 'selected'}-${scope}`
+        mark(`${context}:set-scope`)
+        await graph.evaluate((element: HTMLElement & { scope: string }, value) => { element.scope = value }, scope)
+        mark(`${context}:node-count`)
+        await browserExpect(graph.locator('.react-flow__node')).toHaveCount(scope === 'full' ? 5 : 3)
+        mark(`${context}:anchor-bounds`)
+        await browserExpect.poll(() => graph.evaluate(element => {
+          const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+          const anchor = element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect()
+          console.debug('lineage-test-progress:' + JSON.stringify({ flow: flow.toJSON(), anchor: anchor.toJSON() }))
           return anchor.width > 0 && anchor.left >= flow.left && anchor.right <= flow.right
             && anchor.top >= flow.top && anchor.bottom <= flow.bottom
         }), { message: `${scope} scope must center the ${cleared ? 'fallback' : 'selected'} asset` }).toBe(true)
+        mark(`${context}:selection-count`)
         await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(cleared ? 0 : 1)
       }
     }
+    mark('fit-click')
     await graph.getByRole('button', { name: 'Fit graph', exact: true }).click()
+    mark('fit-node-count')
     await browserExpect(graph.locator('.react-flow__node')).toHaveCount(5)
+    mark('fit-bounds')
     await browserExpect.poll(() => graph.evaluate(element => {
       const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
-      return Array.from(element.querySelectorAll('.react-flow__node')).flatMap(node => {
+      const outside = Array.from(element.querySelectorAll('.react-flow__node')).flatMap(node => {
         const bounds = node.getBoundingClientRect()
         const inside = bounds.width > 0 && bounds.left >= flow.left && bounds.right <= flow.right
           && bounds.top >= flow.top && bounds.bottom <= flow.bottom
         return inside ? [] : [{ id: node.getAttribute('data-id'), node: bounds.toJSON(), flow: flow.toJSON() }]
       })
+      console.debug('lineage-test-progress:' + JSON.stringify({ outside }))
+      return outside
     }), { message: 'Full Fit must contain every included node' }).toEqual([])
-  } finally { await page.close() }
+    mark('assertions-complete')
+  } catch (error) {
+    emit('failure')
+    throw error
+  } finally {
+    mark('page-close')
+    try { await page?.close() } finally {
+      clearTimeout(warning)
+      browser.off('disconnected', disconnected)
+    }
+  }
 })
 
 function testDocument(): string {
