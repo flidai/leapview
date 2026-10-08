@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import type { Page } from '@playwright/test'
-import { chatPageBrowserFixture, testDocument } from './chat-page-browser.test-fixture'
+import { chatPageBrowserFixture, openDashboardTestVisual, testDocument } from './chat-page-browser.test-fixture'
 
 const fixture = chatPageBrowserFixture()
 
@@ -774,26 +774,6 @@ test('chat switch waits for bootstrap before showing agent availability', async 
   }
 })
 
-async function openDashboardTestVisual(page: Page): Promise<void> {
-  await page.goto(`${fixture.baseURL}/chats/c1`)
-  await page.locator('lv-chat-page lv-chat-thread').waitFor()
-  await page.locator('lv-chat-page').evaluate(async (chat: any) => {
-    await chat.updateComplete
-    const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-    const field = (id: string, role: string) => ({ id, role, dataType: role === 'metric' ? 'decimal' : 'string', nullable: false, label: id })
-    mergePatch({ agent: { transcript: [{ id: 'tool-dashboard', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'chart-dashboard', type: 'bar', summary: 'Net sales by country' } }] }, visuals: { 'chart-dashboard': {
-schemaVersion: 14, visualID: 'chart-dashboard', rendererID: 'echarts', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1,
-          spec: { kind: 'cartesian', mark: 'bar', title: 'Net sales by country', datasets: [{ id: 'primary', fields: [field('label', 'dimension'), field('value', 'metric')] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Net sales by country', description: 'Revenue' }, interactions: [], x: { dataset: 'primary', field: 'label' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
-          dataState: { kind: 'inline', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['France', 42]], completeness: 'complete' }] },
-          selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
-    } } })
-    await chat.updateComplete
-    chat.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', {
-      detail: { artifactId: 'chart-dashboard', title: 'Net sales by country', explorerHref: '/explore?model=sales' }, bubbles: true, composed: true,
-    }))
-  })
-  await page.getByRole('button', { name: 'Add to dashboard', exact: true }).click()
-}
 
 for (const createNew of [false, true]) {
   test(`chat adds a visual to ${createNew ? 'a new' : 'an existing'} dashboard and offers another visual`, async () => {
@@ -809,7 +789,7 @@ for (const createNew of [false, true]) {
           await route.fulfill({ json: { dashboardId: createNew ? 'dashboard:new' : 'dashboard:finance', title: createNew ? 'CFO review' : 'Finance', componentId: 'imported-chart-component', pageId: createNew ? 'overview' : 'details', href: `/dashboards/dashboard:finance/edit?page=${createNew ? 'overview' : 'details'}&returnChat=c1` } })
         }
       })
-      await openDashboardTestVisual(page)
+      await openDashboardTestVisual(page, fixture.baseURL)
       const picker = page.locator('lv-chat-dashboard-picker')
       await picker.getByRole('radio', { name: 'Finance', exact: true }).waitFor()
       if (createNew) {
@@ -858,7 +838,7 @@ test('dashboard save retries preserve the command identity and keep failures in 
         await route.fulfill(keys.length === 1 ? { status: 503, json: {} } : { json: { dashboardId: 'dashboard:new', title: 'CFO review', href: '/dashboards/dashboard:new/edit', pageId: 'overview' } })
       }
     })
-    await openDashboardTestVisual(page)
+    await openDashboardTestVisual(page, fixture.baseURL)
     const picker = page.locator('lv-chat-dashboard-picker')
     await picker.getByRole('textbox', { name: 'Dashboard name' }).fill('CFO review')
     await picker.getByRole('button', { name: 'Create dashboard and add' }).click()
@@ -878,7 +858,7 @@ test('dashboard search cannot submit a destination hidden by the filter', async 
     await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', route => route.fulfill({ json: {
       dashboards: Array.from({ length: 7 }, (_, i) => ({ id: `dashboard:${i}`, title: `Finance ${i}`, pages: [{ id: 'overview', title: 'Overview' }] })), canCreate: true,
     } }))
-    await openDashboardTestVisual(page)
+    await openDashboardTestVisual(page, fixture.baseURL)
     const picker = page.locator('lv-chat-dashboard-picker')
     await picker.getByRole('searchbox', { name: 'Find a dashboard' }).fill('Finance 6')
     expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isDisabled()).toBe(true)
@@ -1191,28 +1171,4 @@ for (const terminalError of ['', 'The final reply exceeded the conversation limi
   await chat.evaluate(async (e:any)=>{e.requestUpdate();await e.updateComplete})
   expect(await chat.evaluate((e:any)=>e.builderOpen)).toBe(false)
  }finally{await page.close()}
-})
-
-test('shrinking chat switches visual panels without creating an empty dashboard', async () => {
- const page = await fixture.browser.newPage({viewport:{width:1400,height:900}})
- try {
-  let creates = 0
-  await page.route('**/dashboards/new', route => {creates++;return route.fulfill({contentType:'text/html',body:'<lv-dashboard-builder></lv-dashboard-builder>'})})
-  await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', route => route.fulfill({json:{dashboards:[],canCreate:true}}))
-  await openDashboardTestVisual(page)
-  const chat = page.locator('lv-chat-page')
-  await page.getByRole('button',{name:'Close add to dashboard',exact:true}).click()
-  expect(await chat.locator('lv-chat-visual-panel').count()).toBe(1)
-  await page.getByRole('button',{name:'Shrink chat',exact:true}).click()
-  expect(await chat.locator('lv-chat-visual-panel').count()).toBe(0)
-  expect(await page.getByRole('region',{name:'Dashboard preview'}).isVisible()).toBe(true)
-  expect(creates).toBe(0)
-  await chat.evaluate(async(e:any)=>{e.openVisual(new CustomEvent('lv-chat-visual-open',{detail:{artifactId:'chart-dashboard',title:'Net sales by country'}}));await e.updateComplete})
-  expect(await chat.locator('lv-chat-visual-panel').count()).toBe(0)
-  await chat.evaluate(async(e:any)=>{e.savedBuilderHref='/dashboards/demo/edit?embed=chat&page=overview';await e.updateComplete})
-  await page.getByRole('button',{name:'Preview dashboard',exact:true}).click()
-  expect(await page.getByRole('region',{name:'Dashboard builder'}).isVisible()).toBe(true)
-  expect(await chat.locator('lv-chat-visual-panel').count()).toBe(0)
-  expect(creates).toBe(0)
- } finally {await page.close()}
 })
