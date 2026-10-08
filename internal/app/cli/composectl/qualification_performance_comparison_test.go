@@ -11,6 +11,7 @@ func comparableQualificationPerformanceReport() qualificationPerformanceReport {
 	report := completeQualificationLatencyReport()
 	report.Policy = validQualificationPerformancePolicy()
 	report.Architecture = "amd64"
+	report.Image = "reference-image"
 	report.Environment.Runtime = "Docker Engine 28.5.1"
 	report.Environment.LogicalCPUs = report.Policy.Assumptions.MinimumLogicalCPUs
 	report.Environment.MemoryBytes = report.Policy.Assumptions.MinimumMemoryBytes
