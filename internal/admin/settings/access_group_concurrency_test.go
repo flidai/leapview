@@ -39,10 +39,11 @@ func testConcurrentGroupRevision(t *testing.T, surface string) {
 	require.NoError(t, err)
 	_, err = repository.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: actor.ID, Email: actor.Email, DisplayName: actor.DisplayName, Role: access.PlatformRoleAdmin})
 	require.NoError(t, err)
-	target, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "local", Name: "Target"})
+	target, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "target-team", Name: "Target"})
 	require.NoError(t, err)
-	control, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "local", Name: "Control"})
+	control, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "control-team", Name: "Control"})
 	require.NoError(t, err)
+	require.NotEqual(t, target.ID, control.ID)
 	readGroup := func(id string) (access.Group, error) {
 		groups, err := repository.ListGroups(ctx)
 		if err != nil {
