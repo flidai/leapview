@@ -566,17 +566,13 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			if command.PrincipalID == "" {
 				return event, errors.New("principal is required")
 			}
-			sessions, err := tx.ListSessions(ctx, command.PrincipalID)
-			if err != nil {
-				return event, err
+			writer, ok := tx.(interface {
+				RevokeSessionsForPrincipal(context.Context, string) error
+			})
+			if !ok {
+				return event, errors.New("session revocation is unavailable")
 			}
-			for _, session := range sessions {
-				if session.RevokedAt == "" {
-					if err := tx.RevokeSessionForPrincipal(ctx, command.PrincipalID, session.ID); err != nil {
-						return event, err
-					}
-				}
-			}
+			mutationErr = writer.RevokeSessionsForPrincipal(ctx, command.PrincipalID)
 			event.Action, event.ResourceKind, event.ResourceID = "principal.sessions.revoked", "principal", command.PrincipalID
 			result.Message = "All active sessions revoked."
 		case "create_group":
