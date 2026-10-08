@@ -22,7 +22,7 @@ import (
 )
 
 func TestApplyAccessAdministrationCommandRejectsConcurrentPrincipalRevision(t *testing.T) {
-	for _, surface := range []string{"admin", "REST", "self"} {
+	for _, surface := range []string{"admin", "REST", "self", "service"} {
 		t.Run(surface, func(t *testing.T) { testConcurrentPrincipalRevision(t, surface) })
 	}
 }
@@ -38,21 +38,30 @@ func testConcurrentPrincipalRevision(t *testing.T, surface string) {
 	require.NoError(t, err)
 	_, err = repository.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: actor.ID, Email: actor.Email, DisplayName: actor.DisplayName, Role: access.PlatformRoleAdmin})
 	require.NoError(t, err)
-	target, err := repository.CreateLocalUser(ctx, access.LocalUserInput{Email: "target@example.com", DisplayName: "Target"})
+	createPrincipal := func(email, name string) (access.Principal, error) {
+		if surface == "service" {
+			return repository.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: name})
+		}
+		user, err := repository.CreateLocalUser(ctx, access.LocalUserInput{Email: email, DisplayName: name})
+		return user.Principal, err
+	}
+	target, err := createPrincipal("target@example.com", "Target")
 	require.NoError(t, err)
-	control, err := repository.CreateLocalUser(ctx, access.LocalUserInput{Email: "control@example.com", DisplayName: "Control"})
+	control, err := createPrincipal("control@example.com", "Control")
 	require.NoError(t, err)
-	initial, err := repository.PrincipalByID(ctx, target.Principal.ID)
+	initial, err := repository.PrincipalByID(ctx, target.ID)
 	require.NoError(t, err)
-	controlBefore, err := repository.PrincipalByID(ctx, control.Principal.ID)
+	controlBefore, err := repository.PrincipalByID(ctx, control.ID)
 	require.NoError(t, err)
-	actorID, action := actor.ID, "principal.updated"
+	actorID, action, resourceKind := actor.ID, "principal.updated", "principal"
 	capability := access.CapabilityProjectAdmin
 	if surface != "admin" {
 		capability = ""
 	}
 	if surface == "self" {
-		actorID, action = target.Principal.ID, "principal.profile.updated"
+		actorID, action = target.ID, "principal.profile.updated"
+	} else if surface == "service" {
+		action, resourceKind = "service_principal.updated", "service_principal"
 	}
 	handlerFor := func(writer *accesspostgres.Repository) accesshttp.Handler {
 		return accesshttp.Handler{
@@ -66,6 +75,16 @@ func testConcurrentPrincipalRevision(t *testing.T, surface string) {
 		}
 	}
 	loadRevision := func(principal access.Principal) (string, error) {
+		if surface == "service" {
+			router := chi.NewRouter()
+			router.Get("/api/v1/service-principals/{servicePrincipal}", handlerFor(repository).GetServicePrincipal)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/service-principals/"+principal.ID, nil).WithContext(ctx))
+			if response.Code != http.StatusOK || response.Header().Get("ETag") == "" {
+				return "", fmt.Errorf("service profile revision: status=%d body=%s", response.Code, response.Body.String())
+			}
+			return response.Header().Get("ETag"), nil
+		}
 		if surface != "self" {
 			return access.PrincipalRevision(principal)
 		}
@@ -78,13 +97,13 @@ func testConcurrentPrincipalRevision(t *testing.T, surface string) {
 	}
 	revision, err := loadRevision(initial)
 	require.NoError(t, err)
-	_, err = access.PrincipalForMutation(ctx, repository, target.Principal.ID)
+	_, err = access.PrincipalForMutation(ctx, repository, target.ID)
 	require.ErrorContains(t, err, "caller-owned transaction", "a pool read must not claim to retain a revision lock")
 	staleRevision := errors.New("stale profile revision")
 	invoke := func(ctx context.Context, writer *accesspostgres.Repository, name, revision string) error {
 		if surface == "admin" {
 			result, err := ApplyAccessAdministrationCommand(ctx, writer, actorID, AccessAdministrationCommand{
-				Action: "update_principal", PrincipalID: target.Principal.ID, DisplayName: name, Revision: revision,
+				Action: "update_principal", PrincipalID: target.ID, DisplayName: name, Revision: revision,
 			})
 			if err != nil && strings.Contains(err.Error(), "principal changed; refresh and try again") {
 				return staleRevision
@@ -94,12 +113,17 @@ func testConcurrentPrincipalRevision(t *testing.T, surface string) {
 			}
 			return err
 		}
-		operation, path := "updatePrincipal", "/api/v1/principals/"+target.Principal.ID
+		operation, path := "updatePrincipal", "/api/v1/principals/"+target.ID
+		targetValues := map[string]string{"principal": target.ID}
 		handler := handlerFor(writer)
 		router := chi.NewRouter()
 		if surface == "self" {
 			operation, path = "updateCurrentPrincipal", "/api/v1/me"
 			router.Patch(path, handler.UpdateCurrentPrincipal)
+		} else if surface == "service" {
+			operation, path = "updateServicePrincipal", "/api/v1/service-principals/"+target.ID
+			targetValues = map[string]string{"servicePrincipal": target.ID}
+			router.Patch("/api/v1/service-principals/{servicePrincipal}", handler.UpdateServicePrincipal)
 		} else {
 			router.Patch("/api/v1/principals/{principal}", handler.UpdatePrincipal)
 		}
@@ -109,7 +133,7 @@ func testConcurrentPrincipalRevision(t *testing.T, surface string) {
 		}
 		commandContext, guard, err := apigencommand.BeginInvocation(ctx, contract, apigencommand.Invocation{
 			OperationID: operation, Surface: apigencommand.SurfaceAPI,
-			TargetValues: map[string]string{"principal": target.Principal.ID}, ConcurrencyToken: revision,
+			TargetValues: targetValues, ConcurrencyToken: revision,
 		})
 		if err != nil {
 			return err
@@ -143,9 +167,9 @@ func testConcurrentPrincipalRevision(t *testing.T, surface string) {
 	require.NoError(t, err)
 	defer func() { _ = blocker.Rollback(context.Background()) }()
 	var lockedID string
-	err = blocker.QueryRow(ctx, `SELECT id::text FROM access.principal WHERE id=$1::uuid FOR UPDATE`, target.Principal.ID).Scan(&lockedID)
+	err = blocker.QueryRow(ctx, `SELECT id::text FROM access.principal WHERE id=$1::uuid FOR UPDATE`, target.ID).Scan(&lockedID)
 	require.NoError(t, err)
-	require.Equal(t, target.Principal.ID, lockedID)
+	require.Equal(t, target.ID, lockedID)
 
 	type outcome struct {
 		name string
@@ -214,26 +238,27 @@ func testConcurrentPrincipalRevision(t *testing.T, surface string) {
 			t.Fatalf("profile writers did not finish: %v", writeContext.Err())
 		}
 	}
-	stored, err := repository.PrincipalByID(ctx, target.Principal.ID)
+	stored, err := repository.PrincipalByID(ctx, target.ID)
 	require.NoError(t, err)
-	filter := access.AuditEventFilter{IncludeUnscoped: true, PrincipalID: actorID, Action: action, ResourceKind: "principal", ResourceID: target.Principal.ID}
+	filter := access.AuditEventFilter{IncludeUnscoped: true, PrincipalID: actorID, Action: action, ResourceKind: resourceKind, ResourceID: target.ID}
 	events, err := repository.ListAuditEvents(ctx, filter)
 	require.NoError(t, err)
 	t.Logf("profile outcomes: successes=%d stale=%d audits=%d finalName=%q", successes, stale, len(events), stored.DisplayName)
 	require.Equal(t, 1, successes, "one initial revision must authorize only one concurrent profile write")
 	require.Equal(t, 1, stale)
 	require.Equal(t, winner, stored.DisplayName)
+	require.Equal(t, initial.Kind, stored.Kind)
 	require.Len(t, events, 1)
 	require.Equal(t, "success", events[0].Status)
 	require.Equal(t, capability, events[0].Capability)
-	unchanged, err := repository.PrincipalByID(ctx, control.Principal.ID)
+	unchanged, err := repository.PrincipalByID(ctx, control.ID)
 	require.NoError(t, err)
 	require.Equal(t, controlBefore, unchanged)
 
 	freshRevision, err := loadRevision(stored)
 	require.NoError(t, err)
 	require.NoError(t, invoke(ctx, repository, "Recovered", freshRevision))
-	recovered, err := repository.PrincipalByID(ctx, target.Principal.ID)
+	recovered, err := repository.PrincipalByID(ctx, target.ID)
 	require.NoError(t, err)
 	require.Equal(t, "Recovered", recovered.DisplayName)
 	events, err = repository.ListAuditEvents(ctx, filter)
