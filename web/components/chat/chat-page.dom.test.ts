@@ -260,7 +260,7 @@ for (const viewport of [
           stageJustifyContent: getComputedStyle(stage).justifyContent,
           stageFlexDirection: getComputedStyle(stage).flexDirection,
           promptLayout: getComputedStyle(starterGroup).display,
-          contextActionDisplay: getComputedStyle(composerRoot.querySelector('.context-button')).display,
+          contextActionDisplay: getComputedStyle(composerRoot.querySelector('[aria-label="Add context"]')).display,
           hasVerticalOverflow: document.documentElement.scrollHeight > window.innerHeight,
           hasHorizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
         }

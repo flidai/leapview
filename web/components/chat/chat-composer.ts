@@ -231,7 +231,7 @@ class ChatComposer extends LitElement {
           <div class="actions">
             <button class="context-button" type="button" aria-label="Add files" title="Add files" ?disabled=${this.pending || this.running || this.readingFiles} @click=${()=>this.shadowRoot?.querySelector<HTMLInputElement>('.file-input')?.click()}>${lucideIcon(Paperclip)}</button>
             <button
-              class="context-button"
+              class="context-button context-picker-button"
               type="button"
               aria-label="Add context"
               title="Add context"
