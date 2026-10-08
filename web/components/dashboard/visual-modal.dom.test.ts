@@ -76,6 +76,7 @@ async function dispatchVisualAction(page: Awaited<ReturnType<typeof setupPage>>,
 test('focus action moves the live visual into the modal and restores it in place', async () => {
   const page = await setupPage()
   try {
+    await page.addStyleTag({ content: ':root { --lv-bg-page: #010409; --lv-modal-backdrop: rgba(0, 0, 0, 0.35); }' })
     await page.locator('#trigger').focus()
     await dispatchVisualAction(page, 'first', 'focus')
     const close = page.getByRole('button', { name: 'Close visual modal' })
@@ -103,6 +104,9 @@ test('focus action moves the live visual into the modal and restores it in place
       activeInModal: true,
       nativeModal: true,
     })
+
+    expect(await page.getByRole('dialog').evaluate((dialog) => getComputedStyle(dialog, '::backdrop').backgroundColor))
+      .toBe('rgba(0, 0, 0, 0.35)')
 
     // Chromium may move forward focus to browser chrome when the native dialog
     // has only one control; reverse traversal must return to that real control.
