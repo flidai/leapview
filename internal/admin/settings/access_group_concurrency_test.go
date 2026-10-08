@@ -18,6 +18,7 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -238,4 +239,53 @@ func testConcurrentGroupRevision(t *testing.T, surface string) {
 	events, err = repository.ListAuditEvents(ctx, filter)
 	require.NoError(t, err)
 	require.Len(t, events, 2)
+}
+
+func TestGroupForMutationRequiresTransactionAndActiveGroup(t *testing.T) {
+	ctx := t.Context()
+	pool := postgrestest.Open(t, accesspostgres.ApplySchema)
+	config := accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("admin-settings-test-key", 2))}
+	repository, err := accesspostgres.NewAccess(pool, config)
+	require.NoError(t, err)
+	group, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "local-team", Name: "Local team"})
+	require.NoError(t, err)
+	// The broad Repository interface deliberately does not expose the optional
+	// locking reader. A normal repository read cannot stand in for that reader.
+	withoutReader := struct{ access.Repository }{Repository: repository}
+	row, err := access.GroupForMutation(ctx, withoutReader, group.ID)
+	require.ErrorContains(t, err, "group revision locking is unavailable")
+	require.Equal(t, access.Group{}, row)
+	row, err = access.GroupForMutation(ctx, repository, group.ID)
+	require.ErrorContains(t, err, "caller-owned transaction")
+	require.Equal(t, access.Group{}, row)
+
+	connection, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer connection.Release()
+	connectionRepository, err := accesspostgres.NewAccess(connection.Conn(), config)
+	require.NoError(t, err)
+	row, err = access.GroupForMutation(ctx, connectionRepository, group.ID)
+	require.ErrorContains(t, err, "caller-owned transaction")
+	require.Equal(t, access.Group{}, row)
+	tx, err := connection.Conn().Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	transactionRepository, err := accesspostgres.NewAccess(tx, config)
+	require.NoError(t, err)
+	row, err = access.GroupForMutation(ctx, transactionRepository, group.ID)
+	require.NoError(t, err)
+	require.Equal(t, group, row)
+	expectedRevision, err := access.GroupRevision(group)
+	require.NoError(t, err)
+	lockedRevision, err := access.GroupRevision(row)
+	require.NoError(t, err)
+	require.Equal(t, expectedRevision, lockedRevision)
+
+	row, err = access.GroupForMutation(ctx, transactionRepository, "00000000-0000-4000-8000-000000000001")
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+	require.Equal(t, access.Group{}, row)
+	require.NoError(t, transactionRepository.DeleteGroup(ctx, group.ID))
+	row, err = access.GroupForMutation(ctx, transactionRepository, group.ID)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+	require.Equal(t, access.Group{}, row)
 }
