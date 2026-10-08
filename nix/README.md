@@ -193,10 +193,21 @@ installer metadata, release evidence and the hostile-instance boundary. The
 `native-desktop` development lane exercises this host floor
 without publication credentials.
 
+After qualification, a separate protected signer rechecks the original builder
+bytes and complete qualification evidence without running the candidate. It
+attests the exact Debian archive's provenance and SPDX predicate and the native
+qualification receipt. An independent read-only job verifies those attestations
+live against the protected workflow, exact main revision and original artifact
+IDs, then retains the signed evidence binding. Package metadata remains
+`unsigned-candidate` and `productionEligible: false`; GitHub artifact attestations
+do not change the Desktop distribution policy.
+
 That candidate qualification records install, reinstall, protocol registration
-and removal. Upgrade, rollback, recovery and profile observation remain pending;
-it does not establish production adoption, signing, publication or release
-admission. Conventional desktop release workflows remain authoritative.
+and removal. Upgrade, rollback, recovery, canonical release identity, profile
+observation and exact promotion remain pending. The protected attestation path
+requires a successful live run after merge; fixture tests do not establish that
+acceptance. It does not establish production adoption or release admission.
+Conventional desktop release workflows remain authoritative.
 macOS and Windows outputs remain on their existing toolchains.
 
 ### Standalone public-site candidates
