@@ -84,6 +84,7 @@ class PlaygroundApp extends LitElement {
   @state() private exampleReady = false
   private navigationRevision = 0
   private examplePreparation: Promise<void> = Promise.resolve()
+  private pendingExampleState = initialSnapshot?.example
   private readonly beforeReload = () => {
     if (embedded) return
     try { sessionStorage.setItem(snapshotKey, JSON.stringify({ href: location.href, state: JSON.stringify(this.snapshot()) })) } catch { /* Storage unavailable. */ }
@@ -123,12 +124,15 @@ class PlaygroundApp extends LitElement {
       darkTheme: document.documentElement.dataset.darkTheme || 'dark',
       colorScheme: this.dark ? 'dark' : 'light',
     },
-    preview: this.previewOnly, example: this.exampleElement()?.getExampleState?.() || {},
+    preview: this.previewOnly,
+    // A reload while importing/restoring must retain authored shared state.
+    example: !this.exampleReady && this.pendingExampleState ? this.pendingExampleState : this.exampleElement()?.getExampleState?.() || {},
   })
 
   private async prepareCurrentExample(snapshot?: ExampleSnapshot) {
     const revision = this.navigationRevision
     this.exampleReady = false
+    this.pendingExampleState = snapshot?.route === this.route ? snapshot.example : undefined
     await this.loadCurrentExample()
     if (revision !== this.navigationRevision || this.loadError) return
     await this.updateComplete
@@ -282,7 +286,7 @@ class PlaygroundApp extends LitElement {
     const example = group?.examples.find(item => item.id === exampleID)
     const exampleModule = exampleModules.get(moduleID(this.route))
     const preview = example && !customElements.get(exampleModule?.tag || '')
-      ? html`<p role="status">${this.loadError || 'Loading example…'}</p>`
+      ? html`<div class="example-loading"><p role="status">${this.loadError || 'Loading example…'}</p>${this.loadError ? html`<button type="button" class="settings-button" @click=${() => { this.beforeReload(); location.reload() }}>Reload example</button>` : nothing}</div>`
       : example ? keyed(this.route, groupID === 'charts'
       ? html`<playground-charts .example=${exampleID} ?preview-only=${this.previewOnly}></playground-charts>`
       : groupID === 'graphs' ? html`<playground-graphs .example=${exampleID} ?preview-only=${this.previewOnly}></playground-graphs>`
@@ -337,7 +341,7 @@ class PlaygroundApp extends LitElement {
           <span class="share-message" role="status" ?hidden=${this.previewOnly}>${this.shareMessage}</span>
           ${this.shareFallback && !this.previewOnly ? html`<input class="settings-input share-fallback" readonly aria-label="Example link" .value=${this.shareFallback} @focus=${(event: Event) => (event.target as HTMLInputElement).select()}>` : nothing}
           <div class="viewport" style=${`width: ${this.width === 'responsive' ? '100%' : this.width + 'px'}; --playground-preview-height: ${this.height}px`}>${preview}</div>
-          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${this.exampleReady} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.() || ''}></playground-review-tools>` : nothing}
+          ${!embedded ? html`<playground-review-tools ?hidden=${this.previewOnly} .route=${this.route} .exampleReady=${this.exampleReady} .getSnapshot=${this.snapshot} .getExample=${() => this.exampleElement()} .getCode=${() => this.exampleElement()?.getExampleCode?.()}></playground-review-tools>` : nothing}
         </main>
       </div>`
   }

@@ -178,3 +178,24 @@ test('theme, size, preview and review tools preserve authored YAML without reloa
   expect(JSON.parse(url.searchParams.get('state')!).example.source).toBe(source)
   expect(await page.evaluate(() => performance.getEntriesByType('navigation').length)).toBe(1)
 })
+
+test('copying empty authored YAML preserves its exact payload and explains the empty source', async () => {
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value: string) => { (window as any).copiedContractSource = value },
+    } })
+  })
+  const textbox = example().getByRole('textbox', { name: 'Dashboard YAML source', exact: true })
+  await browserExpect(textbox).toBeVisible()
+  await textbox.focus()
+  await textbox.press('ControlOrMeta+A')
+  await textbox.press('Backspace')
+  await browserExpect.poll(() => example().evaluate((element: any) => element.getExampleCode())).toBe('')
+  const review = page.locator('playground-review-tools')
+  await review.locator('summary').first().click()
+  await review.getByRole('button', { name: 'Copy component code', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).copiedContractSource)).toBe('')
+  await browserExpect(review.getByLabel('Current component code', { exact: true })).toBeVisible()
+  await browserExpect(review.getByLabel('Current component code', { exact: true })).toHaveText('')
+  await browserExpect(review).toContainText('The current source is empty.')
+})

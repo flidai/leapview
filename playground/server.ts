@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { watch, type FSWatcher } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { buildMapLibreWorker } from '../scripts/build_maplibre_worker'
 import { datastarRuntimeURL } from '../web/components/shared/datastar-runtime'
+import { dashboardValidationPlugin } from './dashboard-contract-validation-build'
 
 const root = resolve(import.meta.dir, '..')
 const output = resolve(root, '.tmp/playground')
@@ -21,7 +22,8 @@ export async function buildPlayground(outputDirectory = output): Promise<Playgro
   const result = await Bun.build({
     entrypoints: [resolve(root, 'playground/app.ts'), resolve(root, 'web/components/shared/monaco-editor-worker.ts')],
     root: root,
-    target: 'browser', format: 'esm', splitting: true,
+    target: 'browser', format: 'esm', splitting: true, minify: true,
+    plugins: [dashboardValidationPlugin()],
     external: [datastarRuntimeURL],
     define: { __PLAYGROUND_BUILD_ID__: JSON.stringify(nextBuildID) },
     outdir: outputDirectory,
@@ -29,9 +31,20 @@ export async function buildPlayground(outputDirectory = output): Promise<Playgro
   })
   if (!result.success) throw new AggregateError(result.logs, 'Playground build failed')
   await buildMapLibreWorker(outputDirectory)
+  await precompressPlaygroundAssets(outputDirectory)
   const build = { buildID: nextBuildID, outputDirectory }
   if (outputDirectory === output) defaultBuild = build
   return build
+}
+
+/** Compression belongs to the build so serving assets never consumes CPU for it. */
+export async function precompressPlaygroundAssets(outputDirectory: string) {
+  for await (const path of new Bun.Glob('**/*.{js,mjs,css}').scan({ cwd: outputDirectory, absolute: true, onlyFiles: true })) {
+    const compressed = Bun.gzipSync(await Bun.file(path).arrayBuffer())
+    // A rebuild must never expose an incomplete gzip stream to an open tab.
+    await Bun.write(`${path}.gz.tmp`, compressed)
+    await rename(`${path}.gz.tmp`, `${path}.gz`)
+  }
 }
 
 /** Only serve browser assets; never expose the repository or proxy a backend. */
@@ -59,9 +72,44 @@ export async function playgroundBuildResponse(request: Request, build: Playgroun
   if (!filePath) return new Response('Not found', { status: 404 })
   const file = Bun.file(filePath)
   if (!await file.exists()) return new Response('Not found', { status: 404 })
-  return new Response(request.method === 'HEAD' ? null : file, {
-    headers: { 'Content-Type': file.type, 'Cache-Control': 'no-store' },
-  })
+  // Bun's content hashes change whenever a chunk changes. Entry assets stay
+  // fresh so reloads always discover the new graph and its current build ID.
+  const cacheControl = /^\/(?:assets|static)\/chunks\/[^/]+-[a-z0-9]{8}\.(?:js|css)$/.test(path)
+    ? 'public, max-age=31536000, immutable' : 'no-store'
+  const headers = new Headers({ 'Content-Type': file.type, 'Cache-Control': cacheControl, 'Vary': 'Accept-Encoding' })
+  const encodings = encodingQualities(request.headers.get('Accept-Encoding'))
+  const gzipQuality = encodings.get('gzip') ?? encodings.get('*') ?? 0
+  const identityQuality = encodings.get('identity') ?? (encodings.get('*') === 0 ? 0 : 1)
+  let representation = file
+  if (filePath.startsWith(output + sep) && /\.(?:js|mjs|css)$/.test(filePath)) {
+    if (gzipQuality > 0 && (!encodings.has('identity') || gzipQuality >= identityQuality)) {
+      const gzip = Bun.file(`${filePath}.gz`)
+      if (await gzip.exists()) {
+        representation = gzip
+        headers.set('Content-Encoding', 'gzip')
+      }
+    }
+  }
+  if (representation === file && identityQuality === 0) {
+    const message = 'No acceptable content encoding'
+    return new Response(request.method === 'HEAD' ? null : message, { status: 406, headers: { 'Vary': 'Accept-Encoding', 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': String(message.length) } })
+  }
+  headers.set('Content-Length', String(representation.size))
+  return new Response(request.method === 'HEAD' ? null : representation, { headers })
+}
+
+function encodingQualities(value: string | null): Map<string, number> {
+  const qualities = new Map<string, number>()
+  for (const entry of (value || '').split(',')) {
+    const [name, ...parameters] = entry.toLowerCase().split(';').map(part => part.trim())
+    if (!['gzip', 'identity', '*'].includes(name)) continue
+    const parameter = parameters.find(parameter => /^q\s*=/.test(parameter))
+    const rawQuality = parameter?.split('=')[1]?.trim()
+    const quality = rawQuality === undefined ? 1 : /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(rawQuality) ? Number(rawQuality) : 0
+    // Conservatively honor a refusal even if an encoding is repeated.
+    qualities.set(name, Math.min(qualities.get(name) ?? 1, quality))
+  }
+  return qualities
 }
 
 function within(directory: string, requested: string): string | undefined {
@@ -125,7 +173,7 @@ function createLiveReload(state: { build: PlaygroundBuild }) {
     timer = setTimeout(() => { void rebuild() }, 160)
   }
   // Watch source trees, never the repository recursively (node_modules/.git/.tmp).
-  for (const directory of ['playground', 'web', 'static', 'docs/visuals', 'scripts']) {
+  for (const directory of ['playground', 'web', 'static', 'docs/visuals', 'scripts', 'schemas/json']) {
     const watcher = watch(resolve(root, directory), { recursive: true }, (_event, name) => {
       if (!name) { schedule(); return }
       const path = `${directory}/${String(name).replaceAll('\\', '/')}`

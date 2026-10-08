@@ -1,6 +1,6 @@
 import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { loadMonacoRuntime } from './monaco-runtime'
+import type { loadMonacoRuntime } from './monaco-runtime'
 
 type MonacoApi = Awaited<ReturnType<typeof loadMonacoRuntime>>
 type MonacoEditor = ReturnType<MonacoApi['editor']['create']>
@@ -50,6 +50,7 @@ class CodeEditor extends LitElement {
     .monaco-host {
       box-sizing: border-box;
       width: 100%;
+      min-width: 0;
       height: 100%;
       min-height: 22rem;
     }
@@ -162,7 +163,9 @@ class CodeEditor extends LitElement {
       if (signal.aborted || !this.isConnected) return
       const host = this.shadowRoot?.querySelector<HTMLElement>('.monaco-host')
       if (!host) return
-      await this.waitForMonacoStyles(signal)
+      // Keep the editor runtime outside the initial page graph, and load it
+      // alongside its stylesheet once this editor has mounted.
+      const [{ loadMonacoRuntime }] = await Promise.all([import('./monaco-runtime'), this.waitForMonacoStyles(signal)])
       if (signal.aborted || !this.isConnected) return
       const monaco = await loadMonacoRuntime()
       if (signal.aborted || !this.isConnected) return

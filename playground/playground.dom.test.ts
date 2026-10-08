@@ -229,6 +229,45 @@ test('a failed example module leaves navigation usable and reload can recover', 
   await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
 })
 
+test('a failed example offers explicit reload recovery and preserves theme and width', async () => {
+  const moduleURL = '**/assets/chunks/controls-*.js'
+  await page.route(moduleURL, route => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'throw new Error("Fixture module unavailable")' }))
+  await open('controls/select')
+  await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Fixture module unavailable')
+  await page.getByLabel('Preview width', { exact: true }).selectOption('360')
+  await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click()
+  const reload = page.getByRole('button', { name: 'Reload example', exact: true })
+  await browserExpect(reload).toBeVisible()
+  await page.unroute(moduleURL)
+  await reload.click()
+  await browserExpect(page.getByRole('button', { name: 'Refresh frequency', exact: true })).toBeVisible()
+  await browserExpect(page.getByLabel('Preview width', { exact: true })).toHaveValue('360')
+  await browserExpect(page.locator('html')).toHaveAttribute('data-color-mode', 'dark')
+})
+
+test('failed initial loading preserves authored YAML from a shared link during explicit recovery', async () => {
+  const moduleURL = '**/assets/chunks/dashboard-contract-*.js'
+  const source = 'kind: Dashboard\n# My in-progress YAML must survive a failed load.\n'
+  const url = new URL(server.url)
+  url.searchParams.set('state', JSON.stringify({ version: 1, route: 'recipes/dashboard-contract', width: '360', height: '420', theme: 'light', preview: false, example: { version: 'before', scenario: 'zero-span', source } }))
+  url.hash = 'recipes/dashboard-contract'
+  await page.route(moduleURL, route => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'throw new Error("Fixture module unavailable")' }))
+  await page.goto(url.href)
+  await browserExpect(page.locator('.viewport').getByRole('status')).toHaveText('Fixture module unavailable')
+  await page.getByLabel('Preview width', { exact: true }).selectOption('768')
+  await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click()
+  await page.unroute(moduleURL)
+  await page.getByRole('button', { name: 'Reload example', exact: true }).click()
+  const example = page.locator('playground-dashboard-contract')
+  await browserExpect(example).toBeVisible()
+  await browserExpect(page.getByRole('button', { name: 'Copy link', exact: true })).toBeEnabled()
+  expect(await example.evaluate((element: any) => element.getExampleCode())).toBe(source)
+  await browserExpect(example.getByLabel('Document scenario', { exact: true })).toHaveValue('zero-span')
+  await browserExpect(example.getByLabel('Schema version', { exact: true })).toHaveValue('before')
+  await browserExpect(page.getByLabel('Preview width', { exact: true })).toHaveValue('768')
+  await browserExpect(page.locator('html')).toHaveAttribute('data-color-mode', 'dark')
+})
+
 test('browser review waits for the actual preview while its module is delayed', async () => {
   const gate = await delayControlsModule()
   const opening = openExample(page, 'controls/select', { theme: 'light' })

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
@@ -194,6 +194,49 @@ test('code editor initializes Monaco from value attribute', async () => {
   } finally {
     await page.close()
   }
+})
+
+test('code editor follows container and viewport resizing so wrapped source stays visible', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  const source = '# ' + 'Dashboard YAML remains readable when the container narrows. '.repeat(5) + 'tail-marker'
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-code-editor'))
+    await page.evaluate((source) => {
+      const element = document.createElement('lv-code-editor') as any
+      element.value = source
+      element.style.width = 'min(760px, calc(100vw - 48px))'
+      document.body.append(element)
+    }, source)
+    const editor = page.locator('lv-code-editor')
+    await browserExpect(editor.locator('.monaco-editor')).toBeVisible()
+    for (const viewportWidth of [900, 390, 1200]) {
+      await page.setViewportSize({ width: viewportWidth, height: 700 })
+      await browserExpect.poll(() => editor.evaluate((element: any) => {
+        const shell = element.shadowRoot.querySelector('.editor-shell')
+        return Math.abs(element.editor.getLayoutInfo().width - shell.clientWidth)
+      })).toBeLessThanOrEqual(1)
+    }
+    await editor.evaluate((element: any) => { element.style.width = '320px' })
+    await browserExpect.poll(() => editor.evaluate((element: any) => {
+      const shell = element.shadowRoot.querySelector('.editor-shell')
+      return Math.abs(element.editor.getLayoutInfo().width - shell.clientWidth)
+    })).toBeLessThanOrEqual(1)
+    const state = await editor.evaluate((element: any) => {
+      const root = element.shadowRoot
+      const shell = root.querySelector('.editor-shell')
+      const position = { lineNumber: 1, column: element.editor.getValue().length + 1 }
+      element.editor.revealPositionInCenter(position)
+      const tail = element.editor.getScrolledVisiblePosition(position)
+      return {
+        source: element.editor.getValue(),
+        wrapping: element.editor.getLayoutInfo().isViewportWrapping,
+        horizontalOverflow: shell.scrollWidth > shell.clientWidth,
+        tailFits: tail !== null && tail.left >= element.editor.getLayoutInfo().contentLeft && tail.left <= element.editor.getLayoutInfo().width,
+      }
+    })
+    expect(state).toEqual({ source, wrapping: true, horizontalOverflow: false, tailFits: true })
+  } finally { await page.close() }
 })
 
 test('code editor reconnects with retained edits and one model and change listener per lifetime', async () => {

@@ -1,20 +1,6 @@
-import Ajv from 'ajv/dist/2020'
 import { parse } from 'yaml'
-import schema from '../schemas/json/dashboard-document.schema.json'
+import { current, baseline } from './dashboard-contract-validation'
 import evidence from './dashboard-contract-evidence.json'
-
-// Baseline: 510224992 (2026-10-08). Only the twelve scalar minima differ.
-// Reconstruct that historical structural schema from the generated current
-// schema, avoiding a second maintained copy of the Dashboard contract.
-const baselineSchema = structuredClone(schema)
-for (const name of ['DashboardLayoutDefaults', 'DashboardLayoutOverride', 'DashboardPlacement'] as const) {
-  for (const property of Object.values(baselineSchema.$defs[name].properties)) {
-    delete (property as { minimum?: number }).minimum
-  }
-}
-const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false })
-const current = ajv.compile(schema)
-const baseline = ajv.compile(baselineSchema)
 
 export interface DashboardInspection { valid: boolean; issues: { path: string; message: string }[] }
 
