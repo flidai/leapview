@@ -86,7 +86,7 @@ func TestApplyTargetBindingBuildsTokenOnlyQuackConnection(t *testing.T) {
 func testQuackTargetBinding(t *testing.T) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_prod_lakehouse", TargetID: "lvinst_prod", ConnectionID: "lakehouse",
+		ID: "binding_prod_lakehouse", TargetID: "lvinst_prod", ConnectionID: "connection:lakehouse",
 		ConnectorKind: "quack", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
 		Scope:    connectionbinding.BindingScope{ProjectID: "operations", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{Host: "quack.example.com", Port: 443, TLSMode: "require"},
@@ -102,7 +102,7 @@ func testQuackTargetBinding(t *testing.T) connectionbinding.TargetBinding {
 func testDuckDBTargetBinding(t *testing.T) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "warehouse",
+		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "connection:warehouse",
 		ConnectorKind: "postgres", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
 		Scope: connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{

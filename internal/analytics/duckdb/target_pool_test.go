@@ -107,11 +107,11 @@ func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *test
 		"SET http_proxy_username = 'leapview'",
 		"SET http_proxy_password = 'test-proxy-secret'",
 		loadExtensionStatement("/test/extensions/" + extension.ArtifactFilenameStem("postgres") + ".duckdb_extension"),
-		"CREATE OR REPLACE TEMPORARY SECRET leapview_warehouse",
+		"CREATE OR REPLACE TEMPORARY SECRET leapview_target_probe",
 		"HOST 'warehouse.internal'",
 		"HOSTADDR '10.20.30.40'",
 		"PASSWORD 'source-secret'",
-		"ATTACH '' AS conn_warehouse (TYPE postgres, READ_ONLY, SECRET leapview_warehouse)",
+		"ATTACH '' AS conn_target_probe (TYPE postgres, READ_ONLY, SECRET leapview_target_probe)",
 		"SET lock_configuration = true",
 		"SELECT 1",
 	} {
@@ -187,7 +187,7 @@ func TestTargetRuntimePoolFactoryPreparesScopedQuackProbe(t *testing.T) {
 	for _, required := range []string{
 		"LOAD '/test/extensions/httpfs.duckdb_extension'",
 		"LOAD '/test/extensions/quack.duckdb_extension'",
-		"CREATE OR REPLACE TEMPORARY SECRET leapview_lakehouse (TYPE quack, TOKEN 'source-secret', SCOPE 'quack:quack.example.com:443')",
+		"CREATE OR REPLACE TEMPORARY SECRET leapview_target_probe (TYPE quack, TOKEN 'source-secret', SCOPE 'quack:quack.example.com:443')",
 		"FROM quack_query('quack:quack.example.com:443', 'SELECT 1')",
 		"SET lock_configuration = true",
 	} {
