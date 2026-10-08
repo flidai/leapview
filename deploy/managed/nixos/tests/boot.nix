@@ -447,14 +447,18 @@ pkgs.testers.runNixOSTest {
       with subtest("actual operator network loss triggers bounded remote rollback"):
           previous = database.succeed("readlink -f /run/current-system").strip()
           previous_profile = database.succeed("readlink -f /nix/var/nix/profiles/system").strip()
-          operator.succeed("(deploy --file ${deploymentFile} --targets database-network-loss > /root/network-loss.log 2>&1; echo $? > /root/network-loss.status) </dev/null >/dev/null 2>&1 &")
+          operator.succeed("(if deploy --file ${deploymentFile} --targets database-network-loss > /root/network-loss.log 2>&1; then deploy_result=0; else deploy_result=$?; fi; echo $deploy_result > /root/network-loss.status) </dev/null >/dev/null 2>&1 &")
           database.wait_until_succeeds("ip -4 -o addr show dev eth1 | grep -Fq '192.168.1.22/24'", timeout=120)
           database.fail("ip -4 -o addr show dev eth1 | grep -Fq '192.168.1.2/24'")
           operator.fail("ssh -o ConnectTimeout=2 root@192.168.1.2 true", timeout=10)
           database.wait_until_succeeds("grep -qx updated /etc/leapview-managed-generation", timeout=120)
           database.wait_until_succeeds("ip -4 -o addr show dev eth1 | grep -Fq '192.168.1.2/24'", timeout=60)
           operator.wait_until_succeeds("ssh root@192.168.1.2 true", timeout=60)
-          operator.wait_until_succeeds("test -f /root/network-loss.status", timeout=60)
+          try:
+              operator.wait_until_succeeds("test -f /root/network-loss.status", timeout=60)
+          except Exception:
+              print(operator.succeed("tail -n 80 /root/network-loss.log"))
+              raise
           assert operator.succeed("cat /root/network-loss.status").strip() != "0"
           assert database.succeed("readlink -f /run/current-system").strip() == previous
           assert database.succeed("readlink -f /nix/var/nix/profiles/system").strip() == previous_profile

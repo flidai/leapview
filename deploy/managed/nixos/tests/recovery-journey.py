@@ -40,7 +40,7 @@ with subtest("encrypted database and home backups bind one recovery frontier"):
     database.succeed(r"sed -i '/^\[global\]/a repo1-cipher-pass='$(openssl rand -hex 32) /var/lib/recovery-test/pgbackrest.conf")
     database.succeed("chown postgres:postgres /var/lib/recovery-test /var/lib/recovery-test/pgbackrest.conf")
     pgbackrest = "sudo -u postgres pgbackrest --config=/var/lib/recovery-test/pgbackrest.conf --stanza=default "
-    recovery_sql(database, "ALTER SYSTEM SET archive_command='pgbackrest --config=/var/lib/recovery-test/pgbackrest.conf --stanza=default archive-push %p'")
+    recovery_sql(database, "ALTER SYSTEM SET archive_command='/run/current-system/sw/bin/pgbackrest --config=/var/lib/recovery-test/pgbackrest.conf --stanza=default archive-push %p'")
     recovery_sql(database, "SELECT pg_reload_conf()")
     database.succeed(pgbackrest + "stanza-create", timeout=120)
     database.succeed(pgbackrest + "--type=full backup", timeout=300)

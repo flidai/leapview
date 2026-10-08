@@ -986,10 +986,13 @@ esac
             sleep = root / "sleep"
             sleep.write_text(f"#!{shell}\nexit 0\n")
             sleep.chmod(0o700)
-            environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+            # Ubuntu hides /usr; the isolated probe must not inherit host utilities.
+            for name, target in (("sh", shell), ("env", shutil.which("env")), ("cat", shutil.which("cat"))):
+                (root / name).symlink_to(target)
+            environment = dict(os.environ, PATH=str(root),
                                PROBE_COUNTER=str(root / "probes"), PROBE_TLS="true")
             result = subprocess.run(
-                ["bash", "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
+                [shell, "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
                 env=environment, capture_output=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr.decode())
@@ -1002,7 +1005,7 @@ esac
             environment["PROBE_TLS"] = "false"
             (root / "probes").write_text("3\n")
             rejected = subprocess.run(
-                ["bash", "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
+                [shell, "-c", host_guest._postgres_readiness_wait_command("fixture-postgres", "")],
                 env=environment, capture_output=True, timeout=10,
             )
             self.assertEqual(rejected.returncode, 1)

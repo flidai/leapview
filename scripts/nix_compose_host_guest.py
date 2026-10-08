@@ -1174,8 +1174,8 @@ def _postgres_readiness_wait_command(container_name: str, docker_env: str) -> st
     probe = "sh -ec " + shlex.quote(_postgres_readiness_command(container_name))
     return (
         "set -eu; i=0; while [ \"$i\" -lt 60 ]; do i=$((i+1)); "
-        "if env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(container_name) +
-        " 2>/dev/null | grep -qx running; then if readiness=$(" + probe +
+        "if state=$(env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(container_name) +
+        " 2>/dev/null) && [ \"$state\" = running ]; then if readiness=$(" + probe +
         " 2>/dev/null); then printf '%s\\n' \"$readiness\"; exit 0; fi; fi; sleep 2; done; exit 1"
     )
 
