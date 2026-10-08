@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { AtSign, Search, Send, Square, X } from 'lucide'
+import { AtSign, FileText, Paperclip, Search, Send, Square, X } from 'lucide'
+import { attachedMessage, readAttachedMessage, readChatFile, maxAttachmentCount, maxAttachmentCharacters, type ChatFileAttachment } from './attachments'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
@@ -42,6 +43,12 @@ class ChatComposer extends LitElement {
 	@property({ type: String, attribute: 'edit-message-id' }) editMessageId = ''
 	@property({ type: Boolean, reflect: true }) editing = false
   @state() private draft = ''
+  @state() private files: ChatFileAttachment[] = []
+  @state() private readingFiles = false
+  @state() private fileError = ''
+  @state() private draggingFiles = false
+  private fileDropTarget?: EventTarget
+  private dragDepth = 0
 	@state() private mentionIndex = 0
 	@state() private mentionSearchPending = false
 	@state() private acceptedSuggestions: ChatContextReference[] = []
@@ -65,7 +72,11 @@ class ChatComposer extends LitElement {
 
   updated(changed: Map<string, unknown>) {
     if (changed.has('value')) {
-		if (this.value) this.draft = this.value
+		if (this.value) {
+			const message = readAttachedMessage(this.value)
+			this.draft = message.text
+			if (message.files.length) this.files = message.files
+		}
 		void this.updateComplete.then(() => this.resizeTextarea())
     }
 		if (
@@ -83,6 +94,12 @@ class ChatComposer extends LitElement {
   connectedCallback() {
     super.connectedCallback()
     this.draft = this.value || ''
+    const root = this.getRootNode()
+    this.fileDropTarget = root instanceof ShadowRoot ? root.host : this
+    this.fileDropTarget.addEventListener('dragenter', this.fileDragEnter as EventListener)
+    this.fileDropTarget.addEventListener('dragleave', this.fileDragLeave as EventListener)
+    this.fileDropTarget.addEventListener('dragover', this.fileDragOver as EventListener)
+    this.fileDropTarget.addEventListener('drop', this.dropFiles as EventListener)
   }
 
   protected firstUpdated() {
@@ -97,6 +114,10 @@ class ChatComposer extends LitElement {
   }
 
   disconnectedCallback() {
+    this.fileDropTarget?.removeEventListener('dragenter', this.fileDragEnter as EventListener)
+    this.fileDropTarget?.removeEventListener('dragleave', this.fileDragLeave as EventListener)
+    this.fileDropTarget?.removeEventListener('dragover', this.fileDragOver as EventListener)
+    this.fileDropTarget?.removeEventListener('drop', this.dropFiles as EventListener)
     this.resizeObserver?.disconnect()
     this.resizeObserver = undefined
     super.disconnectedCallback()
@@ -111,7 +132,9 @@ class ChatComposer extends LitElement {
   }
 
   public setDraft(value: string, focus = true): void {
-    this.draft = value
+    const message = readAttachedMessage(value)
+    this.draft = message.text
+    this.files = message.files
     this.mentionIndex = 0
     this.mentionSearchPending = false
     this.lastSearchQuery = null
@@ -136,13 +159,18 @@ class ChatComposer extends LitElement {
 		const isEditing = this.editing || Boolean(this.editMessageId.trim())
 		const showStop = this.running
 		const stopDisabled = !this.runId.trim()
-		const continueDisabled = this.disabled || this.pending || this.running || isEditing || this.draft.trim() !== ''
+		const continueDisabled = this.disabled || this.pending || this.running || this.readingFiles || this.files.length > 0 || isEditing || this.draft.trim() !== ''
 		const activeMention = this.activeMention()
 		const mentionGroups = this.mentionSuggestionGroups()
 		const mentions = [...mentionGroups.pinned, ...mentionGroups.global]
 		const referenceLimitReached = this.referenceLimitReached()
     return html`
       <form @submit=${this.submit}>
+        <input class="file-input" type="file" multiple accept=".pdf,.txt,.md,.csv,.json,.log" aria-label="Choose files to attach" @change=${this.chooseFiles} />
+        ${this.draggingFiles ? html`<div class="file-drop-hint" role="status">Drop files to attach</div>` : nothing}
+        ${this.files.length ? html`<div class="attached-files" aria-label="Attached files">${this.files.map(file=>html`<span class="file-chip">${lucideIcon(FileText)}<span title=${file.name}>${file.name}</span><button type="button" aria-label=${`Remove ${file.name}`} ?disabled=${this.pending} @click=${()=>{this.files=this.files.filter(item=>item.id!==file.id)}}>${lucideIcon(X)}</button></span>`)}</div>` : nothing}
+        ${this.readingFiles ? html`<p class="file-status" role="status">Reading files…</p>` : nothing}
+        ${this.fileError ? html`<p class="file-error" role="alert">${this.fileError}</p>` : nothing}
 			${isEditing ? html`
 				<div class="edit-banner" role="status" aria-label="Editing message">
 					<span>Editing message</span>
@@ -201,6 +229,7 @@ class ChatComposer extends LitElement {
             @keydown=${this.keydown}
           ></textarea>
           <div class="actions">
+            <button class="context-button" type="button" aria-label="Add files" title="Add files" ?disabled=${this.pending || this.running || this.readingFiles} @click=${()=>this.shadowRoot?.querySelector<HTMLInputElement>('.file-input')?.click()}>${lucideIcon(Paperclip)}</button>
             <button
               class="context-button"
               type="button"
@@ -228,7 +257,7 @@ class ChatComposer extends LitElement {
                 type="submit"
 				  aria-label=${this.pending ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
 				  title=${this.pending ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
-                ?disabled=${this.disabled || this.pending || this.draft.trim() === ''}
+                ?disabled=${this.disabled || this.pending || this.readingFiles || (this.draft.trim() === '' && !this.files.length)}
               >
 							${this.pending ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
 							${isEditing ? html`<span>Save &amp; send</span>` : null}
@@ -261,6 +290,72 @@ class ChatComposer extends LitElement {
 		const mention = this.activeMention(textarea)
 		this.requestMentionSearch(mention?.query ?? null)
     this.resizeTextarea(textarea)
+  }
+
+  private hasFiles(event: DragEvent): boolean {
+    return Boolean(event.dataTransfer?.types.includes('Files'))
+  }
+
+  private fileDragEnter = (event: DragEvent): void => {
+    if (!this.hasFiles(event)) return
+    event.preventDefault()
+    this.dragDepth++
+    this.draggingFiles = !this.pending && !this.running
+  }
+
+  private fileDragLeave = (event: DragEvent): void => {
+    if (!this.hasFiles(event)) return
+    this.dragDepth = Math.max(0, this.dragDepth - 1)
+    if (!this.dragDepth) this.draggingFiles = false
+  }
+
+  private fileDragOver = (event: DragEvent): void => {
+    if (!this.hasFiles(event)) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = this.pending || this.running ? 'none' : 'copy'
+  }
+
+  private dropFiles = (event: DragEvent): void => {
+    if (!this.hasFiles(event)) return
+    event.preventDefault()
+    event.stopPropagation()
+    this.dragDepth = 0
+    this.draggingFiles = false
+    void this.addFiles(Array.from(event.dataTransfer?.files ?? []))
+  }
+
+  private chooseFiles = (event: Event): void => {
+    const input = event.target as HTMLInputElement
+    void this.addFiles(Array.from(input.files ?? []))
+    input.value = ''
+  }
+
+  private async addFiles(files: File[]): Promise<void> {
+    if (this.pending || this.running || this.readingFiles) return
+    this.fileError = ''
+    this.readingFiles = true
+    const errors: string[] = []
+    try {
+      for (const file of files) {
+        if (this.files.length >= maxAttachmentCount) {
+          errors.push(`Attach up to ${maxAttachmentCount} files at a time.`)
+          break
+        }
+        if (this.files.some(existing => existing.name === file.name && existing.size === file.size)) continue
+        try {
+          const attachment = await readChatFile(file)
+          if (this.files.reduce((total, item) => total + item.text.length, 0) + attachment.text.length > maxAttachmentCharacters) {
+            throw new Error('The attached files contain too much text. Remove a file or use shorter excerpts.')
+          }
+          this.files = [...this.files, attachment]
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : `Could not read ${file.name}.`)
+        }
+      }
+    } finally {
+      this.fileError = errors.join(' ')
+      this.readingFiles = false
+    }
   }
 
 	private keydown(event: KeyboardEvent) {
@@ -322,8 +417,8 @@ class ChatComposer extends LitElement {
   }
 
 	private dispatchSubmit() {
-    const input = this.draft.trim()
-    if (this.disabled || this.pending || input === '') return
+    const input = attachedMessage(this.draft.trim(), this.files)
+    if (this.disabled || this.pending || this.readingFiles || input === '') return
 		const editMessageId = this.editMessageId.trim()
 		if (this.editing && !editMessageId) return
 		emitDomainEvent(this, domainEvents.chatSubmit, {
@@ -344,6 +439,7 @@ class ChatComposer extends LitElement {
 	}
 
 	private continueResponse = (): void => {
+		if (this.files.length || this.readingFiles) return
 		if (this.disabled || this.pending || this.running || !this.canContinue || this.editing || this.editMessageId.trim() || this.draft.trim() !== '') return
 		emitDomainEvent(this, domainEvents.chatSubmit, {
 			input: continueResponsePrompt,
@@ -352,6 +448,8 @@ class ChatComposer extends LitElement {
 	}
 
 	private cancelEdit = (): void => {
+		this.files = []
+		this.fileError = ''
 		const editMessageId = this.editMessageId.trim()
 		if (!this.editing && !editMessageId) return
 		this.editMessageId = ''
@@ -368,6 +466,8 @@ class ChatComposer extends LitElement {
 	}
 
 	private consumeAcceptedTurn() {
+    this.files = []
+    this.fileError = ''
 		this.editMessageId = ''
 		this.editing = false
 		this.draft = ''

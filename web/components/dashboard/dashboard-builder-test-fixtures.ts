@@ -1,5 +1,28 @@
 import { typographyTestTokens } from '../test-typography-tokens'
 import type { DashboardVisualizationSignal } from '../../generated/signals'
+import type { VisualizationEnvelope } from '../../generated/visualization'
+
+export function windowedTablePreviewEnvelope(): VisualizationEnvelope {
+  const fields = [{ id: 'amount', role: 'metric' as const, dataType: 'decimal' as const, nullable: false, label: 'Amount' }]
+  const field = { dataset: 'primary', field: 'amount' }
+  const sort = [{ field, direction: 'ascending' as const }]
+  return {
+    schemaVersion: 14, visualID: 'sales-chart', rendererID: 'tanstack', specRevision: 'table-spec', dataRevision: 1,
+    spec: {
+      kind: 'table', title: 'Amounts', datasets: [{ id: 'primary', fields }],
+      dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Amounts', description: 'Amounts' },
+      interactions: [], columns: [{ field, label: 'Amount', formatting: [] }], defaultSort: sort,
+      presentation: { rowHeight: 34, striped: true, showHeader: true },
+    },
+    dataState: {
+      kind: 'windowed', specRevision: 'table-spec', dataRevision: 1, generation: 1,
+      schema: { id: 'primary', fields }, cardinality: { kind: 'exact', count: 250 }, availableRows: 250,
+      rowCap: 1000, chunkSize: 50, resetVersion: 0, sort,
+      blocks: { a: { id: 'a', start: 0, rows: Array.from({ length: 50 }, (_, i) => [i]), requestSeq: 0, resetVersion: 0, sort } },
+    },
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
+  }
+}
 
 export function governedBarPreviewEnvelope(revision: string): DashboardVisualizationSignal {
   const dataState = {

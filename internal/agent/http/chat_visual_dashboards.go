@@ -136,6 +136,11 @@ func (h *Handler) addChatVisualToDashboard(w stdhttp.ResponseWriter, r *stdhttp.
 	}
 	commandID := authoring.CommandID(key)
 	imported := applicationChatVisualImport(artifact)
+	componentID, err := application.ChatVisualComponentID(imported, commandID)
+	if err != nil {
+		h.writeChatVisualCommandError(w, r, err)
+		return
+	}
 
 	var targetID authoring.DashboardID
 	var targetTitle, pageID string
@@ -178,7 +183,7 @@ func (h *Handler) addChatVisualToDashboard(w stdhttp.ResponseWriter, r *stdhttp.
 			return
 		}
 		if found {
-			h.writeChatVisualDashboardResult(w, r, scope, replay.Lifecycle.ID, replay.Lifecycle.Title, input.PageID)
+			h.writeChatVisualDashboardResult(w, r, scope, replay.Lifecycle.ID, replay.Lifecycle.Title, input.PageID, componentID)
 			return
 		}
 		item, err := h.findChatVisualDashboard(r.Context(), projectID, scope.PrincipalID, input.DashboardID)
@@ -256,11 +261,12 @@ func (h *Handler) addChatVisualToDashboard(w stdhttp.ResponseWriter, r *stdhttp.
 	if targetID == "" {
 		targetID = lifecycle.Lifecycle.ID
 	}
-	h.writeChatVisualDashboardResult(w, r, scope, targetID, targetTitle, pageID)
+	h.writeChatVisualDashboardResult(w, r, scope, targetID, targetTitle, pageID, componentID)
 }
 
-func (h *Handler) writeChatVisualDashboardResult(w stdhttp.ResponseWriter, r *stdhttp.Request, scope agent.Scope, targetID authoring.DashboardID, targetTitle, pageID string) {
-	result := agentgen.AddChatVisualToDashboardResponse{DashboardId: targetID.String(), Title: targetTitle, PageId: pageID, Href: chatDashboardHref(targetID.String(), pageID)}
+func (h *Handler) writeChatVisualDashboardResult(w stdhttp.ResponseWriter, r *stdhttp.Request, scope agent.Scope, targetID authoring.DashboardID, targetTitle, pageID, componentID string) {
+	href := chatDashboardHref(targetID.String(), pageID) + "&returnChat=" + url.QueryEscape(chi.URLParam(r, "conversation"))
+	result := agentgen.AddChatVisualToDashboardResponse{ComponentId: &componentID, DashboardId: targetID.String(), Title: targetTitle, PageId: pageID, Href: href}
 	h.recordLegacyCommandAudit(r, addChatVisualToDashboardOperation, scope, "dashboard", targetID.String())
 	writeJSON(w, stdhttp.StatusOK, result)
 }

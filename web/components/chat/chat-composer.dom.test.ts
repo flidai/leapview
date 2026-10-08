@@ -58,7 +58,7 @@ test('composer renders a compact centered prompt surface', async () => {
       const surface = root.querySelector('.composer-surface') as HTMLElement
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       const actions = root.querySelector('.actions') as HTMLElement
-      const contextButton = root.querySelector('.context-button') as HTMLButtonElement
+      const contextButton = root.querySelector('button[aria-label="Add context"]') as HTMLButtonElement
       const button = root.querySelector('.send-button') as HTMLButtonElement
       const formRect = form.getBoundingClientRect()
       const surfaceRect = surface.getBoundingClientRect()
@@ -301,7 +301,7 @@ test('touch-primary composer reserves Return for newlines and enlarges the send 
 	const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
 	  const root = (element.shadowRoot as ShadowRoot)
 	  const textarea = root.querySelector('textarea') as HTMLTextAreaElement
-	  const contextButton = root.querySelector('.context-button') as HTMLButtonElement
+	  const contextButton = root.querySelector('button[aria-label="Add context"]') as HTMLButtonElement
 	  const button = root.querySelector('.send-button') as HTMLButtonElement
 	  let submits = 0
 	  element.addEventListener('lv-chat-submit', () => submits += 1)
@@ -347,7 +347,7 @@ test('Add context opens the existing @ picker and keeps the draft editable', asy
     const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
       const root = element.shadowRoot as ShadowRoot
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
-      const contextButton = root.querySelector('.context-button') as HTMLButtonElement
+      const contextButton = root.querySelector('button[aria-label="Add context"]') as HTMLButtonElement
       textarea.value = 'Compare revenue'
       textarea.setSelectionRange(textarea.value.length, textarea.value.length)
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))

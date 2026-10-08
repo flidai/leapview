@@ -213,6 +213,10 @@ func TestAddChatVisualToDocumentUsesUniqueFilterURLParametersAcrossImportsAndRep
 	if _, err := AddChatVisualToDocument(&dashboard, "overview", source, firstCommand); err != nil {
 		t.Fatalf("first AddChatVisualToDocument() error = %v", err)
 	}
+	componentID, err := ChatVisualComponentID(source, firstCommand)
+	if err != nil || dashboard.Spec.Pages[0].Components[0].Value.(*document.VisualDashboardPageComponent).ID != componentID {
+		t.Fatalf("import receipt component identity = %q, error = %v", componentID, err)
+	}
 	firstCount := len(dashboard.Spec.Filters)
 	if !chatVisualReplayMatches(dashboard, "overview", source, firstCommand) {
 		t.Fatal("unchanged source does not match its imported filter replay")

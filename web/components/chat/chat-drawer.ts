@@ -1,6 +1,9 @@
-import { LitElement, css, html } from 'lit'
+import { chatDrawerStyles } from './chat-drawer.styles'
+import './agent-visual-library'
+import type { VisualLibraryState } from './agent-visual-library'
+import { LitElement, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChartColumn, CircleHelp, ExternalLink, LayoutDashboard, Maximize2, Move, Plus, RefreshCw, TrendingUp, X, type IconNode } from 'lucide'
+import { ChartColumn, CircleHelp, ExternalLink, LayoutDashboard, Maximize2, Minimize2, Move, Plus, RefreshCw, TrendingUp, X, type IconNode } from 'lucide'
 import type {
   AgentContextSignal,
 	DashboardInteractionSelection,
@@ -14,6 +17,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
+import { chatVisualsFromSignals } from './visual-signals'
 import './chat-visual-panel'
 import './chat-composer'
 import './chat-thread'
@@ -64,7 +68,10 @@ const dashboardPrompts: Array<{ label: string; prompt: string; icon: IconNode }>
 class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) embedded = false
+  @property({ type: Boolean, reflect: true }) expanded = false
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
+  @property({ attribute: false }) dashboardSavedVisualIds: string[] = []
+  @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
 	@state() private editMessageId = ''
@@ -80,242 +87,41 @@ class ChatDrawer extends DatastarLit(LitElement) {
 	private updateSignalCache = new Map<string, unknown>()
 	private cachingUpdateSignals = false
 
-  static styles = css`
-    :host {
-      display: block;
-      box-sizing: border-box;
-      width: 0;
-      min-width: 0;
-      height: 100svh;
-      overflow: hidden;
-      border-left: 0 solid var(--lv-line-muted);
-      background: var(--lv-bg-app);
-      color: var(--lv-fg-default);
-      font-family: var(--fontStack-system);
-      --lv-chat-stack-width: 100%;
+  static styles = chatDrawerStyles
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener('popstate', this.syncExpandedLocation)
+    this.syncExpandedLocation()
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener('popstate', this.syncExpandedLocation)
+    super.disconnectedCallback()
+  }
+
+  private syncExpandedLocation = (): void => {
+    this.expanded = new URL(window.location.href).searchParams.get('chat') === 'expanded'
+    if (this.expanded) this.open = true
+  }
+
+  private toggleExpanded = async (): Promise<void> => {
+    const thread = this.shadowRoot?.querySelector<HTMLElement & { captureScroll(): { top: number; autoScroll: boolean }; restoreScroll(position: { top: number; autoScroll: boolean }): void }>('lv-chat-thread')
+    const position = thread?.captureScroll()
+    this.expanded = !this.expanded
+    const url = new URL(window.location.href)
+    if (this.expanded) {
+      url.searchParams.set('chat', 'expanded')
+      window.history.pushState(null, '', url)
+    } else {
+      url.searchParams.delete('chat')
+      window.history.replaceState(null, '', url)
     }
-
-    :host([open]) {
-			width: 100%;
-      border-left-width: 1px;
-    }
-
-    :host([embedded]) {
-      height: 100%;
-      border-left: 0;
-    }
-
-    .drawer {
-      display: grid;
-			width: 100%;
-      height: 100%;
-      min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      background: var(--lv-bg-app);
-    }
-
-    .drawer.welcome-mode { grid-template-rows: auto minmax(0, 1fr); }
-
-    .header {
-      display: grid;
-			gap: var(--lv-space-sm);
-			padding: var(--lv-space-md) var(--lv-space-lg) var(--lv-space-sm);
-    }
-
-    .toolbar {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-    }
-
-    .title {
-      display: flex;
-      min-width: 0;
-      flex: 1;
-      align-items: center;
-			gap: var(--lv-space-sm);
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .toolbar-actions {
-      display: flex;
-      align-items: center;
-      gap: var(--lv-space-2xs);
-    }
-
-    .title svg,
-    button svg,
-    a svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    button,
-    a {
-      display: inline-grid;
-			width: var(--control-medium-size);
-			height: var(--control-medium-size);
-      place-items: center;
-      border: 0;
-      border-radius: var(--lv-radius-default);
-      background: transparent;
-      color: var(--lv-fg-muted);
-      cursor: pointer;
-      padding: 0;
-      text-decoration: none;
-    }
-
-    button:hover,
-    button:focus-visible,
-    a:hover,
-    a:focus-visible {
-      background: var(--lv-bg-control-hover);
-      color: var(--lv-fg-default);
-      outline: 0;
-    }
-
-    a[aria-disabled="true"] { opacity: 0.5; cursor: wait; }
-
-    button:disabled {
-      color: var(--lv-fg-muted);
-      cursor: not-allowed;
-      opacity: 0.5;
-    }
-
-    button:disabled:hover {
-      background: transparent;
-    }
-
-    .text-action { font: var(--lv-type-caption); width: auto; display: inline-flex; gap: var(--lv-space-xs); padding-inline: var(--lv-space-sm); }
-    .welcome { box-sizing: border-box; min-width: 0; min-height: 0; overflow: auto; padding: var(--lv-space-lg) var(--lv-space-sm); display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: var(--lv-space-md); }
-    .welcome-heading { display: flex; align-items: center; justify-content: center; gap: var(--lv-space-sm); text-align: center; }
-    .welcome-heading .agent-mark { display: grid; place-items: center; color: var(--lv-accent); }
-    .welcome-heading .agent-mark svg { width: var(--base-size-20); height: var(--base-size-20); }
-    .welcome h2 { margin: 0; font: var(--lv-type-section-title); }
-    .welcome lv-chat-composer { width: 100%; flex: 0 0 auto; }
-    .prompts { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--lv-space-sm); padding-inline: var(--lv-space-sm); }
-    .prompt { display: inline-flex; width: auto; height: auto; min-height: var(--lv-control-medium); align-items: center; gap: var(--lv-space-xs); padding: 0 var(--lv-space-md); border: var(--lv-border-muted); border-radius: var(--lv-radius-full); background: var(--lv-bg-panel); color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-medium); white-space: nowrap; }
-    .prompt:hover { border-color: var(--lv-line-accent-muted); }
-    .prompt svg { width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-accent); }
-    .welcome-hint { margin: 0; padding-inline: var(--lv-space-md); color: var(--lv-fg-muted); text-align: center; font: var(--lv-type-caption); }
-    .welcome-hint kbd { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border: var(--lv-border-muted); border-radius: var(--lv-radius-tight); background: var(--lv-bg-control); color: var(--lv-fg-default); font: inherit; }
-    button:focus-visible, a:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--lv-space-2xs); }
-
-    .close-action {
-      margin-left: var(--lv-space-xs);
-    }
-
-    :host([embedded]) .title,
-    :host([embedded]) .close-action {
-      display: none;
-    }
-
-    :host([embedded]) .toolbar {
-      justify-content: flex-end;
-    }
-
-    :host([embedded]) .header {
-      padding-block-start: var(--lv-space-sm);
-    }
-
-    :host([embedded]) .text-action {
-      width: var(--control-medium-size);
-      padding-inline: 0;
-    }
-
-    :host([embedded]) .text-action span {
-      display: none;
-    }
-
-    .context {
-      display: grid;
-			gap: var(--lv-space-sm);
-      border: 0;
-			padding: 0;
-      background: var(--lv-bg-app);
-      font: var(--lv-type-caption);
-    }
-
-    .context-line {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-			gap: var(--lv-space-xs);
-    }
-
-    .page-context {
-      overflow: hidden;
-      color: var(--lv-fg-default);
-      font-weight: var(--base-text-weight-medium);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .context-separator {
-      color: var(--lv-fg-muted);
-    }
-
-    .filter-context {
-      color: var(--lv-fg-muted);
-      white-space: nowrap;
-    }
-
-    .reference-limit-status {
-      color: var(--lv-fg-muted);
-    }
-
-    lv-chat-thread {
-      display: block;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    lv-chat-thread[hidden] { display: none; }
-
-    lv-chat-visual-panel {
-      grid-row: 2 / 4;
-      min-width: 0;
-      min-height: 0;
-      z-index: 1;
-      background: var(--lv-bg-app);
-    }
-
-    lv-chat-composer {
-      display: block;
-      border-top: 0;
-      background: transparent;
-    }
-
-    @media (max-width: 720px) {
-      :host([open]) {
-        position: fixed;
-        inset: 0;
-        z-index: var(--zIndex-modal, 200);
-        width: 100vw;
-        border-left: 0;
-      }
-
-      :host([open][embedded]) {
-        position: static;
-        width: 100%;
-        height: 100%;
-      }
-
-      .drawer {
-        width: 100vw;
-      }
-
-      :host([embedded]) .drawer {
-        width: 100%;
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      :host { transition: none; }
-    }
-  `
+    await this.updateComplete
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    if (position) thread?.restoreScroll(position)
+    this.focusComposer()
+  }
 
 	override performUpdate(): void {
 		// DatastarLit materializes a signal tree on every read. The drawer reads
@@ -349,7 +155,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 	}
 
 	get visuals(): Record<string, VisualizationEnvelope> {
-		return this.cachedSignal<Record<string, VisualizationEnvelope>>('agentVisuals', emptyVisuals)
+		return chatVisualsFromSignals(this.cachedSignal<Record<string, VisualizationEnvelope>>('agentVisuals', emptyVisuals))
 	}
 
 	get dashboardFilters(): AgentContextSignal['filters'] {
@@ -428,9 +234,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
 			this.suggestions,
 		)
 		const catalogSuggestions = searchResults.filter((reference) => !isOnPageReference(reference, context))
-    const conversationHref = agent.activeConversationId
-      ? `/chats/${encodeURIComponent(agent.activeConversationId)}`
-      : '/chats/new'
     const agentEnabled = Boolean(agent.status?.enabled)
     const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
     const composer = html`<lv-chat-composer
@@ -460,7 +263,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
             <div class="toolbar-actions">
               <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
-              <a class="text-action" href=${conversationHref} title="Open full chat" aria-label="Open full chat" aria-disabled=${String(this.pending && !agent.activeConversationId)} @click=${(event: MouseEvent) => { if (this.pending && !agent.activeConversationId) event.preventDefault() }}>${lucideIcon(ExternalLink)}<span>Full chat</span></a>
+              <button type="button" title=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-label=${this.expanded ? 'Shrink chat' : 'Expand chat'} aria-pressed=${this.expanded} @click=${this.toggleExpanded}>${lucideIcon(this.expanded ? Minimize2 : Maximize2)}</button>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
             </div>
           </div>
@@ -484,7 +287,9 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <p class="welcome-hint">Type <kbd>@</kbd> to attach ${this.embedded ? 'a chart on this page.' : 'a dashboard, metric, model, page, or visual.'}</p>
           </section>
         ` : null}
-        <lv-chat-thread ?hidden=${showWelcome || Boolean(this.selectedVisualID)}
+        <lv-agent-visual-library .agent=${agent} @lv-visual-library-state=${(event: CustomEvent<VisualLibraryState>) => { this.visualLibraryState = event.detail }}></lv-agent-visual-library>
+        ${this.visualLibraryState.error ? html`<p role="alert">${this.visualLibraryState.error}</p>` : null}
+        <lv-chat-thread .dashboardVisualIds=${Object.entries(this.visualLibraryState.libraryIds ?? {}).filter(([, id]) => this.dashboardSavedVisualIds.includes(id)).map(([artifactId]) => artifactId)} .savedVisualIds=${this.visualLibraryState.savedIds} .savingVisualId=${this.visualLibraryState.savingId} ?hidden=${showWelcome || Boolean(this.selectedVisualID)}
           surface="drawer"
           .transcript=${agent.transcript ?? []}
           .visuals=${this.visuals}
@@ -528,6 +333,10 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
 	private closeDrawer() {
+		if (this.expanded) {
+			void this.toggleExpanded()
+			return
+		}
 		this.open = false
 		emitDomainEvent(this, domainEvents.chatDrawerClose, undefined)
 	}

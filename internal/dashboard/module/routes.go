@@ -110,6 +110,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// target project role bundle, then source dashboard resource.
 	r.Get("/dashboards/new", protectResourceAction(access.CapabilityResourceEdit, access.ActionDashboardCreate, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
 	r.Post("/dashboards/new", protectResourceAction(access.CapabilityResourceEdit, access.ActionDashboardCreate, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
+
 	forkHandler := protectResourceAction(
 		access.CapabilityResourceEdit,
 		access.ActionDashboardCreate,
@@ -121,12 +122,17 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// Builder documents and mutations are edit-scoped. The application
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
+	r.Get("/visuals/saved", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.SavedVisualLibrary))
+	r.Post("/visuals/saved/remove", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.UnsaveVisual))
+	r.Post("/visuals/saved", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.SaveVisual))
 	r.Get("/dashboards/{dashboard}/edit", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilder))
 	r.Post("/dashboards/{dashboard}/archive", protectAuthoringAction(access.CapabilityResourceManage, access.ActionDashboardDelete, h.DashboardArchive))
 	r.Post("/dashboards/{dashboard}/delete", protectAuthoringAction(access.CapabilityResourceManage, access.ActionDashboardDelete, h.DashboardDelete))
 	r.Get("/dashboards/{dashboard}/preview", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilderPreview))
 	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoringAction(access.CapabilityResourceRead, access.ActionDashboardRead, h.DashboardBuilderExportYAML))
 	r.Post("/dashboards/{dashboard}/draft/command", protectAuthoringCommand(h.DashboardBuilderCommand))
+	r.Post("/dashboards/{dashboard}/draft/chat-remove-visual", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.RemoveChatDashboardVisual))
+	r.Post("/dashboards/{dashboard}/draft/saved-visual", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.AddSavedVisual))
 	// Builder filter state is a read-side exact-draft preview capability. It
 	// shares authoring authorization but has dedicated endpoints and never
 	// enters the published dashboard command/session routes.

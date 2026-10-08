@@ -849,8 +849,12 @@ func copyTypeSpecProject(src string, dst string, excludedDir string) error {
 		if excludedRel != "" && filepath.Clean(rel) == excludedRel {
 			return filepath.SkipDir
 		}
-		if rel != "." && entry.IsDir() && entry.Name() == "node_modules" {
-			return filepath.SkipDir
+		if rel != "." && entry.Name() == "node_modules" {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			// Local dependency links must not escape the isolated staging tree.
+			return nil
 		}
 		// Generators write .<output>.<random>.tmp beside their final outputs.
 		// These are not compiler inputs and may be renamed during this walk.

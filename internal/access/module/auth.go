@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -209,11 +210,23 @@ func NewAuth(repo access.Repository, cfg AuthConfig) (*Auth, error) {
 		csrf.Secure(cfg.CookieSecure),
 		csrf.SameSite(csrf.SameSiteLaxMode),
 		csrf.ErrorHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reason := csrf.FailureReason(r)
 			if wantsJSON(r) {
-				writeJSONError(w, csrf.FailureReason(r), http.StatusForbidden)
+				writeJSONError(w, reason, http.StatusForbidden)
 				return
 			}
-			http.Error(w, csrf.FailureReason(r).Error(), http.StatusForbidden)
+			// A same-origin form can recover from a stale token. The rejected
+			// request never reaches the handler; its retry still passes CSRF
+			// and authorization checks. Origin failures must not be retried.
+			if (errors.Is(reason, csrf.ErrBadToken) || errors.Is(reason, csrf.ErrNoToken)) && csrf.Token(r) != "" {
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("X-Content-Type-Options", "nosniff")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta name="csrf-retry-token" content="%s"></head><body><p>Your page token has expired. Refresh the page and try again.</p></body></html>`, html.EscapeString(csrf.Token(r)))
+				return
+			}
+			http.Error(w, reason.Error(), http.StatusForbidden)
 		})),
 	)
 	auth.stateKey = derivedSecret(csrfSecret, "oidc-state")

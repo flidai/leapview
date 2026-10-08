@@ -42,7 +42,7 @@ func TestDashboardAuthoringPrivateAuthorizationMatrix(t *testing.T) {
 
 	// Three fixed create wrappers (new dashboard and the shared fork wrapper),
 	// twelve dashboard read wrappers (including the nested fork source read and
-	// visual-to-Explorer handoff), five update routes,
+	// visual-to-Explorer handoff), seven update routes,
 	// one read-only export route, and the archive and delete routes are registered. The command route is intentionally
 	// body-dependent and is checked by the HTTP qualification test.
 	if countAction(resourceActions, access.ActionDashboardCreate) != 3 {
@@ -51,8 +51,8 @@ func TestDashboardAuthoringPrivateAuthorizationMatrix(t *testing.T) {
 	if countAction(resourceActions, access.ActionDashboardRead) != 12 {
 		t.Fatalf("browser dashboard-read action count = %d, want 12 (%v)", countAction(resourceActions, access.ActionDashboardRead), resourceActions)
 	}
-	if countAction(authoringActions, access.ActionDashboardUpdate) != 5 || countAction(authoringActions, access.ActionDashboardRead) != 1 || countAction(authoringActions, access.ActionDashboardDelete) != 2 {
-		t.Fatalf("browser authoring action matrix = %v, want five update, one read, and two delete", authoringActions)
+	if countAction(authoringActions, access.ActionDashboardUpdate) != 7 || countAction(authoringActions, access.ActionDashboardRead) != 1 || countAction(authoringActions, access.ActionDashboardDelete) != 2 {
+		t.Fatalf("browser authoring action matrix = %v, want seven update, one read, and two delete", authoringActions)
 	}
 	if commandGuards != 1 {
 		t.Fatalf("body-dependent command guards = %d, want 1", commandGuards)
@@ -93,6 +93,11 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 	})
 
 	want := map[string]bool{
+		"GET /visuals/saved":                                                false,
+		"POST /visuals/saved":                                               false,
+		"POST /visuals/saved/remove":                                        false,
+		"POST /dashboards/{dashboard}/draft/chat-remove-visual":             false,
+		"POST /dashboards/{dashboard}/draft/saved-visual":                   false,
 		"GET /dashboards/new":                                               false,
 		"POST /dashboards/new":                                              false,
 		"GET /dashboards/{dashboard}/fork":                                  false,

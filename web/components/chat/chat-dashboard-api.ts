@@ -1,7 +1,7 @@
 import { postUIJSON } from '../shared/command'
 
 export type ChatDashboardDestination = { id: string; title: string; createsCopy?: boolean; pages: Array<{ id: string; title: string }> }
-export type ChatDashboardResult = { dashboardId: string; title: string; href: string; pageId: string }
+export type ChatDashboardResult = { componentId?: string; dashboardId: string; title: string; href: string; pageId: string }
 export type ChatDashboardChoice = { dashboardId: string; pageId: string } | { title: string }
 export type ChatDashboardOptions = { dashboards: ChatDashboardDestination[]; canCreate: boolean }
 

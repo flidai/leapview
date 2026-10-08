@@ -217,6 +217,15 @@ func AddChatVisualToDocument(value *document.DashboardDocument, pageID string, s
 // The original filter declarations are part of the retained visual identity.
 // Destination ID/URL remapping is lossy, so comparing only the imported filters
 // cannot distinguish a retry from source arguments that changed to those aliases.
+// ChatVisualComponentID returns the canonical component identity used by a chat import.
+func ChatVisualComponentID(source ChatVisualImport, commandID authoring.CommandID) (string, error) {
+	visualID, err := importedChatVisualID(source, commandID)
+	if err != nil {
+		return "", err
+	}
+	return visualID + "_component", nil
+}
+
 func importedChatVisualID(source ChatVisualImport, commandID authoring.CommandID) (string, error) {
 	intent := struct {
 		ArtifactID      string
@@ -388,7 +397,7 @@ func appendChatVisualFilters(value *document.DashboardDocument, filters []docume
 		changed := false
 		claimed := make(map[string]struct{}, len(imports))
 		for _, imported := range imports {
-			candidate, err := remapChatFilterDependencies(imported.filter, filterIDs)
+			candidate, err := RemapChatFilterDependencies(imported.filter, filterIDs)
 			if err != nil {
 				return fmt.Errorf("clone imported dashboard filter dependencies: %w", err)
 			}
@@ -449,7 +458,7 @@ func appendChatVisualFilters(value *document.DashboardDocument, filters []docume
 		}
 	}
 	for _, imported := range imports {
-		copy, err := remapChatFilterDependencies(imported.filter, filterIDs)
+		copy, err := RemapChatFilterDependencies(imported.filter, filterIDs)
 		if err != nil {
 			return fmt.Errorf("clone imported dashboard filter dependencies: %w", err)
 		}
@@ -553,7 +562,9 @@ func chatFilterByID(filters []document.DashboardFilter, id string) *document.Das
 	return nil
 }
 
-func remapChatFilterDependencies(filter document.DashboardFilter, ids map[string]string) (document.DashboardFilter, error) {
+// RemapChatFilterDependencies clones a filter and rewrites its option dependency
+// identities when importing it into another dashboard or saved visual.
+func RemapChatFilterDependencies(filter document.DashboardFilter, ids map[string]string) (document.DashboardFilter, error) {
 	copy, err := cloneChatFilter(filter)
 	if err != nil {
 		return document.DashboardFilter{}, err

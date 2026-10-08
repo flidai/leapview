@@ -628,6 +628,16 @@ test('external lineage scope changes keep the anchor visible and narrow Full Fit
       if (cleared) {
         await graph.locator('.react-flow__renderer').dispatchEvent('click')
         await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveCount(0)
+        const resized = await graph.evaluate(async element => {
+          element.style.width = '330px'
+          for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame)
+          return {
+            flow: element.querySelector('.react-flow')!.getBoundingClientRect().toJSON(),
+            anchor: element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect().toJSON(),
+          }
+        })
+        expect(resized.anchor.left).toBeGreaterThanOrEqual(resized.flow.left)
+        expect(resized.anchor.right).toBeLessThanOrEqual(resized.flow.right)
         const flow = (await graph.locator('.react-flow').boundingBox())!
         await page.mouse.move(flow.x + flow.width - 16, flow.y + flow.height - 20)
         await page.mouse.down()

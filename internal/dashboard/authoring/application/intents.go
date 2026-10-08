@@ -9,6 +9,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -53,6 +54,20 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.validateInitialVisualField(ctx, project, request.Command, lifecycle, visual)
 		}
 	}
+	if patch := request.Command.SetPlacements; patch != nil && patch.FillMissingFields {
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			revision, err := a.validateIntentRevision(ctx, project, request.Command, lifecycle)
+			if err != nil {
+				return err
+			}
+			model, err := a.semanticModelForRevision(ctx, revision)
+			if err != nil {
+				return err
+			}
+			patch.ResolvedFields, err = missingVisualFields(revision.Document, patch.PageID, model)
+			return err
+		}
+	}
 	if request.Command.AssignField != nil {
 		field := request.Command.AssignField
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
@@ -80,6 +95,14 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.prepareVisualTypeSwitch(ctx, project, request.Command, lifecycle, visual)
 		}
 	}
+	if request.Command.AddFilter != nil {
+		patch := request.Command.AddFilter
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			targets, err := a.prepareFilterTargets(ctx, project, request.Command, lifecycle, patch.Dimension)
+			patch.ResolvedTargets = targets
+			return err
+		}
+	}
 	if request.Command.AddSlicer != nil {
 		slicer := request.Command.AddSlicer
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
@@ -87,6 +110,22 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 		}
 	}
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
+}
+
+func (a *Application) prepareFilterTargets(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, dimension string) ([]string, error) {
+	revision, err := a.validateIntentRevision(ctx, project, command, lifecycle)
+	if err != nil {
+		return nil, err
+	}
+	model, err := a.semanticModelForRevision(ctx, revision)
+	if err != nil {
+		return nil, err
+	}
+	targets, err := dashboardcompiler.CompatibleDashboardFilterTargets(revision.Document, dimension, model)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", authoring.ErrInvalidPayload, err)
+	}
+	return targets, nil
 }
 
 func (a *Application) prepareVisualTypeSwitch(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, patch *authoring.SetVisualTypePayload) error {
@@ -108,6 +147,14 @@ func (a *Application) prepareVisualTypeSwitch(ctx context.Context, project proje
 }
 
 func visualForIntent(doc document.DashboardDocument, pageID, componentID string) (document.DashboardVisual, error) {
+	id, err := visualIDForIntent(doc, pageID, componentID)
+	if err != nil {
+		return document.DashboardVisual{}, err
+	}
+	return doc.Spec.Visuals[id], nil
+}
+
+func visualIDForIntent(doc document.DashboardDocument, pageID, componentID string) (string, error) {
 	for _, page := range doc.Spec.Pages {
 		if page.ID != pageID {
 			continue
@@ -115,7 +162,7 @@ func visualForIntent(doc document.DashboardDocument, pageID, componentID string)
 		for _, component := range page.Components {
 			base, err := component.Base()
 			if err != nil {
-				return document.DashboardVisual{}, err
+				return "", err
 			}
 			placed, ok := component.Value.(*document.VisualDashboardPageComponent)
 			if !ok || strings.TrimSpace(placed.Visual) == "" {
@@ -124,15 +171,14 @@ func visualForIntent(doc document.DashboardDocument, pageID, componentID string)
 			if base.ID != componentID && placed.Visual != componentID {
 				continue
 			}
-			visual, ok := doc.Spec.Visuals[placed.Visual]
-			if !ok {
-				return document.DashboardVisual{}, fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, placed.Visual)
+			if _, exists := doc.Spec.Visuals[placed.Visual]; !exists {
+				return "", fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, placed.Visual)
 			}
-			return visual, nil
+			return placed.Visual, nil
 		}
-		return document.DashboardVisual{}, fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, componentID, pageID)
+		return "", fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, componentID, pageID)
 	}
-	return document.DashboardVisual{}, fmt.Errorf("%w: page %q", authoring.ErrNotFound, pageID)
+	return "", fmt.Errorf("%w: page %q", authoring.ErrNotFound, pageID)
 }
 
 func resolveVisualTypeFieldBindings(model *semanticmodel.Model, visual document.DashboardVisual) authoring.VisualTypeFieldBindings {
@@ -546,30 +592,9 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	if err != nil {
 		return err
 	}
-	var componentVisual string
-	for _, page := range revision.Document.Spec.Pages {
-		if page.ID != field.PageID {
-			continue
-		}
-		for _, component := range page.Components {
-			base, baseErr := component.Base()
-			if baseErr != nil {
-				return baseErr
-			}
-			if base.ID == field.VisualID {
-				if visual, ok := component.Value.(*document.VisualDashboardPageComponent); ok {
-					componentVisual = visual.Visual
-				}
-				break
-			}
-		}
-		break
-	}
-	if componentVisual == "" {
-		return fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, field.VisualID, field.PageID)
-	}
-	if _, ok := revision.Document.Spec.Visuals[componentVisual]; !ok {
-		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
+	componentVisual, err := visualIDForIntent(revision.Document, field.PageID, field.VisualID)
+	if err != nil {
+		return err
 	}
 	// Records queries store detail selections as unqualified root fields (the
 	// dataset is authored once on the query). Validation resolves dimensions

@@ -1,13 +1,20 @@
-import { LitElement, css, html, nothing } from 'lit'
+import { builderCanvasDesktopWidth, builderCanvasMinimumHeight } from './dashboard-builder-canvas-size'
+import { dashboardBuilderSurfaceStyles } from './dashboard-builder-surface-styles'
+import { dashboardBuilderControlsStyles } from './dashboard-builder-controls-styles'
+import { dashboardBuilderCanvasStyles } from './dashboard-builder-canvas-styles'
+import { dashboardBuilderFieldsStyles } from './dashboard-builder-fields-styles'
+import { dashboardBuilderDialogsStyles } from './dashboard-builder-dialogs-styles'
+import { dashboardBuilderDensityStyles } from './dashboard-builder-density-styles'
+import { savedVisualComponentId, savedVisualSourceId } from '../chat/dashboard-membership'
+import { savedVisualDragType, submitVisualForm, type SavedVisualLibraryMessage } from '../chat/visual-library-bridge'
+import type { ChatDashboardMessage, SavedVisualImportMessage } from '../chat/dashboard-preview-contract'
+import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, X } from 'lucide'
+import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, Grid2X2, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, WandSparkles, X } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-styles'
-import { dashboardBuilderFilterStyles } from './dashboard-builder-filter-styles'
-import { dashboardBuilderFieldStyles } from './dashboard-builder-field-styles'
 import { hasCompiledBuilderPreview, isBuilderVisualTypeSwitchPending } from './builder-preview-readiness'
 import { builderCatalogEntities, builderFieldCatalogGroup, type BuilderCatalogField } from './builder-field-catalog'
 import { BuilderRenderCache } from './builder-render-cache'
@@ -42,6 +49,8 @@ import type {
 } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
+import { loadDatastarRuntime } from '../shared/datastar-runtime'
+import { uuidv7 } from '../shared/command-identity'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
@@ -49,6 +58,7 @@ import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
 import { BuilderVisualizationState } from './builder-visualization-state'
+import { arrangeDashboardVisuals } from './builder-auto-layout'
 import { renderVisualTypeIcon } from './visual-type-icon'
 import './filters/filter-control'
 import { DashboardFilterController } from './filters/filter-controller'
@@ -69,8 +79,6 @@ type BuilderResolvedTheme = 'light' | 'dark'
 
 const builderPaneStorageKey = 'leapview-dashboard-builder-collapsed-panes'
 const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, visuals: false, data: false, agent: true }
-const builderCanvasDesktopWidth = 1366
-const builderCanvasMinimumHeight = 768
 const builderCanvasRunwayRows = 3
 
 type DashboardBuilderVisualWithPreview = DashboardBuilderVisualSignal & { visualId?: string }
@@ -124,12 +132,62 @@ type BuilderClipboard = {
  * separate component and envelope; this component only edits the bounded
  * builder projection delivered by the stream. */
 class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
+  private readonly embeddedInChat = window.parent !== window && new URL(window.location.href).searchParams.get('embed') === 'chat'
+  private chatProjectionKey = ''
+  private importedVisualSources = new Map<string, string>()
+  private pendingVisualSource: { componentID: string; savedID: string } | null = null
+  private pendingFixVisuals: { pageID: string; visualIDs: Set<string> } | null = null
+  @state() private fixVisualsMessage = ''
+
+  private backToChat = (): void => {
+    window.parent.postMessage({ type: 'lv-builder-back-to-chat' } satisfies ChatDashboardMessage, window.location.origin)
+  }
+
+  private publishChatProjection(): void {
+    const builder = this.builder
+    if (!this.embeddedInChat || !builder) return
+    const page = this.selectedPage(builder)
+    const visuals = this.builderVisuals
+    const ordered = [...(page?.visuals ?? [])].sort((a, b) => a.placement.row - b.placement.row || a.placement.col - b.placement.col)
+    const key = JSON.stringify([builder.revision, page?.id, this.builderFilterState.revision, builder.preview.loading, builder.capabilities.canEdit, this.commandPending, this.builderFilterController.pending, Boolean(this.builderFilterCommandInFlight), Boolean(this.pendingFixVisuals), this.fixVisualsMessage, this.toolsHidden, ordered.map(visual => {
+      const envelope = visuals[this.visualSignalID(visual)]
+      const window = envelope?.dataState.kind === 'windowed' ? envelope.dataState : undefined
+      return [visual.id, envelope?.dataRevision, envelope?.specRevision, envelope?.status.kind, window && [window.generation, window.resetVersion, window.sort, Object.values(window.blocks).map(block => [block.id, block.start, block.requestSeq, block.rows.length])]]
+    })])
+    if (key === this.chatProjectionKey) return
+    this.chatProjectionKey = key
+    const href = new URL(window.location.href)
+    href.searchParams.set('embed', 'chat')
+    href.searchParams.delete('mode')
+    if (page) href.searchParams.set('page', page.id)
+    const artifactID = (pageId: string, componentId: string) => `dashboard:${builder.dashboardId}:${pageId}:${componentId}`
+    window.parent.postMessage({
+      type: 'lv-builder-saved', updating: this.commandPending || this.importingSavedVisual, revisionId: builder.revision.id, fixingVisuals: Boolean(this.pendingFixVisuals), fixMessage: this.fixVisualsMessage, canArrange: Boolean(builder.capabilities.canEdit && !this.commandPending && !this.builderFilterController.pending && !this.builderFilterCommandInFlight && page?.visuals.length), pageId: page?.id ?? '', pageTitle: page?.title ?? '', pages: builder.pages.map(page => ({id: page.id, title: page.title})), modelId: builder.semanticModel.id, href: href.pathname + href.search,
+      reference: {
+        reference: { kind: 'dashboard', id: builder.dashboardId }, name: page ? `${builder.title} · ${page.title}` : builder.title,
+        hierarchy: [], href: href.pathname + href.search, locations: page ? [{dashboardId: builder.dashboardId, dashboardName: builder.title, pageId: page.id, pageName: page.title, href: href.pathname + href.search}] : [], context: ['Editable dashboard draft'],
+      },
+      components: builder.pages.flatMap(page => page.visuals.map(visual => ({ id: visual.id, pageId: page.id, artifactId: artifactID(page.id, visual.id), savedVisualId: (this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)) }))),
+      artifacts: ordered.map(visual => ({ id: artifactID(page!.id, visual.id), type: visual.type, summary: visual.title })),
+      visuals: Object.fromEntries(ordered.flatMap(visual => { const envelope = visuals[this.visualSignalID(visual)]; return envelope ? [[artifactID(page!.id, visual.id), envelope]] : [] })),
+    } satisfies ChatDashboardMessage, window.location.origin)
+  }
+
   @property({ attribute: 'back-href' }) backHref = ''
   @property({ attribute: 'fork-href' }) forkHref = ''
   @property({ attribute: 'page-base-href' }) pageBaseHref = ''
   @property({ attribute: 'preview-href' }) previewHref = ''
   @property({ attribute: 'export-yaml-href' }) exportYAMLHref = ''
 
+  @state() private savedVisualsOpen = false
+  @state() private savedVisualLibraryLoaded = false
+  @state() private importingSavedVisual = false
+  private readonly importFrameName = `builder-visual-import-${crypto.randomUUID()}`
+  private importTimer = 0
+  private importRevision: BuilderRevisionReference | null = null
+  private refreshingBuilder = false
+  private refreshQueued = false
+  private wasAgentRunning = false
   @state() private fieldQuery = ''
   @state() private localPageID = ''
   // null follows the server's initial selection; an empty string records an
@@ -139,6 +197,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private editingPage = false
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private selectedFilterID = ''
+  @state() private addFilterMenuOpen = false
+  @state() private addFilterQuery = ''
   @state() private selectedFilterComponentID = ''
   @state() private selectedHeaderID = ''
   @state() private addingSlicer = false
@@ -153,6 +213,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private interactionEffectOverrides: Record<string, BuilderInteractionEffect> = {}
   @state() private terminalFailure: BrowserCommandFailure | null = null
   @state() private collapsedPanes: Record<BuilderPane, boolean> = { ...defaultCollapsedPanes }
+  @state() private toolsHidden = false
   @state() private appearanceOpen = false
   @state() private resolvedTheme: BuilderResolvedTheme = currentResolvedTheme()
   @state() private canvasScale = 1
@@ -206,7 +267,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   // still reflects the page that was active before the mutation.
   private pendingAddPage: { revision: string; pageIDs: Set<string> } | null = null
   private pendingRemovePage: { revision: string; pageID: string; visualID: string | null } | null = null
-  private pendingAddVisual: { revision: string; visualIDs: Set<string>; pageID: string } | null = null
+  private activeCommandRevisionKey = ''
+  private autoArrangePageID = ''
+  private autoArrangePreservedIDs = new Set<string>()
+  private pendingAddVisual: { revision: string; visualIDs: Set<string>; pageID: string; autoArrange?: boolean } | null = null
   private pendingAddFilter: { revision: string; filterIDs: Set<string> } | null = null
   private pendingAddFilterComponent: { revision: string; componentIDs: Set<string>; pageID: string } | null = null
   private pendingAddSlicer: { revision: string; filterIDs: Set<string>; componentIDs: Set<string>; pageID: string } | null = null
@@ -214,6 +278,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   override connectedCallback(): void {
     super.connectedCallback()
     this.restoreCollapsedPanes()
+    window.addEventListener('message', this.handleSavedVisualMessage)
+    window.addEventListener('message', this.handleVisualImportMessage)
+    this.addEventListener('lv-add-agent-visual', this.handleAgentVisualAdd as EventListener)
+    this.addEventListener('lv-saved-visuals-changed', this.refreshSavedVisualLibrary)
+    this.addEventListener('drop', this.dropSavedVisual, { capture: true })
+    this.addEventListener('dragover', this.allowSavedVisualDrop, { capture: true })
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
     document.addEventListener('datastar-signal-patch', this.handleVisualSignalPatch)
     document.addEventListener('leapview-theme-applied', this.handleThemeApplied)
@@ -228,6 +298,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   override disconnectedCallback(): void {
+    window.removeEventListener('message', this.handleSavedVisualMessage)
+    window.removeEventListener('message', this.handleVisualImportMessage)
+    window.clearTimeout(this.importTimer)
+    this.removeEventListener('lv-add-agent-visual', this.handleAgentVisualAdd as EventListener)
+    this.removeEventListener('lv-saved-visuals-changed', this.refreshSavedVisualLibrary)
+    this.removeEventListener('drop', this.dropSavedVisual, { capture: true })
+    this.removeEventListener('dragover', this.allowSavedVisualDrop, { capture: true })
     document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
     document.removeEventListener('datastar-signal-patch', this.handleVisualSignalPatch)
     document.removeEventListener('leapview-theme-applied', this.handleThemeApplied)
@@ -243,2364 +320,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     super.disconnectedCallback()
   }
 
-  static styles = css`
-    :host {
-      position: relative;
-      display: block;
-      min-height: 100svh;
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-app);
-      font-family: var(--fontStack-system);
-    }
-
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
-
-    .builder {
-      display: grid;
-      height: 100svh;
-      min-height: 100svh;
-      grid-template-rows: auto minmax(0, 1fr);
-    }
-
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: var(--base-size-12);
-      min-height: var(--control-medium-size);
-      padding: var(--base-size-8) var(--base-size-16);
-      border-bottom: var(--lv-border-muted);
-      background: var(--lv-bg-panel);
-    }
-
-    .terminal-failure {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: var(--base-size-8);
-      padding: var(--base-size-8) var(--base-size-16);
-      border-bottom: var(--lv-border-muted);
-      background: var(--lv-bg-danger-muted, var(--lv-bg-panel-muted));
-      color: var(--lv-fg-danger, var(--lv-fg-default));
-      font: var(--lv-type-body-compact);
-    }
-
-    .terminal-failure span {
-      min-width: 0;
-      flex: 1 1 18rem;
-    }
-
-    .back {
-      color: inherit;
-      font: var(--lv-type-body-compact);
-      text-decoration: none;
-      white-space: nowrap;
-    }
-
-    .back:focus-visible,
-    button:focus-visible,
-    input:focus-visible,
-    [role='button']:focus-visible {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: 2px;
-    }
-
-    ${dashboardBuilderToolbarStyles}
-
-    .toolbar-actions {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-    }
-
-    @media (max-width: 640px) {
-      .appearance-popover {
-        position: fixed;
-        top: calc(var(--control-medium-size) + var(--base-size-16));
-        right: var(--base-size-8);
-        left: var(--base-size-8);
-        width: auto;
-      }
-    }
-
-    .icon-action,
-    .pane-collapse {
-      width: var(--lv-button-height-xs, var(--control-xsmall-size));
-      min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
-      flex: 0 0 auto;
-      padding: 0;
-      border-color: var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest));
-      color: var(--lv-button-invisible-icon-rest, var(--lv-fg-muted));
-      background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest));
-    }
-
-    .icon-action:hover,
-    .pane-collapse:hover {
-      border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover));
-      color: var(--lv-fg-default);
-      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover));
-    }
-
-    button,
-    .button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: var(--control-medium-size);
-      box-sizing: border-box;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-button-radius, var(--lv-radius-default));
-      padding: 0 var(--lv-button-padding-inline, var(--base-size-12));
-      color: var(--lv-button-fg-rest);
-      background: var(--lv-button-bg-rest);
-      font: var(--lv-type-body-compact);
-      text-decoration: none;
-      cursor: pointer;
-    }
-
-    button:hover,
-    .button:hover {
-      background: var(--lv-button-bg-hover);
-    }
-
-    button.primary {
-      border-color: var(--lv-button-accent-border-rest);
-      color: var(--lv-button-accent-fg-rest);
-      background: var(--lv-button-accent-bg-rest);
-    }
-
-    button.primary:hover {
-      background: var(--lv-button-accent-bg-hover);
-    }
-
-    .more-actions {
-      position: relative;
-    }
-
-    .more-actions summary {
-      display: inline-flex;
-      min-height: var(--control-medium-size);
-      box-sizing: border-box;
-      align-items: center;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-button-radius, var(--lv-radius-default));
-      padding: 0 var(--lv-button-padding-inline, var(--base-size-12));
-      color: var(--lv-button-fg-rest);
-      background: var(--lv-button-bg-rest);
-      font: var(--lv-type-body-compact);
-      cursor: pointer;
-      list-style: none;
-    }
-
-    .more-actions summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .more-actions summary:focus-visible {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: 2px;
-    }
-
-    .more-actions summary:hover {
-      background: var(--lv-button-bg-hover);
-    }
-
-    .more-menu {
-      position: absolute;
-      z-index: 2;
-      top: calc(100% + var(--base-size-6));
-      right: 0;
-      display: grid;
-      min-width: 10rem;
-      gap: var(--base-size-2);
-      padding: var(--base-size-4);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      box-shadow: var(--lv-shadow-floating-sm);
-    }
-
-    .more-menu button,
-    .more-menu .button {
-      justify-content: flex-start;
-      width: 100%;
-      border-color: transparent;
-      background: transparent;
-      text-align: left;
-    }
-
-    .more-menu button:hover,
-    .more-menu .button:hover {
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .more-menu .archive-action,
-    .more-menu .delete-action {
-      color: var(--lv-fg-danger);
-    }
-
-    button:disabled {
-      cursor: not-allowed;
-      opacity: 0.55;
-    }
-
-    .body {
-      display: grid;
-      min-height: 0;
-      grid-template-columns: minmax(0, 1fr) max-content;
-      grid-template-rows: minmax(0, 1fr) auto;
-    }
-
-    .right-dock {
-      display: grid;
-      grid-column: 2;
-      grid-row: 1 / span 2;
-      min-width: 0;
-      min-height: 0;
-      grid-template-columns: var(--dock-filters-width) var(--dock-visuals-width) var(--dock-data-width) var(--dock-agent-width);
-      background: var(--lv-bg-panel);
-    }
-
-    .pane {
-      position: relative;
-      min-width: 0;
-      min-height: 0;
-      overflow: auto;
-      background: var(--lv-bg-panel);
-    }
-
-    .properties {
-      border-left: var(--lv-border-muted);
-    }
-
-    .filters-pane {
-      border-left: var(--lv-border-muted);
-    }
-
-    .data-pane,
-    .agent-pane {
-      border-left: var(--lv-border-muted);
-    }
-
-    .agent-pane {
-      display: grid;
-      overflow: hidden;
-      grid-template-rows: auto minmax(0, 1fr);
-    }
-
-    .agent-pane[data-collapsed='true'] {
-      display: block;
-    }
-
-    .agent-pane-content {
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    .agent-pane-content lv-chat-drawer {
-      height: 100%;
-      min-height: 0;
-    }
-
-    .filter-pane-body {
-      display: grid;
-      align-content: start;
-      gap: var(--base-size-8);
-      padding: var(--base-size-8) var(--base-size-12) var(--base-size-16);
-    }
-
-    ${dashboardBuilderFilterStyles}
-
-    .filter-scope-options {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: var(--base-size-4);
-    }
-
-    .filter-scope-option {
-      position: relative;
-      display: flex !important;
-      min-height: var(--control-small-size);
-      align-items: center;
-      justify-content: center;
-      box-sizing: border-box;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      padding: 0 var(--base-size-6);
-      color: var(--lv-fg-default) !important;
-      background: var(--lv-bg-panel);
-      cursor: pointer;
-    }
-
-    .filter-scope-option:has(input:checked) {
-      border-color: var(--lv-line-default);
-      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .filter-scope-option:has(input:disabled) {
-      cursor: not-allowed;
-      opacity: 0.55;
-    }
-
-    .filter-scope-option input {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-    }
-
-    .filter-scope-option:has(input:focus-visible) {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: 2px;
-    }
-
-    .filter-scope-option:has(input:checked) span { font-weight: var(--base-text-weight-semibold); }
-
-    .filter-scope-option span {
-      font: var(--lv-type-caption);
-      text-align: center;
-    }
-
-    .filter-card {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      width: 100%;
-      min-height: var(--control-medium-size);
-      align-items: center;
-      gap: var(--base-size-8);
-      padding: var(--base-size-6) var(--base-size-8);
-      border: 1px solid transparent;
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      color: var(--lv-fg-default);
-      background: transparent;
-      text-align: left;
-    }
-
-    .filter-card[aria-pressed='true'] {
-      border-color: var(--lv-line-default);
-      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
-    }
-
-    .filter-card-preview {
-      min-width: 0;
-      border-radius: var(--lv-radius-default);
-      outline: var(--lv-border-width) solid transparent;
-      outline-offset: var(--base-size-2);
-    }
-
-    .filter-card-preview[data-selected='true'] {
-      outline-color: var(--lv-line-accent);
-    }
-
-    .filter-card-preview lv-filter-pane-card {
-      display: block;
-      width: 100%;
-    }
-
-    .filter-card-title {
-      overflow: hidden;
-      font: var(--lv-type-body-compact);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .filter-card-meta {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .filter-editor {
-      container-type: inline-size;
-      min-width: 0;
-      display: grid;
-      gap: var(--base-size-8);
-      margin-top: var(--base-size-4);
-      padding-top: var(--base-size-12);
-      border-top: var(--lv-border-muted);
-    }
-
-    .filter-editor label {
-      min-width: 0;
-      display: grid;
-      gap: var(--base-size-4);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .filter-editor .filter-toggle {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .filter-settings {
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      background: var(--lv-bg-panel);
-    }
-
-    .filter-settings summary {
-      padding: var(--base-size-8);
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-      cursor: pointer;
-    }
-
-    .filter-settings-body {
-      display: grid;
-      gap: var(--base-size-8);
-      padding: 0 var(--base-size-8) var(--base-size-8);
-    }
-
-    .filter-editor-actions {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: var(--base-size-6);
-    }
-
-    .filter-editor-actions button {
-      min-height: var(--control-small-size);
-      padding-inline: var(--base-size-8);
-    }
-
-    .filter-remove {
-      color: var(--lv-fg-danger, var(--lv-fg-default));
-    }
-
-    .filter-placement-action {
-      color: var(--lv-data-2);
-    }
-
-    .filter-pane-empty {
-      margin: var(--base-size-8) 0;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-align: center;
-    }
-
-    .filter-count {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-normal);
-    }
-
-    .page-bar {
-      display: flex;
-      grid-column: 1;
-      grid-row: 2;
-      min-width: 0;
-      min-height: var(--control-large-size);
-      align-items: center;
-      gap: 0;
-      border-top: var(--lv-border-muted);
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .page-bar > button {
-      flex: 0 0 auto;
-      width: var(--control-large-size);
-      min-height: var(--control-large-size);
-      padding: 0;
-      border-color: transparent;
-    }
-
-    .page-add {
-      align-self: stretch;
-      margin: 0;
-      border-radius: 0;
-      color: var(--lv-button-accent-fg-rest, var(--lv-fg-on-accent));
-      background: var(--lv-button-accent-bg-rest, var(--lv-bg-accent));
-    }
-
-    .page-add:hover:not(:disabled) {
-      color: var(--lv-button-accent-fg-rest, var(--lv-fg-on-accent));
-      background: var(--lv-button-accent-bg-hover, var(--lv-bg-accent));
-    }
-
-    .page-bar-tools {
-      display: flex;
-      flex: 0 0 auto;
-      align-self: stretch;
-      align-items: center;
-      margin-left: auto;
-    }
-
-    .page-actions {
-      position: relative;
-      flex: 0 0 auto;
-    }
-
-    .page-actions > summary {
-      display: grid;
-      width: var(--control-medium-size);
-      min-height: var(--control-medium-size);
-      place-items: center;
-      border-radius: var(--lv-button-radius, var(--lv-radius-default));
-      color: var(--lv-fg-muted);
-      cursor: pointer;
-      list-style: none;
-    }
-
-    .page-actions > summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .page-actions > summary:hover {
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .page-actions-menu {
-      position: absolute;
-      z-index: 4;
-      right: 0;
-      bottom: calc(100% + var(--base-size-4));
-      display: grid;
-      min-width: 10rem;
-      gap: var(--base-size-2);
-      padding: var(--base-size-4);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      box-shadow: var(--lv-shadow-floating-sm);
-    }
-
-    .page-actions-menu button {
-      display: flex;
-      width: 100%;
-      min-height: var(--control-small-size);
-      align-items: center;
-      justify-content: flex-start;
-      gap: var(--base-size-8);
-      border-color: transparent;
-      background: transparent;
-      text-align: left;
-    }
-
-    .page-actions-menu button:hover:not(:disabled) {
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .page-actions-menu .page-delete {
-      color: var(--lv-fg-danger, var(--lv-fg-default));
-    }
-
-    .page-zoom {
-      display: flex;
-      height: 100%;
-      align-items: center;
-      gap: var(--base-size-2);
-      padding-inline: var(--base-size-8);
-      border-left: var(--lv-border-muted);
-    }
-
-    .page-zoom button {
-      display: grid;
-      min-width: var(--control-small-size);
-      min-height: var(--control-small-size);
-      place-items: center;
-      border-color: transparent;
-      padding: 0;
-      color: var(--lv-fg-muted);
-      background: transparent;
-    }
-
-    .page-zoom button:hover:not(:disabled) {
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-control-hover);
-    }
-
-    .page-zoom-value {
-      min-width: 3.25rem !important;
-      padding-inline: var(--base-size-6) !important;
-      color: var(--lv-fg-default) !important;
-      font: var(--lv-type-caption);
-      font-variant-numeric: tabular-nums;
-    }
-
-    .pane-header {
-      position: sticky;
-      top: 0;
-      z-index: 1;
-      padding: 0.9rem 0.85rem 0.6rem;
-      border-bottom: var(--lv-border-muted);
-      background: var(--lv-bg-panel);
-    }
-
-    .pane-heading-row {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--base-size-8);
-    }
-
-    .pane-title-group {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      gap: var(--base-size-8);
-    }
-
-    .pane-title-icon {
-      display: inline-flex;
-      flex: 0 0 auto;
-      color: var(--lv-fg-muted);
-    }
-
-    .pane-content[hidden],
-    .pane-header-details[hidden] {
-      display: none !important;
-    }
-
-    .inspector-heading {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: var(--base-size-8);
-    }
-
-    .inspector-title {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      gap: var(--base-size-8);
-    }
-
-    .inspector-heading .pane-title {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .visual-type-badge {
-      flex: 0 0 auto;
-      border-radius: var(--lv-radius-full);
-      padding: var(--base-size-2) var(--base-size-6);
-      color: var(--lv-fg-muted);
-      background: var(--lv-bg-panel-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .pane-title {
-      margin: 0;
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .pane-hint {
-      margin: 0.25rem 0 0;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      line-height: 1.4;
-    }
-
-    .search {
-      width: 100%;
-      box-sizing: border-box;
-      min-height: var(--control-small-size);
-      margin-top: var(--base-size-8);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      padding: 0 var(--control-small-paddingInline-normal, var(--base-size-8));
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-input, var(--lv-bg-control));
-      font: var(--lv-type-body-compact);
-    }
-
-    .field-filter {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
-      gap: var(--base-size-4);
-      margin-top: var(--base-size-8);
-    }
-
-    .field-filter button {
-      min-height: var(--control-small-size);
-      min-width: 0;
-      border: 1px solid transparent;
-      border-radius: var(--lv-radius-full);
-      padding: 0 var(--base-size-8);
-      color: var(--lv-fg-muted);
-      background: transparent;
-      font: var(--lv-type-caption);
-      cursor: pointer;
-    }
-
-    .field-filter button:hover {
-      background: var(--lv-bg-panel-muted);
-      color: var(--lv-fg-default);
-    }
-
-    .field-filter button[aria-pressed='true'] {
-      border-color: var(--lv-line-default);
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .field-results {
-      padding: var(--base-size-8) var(--base-size-12) var(--base-size-16);
-    }
-
-    .field-entity + .field-entity,
-    .catalog-disclosure {
-      margin-top: var(--base-size-8);
-    }
-
-    .field-entity {
-      border-bottom: var(--lv-border-muted);
-      padding-bottom: var(--base-size-8);
-    }
-
-    .field-entity summary,
-    .catalog-disclosure > summary {
-      display: flex;
-      min-height: var(--control-small-size);
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--base-size-8);
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-      cursor: pointer;
-    }
-
-    .field-entity-title,
-    .catalog-disclosure-title {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .field-entity-count,
-    .catalog-disclosure-count {
-      flex: 0 0 auto;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .field-entity > .field-list,
-    .catalog-entity > .field-list {
-      margin-top: var(--base-size-4);
-    }
-
-    .field-list {
-      display: grid;
-      gap: var(--base-size-2);
-    }
-
-    .field {
-      display: grid;
-      grid-template-columns: 1.25rem minmax(0, 1fr) auto;
-      align-items: start;
-      column-gap: var(--base-size-8);
-      width: 100%;
-      box-sizing: border-box;
-      border: 1px solid transparent;
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      min-height: 2.65rem;
-      padding: var(--base-size-6) var(--base-size-8);
-      color: inherit;
-      background: transparent;
-      text-align: left;
-      cursor: grab;
-    }
-
-    .field:hover {
-      border-color: var(--lv-line-muted);
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .field:disabled {
-      cursor: not-allowed;
-      opacity: 0.65;
-    }
-
-    .field[data-used='true'] {
-      background: var(--lv-bg-success-muted, var(--lv-bg-panel-muted));
-    }
-
-    .field[data-dragging='true'] {
-      border-color: var(--lv-data-2);
-      background: var(--lv-data-2-muted);
-    }
-
-    .field-role-icon {
-      display: inline-flex;
-      width: 1.1rem;
-      height: 1.1rem;
-      align-items: center;
-      justify-content: center;
-      margin-top: var(--base-size-2);
-      color: var(--lv-fg-muted);
-    }
-
-    .field-role-icon svg {
-      width: 1rem;
-      height: 1rem;
-      fill: none;
-      stroke: currentColor;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      stroke-width: 1.75;
-    }
-
-    .field-copy {
-      min-width: 0;
-    }
-
-    .field-label {
-      display: block;
-      overflow: hidden;
-      font: var(--lv-type-body-compact);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .field-context {
-      display: block;
-      margin-top: var(--base-size-2);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .field-used {
-      align-self: center;
-      border-radius: var(--lv-radius-full);
-      padding: var(--base-size-2) var(--base-size-6);
-      color: var(--lv-fg-success, var(--lv-fg-default));
-      background: var(--lv-bg-panel);
-      font: var(--lv-type-caption);
-      white-space: nowrap;
-    }
-
-    .catalog-disclosure {
-      border-top: var(--lv-border-muted);
-      padding-top: var(--base-size-8);
-    }
-
-    .catalog-disclosure > summary {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .catalog-disclosure-body {
-      margin-top: var(--base-size-4);
-    }
-
-    .catalog-entity + .catalog-entity {
-      margin-top: var(--base-size-8);
-    }
-
-    .catalog-entity-title {
-      margin: 0 0 var(--base-size-2);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .field-browser {
-      min-height: 0;
-    }
-
-    .field-browser-header {
-      position: sticky;
-      z-index: 1;
-      top: 0;
-      padding: var(--base-size-12);
-      border-bottom: var(--lv-border-muted);
-      background: var(--lv-bg-panel);
-    }
-
-    @media (min-width: 1201px), (min-width: 641px) and (max-width: 960px) {
-      .pane[data-collapsed='true'] {
-        overflow: hidden;
-      }
-
-      .pane[data-collapsed='true'] .pane-header,
-      .pane[data-collapsed='true'] .field-browser-header {
-        position: relative;
-        height: 100%;
-        box-sizing: border-box;
-        padding: var(--base-size-8) var(--base-size-4);
-        border-bottom: 0;
-      }
-
-      .pane[data-collapsed='true'] .pane-heading-row,
-      .pane[data-collapsed='true'] .inspector-heading {
-        height: 100%;
-        flex-direction: column;
-        justify-content: flex-start;
-        flex-wrap: nowrap;
-      }
-
-      .pane[data-collapsed='true'] .pane-title-group,
-      .pane[data-collapsed='true'] .inspector-title {
-        flex-direction: column;
-      }
-
-      .pane[data-collapsed='true'] .pane-title {
-        writing-mode: vertical-rl;
-        transform: rotate(180deg);
-        overflow: visible;
-        text-overflow: clip;
-      }
-
-      .pane[data-collapsed='true'] .pane-collapse {
-        position: absolute;
-        z-index: 1;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        min-height: 0;
-        border: 0;
-        border-radius: 0;
-        background: transparent;
-      }
-
-      .pane[data-collapsed='true'] .pane-collapse svg {
-        display: none;
-      }
-
-      .pane[data-collapsed='true']:hover .pane-header,
-      .pane[data-collapsed='true']:hover .field-browser-header {
-        background: var(--lv-bg-control-hover, var(--lv-bg-panel-muted));
-      }
-
-      .pane[data-collapsed='true'] .pane-collapse:focus-visible {
-        outline: 2px solid var(--lv-fg-accent);
-        outline-offset: -2px;
-      }
-    }
-
-    .canvas-pane {
-      display: grid;
-      grid-column: 1;
-      grid-row: 1;
-      min-height: 0;
-      grid-template-rows: minmax(0, 1fr);
-      background: var(--lv-report-canvas-bg, var(--lv-bg-app));
-    }
-
-    .page-tabs {
-      display: flex;
-      flex: 0 1 auto;
-      align-self: stretch;
-      min-width: 0;
-      gap: 0;
-      overflow-x: auto;
-      overscroll-behavior-x: contain;
-      padding-left: var(--base-size-8);
-      scrollbar-width: thin;
-    }
-
-    .page-tab {
-      display: flex;
-      flex: 0 0 auto;
-      min-width: 4.5rem;
-      max-width: 14rem;
-      min-height: 100%;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      border: 0;
-      border-left: var(--lv-border-width) solid var(--lv-line-muted);
-      border-right: var(--lv-border-width) solid var(--lv-line-muted);
-      border-radius: 0;
-      padding: 0 var(--base-size-16);
-      color: inherit;
-      background: var(--lv-bg-panel-muted);
-      font: var(--lv-type-body-compact);
-      text-align: left;
-      text-decoration: none;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      cursor: pointer;
-    }
-
-    .page-tab:hover {
-      background: var(--lv-bg-control-hover);
-    }
-
-    .page-tab:focus-visible {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: -2px;
-    }
-
-    .page-tab[aria-selected='true'],
-    .page-tab[aria-current='page'] {
-      border-color: var(--lv-line-muted);
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-panel);
-      font-weight: var(--base-text-weight-semibold);
-      box-shadow: inset 0 -3px 0 var(--lv-fg-accent);
-    }
-
-    .page-tab[data-page-dragging='true'] {
-      opacity: 0.55;
-    }
-
-    .page-tab[data-page-drop='true'] {
-      box-shadow: inset 3px 0 0 var(--lv-line-emphasis);
-    }
-
-    .canvas-scroll {
-      position: relative;
-      overflow: auto;
-      min-width: 0;
-      padding: 0;
-      background: var(--lv-report-canvas-bg, var(--lv-bg-app));
-    }
-
-    .canvas-fit {
-      position: relative;
-      width: var(--builder-canvas-fitted-width, 100%);
-      height: var(--builder-canvas-fitted-height, 0);
-      margin-inline: auto;
-    }
-
-    .canvas {
-      --builder-grid-offset: 0px;
-      position: absolute;
-      inset: var(--builder-grid-offset) auto auto var(--builder-grid-offset);
-      box-sizing: border-box;
-      width: var(--builder-grid-width, ${builderCanvasDesktopWidth}px);
-      min-height: ${builderCanvasMinimumHeight}px;
-      border: 0;
-      border-radius: 0;
-      background-color: var(--lv-report-page-bg, var(--lv-bg-panel));
-      background-image: none;
-      background-size: calc(100% / var(--builder-grid-columns)) var(--builder-grid-row-pitch);
-      box-shadow: none;
-      transform: scale(var(--builder-canvas-scale, 1));
-      transform-origin: top left;
-    }
-
-    .canvas[data-field-dragging='true'] {
-      outline: 2px dashed var(--lv-data-2);
-      outline-offset: -4px;
-    }
-
-    .canvas[data-grid-guides='true'],
-    .canvas:has(.ui-draggable-dragging, .ui-resizable-resizing) {
-      background-image: linear-gradient(to right, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px);
-    }
-
-    .canvas-field-drop-hint {
-      position: sticky;
-      z-index: 5;
-      top: var(--base-size-12);
-      display: none;
-      width: fit-content;
-      max-width: calc(100% - 2rem);
-      align-items: center;
-      margin: var(--base-size-12) auto 0;
-      border: 1px solid var(--lv-data-2);
-      border-radius: var(--lv-radius-full);
-      padding: var(--base-size-6) var(--base-size-12);
-      color: var(--lv-fg-default);
-      background: var(--lv-data-2-muted);
-      box-shadow: var(--lv-shadow-floating-sm);
-      font: var(--lv-type-body-compact);
-      pointer-events: none;
-    }
-
-    .canvas[data-field-dragging='true'] .canvas-field-drop-hint {
-      display: flex;
-    }
-
-    /* GridStack's package stylesheet cannot cross this component's shadow
-     * boundary, so keep the small set of layout rules it needs local. The
-     * library supplies the --gs-* values and writes the gs-* attributes. */
-    .grid-stack {
-      position: relative;
-    }
-
-    .grid-stack > .grid-stack-item {
-      position: absolute;
-      top: 0;
-      width: var(--gs-column-width);
-      height: var(--gs-cell-height);
-      padding: 0;
-    }
-
-    .grid-stack > .grid-stack-item > .grid-stack-item-content {
-      position: absolute;
-      top: var(--gs-item-margin-top);
-      right: var(--gs-item-margin-right);
-      bottom: var(--gs-item-margin-bottom);
-      left: var(--gs-item-margin-left);
-      display: grid;
-      width: auto;
-      height: auto;
-      margin: 0;
-      overflow: hidden;
-    }
-
-    .grid-stack:not(.grid-stack-rtl) > .grid-stack-item {
-      left: 0;
-    }
-
-    .grid-stack > .grid-stack-item > .grid-stack-item-content {
-      top: var(--gs-item-margin-top);
-      right: var(--gs-item-margin-right);
-      bottom: var(--gs-item-margin-bottom);
-      left: var(--gs-item-margin-left);
-    }
-
-    .grid-stack-item > .ui-resizable-handle {
-      position: absolute;
-      z-index: 2;
-      display: block;
-      box-sizing: border-box;
-      touch-action: none;
-      user-select: none;
-    }
-
-    .grid-stack-item > .ui-resizable-n,
-    .grid-stack-item > .ui-resizable-s {
-      right: calc(var(--gs-item-margin-right) + 18px);
-      left: calc(var(--gs-item-margin-left) + 18px);
-      height: 12px;
-    }
-
-    .grid-stack-item > .ui-resizable-n {
-      top: var(--gs-item-margin-top);
-      cursor: n-resize;
-    }
-
-    .grid-stack-item > .ui-resizable-s {
-      bottom: var(--gs-item-margin-bottom);
-      cursor: s-resize;
-    }
-
-    .grid-stack-item > .ui-resizable-e,
-    .grid-stack-item > .ui-resizable-w {
-      top: calc(var(--gs-item-margin-top) + 18px);
-      bottom: calc(var(--gs-item-margin-bottom) + 18px);
-      width: 12px;
-    }
-
-    .grid-stack-item > .ui-resizable-e {
-      right: var(--gs-item-margin-right);
-      cursor: e-resize;
-    }
-
-    .grid-stack-item > .ui-resizable-w {
-      left: var(--gs-item-margin-left);
-      cursor: w-resize;
-    }
-
-    .grid-stack-item > .ui-resizable-ne,
-    .grid-stack-item > .ui-resizable-nw,
-    .grid-stack-item > .ui-resizable-se,
-    .grid-stack-item > .ui-resizable-sw {
-      width: 20px;
-      height: 20px;
-    }
-
-    .grid-stack-item > .ui-resizable-ne,
-    .grid-stack-item > .ui-resizable-nw { top: var(--gs-item-margin-top); }
-    .grid-stack-item > .ui-resizable-se,
-    .grid-stack-item > .ui-resizable-sw { bottom: var(--gs-item-margin-bottom); }
-    .grid-stack-item > .ui-resizable-ne,
-    .grid-stack-item > .ui-resizable-se { right: var(--gs-item-margin-right); }
-    .grid-stack-item > .ui-resizable-nw,
-    .grid-stack-item > .ui-resizable-sw { left: var(--gs-item-margin-left); }
-
-    .grid-stack-item > .ui-resizable-ne { cursor: ne-resize; }
-    .grid-stack-item > .ui-resizable-nw { cursor: nw-resize; }
-    .grid-stack-item > .ui-resizable-se { cursor: se-resize; }
-    .grid-stack-item > .ui-resizable-sw { cursor: sw-resize; }
-
-    .grid-stack-item > .ui-resizable-handle::after {
-      position: absolute;
-      border: var(--lv-border-default);
-      background: var(--lv-bg-panel);
-      content: '';
-      pointer-events: none;
-    }
-
-    .grid-stack-item > .ui-resizable-n::after,
-    .grid-stack-item > .ui-resizable-s::after {
-      left: 50%;
-      width: 18px;
-      height: 4px;
-      border-radius: var(--lv-radius-full);
-      transform: translateX(-50%);
-    }
-
-    .grid-stack-item > .ui-resizable-n::after { top: -2px; }
-    .grid-stack-item > .ui-resizable-s::after { bottom: -2px; }
-
-    .grid-stack-item > .ui-resizable-e::after,
-    .grid-stack-item > .ui-resizable-w::after {
-      top: 50%;
-      width: 4px;
-      height: 18px;
-      border-radius: var(--lv-radius-full);
-      transform: translateY(-50%);
-    }
-
-    .grid-stack-item > .ui-resizable-e::after { right: -2px; }
-    .grid-stack-item > .ui-resizable-w::after { left: -2px; }
-
-    .grid-stack-item > .ui-resizable-ne::after,
-    .grid-stack-item > .ui-resizable-nw::after,
-    .grid-stack-item > .ui-resizable-se::after,
-    .grid-stack-item > .ui-resizable-sw::after {
-      top: 50%;
-      left: 50%;
-      width: 8px;
-      height: 8px;
-      border-radius: var(--lv-radius-small);
-      transform: translate(-50%, -50%);
-    }
-
-    .grid-stack-item.ui-resizable-disabled > .ui-resizable-handle {
-      display: none;
-    }
-
-    .grid-stack-item:not([data-selected='true']) > .ui-resizable-handle {
-      display: none !important;
-    }
-
-    .visual > .grid-stack-item-content,
-    .filter-component > .grid-stack-item-content,
-    .header-component > .grid-stack-item-content,
-    .builder-placeholder > .grid-stack-item-content {
-      isolation: isolate;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      box-sizing: border-box;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      padding: var(--base-size-8);
-      color: inherit;
-      background: color-mix(in srgb, var(--lv-bg-panel) 96%, transparent);
-      text-align: left;
-    }
-
-    .visual.has-preview > .grid-stack-item-content {
-      grid-template-rows: minmax(0, 1fr);
-      padding: 0;
-    }
-
-    .visual:hover > .grid-stack-item-content {
-      border-color: var(--lv-line-emphasis);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-control-hover);
-    }
-
-    .visual[data-selected='true'] > .grid-stack-item-content {
-      border-color: var(--lv-data-3);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-3-muted);
-    }
-
-    .filter-component[data-selected='true'] > .grid-stack-item-content {
-      border-color: var(--lv-data-2);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-2-muted);
-    }
-
-    .header-component > .grid-stack-item-content,
-    .builder-placeholder > .grid-stack-item-content {
-      grid-template-rows: auto minmax(0, 1fr);
-      background: var(--lv-bg-panel);
-    }
-
-    .header-component[data-selected='true'] > .grid-stack-item-content {
-      border-color: var(--lv-data-4);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-data-4-muted);
-    }
-
-    .header-copy {
-      display: grid;
-      align-content: center;
-      gap: var(--base-size-4);
-      min-width: 0;
-      padding: var(--base-size-8);
-    }
-
-    .header-copy span,
-    .builder-placeholder span {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .builder-placeholder > .grid-stack-item-content {
-      align-content: center;
-      gap: var(--base-size-4);
-      border-style: dashed;
-      color: var(--lv-fg-muted);
-      text-align: center;
-    }
-
-    .component-drag-handle {
-      display: flex;
-      width: 100%;
-      min-width: 0;
-      min-height: var(--control-small-size);
-      align-items: center;
-      overflow: hidden;
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      cursor: grab;
-      touch-action: none;
-      user-select: none;
-    }
-
-    .component-drag-handle:hover {
-      color: var(--lv-data-4);
-    }
-
-    .component-drag-grip {
-      position: absolute;
-      z-index: 3;
-      top: var(--base-size-4);
-      left: 50%;
-      display: grid;
-      width: var(--control-small-size);
-      min-height: 1.25rem;
-      place-items: center;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-full);
-      color: var(--lv-fg-muted);
-      background: var(--lv-bg-panel);
-      box-shadow: var(--lv-shadow-floating-sm);
-      opacity: 0;
-      pointer-events: none;
-      transform: translateX(-50%);
-      transition: opacity var(--lv-duration-fast) var(--motion-easing-move);
-    }
-
-    .component-drag-grip svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-    }
-
-    .visual:hover .component-drag-grip,
-    .visual[data-selected='true'] .component-drag-grip,
-    .filter-component:hover .component-drag-grip,
-    .filter-component[data-selected='true'] .component-drag-grip {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .component-drag-handle:active,
-    .grid-stack-item.ui-draggable-dragging .component-drag-handle {
-      cursor: grabbing;
-    }
-
-    .visual-picker-catalog {
-      display: block;
-      max-height: none;
-      overflow: visible;
-    }
-
-    .visual-picker {
-      display: grid;
-      grid-template-columns: repeat(7, minmax(0, 1fr));
-      gap: var(--base-size-4);
-    }
-
-    .visual-picker-button {
-      --visual-picker-color: var(--lv-fg-muted);
-      --visual-picker-muted: var(--lv-bg-panel-muted);
-      display: grid;
-      min-width: 0;
-      min-height: 2.25rem;
-      place-items: center;
-      border-color: transparent;
-      padding: var(--base-size-2);
-      color: var(--visual-picker-color);
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .visual-picker-button[data-visual-picker-type='bar'] {
-      --visual-picker-color: var(--lv-data-1);
-      --visual-picker-muted: var(--lv-data-1-muted);
-    }
-
-    .visual-picker-button[data-visual-picker-type='column'] {
-      --visual-picker-color: var(--lv-data-2);
-      --visual-picker-muted: var(--lv-data-2-muted);
-    }
-
-    .visual-picker-button[data-visual-picker-type='line'] {
-      --visual-picker-color: var(--lv-data-3);
-      --visual-picker-muted: var(--lv-data-3-muted);
-    }
-
-    .visual-picker-button[data-visual-picker-type='area'] {
-      --visual-picker-color: var(--lv-data-4);
-      --visual-picker-muted: var(--lv-data-4-muted);
-    }
-
-    .visual-picker-button[data-visual-picker-type='table'] {
-      --visual-picker-color: var(--lv-data-5);
-      --visual-picker-muted: var(--lv-data-5-muted);
-    }
-
-    .visual-picker-button[data-visual-picker-type='kpi'] {
-      --visual-picker-color: var(--lv-data-6);
-      --visual-picker-muted: var(--lv-data-6-muted);
-    }
-
-    .visual-picker-button[data-visual-group='Part to whole'] {
-      --visual-picker-color: var(--lv-data-4);
-      --visual-picker-muted: var(--lv-data-4-muted);
-    }
-
-    .visual-picker-button[data-visual-group='Distribution'] {
-      --visual-picker-color: var(--lv-data-3);
-      --visual-picker-muted: var(--lv-data-3-muted);
-    }
-
-    .visual-picker-button[data-visual-group='Hierarchy & flow'] {
-      --visual-picker-color: var(--lv-data-2);
-      --visual-picker-muted: var(--lv-data-2-muted);
-    }
-
-    .visual-picker-button[data-visual-group='Specialized'] {
-      --visual-picker-color: var(--lv-data-6);
-      --visual-picker-muted: var(--lv-data-6-muted);
-    }
-
-    .visual-picker-button[data-visual-group='Tables'] {
-      --visual-picker-color: var(--lv-data-5);
-      --visual-picker-muted: var(--lv-data-5-muted);
-    }
-
-    .visual-picker-button[data-visual-group='Filters'] {
-      --visual-picker-color: var(--lv-data-1);
-      --visual-picker-muted: var(--lv-data-1-muted);
-    }
-
-    .visual-picker-button:hover {
-      border-color: color-mix(in srgb, var(--visual-picker-color) 55%, var(--lv-line-default));
-      background: color-mix(in srgb, var(--visual-picker-muted) 72%, var(--lv-bg-panel-muted));
-    }
-
-    .visual-picker-button[aria-pressed='true'] {
-      border-color: var(--visual-picker-color);
-      background: var(--visual-picker-muted);
-      box-shadow: inset 0 0 0 var(--lv-border-width) var(--visual-picker-color);
-    }
-
-    .visual-picker-button svg {
-      width: 1.25rem;
-      height: 1.25rem;
-      overflow: visible;
-    }
-
-    .visual-picker-button .visual-icon-primary,
-    .visual-picker-button .visual-icon-secondary,
-    .visual-picker-button .visual-icon-tertiary,
-    .visual-picker-button .visual-icon-axis {
-      fill: currentColor;
-    }
-
-    .visual-picker-button .visual-icon-primary {
-      opacity: 1;
-    }
-
-    .visual-picker-button .visual-icon-secondary {
-      opacity: 0.58;
-    }
-
-    .visual-picker-button .visual-icon-tertiary {
-      opacity: 0.24;
-    }
-
-    .visual-picker-button .visual-icon-axis {
-      opacity: 0.36;
-    }
-
-    .visual-picker-button .visual-icon-stroke,
-    .visual-picker-button .visual-icon-band,
-    .visual-picker-button .visual-icon-ring,
-    .visual-picker-button .visual-icon-sunburst-outer,
-    .visual-picker-button .visual-icon-gauge {
-      fill: none;
-      stroke: currentColor;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .visual-picker-button .visual-icon-stroke {
-      stroke-width: 2.25;
-    }
-
-    .visual-picker-button .visual-icon-stroke-thin {
-      stroke-width: 1.5;
-    }
-
-    .visual-picker-button .visual-icon-band {
-      stroke-width: 4;
-    }
-
-    .visual-picker-button .visual-icon-ring,
-    .visual-picker-button .visual-icon-sunburst-outer {
-      stroke-width: 4.5;
-    }
-
-    .visual-picker-button .visual-icon-gauge {
-      stroke-width: 3.5;
-    }
-
-    .visual-picker-button .visual-icon-cutout {
-      fill: var(--lv-bg-panel-muted);
-    }
-
-    .visual-reference-link {
-      margin-left: auto;
-      color: var(--lv-fg-accent);
-      font: var(--lv-type-caption);
-      text-decoration: none;
-    }
-
-    .visual-reference-link:hover {
-      text-decoration: underline;
-    }
-
-    .inspector-panel {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--base-size-8);
-      padding: var(--base-size-12);
-    }
-
-    .inspector-panel > *,
-    .inspector-panel .property-group,
-    .inspector-panel .field-wells,
-    .inspector-panel .field-well,
-    .inspector-panel .field-well-target {
-      min-width: 0;
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .field-wells {
-      display: grid;
-      gap: var(--base-size-8);
-    }
-
-    ${dashboardBuilderFieldStyles}
-
-    .property-heading {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--base-size-8);
-    }
-
-    .builder-disclosure {
-      border-top: var(--lv-border-muted);
-      padding-top: var(--base-size-8);
-    }
-
-    .builder-disclosure summary {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
-      cursor: pointer;
-    }
-
-    .builder-disclosure summary:has(.disclosure-count) {
-      display: list-item;
-    }
-
-    .disclosure-count {
-      float: right;
-      min-width: 1.25rem;
-      border-radius: var(--lv-radius-full);
-      color: var(--lv-fg-muted);
-      background: var(--lv-bg-panel-muted);
-      font-weight: var(--base-text-weight-normal);
-      text-align: center;
-    }
-
-    .builder-disclosure-content {
-      padding-top: var(--base-size-8);
-    }
-
-    .interaction-targets {
-      display: grid;
-      gap: var(--base-size-8);
-      margin: 0;
-      padding: 0;
-      border: 0;
-    }
-
-    .interaction-target {
-      display: grid;
-      gap: var(--base-size-6);
-    }
-
-    .interaction-target-title {
-      overflow: hidden;
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .interaction-effects {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: var(--base-size-4);
-    }
-
-    .interaction-effect {
-      display: grid;
-      place-items: center;
-      min-height: var(--control-small-size);
-      box-sizing: border-box;
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      color: var(--lv-fg-muted);
-      background: var(--lv-bg-panel);
-      font: var(--lv-type-caption);
-      cursor: pointer;
-    }
-
-    .interaction-effect:has(input:focus-visible) {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: 1px;
-    }
-
-    .interaction-effect[data-effect='filter'][data-selected='true'] {
-      border-color: var(--lv-data-2);
-      color: var(--lv-data-2);
-      background: var(--lv-data-2-muted);
-    }
-
-    .interaction-effect[data-effect='highlight'][data-selected='true'] {
-      border-color: var(--lv-data-3);
-      color: var(--lv-data-3);
-      background: var(--lv-data-3-muted);
-    }
-
-    .interaction-effect[data-effect='none'][data-selected='true'] {
-      border-color: var(--lv-line-emphasis);
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .interaction-effect input {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .field-well {
-      display: grid;
-      gap: var(--base-size-6);
-    }
-
-    .field-well-label {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--base-size-8);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .field-well-label span:last-child {
-      font-weight: var(--base-text-weight-normal);
-    }
-
-    .field-well-target {
-      display: grid;
-      min-height: var(--control-large-size);
-      gap: var(--base-size-4);
-      align-content: center;
-      box-sizing: border-box;
-      border: 1px dashed var(--lv-line-default);
-      border-radius: var(--lv-radius-default);
-      padding: var(--base-size-6);
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .field-well-target:hover,
-    .field-well-target:focus-within {
-      border-color: var(--lv-data-2);
-      background: var(--lv-data-2-muted);
-    }
-
-    .field-well-target[data-field-drop='compatible'] {
-      border-color: var(--lv-data-2);
-      background: var(--lv-data-2-muted);
-    }
-
-    .field-well-target[data-field-drop='incompatible'] {
-      opacity: 0.55;
-    }
-
-    .field-pill,
-    .field-token {
-      display: flex;
-      min-height: var(--control-small-size);
-      align-items: center;
-      gap: var(--base-size-6);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      padding: 0 var(--base-size-8);
-      background: var(--lv-bg-panel);
-      font: var(--lv-type-body-compact);
-    }
-
-    .field-token-label {
-      min-width: 0;
-      flex: 1 1 auto;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .field-token-actions {
-      display: flex;
-      flex: 0 0 auto;
-      align-items: center;
-      gap: var(--base-size-2);
-    }
-
-    .field-token-action {
-      display: grid;
-      width: 1.5rem;
-      min-width: 1.5rem;
-      min-height: 1.5rem;
-      place-items: center;
-      border-color: transparent;
-      padding: 0;
-      color: var(--lv-fg-muted);
-      background: transparent;
-      font: var(--lv-type-caption);
-    }
-
-    .field-token-action:hover:not(:disabled) {
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-control-hover);
-    }
-
-    .field-token-action[data-field-action='remove']:hover:not(:disabled) {
-      color: var(--lv-fg-danger, var(--lv-fg-default));
-    }
-
-    .field-token-action:disabled {
-      opacity: 0.35;
-    }
-
-    .field-pill-kind {
-      margin-left: auto;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .empty-well {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-align: center;
-    }
-
-    .format-placeholder {
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      padding: var(--base-size-12);
-      color: var(--lv-fg-muted);
-      background: var(--lv-bg-panel-muted);
-      font: var(--lv-type-caption);
-      line-height: 1.45;
-    }
-
-    .format-controls {
-      display: grid;
-      gap: var(--base-size-12);
-    }
-
-    .visual-format-controls {
-      margin-top: var(--base-size-4);
-      border-top: var(--lv-border-muted);
-      padding-top: var(--base-size-12);
-    }
-
-    .visual-query-controls {
-      margin-top: var(--base-size-4);
-      border-top: var(--lv-border-muted);
-      padding-top: var(--base-size-12);
-    }
-
-    .query-control-list {
-      display: grid;
-      gap: var(--base-size-8);
-    }
-
-    .query-sort-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
-      gap: var(--base-size-6);
-      align-items: center;
-    }
-
-    .query-sort-row button {
-      min-width: 1.8rem;
-    }
-
-    .format-controls-heading {
-      margin: 0;
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .inline-page-properties {
-      margin-top: var(--base-size-4);
-      border-top: var(--lv-border-muted);
-      padding-top: var(--base-size-12);
-    }
-
-    .format-section {
-      display: grid;
-      gap: var(--base-size-8);
-      border-bottom: var(--lv-border-muted);
-      padding-bottom: var(--base-size-12);
-    }
-
-    .format-section:last-child {
-      border-bottom: 0;
-      padding-bottom: 0;
-    }
-
-    .format-section h3 {
-      margin: 0;
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .format-text-field {
-      display: grid;
-      gap: var(--base-size-4);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .format-text-field input[type='text'],
-    .format-text-field input[type='number'],
-    .format-text-field select {
-      width: 100%;
-      min-width: 0;
-      min-height: var(--control-medium-size);
-      box-sizing: border-box;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      padding: 0 var(--base-size-8);
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-control);
-      font: var(--lv-type-body-compact);
-    }
-
-    .format-toggle {
-      display: flex;
-      min-height: var(--control-small-size);
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--base-size-8);
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-    }
-
-    .format-toggle input {
-      width: 1rem;
-      height: 1rem;
-      margin: 0;
-      accent-color: var(--lv-data-3);
-    }
-
-    .format-toggle:has(input:disabled) {
-      color: var(--lv-fg-muted);
-    }
-
-    .page-layout-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--base-size-8);
-    }
-
-    .page-format-summary {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: var(--base-size-8);
-      margin: 0;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .visual,
-    .filter-component,
-    .header-component,
-    .builder-placeholder {
-      position: absolute;
-      display: block;
-      min-width: 4rem;
-      min-height: 3rem;
-      box-sizing: border-box;
-      color: inherit;
-      text-align: left;
-      cursor: default;
-    }
-
-    .visual.has-preview {
-      overflow: hidden;
-    }
-
-    .visual:focus-visible,
-    .filter-component:focus-visible,
-    .header-component:focus-visible {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: 2px;
-    }
-
-    .visual[data-field-drop='compatible'] > .grid-stack-item-content {
-      outline: 2px dashed var(--lv-data-2);
-      outline-offset: -3px;
-      background: var(--lv-data-2-muted);
-    }
-
-    .visual[data-field-drop='incompatible'] {
-      opacity: 0.55;
-    }
-
-    .visual-title {
-      overflow: hidden;
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .visual-type {
-      margin-top: 0.2rem;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .visual-preview {
-      position: relative;
-      display: block;
-      width: 100%;
-      height: 100%;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    .visual-preview lv-visualization-host {
-      display: block;
-      width: 100%;
-      height: 100%;
-    }
-
-    .visual-preview-empty {
-      display: flex;
-      min-height: 0;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: var(--base-size-4);
-      padding: var(--base-size-8);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-align: center;
-    }
-
-    .visual-preview-empty strong {
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .filter-component > .grid-stack-item-content {
-      grid-template-rows: minmax(0, 1fr);
-      padding: 0;
-      gap: 0;
-      background: var(--lv-bg-panel);
-    }
-
-    .filter-component:hover > .grid-stack-item-content {
-      border-color: var(--lv-line-emphasis);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-control-hover);
-    }
-
-    .filter-control-preview {
-      display: grid;
-      min-height: 0;
-      align-content: center;
-      gap: var(--base-size-6);
-    }
-
-    .filter-preview-input,
-    .filter-preview-range > span {
-      display: flex;
-      min-width: 0;
-      min-height: var(--control-small-size);
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 var(--base-size-8);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-      background: var(--lv-bg-input, var(--lv-bg-panel));
-      font: var(--lv-type-caption);
-    }
-
-    .filter-preview-range {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--base-size-6);
-    }
-
-    .filter-runtime-note {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .filter-component lv-slicer {
-      display: block;
-      min-width: 0;
-      min-height: 0;
-      overflow: auto;
-    }
-
-    .visual-empty {
-      display: grid;
-      place-items: center;
-      min-height: 20rem;
-      color: var(--lv-fg-muted);
-      text-align: center;
-    }
-
-    .visual-empty strong {
-      display: block;
-      margin-bottom: 0.3rem;
-      color: var(--lv-fg-default);
-    }
-
-    .properties-body {
-      display: grid;
-      gap: var(--base-size-12);
-      padding: var(--base-size-12);
-    }
-
-    .property-group {
-      display: grid;
-      gap: 0.35rem;
-    }
-
-    .property-label {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .property-value {
-      font: var(--lv-type-body-compact);
-    }
-
-    .slot {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.5rem;
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      padding: var(--base-size-6);
-      font: var(--lv-type-body-compact);
-    }
-
-    .slot-kind {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .diagnostics {
-      display: grid;
-      gap: 0.35rem;
-    }
-
-    .diagnostic {
-      border-left: 3px solid var(--lv-fg-muted);
-      padding: 0.35rem 0.5rem;
-      background: var(--lv-bg-panel-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .diagnostic.error {
-      border-color: var(--lv-fg-danger);
-    }
-
-    .diagnostic.warning {
-      border-color: var(--lv-fg-warning);
-    }
-
-    .diagnostic.info {
-      border-color: var(--lv-data-1);
-    }
-
-    .evidence {
-      display: grid;
-      gap: 0.3rem;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .secondary-details {
-      border-top: var(--lv-border-muted);
-      padding-top: var(--base-size-8);
-    }
-
-    .secondary-details summary {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
-      cursor: pointer;
-    }
-
-    .secondary-details-content {
-      display: grid;
-      gap: var(--base-size-12);
-      padding-top: var(--base-size-8);
-    }
-
-    .state {
-      display: grid;
-      place-items: center;
-      min-height: 60svh;
-      padding: 2rem;
-      color: var(--lv-fg-muted);
-      text-align: center;
-    }
-
-    .state strong {
-      display: block;
-      margin-bottom: 0.35rem;
-      color: var(--lv-fg-default);
-    }
-
-    @media (max-width: 960px) {
-      .toolbar {
-        flex-wrap: wrap;
-      }
-
-      .title-wrap {
-        min-width: 10rem;
-      }
-
-      .body {
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr) auto auto;
-      }
-
-      .right-dock {
-        grid-column: 1;
-        grid-row: 3;
-        max-height: 19rem;
-        grid-template-columns: var(--dock-filters-flex) var(--dock-visuals-flex) var(--dock-data-flex) var(--dock-agent-flex);
-        grid-template-rows: minmax(0, 1fr);
-        border-top: var(--lv-border-muted);
-      }
-
-      .filters-pane,
-      .properties,
-      .data-pane,
-      .agent-pane {
-        max-height: none;
-        border-top: 0;
-      }
-
-      .filters-pane {
-        border-left: 0;
-      }
-
-      .data-pane,
-      .agent-pane {
-        border-left: var(--lv-border-muted);
-      }
-    }
-
-    @media (min-width: 961px) and (max-width: 1200px) {
-      .body {
-        grid-template-columns: minmax(0, 1fr) minmax(20rem, 23rem);
-      }
-
-      .right-dock {
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: var(--dock-filters-row) var(--dock-visuals-row) var(--dock-data-row) var(--dock-agent-row);
-      }
-
-      .properties,
-      .data-pane,
-      .agent-pane {
-        border-top: var(--lv-border-muted);
-      }
-    }
-
-    @media (max-width: 640px) {
-      :host {
-        height: 100%;
-        max-height: 100svh;
-        overflow-y: auto;
-      }
-
-      .builder {
-        height: auto;
-        min-height: auto;
-        grid-template-columns: minmax(0, 1fr);
-      }
-
-      .body {
-        display: block;
-      }
-
-      .right-dock {
-        display: block;
-        grid-column: 1;
-        max-height: none;
-        border-top: 0;
-      }
-
-      .pane {
-        max-height: none;
-        border: 0;
-        border-bottom: var(--lv-border-muted);
-      }
-
-      .properties {
-        max-height: none;
-      }
-
-      .data-pane,
-      .agent-pane {
-        border-left: 0;
-      }
-
-      .agent-pane-content {
-        height: min(32rem, 60svh);
-      }
-
-      .page-tab {
-        max-width: 12rem;
-      }
-
-      .canvas-pane {
-        min-height: 38rem;
-      }
-
-      /* The authored grid remains absolute on desktop. On a narrow viewport,
-       * switch the canvas to a single-column flow so chart hosts get a real
-       * viewport-sized box instead of an off-screen slice of the desktop
-       * canvas. The surface stays full-bleed; the canvas scroller remains the
-       * only overflow container. */
-      .canvas-fit {
-        width: 100% !important;
-        height: auto !important;
-      }
-
-      .canvas {
-        position: relative;
-        inset: auto;
-        display: grid;
-        width: 100%;
-        min-width: 0;
-        min-height: 0;
-        aspect-ratio: auto !important;
-        transform: none !important;
-        grid-template-columns: minmax(0, 1fr) !important;
-        grid-auto-rows: auto;
-        gap: var(--base-size-12);
-      }
-
-      .canvas .visual,
-      .canvas .filter-component,
-      .canvas .header-component,
-      .canvas .builder-placeholder {
-        position: relative;
-        top: auto !important;
-        right: auto !important;
-        bottom: auto !important;
-        left: auto !important;
-        width: 100% !important;
-        height: 16rem !important;
-        min-width: 0;
-        min-height: 12rem;
-        order: var(--mobile-order, 0);
-      }
-
-      .canvas .visual[data-visual-type='kpi'] {
-        height: 8rem !important;
-        min-height: 8rem;
-      }
-
-      .canvas .filter-component {
-        height: 8rem !important;
-        min-height: 8rem;
-      }
-
-      .canvas .header-component,
-      .canvas .builder-placeholder {
-        height: 8rem !important;
-        min-height: 8rem;
-      }
-
-      .canvas .visual > .grid-stack-item-content,
-      .canvas .filter-component > .grid-stack-item-content,
-      .canvas .header-component > .grid-stack-item-content,
-      .canvas .builder-placeholder > .grid-stack-item-content {
-        position: relative;
-        inset: auto !important;
-        width: 100%;
-        height: 100%;
-      }
-
-      .toolbar-actions {
-        width: 100%;
-        flex-wrap: wrap;
-        overflow: visible;
-      }
-
-      .dashboard-metadata-form {
-        left: 0;
-        right: auto;
-      }
-    }
-  `
+  static styles = [dashboardBuilderSurfaceStyles, dashboardBuilderControlsStyles, dashboardBuilderCanvasStyles, dashboardBuilderFieldsStyles, dashboardBuilderDialogsStyles, dashboardBuilderDensityStyles]
 
   override performUpdate(): void {
     // Share one materialized dashboard snapshot across helpers for this update.
@@ -2620,9 +340,22 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   updated(): void {
+    // Persist the server-validated chat origin so reload keeps the same Back target.
+    if (this.backHref.startsWith('/chats/')) {
+      const current = new URL(window.location.href)
+      const conversation = this.backHref.slice('/chats/'.length)
+      if (current.searchParams.get('returnChat') !== conversation) {
+        current.searchParams.set('returnChat', conversation)
+        window.history.replaceState(window.history.state, '', current)
+      }
+    }
     if (this.agentMutationTracker.observe(this.signal('agent', {}))) this.dispatchEvent(new CustomEvent('lv-builder-agent-run-complete', { bubbles: true, composed: true }))
     const builder = this.builder
+    const agentRunning = Boolean(this.signal<{ status?: { running?: boolean } }>('agent', {}).status?.running)
+    if (this.wasAgentRunning && !agentRunning) this.refreshBuilderSignals()
+    this.wasAgentRunning = agentRunning
     if (builder?.redirectTo) {
+      if (this.embeddedInChat) { this.backToChat(); return }
       const target = new URL(builder.redirectTo, window.location.href)
       if (target.origin === window.location.origin && target.href !== window.location.href) window.location.assign(target.href)
       return
@@ -2653,6 +386,23 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.canvasPage = page
     this.syncGridStack(builder, page)
     this.syncCanvasViewport(page)
+    if (this.embeddedInChat) {
+      for (const link of this.shadowRoot?.querySelectorAll<HTMLAnchorElement>('a[href]') ?? []) {
+        const target = new URL(link.href, window.location.href)
+        if (target.origin === window.location.origin && target.pathname.endsWith('/edit')) {
+          target.searchParams.set('embed', 'chat')
+          link.href = target.href
+        }
+      }
+    }
+    if (this.autoArrangePageID && !this.commandPending && !this.importingSavedVisual) {
+      const pageID = this.autoArrangePageID
+      const preservedIDs = this.autoArrangePreservedIDs
+      this.autoArrangePageID = ''
+      this.autoArrangePreservedIDs = new Set()
+      if (!this.status.error && page?.id === pageID) this.applyBalancedLayout(false, false, preservedIDs)
+    }
+    this.publishChatProjection()
   }
 
   private readonly handleViewportChange = (): void => {
@@ -2683,6 +433,22 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.gridLayoutKey = layoutKey
       Object.assign(canvas.dataset, { builderRevisionKey: this.revisionKey(builder!), builderPlacementKey: placementKey })
       this.gridIsMobile = mobile
+      // Destroying the old grid restores its mutable attributes after Lit has
+      // rendered the new revision. Seed the new grid from canonical geometry.
+      const placements = new Map(this.pagePlacedComponents(page).map(component => [component.id, component.placement]))
+      const seen = new Set<string>()
+      for (const item of canvas.querySelectorAll<HTMLElement>(':scope > .grid-stack-item')) {
+        const id = item.getAttribute('gs-id') ?? ''
+        const placement = placements.get(id)
+        // Drag/resize teardown can reinsert a tile Lit already removed. Keep
+        // exactly one DOM tile for each component in the current document.
+        if (!placement || seen.has(id)) { item.remove(); continue }
+        seen.add(id)
+        item.setAttribute('gs-x', String(Math.max(0, placement.col - 1)))
+        item.setAttribute('gs-y', String(Math.max(0, placement.row - 1)))
+        item.setAttribute('gs-w', String(Math.max(1, placement.colSpan)))
+        item.setAttribute('gs-h', String(Math.max(1, placement.rowSpan)))
+      }
       this.gridStack = GridStack.init({
         column: Math.max(1, page.grid.columns || 12),
         // GridStack's cell height is the authored row plus its following gap.
@@ -2885,6 +651,70 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.emitCommand('set_placements', { pageId: page.id, placements, compact: false })
   }
 
+  private readonly arrangeVisuals = (): void => {
+    // Fix repairs missing fields using the currently authored layout. In a
+    // standalone builder, Arrange remains an explicit request to repack.
+    if (this.builderFilterController.pending || this.builderFilterCommandInFlight) {
+      this.chatProjectionKey = ''
+      this.requestUpdate()
+      return
+    }
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    if (this.embeddedInChat && page?.visuals.length && this.builder?.capabilities.canEdit && !this.commandPending) {
+      this.pendingFixVisuals = { pageID: page.id, visualIDs: new Set(page.visuals.filter(visual => this.visualNeedsRepair(visual)).map(visual => visual.id)) }
+      this.fixVisualsMessage = ''
+      if (this.pendingFixVisuals.visualIDs.size === 0) {
+        this.finishFixVisuals()
+        this.chatProjectionKey = ''
+        this.requestUpdate()
+        return
+      }
+    }
+    const preservedIDs = new Set(this.embeddedInChat ? page?.visuals.map(visual => visual.id) : [])
+    this.applyBalancedLayout(true, true, preservedIDs)
+    // A layout that is already balanced still acknowledges the parent click.
+    this.chatProjectionKey = ''
+    this.requestUpdate()
+  }
+
+  private finishFixVisuals(error?: string): void {
+    const pending = this.pendingFixVisuals
+    if (!pending) return
+    this.pendingFixVisuals = null
+    if (error) { this.fixVisualsMessage = error; return }
+    const page = this.builder?.pages.find(page => page.id === pending.pageID)
+    const remaining = page?.visuals.filter(visual => this.visualNeedsRepair(visual)) ?? []
+    const completed = page?.visuals.filter(visual => pending.visualIDs.has(visual.id) && !this.visualNeedsRepair(visual)).length ?? 0
+    const summary = completed > 0 ? `Completed ${completed} visual${completed === 1 ? '' : 's'}. ` : ''
+    this.fixVisualsMessage = remaining.length > 0
+      ? `${summary}${remaining.length} visual${remaining.length === 1 ? ' could not be completed automatically' : 's could not be completed automatically'}. Select ${remaining.length === 1 ? 'it' : 'them'} in the Visuals panel.`
+      : completed > 0 ? `${summary}Your layout is unchanged.` : 'Visuals are ready. Your layout is unchanged.'
+  }
+
+  private isFixedVisualReady(visual: DashboardBuilderVisualSignal): boolean {
+    const preview = this.builderVisuals[this.visualSignalID(visual)]
+    return Boolean(this.builder?.preview.active && !visual.previewError && preview && ['ready', 'no_data', 'partial'].includes(preview.status.kind))
+  }
+
+  private visualNeedsRepair(visual: DashboardBuilderVisualSignal): boolean {
+    return Boolean(visual.previewError?.trim()) || this.visualRequirementMessages(visual).length > 0
+  }
+
+  private applyBalancedLayout(recordHistory: boolean, fillMissingFields = false, preservedIDs: ReadonlySet<string> = new Set()): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending || page.visuals.length === 0) return
+    const obstacles = this.pagePlacedComponents(page).filter(component => !page.visuals.some(visual => visual.id === component.id))
+    const placements = arrangeDashboardVisuals([...page.visuals].sort((a, b) => a.placement.row - b.placement.row || a.placement.col - b.placement.col).map(visual => ({ id: visual.id, type: this.visualTypeForRender(visual), placement: preservedIDs.has(visual.id) ? visual.placement : undefined })), obstacles.map(component => component.placement), page.grid)
+    if (!fillMissingFields && placements.every(p => this.placementEqual(p, page.visuals.find(visual => visual.id === p.componentId)!.placement))) {
+      if (preservedIDs.size === 0) this.fitCanvasToViewport()
+      return
+    }
+    if (preservedIDs.size === 0) this.canvasZoom = null
+    this.gridInteractionMessage = fillMissingFields && preservedIDs.size > 0 ? 'Completing visuals while keeping your layout.' : 'Arranging dashboard visuals.'
+    this.emitCommand('set_placements', { pageId: page.id, placements, ...(fillMissingFields ? { fillMissingFields: true } : {}) }, recordHistory)
+  }
+
   private placementEqual(left: GridPlacement, right: DashboardBuilderVisualSignal['placement']): boolean {
     return left.placement.column === right.col && left.placement.row === right.row && left.placement.columnSpan === right.colSpan && left.placement.rowSpan === right.rowSpan
   }
@@ -2990,11 +820,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private restoreCollapsedPanes(): void {
     if (typeof window === 'undefined') return
     try {
-      const stored = window.localStorage.getItem(builderPaneStorageKey)
+      const stored = window.localStorage.getItem(builderPaneStorageKey + (this.embeddedInChat ? '-chat' : ''))
       if (stored === null) return
       const value = JSON.parse(stored)
-      const legacy = Array.isArray(value)
-      const panes = legacy ? value : value?.version === 2 && Array.isArray(value.collapsed) ? value.collapsed : null
+      // Old chat preferences came from the automatic one-panel layout. Reset
+      // those once; version 3 stores only the user's independent choices.
+      const legacy = !this.embeddedInChat && Array.isArray(value)
+      const version = this.embeddedInChat ? 3 : 2
+      const panes = legacy ? value : value?.version === version && Array.isArray(value.collapsed) ? value.collapsed : null
       if (!panes) return
       const collapsed = new Set(panes.filter((pane: unknown): pane is BuilderPane => pane === 'filters' || pane === 'visuals' || pane === 'data' || pane === 'agent'))
       this.collapsedPanes = {
@@ -3003,6 +836,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         data: collapsed.has('data'),
         agent: legacy ? true : collapsed.has('agent'),
       }
+      if (this.embeddedInChat) this.collapsedPanes.agent = true
     } catch {
       this.collapsedPanes = { ...defaultCollapsedPanes }
     }
@@ -3012,7 +846,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (typeof window === 'undefined') return
     try {
       const collapsed = (Object.keys(this.collapsedPanes) as BuilderPane[]).filter((pane) => this.collapsedPanes[pane])
-      window.localStorage.setItem(builderPaneStorageKey, JSON.stringify({ version: 2, collapsed }))
+      window.localStorage.setItem(builderPaneStorageKey + (this.embeddedInChat ? '-chat' : ''), JSON.stringify({ version: this.embeddedInChat ? 3 : 2, collapsed }))
     } catch {
       // Storage can be unavailable in hardened browser contexts. The current
       // session still keeps the pane state through this reactive property.
@@ -3020,8 +854,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private togglePane = (pane: BuilderPane): void => {
-    this.collapsedPanes = { ...this.collapsedPanes, [pane]: !this.collapsedPanes[pane] }
+    const opening = this.collapsedPanes[pane]
+    if (opening && pane === 'data') this.savedVisualsOpen = false
+    // Each section changes independently and retains its DOM and draft.
+    this.collapsedPanes = { ...this.collapsedPanes, [pane]: !opening }
     this.persistCollapsedPanes()
+  }
+
+  private toggleTools = (): void => {
+    // Hiding the dock is distinct from collapsing its individual sections.
+    // Keep headers available even when every section is collapsed.
+    this.toolsHidden = !this.toolsHidden
   }
 
   private closeAgentPane = (): void => {
@@ -3031,8 +874,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private rightDockStyle(): string {
-    const size = (pane: BuilderPane, open: string) => this.collapsedPanes[pane] ? '2.75rem' : open
-    const rowSize = (pane: BuilderPane) => this.collapsedPanes[pane] ? '3.5rem' : 'minmax(0, 1fr)'
+    const size = (pane: BuilderPane, open: string) => pane === 'agent' && this.embeddedInChat ? '0px' : this.collapsedPanes[pane] ? '2.75rem' : open
+    const rowSize = (pane: BuilderPane) => pane === 'agent' && this.embeddedInChat ? '0px' : this.collapsedPanes[pane] ? '2.5rem' : 'minmax(0, 1fr)'
     return [
       `--dock-filters-width:${size('filters', '11.5rem')}`,
       `--dock-visuals-width:${size('visuals', '13.5rem')}`,
@@ -3088,13 +931,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const header = page ? this.selectedHeader(page) : undefined
     return html`
-      <section class="builder" aria-label="Dashboard builder">
+      <section class=${`builder${this.embeddedInChat ? ' chat-preview' : ''}`} aria-label="Dashboard builder">
         ${this.renderTerminalFailure()}
-        ${this.renderToolbar(builder)}
-        <div class="body">
+        <div class="builder-header">${this.renderToolbar(builder)}</div>
+        <div class=${`body${this.toolsHidden ? ' tools-hidden' : ''}`}>
           ${this.renderCanvas(builder, page)}
           ${this.renderPageBar(builder, page)}
-          <div class="right-dock" style=${this.rightDockStyle()}>
+          <div id="builder-tools" class="right-dock" ?hidden=${this.toolsHidden} style=${this.rightDockStyle()}>
             ${this.renderFiltersPane(builder)}
             ${this.renderInspector(builder, page, visual, header)}
             ${this.renderDataPane(builder, visual)}
@@ -3102,6 +945,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
       </section>
+      <iframe class="visual-import-frame" name=${this.importFrameName} title="Visual import" hidden @load=${this.handleVisualImportLoad}></iframe>
       <lv-visual-modal></lv-visual-modal>
     `
   }
@@ -3123,7 +967,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
-        ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboards">Back</a>` : html`<span class="back" aria-label="Back to dashboards">Back</span>`}
+        ${this.embeddedInChat ? nothing : this.backHref ? html`<a class="back" href=${this.backHref} aria-label=${this.backHref.startsWith('/chats/') ? 'Back to chat' : 'Back to dashboards'}>Back</a>` : html`<span class="back" aria-label="Back to dashboards">Back</span>`}
         <div class="appearance-control">
           <button
             type="button"
@@ -3149,6 +993,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
+          ${this.embeddedInChat ? html`<button class="magic-fill" type="button" aria-label="Visual magic" aria-busy=${Boolean(this.pendingFixVisuals)} title="Complete missing chart fields on this page. Your layout stays unchanged." ?disabled=${!builder.capabilities.canEdit || this.commandPending || Boolean(this.pendingFixVisuals) || this.builderFilterController.pending || Boolean(this.builderFilterCommandInFlight) || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>${lucideIcon(WandSparkles, { size: 16, strokeWidth: 2 })}<span>${this.pendingFixVisuals ? 'Completing…' : 'Visual magic'}</span></button>` : nothing}
+          ${this.embeddedInChat ? nothing : html`<button class="arrange-toolbar" type="button" aria-label="Arrange visuals" title="Fit visuals into a balanced grid" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>${lucideIcon(Grid2X2, { size: 16, strokeWidth: 2 })}<span class="arrange-label">Arrange visuals</span></button>`}
+          <button type="button" class="icon-action" data-builder-action="tools" aria-label=${this.toolsHidden ? 'Show tools' : 'Hide tools'} title=${this.toolsHidden ? 'Show editing panels' : 'Hide editing panels'} aria-expanded=${!this.toolsHidden} aria-controls="builder-tools" @click=${this.toggleTools}>${lucideIcon(this.toolsHidden ? PanelRightOpen : PanelRightClose, { size: 16, strokeWidth: 2 })}<span class="sr-only">${this.toolsHidden ? 'Show tools' : 'Hide tools'}</span></button>
           <details class="dashboard-metadata">
             <summary aria-label="Dashboard settings" title="Dashboard settings">${lucideIcon(Settings2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Dashboard settings</span></summary>
             <div class="dashboard-metadata-form">
@@ -3163,6 +1010,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
               <div class="more-menu" aria-label="More dashboard actions">
+                ${this.embeddedInChat ? nothing : html`<button class="arrange-mobile" type="button" aria-label="Arrange visuals" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>Arrange visuals</button>`}
                 ${this.forkHref ? html`<a class="button" href=${this.forkHref}>Make a copy</a>` : nothing}
                 ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'organization' ? 'Make private' : 'Share with organization'}</button>` : nothing}
                 ${builder.capabilities.canExport
@@ -3175,6 +1023,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${builder.capabilities.canPublish ? html`<button type="button" class="primary" data-builder-action="publish" title=${publishTitle} ?disabled=${publishDisabled} @click=${this.publish}>${publishLabel}</button>` : nothing}
         </div>
       </header>
+      ${this.embeddedInChat && this.fixVisualsMessage ? html`<p class="magic-fill-result" role="status">${this.fixVisualsMessage}</p>` : nothing}
     `
   }
 
@@ -3244,17 +1093,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     if (!this.commandPending) return
     if (detail?.type === 'finished') {
+      // Filter and authoring fetches share this host. A filter's completion
+      // must not unlock a newer edit before its authoritative revision arrives.
+      if (this.hasAttribute('data-on:lv-builder-command') && this.activeCommandAction !== 'publish' && this.activeCommandRevisionKey && this.builder && this.revisionKey(this.builder) === this.activeCommandRevisionKey) return
+      this.activeCommandRevisionKey = ''
       this.resumeGridPreviewAfterSave()
       this.selectPendingAddedVisual(this.builder, true)
       this.commandPending = false
       this.activeCommandAction = ''
+      this.finishFixVisuals()
       this.pendingHistorySnapshot = null
       this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
       this.requestUpdate()
+      if (this.refreshQueued) { this.refreshQueued = false; this.refreshBuilderSignals() }
       return
     }
     const commandFailure = browserCommandFailure(event, 'Dashboard builder action')
     if (!commandFailure) return
+    this.finishFixVisuals(commandFailure.message)
     const failedAction = this.activeCommandAction
     this.commandPending = false
     this.activeCommandAction = ''
@@ -3268,6 +1124,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.reversibleVisualTypeSwitch = null
     this.interactionEffectOverrides = {}
     this.interactionOverridesRevision = ''
+    this.autoArrangePageID = ''
+    this.autoArrangePreservedIDs = new Set()
+    this.pendingAddVisual = null
     this.pendingAddPage = null
     this.pendingAddFilter = null
     this.pendingAddFilterComponent = null
@@ -3332,7 +1191,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 data-page-id=${item.id}
                 data-page-dragging=${this.draggedPageID === item.id}
                 data-page-drop=${this.pageDropTargetID === item.id}
-                @click=${(event: MouseEvent) => { if (item.id === page?.id) this.openPageSettings(item, event) }}
+                @click=${(event: MouseEvent) => { if (this.embeddedInChat) { event.preventDefault(); this.selectPage(item.id) } else if (item.id === page?.id) this.openPageSettings(item, event) }}
                 @dragstart=${(event: DragEvent) => this.startPageDrag(event, item.id)}
                 @dragover=${(event: DragEvent) => this.dragPageOver(event, item.id)}
                 @dragleave=${() => this.leavePageDrop(item.id)}
@@ -3404,15 +1263,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const groups: Array<Exclude<BuilderFieldFilter, 'all'>> = ['metric', 'dimension', 'time']
     const collapsed = this.collapsedPanes.data
     return html`
-      <div class="field-browser">
-        <div class="field-browser-header">
-          <div class="pane-heading-row">
-            <div class="pane-title-group">
-              <span class="pane-title-icon">${lucideIcon(Database, { size: 16, strokeWidth: 2 })}</span>
-              <h2 id="builder-data-heading" class="pane-title">Data</h2>
-            </div>
-            ${this.renderPaneToggle('data', 'Data pane', 'builder-data-content')}
-          </div>
+      <div class="field-browser" ?hidden=${this.savedVisualsOpen || collapsed}>
+        <div class="field-search-header">
           <div class="pane-header-details" ?hidden=${collapsed}>
             <label>
               <span class="sr-only">Search fields</span>
@@ -3443,15 +1295,206 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     `
   }
 
+  private get savedVisualFrame(): HTMLIFrameElement | null {
+    return this.shadowRoot?.querySelector<HTMLIFrameElement>('.saved-visuals-frame') ?? null
+  }
+
+  private get visualImportFrame(): HTMLIFrameElement | null {
+    return this.shadowRoot?.querySelector<HTMLIFrameElement>('.visual-import-frame') ?? null
+  }
+
+  private finishVisualImport(message = ''): void {
+    const imported = this.importingSavedVisual
+    this.pendingVisualSource = null
+    window.clearTimeout(this.importTimer)
+    this.importingSavedVisual = false
+    this.refreshingBuilder = false
+    this.commandPending = false
+    this.activeCommandAction = ''
+    this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
+    if (message || imported) this.visualActionMessage = message || 'Visual added to dashboard.'
+    if (message) {
+      this.terminalFailure = { kind: 'unknown', status: null, message, retryable: true }
+      this.pendingAddVisual = null
+      if (this.embeddedInChat) window.parent.postMessage({ type: 'lv-builder-operation-error', message } satisfies ChatDashboardMessage, window.location.origin)
+    }
+    this.importRevision = null
+    this.requestUpdate()
+    if (this.refreshQueued) {
+      this.refreshQueued = false
+      this.refreshBuilderSignals()
+    }
+  }
+
+  private handleVisualImportLoad = (): void => {
+    const frame = this.visualImportFrame
+    if ((!this.importingSavedVisual && !this.refreshingBuilder) || !frame?.contentDocument || frame.contentWindow?.location.href === 'about:blank') return
+    if (!frame.contentDocument.getElementById('chat-dashboard-receipt')) {
+      this.finishVisualImport(frame.contentDocument.body?.innerText.trim().slice(0, 500) || 'Could not add this visual. Please try again.')
+    }
+  }
+
+  private handleVisualImportMessage = async (event: MessageEvent<SavedVisualImportMessage>): Promise<void> => {
+    if ((!this.importingSavedVisual && !this.refreshingBuilder) || event.origin !== window.location.origin || event.source !== this.visualImportFrame?.contentWindow || event.data?.type !== 'lv-builder-imported') return
+    const envelope = event.data.envelope
+    if (envelope.builder?.dashboardId !== this.builder?.dashboardId || envelope.builder.draftId !== this.builder?.draftId) return
+    const source = this.pendingVisualSource
+    if (source && envelope.builder.pages.some(page => page.visuals.some(visual => visual.id === source.componentID))) {
+      this.importedVisualSources.set(source.componentID, source.savedID)
+    }
+    const runtime = await loadDatastarRuntime()
+    // Replace discriminated chart envelopes instead of merging stale specs.
+    runtime.mergePatch({ builderVisuals: null })
+    runtime.mergePatch({
+      builder: envelope.builder, builderVisuals: envelope.builderVisuals,
+      agentContext: event.data.agentContext,
+      runtime: { servingStateId: envelope.runtime.servingStateId, pageId: envelope.runtime.pageId ?? envelope.builder.selectedPageId },
+      builderFilterContract: envelope.builderFilterContract, builderFilterState: envelope.builderFilterState,
+      builderFilterOptionPages: envelope.builderFilterOptionPages, builderFilterValidation: envelope.builderFilterValidation,
+      status: envelope.status,
+    })
+    if (this.importRevision) {
+      this.undoStack = [...this.undoStack.slice(-99), this.importRevision]
+      this.redoStack = []
+    }
+    this.finishVisualImport()
+  }
+
+  private refreshSavedVisualLibrary = (): void => {
+    const frame = this.savedVisualFrame
+    if (frame) frame.src = frame.src
+  }
+
+  private refreshBuilderSignals(): void {
+    if (this.commandPending || this.importingSavedVisual || this.refreshingBuilder) {
+      this.refreshQueued = true
+      return
+    }
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    const frame = this.visualImportFrame
+    if (!page || !frame) return
+    this.refreshingBuilder = true
+    this.commandPending = true
+    this.activeCommandAction = 'refresh_builder'
+    const href = new URL(window.location.href)
+    href.searchParams.set('builderReceipt', '1')
+    href.searchParams.set('page', page.id)
+    href.searchParams.set('builderRuntime', JSON.stringify(this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })))
+    frame.src = href.pathname + href.search
+    this.importTimer = window.setTimeout(() => this.finishVisualImport('Refreshing the dashboard took too long. Please try again.'), 45000)
+  }
+
+  private handleSavedVisualMessage = (event: MessageEvent<SavedVisualLibraryMessage | ChatDashboardMessage>): void => {
+    if (event.origin !== window.location.origin) return
+    const fromParent = this.embeddedInChat && event.source === window.parent
+    if (!fromParent && event.source !== this.savedVisualFrame?.contentWindow) return
+    if (fromParent && event.data?.type === 'lv-builder-visual-window') {
+      const page = this.builder ? this.selectedPage(this.builder) : undefined
+      const request = event.data.request
+      if (page?.id === event.data.pageId && page.visuals.some(visual => this.visualSignalID(visual) === request.visualID)) {
+        this.dispatchEvent(new CustomEvent('lv-visualization-window-request', { detail: request, bubbles: true, composed: true }))
+      }
+      return
+    }
+    if (fromParent && (event.data as { type: string }).type === 'lv-arrange-dashboard-visuals') this.arrangeVisuals()
+    if (fromParent && (event.data as {type: string}).type === 'lv-select-dashboard-page') {
+      const pageId = (event.data as unknown as {pageId: string}).pageId
+      if (this.builder?.pages.some(page => page.id === pageId) && this.selectedPage(this.builder)?.id !== pageId) this.selectPage(pageId)
+    }
+    if (fromParent && event.data?.type === 'lv-add-saved-visual' && event.data.pageId && event.data.pageId !== (this.builder ? this.selectedPage(this.builder)?.id : undefined)) {
+      window.parent.postMessage({type: 'lv-builder-operation-error', message: 'The selected page changed. Select your destination and try again.'} satisfies ChatDashboardMessage, window.location.origin)
+      return
+    }
+    if (fromParent && (event.data as { type: string }).type === 'lv-refresh-builder') this.refreshBuilderSignals()
+    if (fromParent && ['lv-add-saved-visual', 'lv-remove-dashboard-visual'].includes(event.data?.type) && (this.commandPending || this.importingSavedVisual)) {
+      window.parent.postMessage({ type: 'lv-builder-operation-error', message: 'The dashboard is finishing another update. Please try again.' } satisfies ChatDashboardMessage, window.location.origin)
+      return
+    }
+    if (fromParent && event.data?.type === 'lv-remove-dashboard-visual') {
+      this.emitCommand('remove_visual', { pageId: event.data.pageId, visualId: event.data.componentId })
+    }
+    if (event.data?.type === 'lv-refresh-saved-visuals') this.refreshSavedVisualLibrary()
+    if (event.data?.type === 'lv-add-saved-visual') this.addSavedVisual(event.data.id, undefined, event.data.requestId)
+  }
+
+  private handleAgentVisualAdd = (event: CustomEvent<{savedId: string}>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    if ((this.builder ? this.selectedPage(this.builder)?.visuals : [])?.some(visual => (this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)) === event.detail.savedId)) return
+    this.addSavedVisual(event.detail.savedId)
+  }
+
+  private allowSavedVisualDrop = (event: DragEvent): void => {
+    if (!event.dataTransfer?.types.includes(savedVisualDragType)) return
+    if (!event.composedPath().some(node => node instanceof HTMLElement && node.classList.contains('canvas-pane'))) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  private dropSavedVisual = (event: DragEvent): void => {
+    if (!event.dataTransfer?.types.includes(savedVisualDragType)) return
+    if (!event.composedPath().some(node => node instanceof HTMLElement && node.classList.contains('canvas-pane'))) return
+    event.preventDefault()
+    event.stopPropagation()
+    const page = this.builder ? this.selectedPage(this.builder) : undefined
+    const canvas = this.shadowRoot?.querySelector('.canvas')
+    if (!page || !canvas) return
+    const y = (event.clientY - canvas.getBoundingClientRect().top) / this.canvasScale
+    const row = Math.max(1, Math.floor(y / ((page.grid.rowHeight || 48) + (page.grid.gap || 0))) + 1)
+    this.addSavedVisual(event.dataTransfer.getData(savedVisualDragType), row)
+  }
+
+  private addSavedVisual(id: string, row?: number, requestId?: string): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending || this.importingSavedVisual || !id) return
+    const importID = requestId || uuidv7()
+    this.pendingVisualSource = { componentID: savedVisualComponentId(id, importID), savedID: id }
+    this.importingSavedVisual = true
+    this.importRevision = this.currentRevisionReference()
+    this.pendingAddVisual = { revision: this.revisionKey(builder), visualIDs: new Set(page.visuals.map(visual => visual.id)), pageID: page.id, autoArrange: row === undefined }
+    this.commandPending = true
+    this.activeCommandAction = 'import_saved_visual'
+    this.setGridEditingEnabled(false)
+    this.terminalFailure = null
+    this.importTimer = window.setTimeout(() => this.finishVisualImport('Adding this visual took too long. Please try again.'), 45000)
+    this.requestUpdate()
+    submitVisualForm(`/dashboards/${encodeURIComponent(builder.dashboardId)}/draft/saved-visual`, this.visualImportFrame, {
+      idempotencyKey: importID, builderReceipt: '1',
+      builderRuntime: JSON.stringify(this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })),
+      savedVisualId: id, pageId: page.id, revisionId: builder.revision.id,
+      row: String(row ?? 1), embed: this.embeddedInChat ? 'chat' : '',
+    })
+  }
+
   private renderDataPane(builder: DashboardBuilderSignal, visual: DashboardBuilderVisualSignal | undefined) {
+    const collapsed = this.collapsedPanes.data
     return html`
-      <aside class="pane data-pane" data-collapsed=${this.collapsedPanes.data} aria-labelledby="builder-data-heading">
+      <aside class="pane data-pane" data-collapsed=${collapsed} aria-labelledby="builder-data-heading">
+        <div class="pane-header field-browser-header">
+          <div class="pane-heading-row">
+            <div class="pane-title-group">
+              <span class="pane-title-icon">${lucideIcon(Database, { size: 16, strokeWidth: 2 })}</span>
+              <h2 id="builder-data-heading" class="pane-title">Data</h2>
+            </div>
+            ${this.renderPaneToggle('data', 'Data pane', 'builder-data-tabs')}
+          </div>
+        </div>
+        <div id="builder-data-tabs" class="saved-library-tabs" ?hidden=${collapsed}>
+          <button type="button" aria-pressed=${!this.savedVisualsOpen} @click=${() => { this.savedVisualsOpen = false }}>Fields</button>
+          <button type="button" aria-pressed=${this.savedVisualsOpen} @click=${() => { this.savedVisualLibraryLoaded = true; this.savedVisualsOpen = true }}>Saved visuals</button>
+        </div>
         ${this.renderFieldBrowser(builder, visual)}
+        ${this.savedVisualLibraryLoaded ? html`
+          <iframe id="builder-saved-visuals" class="saved-visuals-frame" title="Saved visuals" ?hidden=${collapsed || !this.savedVisualsOpen} src=${`/visuals/saved?model=${encodeURIComponent(builder.semanticModel.id)}`}></iframe>
+        ` : nothing}
       </aside>
     `
   }
 
   private renderAgentPane() {
+    if (this.embeddedInChat) return nothing
     const collapsed = this.collapsedPanes.agent
     return html`
       <aside class="pane agent-pane" data-collapsed=${collapsed} aria-labelledby="builder-agent-heading">
@@ -3465,7 +1508,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div id="builder-agent-content" class="pane-content agent-pane-content" ?hidden=${collapsed}>
-          <lv-chat-drawer .open=${!collapsed} embedded @lv-chat-drawer-close=${this.closeAgentPane}></lv-chat-drawer>
+          <lv-chat-drawer .dashboardSavedVisualIds=${(this.builder ? this.selectedPage(this.builder)?.visuals : [])?.map(visual => this.importedVisualSources.get(visual.id) ?? savedVisualSourceId(visual.id)).filter((id): id is string => Boolean(id)) ?? []} .open=${!collapsed} embedded @lv-chat-drawer-close=${this.closeAgentPane}></lv-chat-drawer>
         </div>
       </aside>
     `
@@ -3477,7 +1520,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const grouped = this.groupFiltersByScope(filters, page, visual)
-    const dimensions = this.renderCache.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field))
+    const dimensions = this.renderCache.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field) && (!this.addFilterQuery.trim() || item.field.label.toLocaleLowerCase().includes(this.addFilterQuery.trim().toLocaleLowerCase())))
     const filterError = this.builderFilterErrorMessage()
     const collapsed = this.collapsedPanes.filters
     return html`
@@ -3497,13 +1540,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         </div>
         <div id="builder-filters-content" class="filter-pane-body pane-content" ?hidden=${collapsed}>
           ${this.draggedFieldID ? html`<div class="filter-drop-zone" data-field-dragging="true" @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnFilters}>Drop to add filter</div>` : nothing}
-          <label>
-            <span class="sr-only">Add filter</span>
-            <select class="filter-add-select" aria-label="Add filter" ?disabled=${!builder.capabilities.canEdit || this.commandPending} @change=${this.addFilterFromSelect}>
-              <option value="">+ Add filter</option>
-              ${dimensions.map((item) => html`<option value=${item.field.id} ?disabled=${filters.some((candidate) => candidate.dimension === item.field.id)}>${item.field.label}</option>`)}
-            </select>
-          </label>
+          <button class="filter-add-trigger" type="button" aria-label="Add filter" aria-haspopup="menu" aria-controls="builder-filter-field-options" aria-expanded=${this.addFilterMenuOpen} ?disabled=${!builder.capabilities.canEdit || this.commandPending} @click=${this.toggleAddFilterMenu}>+ Add filter</button>
+          <div class="filter-add-menu" ?hidden=${!this.addFilterMenuOpen} @keydown=${this.handleAddFilterMenuKey}>
+            <input class="filter-add-search" type="search" aria-label="Search filter fields" placeholder="Search fields" .value=${this.addFilterQuery} @input=${(event: Event) => { this.addFilterQuery = (event.target as HTMLInputElement).value }} />
+            <div id="builder-filter-field-options" class="filter-add-options" role="menu" aria-label="Choose filter field">
+            ${dimensions.map((item) => html`<button type="button" role="menuitem" class="filter-add-option" data-field-id=${item.field.id}
+              ?disabled=${filters.some((candidate) => candidate.dimension === item.field.id) || !this.filterHasCompatibleVisual(item.field)}
+              title=${filters.some(candidate => candidate.dimension === item.field.id) ? 'Already added' : this.filterHasCompatibleVisual(item.field) ? item.field.label : 'This field does not apply to any dashboard visual'}
+              @click=${() => this.chooseFilterField(item.field)}>${item.field.label}</button>`)}
+            </div>
+            ${dimensions.length === 0 ? html`<p class="filter-add-empty" role="status">No matching fields</p>` : nothing}
+          </div>
           ${this.renderBuilderFilterResetControls(page)}
           ${this.renderBuilderFilterApplicationActions()}
           ${filters.length === 0 ? html`<p class="filter-pane-empty">No filters yet</p>` : nothing}
@@ -3661,6 +1708,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         @click=${() => this.selectFilterDefinition(filter.id)}
       >
         <lv-filter-pane-card
+          .presentation=${definition.predicates.some(predicate => predicate.kind === 'set') ? { style: 'dropdown', search: true, selectAll: false, showCounts: false, showSummary: false, compact: true } : undefined}
           .definition=${definition}
           .binding=${binding}
           .expression=${expression}
@@ -3970,20 +2018,23 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${selectedEntry ? html`<a class="visual-reference-link" href=${selectedEntry.referenceHref}>Reference</a>` : nothing}
         </div>
         <p id=${pickerHelpID} class="sr-only">${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type to add it immediately.'}</p>
-        <div class="visual-picker-catalog" role="group" aria-label=${visual ? `Change ${visual.title} type` : 'Visual types'}>
-          <div class="visual-picker">
-            ${catalog.map((entry) => html`
-              <button type="button" class="visual-picker-button" data-visual-picker-type=${entry.type} data-visual-type=${entry.type} data-visual-group=${entry.group} aria-label=${visual ? `Change to ${entry.label} visual` : `Add ${entry.label} visual`} aria-describedby=${pickerHelpID} title=${entry.label} aria-pressed=${Boolean(visual && currentType === entry.type)} ?disabled=${this.commandPending || (visual ? !builder.capabilities.canEdit : !page || !builder.capabilities.canAddVisual)} @click=${() => this.selectVisualType(entry.type, visual)}>
-                ${renderVisualTypeIcon(entry.type)}
-                <span class="sr-only">${entry.label}</span>
+        <details class="visual-type-disclosure" open>
+          <summary>${selectedEntry ? `${selectedEntry.label} · Change type` : slicerSelected ? 'Slicer · Change type' : 'Choose a visual'}</summary>
+          <div class="visual-picker-catalog" role="group" aria-label=${visual ? `Change ${visual.title} type` : 'Visual types'}>
+            <div class="visual-picker">
+              ${catalog.map((entry) => html`
+                <button type="button" class="visual-picker-button" data-visual-picker-type=${entry.type} data-visual-type=${entry.type} data-visual-group=${entry.group} aria-label=${visual ? `Change to ${entry.label} visual` : `Add ${entry.label} visual`} aria-describedby=${pickerHelpID} title=${entry.label} aria-pressed=${Boolean(visual && currentType === entry.type)} ?disabled=${this.commandPending || (visual ? !builder.capabilities.canEdit : !page || !builder.capabilities.canAddVisual)} @click=${() => this.selectVisualType(entry.type, visual)}>
+                  ${renderVisualTypeIcon(entry.type)}
+                  <span class="sr-only">${entry.label}</span>
+                </button>
+              `)}
+              <button type="button" class="visual-picker-button" data-visual-picker-type="slicer" data-visual-type="slicer" data-visual-group="Filters" aria-label="Add slicer" aria-describedby=${pickerHelpID} title="Slicer" aria-pressed=${slicerSelected} ?disabled=${this.commandPending || !page || !builder.capabilities.canEdit} @click=${this.startAddingSlicer}>
+                ${renderVisualTypeIcon('slicer')}
+                <span class="sr-only">Slicer</span>
               </button>
-            `)}
-            <button type="button" class="visual-picker-button" data-visual-picker-type="slicer" data-visual-type="slicer" data-visual-group="Filters" aria-label="Add slicer" aria-describedby=${pickerHelpID} title="Slicer" aria-pressed=${slicerSelected} ?disabled=${this.commandPending || !page || !builder.capabilities.canEdit} @click=${this.startAddingSlicer}>
-              ${renderVisualTypeIcon('slicer')}
-              <span class="sr-only">Slicer</span>
-            </button>
+            </div>
           </div>
-        </div>
+        </details>
       </section>
     `
   }
@@ -4058,7 +2109,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       label: this.fieldLabel(slot.fieldId ?? '', slot.label),
     })).filter((field) => field.field)
     return html`
-      <details class="visual-query-controls" aria-label="Query controls" open>
+      <details class="visual-query-controls" aria-label="Query controls">
         <summary>Query</summary>
         <div class="builder-disclosure-content query-control-list">
           ${slots.map((slot) => html`
@@ -4299,26 +2350,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     for (const option of formatOptions) sections.set(option.section, [...(sections.get(option.section) ?? []), option])
     const reference = this.visualCatalogEntry(this.visualTypeForRender(visual))
     return html`
-      <section class="format-controls visual-format-controls" aria-label="Visual formatting">
-        <h3 class="format-controls-heading">Format</h3>
-        <div class="format-section">
-          <h3>Title</h3>
-          <label class="format-text-field">
-            <span>Title text</span>
-            <input type="text" maxlength="128" data-format-control="title-text" aria-label="Title text" .value=${visual.title} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualTitle(visual, event)} />
-          </label>
-          ${this.renderFormatToggle(visual, 'title-visible', 'Show title', visual.titleVisible !== false, editable, 'titleVisible')}
-        </div>
-        ${[...sections.entries()].map(([section, options]) => html`
-          <div class="format-section" data-format-section=${section}>
-            <h3>${section}</h3>
-            ${options.map((option) => this.renderFormatOption(visual, option, editable))}
-            ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
+      <details class="visual-format-disclosure builder-disclosure" aria-label="Formatting controls">
+        <summary>Format</summary>
+        <section class="format-controls visual-format-controls builder-disclosure-content" aria-label="Visual formatting">
+          <div class="format-section">
+            <h3>Title</h3>
+            <label class="format-text-field">
+              <span>Title text</span>
+              <input type="text" maxlength="128" data-format-control="title-text" aria-label="Title text" .value=${visual.title} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualTitle(visual, event)} />
+            </label>
+            ${this.renderFormatToggle(visual, 'title-visible', 'Show title', visual.titleVisible !== false, editable, 'titleVisible')}
           </div>
-        `)}
-        ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no additional formatting controls. Configure advanced options in dashboard code.</p>` : nothing}
-        ${reference ? html`<a class="visual-reference-link" href=${reference.referenceHref}>View every ${reference.label} option in the visual reference</a>` : nothing}
-      </section>
+          ${[...sections.entries()].map(([section, options]) => html`
+            <div class="format-section" data-format-section=${section}>
+              <h3>${section}</h3>
+              ${options.map((option) => this.renderFormatOption(visual, option, editable))}
+              ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
+            </div>
+          `)}
+          ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no additional formatting controls. Configure advanced options in dashboard code.</p>` : nothing}
+          ${reference ? html`<a class="visual-reference-link" href=${reference.referenceHref}>View every ${reference.label} option in the visual reference</a>` : nothing}
+        </section>
+      </details>
     `
   }
 
@@ -5065,7 +3118,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       : `Changing ${visual.title} to a ${this.visualLabel(type, builder)} visual.`
     if (currentType !== type) {
       this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
-      if (currentRevision) {
+      if (currentRevision && !visual.previewError) {
         this.pendingVisualTypeSwitch = { pageID: page.id, visualID: visual.id, fromType: currentType, toType: type, fromRevision: currentRevision }
       }
       this.reversibleVisualTypeSwitch = null
@@ -5415,13 +3468,34 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectedFilterComponentID = ''
   }
 
-  private readonly addFilterFromSelect = (event: Event): void => {
-    const select = event.currentTarget as HTMLSelectElement
-    const fieldID = select.value
-    select.value = ''
-    if (!fieldID || !this.builder) return
-    const field = this.builder.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((candidate) => candidate.id === fieldID)
-    if (field) this.addFilterForField(field)
+  private readonly toggleAddFilterMenu = async (): Promise<void> => {
+    this.addFilterMenuOpen = !this.addFilterMenuOpen
+    this.addFilterQuery = ''
+    await this.updateComplete
+    if (this.addFilterMenuOpen) this.renderRoot.querySelector<HTMLInputElement>('.filter-add-search')?.focus({ preventScroll: true })
+  }
+
+  private chooseFilterField(field: DashboardBuilderFieldSignal): void {
+    this.addFilterMenuOpen = false
+    this.addFilterForField(field)
+    this.renderRoot.querySelector<HTMLElement>('.filter-add-trigger')?.focus({ preventScroll: true })
+  }
+
+  private readonly handleAddFilterMenuKey = (event: KeyboardEvent): void => {
+    const menu = event.currentTarget as HTMLElement
+    const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
+    const index = buttons.indexOf(event.target as HTMLButtonElement)
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      this.addFilterMenuOpen = false
+      this.renderRoot.querySelector<HTMLElement>('.filter-add-trigger')?.focus({ preventScroll: true })
+    } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && buttons.length > 0) {
+      if (event.target instanceof HTMLInputElement && ['Home', 'End'].includes(event.key)) return
+      event.preventDefault()
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : index < 0 ? (event.key === 'ArrowUp' ? buttons.length - 1 : 0) : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+      buttons[next].focus()
+    }
   }
 
   private readonly dropFieldOnFilters = (event: DragEvent): void => {
@@ -5443,6 +3517,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.visualActionMessage = `${field.label} is already a report filter.`
       return false
     }
+    if (!this.filterHasCompatibleVisual(field)) {
+      this.builderFilterTransportError = `${field.label} does not apply to any dashboard visual. Choose a field from a chart’s dataset.`
+      this.requestUpdate()
+      return false
+    }
+    this.builderFilterTransportError = ''
     const controlType = this.recommendedFilterControl(field)
     this.pendingAddFilter = { revision: this.revisionKey(builder), filterIDs: new Set((builder.filters ?? []).map((filter) => filter.id)) }
     this.visualActionMessage = `Adding ${field.label} as a report filter.`
@@ -5466,6 +3546,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.addFilterComponent(page, existing)
       return true
     }
+    if (!this.filterHasCompatibleVisual(field)) {
+      this.builderFilterTransportError = `${field.label} does not apply to any dashboard visual.`
+      this.requestUpdate()
+      return false
+    }
+    this.builderFilterTransportError = ''
     this.pendingAddSlicer = {
       revision: this.revisionKey(builder),
       filterIDs: new Set((builder.filters ?? []).map((filter) => filter.id)),
@@ -5483,6 +3569,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       controlType: this.recommendedFilterControl(field),
     })
     return true
+  }
+
+  private filterHasCompatibleVisual(field: DashboardBuilderFieldSignal): boolean {
+    // Governed query resolution includes computed measures and multiple
+    // datasets; use its projection instead of guessing from visible slots.
+    return field.canFilter !== false
   }
 
   private fieldSupportsFilter(field: DashboardBuilderFieldSignal): boolean {
@@ -5575,7 +3667,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private recommendedVisualForField(field: DashboardBuilderFieldSignal): BuilderVisualType {
-    return field.kind === 'metric' ? 'kpi' : 'table'
+    return field.kind === 'metric' ? 'kpi' : field.roles?.length && !field.roles.includes('detail') ? 'bar' : 'table'
   }
 
   private recommendedVisualForDraggedField(builder: DashboardBuilderSignal): BuilderVisualType {
@@ -5588,7 +3680,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canAddVisual || !page || this.commandPending || !this.fieldDataTypeSupported(field)) return false
     const type = this.recommendedVisualForField(field)
-    const role: BuilderFieldRole = field.kind === 'metric' ? 'metric' : 'detail'
+    const role: BuilderFieldRole = field.kind === 'metric' ? 'metric' : type === 'table' ? 'detail' : 'dimension'
     this.pendingAddVisual = { revision: this.revisionKey(builder), visualIDs: new Set(page.visuals.map((visual) => visual.id)), pageID: page.id }
     this.visualType = type
     this.gridInteractionMessage = `Creating a ${this.visualLabel(type, builder)} visual for ${field.label}.`
@@ -5611,6 +3703,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     this.emit('lv-builder-page-select', { ...this.commandDetail(), pageId: pageID })
+    // Embedded tabs retain the document, so load the newly selected page's
+    // governed preview instead of keeping envelopes from the previous page.
+    if (this.embeddedInChat) this.refreshBuilderSignals()
   }
 
   private openPageSettings(page: DashboardBuilderPageSignal, event?: Event): void {
@@ -5628,8 +3723,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectedFilterComponentID = ''
     this.editingPage = true
     if (this.collapsedPanes.visuals) {
-      this.collapsedPanes = { ...this.collapsedPanes, visuals: false }
-      this.persistCollapsedPanes()
+      this.togglePane('visuals')
     }
     this.visualActionMessage = `Editing settings for ${page.title}.`
     if (selectedVisual) this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
@@ -5825,6 +3919,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     this.commandPending = true
     this.activeCommandAction = action
+    this.activeCommandRevisionKey = this.builder ? this.revisionKey(this.builder) : ''
     this.setGridEditingEnabled(false)
     this.terminalFailure = null
     this.requestUpdate()
@@ -5957,6 +4052,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       return
     }
     this.pendingAddVisual = null
+    if (this.embeddedInChat && pending.autoArrange !== false) {
+      this.autoArrangePageID = page.id
+      this.autoArrangePreservedIDs = new Set(pending.visualIDs)
+    }
     this.localPageID = page.id
     this.localVisualID = addedVisual.id
     this.addingSlicer = false

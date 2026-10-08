@@ -328,6 +328,23 @@ func (h Handler) ensureBuilderFilterSession(ctx context.Context, key dashboardse
 	return record, createErr
 }
 
+func (h Handler) reconcileBuilderFilterSession(ctx context.Context, record dashboardsession.Record, definition dashboarddefinition.Definition) (dashboardsession.Record, error) {
+	mode, bindings := definition.FilterApplication.WithDefaults().Mode, definition.FilterBindingSpecs()
+	if _, err := dashboardfilter.RestoreMachine(mode, bindings, record.State.Filters); err == nil {
+		return record, nil
+	}
+	machine, err := dashboardfilter.ReconcileMachine(mode, bindings, record.State.Filters)
+	if err != nil {
+		return dashboardsession.Record{}, authoring.ErrStaleRevision
+	}
+	record.State.Filters = machine.Snapshot()
+	record, err = h.SessionStore.CompareAndSwap(ctx, record.Key, record.Version, record.State)
+	if errors.Is(err, dashboardsession.ErrConflict) {
+		return dashboardsession.Record{}, authoring.ErrStaleRevision
+	}
+	return record, err
+}
+
 func builderFilterValidationResponse(definition dashboarddefinition.Definition, state dashboardfilter.State, accepted bool, message, mutationID string) map[string]any {
 	return map[string]any{
 		"builderFilterContract":    uisignals.DashboardFilterContractFromDefinition(definition),

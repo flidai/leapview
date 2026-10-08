@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +58,16 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	}
 	if disableThinkingForRequest(m.config) {
 		body.Thinking = &openAIThinking{Type: "disabled"}
+	}
+	if endpoint, err := url.Parse(m.config.NormalizedBaseURL()); err == nil && strings.EqualFold(endpoint.Hostname(), "openrouter.ai") {
+		// OpenRouter uses a normalized reasoning parameter. Explicit settings
+		// take precedence over the existing DeepSeek non-thinking default.
+		if effort := m.config.NormalizedReasoningEffort(); effort != "" {
+			body.Reasoning = &openAIRouterReasoning{Effort: effort}
+		} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(m.config.Model)), "deepseek/deepseek-v4") {
+			disabled := false
+			body.Reasoning = &openAIRouterReasoning{Enabled: &disabled}
+		}
 	}
 	if len(body.Tools) > 0 {
 		body.ToolChoice = "auto"
@@ -370,18 +381,24 @@ func disableThinkingForRequest(config agentapp.Config) bool {
 }
 
 type openAIChatRequest struct {
-	Model         string               `json:"model"`
-	Messages      []openAIMessage      `json:"messages"`
-	Tools         []openAITool         `json:"tools,omitempty"`
-	ToolChoice    string               `json:"tool_choice,omitempty"`
-	MaxTokens     int                  `json:"max_tokens,omitempty"`
-	Thinking      *openAIThinking      `json:"thinking,omitempty"`
-	Stream        bool                 `json:"stream,omitempty"`
-	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
+	Model         string                 `json:"model"`
+	Messages      []openAIMessage        `json:"messages"`
+	Tools         []openAITool           `json:"tools,omitempty"`
+	ToolChoice    string                 `json:"tool_choice,omitempty"`
+	MaxTokens     int                    `json:"max_tokens,omitempty"`
+	Thinking      *openAIThinking        `json:"thinking,omitempty"`
+	Reasoning     *openAIRouterReasoning `json:"reasoning,omitempty"`
+	Stream        bool                   `json:"stream,omitempty"`
+	StreamOptions *openAIStreamOptions   `json:"stream_options,omitempty"`
 }
 
 type openAIThinking struct {
 	Type string `json:"type"`
+}
+
+type openAIRouterReasoning struct {
+	Enabled *bool  `json:"enabled,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 }
 
 type openAIStreamOptions struct {

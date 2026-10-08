@@ -759,18 +759,52 @@ func validateCanonicalRouteURLParameters(reportBindings map[string]dashboardfilt
 
 func canonicalQueryDatasets(query document.DashboardQuery, model *semanticmodel.Model) ([]string, error) {
 	var datasets = map[string]struct{}{}
+	visited := map[string]bool{}
+	visiting := map[string]bool{}
+	var addMetricReference func(string) error
+	addMetricReference = func(name string) error {
+		if visiting[name] {
+			return fmt.Errorf("metric dependency cycle at %q", name)
+		}
+		if visited[name] {
+			return nil
+		}
+		metric, err := model.ResolveMetric(name)
+		if err != nil {
+			return err
+		}
+		visiting[name] = true
+		defer delete(visiting, name)
+		if metric.Dataset != "" {
+			datasets[metric.Dataset] = struct{}{}
+		}
+		var references []string
+		switch metric.Type {
+		case "derived":
+			expression, err := semanticmodel.ParseExpression(metric.Expression)
+			if err != nil {
+				return err
+			}
+			references = expression.References()
+		case "ratio":
+			references = []string{metric.Numerator, metric.Denominator}
+		}
+		for _, reference := range references {
+			if err := addMetricReference(reference); err != nil {
+				return err
+			}
+		}
+		visited[name] = true
+		return nil
+	}
 	addMetric := func(selection []document.DashboardMetricSelection) error {
 		for _, value := range selection {
 			name, _, err := canonicalMetric(value)
 			if err != nil {
 				return err
 			}
-			metric, err := model.ResolveMetric(name)
-			if err != nil {
+			if err := addMetricReference(name); err != nil {
 				return err
-			}
-			if metric.Dataset != "" {
-				datasets[metric.Dataset] = struct{}{}
 			}
 		}
 		return nil
@@ -790,25 +824,13 @@ func canonicalQueryDatasets(query document.DashboardQuery, model *semanticmodel.
 			return nil, err
 		}
 	case *document.HistogramDashboardQuery:
-		name, _, err := canonicalMetric(value.Field)
-		if err != nil {
+		if err := addMetric([]document.DashboardMetricSelection{value.Field}); err != nil {
 			return nil, err
 		}
-		metric, err := model.ResolveMetric(name)
-		if err != nil {
-			return nil, err
-		}
-		datasets[metric.Dataset] = struct{}{}
 	case *document.DistributionDashboardQuery:
-		name, _, err := canonicalMetric(value.Field)
-		if err != nil {
+		if err := addMetric([]document.DashboardMetricSelection{value.Field}); err != nil {
 			return nil, err
 		}
-		metric, err := model.ResolveMetric(name)
-		if err != nil {
-			return nil, err
-		}
-		datasets[metric.Dataset] = struct{}{}
 	default:
 		return nil, fmt.Errorf("query variant is required")
 	}

@@ -3449,15 +3449,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 
 	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
 	require.NoError(t, err)
-	frontendShard := taskfileTaskBlock(t, string(taskfile), "ci:lane:frontend:shard")
-	for _, want := range []string{
-		"enum: [core, reports, chat, data, site]",
-		`node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}`,
-	} {
-		if !strings.Contains(frontendShard, want) {
-			t.Fatalf("frontend shard lane must retain its bounded retry contract: missing %q", want)
-		}
-	}
+	assertFrontendWatchdogBounds(t, string(taskfile))
 	frontendCore := taskfileTaskBlock(t, string(taskfile), "ci:test:frontend:core")
 	if !strings.Contains(frontendCore, "node --test scripts/ci_watchdog.test.mjs") {
 		t.Fatal("frontend core contract must exercise the Node watchdog independently of Bun")

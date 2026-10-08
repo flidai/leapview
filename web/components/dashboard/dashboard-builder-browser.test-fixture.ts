@@ -14,6 +14,11 @@ export function dashboardBuilderBrowserFixture(): { browser: Browser; baseURL: s
   beforeAll(async () => {
     server = createServer(async (request, response) => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/embed-host') {
+      response.setHeader('content-type', 'text/html')
+      response.end('<html><body style="margin:0"><iframe title="Chat builder" src="/?embed=chat" style="border:0;width:100%;height:820px"></iframe></body></html>')
+      return
+    }
       if (url.pathname === '/') {
         response.setHeader('content-type', 'text/html')
         response.end(builderTestDocument())

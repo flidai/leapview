@@ -5,6 +5,7 @@ package compiler
 // pass through dashboard/authoring or renderer configuration objects.
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -609,25 +610,17 @@ func validateCanonicalPresentationApplicability(value document.DashboardPresenta
 		if variant == nil {
 			return nil
 		}
-		if err := optionSupported("orientation", variant.Orientation != nil, document.SupportsPresentationField(visualType, "orientation")); err != nil {
-			return err
-		}
-		if err := optionSupported("rose", variant.Rose != nil, document.SupportsPresentationField(visualType, "rose")); err != nil {
-			return err
-		}
-		if err := optionSupported("centerLabel", variant.CenterLabel != nil, document.SupportsPresentationField(visualType, "centerLabel")); err != nil {
-			return err
-		}
-		if err := optionSupported("innerRadius", variant.InnerRadius != nil, document.SupportsPresentationField(visualType, "innerRadius")); err != nil {
-			return err
-		}
-		if err := optionSupported("outerRadius", variant.OuterRadius != nil, document.SupportsPresentationField(visualType, "outerRadius")); err != nil {
-			return err
-		}
-		if err := optionSupported("align", variant.Align != nil, document.SupportsPresentationField(visualType, "align")); err != nil {
-			return err
-		}
-		return optionSupported("sort", variant.Sort != nil, document.SupportsPresentationField(visualType, "sort"))
+		// Report independent mistakes together so an author or agent can
+		// repair the presentation in one edit instead of one preview per key.
+		return errors.Join(
+			optionSupported("orientation", variant.Orientation != nil, document.SupportsPresentationField(visualType, "orientation")),
+			optionSupported("rose", variant.Rose != nil, document.SupportsPresentationField(visualType, "rose")),
+			optionSupported("centerLabel", variant.CenterLabel != nil, document.SupportsPresentationField(visualType, "centerLabel")),
+			optionSupported("innerRadius", variant.InnerRadius != nil, document.SupportsPresentationField(visualType, "innerRadius")),
+			optionSupported("outerRadius", variant.OuterRadius != nil, document.SupportsPresentationField(visualType, "outerRadius")),
+			optionSupported("align", variant.Align != nil, document.SupportsPresentationField(visualType, "align")),
+			optionSupported("sort", variant.Sort != nil, document.SupportsPresentationField(visualType, "sort")),
+		)
 	case *document.PolarDashboardPresentation:
 		if variant == nil {
 			return nil

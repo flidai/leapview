@@ -6,6 +6,7 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import '../dashboard/visualization/host'
 
 class VisualArtifact extends LitElement {
+  @property({ type: Boolean }) eager = false
   @property() type: string = ''
   @property({ attribute: 'artifact-id' }) artifactId = ''
   @property({ attribute: false }) payload?: VisualizationEnvelope
@@ -28,7 +29,7 @@ class VisualArtifact extends LitElement {
       display: flex;
       flex-direction: column;
       width: 100%;
-      height: 100%;
+      height: var(--lv-visual-height, 100%);
       min-width: 0;
       overflow: hidden;
       border: var(--lv-border-default);
@@ -92,7 +93,7 @@ class VisualArtifact extends LitElement {
       && this.payload.dataState.datasets.some(dataset => dataset.rows.length >= budget)
     return html`
       <div class=${`artifact ${isTabularVisualType(this.payload.spec.kind) ? 'table' : 'chart'}`}>
-        <lv-visualization-host .envelope=${this.payload}>${this.explorerHref ? html`<a slot="agent-action" class="explorer-action" href=${this.explorerHref} aria-label="Open in Data Explorer" title="Open in Data Explorer">${lucideIcon(ArrowUpRight, { size: 16 })}<span>Open in Data Explorer</span></a>` : nothing}</lv-visualization-host>
+        <lv-visualization-host .deferMount=${!this.eager} .envelope=${this.payload}>${this.explorerHref ? html`<a slot="agent-action" class="explorer-action" href=${this.explorerHref} aria-label="Open in Data Explorer" title="Open in Data Explorer">${lucideIcon(ArrowUpRight, { size: 16 })}<span>Open in Data Explorer</span></a>` : nothing}</lv-visualization-host>
         ${limitNotice || limited ? html`<p class="limit-notice" role="note">${limitNotice || `Showing up to ${budget} rows. More data may exist.`}</p>` : null}
       </div>
     `

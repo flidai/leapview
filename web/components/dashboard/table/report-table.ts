@@ -203,7 +203,7 @@ export class ReportTable extends LitElement {
   static styles = [visualActionStyles, css`
     :host {
       display: block;
-      height: 100%;
+      height: var(--lv-visual-height, 100%);
       min-height: 0;
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
@@ -212,7 +212,7 @@ export class ReportTable extends LitElement {
     .shell {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      height: var(--lv-visual-height, 100%);
       min-height: 0;
       min-width: 0;
       background: var(--lv-chart-surface);
@@ -561,7 +561,7 @@ export class ReportTable extends LitElement {
       background: transparent;
       color: inherit;
       cursor: pointer;
-      padding: 0;
+      padding: 0 var(--base-size-8);
       font: inherit;
       text-align: inherit;
     }
@@ -675,6 +675,7 @@ export class ReportTable extends LitElement {
     }
 
     .table-scrollport {
+      max-height: var(--lv-table-max-body-height, none);
       position: relative;
       flex: 1 1 auto;
       overflow: auto;
@@ -800,14 +801,18 @@ export class ReportTable extends LitElement {
       text-align: left;
     }
 
-    .density-compact .cell {
+    .density-compact .cell-action {
       padding: 0 var(--base-size-6);
       font: var(--lv-type-caption);
     }
 
-    .density-spacious .cell {
+    .density-spacious .cell-action {
       padding: 0 var(--base-size-12);
       font: var(--lv-type-body-large);
+    }
+
+    .cell:not(.skeleton-cell) {
+      padding: 0;
     }
 
     .grid-columns .cell,

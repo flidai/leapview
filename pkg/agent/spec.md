@@ -151,6 +151,7 @@ type Limits struct {
 Default limits:
 
 - `MaxTurns`: 16
+- `MaxTruncationRetries`: 0 (disabled). When enabled, output-limit recovery consumes a turn and the per-run retry allowance. Completed tool results remain available; unfinished calls and their provider state are discarded before recovery or later conversation replay.
 - `MaxToolCalls`: 64 per run
 - `MaxConcurrentTools`: 4 per assistant turn
 - `ToolTimeout`: 30 seconds

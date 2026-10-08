@@ -2178,7 +2178,7 @@ test('dashboard slicers expose atomic clear only while active', async () => {
       await slicer.updateComplete
       await leaf.updateComplete
       const pendingDisabled = clear.disabled
-      const inputs = Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll('.range input')) as HTMLInputElement[]
+      const inputs = Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll('.range input[type=number]')) as HTMLInputElement[]
       inputs[0].focus()
       inputs[0].value = '200'
       inputs[0].dispatchEvent(new Event('input', { bubbles: true, composed: true }))
@@ -2192,7 +2192,7 @@ test('dashboard slicers expose atomic clear only while active', async () => {
         activeVisibility,
         pendingDisabled,
         inactiveDisplay: getComputedStyle(clear).display,
-        values: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('.range input')).map((input) => input.value),
+        values: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('.range input[type=number]')).map((input) => input.value),
         mutations,
       }
     })

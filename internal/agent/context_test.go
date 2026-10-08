@@ -132,3 +132,14 @@ func TestBuilderTurnContextIsIncludedForAgentPrompt(t *testing.T) {
 		t.Fatalf("builder policy context = %#v", items[1])
 	}
 }
+
+func TestTurnContextItemsRetainBuilderDestination(t *testing.T) {
+	items := turnContextItems(&TurnContext{Surface: "builder", DashboardID: "draft", PageID: "bars", References: []TurnReference{{Reference: TurnReferenceKey{Kind: "dashboard", ID: "draft"}}}})
+	if len(items) != 1 {
+		t.Fatalf("builder context lost: %#v", items)
+	}
+	resolved := items[0].Value.(TurnContext)
+	if resolved.Surface != "builder" || resolved.PageID != "bars" || resolved.DashboardID != "draft" {
+		t.Fatalf("wrong builder context: %+v", resolved)
+	}
+}

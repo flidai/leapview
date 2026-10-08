@@ -879,6 +879,9 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
       await deferred.updateComplete
       while (deferred.pendingApply) await deferred.pendingApply
       await deferred.updateComplete
+      for (let frame = 0; frame < 120 && !deferred.shadowRoot.querySelector('.renderer')?.childElementCount; frame++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      }
       return {
         mounted: ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         disconnected: (window as any).__lvIntersectionObservers[0]?.disconnected,
@@ -932,6 +935,10 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
         deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
         document.body.append(deferred)
         await deferred.updateComplete
+        for (let frame = 0; frame < 120 && !deferred.shadowRoot.querySelector('.renderer')?.childElementCount; frame++) {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        }
+        return ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0
       })
       const renderer = page.locator('#deferred-fallback .renderer > *')
       if (rendererChunkRequested) expect(await renderer.count()).toBe(0)
@@ -1086,4 +1093,71 @@ test('table menus receive and clear the authorized Explorer link after renderer 
     })
     expect(state).toEqual({ href: '/dashboards/sales/pages/overview/visuals/orders/explore', cleared: true, disabled: true })
   } finally { await page.close() }
+})
+
+for (const rows of [5, 250]) {
+  test(`content-sized table fits ${rows} rows with bounded internal scrolling`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => (window as any).__lvSourceHosts)
+      await page.evaluate(async rows => {
+        const container = document.createElement('div')
+        container.style.cssText = 'height:700px;width:700px;--lv-visual-height:auto;--lv-table-max-body-height:300px'
+        const host = document.createElement('lv-visualization-host') as any
+        host.id = 'fit-table'
+        const envelope = structuredClone((window as any).__lvSourceHosts.orders.envelope)
+        envelope.status = {kind:'ready'}
+        envelope.dataState.availableRows = rows
+        envelope.dataState.cardinality.count = rows
+        envelope.dataState.blocks.a.rows = envelope.dataState.blocks.a.rows.slice(0, rows)
+        host.envelope = envelope
+        container.append(host)
+        document.body.append(container)
+        await host.ensureMounted()
+      }, rows)
+      const table = page.locator('#fit-table lv-report-table')
+      await table.locator('.canvas').waitFor()
+      const size = await table.evaluate(element => {
+        const body = element.shadowRoot!.querySelector('.table-scrollport')!
+        return {height:element.getBoundingClientRect().height, body:body.clientHeight, content:body.scrollHeight}
+      })
+      expect(size.height).toBeLessThan(420)
+      expect(size.height).toBeGreaterThan(140)
+      expect(size.body).toBeLessThanOrEqual(300)
+      if (rows === 5) expect(size.content - size.body).toBeLessThanOrEqual(1)
+      else expect(size.content).toBeGreaterThan(size.body)
+    } finally { await page.close() }
+  })
+}
+
+test('table numeric headers and values align right while labels stay left', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.id = 'alignment-table'
+      host.style.cssText = 'width:700px;height:350px'
+      host.envelope = structuredClone((window as any).__lvSourceHosts.orders.envelope)
+      host.envelope.status = {kind:'ready'}
+      document.body.append(host)
+      await host.ensureMounted()
+      const table = host.shadowRoot.querySelector('lv-report-table')
+      table.table = {...table.table, columns:[{...table.table.columns[0], align:'right', role:'metric'}]}
+      await table.updateComplete
+    })
+    const table = page.locator('#alignment-table lv-report-table')
+    const styles = await table.evaluate(element => {
+      const root = element.shadowRoot!
+      return {header:getComputedStyle(root.querySelector('.header-button')!).textAlign, cell:getComputedStyle(root.querySelector('.cell-action')!).textAlign}
+    })
+    expect(styles).toEqual({header:'right', cell:'right'})
+    await table.evaluate(async (element:any) => {
+      element.table = {...element.table, columns:[{...element.table.columns[0], align:'left', role:'row_header'}]}
+      await element.updateComplete
+    })
+    expect(await table.locator('.cell-action').first().evaluate(element=>getComputedStyle(element).textAlign)).toBe('left')
+  } finally {await page.close()}
 })
