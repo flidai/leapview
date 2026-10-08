@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test'
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import { echartsOption } from './echarts'
+import { cartesianFixture, proportionalFixture } from './echarts-test-fixtures'
 
 test('ECharts curated tooltips preserve item order, overrides, nulls, and escaping', () => {
   const envelope = tooltipFixture()
@@ -201,4 +202,20 @@ function pointLegendSpec(baseSpec: any, legendItems: Array<{ value: string; labe
     color: { dataset: 'primary', field: 'status' }, colorScale: { kind: 'categorical' },
     presentation: { legend: 'bottom', legendItems, labelPolicy: baseSpec.presentation.labelPolicy, overplot: 'show_all', opacity: 1, largeMode: 'never', largeThreshold: 100, brush: [] },
   }
+}
+
+for (const theme of ['light', 'dark'] as const) {
+ test(`${theme} chart axes and legends use readable foreground text without changing grid colors`, () => {
+  const context = { ...defaultRendererContext, theme, colors: { ...defaultRendererContext.colors, foreground: theme === 'dark' ? '#f0f6fc' : '#1f2328', muted: theme === 'dark' ? '#9198a1' : '#59636e' } }
+  for (const envelope of [cartesianFixture('line'), cartesianFixture('bar'), proportionalFixture('pie')]) {
+   const option = echartsOption(envelope, context) as any
+   expect(option.legend.textStyle.color).toBe(context.colors.foreground)
+   if (envelope.spec.kind === 'cartesian') {
+    expect(option.xAxis.axisLabel.color).toBe(context.colors.foreground)
+    expect(option.xAxis.nameTextStyle.color).toBe(context.colors.foreground)
+    expect(option.yAxis.axisLabel.color).toBe(context.colors.foreground)
+    expect(option.yAxis.splitLine.lineStyle.color).toBe(context.colors.grid)
+   }
+  }
+ })
 }

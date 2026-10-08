@@ -1456,19 +1456,3 @@ function gaugeFixture(): VisualizationEnvelope {
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [['0.75']], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as unknown as VisualizationEnvelope
 }
-
-for (const theme of ['light', 'dark'] as const) {
- test(`${theme} chart axes and legends use readable foreground text without changing grid colors`, () => {
-  const context = { ...defaultRendererContext, theme, colors: { ...defaultRendererContext.colors, foreground: theme === 'dark' ? '#f0f6fc' : '#1f2328', muted: theme === 'dark' ? '#9198a1' : '#59636e' } }
-  for (const envelope of [cartesianFixture('line'), cartesianFixture('bar'), proportionalFixture('pie')]) {
-   const option = echartsOption(envelope, context) as any
-   expect(option.legend.textStyle.color).toBe(context.colors.foreground)
-   if (envelope.spec.kind === 'cartesian') {
-    expect(option.xAxis.axisLabel.color).toBe(context.colors.foreground)
-    expect(option.xAxis.nameTextStyle.color).toBe(context.colors.foreground)
-    expect(option.yAxis.axisLabel.color).toBe(context.colors.foreground)
-    expect(option.yAxis.splitLine.lineStyle.color).toBe(context.colors.grid)
-   }
-  }
- })
-}
