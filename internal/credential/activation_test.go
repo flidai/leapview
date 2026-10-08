@@ -82,6 +82,12 @@ func (r *activationRuntimeFake) RestoreCurrent(context.Context) error {
 	*r.events = append(*r.events, "restore")
 	return nil
 }
+func (r *activationRuntimeFake) CheckCurrent(context.Context, ActivationRecord) error {
+	if r.fail {
+		return ErrConflict
+	}
+	return nil
+}
 
 func activationFixture(t *testing.T) (*ActivationCoordinator, *activationAuthorityFake, *activationRuntimeFake) {
 	t.Helper()
@@ -120,6 +126,9 @@ func TestActivationRecoveryKeepsExactCommittedVersionAfterLostAcknowledgment(t *
 			version := a.record.Request.VersionID
 			fresh, err := NewActivationCoordinator(a, r, NewProviderAdmission(), time.Second)
 			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fresh.Reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			status, err := fresh.RetryActivation(t.Context(), "actor", a.record.Resource, a.record.Request.OperationID, "")
@@ -271,5 +280,23 @@ func TestCompletedRetryDoesNotPauseHealthyProviderWork(t *testing.T) {
 	status, err := service.RetryActivation(t.Context(), "actor", authority.record.Resource, authority.record.Request.OperationID, "")
 	if err != nil || status.State != "completed" || !service.admission.Ready() || work.Err() != nil || len(*authority.events) != 0 {
 		t.Fatalf("historical retry disturbed healthy runtime: status=%+v error=%v ready=%v work=%v events=%v", status, err, service.admission.Ready(), work.Err(), *authority.events)
+	}
+}
+
+func TestCompletedRetryRejectsNoncurrentRuntimeWithoutPausing(t *testing.T) {
+	service, authority, runtime := activationFixture(t)
+	authority.record.Status.State = "completed"
+	runtime.fail = true
+	if err := service.admission.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	work, release, err := service.admission.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	status, err := service.RetryActivation(t.Context(), "actor", authority.record.Resource, authority.record.Request.OperationID, "")
+	if !errors.Is(err, ErrConflict) || status.RuntimeReady || !service.admission.Ready() || work.Err() != nil || len(*authority.events) != 0 {
+		t.Fatalf("noncurrent completion disturbed healthy work or became ready: status=%+v error=%v work=%v", status, err, work.Err())
 	}
 }

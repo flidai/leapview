@@ -296,6 +296,18 @@ func (a *AgentCredentials) RestoreCurrent(ctx context.Context) error {
 	}
 	return a.restore(ctx)
 }
+func (a *AgentCredentials) CheckCurrent(ctx context.Context, record credential.ActivationRecord) error {
+	saved, err := a.repository.GetActivationRequest(ctx, a.config.InstanceID, record.Request.OperationID)
+	if err != nil || saved.ActivationRecord() != record || saved.Resource() != a.resource() || saved.State != "completed" {
+		return credential.ErrConflict
+	}
+	// Open admission proves this process restored runtime successfully. Check
+	// its durable identity under the same fence as configuration publication;
+	// this read never invokes install/restore or changes the journal.
+	return a.transaction(ctx, func(tx pgx.Tx) error {
+		return a.authorizeTx(saved, saved.Receipt.ActorID, true)(ctx, tx)
+	})
+}
 func (a *AgentCredentials) phaseAudit(ctx context.Context, tx pgx.Tx, record credential.ActivationRequestRecord, phase string) error {
 	metadata, _ := json.Marshal(struct {
 		OperationID           string `json:"operation_id"`

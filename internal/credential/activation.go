@@ -38,6 +38,9 @@ type ActivationAuthority interface {
 type ActivationRuntime interface {
 	InstallCommitted(context.Context, ActivationRecord) error
 	RestoreCurrent(context.Context) error
+	// CheckCurrent verifies that the completed operation still names the
+	// authoritative current runtime. It must not install, drain, or mutate it.
+	CheckCurrent(context.Context, ActivationRecord) error
 }
 
 type ActivationCoordinator struct {
@@ -127,6 +130,13 @@ func (service *ActivationCoordinator) RetryActivation(ctx context.Context, actor
 			return service.status(record), pendingErr
 		}
 		if service.admission.Ready() {
+			// Startup can restore current runtime without a pending journal row.
+			// Acknowledge only this exact current operation, never any historical
+			// completion merely because admission is open.
+			if err := service.runtime.CheckCurrent(ctx, record); err != nil {
+				return service.status(record), err
+			}
+			service.readyOperation.Store(&operationID)
 			return service.status(record), nil
 		}
 	}

@@ -124,3 +124,12 @@ func (r *ActivationRouting) InstallCommitted(ctx context.Context, record credent
 func (r *ActivationRouting) RestoreCurrent(ctx context.Context) error {
 	return errors.Join(r.sourceRuntime.RestoreCurrent(ctx), r.agentRuntime.RestoreCurrent(ctx))
 }
+func (r *ActivationRouting) CheckCurrent(ctx context.Context, record credential.ActivationRecord) error {
+	if _, err := r.authority(record.Resource); err != nil {
+		return err
+	}
+	if record.Resource.ScopeKind == "agent" {
+		return r.agentRuntime.CheckCurrent(ctx, record)
+	}
+	return r.sourceRuntime.CheckCurrent(ctx, record)
+}

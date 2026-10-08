@@ -105,6 +105,16 @@ func (a *sourceCredentialActivation) InstallCommitted(ctx context.Context, recor
 func (a *sourceCredentialActivation) RestoreCurrent(ctx context.Context) error {
 	return a.config.Restore(ctx)
 }
+func (a *sourceCredentialActivation) CheckCurrent(ctx context.Context, record credentialmodule.ActivationRecord) error {
+	row, err := a.config.Credentials.GetActivationRequest(ctx, a.config.TargetID, record.Request.OperationID)
+	if err != nil {
+		return err
+	}
+	if row.ActivationRecord() != record || row.State != "completed" {
+		return credentialmodule.ErrValidationConflict
+	}
+	return a.transaction(ctx, func(tx pgx.Tx) error { return a.committed(ctx, tx, row) })
+}
 func (a *sourceCredentialActivation) committed(ctx context.Context, tx pgx.Tx, row credentialmodule.ActivationRequestRecord) error {
 	if err := a.config.CurrentAuthorityTx(ctx, tx, row.Receipt); err != nil {
 		return err

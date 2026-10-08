@@ -415,3 +415,83 @@ func TestPostgreSQLAgentActivationUsesSingleConnectionThroughRestart(t *testing.
 		t.Fatal("restart did not install committed credential")
 	}
 }
+
+func TestPostgreSQLAgentCompletedActivationRetryAfterStartupReconcile(t *testing.T) {
+	f := newAgentLifecycleFixtureWithPoolLimit(t, 1)
+	input := agentCandidateInput("private-completed-retry-key")
+	token, err := f.adapter.Test(t.Context(), "admin", 0, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.adapter.Activate(t.Context(), "admin", 0, input, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The response can be lost after completion. Normal startup sees no pending
+	// journal entry, restores current configuration, and opens admission.
+	f.restart(t)
+	if err = f.coordinator.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	work, release, err := f.gate.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	retried, err := f.adapter.Activate(t.Context(), "admin", 0, input, token)
+	if err != nil {
+		t.Fatalf("completed retry after startup: %v", err)
+	}
+	if retried.Revision != first.Revision || retried.CredentialVersionID != first.CredentialVersionID || work.Err() != nil || !f.gate.Ready() {
+		t.Fatal("retry changed exact current revision or disturbed healthy provider work")
+	}
+	release()
+
+	nextInput := agentCandidateInput("private-newer-key")
+	nextToken, err := f.adapter.Test(t.Context(), "admin", 1, nextInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.adapter.Activate(t.Context(), "admin", 1, nextInput, nextToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.restart(t)
+	if err = f.coordinator.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	work, release, err = f.gate.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err = f.adapter.Activate(t.Context(), "admin", 0, input, token); err == nil {
+		t.Fatal("historical completed retry acknowledged a superseded configuration")
+	}
+	current, err := f.store.CurrentConfiguration(t.Context())
+	if err != nil || current.Revision != second.Revision || current.CredentialVersionID != second.CredentialVersionID || f.installed.APIKey != nextInput.APIKey || work.Err() != nil || !f.gate.Ready() {
+		t.Fatalf("historical retry changed newer current runtime: %v", err)
+	}
+	release()
+
+	thirdInput := agentCandidateInput("private-pending-key")
+	thirdToken, err := f.adapter.Test(t.Context(), "admin", 2, thirdInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.failAudit = true
+	if _, err = f.adapter.Activate(t.Context(), "admin", 2, thirdInput, thirdToken); err == nil {
+		t.Fatal("expected pending commit failure")
+	}
+	pending, err := f.repository.GetPendingActivationRequest(t.Context(), f.config.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.adapter.Activate(t.Context(), "admin", 1, nextInput, nextToken); err == nil {
+		t.Fatal("completed retry bypassed another pending operation")
+	}
+	after, err := f.repository.GetPendingActivationRequest(t.Context(), f.config.InstanceID)
+	if err != nil || after != pending || f.gate.Ready() || f.installed.APIKey != nextInput.APIKey {
+		t.Fatalf("completed retry released another pending fence: %v", err)
+	}
+}
