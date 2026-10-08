@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	agentcap "github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	materialize "github.com/flidai/leapview/internal/analytics/materialize"
@@ -31,24 +33,42 @@ import (
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	"github.com/flidai/leapview/internal/servingstate"
+	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/stretchr/testify/require"
 )
 
 // Native credentials and current policy cross the mounted router over HTTP.
 // API calls deliberately bypass the dashboard result cache.
 func TestCurrentPolicyRevocationDeniesScopedSemanticHTTPQuery(t *testing.T) {
-	currentPolicyRevocationFixture(t, false)
+	currentPolicyRevocationFixture(t, currentPolicyRevocationAPI)
 }
 
 // The dashboard operation uses the assembled product decorators, planner and
 // result cache with credentials resolved by PostgreSQL. This is a direct
 // materialization test, not mounted dashboard HTTP, browser or row-policy proof.
 func TestCurrentPolicyRevocationDeniesWarmedDashboardQuery(t *testing.T) {
-	currentPolicyRevocationFixture(t, true)
+	currentPolicyRevocationFixture(t, currentPolicyRevocationDashboard)
 }
 
-func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
+// The same assembled tool catalogs and credential scopes are retained across
+// revocation. This is direct governed agent-tool execution, not MCP transport,
+// browser, or provider-loop proof.
+func TestCurrentPolicyRevocationDeniesRetainedAgentQueryTool(t *testing.T) {
+	currentPolicyRevocationFixture(t, currentPolicyRevocationAgent)
+}
+
+type currentPolicyRevocationSurface uint8
+
+const (
+	currentPolicyRevocationAPI currentPolicyRevocationSurface = iota
+	currentPolicyRevocationDashboard
+	currentPolicyRevocationAgent
+)
+
+func currentPolicyRevocationFixture(t *testing.T, surface currentPolicyRevocationSurface) {
 	t.Helper()
+	dashboardCache := surface == currentPolicyRevocationDashboard
+	retainedAgent := surface == currentPolicyRevocationAgent
 	ctx := t.Context()
 	store := testStore(t)
 	repo := store.fixture.Graph.Access
@@ -136,6 +156,44 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 		return credential{principal.ID, bearer}
 	}
 	targetCredential, controlCredential := issue(target), issue(control)
+	toolCatalogs := make(map[string]*agentcore.ToolCatalog)
+	nativeCredentials := make(map[string]access.APICredential)
+	if retainedAgent {
+		for _, credential := range []credential{targetCredential, controlCredential} {
+			resolved, err := repo.CredentialForAPIToken(ctx, credential.bearer)
+			require.NoError(t, err)
+			require.Equal(t, credential.principalID, resolved.Principal.ID)
+			require.NotEmpty(t, resolved.Token.ID)
+			nativeCredentials[credential.principalID] = resolved
+			toolScope := agentcap.Scope{
+				ProjectID: testProjectID.String(), PrincipalID: resolved.Principal.ID,
+				Credential: agentcap.CredentialScope{
+					Restricted: true, PermissionProfile: resolved.Token.PermissionProfile,
+					Permissions: access.ClonePermissionPairs(resolved.Token.Permissions),
+				},
+			}
+			definitions := application.routes.agentModule.ToolDefinitions(toolScope)
+			catalog, err := agentcore.NewToolCatalog(definitions)
+			require.NoError(t, err)
+			var found bool
+			for _, definition := range catalog.Definitions() {
+				found = found || definition.Name == "query_semantic_model"
+			}
+			require.True(t, found, "assembled governed semantic query tool is missing")
+			toolCatalogs[credential.principalID] = catalog
+		}
+	}
+	toolCalls := make(map[string]int)
+	agentQuery := func(credential credential) agentcore.ToolResult {
+		t.Helper()
+		toolCalls[credential.principalID]++
+		result, err := toolCatalogs[credential.principalID].Execute(ctx, agentcore.ToolCall{
+			ID:   "retained-query-" + credential.principalID + "-" + strconv.Itoa(toolCalls[credential.principalID]),
+			Name: "query_semantic_model", Arguments: json.RawMessage(`{"model":"test","metrics":[{"field":"order_count"}],"limit":1}`),
+		})
+		require.NoError(t, err)
+		return result
+	}
 	request := func(credential credential, method, path, body string, wantStatus int) []byte {
 		t.Helper()
 		req, err := http.NewRequestWithContext(ctx, method, server.URL+path, strings.NewReader(body))
@@ -154,6 +212,16 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 	}
 	const path = "/api/v1/semantic-models/test/query"
 	const body = `{"metrics":[{"field":"order_count"}],"limit":1}`
+	if retainedAgent {
+		for _, credential := range []credential{targetCredential, controlCredential} {
+			payload := request(credential, http.MethodPost, path, body, http.StatusOK)
+			var response struct {
+				Rows [][]any `json:"rows"`
+			}
+			require.NoError(t, json.Unmarshal(payload, &response))
+			require.Equal(t, [][]any{{"42"}}, response.Rows, "direct query reference=%s", payload)
+		}
+	}
 	dashboardQuery := func(credential credential) (dataquery.Result, error) {
 		t.Helper()
 		resolved, err := repo.CredentialForAPIToken(ctx, credential.bearer)
@@ -177,6 +245,16 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 			result, err := dashboardQuery(credential)
 			require.NoError(t, err)
 			require.Equal(t, []dataquery.Row{{"order_count": int64(42)}}, result.Rows)
+		} else if retainedAgent {
+			result := agentQuery(credential)
+			require.False(t, result.IsError, "agent result=%#v", result.Content)
+			payload, err := json.Marshal(result.Content)
+			require.NoError(t, err)
+			var response struct {
+				Rows [][]any `json:"rows"`
+			}
+			require.NoError(t, json.Unmarshal(payload, &response))
+			require.Equal(t, [][]any{{"42"}}, response.Rows, "agent payload=%s", payload)
 		} else {
 			payload := request(credential, http.MethodPost, path, body, http.StatusOK)
 			var response struct {
@@ -187,6 +265,13 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 		}
 		require.Equal(t, before+1, metrics.executionCount(), "query did not execute through the product materializer")
 		require.Equal(t, wantOutcome, metrics.lastOutcome())
+		if retainedAgent {
+			query := metrics.lastDataQuery()
+			require.Equal(t, dataquery.SurfaceAgent, query.Surface)
+			require.Equal(t, dataquery.OperationAgentQuery, query.Operation)
+			require.Equal(t, credential.principalID, query.PrincipalID)
+			require.Equal(t, testProjectID, query.ProjectID)
+		}
 	}
 	for _, credential := range []credential{targetCredential, controlCredential} {
 		physical := metrics.database.queries.Load()
@@ -199,11 +284,13 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 			assertQuery(credential, "")
 			require.Equal(t, physical+1, metrics.database.queries.Load())
 			assertQuery(credential, "")
-			require.Equal(t, physical+2, metrics.database.queries.Load(), "API query must bypass the dashboard cache")
+			require.Equal(t, physical+2, metrics.database.queries.Load(), "non-dashboard query must bypass the dashboard cache")
 		}
 	}
 	if dashboardCache {
 		t.Log("both native principals warmed actual governed dashboard cache entries")
+	} else if retainedAgent {
+		t.Log("both retained native agent catalogs executed governed semantic queries with explicit cache bypass")
 	} else {
 		t.Log("both scoped native credentials queried mounted semantic HTTP with explicit cache bypass")
 	}
@@ -224,6 +311,12 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 		}
 		require.NoError(t, json.Unmarshal(payload, &principal))
 		require.Equal(t, credential.principalID, principal.ID, "credential identity changed after policy mutation")
+		if retainedAgent {
+			resolved, err := repo.CredentialForAPIToken(ctx, credential.bearer)
+			require.NoError(t, err)
+			require.Equal(t, nativeCredentials[credential.principalID].Token.ID, resolved.Token.ID)
+			require.Equal(t, nativeCredentials[credential.principalID].Token.Permissions, resolved.Token.Permissions)
+		}
 	}
 	physical, executions := metrics.database.queries.Load(), metrics.executionCount()
 	if dashboardCache {
@@ -232,6 +325,20 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 		require.ErrorAs(t, err, &denied)
 		require.Equal(t, access.ActionSemanticConsume, denied.Action)
 		require.Empty(t, result.Rows)
+	} else if retainedAgent {
+		result := agentQuery(targetCredential)
+		require.True(t, result.IsError, "retained target catalog accepted revoked authority")
+		payload, err := json.Marshal(result.Content)
+		require.NoError(t, err)
+		var response struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(payload, &response))
+		// Semantic query handlers conceal inaccessible targets with HTTP 404;
+		// the generated agent adapter preserves that as resource_not_found.
+		require.Equal(t, "resource_not_found", response.Error.Code, "agent denial=%s", payload)
 	} else {
 		// The generated semantic.query operation rejects before materializer
 		// lookup. Its http.Error boundary precedes response normalization.
@@ -270,6 +377,8 @@ func currentPolicyRevocationFixture(t *testing.T, dashboardCache bool) {
 	require.True(t, allowed, "revocation changed control authority")
 	if dashboardCache {
 		t.Log("committed target-only revocation denied a warmed dashboard query while credential and control cache stayed valid")
+	} else if retainedAgent {
+		t.Log("committed target-only revocation denied the retained agent catalog before execution while credentials and control stayed valid")
 	} else {
 		t.Log("committed target-only revocation denied semantic HTTP while credential and control query stayed valid")
 	}
@@ -316,10 +425,11 @@ func (f cachedRevocationFactory) Prepare(ctx context.Context, input runtimehost.
 
 type cachedRevocationMetrics struct {
 	fakeMetrics
-	core     *materialize.Runtime
-	database *cachedRevocationDatabase
-	mu       sync.Mutex
-	outcomes []string
+	core      *materialize.Runtime
+	database  *cachedRevocationDatabase
+	mu        sync.Mutex
+	outcomes  []string
+	lastQuery dataquery.Query
 }
 
 func newCachedRevocationMetrics(t *testing.T, identity projectgraph.ServingIdentity) *cachedRevocationMetrics {
@@ -355,6 +465,7 @@ func (m *cachedRevocationMetrics) ExecuteDataQuery(ctx context.Context, query da
 	result, err := m.core.ExecuteDataQuery(ctx, query)
 	m.mu.Lock()
 	m.outcomes = append(m.outcomes, result.CacheOutcome)
+	m.lastQuery = query
 	m.mu.Unlock()
 	return result, err
 }
@@ -369,6 +480,12 @@ func (m *cachedRevocationMetrics) lastOutcome() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.outcomes[len(m.outcomes)-1]
+}
+
+func (m *cachedRevocationMetrics) lastDataQuery() dataquery.Query {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastQuery
 }
 
 type cachedRevocationDatabase struct{ queries atomic.Int64 }
