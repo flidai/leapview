@@ -540,8 +540,9 @@ func (p *Planner) planIRAggregateMetrics(dataset string, names []string, resolve
 		aggregation := strings.ToUpper(metric.Aggregation)
 		typ := "decimal"
 		// Counts have an integer result regardless of input datatype (including
-		// COUNT_DISTINCT over strings). AVG stays exact Decimal for integer or
-		// Decimal inputs and is Float only when its input is explicitly Float.
+		// COUNT_DISTINCT over strings). Integer SUM widens to HUGEINT, carried
+		// by Arrow as scale-zero Decimal. AVG stays exact Decimal for integer
+		// or Decimal inputs; SUM and AVG retain explicitly Float inputs.
 		if aggregation == "COUNT" || aggregation == "COUNT_STAR" || aggregation == "COUNT_DISTINCT" || aggregation == "COUNT_DISTINCT_PAIR" {
 			typ = "integer"
 		} else if compiled, ok := p.compiled.metric(metric.Name); ok && compiled.Aggregate != nil {
@@ -554,7 +555,9 @@ func (p *Planner) planIRAggregateMetrics(dataset string, names []string, resolve
 			case "SUM", "MIN", "MAX":
 				switch physical.Datatype {
 				case semanticmodel.DataTypeInteger:
-					typ = "integer"
+					if aggregation != "SUM" {
+						typ = "integer"
+					}
 				case semanticmodel.DataTypeFloat:
 					typ = "float"
 				case semanticmodel.DataTypeDecimal:

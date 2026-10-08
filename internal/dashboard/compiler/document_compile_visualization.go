@@ -102,7 +102,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		}
 		columns := make([]visualizationir.TableVisualizationColumn, 0, len(query.ResultFrame))
 		for i := range query.ResultFrame {
-			columns = append(columns, visualizationir.TableVisualizationColumn{Field: ref(i), Label: query.ResultFrame[i].Name, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
+			columns = append(columns, visualizationir.TableVisualizationColumn{Field: ref(i), Label: primaryFields[i].Label, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
 		}
 		base.Kind = "table"
 		return visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: base, Kind: "table", Columns: columns, Presentation: p}}, nil
