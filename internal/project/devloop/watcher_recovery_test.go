@@ -76,6 +76,26 @@ func TestWatcherReportsInvalidNewResourceAndPreservesCandidate(t *testing.T) {
 	require.NotEqual(t, initial.Result.Candidate.ArtifactDigest, recovered.Result.Candidate.ArtifactDigest)
 }
 
+func TestWatcherReinstallsRemovedAndRecreatedDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeWatcherResource(t, filepath.Join(root, "connections", "warehouse.yaml"), watcherConnection("warehouse"))
+	resource := filepath.Join(root, "connections", "team", "customer.yaml")
+	writeWatcherResource(t, resource, watcherConnection("customer"))
+	updates, _, _ := runFilesystemWatcher(t, root)
+	require.Equal(t, StatusSynchronized, awaitUpdate(t, updates).Result.Status)
+
+	require.NoError(t, os.RemoveAll(filepath.Dir(resource)))
+	removed := awaitWatcherSnapshot(t, updates, "connections/warehouse.yaml", watcherConnection("warehouse"))
+	require.Len(t, removed.Result.Snapshot.Artifacts, 1)
+
+	writeWatcherResource(t, resource, watcherConnection("customer"))
+	restored := awaitWatcherSnapshot(t, updates, "connections/team/customer.yaml", watcherConnection("customer"))
+	require.Len(t, restored.Result.Snapshot.Artifacts, 2)
+	updated := watcherConnection("customer") + "# edit after recreation\n"
+	writeWatcherResource(t, resource, updated)
+	_ = awaitWatcherSnapshot(t, updates, "connections/team/customer.yaml", updated)
+}
+
 func watcherConnection(name string) string {
 	return "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:" + name + ", name: " + name + "}\nspec: {type: managed}\n"
 }
@@ -169,11 +189,13 @@ type observedFilesystemSource struct {
 	watchSource
 	events chan fileEvent
 	closed chan struct{}
+	done   chan struct{}
 }
 
 func observeFilesystemEvents(source watchSource, observed chan<- fileEvent) *observedFilesystemSource {
-	wrapped := &observedFilesystemSource{watchSource: source, events: make(chan fileEvent), closed: make(chan struct{})}
+	wrapped := &observedFilesystemSource{watchSource: source, events: make(chan fileEvent), closed: make(chan struct{}), done: make(chan struct{})}
 	go func() {
+		defer close(wrapped.done)
 		defer close(wrapped.events)
 		for {
 			select {
@@ -203,5 +225,7 @@ func (source *observedFilesystemSource) Events() <-chan fileEvent { return sourc
 
 func (source *observedFilesystemSource) Close() error {
 	close(source.closed)
-	return source.watchSource.Close()
+	err := source.watchSource.Close()
+	<-source.done
+	return err
 }
