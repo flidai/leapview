@@ -5,6 +5,7 @@ export async function assertExploreTablePresentationReset(page: Page): Promise<v
   await page.waitForFunction(() => customElements.get('lv-data-explorer'))
   await page.evaluate(async () => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+    ;(window as any).__exploreResetMergePatch = mergePatch
     const object = { key: 'orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columns: [{ key: 'status', label: 'Status' }] }
     const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100, table: { columns: [{ field: 'orders.status', width: 220 }] } }
     const command = { spec, requestSeq: 5, resetVersion: 2, action: 'run', columnWidths: {} }
@@ -47,8 +48,8 @@ export async function assertExploreTablePresentationReset(page: Page): Promise<v
   }
   expect((await header.boundingBox())!.width).toBe(220)
   await drag()
-  await explorer.evaluate(async (element: any) => {
-    const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+  await explorer.evaluate((element: any) => {
+    const mergePatch = (window as any).__exploreResetMergePatch
     const spec = { ...element.dataExplorer.explore.command.spec, table: { columns: [{ field: 'orders.status', width: 180 }] } }
     mergePatch({ savedExplorations: { current: { revision: { revisionId: 'revision-2' }, spec } }, dataExplorer: { explore: { command: { spec } } } })
   })
@@ -64,8 +65,8 @@ export async function assertExploreTablePresentationReset(page: Page): Promise<v
   expect((await header.boundingBox())!.width).toBe(180)
 
   await drag()
-  await explorer.evaluate(async () => {
-    const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+  await explorer.evaluate(() => {
+    const mergePatch = (window as any).__exploreResetMergePatch
     mergePatch({ dataExplorer: { explore: { result: { error: 'Query failed' }, status: { state: 'error' } } } })
   })
   await explorer.getByRole('button', { name: 'Reset query', exact: true }).click()
