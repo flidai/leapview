@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -236,30 +237,49 @@ func TestCallerGroupSliceCannotMutateAccountingOrEvents(t *testing.T) {
 }
 
 func TestQueueTimeoutCancellationAndShutdown(t *testing.T) {
-	c := testController(t, Config{MaxRunning: 1, MaximumQueued: 4, Classes: map[Class]Policy{
-		Interactive: {MaximumRunning: 1, MaximumQueued: 4, QueueTimeout: 20 * time.Millisecond},
-	}})
-	running := acquire(t, c, Interactive, "holder", nil)
-	_, err := c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "timeout", Operation: "query", EstimatedMemoryBytes: 1})
-	assertReason(t, err, QueueTimeout)
-	ctx, cancel := context.WithCancel(context.Background())
-	canceled := acquireAsyncContext(c, ctx, Interactive, "cancel", nil)
-	waitQueued(t, c, 1)
-	cancel()
-	if err := receiveError(t, canceled); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancel error = %v", err)
-	}
-	waitQueued(t, c, 0)
-	shutdown := acquireAsync(c, Interactive, "shutdown", nil)
-	waitQueued(t, c, 1)
-	c.Close()
-	assertReason(t, receiveError(t, shutdown), ControllerShutdown)
-	select {
-	case <-running.Context().Done():
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not cancel running context")
-	}
-	running.Release()
+	synctest.Test(t, func(t *testing.T) {
+		c := testController(t, Config{MaxRunning: 1, MaximumQueued: 4, Classes: map[Class]Policy{
+			Interactive: {MaximumRunning: 1, MaximumQueued: 4, QueueTimeout: 20 * time.Millisecond},
+		}})
+		assertQueued := func(want int) {
+			t.Helper()
+			// Settle acquisition before observing its queue entry, without
+			// allowing the queue deadline to race a wall-clock polling interval.
+			synctest.Wait()
+			if got := c.Stats().Queued; got != want {
+				t.Fatalf("queued = %d, want %d", got, want)
+			}
+		}
+		running := acquire(t, c, Interactive, "holder", nil)
+		defer running.Release()
+		_, err := c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "timeout", Operation: "query", EstimatedMemoryBytes: 1})
+		assertReason(t, err, QueueTimeout)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		canceled := acquireAsyncContext(c, ctx, Interactive, "cancel", nil)
+		assertQueued(1)
+		cancel()
+		if err := receiveError(t, canceled); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancel error = %v", err)
+		}
+		assertQueued(0)
+		shutdown := acquireAsync(c, Interactive, "shutdown", nil)
+		assertQueued(1)
+		c.Close()
+		assertReason(t, receiveError(t, shutdown), ControllerShutdown)
+		select {
+		case <-running.Context().Done():
+		case <-time.After(time.Second):
+			t.Fatal("shutdown did not cancel running context")
+		}
+		if stats := c.Stats(); stats.Running != 1 || stats.Queued != 0 || stats.MemoryBytes != 1 {
+			t.Fatalf("shutdown changed unreleased lease accounting: %+v", stats)
+		}
+		running.Release()
+		if stats := c.Stats(); stats.Running != 0 || stats.Queued != 0 || stats.MemoryBytes != 0 {
+			t.Fatalf("released shutdown accounting: %+v", stats)
+		}
+	})
 }
 
 func TestExecutionDeadlineAndIdempotentRelease(t *testing.T) {
