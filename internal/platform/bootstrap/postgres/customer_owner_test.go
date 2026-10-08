@@ -3,12 +3,14 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -93,43 +95,78 @@ func TestCustomerOwnerDeclarationReplayConflictAndRollback(t *testing.T) {
 }
 
 func TestCustomerOwnerDeclarationConcurrentReplayConverges(t *testing.T) {
-	db := bootstrapTestDB(t)
-	repository := New(db)
-	if err := repository.EnsureInstanceID(t.Context(), "lvinst_0123456789abcdefghijklmnopqrstuv"); err != nil {
-		t.Fatal(err)
-	}
+	for _, competing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("competing=%t", competing), func(t *testing.T) {
+			db := bootstrapTestDB(t)
+			repository := New(db)
+			if err := repository.EnsureInstanceID(t.Context(), "lvinst_0123456789abcdefghijklmnopqrstuv"); err != nil {
+				t.Fatal(err)
+			}
 
-	const workers = 12
-	type result struct {
-		inserted bool
-		err      error
-	}
-	results := make(chan result, workers)
-	var wait sync.WaitGroup
-	for range workers {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			inserted, err := repository.DeclareCustomerOwner(context.Background(), "customer_concurrent")
-			results <- result{inserted: inserted, err: err}
-		}()
-	}
-	wait.Wait()
-	close(results)
-	insertions := 0
-	for result := range results {
-		if result.err != nil {
-			t.Fatalf("concurrent declaration error: %v", result.err)
-		}
-		if result.inserted {
-			insertions++
-		}
-	}
-	if insertions != 1 {
-		t.Fatalf("successful concurrent inserts = %d, want one", insertions)
-	}
-	if got, err := repository.CustomerOwner(t.Context()); err != nil || got != "customer_concurrent" {
-		t.Fatalf("CustomerOwner() = %q, %v; want winning declaration", got, err)
+			// Open every connection before releasing the writers. Cold pool
+			// connections can otherwise serialize the first declaration.
+			const workers = 12
+			connections := make([]*pgx.Conn, workers)
+			for i := range connections {
+				conn, err := pgx.Connect(t.Context(), db.Config().ConnString())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = conn.Close(context.Background()) })
+				connections[i] = conn
+			}
+			for round := range 8 {
+				// Each round exercises an empty test-owned table, including both
+				// unique indexes, without changing its immutable-row triggers.
+				if _, err := db.Exec(t.Context(), `TRUNCATE platform.instance_customer_owner`); err != nil {
+					t.Fatal(err)
+				}
+				type result struct {
+					owner    string
+					inserted bool
+					err      error
+				}
+				results := make(chan result, workers)
+				start := make(chan struct{})
+				var wait sync.WaitGroup
+				for i, conn := range connections {
+					wait.Add(1)
+					go func() {
+						defer wait.Done()
+						owner := "customer_concurrent"
+						if competing {
+							owner = fmt.Sprintf("customer_%d", i)
+						}
+						<-start
+						inserted, err := New(conn).DeclareCustomerOwner(t.Context(), owner)
+						results <- result{owner: owner, inserted: inserted, err: err}
+					}()
+				}
+				close(start)
+				wait.Wait()
+				close(results)
+				stored, err := repository.CustomerOwner(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				insertions := 0
+				for result := range results {
+					if result.owner == stored {
+						if result.err != nil {
+							t.Fatalf("round %d matching replay: %v", round, result.err)
+						}
+					} else if !errors.Is(result.err, ErrConflict) || result.inserted {
+						t.Fatalf("round %d competing declaration inserted=%t, error=%v; want false, ErrConflict", round, result.inserted, result.err)
+					}
+					if result.inserted {
+						insertions++
+					}
+				}
+				if insertions != 1 {
+					t.Fatalf("round %d successful inserts = %d, want one", round, insertions)
+				}
+			}
+		})
 	}
 }
 
