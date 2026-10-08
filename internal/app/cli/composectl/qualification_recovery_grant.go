@@ -91,22 +91,26 @@ func (c *Controller) stageQualificationRecoveryUploadGrant(
 	revision int64,
 	digest string,
 ) (int64, string, error) {
+	pipelineGrant, err := qualificationPipelineRunGrant(options.ProjectID, principalID)
+	if err != nil {
+		return 0, "", err
+	}
+	return c.stageQualificationUploadGrant(ctx, options, client, token, principalID, revision, digest, pipelineGrant)
+}
+
+func (c *Controller) stageQualificationUploadGrant(ctx context.Context, options qualificationAuthoringOptions, client *http.Client, token, principalID string, revision int64, digest string, previous ...access.AuthorizationGrant) (int64, string, error) {
 	if ctx == nil || client == nil || strings.TrimSpace(token) == "" || strings.TrimSpace(principalID) == "" {
 		return 0, "", errors.New("qualification recovery grant staging inputs are required")
 	}
 	if err := platformdigest.ValidateSHA256Identity(digest); err != nil {
 		return 0, "", fmt.Errorf("qualification pipeline policy digest: %w", err)
 	}
-	pipelineGrant, err := qualificationPipelineRunGrant(options.ProjectID, principalID)
-	if err != nil {
-		return 0, "", err
-	}
 	grant, err := qualificationRecoveryUploadGrant(options.ProjectID, principalID)
 	if err != nil {
 		return 0, "", err
 	}
 	endpoint := strings.TrimRight(options.Target, "/") + "/api/v1/projects/" + url.PathEscape(options.ProjectID) + "/role-bindings"
-	current, bindings, err := retrieveQualificationRoleBindingPolicy(ctx, client, endpoint, options.ProjectID, options.Environment, token, pipelineGrant)
+	current, bindings, err := retrieveQualificationRoleBindingPolicy(ctx, client, endpoint, options.ProjectID, options.Environment, token, previous...)
 	if err != nil {
 		return 0, "", err
 	}
@@ -145,14 +149,15 @@ func (c *Controller) stageQualificationRecoveryUploadGrant(
 	if err := platformdigest.ValidateSHA256Identity(staged.PolicyDigest); err != nil {
 		return 0, "", fmt.Errorf("staged recovery upload grant has an invalid policy digest: %w", err)
 	}
+	expected := append(append([]access.AuthorizationGrant(nil), previous...), grant)
 	if err := readQualificationRecoveryOwnerGrants(
 		ctx, client, options.Target, options.ProjectID, options.Environment, token,
-		staged.TargetID, staged.PolicyRevision, staged.PolicyDigest, pipelineGrant, grant,
+		staged.TargetID, staged.PolicyRevision, staged.PolicyDigest, expected...,
 	); err != nil {
 		return 0, "", err
 	}
 	policy, bindings, err := retrieveQualificationRoleBindingPolicy(
-		ctx, client, endpoint, options.ProjectID, options.Environment, token, pipelineGrant, grant,
+		ctx, client, endpoint, options.ProjectID, options.Environment, token, expected...,
 	)
 	if err != nil {
 		return 0, "", err
@@ -172,7 +177,7 @@ func readQualificationRecoveryOwnerGrants(
 	digest string,
 	expected ...access.AuthorizationGrant,
 ) error {
-	if client == nil || strings.TrimSpace(token) == "" || len(expected) != 2 {
+	if client == nil || strings.TrimSpace(token) == "" || len(expected) == 0 {
 		return errors.New("qualification owner grant readback inputs are required")
 	}
 	if err := platformdigest.ValidateSHA256Identity(digest); err != nil {

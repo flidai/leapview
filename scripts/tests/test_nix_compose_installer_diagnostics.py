@@ -60,6 +60,22 @@ class InstallerDiagnosticsTests(unittest.TestCase):
             self.assertEqual(record["boundaries"], [])
             self.assertNotIn(b"secret", b"".join(path.read_bytes() for path in evidence.iterdir()))
 
+    def test_bootstrap_non_executable_payload_has_fixed_classification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            command = (
+                "printf '%s\\n' 'private-bootstrap-output' "
+                "'LeapView deployment controller is not executable on the payload filesystem' >&2; exit 1"
+            )
+            with self.assertRaisesRegex(guest.HostGuestError, r"installer failed \(1\)"):
+                guest._run_host_installer(LocalGuest(), evidence, command, timeout=10,
+                    fixture_secrets=["private-bootstrap-output"])
+            record = json.loads((evidence / "host-install-diagnostic.json").read_bytes())
+            self.assertEqual(record["exitCode"], 1)
+            self.assertEqual(record["causes"], ["controller-not-executable"])
+            self.assertEqual(record["boundaries"], [])
+            self.assertNotIn(b"private-bootstrap-output", b"".join(path.read_bytes() for path in evidence.iterdir()))
+
     def test_unknown_error_and_large_output_are_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory)

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 )
 
@@ -144,6 +144,9 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	}
 	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.EvidenceDir, "evidence-dir", "", "new private directory for first-publication evidence")
 	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.AssetsRoot, "assets-root", "", "protected qualification asset directory transferred by the verifier")
+	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.PreloadedClientImage, "preloaded-client-image", "", "exact local sha256 image ID of the prepared authoring client (requires preloaded browser)")
+	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.PreloadedBrowserImage, "preloaded-browser-image", "", "exact local sha256 image ID of the prepared authoring browser (requires preloaded client)")
+	qualifyFirstPublication.Flags().StringVar(&firstPublicationQualification.LifecycleCredentialFile, "lifecycle-credential-file", "", "new private file outside evidence for a scoped two-hour managed lifecycle credential")
 
 	qualify := &cobra.Command{
 		Use:   "qualify",
