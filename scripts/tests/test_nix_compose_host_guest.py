@@ -921,6 +921,49 @@ class HostGuestReceiptTests(unittest.TestCase):
 
 
 class FirstInstallGuestFixtureTests(unittest.TestCase):
+    def test_serving_credential_boundary_reads_private_environment_beside_generation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            generation = root / "releases" / ("sha256-" + "a" * 64)
+            generation.mkdir(parents=True)
+            (root / "current").symlink_to(generation.relative_to(root))
+            # Immutable payloads contain templates; mutable serving state lives
+            # beside current, as Installer.Install and Compose's root require.
+            (generation / "leapview.env.example").write_text("LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=\n")
+            environment = root / "leapview.env"
+            command = host_guest._serving_credential_boundary_command(str(root))
+            for name, contents, expected in (
+                ("runtime only", "LEAPVIEW_ENV=prod\n", 0),
+                ("control migrator", "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=private-control\n", 1),
+                ("DuckLake migrator", "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=private-ducklake\n", 1),
+                ("empty", "", 1),
+                ("missing", None, 1),
+            ):
+                with self.subTest(name=name):
+                    if contents is None:
+                        environment.unlink(missing_ok=True)
+                    else:
+                        environment.write_text(contents)
+                    result = subprocess.run(["sh", "-ec", command], capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode, expected, result.stderr.decode())
+                    self.assertEqual(result.stderr, b"")
+                    if expected:
+                        self.assertEqual(result.stdout, b"")
+                    else:
+                        self.assertEqual(json.loads(result.stdout), {
+                            "controlMigratorURLAbsentFromServingEnvironment": True,
+                            "duckLakeMigratorURLAbsentFromServingEnvironment": True,
+                        })
+            # Failure to inspect the file is never proof that keys are absent.
+            environment.write_text("LEAPVIEW_ENV=prod\n")
+            unavailable = subprocess.run(
+                [shutil.which("sh"), "-ec", command],
+                env=dict(os.environ, PATH=str(root)), capture_output=True, timeout=5,
+            )
+            self.assertEqual(unavailable.returncode, 1)
+            self.assertEqual(unavailable.stdout, b"")
+            self.assertEqual(unavailable.stderr, b"")
+
     def test_postgres_readiness_retries_failed_psql_and_retains_one_complete_probe(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
