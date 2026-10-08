@@ -8,6 +8,7 @@ import { readState, stateRecord } from './example-state'
 import { compilerEvidenceMetadata, dashboardScenario, dashboardScenarios, inspectDashboard, matchingCompilerEvidence, type RecordedCompilerEvidence } from './dashboard-contract-fixtures'
 
 const sourceLimit = 20000
+const diagnosticPageSize = 100
 const defaults = { version: 'after', scenario: 'corrected-monthly', source: dashboardScenario('corrected-monthly').source }
 const choices = { version: ['before', 'after'], scenario: dashboardScenarios.map(fixture => fixture.id) }
 function display(value: unknown): string {
@@ -22,7 +23,9 @@ export class PlaygroundDashboardContract extends LitElement {
   @state() private source = defaults.source
   @state() private inputNotice = ''
   @state() private referencesOpen = false
-  private validationSource = ''
+  @state() private comparisonOpen = false
+  @state() private expandedDiagnostics = new Set<boolean>()
+  @state() private diagnosticCounts = new Map<boolean, number>()
   private readonly validationCache = new Map<boolean, ReturnType<typeof inspectDashboard>>()
 
   getExampleState() {
@@ -89,11 +92,14 @@ export class PlaygroundDashboardContract extends LitElement {
     @container (max-width: 420px) { .card { padding: var(--base-size-12); } dl { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); } dd { margin-bottom: var(--base-size-8); } }
   `, exampleChromeStyles]
 
-  private schemaResult(baseline: boolean) {
-    if (this.validationSource !== this.source) {
-      this.validationSource = this.source
+  protected willUpdate(changed: Map<PropertyKey, unknown>) {
+    if (changed.has('source')) {
       this.validationCache.clear()
+      this.diagnosticCounts = new Map()
     }
+  }
+
+  private schemaResult(baseline: boolean) {
     let result = this.validationCache.get(baseline)
     if (!result) {
       result = inspectDashboard(this.source, baseline)
@@ -128,12 +134,29 @@ export class PlaygroundDashboardContract extends LitElement {
     const result = this.schemaResult(baseline)
     const selected = baseline === (this.version === 'before')
     const shown = 3
+    const limit = shown + (this.diagnosticCounts.get(baseline) ?? diagnosticPageSize)
     return html`<section class=${selected ? 'card selected' : 'card'} aria-label=${baseline ? 'Baseline schema validation' : 'Tightened schema validation'}>
       <div class="pane-heading"><h3>${baseline ? 'Baseline schema' : 'Tightened schema'}</h3>${selected ? html`<span class="badge">Selected contract</span>` : ''}</div>
       <p class=${result.valid ? 'status accepted' : 'status rejected'}>${result.valid ? 'Accepted' : 'Rejected'}</p>
       ${result.issues.length ? html`
         <ul class="issues">${result.issues.slice(0, shown).map(issue => html`<li><code>${issue.path || '/'}</code> — ${issue.message}</li>`)}</ul>
-        ${result.issues.length > shown ? html`<details class="more-issues"><summary>${result.issues.length - shown} additional schema diagnostics</summary><ul class="issues">${result.issues.slice(shown).map(issue => html`<li><code>${issue.path || '/'}</code> — ${issue.message}</li>`)}</ul></details>` : ''}
+        ${result.issues.length > shown ? html`<details class="more-issues" ?open=${this.expandedDiagnostics.has(baseline)} @toggle=${(event: Event) => {
+          const open = (event.target as HTMLDetailsElement).open
+          if (open === this.expandedDiagnostics.has(baseline)) return
+          const expanded = new Set(this.expandedDiagnostics)
+          if (open) expanded.add(baseline)
+          else expanded.delete(baseline)
+          this.expandedDiagnostics = expanded
+        }}><summary>${result.issues.length - shown} additional schema diagnostics</summary>
+          ${this.expandedDiagnostics.has(baseline) ? html`
+            <ul class="issues">${result.issues.slice(shown, limit).map(issue => html`<li><code>${issue.path || '/'}</code> — ${issue.message}</li>`)}</ul>
+            ${result.issues.length > limit ? html`<button class="settings-button" @click=${() => {
+              const counts = new Map(this.diagnosticCounts)
+              counts.set(baseline, limit - shown + diagnosticPageSize)
+              this.diagnosticCounts = counts
+            }}>Show next ${Math.min(diagnosticPageSize, result.issues.length - limit)} diagnostics</button>` : ''}
+          ` : ''}
+        </details>` : ''}
       ` : html`<p class="muted">The YAML shape follows these rules.</p>`}
     </section>`
   }
@@ -239,7 +262,7 @@ export class PlaygroundDashboardContract extends LitElement {
           <div class="review-pane">
             <h3>YAML shape check</h3>
             <p class="muted">Live checks for required fields, allowed values and numeric bounds. An accepted shape does not prove that model fields or page layout are correct.</p>
-            <div class="schema-results" aria-live="polite">${this.schemaCard(this.version === 'before')}<details class="comparison"><summary>Compare with other schema</summary>${this.schemaCard(this.version !== 'before')}</details></div>
+            <div class="schema-results" aria-live="polite">${this.schemaCard(this.version === 'before')}<details class="comparison" @toggle=${(event: Event) => { this.comparisonOpen = (event.target as HTMLDetailsElement).open }}><summary>Compare with other schema</summary>${this.comparisonOpen ? this.schemaCard(this.version !== 'before') : ''}</details></div>
             ${this.compilerCheck()}
           </div>
         </div>

@@ -15,7 +15,13 @@ export function inspectDashboard(source: string, useBaseline: boolean): Dashboar
     // errors. oneOf may also report rejected alternative variants.
     const relevant = [...errors.filter(error => error.keyword === 'minimum'), ...errors.filter(error => error.keyword !== 'minimum')]
     const issues = relevant.map(error => ({ path: error.instancePath || '/', message: error.message || 'Invalid value' }))
-    return { valid: false, issues: issues.filter((issue, index) => issues.findIndex(other => other.path === issue.path && other.message === issue.message) === index) }
+    const seen = new Set<string>()
+    return { valid: false, issues: issues.filter(issue => {
+      const key = JSON.stringify([issue.path, issue.message])
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }) }
   } catch (error) {
     return { valid: false, issues: [{ path: '/', message: error instanceof Error ? error.message : 'Invalid YAML' }] }
   }

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { parse } from 'yaml'
 import { beforeYAML, afterYAML, dashboardScenarios, dashboardScenario, inspectDashboard, matchingCompilerEvidence, sourceDigest } from './dashboard-contract-fixtures'
 
 test('the corrected guide is structurally valid under both schemas', () => {
@@ -75,4 +76,18 @@ test('exact recorded source lookup is immediate and needs no asynchronous browse
   expect(matchingCompilerEvidence(fixture.source, fixture.id)).toBe(fixture)
   expect(matchingCompilerEvidence(fixture.source + '\n# edited\n', fixture.id)).toBeUndefined()
   expect(matchingCompilerEvidence(fixture.source, 'untrusted')).toBeUndefined()
+})
+
+
+test('large invalid documents retain all distinct diagnostics in both schemas', () => {
+  const document = parse(afterYAML)
+  document.spec.pages[0].components = Array(2500).fill(null)
+  const source = JSON.stringify(document)
+  for (const baseline of [false, true]) {
+    const result = inspectDashboard(source, baseline)
+    expect(result.valid).toBe(false)
+    expect(result.issues).toHaveLength(5001)
+    expect(new Set(result.issues.map(issue => JSON.stringify([issue.path, issue.message]))).size).toBe(result.issues.length)
+    expect(result.issues.some(issue => issue.path === '/spec/pages/0/components/2499')).toBe(true)
+  }
 })
