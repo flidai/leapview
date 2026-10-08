@@ -1,0 +1,42 @@
+{
+  "status": "failed",
+  "adoption_qualified": false,
+  "source": "5f98533d6d4dee5dac6bc4eaef066020fbb0ea68",
+  "run": "https://github.com/flidai/leapview/actions/runs/37621062598",
+  "attempt": 1,
+  "producer_samples": [
+    {
+      "kind": "producer",
+      "mode": "baseline",
+      "status": "failed",
+      "build_elapsed_including_failed_export_seconds": 673,
+      "sqlc_seconds": 82,
+      "failure": "GitHub Actions cache export: permission_denied",
+      "receipt_sha256": "80abdbea647fa865f98a87e30596ae39373604eb52d82e7f9522bfd9e296176d",
+      "build_log_sha256": "29ded0c9010d5a3e1dfdae1dbef836b982ed3b5c15c1fa1a64b7cfaa40942f47",
+      "qualification": "not run",
+      "generated_output_comparison": "not run"
+    },
+    {
+      "kind": "producer",
+      "mode": "treatment",
+      "status": "failed",
+      "build_elapsed_including_failed_export_seconds": 700,
+      "sqlc_seconds": 0,
+      "failure": "GitHub Actions cache export: permission_denied",
+      "receipt_sha256": "6212386bc96e3cf2df161fb35007755dd9a4e34dcdbc086b06dc96094d8a3646",
+      "build_log_sha256": "942588f7dbaceeee750d7ea658fb01b671134d9bb4384c57658274814e3cc432",
+      "qualification": "not run",
+      "generated_output_comparison": "not run"
+    }
+  ],
+  "consumers": "all six skipped after producer failure",
+  "comparison": "failed; failed sample retained",
+  "root_cause": "BuildKit v0.33.0 GHA export requires cache reads even without cache-from; producer write-only forbids reads. The precise first denied API request was not logged.",
+  "upstream_commit": "dddd5621af04ea57823085c93a063383f71d3173",
+  "limits": [
+    "No successful hosted producer, consumer pair, qualification or speedup claim.",
+    "Failed build clocks include image loading and failed cache export; do not use as successful build costs.",
+    "No blind retry, production cache changes, gate bypass or adoption."
+  ]
+}

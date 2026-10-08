@@ -20,10 +20,40 @@ test('hosted SQLC experiment is manual, bounded and preserves failed samples', (
   }
   expect(config.jobs.compare.if).toBe('${{ !cancelled() }}')
   expect(config.jobs.compare.needs).toEqual(['producers', 'consumers'])
-  expect(config.jobs.producers['cache-mode']).toBe('write-only')
+  // BuildKit's exporter reads its mutable cache index even without cache-from.
+  expect(config.jobs.producers['cache-mode']).toBe('write')
   expect(config.jobs.consumers['cache-mode']).toBe('read')
   const download = config.jobs.compare.steps.find((step: any) => step.uses?.startsWith('actions/download-artifact@'))
   expect(download.with.pattern).toBe('sqlc-sample-${{ github.run_attempt }}-*')
+})
+
+test('producer cache access is exercised before the expensive measured build', () => {
+  const steps = workflow('sqlc-image-sample').jobs.sample.steps
+  const prepare = steps.find((step: any) => step.name === 'Prepare cache access probe')
+  const probe = steps.find((step: any) => step.name === 'Verify producer cache export access')
+  expect(prepare?.if).toBe("inputs.kind == 'producer'")
+  expect(probe?.if).toBe("inputs.kind == 'producer'")
+  expect(probe['continue-on-error']).toBeUndefined()
+  expect(probe.with['cache-from']).toBeUndefined()
+  expect(probe.with['cache-to']).toBe('type=gha,version=2,mode=max,scope=${{ env.SCREEN_SCOPE }}-access-probe')
+  expect(probe.with.outputs).toBe('type=cacheonly')
+  expect(probe.with.builder).toBe('${{ steps.builder.outputs.name }}')
+  expect(steps.indexOf(probe)).toBeLessThan(steps.findIndex((step: any) => step.name === 'Start full image build clock'))
+  const build = steps.find((step: any) => step.id === 'build')
+  expect(build.if).toBeUndefined()
+  const history = steps.find((step: any) => step.name === 'Retain exact measured build history')
+  expect(history.if).toContain("steps.build.outcome != 'skipped'")
+  const directory = mkdtempSync(join(tmpdir(), 'sqlc-access-probe-'))
+  try {
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', prepare.run], {
+      env: { ...process.env, SCREEN_DIR: directory },
+    })
+    expect(result.status, result.stderr.toString()).toBe(0)
+    expect(readFileSync(join(directory, 'cache-probe/Dockerfile'), 'utf8')).toBe('FROM scratch\nCOPY marker /marker\n')
+    expect(readFileSync(join(directory, 'cache-probe/marker'), 'utf8')).toBe('sqlc-cache-access-probe\n')
+  } finally {
+    rmSync(directory, { recursive: true })
+  }
 })
 
 test('sample authority rejects other repositories, events, branches and revisions', () => {
