@@ -1,12 +1,30 @@
 package ui
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/flidai/leapview/internal/agent"
 	appshell "github.com/flidai/leapview/internal/app/shell"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 )
+
+func TestChatSignalPatchClearsPreviousRunControlsAndErrors(t *testing.T) {
+	encoded, err := json.Marshal(ChatSignalPatch(ChatViewState{Agent: ChatSignal{Status: ChatStatus{Enabled: true}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patch map[string]any
+	if err := json.Unmarshal(encoded, &patch); err != nil {
+		t.Fatal(err)
+	}
+	status := patch["agent"].(map[string]any)["status"].(map[string]any)
+	for _, key := range []string{"runId", "canContinue", "error"} {
+		if value, present := status[key]; !present || value != nil {
+			t.Fatalf("status[%q] = %#v (present %v), want explicit null", key, value, present)
+		}
+	}
+}
 
 func TestChatTranscriptItemsPreserveAgentOwnedWireState(t *testing.T) {
 	items := ChatTranscriptItems([]agent.ChatTranscriptItem{{

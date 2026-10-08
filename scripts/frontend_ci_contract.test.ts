@@ -73,8 +73,17 @@ test('local frontend validation runs every bounded shard without suppressing fai
     task: 'ci:lane:frontend:shard', vars: { SHARD: shard },
   })))
   expect(tasks['ci:lane:frontend:shard'].cmds).toEqual([
-    'node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}',
+    '{{if eq .SHARD "reports"}}\ntask ci:lane:frontend:reports\n{{else}}\nnode scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}\n{{end}}\n',
   ])
+  expect(tasks['ci:lane:frontend:reports'].cmds).toEqual([
+    'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:viewer',
+    'node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:builder',
+  ])
+  expect(tasks['ci:test:frontend:reports'].cmds).toEqual([
+    { task: 'ci:test:frontend:reports:viewer' },
+    { task: 'ci:test:frontend:reports:builder' },
+  ])
+  expect(tasks['ci:lane:frontend:reports'].ignore_error).toBeUndefined()
   expect(tasks['ci:lane:frontend:local'].cmds).toEqual([{ task: 'ci:lane:frontend' }])
   expect(tasks['ci:lane:frontend'].ignore_error).toBeUndefined()
   expect(tasks['ci:lane:frontend:shard'].ignore_error).toBeUndefined()

@@ -683,3 +683,79 @@ test('Escape dismisses filter choices before reaching the containing panel', asy
     expect(await page.evaluate(() => (window as any).panelEscapes)).toBe(1)
   } finally { await page.close() }
 })
+
+test('filter choices stay below the trigger, follow loaded values, and fit near the viewport bottom', async () => {
+  const page = await browser.newPage({ viewport: { width: 640, height: 480 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.style.cssText = 'position:fixed;left:430px;top:210px;width:180px'
+      leaf.definition = { id: 'country', label: 'Country', valueKind: 'string', predicates: [{ kind: 'set', operators: ['in'] }], options: { kind: 'static', limit: 0, values: [] } }
+      leaf.binding = { key: 'country', readerEditable: true, selectionMode: 'multiple', default: { kind: 'unfiltered' } }
+      leaf.presentation = { style: 'dropdown', search: false, selectAll: false, showCounts: false, showSummary: false, compact: false }
+      document.body.append(leaf)
+      await leaf.updateComplete
+    })
+    const trigger = page.getByRole('button', { name: 'Country: All' })
+    const menu = page.getByRole('dialog', { name: 'Country filter options' })
+    await trigger.click()
+    let anchor = (await trigger.boundingBox())!
+    let box = (await menu.boundingBox())!
+    expect(box.y).toBeGreaterThanOrEqual(anchor.y + anchor.height)
+    await page.locator('lv-filter-leaf').evaluate(async (leaf: any) => {
+      leaf.options = { items: Array.from({ length: 30 }, (_, index) => ({ value: { kind: 'string', value: `${index}` }, label: `Country ${index}`, null: false, selected: false, available: true })) }
+      await leaf.updateComplete
+    })
+    await page.waitForTimeout(50)
+    box = (await menu.boundingBox())!
+    expect(box.y).toBeGreaterThanOrEqual(anchor.y + anchor.height)
+    expect(box.y + box.height).toBeLessThanOrEqual(472)
+    expect(box.x + box.width).toBeLessThanOrEqual(632)
+    // A resized viewport and moved trigger must reposition the already-open menu.
+    await page.locator('lv-filter-leaf').evaluate((leaf: any) => { leaf.style.top = '410px' })
+    await page.setViewportSize({ width: 640, height: 460 })
+    await page.waitForTimeout(50)
+    anchor = (await trigger.boundingBox())!
+    box = (await menu.boundingBox())!
+    expect(box.y + box.height).toBeLessThanOrEqual(anchor.y)
+    expect(box.y).toBeGreaterThanOrEqual(8)
+    await page.keyboard.press('Escape')
+    expect(await menu.isVisible()).toBe(false)
+  } finally { await page.close() }
+})
+
+test('numeric range slider commits on release, keeps its scale, and supports keyboard and reset', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = {id:'amount', label:'Amount', field:'amount', valueKind:'decimal', predicates:[{kind:'range',operators:[]}], options:{kind:'none',values:[]}, timezone:'UTC'}
+      leaf.binding = {key:'amount', readerEditable:true}
+      leaf.expression = {kind:'range',lower:{value:{kind:'decimal',value:-50},inclusive:true},upper:{value:{kind:'decimal',value:150},inclusive:true}}
+      leaf.presentation = {style:'numeric_range'}
+      leaf.showClearAction = true
+      ;(window as any).mutations = []
+      leaf.addEventListener('lv-filter-mutate', (event: any) => { (window as any).mutations.push(event.detail); leaf.expression = event.detail.expression })
+      document.body.append(leaf)
+      await leaf.updateComplete
+    })
+    const lower = page.getByRole('slider',{name:'Minimum value',exact:true})
+    await lower.waitFor()
+    await lower.evaluate((input: HTMLInputElement) => {input.value='25';input.dispatchEvent(new Event('input',{bubbles:true}))})
+    expect(await page.evaluate(()=>(window as any).mutations.length)).toBe(0)
+    await lower.dispatchEvent('change')
+    expect(await page.evaluate(()=>(window as any).mutations.at(-1).expression.lower.value.value)).toBe('25')
+    expect(await lower.getAttribute('min')).toBe('-50')
+    expect(await lower.getAttribute('max')).toBe('150')
+    await lower.focus()
+    await page.keyboard.press('ArrowRight')
+    expect(Number(await lower.inputValue())).toBeGreaterThan(25)
+    await page.getByRole('button',{name:'Clear Amount',exact:true}).click()
+    expect(await page.evaluate(()=>(window as any).mutations.at(-1).expression.kind)).toBe('unfiltered')
+    expect(await page.getByRole('spinbutton',{name:'Minimum',exact:true}).inputValue()).toBe('')
+  } finally {await page.close()}
+})

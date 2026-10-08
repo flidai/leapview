@@ -2,12 +2,19 @@
 
 Reviewed on 2026-09-30. Owner: Ganesh K. Implementation: PR #760.
 
+The deployment proposal from [PR #744](https://github.com/flidai/leapview/pull/744)
+has been removed from main pending renewed review. The baseline and overlap gate
+below describe the earlier roadmap, not permission to deploy overlapping processes
+against the locked application home. The separately merged
+[maintenance implementation](maintenance.md) remains available; architecture
+acceptance and full managed-profile qualification remain outstanding.
+
 ## Execution baseline
 
 - Original scaffold: `25d3ee01e2aa46b49ec0d2c79b49330db12ffe37`.
 - Current main incorporated: `ac1433754574d9f210c2705f3ba207aabbc097cf`.
 - Reference decision: proposed ADR-0025 in PR #744 at
-  `5938aeaa8a02c2b84084036961d7ce7edc29ddd9`; it remains open for review.
+  `5938aeaa8a02c2b84084036961d7ce7edc29ddd9` (historical numbering; later ADR-0028).
 - The user's revised Nix migration roadmap dated 2026-09-30 is the broader
   sequencing reference. [Repository roadmap](../../plan.md) contains the earlier
   version. The revised roadmap additionally calls out protected first-reviewer

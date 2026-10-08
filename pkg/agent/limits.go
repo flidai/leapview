@@ -9,6 +9,9 @@ type Limits struct {
 	ToolTimeout         time.Duration
 	MaxToolResultBytes  int
 	MaxToolDisplayBytes int
+	// MaxTruncationRetries bounds automatic recovery from incomplete model output.
+	// Zero disables recovery. Retries still consume MaxTurns.
+	MaxTruncationRetries int
 
 	ContextWindowTokens  int
 	ReserveOutputTokens  int
@@ -47,6 +50,9 @@ func defaultLimits(l Limits) Limits {
 }
 
 func validateLimits(l Limits) error {
+	if l.MaxTruncationRetries < 0 {
+		return NewError(ErrorCodeInvalidArgument, "max truncation retries must not be negative", nil)
+	}
 	if l.MaxTurns <= 0 {
 		return NewError(ErrorCodeInvalidArgument, "max turns must be positive", nil)
 	}

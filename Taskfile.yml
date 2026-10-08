@@ -552,23 +552,59 @@ tasks:
       - task: docs:check
       - go test ./cmd/leapview-site ./docs ./site ./internal/app/site/...
 
+  audit:inventory:
+    desc: Inventory tracked files, feature declarations and frontend CI registration without running product tests
+    deps: [node:deps]
+    cmds:
+      - node scripts/audit_inventory.mjs {{.CLI_ARGS}}
+
+  audit:controller-catalogs:
+    desc: Inventory explicit controller commands for both shipped builds without executing them
+    deps:
+      - node:deps
+      - db:generate
+      - config:generate
+      - api:generate
+      - ui-signals:generate
+    cmds:
+      # Bind the source before compilation as well as during construction.
+      - node scripts/controller_catalogs.mjs {{.CLI_ARGS}}
+
+  audit:go-receipt:
+    desc: Capture bounded fresh named Go executions and bind their source, inputs, command and raw logs
+    deps: [node:deps]
+    cmds:
+      # Prepare generated sources before capturing; keep logs in ignored/external storage.
+      - node scripts/go_receipts.mjs {{.CLI_ARGS}}
+
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
       - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_desktop_candidate_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
+      - bun test scripts/managed_admission_contract.test.ts
+      - bun test scripts/managed_application_contract.test.ts
+      - python3 -m unittest discover -s scripts/tests -p test_managed_admission_handoff.py
+      - python3 -m unittest discover -s scripts/tests -p test_managed_application_inputs.py
+      - python3 -m unittest discover -s deploy/managed/nixos/tests -p 'managed_application*_test.py'
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
+      - python3 -m unittest discover -s scripts/tests -p 'test_ci_sqlc_hosted_*.py'
+      - bun test scripts/sqlc_hosted_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_package_compose_bundle.py
       - python3 -m unittest discover -s scripts/tests -p test_release_image_promotion.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_ci_environment.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_attestation.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
@@ -581,6 +617,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_installer_diagnostics.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_site_image.py
@@ -609,8 +646,13 @@ tasks:
   ci:test:frontend:reports:
     desc: Run dashboard, visualization, and report browser tests
     cmds:
+      - task: ci:test:frontend:reports:viewer
+      - task: ci:test:frontend:reports:builder
+
+  ci:test:frontend:reports:viewer:
+    desc: Run dashboard viewer and table browser tests
+    cmds:
       - bun run test:visualization-ir
-      - bun run test:playground
       - bun run test:table-selection
       - bun run test:interaction-selection
       - bun run test:record-table
@@ -618,9 +660,14 @@ tasks:
       - bun run test:catalog-page
       - bun run test:dashboard-page
       - bun run test:date-picker
-      - bun run test:dashboard-builder
       - bun run test:windowed-table
       - bun run test:filter-menu
+
+  ci:test:frontend:reports:builder:
+    desc: Run visual previews and dashboard builder browser tests
+    cmds:
+      - bun run test:playground
+      - bun run test:dashboard-builder
 
   ci:test:frontend:chat:
     desc: Run chat and shared content browser tests
@@ -1686,7 +1733,7 @@ tasks:
       - nix build .#checks.x86_64-linux.host-contracts .#checks.x86_64-linux.deploy-schema .#checks.x86_64-linux.deploy-activate --no-link --no-update-lock-file --max-jobs 1 --cores 2 -L
 
   managed:hosts:boot-test:
-    desc: Boot isolated NixOS guests and verify TLS, filtering and reboot persistence
+    desc: Exercise managed-host updates and rollback plus network and GRUB reboot checks in NixOS guests
     cmds:
       - nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
 
@@ -1709,6 +1756,18 @@ tasks:
     dir: deploy/managed/kamal
     cmds:
       - bundle exec ruby config_test.rb
+      - bundle exec ruby maintenance_test.rb
+
+  managed:kamal:transport-test:
+    desc: Exercise pinned Kamal, Docker and TLS in isolated namespaces (requires sudo; transport evidence only)
+    cmds:
+      - python3 deploy/managed/nixos/tests/kamal_transport_contract_test.py
+      - bash deploy/managed/nixos/tests/run-kamal-transport.sh
+
+  managed:application:qualify:
+    desc: Qualify real admitted image enrollment, handoff and offline recovery in private namespaces (requires sudo)
+    cmds:
+      - bash deploy/managed/nixos/tests/run-managed-application.sh {{.CLI_ARGS}}
 
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures
@@ -2127,8 +2186,20 @@ tasks:
     cmds:
       # Bound a single unit of work, not the cumulative runtime of all five.
       # Hosted CI gives each shard its own runner; local CI avoids CPU contention.
-      # The reports shard includes the full viewer and builder browser suites.
-      - node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}
+      # Reports retains every viewer and builder test, with separate bounds
+      # for those units rather than one cumulative timeout for both suites.
+      - |
+        {{if eq .SHARD "reports"}}
+        task ci:lane:frontend:reports
+        {{else}}
+        node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}
+        {{end}}
+
+  ci:lane:frontend:reports:
+    desc: Run independently bounded viewer and builder validation
+    cmds:
+      - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:viewer
+      - node scripts/ci_watchdog.mjs --timeout-seconds 300 --attempts 2 -- task ci:test:frontend:reports:builder
 
   ci:lane:frontend:local:
     desc: Run the frontend lane locally with the hosted-CI hang watchdog

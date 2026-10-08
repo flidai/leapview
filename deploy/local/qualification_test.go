@@ -122,6 +122,111 @@ exit 0
 	if combined, err := lifecycle.CombinedOutput(); err == nil || !strings.Contains(string(combined), "explicit --docker-host") {
 		t.Fatalf("required lifecycle prerequisite result: %v\n%s", err, combined)
 	}
+	checkQualificationLifecyclePinEvidence(t, root, archive)
+}
+
+func checkQualificationLifecyclePinEvidence(t *testing.T, root, archive string) {
+	t.Helper()
+	// Reuse the exact packaged CLI/static probes, substituting only disposable
+	// lifecycle effects so the pin claim can be checked without a Docker daemon.
+	python := `import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("qualification", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+failure = sys.argv[4]
+identity = {"Version": "29.0.0", "Os": "linux", "Arch": "amd64"}
+module.normalize_docker_host = lambda host: host
+module.docker_metadata = lambda *args: {"cli": "docker", "endpoint": "unix://<local-socket>", "transport": "unix", "server": identity, "composeVersion": "2.30.0", "endpointPinned": False, "pinState": "not-proven"}
+module.docker_server_identity = lambda *args: identity
+which = module.shutil.which
+module.shutil.which = lambda name: "/fixture/docker" if name == "docker" else which(name)
+run = module.run_command
+def lifecycle(name, command, results, *args, **kwargs):
+    if name not in ("init", "dev-once", "dev-once-restart", "cleanup-reset-plan", "cleanup-reset"):
+        return run(name, command, results, *args, **kwargs)
+    if name == "init": pathlib.Path(command[-1]).mkdir()
+    output = "staging declared development input sample (sha256: staged sha256: synchronized sha256: session-preview http://localhost/preview"
+    if name == "cleanup-reset-plan": output = "Exact confirmation: sha256:" + "a" * 64
+    result = {"name": name, "command": module.command_display(command), "status": "failed" if name == failure else "passed", "exitCode": 1 if name == failure else 0, "output": output, "durationMs": 1}
+    results.append(result)
+    if name == failure: raise module.QualificationError(name + " fixture failure")
+    return result
+module.run_command = lifecycle
+result = module.main(["--archive", sys.argv[2], "--evidence-dir", sys.argv[3], "--required", "--run-lifecycle", "--docker-host", "unix:///var/run/docker.sock"])
+assert result == (0 if failure == "success" else 1), result
+`
+	for _, failure := range []string{"dev-once", "dev-once-restart", "success"} {
+		t.Run("lifecycle-pin-"+failure, func(t *testing.T) {
+			evidenceDir := t.TempDir()
+			command := exec.Command("python3", "-c", python, filepath.Join(root, "deploy/local/qualification/qualify.py"), archive, evidenceDir, failure)
+			command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("lifecycle pin fixture: %v\n%s", err, output)
+			}
+			var evidence map[string]any
+			body, err := os.ReadFile(filepath.Join(evidenceDir, "qualification-report.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(body, &evidence); err != nil {
+				t.Fatal(err)
+			}
+			docker := evidence["metadata"].(map[string]any)["docker"].(map[string]any)
+			wantState, wantResult := "not-proven", "failed"
+			if failure == "success" {
+				wantState, wantResult = "verified-pre-post", "partial"
+			}
+			if docker["endpointPinned"] != (failure == "success") || docker["pinState"] != wantState || evidence["result"] != wantResult {
+				t.Fatalf("premature lifecycle claim: docker=%v result=%v", docker, evidence["result"])
+			}
+			results := evidence["rawResults"].([]any)
+			last := results[len(results)-1].(map[string]any)
+			if last["name"] != "cleanup-reset" || last["status"] != "passed" {
+				t.Fatalf("lifecycle did not finish reset: %v", last)
+			}
+			validateQualificationEvidenceSchema(t, root, evidence)
+		})
+	}
+}
+
+func TestReleasedAuthoringQualificationInterruptionRetainsFailedEvidence(t *testing.T) {
+	root := repositoryRoot(t)
+	directory := t.TempDir()
+	python := `import hashlib, importlib.util, json, os, pathlib, signal, sys
+spec = importlib.util.spec_from_file_location("qualification", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+root = pathlib.Path(sys.argv[2])
+archive = root / "archive.tar.gz"
+archive.write_bytes(b"interrupt before extraction")
+archive.with_suffix(".gz.sha256").write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + "  archive.tar.gz\n")
+workdirs = []
+def interrupt_extraction(archive, directory):
+    workdirs.append(directory)
+    os.kill(os.getpid(), signal.SIGINT)
+module.extract_archive = interrupt_extraction
+result = module.main(["--archive", str(archive), "--required", "--evidence-dir", str(root / "evidence")])
+assert result == 1, result
+assert workdirs and all(not path.exists() for path in workdirs)
+report = json.loads((root / "evidence" / "qualification-report.json").read_text())
+assert report["result"] == "failed", report
+assert report["failures"] == ["qualification interrupted"]
+assert (root / "evidence" / "raw-results.json").is_file()
+`
+	command := exec.Command("python3", "-c", python, filepath.Join(root, "deploy/local/qualification/qualify.py"), directory)
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("interrupted harness did not retain failed evidence and clean up: %v\n%s", err, output)
+	}
+	var evidence map[string]any
+	body, err := os.ReadFile(filepath.Join(directory, "evidence/qualification-report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	validateQualificationEvidenceSchema(t, root, evidence)
 }
 
 func TestReleasedAuthoringQualificationRejectsArchiveChecksumDrift(t *testing.T) {

@@ -523,3 +523,42 @@ func cloneModuleJob(job jobs.Job) jobs.Job {
 	sort.Strings(job.GroupIDs)
 	return job
 }
+
+func TestAgentExecutionHasOwnBoundedLease(t *testing.T) {
+	execution, err := loadRunExecutionContract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := &Module{runExecution: execution}
+	handler := mod.JobHandlers(nil)[0]
+	timing, ok := handler.(interface{ LeaseTimeout() time.Duration })
+	if !ok || timing.LeaseTimeout() <= agentRunExecutionTimeout || timing.LeaseTimeout() > agentRunExecutionTimeout+time.Minute {
+		t.Fatal("agent lease must cover its execution deadline and finalization")
+	}
+}
+
+func TestStopSettlesRunWhoseWorkerAlreadyFailed(t *testing.T) {
+	f := newModuleJobFixture(t)
+	conversation, run := f.run(t, "orphan-failed-worker", agent.RunStatusRunning)
+	job := f.claim(t, conversation, run)
+	// An active worker must still be canceled through its own fenced context.
+	if _, err := f.mod.CancelQueuedRun(t.Context(), f.scope(), conversation.ID, run.ID); err == nil {
+		t.Fatal("active worker canceled without its fence")
+	}
+	f.jobs.mu.Lock()
+	job.Status = jobs.StatusFailed
+	f.jobs.jobs[job.ID] = job
+	f.jobs.mu.Unlock()
+	changed, err := f.mod.CancelQueuedRun(t.Context(), f.scope(), conversation.ID, run.ID)
+	if err != nil || !changed {
+		t.Fatalf("stop: changed=%t err=%v", changed, err)
+	}
+	settled, err := f.repo.GetRun(t.Context(), f.owner.ID, conversation.ID, run.ID)
+	if err != nil || settled.Status != agent.RunStatusCanceled {
+		t.Fatalf("run=%+v err=%v", settled, err)
+	}
+	history, err := f.jobs.Get(t.Context(), job.ID)
+	if err != nil || history.Status != jobs.StatusFailed {
+		t.Fatal("worker failure history was rewritten")
+	}
+}

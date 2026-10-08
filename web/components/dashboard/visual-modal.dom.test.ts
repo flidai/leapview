@@ -76,6 +76,7 @@ async function dispatchVisualAction(page: Awaited<ReturnType<typeof setupPage>>,
 test('focus action moves the live visual into the modal and restores it in place', async () => {
   const page = await setupPage()
   try {
+    await page.addStyleTag({ content: ':root { --lv-bg-page: #010409; --lv-modal-backdrop: rgba(0, 0, 0, 0.35); }' })
     await page.locator('#trigger').focus()
     await dispatchVisualAction(page, 'first', 'focus')
     const close = page.getByRole('button', { name: 'Close visual modal' })
@@ -103,6 +104,9 @@ test('focus action moves the live visual into the modal and restores it in place
       activeInModal: true,
       nativeModal: true,
     })
+
+    expect(await page.getByRole('dialog').evaluate((dialog) => getComputedStyle(dialog, '::backdrop').backgroundColor))
+      .toBe('rgba(0, 0, 0, 0.35)')
 
     // Chromium may move forward focus to browser chrome when the native dialog
     // has only one control; reverse traversal must return to that real control.
@@ -582,4 +586,21 @@ test('a previous action timer cannot clear a newer repeated notice', async () =>
   } finally {
     await page.close()
   }
+})
+
+test('table focus fits its content and restores chart-sized focus after closing', async () => {
+  const page = await setupPage()
+  try {
+    await page.addStyleTag({content: ':root{--base-size-28:28px} #second{display:block;height:300px} #second[slot="focus-visual"]{height:300px}'})
+    await dispatchVisualAction(page, 'second', 'focus')
+    const modal = page.locator('lv-visual-modal')
+    const dialog = modal.getByRole('dialog')
+    const size = await dialog.boundingBox()
+    expect(size!.height).toBeLessThan(400)
+    expect(size!.height).toBeGreaterThanOrEqual(300)
+    await modal.getByRole('button', {name:'Close visual modal'}).click()
+    await dispatchVisualAction(page, 'first', 'focus')
+    expect(await modal.getAttribute('tabular-focus')).toBeNull()
+    expect((await dialog.boundingBox())!.height).toBeGreaterThan(400)
+  } finally {await page.close()}
 })

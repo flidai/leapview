@@ -1,0 +1,153 @@
+{
+  "generated_at": "2026-10-07T03:47:53.047075345Z",
+  "run_count": 570,
+  "successes": 282,
+  "failures": 61,
+  "cancellations": 156,
+  "skipped": 71,
+  "unknown_conclusions": 0,
+  "incomplete": 207,
+  "missing_durations": 131,
+  "full_pr": {
+    "count": 229,
+    "p50_seconds": 1262,
+    "p95_seconds": 1765
+  },
+  "merge": {
+    "count": 107,
+    "p50_seconds": 1306,
+    "p95_seconds": 1599
+  },
+  "selective": {
+    "count": 24,
+    "p50_seconds": 1398,
+    "p95_seconds": 1584
+  },
+  "nightly": {
+    "count": 13,
+    "p50_seconds": 1328
+  },
+  "queue": {
+    "count": 422,
+    "p50_seconds": 4,
+    "p95_seconds": 190
+  },
+  "reruns": 17,
+  "rerun_percent": 3.1481481481481484,
+  "audit_samples": 14,
+  "audit_potential_misses": 0,
+  "alerts": [
+    "full CI p95 is 26m39s (limit 12m0s)",
+    "full PR p95 is 29m25s (limit 12m0s)",
+    "unknown CI p95 is 30m44s (limit 12m0s)",
+    "selective PR p95 is 26m24s (limit 6m0s)",
+    "queue p95 is 3m10s (limit 2m0s)",
+    "rerun rate is 3.1% (limit 3.0%)",
+    "207 runs have incomplete reporting evidence; health is not established"
+  ],
+  "raw_report_sha256": "9cecdf19bbbb8ed66042d30d33f9a3490669158a349cab4d415b5cea463f816a",
+  "post_merge_observational": {
+    "cutoff": "2026-10-04T06:39:47Z",
+    "runs": 242,
+    "conclusions": {
+      "skipped": 18,
+      "success": 142,
+      "cancelled": 66,
+      "failure": 16
+    },
+    "missing_durations": 40,
+    "incomplete": 68,
+    "attempts_above_one": 8,
+    "deferred": 8,
+    "distinct_workflow_shas": 190,
+    "audit_samples": 2,
+    "audit_potential_misses": 0,
+    "canonical_durations": {
+      "full_pr": {
+        "count": 109,
+        "p50_seconds": 1368,
+        "p95_seconds": 1691
+      },
+      "merge": {
+        "count": 48,
+        "p50_seconds": 1309,
+        "p95_seconds": 1599
+      },
+      "selective": {
+        "count": 17,
+        "p50_seconds": 1407,
+        "p95_seconds": null
+      },
+      "nightly": {
+        "count": 3,
+        "p50_seconds": 1340,
+        "p95_seconds": null
+      }
+    },
+    "successful_durations": {
+      "full_pr": {
+        "count": 61,
+        "p50_seconds": 1491,
+        "p95_seconds": 1724
+      },
+      "merge": {
+        "count": 47,
+        "p50_seconds": 1319,
+        "p95_seconds": 1599
+      },
+      "selective": {
+        "count": 16,
+        "p50_seconds": 1407,
+        "p95_seconds": null
+      },
+      "nightly": {
+        "count": 2,
+        "p50_seconds": 1136,
+        "p95_seconds": null
+      }
+    }
+  },
+  "limitations": [
+    "Trailing seven-day measurements include pre-rollout history.",
+    "Post-merge rows span materially different sources/workflows/workloads; temporal filtering alone does not establish comparability or attributed performance gains.",
+    "Post-merge rerun-ID count is descriptive and excludes new run IDs/requeues.",
+    "No percentile is emitted below twenty duration observations."
+  ],
+  "collection": {
+    "collection_started_at": "2026-10-07T03:44:30.489028+00:00",
+    "collection_finished_at": "2026-10-07T03:47:53.484547+00:00",
+    "reporter_base_revision": "7437799c92bfe962c9d083530ce05f180d23d92b",
+    "exit_code": 0,
+    "repository": "flidai/leapview",
+    "reporter_go": "go1.27.1",
+    "platform": "linux/amd64",
+    "reporter_binary_sha256": "4da86d048629540684573072cd3cc5469255d40b552db5098f1b54b8da180716"
+  },
+  "triggering_failure": {
+    "run_id": 37328441724,
+    "url": "https://github.com/flidai/leapview/actions/runs/37328441724",
+    "source_revision": "c2d09aafcb19c92a704e93038ab104fe1fbdef2f",
+    "upstream_run_id": 37282298281,
+    "status": 502,
+    "uploaded_artifacts": 0
+  },
+  "latest_main_critical_path": {
+    "run_id": 37458672929,
+    "url": "https://github.com/flidai/leapview/actions/runs/37458672929/job/112252451078",
+    "candidate_revision": "7437799c92bfe962c9d083530ce05f180d23d92b",
+    "workflow_seconds": 1268,
+    "transition_job_seconds": 1255,
+    "initial_queue_seconds": 5,
+    "setup_seconds": 118,
+    "local_image_seconds": 614,
+    "fixture_seconds": 461,
+    "sourcegen_vertex_seconds": 231.7,
+    "mapasset_vertex_seconds": 96.1,
+    "app_build_vertex_seconds": 129.1,
+    "predecessor_fixture_phase_seconds": 216.188,
+    "candidate_transition_phase_seconds": 37.796,
+    "initial_browser_auth_and_candidate_handoff_phase_seconds": 24.067,
+    "replacement_publish_browser_proofs_phase_seconds": 68.925,
+    "interpretation": "One diagnostic observation; spans overlap or are nested and must not be summed as independent savings."
+  }
+}

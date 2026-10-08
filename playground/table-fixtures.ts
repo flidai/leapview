@@ -126,7 +126,7 @@ export function recordFixture(empty = false, tight = false): RecordTableSignal {
       status: { label: statuses[index % statuses.length], tone: ['success', 'accent', 'danger', 'muted'][index % statuses.length] },
       rows: { label: (1250 + index * 450).toLocaleString('en-US'), value: 1250 + index * 450 },
       query: { label: `SELECT * FROM ${name.toLowerCase().replaceAll(' ', '_')}`, expandedContent: `SELECT\n  *\nFROM analytics.${name.toLowerCase().replaceAll(' ', '_')}\nLIMIT 100;`, copyLabel: 'Copy query' },
-      tags: [{ label: index % 2 ? 'Finance' : 'Commerce', tone: 'accent' }, { label: 'Managed', tone: 'muted' }],
+      tags: [index % 2 ? 'Finance' : 'Commerce', 'Managed'],
       actions: [{ label: 'Inspect', action: 'inspect', icon: 'details' }, { label: 'Refresh', action: 'refresh', icon: 'refresh', disabled: index === 1 }],
     })),
     empty: 'No asset records to show.', minWidth: '860px', density: tight ? 'tight' : 'normal', rowAction: 'inspect',

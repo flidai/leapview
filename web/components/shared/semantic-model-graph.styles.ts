@@ -268,9 +268,12 @@ export const semanticModelGraphStyles = `
   }
 
   lv-semantic-model-graph .semantic-model-edge-label {
+    box-sizing: border-box;
     min-width: 30px;
     min-height: 20px;
     padding: 0 var(--base-size-6);
+    overflow-wrap: anywhere;
+    text-align: center;
   }
 
   lv-semantic-model-graph .semantic-model-edge-label.selected {

@@ -86,15 +86,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 			t.Fatalf("frontend aggregate lane missing shard %q", shard)
 		}
 	}
-	frontendShard := taskfileTaskBlock(t, taskfile, "ci:lane:frontend:shard")
-	for _, want := range []string{
-		"enum: [core, reports, chat, data, site]",
-		`node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}`,
-	} {
-		if !strings.Contains(frontendShard, want) {
-			t.Fatalf("frontend shard lane missing bounded retry contract %q", want)
-		}
-	}
+	assertFrontendWatchdogBounds(t, taskfile)
 	localFrontendLane := taskfileTaskBlock(t, taskfile, "ci:lane:frontend:local")
 	if !strings.Contains(localFrontendLane, "- task: ci:lane:frontend") {
 		t.Fatal("local frontend lane must invoke the aggregate frontend shards")

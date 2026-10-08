@@ -106,7 +106,7 @@ func (h Handler) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 	}
 	var row access.Principal
 	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
-		current, err := tx.PrincipalByID(r.Context(), id)
+		current, err := access.PrincipalForMutation(r.Context(), tx, id)
 		if err != nil {
 			return "", err
 		}

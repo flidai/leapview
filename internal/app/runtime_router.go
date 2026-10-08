@@ -2114,6 +2114,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if pairErr != nil {
 				return false, pairErr
 			}
+			// Repeat the middleware's typed authoring ceiling for local CLI
+			// sessions after the exact claim and canonical binding checks above.
+			// REST API credentials retain their independent bootstrap path.
+			if allowed, err := routes.accessModule.AuthorizeTypedAuthoringBootstrapRequest(r.Context(), r, projectID.String(), required); err != nil || allowed {
+				return allowed, err
+			}
 			return routes.accessModule.AuthorizeTypedBootstrapRequest(r.Context(), r, required)
 		})
 	}

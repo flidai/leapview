@@ -85,3 +85,17 @@ function record(value: unknown): Record<string, unknown> | undefined {
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
+
+// Results identify newly created dashboards; fork inputs identify their source.
+export function dashboardActionIdentity(item: ChatTranscriptItemSignal): string {
+  const result = parseRecord(item.resultJson)
+  const lifecycle = record(result.lifecycle)
+  const revision = record(result.revision)
+  const returned = text(lifecycle?.id) || text(result.dashboardId) || text(revision?.dashboardId)
+  if (returned || ['create_dashboard_draft', 'fork_dashboard'].includes(item.name ?? '')) return returned
+  const envelope = parseRecord(item.inputJson)
+  const input = item.argumentsJson ? parseRecord(item.argumentsJson)
+    : typeof envelope.arguments === 'string' ? parseRecord(envelope.arguments)
+      : record(envelope.arguments) ?? envelope
+  return text(input.dashboardId)
+}

@@ -1162,7 +1162,11 @@ func (r *Repository) CancelRunWorkflow(ctx context.Context, input agent.RunFinis
 		if err != nil {
 			return err
 		}
-		if job.ResourceID != input.RunID || (job.Status != jobs.StatusQueued && job.Status != jobs.StatusCancelled) {
+		// A worker may fail before committing the domain outcome (for example
+		// after losing its lease). It has no active successor once the queue
+		// job is terminal, so an explicit Stop can settle the orphaned run.
+		// Preserve the queue's failure history instead of rewriting it.
+		if job.ResourceID != input.RunID || (job.Status != jobs.StatusQueued && job.Status != jobs.StatusCancelled && job.Status != jobs.StatusFailed) {
 			return errors.New("agent job is not cancellable")
 		}
 		if job.Status == jobs.StatusQueued {

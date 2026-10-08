@@ -221,6 +221,8 @@ model DashboardBuilderFieldSignal {
   `id`: string;
   /** Dataset that owns this projected field in the semantic catalog. */
   `datasetId`?: string;
+  /** Whether this dimension can filter the current dashboard draft. */
+  `canFilter`?: boolean;
   `label`: string;
   `kind`: "dimension" | "metric";
   `roles`: DashboardBuilderFieldRoleSignal[];
@@ -2807,4 +2809,28 @@ model ResourceTabSignal {
   `href`: string;
   `id`: string;
   `label`: string;
+}
+
+@apigen.contract(#{ kind: "ui-envelope", tags: #["dashboard", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "dashboard" })
+model SavedVisualLibraryEnvelope {
+ @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "savedVisualLibrary", `x-leapview-signal-owner`: "server" })
+ savedVisualLibrary: SavedVisualLibrarySignal;
+}
+
+/** Private account library of authored visuals, without cached result rows. */
+@apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
+model SavedVisualLibrarySignal {
+ visuals: SavedVisualSignal[];
+ savedId: string;
+ sourceKey: string;
+ modelId: string;
+ error: string;
+}
+model SavedVisualSignal {
+ id: string;
+ title: string;
+ semanticModelId: string;
+ sourceKey: string;
 }

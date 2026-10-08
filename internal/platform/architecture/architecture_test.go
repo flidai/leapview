@@ -1176,7 +1176,9 @@ func TestApplicationRetainsOnlyProcessFacingSurfaces(t *testing.T) {
 }
 
 func TestApplicationPublicSurfaceIsClosed(t *testing.T) {
-	want := map[string]bool{"Handler": true, "Start": true, "Shutdown": true, "Fatal": true}
+	// MaintenanceHandler exposes only the process-owned private Unix listener;
+	// the admission state and worker graph remain behind the lifecycle owner.
+	want := map[string]bool{"Handler": true, "MaintenanceHandler": true, "Start": true, "Shutdown": true, "Fatal": true}
 	got := map[string]bool{}
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir != "internal/app" {
@@ -1198,7 +1200,7 @@ func TestApplicationPublicSurfaceIsClosed(t *testing.T) {
 		}
 	}
 	if !boolMapsEqual(got, want) {
-		t.Fatalf("Application exported methods = %#v, want handler, start, shutdown, and fatal only", got)
+		t.Fatalf("Application exported methods = %#v, want public/private handlers, start, shutdown, and fatal only", got)
 	}
 }
 
@@ -3001,7 +3003,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"qualify-production-image:",
 		"name: Qualify production image",
 		"needs: build-production-image",
-		"if: ${{ always() && needs.build-production-image.result == 'success' }}",
+		"if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}",
 		"uses: ./.github/actions/setup-ci",
 		"task image:qualify:production IMAGE=\"${immutable_image}\"",
 	} {
@@ -3447,15 +3449,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 
 	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
 	require.NoError(t, err)
-	frontendShard := taskfileTaskBlock(t, string(taskfile), "ci:lane:frontend:shard")
-	for _, want := range []string{
-		"enum: [core, reports, chat, data, site]",
-		`node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}`,
-	} {
-		if !strings.Contains(frontendShard, want) {
-			t.Fatalf("frontend shard lane must retain its bounded retry contract: missing %q", want)
-		}
-	}
+	assertFrontendWatchdogBounds(t, string(taskfile))
 	frontendCore := taskfileTaskBlock(t, string(taskfile), "ci:test:frontend:core")
 	if !strings.Contains(frontendCore, "node --test scripts/ci_watchdog.test.mjs") {
 		t.Fatal("frontend core contract must exercise the Node watchdog independently of Bun")

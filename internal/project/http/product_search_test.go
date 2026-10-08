@@ -55,7 +55,7 @@ func TestProductSearchUsesSessionPrincipalAndCanonicalCatalog(t *testing.T) {
 		},
 	}
 	response := httptest.NewRecorder()
-	handler.ProductSearch(response, httptest.NewRequest(stdhttp.MethodGet, "/search?q=sales", nil))
+	handler.ProductSearch(response, httptest.NewRequest(stdhttp.MethodGet, "/search?q=sales&view=palette", nil))
 
 	if response.Code != stdhttp.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -109,7 +109,7 @@ func TestProductSearchPagesUntilTypedCredentialFindsAuthorizedResults(t *testing
 		},
 	}
 	response := httptest.NewRecorder()
-	handler.ProductSearch(response, httptest.NewRequest(stdhttp.MethodGet, "/search?q=dashboard", nil))
+	handler.ProductSearch(response, httptest.NewRequest(stdhttp.MethodGet, "/search?q=dashboard&view=palette", nil))
 	if response.Code != stdhttp.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}

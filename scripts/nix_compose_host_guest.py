@@ -30,6 +30,9 @@ SCHEMA_VERSION = 1
 SCOPE = "nix-compose-host-guest"
 MAX_RECEIPT_BYTES = 2 * 1024**2
 MAX_GUEST_OUTPUT_BYTES = 2 * 1024**2
+# Cold candidate images exceed 1 GiB compressed; unpacking them under the
+# supported native-ISA TCG profile takes longer than a five-minute pull.
+CANDIDATE_IMAGE_PULL_TIMEOUT = 1200
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 NONCE_RE = re.compile(r"^[0-9a-f]{32,128}$")
@@ -944,22 +947,50 @@ def _remote_path(directory: str, name: str) -> str:
     return directory + "/" + name
 
 
-def _guest_package_setup(guest: SSHGuest, guest_os: str) -> None:
+def _guest_prerequisite(guest: SSHGuest, evidence: Path, stage: str, command: str, *, timeout: int) -> None:
+    # Use only for credential-free host prerequisites, before the PostgreSQL
+    # fixture exists. Keep general SSH/installer output private by default.
+    probe = (
+        "set +e; umask 077; log=$(mktemp) || exit 1; trap 'rm -f -- \"$log\"' EXIT; "
+        "timeout --kill-after=10s " + str(timeout) + "s bash -c " + shlex.quote(command) +
+        " >\"$log\" 2>&1; result=$?; "
+        "printf '%s\\n' \"$result\"; tail -c 65536 \"$log\"; exit 0"
+    )
+    try:
+        # Let the guest stop its child and return the bounded log before the
+        # transport deadline; killing SSH first loses the failing command's output.
+        result = guest.run(probe, timeout=timeout + 30)
+    except HostGuestError as exc:
+        raise HostGuestError(f"guest prerequisite {stage}: {exc}") from exc
+    status, separator, diagnostic = result.partition(b"\n")
+    if not separator or re.fullmatch(rb"[0-9]{1,3}", status) is None or int(status) > 255:
+        raise HostGuestError(f"guest prerequisite {stage} returned an invalid exit status")
+    _record(evidence, f"prerequisite-{stage}-exit-code.txt", status + b"\n")
+    _record(evidence, f"prerequisite-{stage}.log", diagnostic)
+    if int(status) != 0:
+        raise HostGuestError(f"guest prerequisite {stage} failed ({int(status)}); see retained prerequisite-{stage}.log")
+
+
+def _guest_package_setup(guest: SSHGuest, guest_os: str, *, evidence: Path) -> None:
     compose_package, extra_packages = {
         "ubuntu2404": ("docker-compose-v2", []),
         "debian13": ("docker-compose", ["docker-cli"]),
     }[guest_os]
     packages = ["ca-certificates", "docker.io", compose_package, *extra_packages, "openssl", "unattended-upgrades"]
     package_list = " ".join(shlex.quote(package) for package in packages)
-    command = (
-        "set +e; DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && "
-        "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends " + package_list +
-        " >/dev/null 2>&1 && systemctl enable --now docker >/dev/null 2>&1 && "
-        "docker version >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; "
-        "result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+    steps = (
+        ("apt-update", "DEBIAN_FRONTEND=noninteractive apt-get update"),
+        ("apt-install", "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends " + package_list),
+        ("docker-enable", "systemctl enable --now docker || { result=$?; journalctl -u docker --no-pager -n 50; exit \"$result\"; }"),
+        ("docker-version", "docker version"),
+        ("compose-version", "docker compose version"),
     )
-    if _one_line(guest.run(command, timeout=600), "guest package setup result") != "0":
-        raise HostGuestError("Nix-controller guest Docker and Compose fixture setup failed")
+    deadline = time.monotonic() + 600
+    for stage, command in steps:
+        remaining = int(deadline - time.monotonic())
+        if remaining <= 0:
+            raise HostGuestError(f"guest prerequisite {stage}: package setup timed out")
+        _guest_prerequisite(guest, evidence, stage, command, timeout=remaining)
 
 
 POSTGRES_PASSWORD_KEYS = {
@@ -1137,6 +1168,18 @@ def _postgres_readiness_command(container_name: str) -> str:
     return "set -eu; " + "; ".join(checks)
 
 
+def _postgres_readiness_wait_command(container_name: str, docker_env: str) -> str:
+    # A separate shell keeps the probe's errexit active when its exit status is
+    # tested by `if`. Retain only one complete, successful two-role TLS probe.
+    probe = "sh -ec " + shlex.quote(_postgres_readiness_command(container_name))
+    return (
+        "set -eu; i=0; while [ \"$i\" -lt 60 ]; do i=$((i+1)); "
+        "if env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(container_name) +
+        " 2>/dev/null | grep -qx running; then if readiness=$(" + probe +
+        " 2>/dev/null); then printf '%s\\n' \"$readiness\"; exit 0; fi; fi; sleep 2; done; exit 1"
+    )
+
+
 def _compose_command(project_dir: str, docker_env: str) -> str:
     return (
         "env " + docker_env + " docker compose --project-name leapview --project-directory " + shlex.quote(project_dir) +
@@ -1165,24 +1208,95 @@ def _host_install_command(*, mode: str, docker_env: str, controller_path: str, c
                           payload_path: str, image: str) -> str:
     if mode == "bootstrap":
         return (
-            "set -eu; test -s /run/leapview/operator-bootstrap.json; test ! -e /opt/leapview; set +e; "
-            "env " + docker_env + " bash " + shlex.quote(controller_path) + " install >/dev/null 2>&1; "
-            "result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+            "set -eu; test -s /run/leapview/operator-bootstrap.json; test ! -e /opt/leapview; "
+            "env " + docker_env + " bash " + shlex.quote(controller_path) + " install"
         )
     if mode == "nix-controller":
         return (
-            "set +e; env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview " + shlex.quote(controller_path) +
+            "env " + docker_env + " LEAPVIEWCTL_ROOT=/opt/leapview " + shlex.quote(controller_path) +
             " host install --config " + shlex.quote(config_path) + " --payload " + shlex.quote(payload_path) +
             " --source-image " + shlex.quote(image) + " --operator-config /run/leapview/operator-bootstrap.json"
-            " >/dev/null 2>&1; result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
         )
     raise HostGuestError("host install mode is unsupported")
 
 
+def _run_host_installer(guest: SSHGuest, evidence: Path, command: str, *, timeout: int,
+                        fixture_secrets: list[str]) -> None:
+    # Drain both streams into a bounded tail, in a private, guest-local temporary
+    # file. Never retain raw installer output: it may include generated bootstrap
+    # credentials unknown to the collector. Only fixed vocabulary leaves memory.
+    script = (
+        "set +e; set -o pipefail; umask 077; log=$(mktemp) || exit 1; "
+        "trap 'rm -f -- \"$log\"' EXIT; timeout --kill-after=10s " + str(timeout) +
+        "s bash -c " + shlex.quote(command) + " 2>&1 | tail -c 65536 >\"$log\"; "
+        "result=$?; printf '%s\\n' \"$result\"; cat \"$log\"; exit 0"
+    )
+    output = guest.run("bash -c " + shlex.quote(script), timeout=timeout + 30)
+    status, separator, tail = output.partition(b"\n")
+    if (not separator or re.fullmatch(rb"[0-9]{1,3}", status) is None
+            or int(status) > 255 or len(tail) > 65536):
+        raise HostGuestError("guest installer returned an invalid exit status or output bound")
+    code = int(status)
+    text = tail.decode("utf-8", errors="replace").lower() if code else ""
+    boundaries = {
+        "host-config": "validate host installation configuration",
+        "payload": "validate host installation payload",
+        "operator-config": "operator bootstrap configuration",
+        "stage-generation": "stage deployment generation",
+        "install-links": "install deployment links",
+        "activate-generation": "activate deployment generation",
+        "deployment-environment": "install deployment environment",
+        "prepare-postgres-pool": "prepare production postgresql and delivery-pool bootstrap",
+        "postgres-connections": "validate first-install postgresql connections",
+        "pool-identity": "validate first-install physical-pool identity",
+        "pool-evidence": "validate first-install physical-pool evidence",
+        "pool-artifacts": "prepare first-install physical-pool artifacts",
+        "pool-dry-run": "dry-run first-install physical-pool bootstrap",
+        "initialize": "initialize leapview",
+        "pool-apply": "apply production delivery-pool bootstrap",
+        "private-marker": "write private-bootstrap installation marker",
+        "private-start": "start leapview in private first-install bootstrap",
+    }
+    causes = {
+        "permission-denied": "permission denied", "connection-refused": "connection refused",
+        "postgres-authentication": "password authentication failed", "dns": "no such host",
+        "tls-certificate": "certificate", "missing-file": "no such file or directory",
+        "invalid-json": "not strict json", "invalid-schema": "required schema",
+        "runtime-role": "invalid role identity", "tls-mode": "must set sslmode=verify-full",
+        "credential-alias": "credential aliases", "database-identity": "unexpected database",
+        "pool-output": "physical-pool bootstrap returned", "pool-compatibility": "compatibility differ",
+        "missing-bootstrap-input": "bootstrap input is missing",
+        "missing-prerequisites": "host prerequisites are missing",
+        "controller-not-executable": "leapview deployment controller is not executable on the payload filesystem",
+        "docker-unavailable": "cannot connect to the docker daemon", "image-pull": "pull access denied",
+        "csrf-key": "leapview_csrf_key", "agent-key": "leapview_agent_credential_key",
+        "disk-full": "no space left on device", "deadline": "deadline exceeded",
+    }
+    matched_causes = [key for key, phrase in causes.items() if phrase in text]
+    if code in (124, 137):
+        matched_causes.append("timeout" if code == 124 else "killed")
+    diagnostic = _canonical({
+        "schemaVersion": 1, "scope": "nix-compose-host-installer-diagnostic", "exitCode": code,
+        "outputTailBytes": len(tail), "outputTailLimit": 65536,
+        "boundaries": [key for key, phrase in boundaries.items() if phrase in text],
+        "causes": matched_causes or (["unclassified"] if code else []),
+    }) + b"\n"
+    _assert_no_secrets_in_bytes(diagnostic, fixture_secrets, "installer diagnostic")
+    _record(evidence, "host-install-exit-code.txt", status + b"\n")
+    _record(evidence, "host-install-diagnostic.json", diagnostic)
+    if code:
+        raise HostGuestError(f"selected fresh-host installer failed ({code}); see retained host-install-diagnostic.json")
+
+
 def _bootstrap_prepare_command(bootstrap_path: str, docker_env: str) -> str:
+    return "env " + docker_env + " bash " + shlex.quote(bootstrap_path) + " prepare-host"
+
+
+def _openssl_setup_command() -> str:
     return (
-        "set +e; env " + docker_env + " bash " + shlex.quote(bootstrap_path) +
-        " prepare-host >/dev/null 2>&1; result=$?; printf '%s\\n' \"$result\"; exit \"$result\""
+        "if ! command -v openssl >/dev/null 2>&1; then "
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl || exit $?; "
+        "fi; openssl version"
     )
 
 
@@ -1220,8 +1334,25 @@ def _readiness_after_reboot_command(container_name: str, expected: str) -> str:
     )
 
 
+def _transfer_postgres_init(guest: SSHGuest, evidence: Path, source: Path, destination: str) -> str:
+    # verify_bundle authenticated this package asset against the clean release
+    # source. The OCI deployment payload does not contain packaging-only fixtures.
+    data = _read(source, "verified bundle PostgreSQL init script", qualification.compose_bundle.MAX_ASSET_BYTES)
+    expected = _digest(data)
+    _record(evidence, "postgres-init-bundle-sha256.txt", (expected + "\n").encode())
+    guest.run("umask 077; cat > " + shlex.quote(destination), input_bytes=data)
+    guest.run("chmod 644 " + shlex.quote(destination))
+    measured = "sha256:" + _one_line(guest.run(
+        "sha256sum " + shlex.quote(destination),
+    ), "transferred PostgreSQL init script hash").split()[0]
+    if measured != expected:
+        raise HostGuestError("transferred PostgreSQL init script differs from the verified Compose archive")
+    return expected
+
+
 def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict, docker_env: str,
-                          host_config: dict, nonce: str, candidate_image_id: str) -> tuple[dict, dict, list[str]]:
+                          host_config: dict, nonce: str, candidate_image_id: str,
+                          postgres_init: Path) -> tuple[dict, dict, list[str]]:
     postgres_image = _locked_postgres_image(Path(args.source_root))
     credentials = _postgres_fixture_credentials()
     urls = _postgres_connection_urls(credentials)
@@ -1236,8 +1367,8 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
 
     guest.run("install -d -m 700 -- " + " ".join(shlex.quote(path) for path in (project_dir, fixture_dir, tls_dir)))
     guest.run("cp -- " + shlex.quote(paths["payload"] + "/compose.yaml") + " " + shlex.quote(project_dir + "/compose.yaml"))
-    guest.run("cp -- " + shlex.quote(paths["payload"] + "/qualification/postgres-init.sh") + " " + shlex.quote(fixture_dir + "/postgres-init.sh"))
-    guest.run("chmod 600 " + shlex.quote(project_dir + "/compose.yaml") + " && chmod 644 " + shlex.quote(fixture_dir + "/postgres-init.sh"))
+    init_script_sha = _transfer_postgres_init(guest, evidence, postgres_init, fixture_dir + "/postgres-init.sh")
+    guest.run("chmod 600 " + shlex.quote(project_dir + "/compose.yaml"))
     env_template = guest.run("cat " + shlex.quote(paths["payload"] + "/leapview.env.example"))
     probe_env = _pool_probe_environment(env_template, urls, host_config)
     deployment_env = (
@@ -1320,12 +1451,7 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
     ))
     guest.run(postgres_start, timeout=120)
     guest.run("rm -f -- " + shlex.quote(fixture_dir + "/postgres.env"))
-    readiness = (
-        "set -eu; i=0; while [ \"$i\" -lt 60 ]; do i=$((i+1)); "
-        "if env " + docker_env + " docker inspect --format '{{.State.Status}}' " + shlex.quote(postgres_name) +
-        " 2>/dev/null | grep -qx running; then if " + _postgres_readiness_command(postgres_name) +
-        " >/dev/null 2>&1; then " + _postgres_readiness_command(postgres_name) + "; exit 0; fi; fi; sleep 2; done; exit 1"
-    )
+    readiness = _postgres_readiness_wait_command(postgres_name, docker_env)
     role_probe = _record(evidence, "postgres-tls-role-probes-before-install.txt", guest.run(readiness, timeout=150))
     expected_probe = "\n".join(TLS_ROLE_EXPECTATIONS.values())
     if role_probe.decode("utf-8").strip() != expected_probe:
@@ -1377,6 +1503,11 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
         "sourceRevision": args.source_revision,
         "operatorBootstrapWrittenAfterPoolProbe": True,
     }, sort_keys=True) + "\n").encode())
+    final_init_sha = "sha256:" + _one_line(guest.run(
+        "sha256sum " + shlex.quote(fixture_dir + "/postgres-init.sh"),
+    ), "qualification PostgreSQL init script hash").split()[0]
+    if final_init_sha != init_script_sha:
+        raise HostGuestError("PostgreSQL fixture init script changed after verified bundle transfer")
     fixture = {
         "image": postgres_image,
         "repoDigest": postgres_repo_digest,
@@ -1388,7 +1519,7 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
         "stateVolume": state_volume,
         "dataVolume": data_volume,
         "restartPolicy": "unless-stopped",
-        "initScriptSHA256": "sha256:" + _one_line(guest.run("sha256sum " + shlex.quote(fixture_dir + "/postgres-init.sh")), "qualification PostgreSQL init script hash").split()[0],
+        "initScriptSHA256": init_script_sha,
         "tlsRoleProbesBeforeInstall": TLS_ROLE_EXPECTATIONS,
     }
     _record(evidence, "postgres-fixture.json", (json.dumps(fixture, sort_keys=True) + "\n").encode())
@@ -1398,7 +1529,10 @@ def _prepare_pool_fixture(guest: SSHGuest, evidence: Path, *, args, paths: dict,
 def _pull_payload(guest: SSHGuest, evidence: Path, *, image_reference: str, docker_env: str,
                  payload_path: str, nonce: str) -> tuple[list, str, str]:
     image = shlex.quote(image_reference)
-    guest.run("env " + docker_env + " docker pull " + image, timeout=300)
+    _guest_prerequisite(
+        guest, evidence, "candidate-image-pull", "env " + docker_env + " docker pull " + image,
+        timeout=CANDIDATE_IMAGE_PULL_TIMEOUT,
+    )
     repo_digest_bytes = _record(evidence, "oci-repo-digests.json", guest.run(
         "env " + docker_env + " docker image inspect --format '{{json .RepoDigests}}' " + image,
     ))
@@ -1549,7 +1683,7 @@ def _install_and_collect(args) -> dict:
         driver = "nix-archive" if args.install_mode == "nix-controller" else "source-bootstrap-linux.sh"
         bootstrap_sha = None
         if args.install_mode == "nix-controller":
-            _guest_package_setup(guest, args.guest_os)
+            _guest_package_setup(guest, args.guest_os, evidence=evidence)
         else:
             bootstrap_path = source_root / "deploy/host/bootstrap-linux.sh"
             bootstrap_info = bootstrap_path.lstat()
@@ -1571,13 +1705,14 @@ def _install_and_collect(args) -> dict:
             guest.run("chmod 600 /run/leapview/bootstrap.json")
             guest.run("cat > /run/leapview/image-reference", input_bytes=(args.image + "\n").encode())
             guest.run("chmod 600 /run/leapview/image-reference")
-            prepare_result = guest.run(
-                _bootstrap_prepare_command(paths["bootstrap"], docker_env),
+            _guest_prerequisite(
+                guest, evidence, "bootstrap-prepare", _bootstrap_prepare_command(paths["bootstrap"], docker_env),
                 timeout=900,
             )
-            if _one_line(prepare_result, "source bootstrap prepare-host result") != "0":
-                raise HostGuestError("source bootstrap prepare-host phase failed")
-            guest.run("set -eu; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl >/dev/null 2>&1")
+            _guest_prerequisite(
+                guest, evidence, "openssl-install",
+                _openssl_setup_command(), timeout=600,
+            )
         guest.run("mkdir -m 700 -- " + shlex.quote(paths["payload"]))
         repo_digests, pulled_image_id, payload_sha = _pull_payload(
             guest, evidence, image_reference=args.image, docker_env=docker_env,
@@ -1586,6 +1721,7 @@ def _install_and_collect(args) -> dict:
         postgres_fixture, pool_info, fixture_secrets = _prepare_pool_fixture(
             guest, evidence, args=args, paths=paths, docker_env=docker_env,
             host_config=host_config, nonce=nonce, candidate_image_id=pulled_image_id,
+            postgres_init=nix_controller.parent / "qualification/postgres-init.sh",
         )
 
         install = _host_install_command(
@@ -1593,9 +1729,9 @@ def _install_and_collect(args) -> dict:
             controller_path=paths["bootstrap"] if args.install_mode == "bootstrap" else paths["controller"],
             config_path=paths["config"], payload_path=paths["payload"], image=args.image,
         )
-        install_result = guest.run(install, timeout=1800 if args.install_mode == "bootstrap" else 900)
-        if _one_line(install_result, "selected installer result") != "0":
-            raise HostGuestError("selected fresh-host installer failed")
+        _run_host_installer(guest, evidence, install,
+                            timeout=1800 if args.install_mode == "bootstrap" else 900,
+                            fixture_secrets=fixture_secrets)
         _record(evidence, "installer-driver.txt", (driver + "\n").encode())
         boundary_result = guest.run(
             "set -eu; file=/opt/leapview/current/leapview.env; test -s \"$file\"; "
@@ -1615,7 +1751,6 @@ def _install_and_collect(args) -> dict:
         if _one_line(operator_cleanup, "operator bootstrap cleanup") != "absent":
             raise HostGuestError("guest-owned private operator bootstrap input was not removed after install")
 
-        _record(evidence, "host-install-exit-code.txt", b"0\n")
         target_id = host_config.get("targetId", "")
         marker, marker_data = _capture_host_install_marker(
             guest, evidence, filename="host-marker-private-after-install.json",
@@ -2589,6 +2724,7 @@ def _validate_receipt(receipt: dict, evidence: Path, *, expected_image: str | No
         "installed-controller-sha256.txt": controllers["installedSHA256"],
         "postgres-image-id.txt": postgres_fixture["imageID"],
         "postgres-image-platform.txt": postgres_fixture["platform"],
+        "postgres-init-bundle-sha256.txt": postgres_fixture["initScriptSHA256"],
         "postgres-container-before-reboot.txt": None,
         "postgres-container-after-reboot.txt": None,
         "physical-pool-qualification-sha256.txt": pool_artifacts_sha,

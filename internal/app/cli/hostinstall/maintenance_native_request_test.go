@@ -27,7 +27,7 @@ func nativeRequestFixture(t *testing.T) NativeRequest {
 	r.Plan.PredecessorRevision = r.PredecessorRevision
 	r.Plan.CandidateRevision = r.CandidateRevision
 	r.Plan.PendingMigrationDigests = map[string]string{}
-	before := SourceCompatibility{PermissionProfile: "leapview.permissions/v1", Schema: 28, Migrations: map[string]string{}, Engines: map[string]string{"river": "same", "duckdb": "same"}, RolePolicy: hex64('a')}
+	before := SourceCompatibility{PermissionProfile: "leapview.permissions/v1", Schema: 28, Migrations: map[string]string{}, Engines: map[string]string{"github.com/riverqueue/river": "v0.47.0", "github.com/duckdb/duckdb-go/v2": "v2.1.0"}, RolePolicy: hex64('a')}
 	after := SourceCompatibility{PermissionProfile: "leapview.permissions/v1", Schema: r.Plan.CandidateSchema, Migrations: map[string]string{}, Engines: before.Engines, RolePolicy: before.RolePolicy}
 	files, err := fs.ReadDir(migrations.MigrationFS(), ".")
 	if err != nil {
@@ -70,6 +70,28 @@ func TestNativeRequestBindsQualifiedDigestSourceAndReviewedSQL(t *testing.T) {
 	}
 	if id.Candidate != r.CandidateImage || id.Target != r.Profile.ID {
 		t.Fatal(id)
+	}
+}
+
+// The host must reject incomplete source evidence even when both sides report
+// the same incomplete engine set and the caller's claimed mode is consistent.
+func TestNativeRequestRejectsIncompleteEngineEvidence(t *testing.T) {
+	for name, engines := range map[string]map[string]string{
+		"missing DuckDB":            {"github.com/riverqueue/river": "v0.47.0"},
+		"missing River":             {"github.com/duckdb/duckdb-go/v2": "v2.1.0"},
+		"empty engine version":      {"github.com/duckdb/duckdb-go/v2": "", "github.com/riverqueue/river": "v0.47.0"},
+		"whitespace engine version": {"github.com/duckdb/duckdb-go/v2": " ", "github.com/riverqueue/river": "v0.47.0"},
+		"mutable engine version":    {"github.com/duckdb/duckdb-go/v2": "main", "github.com/riverqueue/river": "v0.47.0"},
+		"unknown engine name":       {"": "v1.0.0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := nativeRequestFixture(t)
+			request.Plan.SourceBefore.Engines = engines
+			request.Plan.SourceAfter.Engines = engines
+			if _, err := request.Identity(); err == nil {
+				t.Fatal("accepted incomplete immutable engine evidence")
+			}
+		})
 	}
 }
 func TestNativeRequestRejectsUnqualifiedAndUnreviewedChanges(t *testing.T) {

@@ -616,12 +616,12 @@ async function verifyFilterShowcase(): Promise<void> {
         bindingID: 'delivery_days',
         mutate: async () => {
           const control = page.getByRole('region', { name: 'Delivery days', exact: true })
-          const minimum = control.getByLabel('Minimum')
-          const maximum = control.getByLabel('Maximum')
+          const minimum = control.getByLabel('Minimum', { exact: true })
+          const maximum = control.getByLabel('Maximum', { exact: true })
           await minimum.fill('0')
           await minimum.press('Tab')
           await maximum.fill('60')
-          await maximum.press('Tab')
+          await maximum.press('Enter')
         },
         expressionKind: 'range',
       },
@@ -630,12 +630,12 @@ async function verifyFilterShowcase(): Promise<void> {
         bindingID: 'revenue_amount',
         mutate: async () => {
           const control = page.getByRole('region', { name: 'Order revenue', exact: true })
-          const minimum = control.getByLabel('Minimum')
-          const maximum = control.getByLabel('Maximum')
+          const minimum = control.getByLabel('Minimum', { exact: true })
+          const maximum = control.getByLabel('Maximum', { exact: true })
           await minimum.fill('1.25')
           await minimum.press('Tab')
           await maximum.fill('1000.50')
-          await maximum.press('Tab')
+          await maximum.press('Enter')
         },
         expressionKind: 'range',
       },

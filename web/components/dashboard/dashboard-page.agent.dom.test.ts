@@ -753,6 +753,43 @@ test('side agent keeps the composer visible and starter prompts never submit aut
   } finally { await page.close() }
 })
 
+for (const { width, embedded } of [{ width: 1440, embedded: false }, { width: 390, embedded: false }, { width: 390, embedded: true }]) {
+  test(`dashboard chat expands in place and preserves its draft, files, and page on ${width}px${embedded ? ' embedded' : ''}`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    try {
+      await page.goto(baseURL)
+      await page.getByRole('button', { name: 'Toggle dashboard agent', exact: true }).click()
+      const drawer = page.locator('lv-chat-drawer')
+      if (embedded) await drawer.evaluate((element: any) => { element.embedded = true })
+      const composer = drawer.locator('lv-chat-composer')
+      await composer.getByRole('combobox').fill('Keep this unsent dashboard question')
+      await composer.locator('input[type=file]').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment') })
+      await composer.locator('.file-chip').waitFor()
+      await page.locator('lv-dashboard-page').evaluate((host: any) => {
+        const drawer = host.shadowRoot.querySelector('lv-chat-drawer')
+        ;(window as any).auditOriginalNodes = { host, drawer, composer: drawer.shadowRoot.querySelector('lv-chat-composer'), canvas: host.shadowRoot.querySelector('lv-report-canvas') }
+      })
+      const beforeURL = page.url()
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).click()
+      expect(await drawer.evaluate((element: any) => ({ expanded: element.expanded, width: Math.round(element.getBoundingClientRect().width) }))).toEqual({ expanded: true, width })
+      expect(await drawer.locator('.title').isVisible()).toBe(true)
+      expect(await drawer.evaluate(element => ({ top: Math.round(element.getBoundingClientRect().top), height: Math.round(element.getBoundingClientRect().height) }))).toEqual({ top: 0, height: 900 })
+      await drawer.getByRole('button', { name: 'Shrink chat', exact: true }).click()
+      expect(page.url()).toBe(beforeURL)
+      expect(await composer.getByRole('combobox').inputValue()).toBe('Keep this unsent dashboard question')
+      expect(await composer.locator('.file-chip').innerText()).toContain('notes.txt')
+      expect(await page.locator('lv-dashboard-page').evaluate((host: any) => {
+        const nodes = (window as any).auditOriginalNodes
+        const drawer = host.shadowRoot.querySelector('lv-chat-drawer')
+        return host === nodes.host && drawer === nodes.drawer && drawer.shadowRoot.querySelector('lv-chat-composer') === nodes.composer && host.shadowRoot.querySelector('lv-report-canvas') === nodes.canvas
+      })).toBe(true)
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).click()
+      await page.goBack()
+      await drawer.getByRole('button', { name: 'Expand chat', exact: true }).waitFor()
+      expect(await composer.getByRole('combobox').inputValue()).toBe('Keep this unsent dashboard question')
+    } finally { await page.close() }
+  }, 15000)
+}
 test('dashboard agent opens an eligible query visual with a Save action', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   let savedVisual: Record<string, unknown> | null = null
@@ -863,6 +900,31 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
     })
     await page.waitForFunction(() => document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
     expect(savedVisual as unknown).toEqual({ title: 'Revenue by country', explorerUrl: panelState.explorerHref })
+
+    const refreshed = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer')
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const original = drawer.agent.transcript[0]
+      const input = JSON.parse(original.argumentsJson)
+      input.visual.query.metrics = ['profit']
+      const visual = drawer.visuals['chat-chart']
+      mergePatch({ agent: { transcript: [original, { ...original, id: 'replacement-tool', runId: 'replacement-run', argumentsJson: JSON.stringify(input) }] },
+        agentVisuals: { 'chat-chart': { ...visual, specRevision: `sha256:${'9'.repeat(64)}` } },
+      })
+      await drawer.updateComplete
+      const panel = drawer.shadowRoot.querySelector('lv-chat-visual-panel')
+      await panel.updateComplete
+      return { explorerHref: panel.explorerHref, auditHref: panel.auditHref, saved: panel.saved,
+        saveDisabled: panel.shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]').disabled }
+    })
+    expect(refreshed.explorerHref).not.toBe(panelState.explorerHref)
+    expect(JSON.parse(new URL(refreshed.explorerHref, baseURL).searchParams.get('state')!).metrics).toEqual([{ field: 'profit' }])
+    expect(refreshed.auditHref).toBe('/chats/chat-one/visuals/chat-chart/explore?run=replacement-run')
+    expect(refreshed.saved).toBe(false)
+    expect(refreshed.saveDisabled).toBe(false)
+    await page.locator('lv-chat-drawer lv-chat-visual-panel').getByRole('button', { name: 'Save visual to Data Explorer', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
+    expect(savedVisual as unknown).toEqual({ title: 'Revenue by country', explorerUrl: refreshed.explorerHref })
 
     const drawerRemainsOpen = await page.locator('lv-dashboard-page').evaluate((element: any) => {
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any

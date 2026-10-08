@@ -57,9 +57,10 @@ Keep activation/runtime feature work out of D02. The
 implementation split and retained denial dependencies. Extraction and passing
 tests do not accept this proposed decision.
 
-The current [ADR-0028 deployment proposal](https://github.com/flidai/leapview/blob/b305bcc616892538a27bd3d255fe0b4e9fa66dff/adr/0028-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md#decision-reconciliation-and-acceptance-boundary)
-retains candidate-first Kamal overlap. The single-process assumptions below limit
-the foundation's component evidence; they do not qualify that managed profile.
+The [deployment proposal in PR #744](https://github.com/flidai/leapview/pull/744)
+has been removed from main pending renewed review. Its historical revisions do
+not establish an accepted managed lifecycle. The single-process assumptions below
+limit the foundation's component evidence; they do not qualify a managed profile.
 D01/D02 must reconcile the process contract before accepting affected lifecycle
 implementation, and D11/D12 must agree ownership, admission/draining, publication
 and restart interfaces before implementing their combined path. Readiness alone

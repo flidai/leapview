@@ -1,131 +1,19 @@
-import { afterAll, beforeAll, expect, setDefaultTimeout, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { mkdir, readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, type Browser, type Page } from '@playwright/test'
-import { typographyTestTokens } from '../test-typography-tokens'
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
+import { expect, test } from 'bun:test'
+import type { Page } from '@playwright/test'
+import { chatPageBrowserFixture, testDocument } from './chat-page-browser.test-fixture'
 
-let server: Server
-let baseURL = ''
-let browser: Browser
-let draftTurnRequests = 0
-let draftTurnAnswerSent = false
-let draftTurnAnswerFinished = false
-let releaseDraftTurnAnswer: (() => void) | null = null
-let savedVisualRequest: { body: string; csrf: string | undefined } | null = null
-
-setDefaultTimeout(15_000)
-
-const projectRoot = process.cwd()
-const root = join(projectRoot, '.tmp/chat-page-test')
-
-beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (request.method === 'POST' && url.pathname === '/explore/saved') {
-      const chunks: Buffer[] = []
-      for await (const chunk of request) chunks.push(Buffer.from(chunk))
-      savedVisualRequest = { body: Buffer.concat(chunks).toString(), csrf: request.headers['x-csrf-token'] as string | undefined }
-      response.writeHead(201, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ item: { id: 'saved-1', title: 'Revenue by country', href: '/explore?saved=saved-1' } }))
-      return
-    }
-    if (request.method === 'POST' && url.pathname === '/chats/turns') {
-      draftTurnRequests += 1
-      response.writeHead(200, {
-        'cache-control': 'no-cache',
-        'content-type': 'text/event-stream',
-        connection: 'close',
-      })
-      response.write('event: datastar-patch-signals\ndata: signals {"agent":{"activeConversationId":"c3"}}\n\n')
-      await new Promise<void>((resolve) => {
-        releaseDraftTurnAnswer = resolve
-      })
-      draftTurnAnswerSent = true
-      if (response.destroyed) {
-        draftTurnAnswerFinished = true
-        return
-      }
-      response.write('event: datastar-patch-signals\ndata: signals {"agent":{"transcript":[{"id":"fake-answer","kind":"assistant","markdown":"Fake answer","conversationId":"c3"}]}}\n\n')
-      response.end()
-      draftTurnAnswerFinished = true
-      releaseDraftTurnAnswer = null
-      return
-    }
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    if (url.pathname === '/list') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument('list'))
-      return
-    }
-    if (url.pathname === '/new') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument('new', 'new'))
-      return
-    }
-    if (url.pathname === '/unavailable-new') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument('new', 'new', false))
-      return
-    }
-    if (url.pathname === '/unavailable-list') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument('list', 'new', false))
-      return
-    }
-    if (url.pathname === '/unhydrated') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument('conversation', 'active', true, false))
-      return
-    }
-    if (url.pathname.startsWith('/chats/')) {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
-    const file = normalize(join(fileRoot, url.pathname))
-    if (!file.startsWith(fileRoot)) {
-      response.writeHead(404)
-      response.end('not found')
-      return
-    }
-    try {
-      response.setHeader('content-type', 'text/javascript')
-      response.end(await readFile(file))
-    } catch {
-      response.writeHead(404)
-      response.end('not found')
-    }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
-})
-
-afterAll(async () => {
-  await browser?.close()
-  server.closeAllConnections()
-  await new Promise<void>((resolve, reject) => server.close((error: NodeJS.ErrnoException | undefined) => {
-    if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
-    else resolve()
-  }))
-}, 15_000)
+const fixture = chatPageBrowserFixture()
 
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 820 },
   { name: 'mobile', width: 390, height: 820 },
 ]) {
   test(`chat page composes route UI on ${viewport.name}`, async () => {
-    const page = await browser.newPage({ viewport })
+    const page = await fixture.browser.newPage({ viewport })
     try {
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => (
         customElements.get('lv-chat-page')
           && customElements.get('lv-chat-thread')
@@ -171,11 +59,12 @@ for (const viewport of [
 }
 
 test('chat visual card opens a side panel with the chart and Save action', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    savedVisualRequest = null
-    await page.goto(baseURL)
+    fixture.savedVisualRequest = null
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-thread'))
+    await page.locator('lv-chat-page lv-chat-thread').waitFor()
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       const field = (id: string, role: string) => ({ id, role, dataType: role === 'metric' ? 'decimal' : 'string', nullable: false, label: id })
@@ -225,6 +114,26 @@ test('chat visual card opens a side panel with the chart and Save action', async
     expect(state.explorerHref).toContain('/explore?')
     expect(state.auditHref).toContain('/visuals/chart-1/explore')
     expect(state.visualExplorerHref).toBe(state.explorerHref)
+    const latest = await page.locator('lv-chat-page').evaluate(async (chat: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const original = chat.agent.transcript[0]
+      const input = JSON.parse(original.argumentsJson)
+      input.visual.query.metrics = ['profit']
+      const payload = chat.visuals['chart-1']
+      mergePatch({ agent: { transcript: [original, { ...original, id: 'new-tool', runId: 'new-run', argumentsJson: JSON.stringify(input) }] },
+        visuals: { 'chart-1': { ...payload, specRevision: `sha256:${'3'.repeat(64)}`, spec: { ...payload.spec, title: 'Profit by country' } } },
+      })
+      await chat.updateComplete
+      const panel = chat.shadowRoot.querySelector('lv-chat-visual-panel')
+      await panel.updateComplete
+      return { explorerHref: panel.explorerHref, auditHref: panel.auditHref, title: panel.title, payloadTitle: panel.payload.spec.title }
+    })
+    expect(latest.payloadTitle).toBe('Profit by country')
+    expect(latest.title).toBe('Profit by country')
+    expect(latest.explorerHref).not.toBe(state.explorerHref)
+    expect(JSON.parse(new URL(latest.explorerHref, fixture.baseURL).searchParams.get('state')!).metrics).toEqual([{ field: 'profit' }])
+    expect(latest.auditHref).toBe('/chats/c1/visuals/chart-1/explore?run=new-run')
+    state.explorerHref = latest.explorerHref
     const screenshotDir = process.env.LEAPVIEW_CHAT_SCREENSHOT_DIR
     if (screenshotDir) {
       await page.waitForFunction(() => Boolean(document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.querySelector('lv-visual-artifact')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('.renderer canvas')))
@@ -233,8 +142,8 @@ test('chat visual card opens a side panel with the chart and Save action', async
     }
     await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('lv-chat-visual-panel').shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]').click())
     await page.waitForFunction(() => document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
-    expect(JSON.parse(savedVisualRequest!.body)).toMatchObject({ title: 'Revenue by country', explorerUrl: state.explorerHref })
-    expect(savedVisualRequest!.csrf).toBe('test-csrf')
+    expect(JSON.parse(fixture.savedVisualRequest!.body)).toMatchObject({ title: 'Profit by country', explorerUrl: state.explorerHref })
+    expect(fixture.savedVisualRequest!.csrf).toBe('test-csrf')
     await page.setViewportSize({ width: 390, height: 820 })
     await page.waitForFunction(() => Boolean(document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('.main')?.hasAttribute('inert')))
     const mobilePanel = await page.locator('lv-chat-page').evaluate((element: any) => {
@@ -246,15 +155,32 @@ test('chat visual card opens a side panel with the chart and Save action', async
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'chat-visual-panel-mobile-after.png'), fullPage: true })
     await page.locator('lv-chat-page').evaluate((element: any) => element.shadowRoot.querySelector('lv-chat-visual-panel').shadowRoot.querySelector('[aria-label="Close visual details"]').click())
     expect(await page.locator('lv-chat-page').evaluate((element: any) => Boolean(element.shadowRoot.querySelector('lv-chat-visual-panel')))).toBe(false)
+    await page.setViewportSize({ width: 1280, height: 820 })
+    await page.getByRole('button', { name: 'Visuals (1)', exact: true }).click()
+    const preview = page.locator('.preview-panel lv-visual-artifact')
+    await preview.locator('lv-visualization-host').waitFor()
+    expect(await preview.evaluate((artifact: any) => artifact.shadowRoot.querySelector('lv-visualization-host').exploreHref)).toBe(state.explorerHref)
+    expect(await preview.locator('[slot="agent-action"]').count()).toBe(0)
+    await page.evaluate(async () => {
+      const chat = document.querySelector('lv-chat-page') as any
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const item = chat.agent.transcript[0]
+      const input = JSON.parse(item.argumentsJson)
+      input.visual.query.type = 'records'
+      mergePatch({ agent: { transcript: [{ ...item, runId: 'unsupported-run', argumentsJson: JSON.stringify(input) }] } })
+    })
+    await preview.getByRole('link', { name: 'View saved visual', exact: true }).waitFor()
+    expect(await preview.getByRole('link', { name: 'View saved visual', exact: true }).getAttribute('href')).toBe('/chats/c1/visuals/chart-1/explore?run=unsupported-run')
+    expect(await preview.evaluate((artifact: any) => artifact.shadowRoot.querySelector('lv-visualization-host').exploreHref)).toBe('')
   } finally {
     await page.close()
   }
 })
 
 test('chat donut panel keeps outside value labels and places the legend below the chart', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     const state = await page.evaluate(async () => {
       await customElements.whenDefined('lv-chat-visual-panel')
       const panel = document.createElement('lv-chat-visual-panel') as any
@@ -282,9 +208,9 @@ test('chat donut panel keeps outside value labels and places the legend below th
 })
 
 test('chat visual panel preserves a hidden proportional legend', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     const legend = await page.evaluate(async () => {
       await customElements.whenDefined('lv-chat-visual-panel')
       const panel = document.createElement('lv-chat-visual-panel') as any
@@ -305,9 +231,9 @@ for (const viewport of [
   { name: 'mobile', width: 390, height: 820, expectedSurfaceWidth: 366 },
 ]) {
   test(`new chat page centers the title and composer on ${viewport.name}`, async () => {
-    const page = await browser.newPage({ viewport })
+    const page = await fixture.browser.newPage({ viewport })
     try {
-      await page.goto(`${baseURL}/new`)
+      await page.goto(`${fixture.baseURL}/new`)
       await page.waitForFunction(() => (
         customElements.get('lv-chat-page')
           && customElements.get('lv-chat-composer')
@@ -395,11 +321,12 @@ for (const viewport of [
         descriptionCount: 0,
         contextHint: 'Type @ to attach a dashboard, metric, model, page, or visual.',
         starters: [
+          { label: 'Build a dashboard', prompt: 'Build a complete dashboard from my selected data source, with key metrics, trends, comparisons, and useful filters. Arrange it clearly and open the preview.' },
           { label: 'Spot a change', prompt: 'What changed most in the last 30 days?' },
           { label: 'Explain a metric', prompt: 'Explain how revenue is calculated.' },
           { label: 'Review a dashboard', prompt: 'Summarize the Executive Sales dashboard.' },
         ],
-        starterDraft: 'What changed most in the last 30 days?',
+        starterDraft: 'Build a complete dashboard from my selected data source, with key metrics, trends, comparisons, and useful filters. Arrange it clearly and open the preview.',
         starterFocused: true,
         starterSubmits: 0,
         promptsFollowComposer: true,
@@ -429,29 +356,49 @@ for (const viewport of [
 }
 
 test('new chat navigates when the created conversation signal arrives', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(`${baseURL}/new`)
+    await page.goto(`${fixture.baseURL}/new`)
     await page.waitForFunction(() => customElements.get('lv-chat-page'))
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { activeConversationId: 'c3' } })
     })
-    await page.waitForURL(`${baseURL}/chats/c3`)
+    await page.waitForURL(`${fixture.baseURL}/chats/c3`)
     expect(new URL(page.url()).pathname).toBe('/chats/c3')
   } finally {
     await page.close()
   }
 })
 
-test('new chat submits Enter and navigates from the command signal before the answer arrives', async () => {
-  draftTurnRequests = 0
-  draftTurnAnswerSent = false
-  draftTurnAnswerFinished = false
-  releaseDraftTurnAnswer = null
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+test('Search Ask AI opens an unsent draft once and clears only its prompt fragment', async () => {
+  const page = await fixture.browser.newPage()
+  const requestsBefore = fixture.draftTurnRequests
+  const prompt = 'Why did sales fall in Europe?'
   try {
-    await page.goto(`${baseURL}/new`)
+    await page.goto(`${fixture.baseURL}/new#${new URLSearchParams({ prompt, source: 'search' })}`)
+    const composer = page.locator('lv-chat-page lv-chat-composer')
+    await page.waitForFunction(prompt => {
+      const composer = document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-composer') as any
+      return composer?.getDraft?.() === prompt && !window.location.hash.includes('prompt=')
+    }, prompt)
+    expect(await composer.locator('textarea').inputValue()).toBe(prompt)
+    expect(new URL(page.url()).hash).toBe('#source=search')
+    await composer.locator('textarea').fill('My revised question')
+    await page.locator('lv-chat-page').evaluate(async (chat: any) => { chat.requestUpdate(); await chat.updateComplete })
+    expect(await composer.locator('textarea').inputValue()).toBe('My revised question')
+    expect(fixture.draftTurnRequests).toBe(requestsBefore)
+  } finally { await page.close() }
+})
+
+test('new chat submits Enter and navigates from the command signal before the answer arrives', async () => {
+  fixture.draftTurnRequests = 0
+  fixture.draftTurnAnswerSent = false
+  fixture.draftTurnAnswerFinished = false
+  fixture.releaseDraftTurnAnswer = null
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${fixture.baseURL}/new`)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
     await page.locator('lv-chat-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -463,14 +410,14 @@ test('new chat submits Enter and navigates from the command signal before the an
     await textarea.fill('What changed most recently?')
     await textarea.press('Enter')
 
-    await page.waitForURL(`${baseURL}/chats/c3`)
-    expect(draftTurnRequests).toBe(1)
-    expect(draftTurnAnswerSent).toBe(false)
+    await page.waitForURL(`${fixture.baseURL}/chats/c3`)
+    expect(fixture.draftTurnRequests).toBe(1)
+    expect(fixture.draftTurnAnswerSent).toBe(false)
     expect(new URL(page.url()).pathname).toBe('/chats/c3')
   } finally {
-    const release = releaseDraftTurnAnswer as (() => void) | null
+    const release = fixture.releaseDraftTurnAnswer as (() => void) | null
     release?.()
-    for (let attempt = 0; attempt < 50 && !draftTurnAnswerFinished; attempt += 1) {
+    for (let attempt = 0; attempt < 50 && !fixture.draftTurnAnswerFinished; attempt += 1) {
       await new Promise<void>((resolve) => setTimeout(resolve, 10))
     }
     await page.close()
@@ -478,9 +425,9 @@ test('new chat submits Enter and navigates from the command signal before the an
 })
 
 test('active chat shows a submitted turn immediately and replaces it with durable state', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
     const lifecycle = await page.locator('lv-chat-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -517,9 +464,9 @@ test('active chat shows a submitted turn immediately and replaces it with durabl
 })
 
 test('chat list page renders searchable conversation history', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(`${baseURL}/list`)
+    await page.goto(`${fixture.baseURL}/list`)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
     await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
@@ -626,9 +573,9 @@ test('chat list page renders searchable conversation history', async () => {
 })
 
 test('chat history keeps a readable centered width on wide screens and fits narrow screens', async () => {
-  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1600, height: 900 } })
   try {
-    await page.goto(`${baseURL}/list`)
+    await page.goto(`${fixture.baseURL}/list`)
     await page.waitForFunction(() => customElements.get('lv-chat-list'))
     const bounds = () => page.locator('lv-chat-list').evaluate((element: HTMLElement) => {
       const shell = element.shadowRoot!.querySelector<HTMLElement>('.shell')!
@@ -649,9 +596,9 @@ test('chat history keeps a readable centered width on wide screens and fits narr
 })
 
 test('chat list opens archived chats from its header', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(`${baseURL}/list`)
+    await page.goto(`${fixture.baseURL}/list`)
     await page.waitForFunction(() => customElements.get('lv-chat-list'))
     await page.evaluate(() => {
       ;(window as any).archiveOpens = 0
@@ -665,9 +612,9 @@ test('chat list opens archived chats from its header', async () => {
 })
 
 test('chat list exposes bulk deletion and archive row action on hover', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(`${baseURL}/list`)
+    await page.goto(`${fixture.baseURL}/list`)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
     await page.locator('lv-chat-page').evaluate(async (element: any) => {
       const list = (element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as any
@@ -702,9 +649,9 @@ test('chat list exposes bulk deletion and archive row action on hover', async ()
 })
 
 test('chat list row menu supports keyboard dismissal and dispatches actions', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(`${baseURL}/list`)
+    await page.goto(`${fixture.baseURL}/list`)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
     const state = await page.locator('lv-chat-page').evaluate(async (element: any) => {
       const list = (element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as any
@@ -747,9 +694,9 @@ test('chat list row menu supports keyboard dismissal and dispatches actions', as
 })
 
 test('last chat row menu stays visible and keeps delete accessible', async () => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 300 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 390, height: 300 } })
   try {
-    await page.goto(`${baseURL}/list`)
+    await page.goto(`${fixture.baseURL}/list`)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
     const list = page.locator('lv-chat-page').locator('lv-chat-list')
     await list.evaluate(async (element: any) => {
@@ -779,9 +726,9 @@ test('last chat row menu stays visible and keeps delete accessible', async () =>
 })
 
 test('unconfigured agent uses intentional unavailable states', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(`${baseURL}/unavailable-new`)
+    await page.goto(`${fixture.baseURL}/unavailable-new`)
     await page.waitForFunction(() => customElements.get('lv-chat-page'))
     const newState = await page.locator('lv-chat-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -800,13 +747,13 @@ test('unconfigured agent uses intentional unavailable states', async () => {
     expect(newState).toEqual({
       title: 'Ask about your data',
       descriptionCount: 0,
-      starterCount: 3,
+      starterCount: 4,
       startersDisabled: true,
       composerDisabled: true,
       placeholder: 'Agent is not configured.',
     })
 
-    await page.goto(`${baseURL}/unavailable-list`)
+    await page.goto(`${fixture.baseURL}/unavailable-list`)
     await page.waitForFunction(() => customElements.get('lv-chat-list'))
     const listState = await page.locator('lv-chat-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -828,9 +775,9 @@ test('unconfigured agent uses intentional unavailable states', async () => {
 })
 
 test('chat switch waits for bootstrap before showing agent availability', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(`${baseURL}/unhydrated`)
+    await page.goto(`${fixture.baseURL}/unhydrated`)
     await page.waitForFunction(() => customElements.get('lv-chat-page'))
     const before = await page.locator('lv-chat-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -888,61 +835,11 @@ test('chat switch waits for bootstrap before showing agent availability', async 
   }
 })
 
-function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'active', enabled = true, hydrated = true): string {
-  const page = {
-    kind: 'chat',
-    view,
-    title: 'Chats',
-    description: 'Ask about governed BI or make authorized dashboard changes.',
-  }
-  const agent = {
-    conversations: enabled ? [
-      { id: 'c1', title: 'Revenue check', href: '/chats/c1', updatedAt: '2026-01-02T10:00:00Z' },
-      { id: 'c2', title: 'Inventory status', href: '/chats/c2', updatedAt: '2026-01-03T10:00:00Z' },
-    ] : [],
-    activeConversationId: scenario === 'new' ? '' : 'c1',
-    transcript: scenario === 'new' ? [] : [{ role: 'assistant', content: 'Ready.' }],
-    status: { enabled, running: false, ...(enabled ? {} : { error: 'Agent is not configured.' }) },
-    composer: { value: '', disabled: !enabled, placeholder: enabled ? 'Ask about dashboards, metrics, or models...' : 'Agent is not configured.' },
-  }
-  const submitCommand = scenario === 'new'
-    ? ` data-on:lv-chat-submit="$agent.composer.value = evt.detail.input; @post('/chats/turns')"`
-    : ''
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <meta name="csrf-token" content="test-csrf">
-        <style>
-          html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-hover: #eff2f5; --lv-bg-accent-muted: #ddf4ff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-accent: #0969da; --lv-accent-fg: #fff; --lv-line-default: #d0d7de; --lv-line-muted: #d8dee4; --lv-line-accent: #0969da; --lv-line-accent-muted: #54aeff; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-border-width-focus: 2px; --lv-radius-default: 6px; --lv-radius-tight: 4px; --lv-radius-large: 12px; --base-size-4: 4px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-36: 36px; --lv-space-2xs: 2px; --lv-space-xs: 4px; --lv-space-sm: 8px; --lv-space-md: 12px; --lv-space-lg: 16px; --lv-space-control: 10px; --control-medium-size: 32px; --control-large-size: 40px; --control-medium-paddingInline-spacious: 16px; --lv-control-medium: 32px; --button-primary-bgColor-rest: #0969da; --button-primary-bgColor-hover: #0757b3; --button-primary-fgColor-rest: #fff; --lv-chat-stack-width: 760px; --lv-chat-thread-padding: 16px; --lv-chat-thread-padding-compact: 12px; --lv-transition-fast: 160ms ease; --lv-transition-medium: 260ms ease; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); --lv-shadow-floating-sm: 0 8px 24px rgb(0 0 0 / .12); --duration-fast: 160ms; --ease-lv: ease; }
-          lv-chat-page { min-height: 720px; }
-        </style>
-      </head>
-      <body>
-        <main ${hydrated ? `data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}"` : ''}>
-          <lv-chat-page${submitCommand}></lv-chat-page>
-        </main>
-        <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
-        <script type="module" src="/chat-page-under-test.js"></script>
-      </body>
-    </html>
-  `
-}
-
-function escapeHTML(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-}
-
-
 async function openDashboardTestVisual(page: Page): Promise<void> {
-  await page.goto(baseURL)
-  await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-thread'))
-  await page.evaluate(async () => {
+  await page.goto(`${fixture.baseURL}/chats/c1`)
+  await page.locator('lv-chat-page lv-chat-thread').waitFor()
+  await page.locator('lv-chat-page').evaluate(async (chat: any) => {
+    await chat.updateComplete
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
     const field = (id: string, role: string) => ({ id, role, dataType: role === 'metric' ? 'decimal' : 'string', nullable: false, label: id })
     mergePatch({ agent: { transcript: [{ id: 'tool-dashboard', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'chart-dashboard', type: 'bar', summary: 'Net sales by country' } }] }, visuals: { 'chart-dashboard': {
@@ -951,7 +848,6 @@ schemaVersion: 14, visualID: 'chart-dashboard', rendererID: 'echarts', specRevis
           dataState: { kind: 'inline', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${'2'.repeat(64)}`, dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['France', 42]], completeness: 'complete' }] },
           selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
     } } })
-    const chat = document.querySelector('lv-chat-page') as any
     await chat.updateComplete
     chat.shadowRoot.querySelector('lv-chat-thread').dispatchEvent(new CustomEvent('lv-chat-visual-open', {
       detail: { artifactId: 'chart-dashboard', title: 'Net sales by country', explorerHref: '/explore?model=sales' }, bubbles: true, composed: true,
@@ -962,7 +858,7 @@ schemaVersion: 14, visualID: 'chart-dashboard', rendererID: 'echarts', specRevis
 
 for (const createNew of [false, true]) {
   test(`chat adds a visual to ${createNew ? 'a new' : 'an existing'} dashboard and offers another visual`, async () => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
     const requests: { body: any; csrf: string | undefined; key: string | undefined }[] = []
     try {
       await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', async route => {
@@ -971,7 +867,7 @@ for (const createNew of [false, true]) {
         } else {
           const headers = route.request().headers()
           requests.push({ body: route.request().postDataJSON(), csrf: headers['x-csrf-token'], key: headers['idempotency-key'] })
-          await route.fulfill({ json: { dashboardId: createNew ? 'dashboard:new' : 'dashboard:finance', title: createNew ? 'CFO review' : 'Finance', pageId: createNew ? 'overview' : 'details', href: '/dashboards/dashboard:finance/edit' } })
+          await route.fulfill({ json: { dashboardId: createNew ? 'dashboard:new' : 'dashboard:finance', title: createNew ? 'CFO review' : 'Finance', componentId: 'imported-chart-component', pageId: createNew ? 'overview' : 'details', href: `/dashboards/dashboard:finance/edit?page=${createNew ? 'overview' : 'details'}&returnChat=c1` } })
         }
       })
       await openDashboardTestVisual(page)
@@ -989,10 +885,21 @@ for (const createNew of [false, true]) {
       expect(requests[0].body).toEqual(createNew ? { title: 'CFO review' } : { dashboardId: 'dashboard:finance', pageId: 'details' })
       expect(requests[0].csrf).toBe('test-csrf')
       expect(requests[0].key).toMatch(/^[0-9a-f-]{14}7[0-9a-f-]{21}$/)
-      expect(await picker.getByRole('link', { name: 'Open dashboard' }).getAttribute('href')).toBe('/dashboards/dashboard:finance/edit')
+      expect(await picker.getByRole('link', { name: 'Open dashboard' }).getAttribute('href')).toBe(`/dashboards/dashboard:finance/edit?page=${createNew ? 'overview' : 'details'}&returnChat=c1`)
+      const membership = await page.locator('lv-chat-page').evaluate((chat: any) => ({ pageId: chat.dashboardPageId, copy: chat.dashboardCopies['chart-dashboard'], href: chat.savedBuilderHref }))
+      expect(membership.pageId).toBe(createNew ? 'overview' : 'details')
+      expect(membership.copy).toEqual({ id: 'imported-chart-component', pageId: createNew ? 'overview' : 'details' })
+      expect(membership.href).toContain(`page=${createNew ? 'overview' : 'details'}`)
+      if (!createNew) {
+        await picker.getByRole('button', { name: 'Done', exact: true }).click()
+        await page.getByRole('button', { name: 'Remove from dashboard', exact: true }).waitFor()
+        expect(await page.getByRole('button', { name: 'Add to dashboard', exact: true }).count()).toBe(0)
+        expect(await page.locator('lv-chat-visual-panel').count()).toBe(0)
+        return
+      }
       await page.locator('lv-chat-composer').evaluate((element: any) => element.setDraft('Show margin by product', false))
       await picker.getByRole('button', { name: 'Add another visual' }).click()
-      await page.locator('.dashboard-destination').waitFor()
+      await page.locator('div.dashboard-destination').waitFor()
       expect(await page.locator('lv-chat-composer').getByRole('combobox').inputValue()).toBe('Show margin by product')
       expect(await page.locator('lv-chat-composer').getByRole('combobox').evaluate(element => element.getRootNode() instanceof ShadowRoot && (element.getRootNode() as ShadowRoot).activeElement === element)).toBe(true)
       expect(await page.locator('lv-chat-visual-panel').count()).toBe(0)
@@ -1001,7 +908,7 @@ for (const createNew of [false, true]) {
 }
 
 test('dashboard save retries preserve the command identity and keep failures in the picker', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   const keys: string[] = []
   try {
     await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', async route => {
@@ -1027,7 +934,7 @@ test('dashboard save retries preserve the command identity and keep failures in 
 
 
 test('dashboard search cannot submit a destination hidden by the filter', async () => {
-  const page = await browser.newPage()
+  const page = await fixture.browser.newPage()
   try {
     await page.route('**/chats/c1/visuals/chart-dashboard/dashboards', route => route.fulfill({ json: {
       dashboards: Array.from({ length: 7 }, (_, i) => ({ id: `dashboard:${i}`, title: `Finance ${i}`, pages: [{ id: 'overview', title: 'Overview' }] })), canCreate: true,
@@ -1039,4 +946,310 @@ test('dashboard search cannot submit a destination hidden by the filter', async 
     await picker.getByRole('radio', { name: 'Finance 6', exact: true }).check()
     expect(await picker.getByRole('button', { name: 'Add visual', exact: true }).isEnabled()).toBe(true)
   } finally { await page.close() }
+})
+
+test('preview chat keeps expansion controls without dashboard actions', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      e.dashboardPreview = true
+      e.builderOpen = true
+      await e.updateComplete
+      ;(window as any).retainedBuilder = e.shadowRoot.querySelector('.builder-frame')
+    })
+    expect(await chat.getByRole('button', { name: 'Chart assist', exact: true }).count()).toBe(0)
+    expect(await chat.getByRole('button', { name: 'Visual magic', exact: true }).count()).toBe(0)
+    await page.getByRole('button', { name: 'Expand chat', exact: true }).click()
+    expect(await chat.evaluate((e: any) => e.builderOpen)).toBe(false)
+    expect(await chat.evaluate((e: any) => e.shadowRoot.querySelector('.builder-frame') === (window as any).retainedBuilder)).toBe(true)
+  } finally { await page.close() }
+})
+
+test('dashboard membership follows Preview, delete, Undo, and saved-library imports', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ agent: { transcript: [{ kind: 'tool', name: 'query_visual', status: 'complete', artifact: { id: 'chart-one', type: 'bar', summary: 'Revenue' } }] } })
+      e.dashboardPreview = true
+      e.pendingPreviewArtifacts = ['chart-one']
+      await e.updateComplete
+    })
+    const project = async (components: Array<{id: string; pageId: string; savedVisualId?: string}>) => {
+      await page.frameLocator('.builder-frame').locator('body').evaluate((_, components) => {
+        window.parent.postMessage({ type: 'lv-builder-saved', revisionId: 'rev', pageId: 'overview', href: '/dashboards/demo/edit', components, artifacts: [], visuals: {},
+          reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], href: '/dashboards/demo/edit', locations: [], context: [] },
+        }, window.parent.location.origin)
+      }, components)
+      await page.waitForTimeout(50)
+    }
+    await project([])
+    expect(await chat.evaluate((e: any) => e.pendingPreviewArtifacts)).toEqual(['chart-one'])
+    await project([{id: 'visual_1', pageId: 'overview'}])
+    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
+    await project([])
+    expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
+    await project([{id: 'visual_1', pageId: 'overview'}])
+    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
+    await project([{id: 'saved_import', pageId: 'another-page', savedVisualId: 'saved-one'}])
+    await chat.evaluate(async (e: any) => {
+      e.handleVisualLibraryState(new CustomEvent('lv-visual-library-state', {detail: {savedIds: ['chart-one'], libraryIds: {'chart-one': 'saved-one'}, savingId: '', error: ''}}))
+      await e.updateComplete
+    })
+    expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
+    expect(await chat.evaluate((e: any) => e.dashboardCopies['chart-one'])).toBeUndefined()
+    await project([{id: 'saved_import', pageId: 'another-page', savedVisualId: 'saved-one'}, {id: 'second_copy', pageId: 'overview', savedVisualId: 'saved-one'}])
+    await project([{id: 'second_copy', pageId: 'overview', savedVisualId: 'saved-one'}])
+    expect(await chat.getByRole('button', {name: 'Remove from dashboard', exact: true}).count()).toBe(1)
+    await project([])
+    expect(await chat.getByRole('button', {name: 'Add to dashboard', exact: true}).count()).toBe(1)
+    // A new tab has no history links; the authored source identity still matches.
+    await chat.evaluate((e: any) => {
+      e.dashboardCopyLinks = {}
+      e.visualLibraryState = {savedIds:['chart-one'],libraryIds:{'chart-one':'11111111-1111-1111-1111-111111111111'},savingId:'',error:''}
+    })
+    await project([{id: 'saved_11111111111111111111111111111111_22222222222222222222222222222222',pageId:'overview'}])
+    expect(await chat.getByRole('button', {name:'Remove from dashboard',exact:true}).count()).toBe(1)
+  } finally { await page.close() }
+})
+
+test('reload restores the same dashboard draft and page without creating another dashboard', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.route('**/dashboards/demo/edit**', route => route.fulfill({ contentType: 'text/html', body: '<p>Saved dashboard draft</p>' }))
+    await page.goto(`${fixture.baseURL}/chats/c1?preview=builder`)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      e.dashboardPreview = true
+      e.builderOpen = true
+      e.pendingPreviewArtifacts = ['chart-one']
+      await e.updateComplete
+    })
+    await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
+      window.parent.postMessage({
+        type: 'lv-builder-saved', revisionId: 'rev-2', pageId: 'details',
+        href: '/dashboards/demo/edit?embed=chat&draft=draft-1&page=details',
+        reference: { reference: { kind: 'dashboard', id: 'demo' }, name: 'Demo', hierarchy: [], locations: [], context: [] },
+        components: [{id: 'visual_1', pageId: 'details'}], artifacts: [], visuals: {},
+      }, window.parent.location.origin)
+    })
+    await page.waitForFunction(() => (document.querySelector('lv-chat-page') as any)?.savedBuilderHref.includes('demo'))
+    expect(new URL(page.url()).searchParams.get('dashboard')).toBe('/dashboards/demo/edit?embed=chat&draft=draft-1&page=details')
+    await page.reload()
+    await page.getByRole('button', { name: 'Expand chat', exact: true }).waitFor()
+    await page.frameLocator('.builder-frame').getByText('Saved dashboard draft').waitFor()
+    expect(await chat.evaluate((e: any) => e.dashboardCopyLinks['chart-one'])).toEqual([{id: 'visual_1', pageId: 'details'}])
+    await page.getByRole('button', {name: 'Expand chat', exact: true}).click()
+    await page.reload()
+    expect(await chat.evaluate((e: any) => e.builderOpen)).toBe(false)
+    expect(await chat.evaluate((e: any) => e.savedBuilderHref)).toContain('/dashboards/demo/edit')
+  } finally { await page.close() }
+})
+
+test('preview restoration rejects external and non-builder destinations', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    for (const href of ['https://example.com/dashboards/demo/edit', '/logout', '/dashboards/demo/delete']) {
+      await page.goto(`${fixture.baseURL}/chats/c1?preview=builder&dashboard=${encodeURIComponent(href)}`)
+      await page.locator('lv-chat-composer').waitFor()
+      expect(await page.locator('lv-chat-page').evaluate((e: any) => e.savedBuilderHref)).toBe('')
+      expect(await page.locator('.builder-frame').getAttribute('src')).toBe(null)
+    }
+  } finally { await page.close() }
+})
+
+
+test('Preview creates an empty draft instead of implicitly adding every chat visual', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    let submitted = ''
+    await page.route('**/dashboards/new', async route => { submitted = route.request().postData() ?? ''; await route.fulfill({contentType:'text/html',body:'<lv-dashboard-builder></lv-dashboard-builder>'}) })
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      const {mergePatch} = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({agent:{transcript:[{kind:'tool',status:'complete',artifact:{id:'new-chart',type:'bar'},argumentsJson:JSON.stringify({semanticModelId:'semantic-model:sales',visual:{type:'bar'}})}]}})
+      await e.updateComplete
+      await e.saveDashboard(true)
+    })
+    await page.waitForTimeout(200)
+    const form = new URLSearchParams(submitted)
+    expect(form.get('semanticModel')).toBe('semantic-model:sales')
+    expect(form.get('embed')).toBe('chat')
+    expect(form.has('chatVisuals')).toBe(false)
+  } finally {await page.close()}
+})
+
+test('preview chat follows the selected page and targets visual imports there', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {e.dashboardPreview=true;e.builderOpen=true;await e.updateComplete})
+    const project = async (id: string, title: string) => {
+      await page.frameLocator('.builder-frame').locator('body').evaluate((_, selected) => {
+        window.parent.postMessage({type:'lv-builder-saved',revisionId:'revision-1',pageId:selected.id,pageTitle:selected.title,modelId:'semantic-model:sales',href:`/dashboards/demo/edit?embed=chat&page=${selected.id}`,
+          reference:{reference:{kind:'dashboard',id:'demo'},name:`Sales · ${selected.title}`,hierarchy:[],locations:[],context:[]},components:[],artifacts:[],visuals:{}},window.parent.location.origin)
+      },{id,title})
+      await page.waitForFunction(id=>(document.querySelector('lv-chat-page') as any)?.context?.pageId===id,id)
+    }
+    await project('overview','Overview')
+    await project('pies','Pie charts')
+    expect(await chat.evaluate((e: any)=>e.context.dashboardId)).toBe('demo')
+    expect(await chat.evaluate((e: any)=>e.references.filter((r: any)=>r.reference.id==='demo').map((r: any)=>r.name))).toEqual(['Sales · Pie charts'])
+    expect(await chat.locator('.chat-pane-heading').innerText()).toContain('Pie charts')
+    await page.getByRole('button',{name:'Expand chat',exact:true}).click()
+    let posted = ''
+    await page.route('**/dashboards/demo/draft/saved-visual', async route=>{posted=route.request().postData()??'';await route.fulfill({contentType:'text/html',body:'<div id="chat-dashboard-receipt"></div>'})})
+    await chat.evaluate(async(e: any)=>e.addAgentVisual(new CustomEvent('lv-add-agent-visual',{detail:{savedId:'11111111-1111-1111-1111-111111111111',artifactId:'pie'}})))
+    await page.waitForTimeout(200)
+    expect(new URLSearchParams(posted).get('pageId')).toBe('pies')
+    expect(new URL(new URL(page.url()).searchParams.get('dashboard')!,fixture.baseURL).searchParams.get('page')).toBe('pies')
+  } finally {await page.close()}
+})
+
+test('preview header stays aligned and visual membership is scoped to the chosen page', async () => {
+  const page = await fixture.browser.newPage({viewport: {width: 1400, height: 900}})
+  try {
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async (e: any) => {
+      e.dashboardPreview = true; e.builderOpen = true
+      e.dashboardPageId = 'pies'; e.dashboardPageTitle = 'Pie charts with a long name'; e.savedBuilderHref='/dashboards/demo/edit?embed=chat&page=pies'
+      e.dashboardPages = [{id:'overview',title:'Overview'},{id:'pies',title:'Pie charts with a long name'}]
+      e.fixVisualsMessage = 'Completed 1 visual. Your layout is unchanged.'
+      e.dashboardCopyLinks = {one:[{id:'first',pageId:'overview'},{id:'second',pageId:'pies'}]}
+      e.dashboardComponents = [{id:'first',pageId:'overview'},{id:'second',pageId:'pies'}]
+      e.reconcileDashboardCopies(); await e.updateComplete
+    })
+    expect(await chat.evaluate((e: any)=>e.dashboardCopies.one)).toMatchObject({id:'second',pageId:'pies'})
+    const heading = await chat.locator('.chat-pane-heading').boundingBox()
+    const expand = await page.getByRole('button',{name:'Expand chat',exact:true}).boundingBox()
+    expect(Math.abs(heading!.y + heading!.height / 2 - expand!.y - expand!.height / 2)).toBeLessThan(2)
+    await chat.evaluate(async(e: any)=>{e.dashboardComponents=[{id:'first',pageId:'overview'}];e.reconcileDashboardCopies();await e.updateComplete})
+    expect(await chat.evaluate((e: any)=>e.dashboardCopies.one)).toBeUndefined()
+    await page.getByRole('button',{name:'Expand chat',exact:true}).click()
+    expect((await chat.locator('.dashboard-destination').boundingBox())!.height).toBeLessThan(65)
+  } finally {await page.close()}
+})
+
+test('removing a visual keeps the live builder mounted and sends its selected-page command', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    await chat.evaluate(async(e: any)=>{
+      e.dashboardPreview=true; await e.updateComplete
+      const frame=e.shadowRoot.querySelector('.builder-frame') as HTMLIFrameElement
+      frame.contentDocument!.body.innerHTML='<lv-dashboard-builder></lv-dashboard-builder>'
+      ;(window as any).builderDocument=frame.contentDocument
+      ;(window as any).builderCommands=[]
+      frame.contentWindow!.addEventListener('message',event=>(window as any).builderCommands.push(event.data))
+      e.savedBuilderHref='/dashboards/demo/edit?embed=chat&page=pies';e.dashboardPageId='pies'
+      e.dashboardCopies={one:{id:'second',pageId:'pies'}}
+      e.toggleDashboardVisual('one')
+    })
+    await page.waitForFunction(()=>(window as any).builderCommands.length>0,{},{timeout:2000})
+    expect(await page.evaluate(()=>(window as any).builderCommands[0])).toEqual({type:'lv-remove-dashboard-visual',pageId:'pies',componentId:'second'})
+    expect(await chat.evaluate((e: any)=>e.shadowRoot.querySelector('.builder-frame').contentDocument===(window as any).builderDocument)).toBe(true)
+    await chat.evaluate(async(e: any)=>{
+      e.savingDashboard=false; e.dashboardCopies={}; e.dashboardPages=[{id:'pies',title:'Pie charts'},{id:'overview',title:'Overview'}]
+      await e.addAgentVisual(new CustomEvent('lv-add-agent-visual',{detail:{savedId:'11111111-1111-1111-1111-111111111111',artifactId:'new-chart'}}))
+    })
+    await page.waitForFunction(()=>(window as any).builderCommands.length===2)
+    expect(await page.evaluate(()=>(window as any).builderCommands[1])).toMatchObject({type:'lv-add-saved-visual',pageId:'pies',id:'11111111-1111-1111-1111-111111111111'})
+    expect(await chat.evaluate((e: any)=>e.shadowRoot.querySelector('.builder-frame').contentDocument===(window as any).builderDocument)).toBe(true)
+    await chat.evaluate(async(e: any)=>{e.savingDashboard=false; e.selectDashboardPage({target:{value:'overview'}});await e.updateComplete})
+    await page.waitForFunction(()=>(window as any).builderCommands.length===3)
+    expect(await page.evaluate(()=>(window as any).builderCommands[2])).toEqual({type:'lv-select-dashboard-page',pageId:'overview'})
+  } finally {await page.close()}
+})
+
+test('side agent exposes dashboard-authored visuals in the individual side view', async () => {
+ const page=await fixture.browser.newPage()
+ try {
+  await page.goto(fixture.baseURL)
+  const chat=page.locator('lv-chat-page');await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async(e: any)=>{
+   e.dashboardPreview=true;e.builderOpen=true;await e.updateComplete
+  })
+  await page.frameLocator('.builder-frame').locator('body').evaluate(()=>{
+   window.parent.postMessage({type:'lv-builder-saved',revisionId:'rev-pie',pageId:'pies',pageTitle:'Pie charts',pages:[{id:'overview',title:'Overview'},{id:'pies',title:'Pie charts'}],href:'/dashboards/demo/edit?embed=chat&page=pies',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components:[{id:'component-pie',pageId:'pies',artifactId:'authored-pie'}],artifacts:[{id:'authored-pie',type:'pie',summary:'Agent pie chart'}],visuals:{}},window.parent.location.origin)
+  })
+  await page.getByRole('button',{name:'Open Agent pie chart in visuals sidebar',exact:true}).click()
+  expect(await chat.evaluate((e: any)=>({builderOpen:e.builderOpen,selected:e.selectedPreviewVisual,page:e.dashboardPageId}))).toEqual({builderOpen:false,selected:'authored-pie',page:'pies'})
+  expect(await page.getByRole('button',{name:'Remove from dashboard',exact:true}).isVisible()).toBe(true)
+  expect(await chat.locator('.preview-card:not([hidden])').getAttribute('data-preview-visual')).toBe('authored-pie')
+  expect(await page.getByText('Loading visual…',{exact:true}).isVisible()).toBe(true)
+  expect(await page.getByRole('combobox',{name:'Dashboard page',exact:true}).inputValue()).toBe('pies')
+  expect(await page.getByTitle('Save visual',{exact:true}).count()).toBe(0)
+  expect(await page.getByTitle('Unsave visual',{exact:true}).count()).toBe(0)
+  await page.getByRole('button',{name:'Open in Builder',exact:true}).click()
+  expect(await chat.evaluate((e: any)=>({builderOpen:e.builderOpen,page:e.dashboardPageId}))).toEqual({builderOpen:true,page:'pies'})
+ } finally {await page.close()}
+})
+
+test('submission distinguishes builder authoring from expanded main chat', async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  await page.goto(fixture.baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  const surfaces = await chat.evaluate(async (e: any) => {
+   const surfaces: string[] = []
+   e.addEventListener('lv-chat-submit', (event: CustomEvent) => surfaces.push(event.detail.surface))
+   for (const builderOpen of [true, false]) {
+    e.builderOpen = builderOpen
+    await e.updateComplete
+    e.shadowRoot.querySelector('.route').dispatchEvent(new CustomEvent('lv-chat-submit', {bubbles:true,composed:true,detail:{input:'Create a bar chart',references:[]}}))
+   }
+   return surfaces
+  })
+  expect(surfaces).toEqual(['builder', 'chat'])
+ } finally { await page.close() }
+})
+
+for (const terminalError of ['', 'The final reply exceeded the conversation limit.']) test(`a live full-dashboard run opens its successful preview automatically and only once (${terminalError || 'success'})`, async () => {
+ const page=await fixture.browser.newPage()
+ try {
+  await page.route('**/chats/*/actions/*/open?*', route=>route.fulfill({contentType:'text/html',body:'<lv-dashboard-builder>Generated dashboard</lv-dashboard-builder>'}))
+  await page.goto(fixture.baseURL)
+  const chat=page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async (e:any)=>{
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{status:{enabled:true,running:true,runId:'full-build'}}})
+   await e.updateComplete
+  })
+  await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).dashboardGenerationRun==='full-build')
+  // Terminal status may arrive before the last transcript projection.
+  await chat.evaluate(async (e:any, error:string)=>{
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{status:{enabled:true,running:false,runId:'full-build',error}}})
+   await e.updateComplete
+  }, terminalError)
+  expect(await chat.evaluate((e:any)=>e.builderOpen)).toBe(false)
+  await chat.evaluate(async (e:any)=>{
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{transcript:['create_dashboard_draft','edit_dashboard_source','preview_dashboard_draft'].map(name=>({id:name,kind:'tool',name,runId:'full-build',toolCallId:name,status:'complete'}))}})
+   await e.updateComplete
+  })
+  await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).builderOpen)
+  await page.frameLocator('.builder-frame').getByText('Generated dashboard').waitFor()
+  expect(await chat.locator('.builder-frame').getAttribute('src')).toContain('embed=chat')
+  await page.getByRole('button',{name:'Expand chat',exact:true}).click()
+  await chat.evaluate(async (e:any)=>{e.requestUpdate();await e.updateComplete})
+  expect(await chat.evaluate((e:any)=>e.builderOpen)).toBe(false)
+ }finally{await page.close()}
 })

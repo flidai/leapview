@@ -1,0 +1,248 @@
+name: Qualification / SQLC image cache sample
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+      kind:
+        type: string
+        required: true
+      pair:
+        type: number
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+jobs:
+  sample:
+    name: SQLC ${{ inputs.kind }} ${{ inputs.mode }} pair ${{ inputs.pair }}
+    if: github.repository == 'flidai/leapview' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      SCREEN_SCOPE: sqlc-image-screen-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.mode }}
+      SCREEN_MODE: ${{ inputs.mode }}
+      SCREEN_KIND: ${{ inputs.kind }}
+      SCREEN_PAIR: ${{ inputs.pair }}
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify trusted measurement authority
+        run: |
+          test "$GITHUB_REPOSITORY" = flidai/leapview
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Verify historical qualification source
+        run: |
+          predecessor=$(sed -nE 's/^[[:space:]]*(const[[:space:]]+)?qualificationHistoricalPredecessorRevision[[:space:]]*=[[:space:]]*"([a-f0-9]{40})"[[:space:]]*$/\2/p' internal/app/cli/composectl/qualification_historical_transition.go)
+          if [[ ! "$predecessor" =~ ^[a-f0-9]{40}$ ]]; then
+            echo 'Expected one pinned historical qualification predecessor revision' >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$predecessor^{commit}" ||
+             ! git archive --output=/dev/null "$predecessor" dashboards/experiments/cfo-demo; then
+            echo 'Historical qualification source is unavailable; fetch the required Git history before building' >&2
+            exit 1
+          fi
+      - name: Prepare exact source and experimental recipe
+        id: prepare
+        run: |
+          export SCREEN_DIR="$RUNNER_TEMP/sqlc-screen"
+          echo "SCREEN_DIR=$SCREEN_DIR" >> "$GITHUB_ENV"
+          python3 scripts/ci_sqlc_hosted_screen.py prepare --repo . --source "$GITHUB_SHA" --mode "$SCREEN_MODE" --kind "$SCREEN_KIND" --output "$SCREEN_DIR"
+          date +%s > "$SCREEN_DIR/sample-start.txt"
+          printf '%s\n' "$SCREEN_PAIR" > "$SCREEN_DIR/pair.txt"
+          printf '%s\n' "$SCREEN_SCOPE" > "$SCREEN_DIR/cache-scope.txt"
+          uname -a > "$SCREEN_DIR/host.txt"
+          lscpu >> "$SCREEN_DIR/host.txt"
+          docker version > "$SCREEN_DIR/docker-version.txt"
+      - name: Set up isolated pinned BuildKit
+        id: builder
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          version: v0.33.0
+          driver: docker-container
+          driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Prepare cache access probe
+        if: inputs.kind == 'producer'
+        run: |
+          mkdir -p "$SCREEN_DIR/cache-probe"
+          printf 'FROM scratch\nCOPY marker /marker\n' > "$SCREEN_DIR/cache-probe/Dockerfile"
+          printf 'sqlc-cache-access-probe\n' > "$SCREEN_DIR/cache-probe/marker"
+      - name: Verify producer cache export access
+        if: inputs.kind == 'producer'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          builder: ${{ steps.builder.outputs.name }}
+          context: ${{ env.SCREEN_DIR }}/cache-probe
+          file: ${{ env.SCREEN_DIR }}/cache-probe/Dockerfile
+          platforms: linux/amd64
+          outputs: type=cacheonly
+          cache-to: type=gha,version=2,mode=max,scope=${{ env.SCREEN_SCOPE }}-access-probe
+      - name: Start full image build clock
+        run: date +%s > "$SCREEN_DIR/build-start.txt"
+      - name: Build full runtime image with scoped hosted cache
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          builder: ${{ steps.builder.outputs.name }}
+          context: ${{ steps.prepare.outputs.context }}
+          file: ${{ steps.prepare.outputs.recipe }}
+          target: runtime
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: leapview:sqlc-screen
+          build-args: |
+            BUILD_VERSION=historical-transition
+            BUILD_REVISION=${{ github.sha }}
+            BUILD_TIME=${{ steps.prepare.outputs.build_time }}
+            BUILD_DIRTY=false
+            BUILD_RELEASE=false
+          cache-from: ${{ inputs.kind == 'consumer' && format('type=gha,version=2,scope={0}', env.SCREEN_SCOPE) || '' }}
+          cache-to: ${{ inputs.kind == 'producer' && format('type=gha,version=2,mode=max,scope={0}', env.SCREEN_SCOPE) || '' }}
+      - name: Retain exact measured build history
+        if: always() && steps.builder.outcome == 'success' && steps.build.outcome != 'skipped'
+        env:
+          BUILDER: ${{ steps.builder.outputs.name }}
+          BUILD_METADATA: ${{ steps.build.outputs.metadata }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          date +%s > "$SCREEN_DIR/build-end.txt"
+          if [ -z "$BUILD_METADATA" ]; then BUILD_METADATA='{}'; fi
+          printf '%s\n' "$BUILD_METADATA" | jq '{"buildx.build.ref": ."buildx.build.ref", "containerimage.digest": ."containerimage.digest", "containerimage.config.digest": ."containerimage.config.digest"}' > "$SCREEN_DIR/build-metadata.json"
+          # Failed builds may have no action metadata; only their diagnostics may
+          # use latest, captured before another solve. Successful proof is exact.
+          ref="$(jq -r '."buildx.build.ref" // empty' "$SCREEN_DIR/build-metadata.json" 2>/dev/null || true)"
+          if [ "$BUILD_OUTCOME" = success ]; then test -n "$ref"; fi
+          history_args=()
+          if [ -n "$ref" ]; then history_args+=("${ref##*/}"); fi
+          docker buildx --builder "$BUILDER" history logs --progress plain "${history_args[@]}" > "$SCREEN_DIR/build.log" 2>&1
+          docker buildx --builder "$BUILDER" history inspect --format json "${history_args[@]}" | jq '{Ref, StartedAt, CompletedAt, Duration, Status, Platform, Target, NumCachedSteps, NumCompletedSteps, NumTotalSteps}' > "$SCREEN_DIR/build-history.json"
+      - name: Export generated content from the measured builder
+        id: proof
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          builder: ${{ steps.builder.outputs.name }}
+          context: ${{ steps.prepare.outputs.context }}
+          file: ${{ steps.prepare.outputs.recipe }}
+          target: sqlc-screen-proof
+          platforms: linux/amd64
+          outputs: type=local,dest=${{ steps.prepare.outputs.proof_dir }}
+      - name: Retain exact cached proof history
+        env:
+          BUILDER: ${{ steps.builder.outputs.name }}
+          PROOF_METADATA: ${{ steps.proof.outputs.metadata }}
+        run: |
+          printf '%s\n' "$PROOF_METADATA" | jq '{"buildx.build.ref": ."buildx.build.ref"}' > "$SCREEN_DIR/proof-metadata.json"
+          ref="$(jq -er '."buildx.build.ref"' "$SCREEN_DIR/proof-metadata.json")"
+          docker buildx --builder "$BUILDER" history logs --progress plain "${ref##*/}" > "$SCREEN_DIR/proof.log" 2>&1
+      - name: Validate generation and cache evidence
+        run: python3 scripts/ci_sqlc_hosted_screen.py validate --output "$SCREEN_DIR"
+      - name: Verify exact image identity
+        id: identity
+        run: |
+          docker run --rm leapview:sqlc-screen version --format json > "$SCREEN_DIR/image-identity.json"
+          jq -e --arg revision "$GITHUB_SHA" '.revision == $revision and .dirty == false' "$SCREEN_DIR/image-identity.json"
+          docker image inspect leapview:sqlc-screen > "$SCREEN_DIR/image-inspect.json"
+          image="$(jq -er '.[0].Id' "$SCREEN_DIR/image-inspect.json")"
+          [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Start cache storage diagnostic
+        if: inputs.kind == 'producer'
+        run: date +%s > "$SCREEN_DIR/storage-start.txt"
+      - name: Export comparable local cache inventory after the measured build
+        if: inputs.kind == 'producer'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          builder: ${{ steps.builder.outputs.name }}
+          context: ${{ steps.prepare.outputs.context }}
+          file: ${{ steps.prepare.outputs.recipe }}
+          target: runtime
+          platforms: linux/amd64
+          outputs: type=cacheonly
+          build-args: |
+            BUILD_VERSION=historical-transition
+            BUILD_REVISION=${{ github.sha }}
+            BUILD_TIME=${{ steps.prepare.outputs.build_time }}
+            BUILD_DIRTY=false
+            BUILD_RELEASE=false
+          cache-to: type=local,mode=max,dest=${{ runner.temp }}/sqlc-storage
+      - name: Record storage proxy and remove only the diagnostic export
+        if: inputs.kind == 'producer'
+        run: |
+          date +%s > "$SCREEN_DIR/storage-end.txt"
+          python3 - <<'PY'
+          import json, os, pathlib, shutil
+          cache = pathlib.Path(os.environ['RUNNER_TEMP']) / 'sqlc-storage'
+          size = sum(p.stat().st_size for p in cache.rglob('*') if p.is_file())
+          if not size:
+              raise SystemExit('cache inventory missing')
+          (pathlib.Path(os.environ['SCREEN_DIR']) / 'storage.json').write_text(json.dumps({
+              'local_export_bytes': size, 'gha_billed_bytes': None,
+              'limit': 'local compressed inventory proxy; GHA deduplication/billing not attributed'}))
+          shutil.rmtree(cache)
+          PY
+      - name: Install locked fixture toolchain
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Prepare the existing historical fixture
+        run: |
+          nix develop --no-update-lock-file -c python3 scripts/export_nix_ci_environment.py --profile validation
+      - name: Prepare locked browser dependencies
+        run: |
+          bun install --frozen-lockfile
+          node scripts/ensure_playwright.mjs
+      - name: Authenticate read-only predecessor image pulls
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Qualify the exact full image
+        env:
+          LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED: '1'
+          LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_IMAGE: ${{ steps.identity.outputs.image }}
+          LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_REVISION: ${{ github.sha }}
+          LEAPVIEW_HISTORICAL_TRANSITION_EVIDENCE: ${{ runner.temp }}/sqlc-screen/transition.json
+          LEAPVIEW_HISTORICAL_TRANSITION_FINAL_ARTIFACT: '0'
+        run: |
+          date +%s > "$SCREEN_DIR/qualification-start.txt"
+          task test:qualification:historical-transition
+          date +%s > "$SCREEN_DIR/qualification-end.txt"
+      - name: Record sample outcome
+        if: always()
+        env:
+          SAMPLE_STATUS: ${{ job.status }}
+        run: |
+          SCREEN_DIR="${SCREEN_DIR:-$RUNNER_TEMP/sqlc-screen}"
+          test -d "$SCREEN_DIR" || mkdir -p "$SCREEN_DIR"
+          date +%s > "$SCREEN_DIR/sample-end.txt"
+          printf '%s\n' "$SAMPLE_STATUS" > "$SCREEN_DIR/outcome.txt"
+      - name: Retain sample evidence including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sqlc-sample-${{ github.run_attempt }}-${{ inputs.kind }}-${{ inputs.mode }}-${{ inputs.pair }}
+          path: |
+            ${{ runner.temp }}/sqlc-screen/*.json
+            ${{ runner.temp }}/sqlc-screen/*.txt
+            ${{ runner.temp }}/sqlc-screen/*.log
+            ${{ runner.temp }}/sqlc-screen/Dockerfile.screen
+          if-no-files-found: error
+          retention-days: 30

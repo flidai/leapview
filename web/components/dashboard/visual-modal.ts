@@ -70,7 +70,6 @@ export class VisualModal extends LitElement {
 
     .dialog[open] { display: grid; }
     .dialog::backdrop { background: var(--lv-modal-backdrop); }
-    .focus-dialog::backdrop { background: var(--lv-bg-page); }
 
     .data-dialog.is-single,
     .data-dialog.is-compact {
@@ -96,7 +95,15 @@ export class VisualModal extends LitElement {
     }
 
     .focus-dialog.focus-table-dialog {
-      min-height: min(360px, calc(100dvh - 56px));
+      height: auto;
+      min-height: 0;
+    }
+
+    :host([tabular-focus]) .focus-slot,
+    :host([tabular-focus]) ::slotted([slot='focus-visual']) {
+      height: auto;
+      --lv-visual-height: auto;
+      --lv-table-max-body-height: max(80px, calc(100dvh - 180px));
     }
 
     header {
@@ -412,6 +419,7 @@ export class VisualModal extends LitElement {
     const focusToRestore = this.deepActiveElement()
     this.restoreFocusedVisual(false)
     this.restoreFocusTo = focusToRestore
+    this.toggleAttribute('tabular-focus', detail.visualType === 'table')
     this.detail = detail
     this.mode = 'focus'
     this.focusSource = source
@@ -463,6 +471,7 @@ export class VisualModal extends LitElement {
     this.focusClose = null
     if (this.focusMount) restoreVisualFocus(this.focusMount)
     this.focusMount = null
+    this.removeAttribute('tabular-focus')
     this.focusSource = null
     this.restoreFocusTo = null
     if (restoreFocus && focusToRestore?.isConnected) {

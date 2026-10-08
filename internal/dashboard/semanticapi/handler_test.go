@@ -311,45 +311,49 @@ func TestSemanticArrowSinkPreservesNativeTypesNullsAndMetadata(t *testing.T) {
 }
 
 func TestWriteSemanticArrowResponseUsesNativeExecutorAndStreamsPaginationProbe(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/query", nil)
-	metrics := nativeArrowTestMetrics{t: t}
-	writeSemanticArrowResponse(
-		recorder,
-		request,
-		metrics,
-		dataquery.Query{ProjectID: projectgraph.ResourceID("project_1"), ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Limit: 3},
-		2,
-		0,
-		"query-a",
-		"snapshot-a",
-		"scope-a",
-	)
-	response := recorder.Result()
-	defer response.Body.Close()
-	if response.Header.Get("X-LeapView-Arrow-Contract") != "native-v1" {
-		t.Fatalf("contract header = %q", response.Header.Get("X-LeapView-Arrow-Contract"))
-	}
-	if response.Header.Get("Trailer") != "X-Next-Cursor" {
-		t.Fatalf("declared response trailers = %q", response.Header.Get("Trailer"))
-	}
-	reader, err := ipc.NewReader(response.Body)
-	if err != nil {
-		t.Fatalf("open streamed Arrow: %v", err)
-	}
-	defer reader.Release()
-	var rows int64
-	for reader.Next() {
-		rows += reader.Record().NumRows()
-	}
-	if err := reader.Err(); err != nil {
-		t.Fatalf("read stream: %v", err)
-	}
-	if rows != 2 {
-		t.Fatalf("streamed rows = %d, want page limit 2", rows)
-	}
-	if response.Trailer.Get("X-Next-Cursor") == "" {
-		t.Fatal("pagination probe did not produce next-cursor trailer")
+	for _, kind := range []dataquery.Kind{dataquery.KindSemanticAggregate, dataquery.KindSemanticRows} {
+		t.Run(string(kind), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/query", nil)
+			metrics := nativeArrowTestMetrics{t: t}
+			writeSemanticArrowResponse(
+				recorder,
+				request,
+				metrics,
+				dataquery.Query{ModelID: "sales", Kind: kind, Limit: 3},
+				2,
+				0,
+				"query-a",
+				"snapshot-a",
+				"scope-a",
+			)
+			response := recorder.Result()
+			defer response.Body.Close()
+			if response.Header.Get("X-LeapView-Arrow-Contract") != "native-v1" {
+				t.Fatalf("contract header = %q", response.Header.Get("X-LeapView-Arrow-Contract"))
+			}
+			if response.Header.Get("Trailer") != "X-Next-Cursor" {
+				t.Fatalf("declared response trailers = %q", response.Header.Get("Trailer"))
+			}
+			reader, err := ipc.NewReader(response.Body)
+			if err != nil {
+				t.Fatalf("open streamed Arrow: %v", err)
+			}
+			defer reader.Release()
+			var rows int64
+			for reader.Next() {
+				rows += reader.Record().NumRows()
+			}
+			if err := reader.Err(); err != nil {
+				t.Fatalf("read stream: %v", err)
+			}
+			if rows != 2 {
+				t.Fatalf("streamed rows = %d, want page limit 2", rows)
+			}
+			if response.Trailer.Get("X-Next-Cursor") == "" {
+				t.Fatal("pagination probe did not produce next-cursor trailer")
+			}
+		})
 	}
 }
 
@@ -358,8 +362,15 @@ type nativeArrowTestMetrics struct {
 	t *testing.T
 }
 
+func (nativeArrowTestMetrics) Catalog() dashboard.Catalog {
+	return dashboard.Catalog{Project: dashboard.CatalogProject{ID: projectgraph.ResourceID("project_1")}}
+}
+
 func (m nativeArrowTestMetrics) ExecuteDataQueryArrow(_ context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
 	m.t.Helper()
+	if request.ProjectID != projectgraph.ResourceID("project_1") {
+		m.t.Fatalf("project identity = %q, want catalog project", request.ProjectID)
+	}
 	if request.Limit != 3 {
 		m.t.Fatalf("physical limit = %d, want page limit plus probe", request.Limit)
 	}

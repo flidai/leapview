@@ -73,7 +73,7 @@ func (c *Controller) applyPrivateFirstInstallAt(ctx context.Context, marker inst
 		"up", "-d", "leapview"); err != nil {
 		return fmt.Errorf("start first-install application privately: %w", err)
 	}
-	if err := waitForHostHTTPStatus(ctx, c.sleep, appURL+"/healthz", http.StatusOK); err != nil {
+	if err := waitForHostHTTPStatus(ctx, c.sleep, appURL+"/healthz", marker.Domain, http.StatusOK); err != nil {
 		return fmt.Errorf("first-install application did not become live: %w", err)
 	}
 	if marker.HTTPS != nil && *marker.HTTPS {
@@ -99,7 +99,7 @@ func (c *Controller) activateFirstInstallAt(ctx context.Context, appURL string) 
 	if err := requireLoopbackApplicationBind(c.root); err != nil {
 		return err
 	}
-	status, err := hostHTTPStatus(ctx, appURL+"/readyz")
+	status, err := hostHTTPStatus(ctx, appURL+"/readyz", marker.Domain)
 	if err != nil {
 		return fmt.Errorf("probe first-install application readiness before activation: %w", err)
 	}
@@ -112,7 +112,7 @@ func (c *Controller) activateFirstInstallAt(ctx context.Context, appURL string) 
 		activationErr = c.waitHealthy(ctx)
 	}
 	if activationErr == nil {
-		status, err = hostHTTPStatus(ctx, appURL+"/readyz")
+		status, err = hostHTTPStatus(ctx, appURL+"/readyz", marker.Domain)
 		if err != nil {
 			activationErr = fmt.Errorf("verify readiness after public activation: %w", err)
 		} else if status != http.StatusOK {
@@ -189,11 +189,11 @@ func requireLoopbackApplicationBind(root string) error {
 	return nil
 }
 
-func waitForHostHTTPStatus(ctx context.Context, sleep func(context.Context, time.Duration) error, endpoint string, want int) error {
+func waitForHostHTTPStatus(ctx context.Context, sleep func(context.Context, time.Duration) error, endpoint, authority string, want int) error {
 	var lastStatus int
 	var lastErr error
 	for attempt := 0; attempt < defaultHealthChecks; attempt++ {
-		lastStatus, lastErr = hostHTTPStatus(ctx, endpoint)
+		lastStatus, lastErr = hostHTTPStatus(ctx, endpoint, authority)
 		if lastErr == nil && lastStatus == want {
 			return nil
 		}
@@ -209,11 +209,14 @@ func waitForHostHTTPStatus(ctx context.Context, sleep func(context.Context, time
 	return fmt.Errorf("endpoint returned HTTP %d, want %d", lastStatus, want)
 }
 
-func hostHTTPStatus(ctx context.Context, endpoint string) (int, error) {
+func hostHTTPStatus(ctx context.Context, endpoint, authority string) (int, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return 0, err
 	}
+	// Keep the connection on the private loopback publication. Docker forwards
+	// it from a bridge peer, so the app still requires its configured authority.
+	request.Host = authority
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {

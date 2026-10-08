@@ -229,3 +229,23 @@ func (g *Group) rollbackStart(ctx context.Context, cancel context.CancelFunc, at
 	g.mu.Unlock()
 	return err
 }
+
+// CheckPrepared checks the lifecycle composition without starting any task.
+// Dependency/role health remains owned by the composing application's live
+// preparation checks; this does not claim the workers have run successfully.
+func (g *Group) CheckPrepared() error {
+	if g == nil || len(g.components) == 0 {
+		return errors.New("worker group is not configured")
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.cancel != nil || g.stopRequested {
+		return errors.New("worker group has already started or stopped")
+	}
+	for _, component := range g.components {
+		if component.Start == nil || component.Stop == nil {
+			return errors.New("worker lifecycle ownership is incomplete")
+		}
+	}
+	return nil
+}

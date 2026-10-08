@@ -93,11 +93,11 @@ func TestRevision019MaintenancePayloadTransitionAdmitsBundledAdapterOnce(t *test
 	} {
 		candidate[name] = contents
 	}
-	if err := validateRevision019MaintenancePayloadTransition(installed, predecessor, candidate); err != nil {
+	if err := validateLegacyMaintenancePayloadTransition(installed, predecessor, candidate); err != nil {
 		t.Fatalf("exact revision 019 transition rejected: %v", err)
 	}
 	delete(candidate, "postgres/bundled-init.sh")
-	if err := validateRevision019MaintenancePayloadTransition(installed, predecessor, candidate); err == nil {
+	if err := validateLegacyMaintenancePayloadTransition(installed, predecessor, candidate); err == nil {
 		t.Fatal("revision 019 transition accepted an incomplete bundled adapter payload")
 	}
 }

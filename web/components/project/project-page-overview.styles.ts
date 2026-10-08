@@ -433,7 +433,7 @@ export const projectOverviewStyles = css`
   }
 
   .source-drawer-section .lineage-graph {
-    height: 20rem;
+    height: 32rem;
   }
 
   .lineage {
@@ -444,7 +444,7 @@ export const projectOverviewStyles = css`
 
   .lineage-graph {
     display: block;
-    height: var(--lv-lineage-graph-height);
+    height: clamp(28rem, 65svh, 48rem);
     min-height: 0;
     border-bottom: var(--lv-border-muted);
     background: var(--lv-bg-panel);
@@ -461,6 +461,13 @@ export const projectOverviewStyles = css`
     overflow: hidden;
     border-bottom: var(--lv-border-muted);
     background: transparent;
+  }
+
+  .lineage-notice {
+    padding: var(--base-size-12) var(--base-size-16);
+    color: var(--lv-fg-muted);
+    border-bottom: var(--lv-border-muted);
+    font: var(--lv-type-body);
   }
 
   .lineage-grids {

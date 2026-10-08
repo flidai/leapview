@@ -209,6 +209,9 @@ func (h *Handler) ChatStop(w nethttp.ResponseWriter, r *nethttp.Request) {
 	identity := uiRequestIdentity(r, conversationID+"\x00"+runID)
 	stopCtx, invocationErr := beginUICommandInvocation(r, agentUIBinding(cancelAgentRunOperation), nil, conversationID, runID, identity)
 	if invocationErr != nil {
+		if h.options.Logger != nil {
+			h.options.Logger.ErrorContext(r.Context(), "agent turn invocation failed", "conversation_id", conversationID, "error", invocationErr)
+		}
 		h.writeChatStopFailure(w, r, invocationErr)
 		return
 	}
@@ -525,6 +528,9 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		return
 	}
 	if withIntent, intentErr := h.withAuditIntent(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversationID); intentErr != nil {
+		if h.options.Logger != nil {
+			h.options.Logger.ErrorContext(r.Context(), "agent turn audit intent failed", "conversation_id", conversationID, "error", intentErr)
+		}
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(intentErr), false), embedded))
 		return
 	} else {
@@ -551,6 +557,9 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		started, err = service.StartPrompt(runCtx, prompt)
 	}
 	if err != nil {
+		if h.options.Logger != nil {
+			h.options.Logger.ErrorContext(r.Context(), "agent turn start failed", "conversation_id", conversationID, "error", err)
+		}
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(err), false), embedded))
 		return
 	}

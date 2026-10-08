@@ -143,6 +143,7 @@ type localSessionAuthentication interface {
 	Profile(string) (cliapi.TargetProfile, error)
 	RebindLoopbackOrigin(string, cliapi.TargetProfile, string) error
 	Resolve(context.Context, string) (accesscli.ResolvedCredential, error)
+	CheckBootstrapScope(context.Context, accesscli.ResolvedCredential) error
 	Login(context.Context, accesscli.LoginRequest, func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error)
 }
 
@@ -184,7 +185,13 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 			}
 		}
 		if resolved, resolveErr := authenticator.Resolve(ctx, request.TargetName); resolveErr == nil {
-			return localruntime.SessionResult{TargetName: request.TargetName, SessionID: resolved.SessionID}, nil
+			scopeErr := authenticator.CheckBootstrapScope(ctx, resolved)
+			if scopeErr == nil {
+				return localruntime.SessionResult{TargetName: request.TargetName, SessionID: resolved.SessionID}, nil
+			}
+			if !errors.Is(scopeErr, access.ErrAuthoringScopeDenied) {
+				return localruntime.SessionResult{}, fmt.Errorf("inspect retained local authoring scope: %w", scopeErr)
+			}
 		}
 	} else if !errors.Is(profileErr, cliapi.ErrProfileNotFound) {
 		return localruntime.SessionResult{}, profileErr
@@ -192,7 +199,10 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 	loginRequest := accesscli.LoginRequest{
 		Name: request.TargetName, Origin: request.Origin, InstanceID: request.InstanceID,
 		Environment: request.Environment, ProjectID: request.ProjectID,
-		Actions: access.DefaultAuthoringActions(),
+		// Local dev establishes its initial policy and development profile.
+		// These remain token ceilings, independently checked against the local
+		// principal's bootstrap authority. Remote login keeps its normal scope.
+		Actions: append(access.DefaultAuthoringActions(), localBootstrapActions()...),
 	}
 	var notify func(accesscli.DeviceChallenge)
 	var challengeWriteErr error

@@ -214,3 +214,15 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 // ordered aggregate dimensions. The canonical Dashboard query has no
 // renderer-specific `series` property: the first dimension is the category
 // axis and the optional second dimension is the authored series field.
+
+// ValidateBuilderVisual checks one prospective chart without recompiling every
+// unrelated visual and layout for each field candidate. Like draft preview,
+// interaction edges to other charts are validated separately.
+func ValidateBuilderVisual(id string, visual document.DashboardVisual, modelID string, model *semanticmodel.Model) error {
+	if model == nil {
+		return fmt.Errorf("semantic model is required")
+	}
+	visual.Interactions = nil
+	_, err := (dashboardCompileContext{model: model, modelID: modelID}).compileVisuals(map[string]document.DashboardVisual{id: visual})
+	return err
+}

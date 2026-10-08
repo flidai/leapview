@@ -530,3 +530,34 @@ func (r *builderRuntime) SemanticModelProjection(id graph.ResourceID) (*semantic
 type plainBuilderRuntime struct{}
 
 func (plainBuilderRuntime) Close() error { return nil }
+
+func TestBuilderProjectsGovernedFilterAvailabilityWithUnfinishedVisuals(t *testing.T) {
+	fixture := newBuilderFixture(t)
+	model := builderModel()
+	model.Tables["cash"] = semanticmodel.Table{ModelName: "cash"}
+	model.Datasets["cash"] = semanticmodel.SemanticDatasetSpec{Model: "cash"}
+	model.Dimensions["scenario"] = semanticmodel.SemanticDimension{Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"cash": {Field: "cash.scenario"}}}
+	revision := fixture.revision
+	revision.Document.Spec.Visuals["unfinished"] = document.DashboardVisual{Type: document.DashboardVisualTypeFunnel, Presentation: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional"}}, Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{Type: "aggregate"}}}
+	revision.Document.Spec.Pages[0].Components = append(revision.Document.Spec.Pages[0].Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "unfinished-placement", Placement: document.DashboardPlacement{Column: 5, Row: 1, ColumnSpan: 4, RowSpan: 4}}, Type: "visual", Visual: "unfinished"}})
+	for _, unfinishedOnly := range []bool{false, true} {
+		if unfinishedOnly {
+			revision.Document.Spec.Pages[0].Components = revision.Document.Spec.Pages[0].Components[1:]
+		}
+		signal, err := project(Request{}, fixture.repository.lifecycle, revision, model, uisignals.DashboardBuilderCapabilitiesSignal{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, dataset := range signal.SemanticModel.Datasets {
+			for _, field := range dataset.Fields {
+				if field.CanFilter != nil {
+					got[field.ID] = *field.CanFilter
+				}
+			}
+		}
+		if !got["status"] || got["scenario"] != unfinishedOnly {
+			t.Fatalf("unfinishedOnly=%t availability=%v", unfinishedOnly, got)
+		}
+	}
+}

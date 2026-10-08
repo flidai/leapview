@@ -1,6 +1,9 @@
 # Managed deployment scaffold
 
-First implementation of the [target deployment architecture (ADR-0025, PR #744)](https://github.com/flidai/leapview/pull/744).
+Initial scaffold based on the [deployment proposal in PR #744](https://github.com/flidai/leapview/pull/744).
+That proposal has been removed from main pending renewed review. This revert does
+not remove the separately merged infrastructure or maintenance implementation,
+and their presence does not establish architecture acceptance.
 This is an **operator scaffold, not a qualified production installation**. It
 creates no live resources through CI. Keep using the existing deployment path
 until the lifecycle integration and recovery exercises below are complete.
@@ -72,17 +75,33 @@ behavior. The [application and guest-boot follow-up](rehearsal-application-2026-
 records the subsequent real Kamal and emulated NixOS tests.
 
 An optional, slower integration test (`task managed:hosts:boot-test`) boots
-isolated app/database/outsider guests:
+isolated app/database/outsider/operator guests:
 
 ```sh
 nix build path:./deploy/managed/nixos#boot-test --no-link -L
 ```
 
 It tests TLS, public proxy ingress, private-interface filtering, bypass-port
-denial, firewall reload/restart, Docker restart and persistence across guest
-reboots. KVM is optional; software emulation is much slower. The emulated fixture
+denial, firewall reload/restart, Docker restart and persistence across baseline
+guest reboots. A disposable controller then uses the locked deploy-rs client
+to update both installed host roles over SSH with pinned host keys. The test
+injects a failed application activation and withholds database activation
+confirmation to exercise autoRollback and magicRollback. It checks the active
+system and persistent profile, application files, database rows, SSH access,
+Docker ingress and verified database TLS after updates and recovery. Both host
+roles boot their installed disks through BIOS GRUB. After the successful updates
+and again after both rollback paths, the test reboots the hosts and verifies
+`/run/booted-system` selects the expected updated generation, then repeats the
+state, SSH, ingress and verified database TLS checks.
+
+The test uses generated fixture TLS and upstream public test SSH keys only.
+It never contacts a provider or imports private inventory. The boot checks cover
+BIOS GRUB selection on the disposable guest disks, including selection after
+rollback; they do not qualify UEFI, provider rescue, or recovery from actual
+network loss.
+KVM is optional; software emulation is much slower. The emulated fixture
 starts containerd separately to avoid dockerd's short internal startup deadline.
-It does not exercise Disko, firmware boot or Hetzner networking.
+It does not exercise Disko installation, provider firmware or Hetzner networking.
 
 ## Infrastructure and private inventory
 
@@ -268,20 +287,19 @@ The current shared application home permits one process owner. Ordinary Kamal
 replacement starts another container before stopping the old one. `serve` takes
 the exclusive home lock before app build, and `/readyz` requires an active runtime
 lease, so an overlapping candidate cannot become ready on the shared home. The
-owner-selected bounded-maintenance direction remains pending ADR review and
-qualification; it is not an accepted lifecycle contract. The previous stop-first
-rehearsal does not qualify that sequence. Preserve a restart rollback path and
+bounded-maintenance implementation includes a [host-local compatible-image
+controller](maintenance.md), including closed startup admission, draining and
+restart recovery. Full managed-profile qualification remains outstanding. The
+previous stop-first rehearsal does not qualify that sequence. Preserve a restart rollback path and
 measure interruption. An old image is usable only while database and
 application-state compatibility still permits it; container retention is not a
 database downgrade mechanism.
 
-**Do not use this as a production `kamal deploy` runbook yet.** Kamal's ordinary image
-reference is `repository:version`. The adapter must verify the approved digest,
-reuse LeapView's compatibility/migration/target-binding checks, admit the configured
-physical pool and coordinate mutating workers before enabling releases. The current
-`leapviewctl` path is Compose-specific; invoking it over Kamal would introduce two
-container lifecycle owners. This scaffold intentionally adds no deploy/apply workflow
-or custom hooks that bypass those checks.
+**Do not use ordinary `kamal deploy` for the shared application home.** Kamal's
+ordinary image reference is `repository:version`. The explicit managed adapter
+uses an admitted immutable digest and the dedicated `host managed-release`
+controller; Compose retains its separate owner. See the maintenance runbook for
+enrollment, authority inputs, recovery and qualification limits.
 
 The direct kamal-proxy TLS path has explicit readiness, buffering and timeout
 settings. Cloudflare, certificate renewal, long-lived `/updates`, reconnects,

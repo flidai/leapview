@@ -240,6 +240,8 @@ def _cloud_config(*, client_public_key: bytes, host_private_key: bytes, host_pub
         "disable_root": False,
         "ssh_pwauth": False,
         "ssh_deletekeys": True,
+        "growpart": {"mode": "auto", "devices": ["/"]},
+        "resize_rootfs": True,
         "ssh_genkeytypes": ["ed25519"],
         "ssh_keys": {
             "ed25519_private": host_private_key.decode("ascii"),
@@ -465,7 +467,9 @@ def launch(args: argparse.Namespace, collector: list[str]) -> dict:
         _run([str(cloud_localds), str(seed), str(user_data), str(meta_data)])
         if not seed.is_file() or seed.stat().st_size == 0:
             raise LauncherError("cloud-localds did not create a seed ISO")
-        _run([str(qemu_img), "create", "-f", "qcow2", "-F", "qcow2", "-b", str(image), str(overlay)])
+        # Vendor images contain only a minimal root disk. Grow the disposable
+        # overlay for package installation, candidate images and authoring builds.
+        _run([str(qemu_img), "create", "-f", "qcow2", "-F", "qcow2", "-b", str(image), str(overlay), "40G"])
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_socket:
             port_socket.bind(("127.0.0.1", 0))

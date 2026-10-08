@@ -96,7 +96,7 @@ func runDownloadModules(t *testing.T, failures int, args ...string) downloadResu
 	for arg do printf 'arg=%s\n' "$arg"; done
 } >> "$GO_LOG"
 count=0
-if [ -f "$GO_COUNT" ]; then count=$(cat "$GO_COUNT"); fi
+if [ -f "$GO_COUNT" ]; then IFS= read -r count < "$GO_COUNT"; fi
 count=$((count + 1))
 printf '%s\n' "$count" > "$GO_COUNT"
 if [ "$count" -le "$GO_FAILS" ]; then exit 17; fi

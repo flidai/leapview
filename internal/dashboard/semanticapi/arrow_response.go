@@ -107,6 +107,9 @@ func (s *semanticArrowSink) WriteRecord(record arrow.RecordBatch) error {
 		return err
 	}
 	s.written += write.NumRows()
+	if flusher, ok := s.w.(stdhttp.Flusher); ok {
+		flusher.Flush()
+	}
 	return nil
 }
 
@@ -150,6 +153,7 @@ func writeSemanticArrowResponse(
 		return
 	}
 	sink := newSemanticArrowSink(w, queryID, snapshot, limit)
+	request.ProjectID = metrics.Catalog().Project.ID
 	_, err := executor.ExecuteDataQueryArrow(r.Context(), request, sink)
 	if err != nil {
 		if sink.writer == nil {

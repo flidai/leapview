@@ -101,7 +101,7 @@ func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 	}
 	var updated access.Principal
 	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
-		current, currentErr := tx.PrincipalByID(r.Context(), principal.ID)
+		current, currentErr := access.PrincipalForMutation(r.Context(), tx, principal.ID)
 		if currentErr != nil {
 			return access.AuditEventInput{}, currentErr
 		}

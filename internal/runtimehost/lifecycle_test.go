@@ -145,7 +145,7 @@ func TestHeartbeatLeaseRetriesTransientFailureBeforeConfirmedExpiry(t *testing.T
 	done := make(chan struct{})
 	confirmedExpiry := time.Now().UTC().Add(200 * time.Millisecond)
 	go func() {
-		m.heartbeatLease(ctx, renewer, "heartbeat-transient", confirmedExpiry)
+		m.heartbeatLease(ctx, renewer, "heartbeat-transient", &runtimeLeaseHealth{manager: m}, confirmedExpiry)
 		close(done)
 	}()
 	select {
@@ -183,7 +183,7 @@ func TestHeartbeatLeasePoisonsOnlyAfterConfirmedExpiry(t *testing.T) {
 	done := make(chan struct{})
 	confirmedExpiry := time.Now().UTC().Add(40 * time.Millisecond)
 	go func() {
-		m.heartbeatLease(ctx, renewer, "heartbeat-expiry", confirmedExpiry)
+		m.heartbeatLease(ctx, renewer, "heartbeat-expiry", &runtimeLeaseHealth{manager: m}, confirmedExpiry)
 		close(done)
 	}()
 	select {
@@ -213,7 +213,7 @@ func TestHeartbeatLeaseBoundsBlockingRenewalByConfirmedExpiry(t *testing.T) {
 	confirmedExpiry := time.Now().UTC().Add(35 * time.Millisecond)
 	started := time.Now()
 	go func() {
-		m.heartbeatLease(ctx, renewer, "heartbeat-blocking", confirmedExpiry)
+		m.heartbeatLease(ctx, renewer, "heartbeat-blocking", &runtimeLeaseHealth{manager: m}, confirmedExpiry)
 		close(done)
 	}()
 	select {

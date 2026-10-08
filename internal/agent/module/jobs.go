@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/agent"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
@@ -19,6 +20,10 @@ type RunJob struct {
 	ChatClientID                     string
 }
 
+// AI turns outlive the refresh queue's two-minute fallback lease. Bound the
+// execution separately and leave time to durably save its terminal outcome.
+const agentRunExecutionTimeout = 10 * time.Minute
+
 func boundedResumeError(err error) error {
 	if err == nil {
 		return fmt.Errorf("durable prompt resume failed")
@@ -30,7 +35,9 @@ func boundedResumeError(err error) error {
 
 func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 	execution := m.runExecution
-	return []jobs.Handler{jobs.HandlerFunc{JobKind: execution.JobKind, Run: func(ctx context.Context, job jobs.Job) error {
+	return []jobs.Handler{jobs.HandlerFunc{JobKind: execution.JobKind, ExecutionLeaseTimeout: agentRunExecutionTimeout + time.Minute, Run: func(ctx context.Context, job jobs.Job) error {
+		ctx, cancel := context.WithTimeout(ctx, agentRunExecutionTimeout)
+		defer cancel()
 		var payload RunJob
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			return err

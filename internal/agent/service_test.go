@@ -558,7 +558,8 @@ func TestServiceCompletePromptFailureLeavesSubmittedUserMessage(t *testing.T) {
 	defer store.Close()
 	principal := createAgentAppPrincipal(t, ctx, store, "viewer@example.com")
 	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
-	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(newFailingAgentModel(errors.New("model down"))))
+	model := newFailingAgentModel(errors.New("model down"))
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
 	conversation, err := service.CreateConversation(ctx, scope, "Draft")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -574,8 +575,8 @@ func TestServiceCompletePromptFailureLeavesSubmittedUserMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list messages: %v", err)
 	}
-	if len(messages) != 1 || messages[0].Role != MessageRoleUser || messages[0].ContentText != "Keep failed input" {
-		t.Fatalf("messages after failure = %#v, want submitted user prompt", messages)
+	if len(messages) != 2 || messages[0].Role != MessageRoleUser || messages[0].ContentText != "Keep failed input" || messages[1].Role != MessageRoleAssistant {
+		t.Fatalf("messages after failure = %#v, want submitted user prompt and closed failure boundary", messages)
 	}
 	runs, err := store.ListRuns(ctx, principal.ID, conversation.ID)
 	if err != nil {
@@ -583,6 +584,10 @@ func TestServiceCompletePromptFailureLeavesSubmittedUserMessage(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].Status != RunStatusFailed || runs[0].Error == "" {
 		t.Fatalf("runs after failure = %#v, want failed run with error", runs)
+	}
+	model.err = nil
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Try again"}); err != nil {
+		t.Fatalf("retry after provider failure: %v", err)
 	}
 }
 
@@ -780,6 +785,14 @@ func TestServiceCancelsAnActiveRun(t *testing.T) {
 	run, err := service.GetRun(ctx, scope, conversation.ID, started.RunID)
 	if err != nil || run.Status != RunStatusCanceled {
 		t.Fatalf("run = %#v, error = %v", run, err)
+	}
+	model.delay = 0
+	continued, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Continue your previous response from where you stopped."})
+	if err != nil {
+		t.Fatalf("continue after cancellation before any output: %v", err)
+	}
+	if continued.RunID == "" || continued.RunID == started.RunID {
+		t.Fatalf("continued run = %#v, want a new run", continued)
 	}
 }
 
@@ -2186,4 +2199,42 @@ func pageTestRows[T any](rows []T, page Page, id func(T) string) []T {
 		end = len(rows)
 	}
 	return append([]T(nil), rows[start:end]...)
+}
+
+func TestBuilderAuthoringGuidanceReachesModelAsSystemInstructions(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "builder-context@example.com")
+	model := newRecordingAgentModel(agentcore.ModelResponse{Content: "Done.", FinishReason: agentcore.FinishReasonStop})
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	service.SetSystemPromptProvider(func(context.Context) (string, error) { return "Configured business instructions.", nil })
+	scope := Scope{ProjectID: "sales", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Builder context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Create a bar chart", Context: &TurnContext{Surface: "builder", DashboardID: "draft", PageID: "bars", References: []TurnReference{{Reference: TurnReferenceKey{Kind: "dashboard", ID: "draft"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := model.Requests()
+	if len(requests) != 1 {
+		t.Fatalf("requests: %d", len(requests))
+	}
+	var system string
+	for _, message := range requests[0].Messages {
+		if message.Role == agentcore.RoleSystem {
+			system += message.Content
+		}
+	}
+	for _, want := range []string{"Configured business instructions.", "surface is builder", "add_dashboard_visual", "assign_dashboard_field", "Do not stop at query_visual", "For surface chat", "edit_dashboard_source", "one atomic edit", "preview_dashboard_draft"} {
+		if !strings.Contains(system, want) {
+			t.Fatalf("missing trusted builder guidance %q", want)
+		}
+	}
+	payload, _ := json.Marshal(requests[0].Messages)
+	if !strings.Contains(string(payload), `\"pageId\":\"bars\"`) {
+		t.Fatalf("selected page missing from model context")
+	}
 }

@@ -30,13 +30,39 @@ func main() {
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			fatal(err)
-		}
-		if err := os.WriteFile(path, content, 0o644); err != nil {
+		if err := writeGeneratedFile(path, content); err != nil {
 			fatal(err)
 		}
 	}
+}
+
+func writeGeneratedFile(path string, content []byte) error {
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, content) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	// Deployment tests can regenerate configuration while architecture checks
+	// read the prepared source. Publish complete files without truncating readers.
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".configgen-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+	}()
+	if _, err := temporary.Write(content); err != nil {
+		return err
+	}
+	if err := temporary.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporary.Name(), path)
 }
 
 func generatedOutputs() (map[string][]byte, error) {

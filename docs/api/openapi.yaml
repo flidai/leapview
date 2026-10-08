@@ -5160,6 +5160,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/AddChatVisualToDashboardResponse'
               example:
+                componentId: example
                 dashboardId: example
                 href: example
                 pageId: example
@@ -68568,6 +68569,9 @@ components:
         - href
         - pageId
       properties:
+        componentId:
+          type: string
+          example: example
         dashboardId:
           type: string
           example: example
@@ -68581,6 +68585,7 @@ components:
           type: string
           example: example
       example:
+        componentId: example
         dashboardId: example
         href: example
         pageId: example

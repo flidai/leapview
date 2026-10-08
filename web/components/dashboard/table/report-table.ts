@@ -203,7 +203,7 @@ export class ReportTable extends LitElement {
   static styles = [visualActionStyles, css`
     :host {
       display: block;
-      height: 100%;
+      height: var(--lv-visual-height, 100%);
       min-height: 0;
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
@@ -212,7 +212,7 @@ export class ReportTable extends LitElement {
     .shell {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      height: var(--lv-visual-height, 100%);
       min-height: 0;
       min-width: 0;
       background: var(--lv-chart-surface);
@@ -601,6 +601,19 @@ export class ReportTable extends LitElement {
       white-space: nowrap;
     }
 
+    .header-cell.right .header-button {
+      flex-direction: row-reverse;
+      text-align: right;
+    }
+
+    .density-compact button.header-button {
+      padding-inline: var(--base-size-6);
+    }
+
+    .density-spacious button.header-button {
+      padding-inline: var(--base-size-12);
+    }
+
     button.header-button:hover,
     button.header-button:focus-visible {
       border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
@@ -662,6 +675,7 @@ export class ReportTable extends LitElement {
     }
 
     .table-scrollport {
+      max-height: var(--lv-table-max-body-height, none);
       position: relative;
       flex: 1 1 auto;
       overflow: auto;
@@ -787,14 +801,18 @@ export class ReportTable extends LitElement {
       text-align: left;
     }
 
-    .density-compact .cell {
+    .density-compact .cell-action {
       padding: 0 var(--base-size-6);
       font: var(--lv-type-caption);
     }
 
-    .density-spacious .cell {
+    .density-spacious .cell-action {
       padding: 0 var(--base-size-12);
       font: var(--lv-type-body-large);
+    }
+
+    .cell:not(.skeleton-cell) {
+      padding: 0;
     }
 
     .grid-columns .cell,
@@ -922,6 +940,7 @@ export class ReportTable extends LitElement {
 
     .right {
       justify-content: end;
+      text-align: right;
       font-variant-numeric: tabular-nums;
     }
 
@@ -1439,7 +1458,7 @@ export class ReportTable extends LitElement {
           const sortMark = lucideIcon(this.table?.sort?.direction === 'asc' ? ArrowUp : ArrowDown, { size: 12, strokeWidth: 2 })
           return html`
             <div
-              class=${`header-cell ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${sorted ? 'sorted' : ''}`}
+              class=${`header-cell ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${column.align === 'right' ? 'right' : ''} ${sorted ? 'sorted' : ''}`}
               role="columnheader"
               style=${this.pinnedCellStyle(header.column)}
             >

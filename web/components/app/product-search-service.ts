@@ -40,7 +40,7 @@ export class ProductSearchService {
     const normalized = query.trim()
     if (!normalized) return []
 
-    const response = await this.fetcher(`/search?q=${encodeURIComponent(normalized)}`, {
+    const response = await this.fetcher(`/search?q=${encodeURIComponent(normalized)}&view=palette`, {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
       signal,

@@ -60,3 +60,19 @@ describe('documentation Mermaid validation', () => {
     ])
   })
 })
+
+
+test('diagram math keeps trust disabled when renderer options inherit a polluted prototype', async () => {
+  const katex = (await import('katex' as string)).default
+  const math = String.raw`\href{https://example.invalid}{unsafe}`
+  expect(katex.renderToString(math, { trust: true })).toContain('href=')
+  expect(katex.renderToString(math)).not.toContain('href=')
+  const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, 'trust')
+  try {
+    Object.defineProperty(Object.prototype, 'trust', { value: true, configurable: true, writable: true })
+    expect(katex.renderToString(math)).not.toContain('href=')
+  } finally {
+    if (descriptor) Object.defineProperty(Object.prototype, 'trust', descriptor)
+    else Reflect.deleteProperty(Object.prototype, 'trust')
+  }
+})

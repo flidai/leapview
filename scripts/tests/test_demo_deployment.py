@@ -8,6 +8,7 @@ import os
 import io
 import json
 import sys
+import subprocess
 import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -112,6 +113,50 @@ class PreflightTests(unittest.TestCase):
                     self.assertIn(mode, pathlib.Path(env['GITHUB_STEP_SUMMARY']).read_text())
                 finally:
                     os.umask(previous_umask)
+
+class RuntimeInspectionTests(unittest.TestCase):
+    def test_inspection_reads_both_installed_version_contracts(self):
+        runtime = load('demo_compose_runtime')
+        revision = 'b' * 40
+        image = 'ghcr.io/flidai/leapview@sha256:' + 'a' * 64
+        info = {'Config': {'Image': image,
+                          'Labels': {'com.docker.compose.project': 'leapview-cfo'},
+                          'Env': ['LEAPVIEW_POSTGRES_CONTROL_URL=postgres://demo02-postgres-cfo/leapview_control',
+                                  'LEAPVIEW_POSTGRES_DUCKLAKE_URL=postgres://demo02-postgres-cfo/leapview_ducklake']},
+                'Mounts': [{'Name': runtime.VOLUME, 'Destination': '/var/lib/leapview'}]}
+        for flag, help_text in [(('--json',), 'Flags:\n      --json   emit machine-readable JSON\n'),
+                                (('--format', 'json'), 'Flags:\n      --format string   output format: text or json\n')]:
+            with self.subTest(flag=flag):
+                commands = []
+                def output(*args):
+                    commands.append(args)
+                    if args == ('hostname',): return 'app-leapview-demo-02'
+                    if args[:2] == ('docker', 'inspect'): return json.dumps([info])
+                    if args[-2:] == ('version', '--help'): return help_text
+                    if args == ('docker', 'exec', runtime.APP, 'leapview', 'version', *flag):
+                        return json.dumps({'revision': revision, 'dirty': False})
+                    raise subprocess.CalledProcessError(1, args)
+                with patch.object(runtime, 'out', side_effect=output), patch.object(runtime, 'ready'):
+                    self.assertEqual(runtime.inspect(), {'image': image, 'revision': revision})
+                self.assertEqual(commands[-1][-len(flag):], flag)
+
+    def test_version_discovery_never_retries_failed_or_invalid_identity(self):
+        runtime = load('demo_compose_runtime')
+        revision = 'b' * 40
+        for label, responses, calls in [
+            ('help failure', [subprocess.CalledProcessError(1, 'help')], 1),
+            ('unsupported flags', ['Flags:\n      --yaml\n'], 1),
+            ('wrong format type', ['Flags:\n      --format int\n'], 1),
+            ('version failure', ['      --json\n', subprocess.CalledProcessError(1, 'version')], 2),
+            ('malformed JSON', ['      --json\n', 'text version'], 2),
+            ('missing dirty', ['      --json\n', json.dumps({'revision': revision})], 2),
+            ('dirty', ['      --json\n', json.dumps({'revision': revision, 'dirty': True})], 2),
+            ('invalid revision', ['      --json\n', json.dumps({'revision': 'unknown', 'dirty': False})], 2),
+        ]:
+            with self.subTest(label=label), patch.object(runtime, 'out', side_effect=responses) as output:
+                with self.assertRaises((subprocess.CalledProcessError, ValueError, RuntimeError)):
+                    runtime.runtime_version()
+                self.assertEqual(output.call_count, calls)
 
 class UpgradeGuardTests(unittest.TestCase):
     def setUp(self):

@@ -534,12 +534,7 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 	leaseCtx, stopLease := context.WithCancel(context.Background())
 	leaseLost := make(chan error, 1)
 	go p.renewAPIIdempotencyLease(leaseCtx, scope, digest, owner, record.LeaseGeneration, record.LeaseExpires, func(err error) {
-		p.leaseFailed.Store(true)
-		cancelHandler(err)
-		select {
-		case leaseLost <- err:
-		default:
-		}
+		p.notifyIdempotencyLeaseLost(err, leaseLost, cancelHandler)
 	})
 	capture := newProtocolResponseCapture()
 	var panicValue any
@@ -682,6 +677,17 @@ func (p *Protocol) reclaimsExpiredLease(r *http.Request) bool {
 	}
 	_, allowed := p.config.ReclaimExpiredIdempotency[contract.OperationID]
 	return allowed
+}
+
+func (p *Protocol) notifyIdempotencyLeaseLost(err error, leaseLost chan<- error, cancelHandler context.CancelCauseFunc) {
+	p.leaseFailed.Store(true)
+	// Cancellation may immediately return control from the handler to the
+	// response path, which must already observe this terminal lease failure.
+	select {
+	case leaseLost <- err:
+	default:
+	}
+	cancelHandler(err)
 }
 
 func (p *Protocol) renewAPIIdempotencyLease(ctx context.Context, scope, digest, owner string, generation int64, deadline time.Time, lost func(error)) {

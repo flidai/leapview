@@ -8,12 +8,13 @@ config:generate`, and `task ui-signals:generate`; this step does not run a
 JavaScript audit or advisory query, or refresh the controlled evidence. The
 default `task security:dependencies` command reads
 `.security/javascript-vulnerability-evidence.json`; it does not refresh that
-document or call a live JavaScript audit. The evidence must cover exactly five
+document or call a live JavaScript audit. The evidence must cover exactly six
 JavaScript graphs:
 
 - root `package.json` + `bun.lock`;
 - `desktop/package.json` + `desktop/bun.lock`;
 - `deploy/compose/qualification/package.json` + `deploy/compose/qualification/bun.lock`;
+- `deploy/compose/qualification/package.json` + `deploy/compose/qualification/package-lock.json`;
 - `internal/app/testing/maliciousinstance/electron/package.json` + `internal/app/testing/maliciousinstance/electron/bun.lock`;
 - `pkg/apigen/typespec/package.json` + `pkg/apigen/typespec/package-lock.json`.
 

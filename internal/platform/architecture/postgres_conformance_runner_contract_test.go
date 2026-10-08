@@ -1,6 +1,9 @@
 package architecture
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,11 +17,14 @@ const (
 	postgresLegacyRunCall = "tcpostgres" + ".Run(t)"
 	postgresSharedStart   = "postgrestest" + ".Start(t)"
 	postgresTLSStart      = "postgrestest" + ".StartTLS(t)"
+	postgresSharedOpen    = "postgrestest" + ".Open(t, applySchema)"
 )
 
 func TestPostgreSQLConformanceRunnerUsesCompleteBoundedInventory(t *testing.T) {
 	fixture := newPostgreSQLConformanceFixture(t, map[string]string{
 		"internal/pg/legacy/legacy_test.go":    "package legacy\n\nfunc TestLegacy(t *testing.T) { " + postgresLegacyRunCall + " }\n",
+		"internal/pg/open/helper_test.go":      "package open\n\nfunc testStore(t *testing.T) { " + postgresSharedOpen + " }\n",
+		"internal/pg/open/open_test.go":        "package open\n\nfunc TestOpen(t *testing.T) { testStore(t) }\n",
 		"internal/pg/shared/duplicate_test.go": "package shared\n\nfunc TestDuplicate(t *testing.T) { " + postgresSharedStart + " }\n",
 		"internal/pg/shared/shared_test.go":    "package shared\n\nfunc TestShared(t *testing.T) { " + postgresSharedStart + " }\n",
 		"internal/pg/tls/tls_test.go":          "package tls\n\nfunc TestTLS(t *testing.T) { " + postgresTLSStart + " }\n",
@@ -40,6 +46,7 @@ func TestPostgreSQLConformanceRunnerUsesCompleteBoundedInventory(t *testing.T) {
 		"-v",
 		"-skip", "^TestMinIOParquetSourceRefreshContract$",
 		"github.com/flidai/leapview/internal/pg/legacy",
+		"github.com/flidai/leapview/internal/pg/open",
 		"github.com/flidai/leapview/internal/pg/shared",
 		"github.com/flidai/leapview/internal/pg/tls",
 	}
@@ -55,6 +62,79 @@ func TestPostgreSQLConformanceRunnerUsesCompleteBoundedInventory(t *testing.T) {
 	}
 	if result.required != "1" {
 		t.Fatalf("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED = %q, want 1", result.required)
+	}
+}
+
+func TestPostgreSQLConformanceInventoryIncludesEverySharedHarnessCaller(t *testing.T) {
+	root := repoRoot(t)
+	command := exec.Command("bash", filepath.Join(root, "scripts", "postgres-conformance-tests.sh"), "list")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("list real PostgreSQL conformance packages: %v\n%s", err, output)
+	}
+	listed := make(map[string]bool)
+	for _, name := range strings.Fields(string(output)) {
+		listed[name] = true
+	}
+	moduleBytes, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := strings.Fields(string(moduleBytes))[1]
+	files, err := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*_test.go").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers := 0
+	for _, relative := range strings.Split(string(files), "\x00") {
+		if relative == "" {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, relative), nil, 0)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("parse %s: %v", relative, err)
+		}
+		aliases := make(map[string]bool)
+		for _, imported := range file.Imports {
+			path, err := strconv.Unquote(imported.Path.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if path != module+"/internal/platform/postgres/postgrestest" {
+				continue
+			}
+			name := "postgrestest"
+			if imported.Name != nil {
+				name = imported.Name.Name
+			}
+			aliases[name] = true
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			name, ok := selector.X.(*ast.Ident)
+			if !ok || !aliases[name.Name] || (selector.Sel.Name != "Start" && selector.Sel.Name != "StartTLS" && selector.Sel.Name != "Open") {
+				return true
+			}
+			callers++
+			packageName := module + "/" + filepath.ToSlash(filepath.Dir(relative))
+			if !listed[packageName] {
+				t.Errorf("%s calls shared PostgreSQL harness %s but is absent from the required conformance inventory", relative, selector.Sel.Name)
+			}
+			return true
+		})
+	}
+	if callers == 0 {
+		t.Fatal("shared PostgreSQL harness source inventory is empty")
 	}
 }
 

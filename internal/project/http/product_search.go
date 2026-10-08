@@ -82,7 +82,11 @@ func (h *BrowserHandler) ProductSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			return
 		}
 		var err error
-		page, err = searchCatalogAuthorized(r.Context(), h.SearchCatalog, request, credential, projectID)
+		if !html && values.Get("view") == "palette" {
+			page, err = searchCatalogAuthorized(r.Context(), h.SearchCatalog, request, credential, projectID)
+		} else {
+			page, err = searchCatalogPageAuthorized(r.Context(), h.SearchCatalog, request, credential, projectID)
+		}
 		if err != nil {
 			status := stdhttp.StatusServiceUnavailable
 			if errors.Is(err, projectcatalog.ErrInvalidRequest) || errors.Is(err, projectcatalog.ErrInvalidCursor) {

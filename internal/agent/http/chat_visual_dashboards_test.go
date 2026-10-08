@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -219,5 +220,30 @@ func TestChatVisualDashboardCreateAuditUsesGeneratedAuthoringContext(t *testing.
 	}
 	if !strings.Contains(intent.MetadataJSON, "pending-dashboard") || !strings.Contains(intent.MetadataJSON, "pending-draft") {
 		t.Fatalf("generated audit metadata omitted placeholder identities: %s", intent.MetadataJSON)
+	}
+}
+
+func TestChatVisualDashboardReceiptRetainsComponentAndOriginatingChat(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/chats/conversation-1/visuals/chart-1/dashboards", nil)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("conversation", "conversation-1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	response := httptest.NewRecorder()
+	handler := NewHandler(Options{})
+	handler.writeChatVisualDashboardResult(response, request, agent.Scope{}, authoring.DashboardID("dashboard-1"), "Finance", "details", "imported-chart-component")
+	var receipt struct {
+		ComponentID string `json:"componentId"`
+		Href        string `json:"href"`
+		PageID      string `json:"pageId"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	href, err := url.Parse(receipt.Href)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ComponentID != "imported-chart-component" || receipt.PageID != "details" || href.Path != "/dashboards/dashboard-1/edit" || href.Query().Get("page") != "details" || href.Query().Get("returnChat") != "conversation-1" {
+		t.Fatalf("dashboard receipt loses imported component, page, or originating chat: %+v", receipt)
 	}
 }

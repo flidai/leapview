@@ -151,6 +151,21 @@ jobs:
           expected-workflow: flidai/leapview/.github/workflows/release.yml
           source-revision: ${{ needs.identity.outputs.revision }}
           platform: linux/${{ matrix.arch }}
+          # Main-dispatched release candidates bind image and workflow source
+          # to the same commit. Tag promotion remains a separate authority path.
+          admission-bundle: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && format('{0}/managed-admission', runner.temp) || '' }}
+          release-id: ${{ needs.identity.outputs.release_tag }}
+          release-version: ${{ needs.identity.outputs.version }}
+
+      - name: Retain canonical native admission and verified evidence
+        id: admission-bundle
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/managed-admission
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Record admitted native image digest
         env:
@@ -525,6 +540,19 @@ jobs:
             )
           fi
 
+      - name: Qualify installed discovery and diagnostics
+        env:
+          RELEASE_TAG: ${{ needs.image.outputs.release_tag }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          package="leapview-cli-${RELEASE_TAG}-${TARGET_OS}-${TARGET_ARCH}"
+          ./deploy/local/qualification/qualify.sh \
+            --archive "$PWD/dist/$package.tar.gz" \
+            --evidence-dir "$PWD/dist/evidence/qualification-${TARGET_OS}-${TARGET_ARCH}" \
+            --required
+
       - name: Record native dependency boundary
         run: |
           mkdir -p dist/evidence
@@ -555,6 +583,17 @@ jobs:
             dist/leapview-cli-*.tar.gz
             dist/leapview-cli-*.tar.gz.sha256
             dist/evidence/native-*.txt
+
+      - name: Upload authoring qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authoring-qualification-${{ needs.image.outputs.release_tag }}-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            dist/evidence/qualification-*/qualification-report.json
+            dist/evidence/qualification-*/raw-results.json
 
   qualify:
     name: Pre-publication qualification (${{ matrix.arch }})

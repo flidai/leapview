@@ -191,7 +191,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err != nil {
 				return authoringToolError(err)
 			}
-			return agentcore.ToolResult{Content: value}
+			return agentcore.ToolResult{Content: summarizeDashboardCatalog(value)}
 		}),
 		p.definition(GetDashboardToolName, "Get one authorized dashboard's governed metadata.", "read", agentcontracts.DashboardAuthoringGetInputSchemaJSON, agentcontracts.DashboardAuthoringGetResultSchemaJSON, []string{"dashboard", "authoring", "catalog"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringGetInput
@@ -413,7 +413,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err != nil {
 				return authoringToolError(err)
 			}
-			return agentcore.ToolResult{Content: value}
+			return agentcore.ToolResult{Content: value, ModelContent: dashboardPreviewModelResult(input, value)}
 		}),
 		p.definition(ExportDashboardYAMLToolName, "Export an authorized dashboard source as canonical project YAML. Pass exactly one of dashboardId or stableId. Instance sources export the current draft and require RESOURCE_EDIT; project sources export the retained source and require RESOURCE_READ.", "read", agentcontracts.DashboardAuthoringExportInputSchemaJSON, agentcontracts.DashboardAuthoringExportResultSchemaJSON, []string{"dashboard", "authoring", "export"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringExportInput

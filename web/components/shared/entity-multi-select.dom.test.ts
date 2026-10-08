@@ -68,7 +68,7 @@ test('filters entities and emits ordered multi-selection changes', async () => {
         events,
         summary: (picker.shadowRoot as ShadowRoot).querySelector('.selection-count')?.textContent?.trim(),
         overflow: picker.scrollWidth > picker.clientWidth,
-        multiselect: (picker.shadowRoot as ShadowRoot).querySelector('[role="listbox"]')?.getAttribute('aria-multiselectable'),
+        group: (picker.shadowRoot as ShadowRoot).querySelector('[role="group"]')?.getAttribute('aria-label'),
       }
     })
     expect(result).toEqual({
@@ -76,8 +76,12 @@ test('filters entities and emits ordered multi-selection changes', async () => {
       events: [['ana'], ['ana', 'sam']],
       summary: '2 selected',
       overflow: false,
-      multiselect: 'true',
+      group: 'Users',
     })
+    await page.getByRole('group', { name: 'Users', exact: true }).getByRole('checkbox', { name: 'Sam Seller' }).focus()
+    await page.keyboard.press('Space')
+    expect(await page.getByRole('checkbox', { name: 'Sam Seller' }).isChecked()).toBe(false)
+    expect(await page.locator('.selection-count').textContent()).toContain('1 selected')
   } finally {
     await page.close()
   }

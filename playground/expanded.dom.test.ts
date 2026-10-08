@@ -56,7 +56,7 @@ const routes: Array<[string, string]> = [
   ['tables/data-explore', 'lv-data-explore-table lv-windowed-table .scrollport'],
   ['content/code-editor', 'lv-code-editor .monaco-editor'],
   ['content/code-block', 'lv-code-block pre'],
-  ['content/config-viewer', 'lv-config-viewer [role=tree]'],
+  ['content/config-viewer', 'lv-config-viewer .tree'],
   ['content/markdown-view', 'lv-markdown-view h1, lv-markdown-view h2'],
   ['content/visual-artifact', 'lv-visual-artifact lv-visualization-host'],
   ['content/chat-composer', 'lv-chat-composer textarea'],
@@ -113,11 +113,11 @@ test('lineage selection, scope, and expanded dialog stay local and restore the g
   await browserExpect(page.locator('playground-graphs .documentation')).toContainText('orders-source')
   await graph.getByRole('button', { name: 'Show all upstream', exact: true }).click()
   await browserExpect(page.getByLabel('Graph scope')).toHaveValue('full')
-  await graph.getByRole('button', { name: 'Expand graph', exact: true }).click()
+  await graph.getByRole('button', { name: 'Expand to full page', exact: true }).click()
   await browserExpect(graph.getByRole('dialog')).toBeVisible()
   await page.keyboard.press('Escape')
   await browserExpect(graph.locator('dialog')).not.toHaveAttribute('open', '')
-  await browserExpect(graph.getByRole('button', { name: 'Expand graph', exact: true })).toBeVisible()
+  await browserExpect(graph.getByRole('button', { name: 'Expand to full page', exact: true })).toBeFocused()
 })
 
 test('semantic relationship inspector and field visibility use the real graph', async () => {
@@ -217,7 +217,7 @@ test('configuration viewer parses, filters, and exposes invalid and empty states
   await open('content/config-viewer')
   const viewer = page.locator('lv-config-viewer')
   await viewer.getByRole('searchbox', { name: 'Filter configuration' }).fill('missing-key-example')
-  await browserExpect(viewer.locator('[role=tree]')).toBeEmpty()
+  await browserExpect(viewer.locator('.tree')).toBeEmpty()
   await page.getByLabel('Content state').selectOption('invalid')
   await browserExpect(viewer.getByRole('alert')).toBeVisible()
   await page.getByLabel('Content state').selectOption('empty')

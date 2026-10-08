@@ -25,6 +25,7 @@ const emptyChrome: ChromeSignal = {
 
 class LeapViewAppShell extends DatastarLit(LitElement) {
   @state() private productSearchOpen = false
+  @state() private chatBuilderOpen = false
   @state() private pendingRemovalIds: string[] = []
 
   static styles = css`
@@ -39,7 +40,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
       font-family: var(--fontStack-system);
     }
 
-    :host([data-dashboard]) {
+    :host([data-dashboard]), :host([data-chat-builder]) {
       grid-template-columns: minmax(0, 1fr);
     }
 
@@ -80,7 +81,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
         overflow: hidden;
       }
 
-      :host([data-dashboard]) {
+      :host([data-dashboard]), :host([data-chat-builder]) {
         grid-template-columns: minmax(0, 1fr);
       }
 
@@ -115,11 +116,13 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
   updated(): void {
     checkSignalContract('chrome', this.chrome, { sidebar: 'required' })
     this.toggleAttribute('data-dashboard', this.isAppDashboard)
+    this.toggleAttribute('data-chat-builder', this.chatBuilderOpen)
     this.syncAssetPage()
   }
 
   private syncAssetPage = (): void => {
     const page = this.querySelector('[slot="page"]')
+    if (page?.localName !== 'lv-chat-page') this.chatBuilderOpen = false
     this.toggleAttribute('data-asset-page', page?.localName === 'lv-project-asset-page')
   }
 
@@ -144,6 +147,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     this.addEventListener('product-search-open', this.openProductSearch)
     this.addEventListener('lv-chat-action', this.handleChatAction)
     this.addEventListener('lv-chat-settings-open', this.openChatSettings)
+    this.addEventListener('lv-chat-layout-change', this.handleChatLayoutChange)
     window.addEventListener('keydown', this.handleProductSearchShortcut)
   }
 
@@ -152,13 +156,14 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     this.removeEventListener('product-search-open', this.openProductSearch)
     this.removeEventListener('lv-chat-action', this.handleChatAction)
     this.removeEventListener('lv-chat-settings-open', this.openChatSettings)
+    this.removeEventListener('lv-chat-layout-change', this.handleChatLayoutChange)
     window.removeEventListener('keydown', this.handleProductSearchShortcut)
     super.disconnectedCallback()
   }
 
   render() {
     return html`
-      ${this.isAppDashboard ? null : html`<lv-sidebar .config=${this.chrome.sidebar} .pendingRemovalIds=${this.pendingRemovalIds}></lv-sidebar>`}
+      ${this.isAppDashboard || this.chatBuilderOpen ? null : html`<lv-sidebar .config=${this.chrome.sidebar} .pendingRemovalIds=${this.pendingRemovalIds}></lv-sidebar>`}
       <main>
         <slot name="page" @slotchange=${this.syncAssetPage}></slot>
       </main>
@@ -168,6 +173,11 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
         @product-search-close=${this.closeProductSearch}
       ></lv-product-search>
     `
+  }
+
+  private handleChatLayoutChange = (event: Event): void => {
+    if (event.composedPath()[0] !== this.querySelector('lv-chat-page[slot="page"]')) return
+    this.chatBuilderOpen = (event as CustomEvent<{ builderOpen: boolean }>).detail.builderOpen
   }
 
   private handleChatAction = (event: Event) => {
