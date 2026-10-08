@@ -381,21 +381,28 @@ test('windowed table column resizing is keyboard accessible and publishes clampe
     expect(await resizer.count()).toBe(1)
     await resizer.focus()
     await page.keyboard.press('ArrowRight')
-    expect(await resizer.getAttribute('aria-valuenow')).toBe('196')
+    expect(await resizer.getAttribute('aria-valuetext')).toBe('196 pixels')
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.press('ArrowLeft')
-    expect(await resizer.getAttribute('aria-valuenow')).toBe('164')
+    expect(await resizer.getAttribute('aria-valuetext')).toBe('164 pixels')
+    const range = await resizer.evaluate(element => ({
+      min: Number(element.getAttribute('aria-valuemin')),
+      now: Number(element.getAttribute('aria-valuenow')),
+      max: Number(element.getAttribute('aria-valuemax') ?? 100),
+    }))
+    expect(range.min).toBeLessThanOrEqual(range.now)
+    expect(range.now).toBeLessThanOrEqual(range.max)
     expect(await page.evaluate(() => (window as any).widthEvents)).toEqual([{ id: 196 }, { id: 180 }, { id: 164 }, { id: 164 }])
     await page.locator('lv-windowed-table').evaluate(async (element: any) => {
       element.table = { ...element.table, fillWidth: true }
       await element.updateComplete
     })
-    const filledWidth = Number(await resizer.getAttribute('aria-valuenow'))
+    const filledWidth = Number.parseFloat((await resizer.getAttribute('aria-valuetext'))!)
     expect(filledWidth).toBeGreaterThan(164)
     await resizer.focus()
     await page.keyboard.press('ArrowRight')
-    expect(Number(await resizer.getAttribute('aria-valuenow'))).toBe(filledWidth + 16)
+    expect(await resizer.getAttribute('aria-valuetext')).toBe(`${filledWidth + 16} pixels`)
     await page.locator('lv-windowed-table').evaluate(async (element: any) => {
       element.table = { ...element.table, columns: [
         { key: 'a', label: 'A', width: 120 },
