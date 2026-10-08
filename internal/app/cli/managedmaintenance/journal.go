@@ -61,6 +61,10 @@ func OpenJournal(root string, request Request) (*FileJournal, error) {
 	if err == nil && state.RequestDigest != digest {
 		if state.Target != request.Target || (state.Phase != Succeeded && state.Phase != Recovered) {
 			err = ErrRecoveryRequired
+		} else if request.Operation == "enroll" {
+			// Once this host has a managed operation, a new release must use
+			// the old/new compatibility contract, even if its process is stopped.
+			err = errors.New("managed host is already enrolled; use a compatible handoff")
 		} else {
 			raw, readErr := securefs.ReadPrivateFile(j.path)
 			err = readErr
