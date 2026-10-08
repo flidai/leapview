@@ -1,5 +1,6 @@
 """Bounded HTTP workload contracts; no application or Docker fixture is faked."""
 import io
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -10,6 +11,27 @@ import managed_application_workload as workload
 
 
 class WorkloadTest(unittest.TestCase):
+    def test_credential_requires_exact_upload_connection_before_network_setup(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        credential = {"projectID": "project:leapview-evaluation", "environment": "prod", "targetURL": "https://localhost",
+                      "issuedAt": now.isoformat(), "expiresAt": (now + timedelta(hours=2)).isoformat(),
+                      "actions": sorted(workload.ACTIONS), "token": "private-test-token", "uploadConnectionID": "connection:sample"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "credential.json"
+            path.write_text(json.dumps(credential))
+            path.chmod(0o400)
+            with patch.object(workload.ssl, "create_default_context"), patch.object(workload.urllib.request, "build_opener"):
+                workload.Workload(path, "/unused/ca.crt")
+            for target in (None, "connection:other", "*"):
+                credential["uploadConnectionID"] = target
+                path.chmod(0o600)
+                path.write_text(json.dumps(credential))
+                path.chmod(0o400)
+                with patch.object(workload.ssl, "create_default_context") as tls:
+                    with self.assertRaisesRegex(ValueError, "scope or lifetime"):
+                        workload.Workload(path, "/unused/ca.crt")
+                    tls.assert_not_called()
+
     def test_real_upload_contract_waits_for_completion_before_receipt(self):
         payload = b"value\n1\n"
         manifest, revision = workload.write_manifest(payload)

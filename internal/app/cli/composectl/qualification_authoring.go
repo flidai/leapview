@@ -359,18 +359,9 @@ func (c *Controller) runQualificationAuthoring(
 	if err != nil {
 		return report, err
 	}
-	if !options.FirstPublicationOnly {
-		policyRevision, policyDigest, err = c.stageQualificationPipelineGrant(ctx, options, apiClient, administratorToken.AccessToken, administrator.Principal.Id, policyRevision)
-		if err != nil {
-			return report, err
-		}
-		policyRevision, policyDigest, err = c.stageQualificationRecoveryUploadGrant(
-			ctx, options, apiClient, administratorToken.AccessToken,
-			administrator.Principal.Id, policyRevision, policyDigest,
-		)
-		if err != nil {
-			return report, err
-		}
+	policyRevision, policyDigest, err = c.stageQualificationAuthoringGrants(ctx, options, apiClient, administratorToken.AccessToken, administrator.Principal.Id, policyRevision, policyDigest)
+	if err != nil {
+		return report, err
 	}
 	report.AuthorizationPolicyRevision = policyRevision
 	report.AuthorizationPolicyDigest = policyDigest

@@ -89,6 +89,7 @@ class Workload:
             issued = datetime.fromisoformat(credential["issuedAt"].replace("Z", "+00:00"))
             expiry = datetime.fromisoformat(credential["expiresAt"].replace("Z", "+00:00"))
             valid = (credential["projectID"] == project_id and credential["environment"] == "prod"
+                     and credential.get("uploadConnectionID") == "connection:sample"
                      and credential["targetURL"] == "https://localhost"
                      and set(credential["actions"]) == ACTIONS and len(credential["actions"]) == len(ACTIONS)
                      and issued <= datetime.now(timezone.utc) < expiry

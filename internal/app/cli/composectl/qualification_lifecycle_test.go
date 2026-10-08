@@ -13,6 +13,7 @@ import (
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
 	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,8 +62,19 @@ func TestQualificationLifecycleTokenUsesBoundedProjectWorkloadAuthority(t *testi
 		ExpiresAt   time.Time               `json:"expiresAt"`
 	}
 	requests := make(chan tokenRequest, 1)
+	editor, err := access.NewTypedRoleBinding("editor", "", access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal:author"}, access.PermissionRoleEditor, projectgraph.ResourceID(qualificationProjectID))
+	require.NoError(t, err)
+	upload, err := qualificationRecoveryUploadGrant(qualificationProjectID, "principal:author")
+	require.NoError(t, err)
+	authority := append(editor.Permissions, upload.Permissions...)
+	wide, err := access.ProjectPermissionPairsForActions(projectgraph.ResourceID(qualificationProjectID), qualificationLifecycleActions())
+	require.NoError(t, err)
+	require.ErrorContains(t, access.ValidatePermissionPairsAgainstAuthority(authority, wide), "(connection.upload)")
 	server := jrpc2.NewServer(handler.Map{"createAdministratorAPIToken": handler.New(func(_ context.Context, request tokenRequest) (map[string]string, error) {
 		requests <- request
+		if err := access.ValidatePermissionPairsAgainstAuthority(authority, request.Permissions); err != nil {
+			return nil, err
+		}
 		return map[string]string{"token": "private-workload-token"}, nil
 	})}, nil).Start(serverChannel)
 	t.Cleanup(func() { _ = worker.client.Close(); server.Stop(); _ = server.Wait() })
@@ -71,6 +83,7 @@ func TestQualificationLifecycleTokenUsesBoundedProjectWorkloadAuthority(t *testi
 	scope, err := controller.issueQualificationLifecycleCredential(t.Context(), worker, options)
 	require.NoError(t, err)
 	request := <-requests
+	require.ErrorContains(t, access.ValidatePermissionPairsAgainstAuthority(editor.Permissions, request.Permissions), "(connection.upload)", "the exact upload grant must be published before issuance")
 	require.Equal(t, issuedAt.Add(2*time.Hour), request.ExpiresAt)
 	require.Equal(t, "qualification-managed-lifecycle", request.Name)
 	var actions []string
@@ -78,7 +91,12 @@ func TestQualificationLifecycleTokenUsesBoundedProjectWorkloadAuthority(t *testi
 		require.Equal(t, qualificationProjectID, permission.Target.ProjectID.String())
 		require.Empty(t, permission.Target.InstanceID)
 		actions = append(actions, string(permission.Action))
+		if permission.Action == access.ActionConnectionUpload {
+			require.Equal(t, projectgraph.ResourceID(qualificationManagedConnectionID), permission.Target.ResourceID)
+			require.False(t, permission.Target.IncludeFuture)
+		}
 	}
+	require.Equal(t, qualificationManagedConnectionID, scope.UploadConnectionID)
 	require.ElementsMatch(t, []string{"connection.read", "connection.use", "connection.upload", "source.read", "dashboard.read", "semantic.query", "semantic.consume"}, actions)
 	require.Equal(t, request.ExpiresAt, scope.ExpiresAt)
 	raw, err := json.Marshal(scope)
@@ -88,6 +106,9 @@ func TestQualificationLifecycleTokenUsesBoundedProjectWorkloadAuthority(t *testi
 	report := validFirstPublicationReport()
 	report.LifecycleCredential = scope
 	require.NoError(t, validateQualificationFirstPublicationReport(report))
+	report.LifecycleCredential.UploadConnectionID = "connection:other"
+	require.Error(t, validateQualificationFirstPublicationReport(report))
+	report.LifecycleCredential.UploadConnectionID = qualificationManagedConnectionID
 	report.LifecycleCredential.ExpiresAt = issuedAt.Add(3 * time.Hour)
 	require.Error(t, validateQualificationFirstPublicationReport(report))
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,12 +17,13 @@ import (
 )
 
 type qualificationLifecycleCredentialScope struct {
-	ProjectID   string    `json:"projectID"`
-	Environment string    `json:"environment"`
-	TargetURL   string    `json:"targetURL"`
-	IssuedAt    time.Time `json:"issuedAt"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-	Actions     []string  `json:"actions"`
+	ProjectID          string    `json:"projectID"`
+	Environment        string    `json:"environment"`
+	TargetURL          string    `json:"targetURL"`
+	IssuedAt           time.Time `json:"issuedAt"`
+	ExpiresAt          time.Time `json:"expiresAt"`
+	Actions            []string  `json:"actions"`
+	UploadConnectionID string    `json:"uploadConnectionID"`
 }
 
 type qualificationLifecycleCredential struct {
@@ -35,13 +37,51 @@ func qualificationLifecycleActions() []access.Action {
 
 func validateQualificationLifecycleScope(retained *qualificationLifecycleCredentialScope, request qualificationFirstPublicationRequest) error {
 	if retained != nil {
-		if retained.ProjectID != request.ProjectID || retained.Environment != request.Environment || retained.TargetURL != request.TargetURL ||
+		if retained.ProjectID != request.ProjectID || retained.Environment != request.Environment || retained.TargetURL != request.TargetURL || retained.UploadConnectionID != qualificationManagedConnectionID ||
 			retained.IssuedAt.IsZero() || retained.ExpiresAt.Sub(retained.IssuedAt) != 2*time.Hour ||
 			!slices.Equal(retained.Actions, qualificationActionNames(qualificationLifecycleActions())) {
 			return errors.New("retained lifecycle workload credential has an unexpected scope or lifetime")
 		}
 	}
 	return nil
+}
+
+func (c *Controller) stageQualificationAuthoringGrants(ctx context.Context, options qualificationAuthoringOptions, client *http.Client, token, principalID string, revision int64, digest string) (int64, string, error) {
+	if options.FirstPublicationOnly {
+		if options.LifecycleCredentialFile == "" {
+			return revision, digest, nil
+		}
+		return c.stageQualificationUploadGrant(ctx, options, client, token, principalID, revision, digest)
+	}
+	revision, digest, err := c.stageQualificationPipelineGrant(ctx, options, client, token, principalID, revision)
+	if err != nil {
+		return 0, "", err
+	}
+	return c.stageQualificationRecoveryUploadGrant(ctx, options, client, token, principalID, revision, digest)
+}
+
+func qualificationLifecyclePermissions(project projectgraph.ResourceID) ([]access.PermissionPair, error) {
+	var permissions []access.PermissionPair
+	for _, action := range qualificationLifecycleActions() {
+		if action == access.ActionConnectionUpload {
+			resource, err := access.NewResourceRef(projectgraph.ResourceID(qualificationManagedConnectionID), projectgraph.KindConnection)
+			if err != nil {
+				return nil, err
+			}
+			pair, err := access.NewExactPermissionPair(action, project, resource)
+			if err != nil {
+				return nil, err
+			}
+			permissions = append(permissions, pair)
+		} else {
+			pairs, err := access.ProjectPermissionPairsForActions(project, []access.Action{action})
+			if err != nil {
+				return nil, err
+			}
+			permissions = append(permissions, pairs...)
+		}
+	}
+	return permissions, nil
 }
 
 func validateQualificationLifecycleOptions(options qualificationAuthoringOptions) error {
@@ -210,7 +250,7 @@ func (c *Controller) issueQualificationLifecycleCredential(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	permissions, err := access.ProjectPermissionPairsForActions(project, qualificationLifecycleActions())
+	permissions, err := qualificationLifecyclePermissions(project)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +258,8 @@ func (c *Controller) issueQualificationLifecycleCredential(ctx context.Context, 
 	scope := qualificationLifecycleCredentialScope{
 		ProjectID: options.ProjectID, Environment: options.Environment, TargetURL: options.Target,
 		IssuedAt: issuedAt, ExpiresAt: issuedAt.Add(2 * time.Hour),
-		Actions: qualificationActionNames(qualificationLifecycleActions()),
+		Actions:            qualificationActionNames(qualificationLifecycleActions()),
+		UploadConnectionID: qualificationManagedConnectionID,
 	}
 	var response struct {
 		Token string `json:"token"`
