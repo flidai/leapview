@@ -1,11 +1,65 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { parse } from 'yaml'
 
 const workflow = (name: string) => parse(readFileSync(`.github/workflows/${name}.yml`, 'utf8'))
+
+test('historical source preflight rejects shallow history before image work', () => {
+  const steps = workflow('sqlc-image-sample').jobs.sample.steps
+  const checkout = steps.find((step: any) => step.uses?.startsWith('actions/checkout@'))
+  const preflight = steps.find((step: any) => step.name === 'Verify historical qualification source')
+  expect(checkout.with['fetch-depth']).toBe(0)
+  expect(checkout.with.ref).toBe('${{ github.sha }}')
+  expect(checkout.with['persist-credentials']).toBe(false)
+  expect(preflight).toBeDefined()
+  expect(preflight.if).toBeUndefined()
+  expect(preflight['continue-on-error']).toBeUndefined()
+  expect(steps.indexOf(preflight)).toBeLessThan(steps.findIndex((step: any) => step.id === 'prepare'))
+
+  const directory = mkdtempSync(join(tmpdir(), 'sqlc-history-'))
+  const repo = join(directory, 'full')
+  const shallow = join(directory, 'shallow')
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
+  const pinPath = 'internal/app/cli/composectl/qualification_historical_transition.go'
+  const pin = (revision: string) => `package composectl\nconst qualificationHistoricalPredecessorRevision = "${revision}"\n`
+  try {
+    mkdirSync(join(repo, 'dashboards/experiments/cfo-demo'), { recursive: true })
+    mkdirSync(join(repo, 'internal/app/cli/composectl'), { recursive: true })
+    writeFileSync(join(repo, 'dashboards/experiments/cfo-demo/source.txt'), 'predecessor\n')
+    git('init', '-q')
+    git('config', 'user.name', 'Test')
+    git('config', 'user.email', 'test@example.invalid')
+    git('add', '.')
+    git('commit', '-qm', 'predecessor')
+    const predecessor = git('rev-parse', 'HEAD')
+    writeFileSync(join(repo, pinPath), pin(predecessor))
+    git('add', '.')
+    git('commit', '-qm', 'candidate')
+    execFileSync('git', ['clone', '-q', '--depth=1', `file://${repo}`, shallow])
+    const run = (cwd: string) => spawnSync('bash', ['-euo', 'pipefail', '-c', preflight.run], { cwd })
+    const missing = run(shallow)
+    expect(missing.status).not.toBe(0)
+    expect(missing.stderr.toString()).toContain('Historical qualification source is unavailable')
+    execFileSync('git', ['-C', shallow, 'fetch', '-q', '--unshallow'])
+    expect(run(shallow).status).toBe(0)
+    expect(execFileSync('git', ['-C', shallow, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(git('rev-parse', 'HEAD'))
+    for (const content of [pin('main'), pin(predecessor) + pin(predecessor)]) {
+      writeFileSync(join(repo, pinPath), content)
+      expect(run(repo).status).not.toBe(0)
+    }
+    // The pinned commit must contain the fixture, even if the commit itself exists.
+    rmSync(join(repo, 'dashboards'), { recursive: true })
+    git('add', '-A')
+    git('commit', '-qm', 'missing fixture')
+    writeFileSync(join(repo, pinPath), pin(git('rev-parse', 'HEAD')))
+    expect(run(repo).status).not.toBe(0)
+  } finally {
+    rmSync(directory, { recursive: true })
+  }
+})
 
 test('hosted SQLC experiment is manual, bounded and preserves failed samples', () => {
   const config = workflow('sqlc-image-screen')

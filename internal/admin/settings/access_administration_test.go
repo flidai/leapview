@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,8 +133,10 @@ func TestRoleBindingAdministrationStateProjectsCanonicalRoleDetails(t *testing.T
 }
 
 func TestApplyAccessAdministrationCommandRevokesAllPrincipalSessions(t *testing.T) {
-	ctx := context.Background()
-	repository := openAccessAdministrationRepository(t, ctx)
+	ctx := t.Context()
+	pool := postgrestest.Open(t, accesspostgres.ApplySchema)
+	repository, err := accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("admin-settings-test-key", 2))})
+	require.NoError(t, err)
 	actor, err := repository.CreateLocalUser(ctx, access.LocalUserInput{Email: "admin@example.com", DisplayName: "Admin"})
 	if err != nil {
 		t.Fatal(err)
@@ -142,11 +145,58 @@ func TestApplyAccessAdministrationCommandRevokesAllPrincipalSessions(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if _, err := repository.CreateSession(ctx, target.Principal.ID, time.Hour); err != nil {
-			t.Fatal(err)
+	control, err := repository.CreateLocalUser(ctx, access.LocalUserInput{Email: "control@example.com", DisplayName: "Control"})
+	require.NoError(t, err)
+	type sessionCredential struct{ kind, token string }
+	createSessions := func(principalID string) []sessionCredential {
+		t.Helper()
+		browser, err := repository.CreateSession(ctx, principalID, time.Hour)
+		require.NoError(t, err)
+		desktop, err := repository.CreateDesktopSession(ctx, principalID, "instance_admin_test", "profile_admin_test", time.Hour)
+		require.NoError(t, err)
+		return []sessionCredential{{"browser", browser}, {"desktop", desktop}}
+	}
+	targets := createSessions(target.Principal.ID)
+	controls := createSessions(control.Principal.ID)
+	assertAuthenticated := func(credential sessionCredential, principalID string) {
+		t.Helper()
+		principal, err := repository.PrincipalForToken(ctx, credential.token)
+		require.NoError(t, err, "%s session authentication", credential.kind)
+		require.Equal(t, principalID, principal.ID)
+	}
+	for _, credential := range targets {
+		assertAuthenticated(credential, target.Principal.ID)
+	}
+	for _, credential := range controls {
+		assertAuthenticated(credential, control.Principal.ID)
+	}
+	realSessions, err := repository.ListSessions(ctx, target.Principal.ID)
+	require.NoError(t, err)
+	require.Len(t, realSessions, 2)
+	// These raw filler rows reproduce the UI list cap without creating 1001
+	// password verifiers. Their timestamps place both real target credentials
+	// outside the 1000 newest rows; authentication is checked on real tokens.
+	_, err = pool.Exec(ctx, `
+		INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at)
+		SELECT gen_random_uuid(), $1::uuid,
+		       decode(md5(value::text) || md5('session-' || value::text), 'hex'),
+		       decode(md5('verifier-' || value::text) || md5('secret-' || value::text), 'hex'),
+		       clock_timestamp() + interval '1 hour'
+		FROM generate_series(1, 1001) AS value`, target.Principal.ID)
+	require.NoError(t, err)
+	listed, err := repository.ListSessions(ctx, target.Principal.ID)
+	require.NoError(t, err)
+	require.Len(t, listed, 1000)
+	for _, session := range listed {
+		for _, real := range realSessions {
+			require.NotEqual(t, real.ID, session.ID, "real credential must be beyond the capped list")
 		}
 	}
+	var active int
+	err = pool.QueryRow(ctx, `SELECT count(*) FROM access.session WHERE principal_id=$1::uuid AND revoked_at IS NULL`, target.Principal.ID).Scan(&active)
+	require.NoError(t, err)
+	require.Equal(t, 1003, active)
+
 	result, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, AccessAdministrationCommand{Action: "revoke_all_sessions", PrincipalID: target.Principal.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -154,15 +204,25 @@ func TestApplyAccessAdministrationCommandRevokesAllPrincipalSessions(t *testing.
 	if result.Message != "All active sessions revoked." {
 		t.Fatalf("result = %#v", result)
 	}
-	sessions, err := repository.ListSessions(ctx, target.Principal.ID)
-	if err != nil {
-		t.Fatal(err)
+	// Check all rows and real credentials independently of the capped UI list.
+	err = pool.QueryRow(ctx, `SELECT count(*) FROM access.session WHERE principal_id=$1::uuid AND revoked_at IS NULL`, target.Principal.ID).Scan(&active)
+	require.NoError(t, err)
+	require.Zero(t, active, "all target sessions must be revoked")
+	for i, credential := range targets {
+		_, err := repository.PrincipalForToken(ctx, credential.token)
+		require.ErrorIs(t, err, pgx.ErrNoRows, "target %s session %d must be revoked", credential.kind, i)
 	}
-	for _, session := range sessions {
-		if session.RevokedAt == "" {
-			t.Fatalf("session not revoked: %#v", session)
-		}
+	for _, credential := range controls {
+		assertAuthenticated(credential, control.Principal.ID)
 	}
+	events, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{
+		IncludeUnscoped: true, PrincipalID: actor.Principal.ID, Action: "principal.sessions.revoked",
+		ResourceKind: "principal", ResourceID: target.Principal.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, "success", events[0].Status)
+	require.Equal(t, access.CapabilityProjectAdmin, events[0].Capability)
 }
 
 func TestApplyAccessAdministrationCommandCreatesAndBlocksLocalUser(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
 	"time"
 
@@ -27,6 +28,7 @@ type Budgets struct {
 }
 type Request struct {
 	Version      int                                 `json:"version"`
+	Operation    string                              `json:"operation,omitempty"`
 	Target       string                              `json:"target"`
 	Predecessor  Release                             `json:"predecessor"`
 	Candidate    Release                             `json:"candidate"`
@@ -46,6 +48,9 @@ func (r Request) Validate() error {
 	if r.Budgets.Phase <= 0 || r.Budgets.Total < r.Budgets.Phase || r.Budgets.Total > 24*time.Hour {
 		return errors.New("finite phase and total maintenance budgets are required")
 	}
+	if r.Operation != "" && r.Operation != "enroll" {
+		return errors.New("unsupported managed maintenance operation")
+	}
 	for _, release := range []Release{r.Predecessor, r.Candidate} {
 		if _, err := ociref.ParseImmutable(release.Image); err != nil {
 			return err
@@ -54,7 +59,13 @@ func (r Request) Validate() error {
 			return errors.New("immutable release configuration and credential identities are required")
 		}
 	}
-	if r.Predecessor.Image == r.Candidate.Image {
+	if r.Operation == "enroll" {
+		// Enrollment selects one existing, authenticated release. Both sides are
+		// identical so interrupted enrollment can only recover that same release.
+		if r.Predecessor != r.Candidate || !reflect.DeepEqual(r.SourceBefore, r.SourceAfter) {
+			return errors.New("managed enrollment requires one exact release and source identity")
+		}
+	} else if r.Predecessor.Image == r.Candidate.Image {
 		return errors.New("candidate and predecessor must be distinct immutable images")
 	}
 	if r.Predecessor.ConfigurationDigest != r.Candidate.ConfigurationDigest || r.Predecessor.CredentialDigest != r.Candidate.CredentialDigest {

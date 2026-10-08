@@ -157,7 +157,7 @@ func (k *KamalEffects) Capacity(ctx context.Context) (report CapacityReport, err
 func (k *KamalEffects) checkCapacity(ctx context.Context) error {
 	// An unfinished old journal binds the old profile bytes. Recovery alone
 	// keeps that explicit legacy contract; new operations cannot omit policy.
-	if k.recovering && k.Profile.Capacity == nil {
+	if k.recovering && k.Profile.Capacity == nil && k.Request.Operation != "enroll" {
 		return nil
 	}
 	_, err := k.Capacity(ctx)

@@ -122,7 +122,8 @@ def prepare(args):
     if (not re.fullmatch(r"[a-f0-9]{40}", args.source) or output.exists() or
             output.is_relative_to(repo) or any(c in str(output) for c in ",\n\r")):
         raise ValueError("exact commit and new external output directory required")
-    output.mkdir(parents=True)
+    # The historical fixture writes transition.json here and requires a private parent.
+    output.mkdir(mode=0o700, parents=True)
     receipt = {"status": "preparing", "source": args.source, "mode": args.mode, "kind": args.kind,
                "scope": "hosted full-image experiment; no production adoption or SLO acceptance", "commands": []}
     runner = local.Runner(output, receipt)
