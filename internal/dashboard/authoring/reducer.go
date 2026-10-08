@@ -415,6 +415,7 @@ func setCanonicalVisualQueryOptions(value *document.DashboardDocument, patch Set
 		return err
 	}
 	visual := value.Spec.Visuals[visualID]
+	previousCellFields := gridCellContentDeliveredFields(visual)
 	previousAlias := ""
 	if patch.FieldID != "" && patch.Alias != nil {
 		previousAlias = canonicalVisualQueryFieldAlias(&visual.Query, patch.Role, patch.FieldID)
@@ -453,6 +454,7 @@ func setCanonicalVisualQueryOptions(value *document.DashboardDocument, patch Set
 	if patch.FieldID != "" && patch.Alias != nil {
 		configureTargetPresentationBindings(&visual)
 	}
+	rewriteCanonicalGridCellContentAliases(&visual, previousCellFields)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }
@@ -1882,6 +1884,7 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.Calculations = visual.Calculations
 	newDefault.Interactions = visual.Interactions
 	syncCanonicalComboSeries(&newDefault)
+	pruneCanonicalGridCellContent(&newDefault)
 	value.Spec.Visuals[visualID] = newDefault
 	return nil
 }
@@ -2525,12 +2528,14 @@ func removeCanonicalField(value *document.DashboardDocument, patch RemoveFieldPa
 		case *document.HistogramDashboardQuery:
 			if id, _ := canonicalMetricSelection(query.Field); id == patch.FieldID && id != pending {
 				query.Field = document.DashboardMetricSelection{String: &pending}
+				pruneCanonicalGridCellContent(&visual)
 				value.Spec.Visuals[visualID] = visual
 				return nil
 			}
 		case *document.DistributionDashboardQuery:
 			if id, _ := canonicalMetricSelection(query.Field); id == patch.FieldID && id != pending {
 				query.Field = document.DashboardMetricSelection{String: &pending}
+				pruneCanonicalGridCellContent(&visual)
 				value.Spec.Visuals[visualID] = visual
 				return nil
 			}
@@ -2545,6 +2550,7 @@ func removeCanonicalField(value *document.DashboardDocument, patch RemoveFieldPa
 	}
 	syncCanonicalComboSeries(&visual)
 	configureTargetPresentationBindings(&visual)
+	pruneCanonicalGridCellContent(&visual)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }
@@ -2574,6 +2580,7 @@ func moveCanonicalField(value *document.DashboardDocument, patch MoveFieldPayloa
 	}
 	syncCanonicalComboSeries(&visual)
 	configureTargetPresentationBindings(&visual)
+	pruneCanonicalGridCellContent(&visual)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }

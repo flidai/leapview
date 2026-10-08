@@ -105,10 +105,240 @@ type GradientVisualizationConditionalRule struct {
 	NullStyle VisualizationConditionalStyle `json:"nullStyle" yaml:"nullStyle"`
 }
 
+type GridLevelHierarchy struct {
+	GridRowHierarchyBase
+	Mode   string   `json:"mode" yaml:"mode"`
+	Fields []string `json:"fields" yaml:"fields"`
+	Label  *string  `json:"label,omitempty" yaml:"label,omitempty"`
+}
+
+type GridNestedHierarchy struct {
+	GridRowHierarchyBase
+	Mode          string  `json:"mode" yaml:"mode"`
+	ChildrenField string  `json:"childrenField" yaml:"childrenField"`
+	LabelField    string  `json:"labelField" yaml:"labelField"`
+	IDField       *string `json:"idField,omitempty" yaml:"idField,omitempty"`
+}
+
+type GridParentChildHierarchy struct {
+	GridRowHierarchyBase
+	Mode        string `json:"mode" yaml:"mode"`
+	IDField     string `json:"idField" yaml:"idField"`
+	ParentField string `json:"parentField" yaml:"parentField"`
+	LabelField  string `json:"labelField" yaml:"labelField"`
+}
+
+type GridRowHierarchyVariant interface {
+	isGridRowHierarchyVariant()
+}
+
+type GridRowHierarchy struct {
+	Value GridRowHierarchyVariant
+}
+
+func (*GridLevelHierarchy) isGridRowHierarchyVariant()       {}
+func (*GridNestedHierarchy) isGridRowHierarchyVariant()      {}
+func (*GridParentChildHierarchy) isGridRowHierarchyVariant() {}
+
+func (value GridRowHierarchy) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *GridLevelHierarchy:
+		if variant == nil {
+			return nil, fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return json.Marshal(variant)
+	case *GridNestedHierarchy:
+		if variant == nil {
+			return nil, fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return json.Marshal(variant)
+	case *GridParentChildHierarchy:
+		if variant == nil {
+			return nil, fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("GridRowHierarchy variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported GridRowHierarchy variant %T", variant)
+	}
+}
+
+func (value *GridRowHierarchy) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal GridRowHierarchy into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode GridRowHierarchy object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"mode"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode GridRowHierarchy discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("GridRowHierarchy discriminator mode is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "levels":
+		if _, ok := fields["fields"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property fields is missing", tag.Value)
+		}
+		if _, ok := fields["mode"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property mode is missing", tag.Value)
+		}
+		var variant GridLevelHierarchy
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "nested":
+		if _, ok := fields["childrenField"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property childrenField is missing", tag.Value)
+		}
+		if _, ok := fields["labelField"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property labelField is missing", tag.Value)
+		}
+		if _, ok := fields["mode"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property mode is missing", tag.Value)
+		}
+		var variant GridNestedHierarchy
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "parent_child":
+		if _, ok := fields["idField"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property idField is missing", tag.Value)
+		}
+		if _, ok := fields["labelField"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property labelField is missing", tag.Value)
+		}
+		if _, ok := fields["mode"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property mode is missing", tag.Value)
+		}
+		if _, ok := fields["parentField"]; !ok {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: required property parentField is missing", tag.Value)
+		}
+		var variant GridParentChildHierarchy
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode GridRowHierarchy variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown GridRowHierarchy discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type GridRowHierarchyVisitor interface {
+	VisitGridLevelHierarchy(*GridLevelHierarchy) error
+	VisitGridNestedHierarchy(*GridNestedHierarchy) error
+	VisitGridParentChildHierarchy(*GridParentChildHierarchy) error
+}
+
+func (value *GridRowHierarchy) Visit(visitor GridRowHierarchyVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil GridRowHierarchy")
+	}
+	if visitor == nil {
+		return fmt.Errorf("GridRowHierarchy visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *GridLevelHierarchy:
+		if variant == nil {
+			return fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return visitor.VisitGridLevelHierarchy(variant)
+	case *GridNestedHierarchy:
+		if variant == nil {
+			return fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return visitor.VisitGridNestedHierarchy(variant)
+	case *GridParentChildHierarchy:
+		if variant == nil {
+			return fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return visitor.VisitGridParentChildHierarchy(variant)
+	case nil:
+		return fmt.Errorf("GridRowHierarchy variant is required")
+	default:
+		return fmt.Errorf("unsupported GridRowHierarchy variant %T", variant)
+	}
+}
+
+func (value *GridRowHierarchy) Mode() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil GridRowHierarchy")
+	}
+	switch variant := value.Value.(type) {
+	case *GridLevelHierarchy:
+		if variant == nil {
+			return "", fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return "levels", nil
+	case *GridNestedHierarchy:
+		if variant == nil {
+			return "", fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return "nested", nil
+	case *GridParentChildHierarchy:
+		if variant == nil {
+			return "", fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return "parent_child", nil
+	case nil:
+		return "", fmt.Errorf("GridRowHierarchy variant is required")
+	default:
+		return "", fmt.Errorf("unsupported GridRowHierarchy variant %T", variant)
+	}
+}
+
+func (value *GridRowHierarchy) Base() (*GridRowHierarchyBase, error) {
+	if value == nil {
+		return nil, fmt.Errorf("cannot inspect nil GridRowHierarchy")
+	}
+	switch variant := value.Value.(type) {
+	case *GridLevelHierarchy:
+		if variant == nil {
+			return nil, fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return &variant.GridRowHierarchyBase, nil
+	case *GridNestedHierarchy:
+		if variant == nil {
+			return nil, fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return &variant.GridRowHierarchyBase, nil
+	case *GridParentChildHierarchy:
+		if variant == nil {
+			return nil, fmt.Errorf("GridRowHierarchy variant is nil")
+		}
+		return &variant.GridRowHierarchyBase, nil
+	case nil:
+		return nil, fmt.Errorf("GridRowHierarchy variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported GridRowHierarchy variant %T", variant)
+	}
+}
+
+type GridRowHierarchyBase struct {
+	Mode                 string `json:"mode" yaml:"mode"`
+	DefaultExpandedDepth *int32 `json:"defaultExpandedDepth,omitempty" yaml:"defaultExpandedDepth,omitempty"`
+}
+
 type GridVisualizationPresentation struct {
-	RowHeight  int64 `json:"rowHeight" yaml:"rowHeight"`
-	Striped    bool  `json:"striped" yaml:"striped"`
-	ShowHeader bool  `json:"showHeader" yaml:"showHeader"`
+	RowHeight   int64                        `json:"rowHeight" yaml:"rowHeight"`
+	Striped     bool                         `json:"striped" yaml:"striped"`
+	ShowHeader  bool                         `json:"showHeader" yaml:"showHeader"`
+	Hierarchy   *GridRowHierarchy            `json:"hierarchy,omitempty" yaml:"hierarchy,omitempty"`
+	CellContent *map[string]TableCellContent `json:"cellContent,omitempty" yaml:"cellContent,omitempty"`
 }
 
 type HierarchyVisualizationPresentation struct {
@@ -326,6 +556,164 @@ type TableBadgeFormattingRule struct {
 	Values map[string]string `json:"values" yaml:"values"`
 }
 
+type TableCellContentVariant interface {
+	isTableCellContentVariant()
+}
+
+type TableCellContent struct {
+	Value TableCellContentVariant
+}
+
+func (*TableImageCellContent) isTableCellContentVariant() {}
+func (*TableLinkCellContent) isTableCellContentVariant()  {}
+
+func (value TableCellContent) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *TableImageCellContent:
+		if variant == nil {
+			return nil, fmt.Errorf("TableCellContent variant is nil")
+		}
+		return json.Marshal(variant)
+	case *TableLinkCellContent:
+		if variant == nil {
+			return nil, fmt.Errorf("TableCellContent variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("TableCellContent variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported TableCellContent variant %T", variant)
+	}
+}
+
+func (value *TableCellContent) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal TableCellContent into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode TableCellContent object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"kind"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode TableCellContent discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("TableCellContent discriminator kind is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "image":
+		if _, ok := fields["display"]; !ok {
+			return fmt.Errorf("decode TableCellContent variant %q: required property display is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode TableCellContent variant %q: required property kind is missing", tag.Value)
+		}
+		var variant TableImageCellContent
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode TableCellContent variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "link":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode TableCellContent variant %q: required property kind is missing", tag.Value)
+		}
+		var variant TableLinkCellContent
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode TableCellContent variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown TableCellContent discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type TableCellContentVisitor interface {
+	VisitTableImageCellContent(*TableImageCellContent) error
+	VisitTableLinkCellContent(*TableLinkCellContent) error
+}
+
+func (value *TableCellContent) Visit(visitor TableCellContentVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil TableCellContent")
+	}
+	if visitor == nil {
+		return fmt.Errorf("TableCellContent visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *TableImageCellContent:
+		if variant == nil {
+			return fmt.Errorf("TableCellContent variant is nil")
+		}
+		return visitor.VisitTableImageCellContent(variant)
+	case *TableLinkCellContent:
+		if variant == nil {
+			return fmt.Errorf("TableCellContent variant is nil")
+		}
+		return visitor.VisitTableLinkCellContent(variant)
+	case nil:
+		return fmt.Errorf("TableCellContent variant is required")
+	default:
+		return fmt.Errorf("unsupported TableCellContent variant %T", variant)
+	}
+}
+
+func (value *TableCellContent) Kind() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil TableCellContent")
+	}
+	switch variant := value.Value.(type) {
+	case *TableImageCellContent:
+		if variant == nil {
+			return "", fmt.Errorf("TableCellContent variant is nil")
+		}
+		return "image", nil
+	case *TableLinkCellContent:
+		if variant == nil {
+			return "", fmt.Errorf("TableCellContent variant is nil")
+		}
+		return "link", nil
+	case nil:
+		return "", fmt.Errorf("TableCellContent variant is required")
+	default:
+		return "", fmt.Errorf("unsupported TableCellContent variant %T", variant)
+	}
+}
+
+func (value *TableCellContent) Base() (*TableCellContentBase, error) {
+	if value == nil {
+		return nil, fmt.Errorf("cannot inspect nil TableCellContent")
+	}
+	switch variant := value.Value.(type) {
+	case *TableImageCellContent:
+		if variant == nil {
+			return nil, fmt.Errorf("TableCellContent variant is nil")
+		}
+		return &variant.TableCellContentBase, nil
+	case *TableLinkCellContent:
+		if variant == nil {
+			return nil, fmt.Errorf("TableCellContent variant is nil")
+		}
+		return &variant.TableCellContentBase, nil
+	case nil:
+		return nil, fmt.Errorf("TableCellContent variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported TableCellContent variant %T", variant)
+	}
+}
+
+type TableCellContentBase struct {
+	Kind string `json:"kind" yaml:"kind"`
+}
+
 type TableDataBarFormattingRule struct {
 	TableVisualizationFormattingRuleBase
 	Kind       string   `json:"kind" yaml:"kind"`
@@ -333,6 +721,29 @@ type TableDataBarFormattingRule struct {
 	Maximum    *float64 `json:"maximum,omitempty" yaml:"maximum,omitempty"`
 	Color      string   `json:"color" yaml:"color"`
 	Background *string  `json:"background,omitempty" yaml:"background,omitempty"`
+}
+
+type TableImageCellContent struct {
+	TableCellContentBase
+	Kind     string            `json:"kind" yaml:"kind"`
+	Display  TableImageDisplay `json:"display" yaml:"display"`
+	Width    *int32            `json:"width,omitempty" yaml:"width,omitempty"`
+	Height   *int32            `json:"height,omitempty" yaml:"height,omitempty"`
+	AltField *string           `json:"altField,omitempty" yaml:"altField,omitempty"`
+}
+
+type TableImageDisplay string
+
+const (
+	TableImageDisplayInline  TableImageDisplay = "inline"
+	TableImageDisplayTooltip TableImageDisplay = "tooltip"
+)
+
+type TableLinkCellContent struct {
+	TableCellContentBase
+	Kind       string  `json:"kind" yaml:"kind"`
+	LabelField *string `json:"labelField,omitempty" yaml:"labelField,omitempty"`
+	NewTab     *bool   `json:"newTab,omitempty" yaml:"newTab,omitempty"`
 }
 
 type TableTextColorFormattingRule struct {
@@ -352,6 +763,7 @@ type TableVisualizationColumn struct {
 	Metric      *string                            `json:"metric,omitempty" yaml:"metric,omitempty"`
 	ColumnValue *string                            `json:"columnValue,omitempty" yaml:"columnValue,omitempty"`
 	Formatting  []TableVisualizationFormattingRule `json:"formatting" yaml:"formatting"`
+	Content     *TableCellContent                  `json:"content,omitempty" yaml:"content,omitempty"`
 }
 
 type TableVisualizationFormattingRuleVariant interface {

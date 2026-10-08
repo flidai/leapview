@@ -11,6 +11,7 @@ export const visualizationHostStyles = css`
     font-family: var(--fontStack-system);
   }
   :host([slot='focus-visual']) { --lv-visual-expand-display: none; }
+  :host([data-table-fit]) { height: var(--lv-table-content-height); max-height: 100%; }
   .surface { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
   .surface.headerless { grid-template-rows: minmax(0, 1fr); }
   .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }

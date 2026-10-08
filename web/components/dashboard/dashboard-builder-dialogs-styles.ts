@@ -554,6 +554,13 @@ export const dashboardBuilderDialogsStyles = css`
         min-height: 8rem;
       }
 
+      .canvas .visual:is([data-visual-type='table'], [data-visual-type='matrix'], [data-visual-type='pivot']) {
+        height: auto !important;
+        min-height: 0;
+        --lv-visual-height: auto;
+        --lv-table-max-height: 16rem;
+      }
+
       .canvas .visual > .grid-stack-item-content,
       .canvas .filter-component > .grid-stack-item-content,
       .canvas .header-component > .grid-stack-item-content,
@@ -562,6 +569,10 @@ export const dashboardBuilderDialogsStyles = css`
         inset: auto !important;
         width: 100%;
         height: 100%;
+      }
+
+      .canvas .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .grid-stack-item-content {
+        height: calc(var(--lv-table-content-height) + 2px);
       }
 
       .toolbar-actions {

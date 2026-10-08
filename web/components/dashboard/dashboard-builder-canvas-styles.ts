@@ -385,6 +385,11 @@ export const dashboardBuilderCanvasStyles = css`
       padding: 0;
     }
 
+    .visual.has-preview:has(lv-visualization-host[data-table-fit]) > .grid-stack-item-content {
+      bottom: auto;
+      height: min(calc(100% - var(--gs-item-margin-top) - var(--gs-item-margin-bottom)), calc(var(--lv-table-content-height) + 2px));
+    }
+
     .visual:hover > .grid-stack-item-content {
       border-color: var(--lv-line-emphasis);
       box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-control-hover);

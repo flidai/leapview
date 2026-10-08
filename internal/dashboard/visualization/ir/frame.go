@@ -406,6 +406,12 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	if err := validatePointSpecification(spec, schemas); err != nil {
 		return nil, err
 	}
+	if err := validateGridRowHierarchy(spec); err != nil {
+		return nil, err
+	}
+	if err := validateGridCellContent(spec, schemas); err != nil {
+		return nil, err
+	}
 	if err := validateGeographicSpecification(spec, schemas); err != nil {
 		return nil, err
 	}

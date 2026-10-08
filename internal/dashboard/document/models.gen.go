@@ -4223,10 +4223,12 @@ type StringDashboardFilterValue struct {
 
 type TableDashboardPresentation struct {
 	DashboardPresentationBase
-	Type       string `json:"type" yaml:"type"`
-	RowHeight  int32  `json:"rowHeight" yaml:"rowHeight"`
-	ShowHeader bool   `json:"showHeader" yaml:"showHeader"`
-	Striped    bool   `json:"striped" yaml:"striped"`
+	Type        string                                       `json:"type" yaml:"type"`
+	RowHeight   int32                                        `json:"rowHeight" yaml:"rowHeight"`
+	ShowHeader  bool                                         `json:"showHeader" yaml:"showHeader"`
+	Striped     bool                                         `json:"striped" yaml:"striped"`
+	Hierarchy   *visualizationir.GridRowHierarchy            `json:"hierarchy,omitempty" yaml:"hierarchy,omitempty"`
+	CellContent *map[string]visualizationir.TableCellContent `json:"cellContent,omitempty" yaml:"cellContent,omitempty"`
 }
 
 type TextDashboardFilterControl struct {

@@ -323,6 +323,10 @@ model DashboardBuilderFormatOptionSignal {
   `control`: "toggle" | "select" | "number" | "text";
   `value`: string;
   `placeholder`?: string;
+  `description`?: string;
+  `min`?: float64;
+  `max`?: float64;
+  `step`?: float64;
   `choices`: DashboardBuilderFormatChoiceSignal[];
 }
 

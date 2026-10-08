@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { createRef, ref, type Ref } from 'lit/directives/ref.js'
-import { ArrowDown, ArrowUp, EllipsisVertical } from 'lucide'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, EllipsisVertical } from 'lucide'
 import { type ColumnResizeDrag, resizeClientX, resizeGuideX, resizePlaneScaleX, resizedColumnWidth } from '../../shared/column-resize'
 import { lucideIcon } from '../../shared/lucide-icons'
 import {
@@ -35,6 +35,9 @@ import { visualMenuIcon } from '../visual-menu-icons'
 import { visualActionStyles } from '../visual-action-styles'
 import { conditionalCellAppearance } from './conditional-formatting'
 import { defaultDirection, formatCell, rowKey } from './format'
+import './cell-content'
+import type { TableCellContentElement } from './cell-content'
+import { buildTree, defaultExpandedIDs, flattenTree, type HierarchyNode, type HierarchyTree } from './hierarchy'
 import { blockStartsForAll, emptyBlocks, emptyTable, preserveCardinality, sameSort, sortedBlockRows, tableConverter } from './block-source'
 import {
   buildRowSelectionCommand,
@@ -54,6 +57,7 @@ import {
   type TableColumn,
   type TableRow,
   type TableSignal,
+  type TableSort,
   type TanStackTableRow,
   type VisualAction,
   type VisibleRowSlot,
@@ -128,6 +132,7 @@ export class ReportTable extends LitElement {
     tableId: { attribute: 'table-id' },
     exploreHref: { attribute: false },
     table: { attribute: 'table', converter: tableConverter },
+    maxHeight: { attribute: 'max-height', type: Number },
     selectedCellKey: { state: true },
     viewportTop: { state: true },
     viewportHeight: { state: true },
@@ -136,11 +141,15 @@ export class ReportTable extends LitElement {
     rowSelection: { state: true },
     hoveredRowId: { state: true },
     resizeGuideX: { state: true },
+    hierarchyExpanded: { state: true },
+    hierarchySort: { state: true },
   }
 
   declare tableId: string
   declare exploreHref?: string
   declare table: TableSignal
+  /** Stable allocation from the containing visual; independent of content. */
+  declare maxHeight: number
   declare private selectedCellKey: string
   declare private viewportTop: number
   declare private viewportHeight: number
@@ -149,6 +158,16 @@ export class ReportTable extends LitElement {
   declare private rowSelection: RowSelectionState
   declare private hoveredRowId: string
   declare private resizeGuideX: number
+  declare private hierarchyExpanded: Set<string>
+  declare private hierarchySort: TableSort | undefined
+  private hierarchyTree?: HierarchyTree
+  private hierarchyError = ''
+  private hierarchyIdentity = ''
+  private hierarchyExpansionIdentity = ''
+  private hierarchySourceRows: TableRow[][] = []
+  private hierarchySourceStarts: number[] = []
+  private hierarchyVisibleRows: Array<{ row: TableRow; index: number }> = []
+  private hierarchyNodes = new WeakMap<TableRow, HierarchyNode>()
   private compactColumns = false
   private lastResetVersion = -1
   private shouldResetScroll = false
@@ -162,6 +181,11 @@ export class ReportTable extends LitElement {
   private blockCache: Record<BlockID, TableBlock> = emptyBlocks()
   private bodyViewportRef: Ref<HTMLDivElement> = createRef()
   private resizeObserver?: ResizeObserver
+  private contentResizeObserver?: ResizeObserver
+  private contentSizeTargets = new Set<Element>()
+  private contentSizeFrame = 0
+  private publishedNaturalHeight = -1
+  private publishedHeight = -1
   private resizeGuideFrame = 0
   private resizeDrag?: ColumnResizeDrag
   private tableController = new TableController<typeof reportTableFeatures, TanStackTableRow>(this)
@@ -190,6 +214,7 @@ export class ReportTable extends LitElement {
     super()
     this.tableId = ''
     this.table = emptyTable
+    this.maxHeight = 0
     this.selectedCellKey = ''
     this.viewportTop = 0
     this.viewportHeight = 0
@@ -198,29 +223,54 @@ export class ReportTable extends LitElement {
     this.rowSelection = {}
     this.hoveredRowId = ''
     this.resizeGuideX = -1
+    this.hierarchyExpanded = new Set()
+    this.hierarchySort = undefined
   }
 
   static styles = [visualActionStyles, css`
     :host {
       display: block;
-      height: var(--lv-visual-height, 100%);
+      height: var(--lv-table-content-height, var(--lv-visual-height, 100%));
       min-height: 0;
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
     }
 
     .shell {
+      --lv-table-cell-padding-inline: var(--base-size-8);
+      --lv-table-cell-font: var(--lv-type-body);
       display: flex;
       flex-direction: column;
-      height: var(--lv-visual-height, 100%);
+      height: var(--lv-table-content-height, var(--lv-visual-height, 100%));
       min-height: 0;
       min-width: 0;
       background: var(--lv-chart-surface);
       isolation: isolate;
     }
 
+    .shell > .error { flex: 0 0 auto; }
+
+    .allocation-probe-container {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .allocation-probe {
+      display: block;
+      width: 0;
+      height: var(--lv-table-max-height, 0px);
+      padding: 0;
+      margin: 0;
+      border: 0;
+    }
+
     .toolbar {
       position: relative;
+      flex: 0 0 auto;
       z-index: var(--zIndex-sticky);
       display: flex;
       align-items: center;
@@ -274,6 +324,56 @@ export class ReportTable extends LitElement {
     .visual-actions {
       position: relative;
       z-index: calc(var(--zIndex-default) + 2);
+    }
+
+    .hierarchy-controls {
+      display: flex;
+      gap: 4px;
+      margin-inline-end: 6px;
+    }
+
+    .hierarchy-controls button, .hierarchy-disclosure {
+      border: 1px solid var(--lv-line-muted);
+      border-radius: var(--lv-radius-tight);
+      background: transparent;
+      color: var(--lv-fg-muted);
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .hierarchy-controls button {
+      padding: 4px 7px;
+      white-space: nowrap;
+      font-size: 11px;
+    }
+
+    .hierarchy-cell {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .hierarchy-disclosure, .hierarchy-spacer {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 22px;
+      width: 22px;
+      height: 24px;
+    }
+
+    .hierarchy-disclosure { border-color: transparent; padding: 0; min-width: 22px; }
+    .hierarchy-disclosure svg { flex: 0 0 14px; width: 14px; min-width: 14px; height: 14px; }
+    .hierarchy-disclosure:hover { background: var(--lv-bg-panel); color: var(--lv-fg-default); }
+    .hierarchy-label { flex: 1; min-width: 0; }
+    .hierarchy-depth { flex: 0 0 auto; font-size: 10px; color: var(--lv-fg-muted); padding-inline-end: 4px; }
+
+    .hierarchy-controls button:focus-visible, .hierarchy-disclosure:focus-visible {
+      outline: 2px solid var(--lv-line-accent);
+      outline-offset: -2px;
     }
 
     .visual-actions .icon-action,
@@ -449,7 +549,7 @@ export class ReportTable extends LitElement {
       overflow: hidden;
       border-right: var(--lv-border-default);
       background: inherit;
-      padding: 0 var(--base-size-8);
+      padding: 0 var(--lv-table-cell-padding-inline);
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
@@ -561,7 +661,7 @@ export class ReportTable extends LitElement {
       background: transparent;
       color: inherit;
       cursor: pointer;
-      padding: 0 var(--base-size-8);
+      padding: 0 var(--lv-table-cell-padding-inline);
       font: inherit;
       text-align: inherit;
     }
@@ -586,7 +686,7 @@ export class ReportTable extends LitElement {
       background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest, var(--lv-bg-panel)));
       color: var(--lv-button-invisible-fg-rest, inherit);
       cursor: pointer;
-      padding: 0 var(--base-size-8);
+      padding: 0 calc(var(--lv-table-cell-padding-inline) - var(--borderWidth-default, var(--lv-border-width)));
       font: var(--lv-type-caption);
       letter-spacing: 0;
       text-align: left;
@@ -602,16 +702,11 @@ export class ReportTable extends LitElement {
     }
 
     .header-cell.right .header-button {
-      flex-direction: row-reverse;
       text-align: right;
     }
 
-    .density-compact button.header-button {
-      padding-inline: var(--base-size-6);
-    }
-
-    .density-spacious button.header-button {
-      padding-inline: var(--base-size-12);
+    .header-cell.right .sort {
+      order: -1;
     }
 
     button.header-button:hover,
@@ -625,7 +720,7 @@ export class ReportTable extends LitElement {
     }
 
     .sort {
-      display: inline-grid;
+      display: none;
       min-width: var(--base-size-20);
       place-items: center;
       color: var(--lv-fg-link);
@@ -634,6 +729,7 @@ export class ReportTable extends LitElement {
     }
 
     .sorted .sort {
+      display: inline-grid;
       opacity: 1;
     }
 
@@ -664,7 +760,7 @@ export class ReportTable extends LitElement {
     .table-frame {
       position: relative;
       display: flex;
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       flex-direction: column;
       min-height: 0;
       min-width: 0;
@@ -677,7 +773,7 @@ export class ReportTable extends LitElement {
     .table-scrollport {
       max-height: var(--lv-table-max-body-height, none);
       position: relative;
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       overflow: auto;
       min-height: 0;
       min-width: 0;
@@ -797,18 +893,18 @@ export class ReportTable extends LitElement {
       cursor: default;
       font: inherit;
       padding: 0 var(--base-size-8);
-      font: var(--lv-type-body);
+      font: var(--lv-table-cell-font);
       text-align: left;
     }
 
-    .density-compact .cell-action {
-      padding: 0 var(--base-size-6);
-      font: var(--lv-type-caption);
+    .density-compact {
+      --lv-table-cell-padding-inline: var(--base-size-6);
+      --lv-table-cell-font: var(--lv-type-caption);
     }
 
-    .density-spacious .cell-action {
-      padding: 0 var(--base-size-12);
-      font: var(--lv-type-body-large);
+    .density-spacious {
+      --lv-table-cell-padding-inline: var(--base-size-12);
+      --lv-table-cell-font: var(--lv-type-body-large);
     }
 
     .cell:not(.skeleton-cell) {
@@ -948,7 +1044,8 @@ export class ReportTable extends LitElement {
       position: sticky;
       left: 0;
       display: grid;
-      min-height: 240px;
+      min-height: 0;
+      padding: var(--base-size-12) var(--base-size-8);
       place-items: center;
       color: var(--lv-fg-muted);
       font: var(--lv-type-body-large);
@@ -975,6 +1072,7 @@ export class ReportTable extends LitElement {
 
     .footer {
       display: flex;
+      flex: 0 0 auto;
       align-items: center;
       justify-content: space-between;
       gap: var(--base-size-8);
@@ -1019,11 +1117,76 @@ export class ReportTable extends LitElement {
     super.connectedCallback()
     document.addEventListener('pointerdown', this.handleOutsidePointerDown)
     document.addEventListener('keydown', this.handleDocumentKeyDown)
-    if (this.hasUpdated) queueMicrotask(() => this.startViewportObserver(true))
+    if (this.hasUpdated) queueMicrotask(() => { this.startContentSizeObserver(); this.syncContentHeight(); this.startViewportObserver(true) })
   }
 
   firstUpdated(): void {
+    this.startContentSizeObserver()
+    this.syncContentHeight()
     this.startViewportObserver()
+  }
+
+  private startContentSizeObserver(): void {
+    if (!this.contentResizeObserver) this.contentResizeObserver = new ResizeObserver(this.scheduleContentSize)
+    this.syncContentSizeTargets()
+  }
+
+  private syncContentSizeTargets(): void {
+    if (!this.contentResizeObserver) return
+    const targets = new Set<Element>(this.renderRoot.querySelectorAll('.shell, .toolbar, .footer, .table-plane, .empty, .error, .allocation-probe'))
+    if (this.parentElement) targets.add(this.parentElement)
+    for (const target of this.contentSizeTargets) {
+      if (!targets.has(target)) this.contentResizeObserver.unobserve(target)
+    }
+    for (const target of targets) {
+      if (!this.contentSizeTargets.has(target)) this.contentResizeObserver.observe(target)
+    }
+    this.contentSizeTargets = targets
+  }
+
+  private scheduleContentSize = (): void => {
+    if (this.contentSizeFrame) return
+    this.contentSizeFrame = requestAnimationFrame(() => { this.contentSizeFrame = 0; this.syncContentHeight() })
+  }
+
+  private syncContentHeight(): void {
+    const shell = this.renderRoot.querySelector<HTMLElement>('.shell')
+    const viewport = this.bodyViewportRef.value
+    const plane = this.renderRoot.querySelector<HTMLElement>('.table-plane')
+    const frame = this.renderRoot.querySelector<HTMLElement>('.table-frame')
+    if (!this.isConnected || !shell || !viewport || !plane || !frame || shell.offsetWidth <= 0) return
+    const height = (selector: string) => this.renderRoot.querySelector<HTMLElement>(selector)?.offsetHeight ?? 0
+    const frameStyle = getComputedStyle(frame)
+    const pixels = (value: string) => Number.parseFloat(value) || 0
+    const chrome = height('.toolbar') + height('.footer') + height('.error')
+      + pixels(frameStyle.borderTopWidth) + pixels(frameStyle.borderBottomWidth)
+      + pixels(frameStyle.marginTop) + pixels(frameStyle.marginBottom)
+    const scrollbar = Math.max(0, viewport.offsetHeight - viewport.clientHeight)
+    const naturalBody = plane.offsetHeight + height('.empty') + scrollbar
+    const naturalHeight = Math.ceil(chrome + naturalBody)
+    const bodyMax = getComputedStyle(viewport).maxHeight
+    const bodyLimit = bodyMax.endsWith('px') ? Number.parseFloat(bodyMax) : Infinity
+    const maxBodyHeight = Number.isFinite(bodyLimit) ? Math.max(0, bodyLimit) : Infinity
+    const view = this.ownerDocument.defaultView ?? window
+    const parentHeight = this.parentElement?.clientHeight ?? 0
+    // Focus/chat views already supply an explicit body cap. Other standalone
+    // uses take their containing allocation, with a viewport fallback.
+    const fallbackAllocation = maxBodyHeight < Infinity ? chrome + maxBodyHeight
+      : parentHeight > 0 ? parentHeight : Math.max(1, view.innerHeight - 56)
+    const wholeLimit = height('.allocation-probe')
+    const explicitAllocation = Number.isFinite(this.maxHeight) && this.maxHeight > 0 ? this.maxHeight : Infinity
+    const cssAllocation = wholeLimit > 0 ? wholeLimit : Infinity
+    const specifiedAllocation = Math.min(explicitAllocation, cssAllocation)
+    const allocation = specifiedAllocation < Infinity ? specifiedAllocation : fallbackAllocation
+    const renderedHeight = Math.ceil(Math.min(naturalHeight, allocation, chrome + maxBodyHeight))
+    const next = `${renderedHeight}px`
+    if (this.style.getPropertyValue('--lv-table-content-height') !== next) this.style.setProperty('--lv-table-content-height', next)
+    if (naturalHeight === this.publishedNaturalHeight && renderedHeight === this.publishedHeight) return
+    this.publishedNaturalHeight = naturalHeight
+    this.publishedHeight = renderedHeight
+    this.dispatchEvent(new CustomEvent('lv-table-size-change', {
+      bubbles: true, composed: true, detail: { naturalHeight, height: renderedHeight },
+    }))
   }
 
   private startViewportObserver(reconnected = false): void {
@@ -1053,6 +1216,11 @@ export class ReportTable extends LitElement {
     document.removeEventListener('pointerdown', this.handleOutsidePointerDown)
     document.removeEventListener('keydown', this.handleDocumentKeyDown)
     this.resizeObserver?.disconnect()
+    this.contentResizeObserver?.disconnect()
+    this.contentResizeObserver = undefined
+    this.contentSizeTargets.clear()
+    if (this.contentSizeFrame) cancelAnimationFrame(this.contentSizeFrame)
+    this.contentSizeFrame = 0
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
     this.scrollFrame = 0
     this.clearResizeGuide()
@@ -1080,6 +1248,8 @@ export class ReportTable extends LitElement {
     // that transition once; already-missing empty results must not retry forever.
     const wasVisibleLoading = this.visibleLoading
     this.mergeIncomingBlocks()
+    if (changedProperties.has('table')) this.rebuildHierarchy()
+    if (changedProperties.has('hierarchyExpanded') || changedProperties.has('hierarchySort')) this.refreshHierarchyRows()
     if (this.table.error && previousTable && !(previousTable as TableSignal).error && this.expectedBlocks.size > 0) {
       this.expectedBlocks.clear()
       this.windowRetryController.stop()
@@ -1094,6 +1264,8 @@ export class ReportTable extends LitElement {
   }
 
   updated(): void {
+    this.syncContentSizeTargets()
+    this.syncContentHeight()
     if (this.shouldResetScroll) {
       this.shouldResetScroll = false
       queueMicrotask(() => {
@@ -1114,11 +1286,100 @@ export class ReportTable extends LitElement {
   }
 
   get columns(): TableColumn[] {
-    return Array.isArray(this.table?.columns) ? this.table.columns : []
+    const columns = Array.isArray(this.table?.columns) ? this.table.columns : []
+    const config = this.table.hierarchy
+    if (!this.hierarchyTree || !config) return columns
+    const redundant = config.mode === 'levels' ? config.fields
+      : config.mode === 'parent_child' ? [config.idField, config.parentField, config.labelField]
+        : [config.childrenField, config.labelField, ...(config.idField ? [config.idField] : [])]
+    const first: TableColumn = {
+      key: '__lv_hierarchy', label: config.mode === 'levels' ? config.label || 'Hierarchy'
+        : columns.find(column => column.key === config.labelField)?.label || 'Hierarchy',
+      role: 'row_header', width: 320,
+      ...(config.mode !== 'levels' ? { content: columns.find(column => column.key === config.labelField)?.content } : {}),
+    }
+    return [first, ...columns.filter(column => !redundant.includes(column.key))]
+  }
+
+  private get sourceAvailableRows(): number {
+    return Math.max(0, this.table.availableRows ?? 0)
   }
 
   get loadedRows(): Array<{ row: TableRow; index: number }> {
-    return sortedBlockRows(this.blocks, this.availableRows)
+    return this.hierarchyTree ? this.hierarchyVisibleRows : sortedBlockRows(this.blocks, this.sourceAvailableRows)
+  }
+
+  private rebuildHierarchy(): void {
+    const config = this.table.type === 'table' ? undefined : this.table.hierarchy
+    const identity = JSON.stringify([this.table.id, this.table.type, this.table.resetVersion, this.sourceAvailableRows, this.table.rowCap, config])
+    const sources = blockIDs.map(id => this.blocks[id].rows)
+    const starts = blockIDs.map(id => this.blocks[id].start)
+    if (identity === this.hierarchyIdentity && sources.every((rows, index) => rows === this.hierarchySourceRows[index] && starts[index] === this.hierarchySourceStarts[index])) return
+    this.hierarchyIdentity = identity
+    this.hierarchySourceRows = sources
+    this.hierarchySourceStarts = starts
+    this.hierarchyTree = undefined
+    this.hierarchyError = ''
+    this.hierarchyVisibleRows = []
+    if (!config) return
+    // An aggregate payload can carry the entire frame in one block. Prefer
+    // that block over retained window-cache blocks from an earlier view.
+    const completeBlock = blockIDs.map(id => this.blocks[id])
+      .filter(block => block.start === 0 && block.rows.length >= this.sourceAvailableRows)
+      .sort((a, b) => b.requestSeq - a.requestSeq)[0]
+    const rows = completeBlock
+      ? new Map(completeBlock.rows.slice(0, this.sourceAvailableRows).map((row, index) => [index, row]))
+      : new Map(sortedBlockRows(this.blocks, this.sourceAvailableRows).map(item => [item.index, item.row]))
+    if (rows.size !== this.sourceAvailableRows || [...rows.keys()].some((index) => index < 0 || index >= this.sourceAvailableRows)) {
+      this.hierarchyError = 'Hierarchy requires the complete source frame. Showing the current flat row window.'
+      return
+    }
+    try {
+      this.hierarchyTree = buildTree(Array.from({ length: this.sourceAvailableRows }, (_, index) => rows.get(index)!), config, this.table.rowCap)
+      this.clearJumpTimer()
+      this.expectedBlocks.clear()
+      this.windowRetryController.clear()
+      if (identity !== this.hierarchyExpansionIdentity) {
+        this.hierarchyExpansionIdentity = identity
+        this.hierarchyExpanded = defaultExpandedIDs(this.hierarchyTree, config.defaultExpandedDepth)
+        this.hierarchySort = undefined
+      }
+      this.refreshHierarchyRows()
+    } catch (error) {
+      this.hierarchyError = error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  private refreshHierarchyRows(): void {
+    if (!this.hierarchyTree) return
+    this.hierarchyNodes = new WeakMap()
+    this.hierarchyVisibleRows = flattenTree(this.hierarchyTree, this.hierarchyExpanded, this.hierarchySort, this.columns).map((node, index) => {
+      const row = { ...node.row, __lv_hierarchy: node.label }
+      this.hierarchyNodes.set(row, node)
+      return { row, index }
+    })
+    const maxTop = Math.max(0, this.hierarchyVisibleRows.length * this.rowHeight - this.viewportHeight)
+    if (this.viewportTop > maxTop) {
+      this.viewportTop = maxTop
+      if (this.bodyViewportRef.value) this.bodyViewportRef.value.scrollTop = maxTop
+      this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
+    }
+  }
+
+  private keyForRow(row: TableRow, index: number): string {
+    return this.hierarchyNodes.get(row)?.id ?? rowKey(row, index)
+  }
+
+  private toggleHierarchyNode(node: HierarchyNode): void {
+    const expanded = new Set(this.hierarchyExpanded)
+    if (expanded.has(node.id)) expanded.delete(node.id)
+    else expanded.add(node.id)
+    this.hierarchyExpanded = expanded
+  }
+
+  private expandHierarchyAll(expand: boolean): void {
+    this.hierarchyExpanded = expand && this.hierarchyTree
+      ? new Set([...this.hierarchyTree.nodes.values()].filter(node => node.children.length).map(node => node.id)) : new Set()
   }
 
   get visibleRows(): VisibleRowSlot[] {
@@ -1138,7 +1399,7 @@ export class ReportTable extends LitElement {
   }
 
   get availableRows(): number {
-    return Math.max(0, this.table.availableRows ?? 0)
+    return this.hierarchyTree ? this.hierarchyVisibleRows.length : this.sourceAvailableRows
   }
 
   get blocks(): Record<BlockID, TableBlock> {
@@ -1190,7 +1451,7 @@ export class ReportTable extends LitElement {
     return slots.filter((slot): slot is Extract<VisibleRowSlot, { kind: 'row' }> => slot.kind === 'row').map(({ row, index }) => ({
       ...row,
       __absoluteIndex: index,
-      __rowKey: rowKey(row, index),
+      __rowKey: this.keyForRow(row, index),
     }))
   }
 
@@ -1221,7 +1482,9 @@ export class ReportTable extends LitElement {
       id: column.key,
       accessorKey: column.key,
       header: column.label,
-      cell: (info: any) => formatCell(info.getValue(), column, this.table.type !== 'table'),
+      cell: (info: any) => this.hierarchyTree?.nodes.get(info.row.original.__rowKey)?.synthetic && column.role === 'metric'
+        ? '' : column.content ? String(info.getValue() ?? '') : formatCell(info.getValue(), column, this.table.type !== 'table' && this.table.hierarchy?.mode !== 'nested'),
+      enableHiding: column.key !== '__lv_hierarchy',
       size: this.columnPixelWidth(column),
       minSize: this.minColumnSize(column),
       enableResizing: true,
@@ -1235,8 +1498,9 @@ export class ReportTable extends LitElement {
     // viewport, causing the browser to clamp several sticky cells onto the
     // same right edge.
     const pinnedColumns = this.columnController.pinnedKeys(this.columns, this.columnVisibility)
-    const sorting: SortingState = this.table.sort?.key
-      ? [{ id: this.table.sort.key, desc: this.table.sort.direction === 'desc' }]
+    const activeSort = this.hierarchySort ?? this.table.sort
+    const sorting: SortingState = activeSort?.key
+      ? [{ id: activeSort.key, desc: activeSort.direction === 'desc' }]
       : []
     return this.tableController.table(
       {
@@ -1271,6 +1535,7 @@ export class ReportTable extends LitElement {
   }
 
   handleScroll(event: Event): void {
+    for (const content of this.renderRoot.querySelectorAll<TableCellContentElement>('lv-table-cell-content')) content.closePreview()
     const target = event.currentTarget as HTMLDivElement
     this.viewportTop = target.scrollTop
     this.viewportHeight = target.clientHeight
@@ -1280,10 +1545,14 @@ export class ReportTable extends LitElement {
   }
 
   sortColumn(column: TableColumn): void {
-    const current = this.table?.sort ?? defaultSort
+    const current = this.hierarchySort ?? this.table?.sort ?? defaultSort
     const direction: SortDirection = current.key === column.key
       ? current.direction === 'asc' ? 'desc' : 'asc'
       : defaultDirection(column)
+    if (this.hierarchyTree) {
+      this.hierarchySort = { key: column.key, direction }
+      return
+    }
     this.windowRetryController.allowRetry()
     this.emitBlock('all', 0, { key: column.key, direction }, this.table.resetVersion + 1)
   }
@@ -1293,11 +1562,12 @@ export class ReportTable extends LitElement {
   }
 
   selectCell(row: TableRow, _column: TableColumn, absoluteIndex: number, event: MouseEvent): void {
-    const key = rowKey(row, absoluteIndex)
+    const key = this.keyForRow(row, absoluteIndex)
     this.selectRow(key, row, event)
   }
 
   private selectRow(key: string, row: TableRow, event: MouseEvent): void {
+    if (this.hierarchyNodes.get(row)?.synthetic) return
     const selected = this.rowIsSelected(row, key)
     const action = this.selectionController.action(selected, this.selectedRowCount(), event)
     this.selectedCellKey = ''
@@ -1311,7 +1581,7 @@ export class ReportTable extends LitElement {
       return
     }
     this.rowSelection = tableRowSelectionFromEntries(
-      this.loadedRows.map((item) => ({ row: item.row, key: rowKey(item.row, item.index) })),
+      this.loadedRows.map((item) => ({ row: item.row, key: this.keyForRow(item.row, item.index) })),
       this.table?.interaction,
       selection,
     )
@@ -1454,11 +1724,12 @@ export class ReportTable extends LitElement {
         ${headers.map((header: any) => {
           const column = header.column.columnDef.meta?.column as TableColumn | undefined
           if (!column) return nothing
-          const sorted = this.table?.sort?.key === header.column.id
-          const sortMark = lucideIcon(this.table?.sort?.direction === 'asc' ? ArrowUp : ArrowDown, { size: 12, strokeWidth: 2 })
+          const activeSort = this.hierarchySort ?? this.table.sort
+          const sorted = activeSort?.key === header.column.id
+          const sortMark = lucideIcon(activeSort?.direction === 'asc' ? ArrowUp : ArrowDown, { size: 12, strokeWidth: 2 })
           return html`
             <div
-              class=${`header-cell ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${column.align === 'right' ? 'right' : ''} ${sorted ? 'sorted' : ''}`}
+              class=${`header-cell ${column.align === 'right' ? 'right' : ''} ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${sorted ? 'sorted' : ''}`}
               role="columnheader"
               style=${this.pinnedCellStyle(header.column)}
             >
@@ -1520,6 +1791,7 @@ export class ReportTable extends LitElement {
 
   private cellStyle(row: TableRow, column: TableColumn, pinnedColumn: any): string {
     const styles = [this.pinnedCellStyle(pinnedColumn)].filter(Boolean)
+    if (this.syntheticMetric(row, column)) return styles.join(';')
     const value = row[column.key]
     const conditional = conditionalCellAppearance(row, column)
     const background = conditional.background ? undefined : this.formattingController.background(value, column)
@@ -1547,18 +1819,20 @@ export class ReportTable extends LitElement {
 
   private cellClass(column: TableColumn, cellKey: string, row: TableRow, pinnedColumn: any): string {
     const value = row[column.key]
+    const blankMetric = this.syntheticMetric(row, column)
     return [
       'cell',
       column.align === 'right' ? 'right' : '',
       column.role === 'row_header' ? 'row-header' : '',
       this.pinnedCellClass(pinnedColumn),
       cellKey === this.selectedCellKey ? 'active' : '',
-      conditionalCellAppearance(row, column).background || this.formattingController.background(value, column) ? 'has-background' : '',
-      this.formattingController.dataBar(column) ? 'has-data-bar' : '',
+      !blankMetric && (conditionalCellAppearance(row, column).background || this.formattingController.background(value, column)) ? 'has-background' : '',
+      !blankMetric && this.formattingController.dataBar(column) ? 'has-data-bar' : '',
     ].filter(Boolean).join(' ')
   }
 
   private renderCellValue(row: TableRow, column: TableColumn, formatted: unknown) {
+    if (this.syntheticMetric(row, column)) return nothing
     const value = row[column.key]
     const conditional = conditionalCellAppearance(row, column)
     const cue = conditional.iconLabel
@@ -1574,8 +1848,25 @@ export class ReportTable extends LitElement {
     return html`${cue}${formatted}`
   }
 
+  private syntheticMetric(row: TableRow, column: TableColumn): boolean {
+    return column.role === 'metric' && this.hierarchyNodes.get(row)?.synthetic === true
+  }
+
+  private renderMediaCell(row: TableRow, column: TableColumn, cellKey: string) {
+    return html`<lv-table-cell-content .value=${this.mediaSourceValue(row, column)} .row=${row} .content=${column.content}
+      .columnLabel=${column.label} .rowHeight=${this.rowHeight} .identity=${`${cellKey}:${this.table.resetVersion}`}
+    ></lv-table-cell-content>`
+  }
+
+  private mediaSourceValue(row: TableRow, column: TableColumn): unknown {
+    const config = this.table.hierarchy
+    return column.key === '__lv_hierarchy' && this.hierarchyTree && config && config.mode !== 'levels'
+      ? row[config.labelField] : row[column.key]
+  }
+
   private renderRowSegment(cells: any[], row: TableRow, index: number, key: string) {
-    const selected = this.rowIsSelected(row, key)
+    const node = this.hierarchyNodes.get(row)
+    const selected = !node?.synthetic && this.rowIsSelected(row, key)
     const hovered = key === this.hoveredRowId
     const highlightActive = this.table.highlight?.active === true
     const highlighted = row.__lv_highlighted === true
@@ -1584,6 +1875,10 @@ export class ReportTable extends LitElement {
         class=${`row ${selected ? 'selected' : ''} ${hovered ? 'hovered' : ''} ${highlighted ? 'highlighted' : ''} ${highlightActive && !highlighted ? 'highlight-dimmed' : ''}`}
         role="row"
         aria-selected=${selected ? 'true' : 'false'}
+        aria-level=${node ? node.depth + 1 : nothing}
+        aria-expanded=${node?.children.length ? String(this.hierarchyExpanded.has(node.id)) : nothing}
+        data-row-key=${key}
+        data-source-row=${node?.sourceIndex ?? nothing}
         style=${`top:${index * this.rowHeight}px`}
         @mouseenter=${() => { this.hoveredRowId = key }}
         @mouseleave=${() => { if (this.hoveredRowId === key) this.hoveredRowId = '' }}
@@ -1600,7 +1895,21 @@ export class ReportTable extends LitElement {
               role="cell"
               style=${this.cellStyle(row, column, cell.column)}
             >
-              <button
+              ${column.key === '__lv_hierarchy' && node ? html`
+                <div class="hierarchy-cell" style=${`padding-inline-start:${Math.min(node.depth * 18, 144)}px`}>
+                  ${node.children.length ? html`
+                    <button class="hierarchy-disclosure" type="button"
+                      aria-label=${`${this.hierarchyExpanded.has(node.id) ? 'Collapse' : 'Expand'} ${node.label}`}
+                      aria-expanded=${String(this.hierarchyExpanded.has(node.id))}
+                      @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleHierarchyNode(node) }}
+                    >${lucideIcon(this.hierarchyExpanded.has(node.id) ? ChevronDown : ChevronRight, { size: 14 })}</button>
+                  ` : html`<span class="hierarchy-spacer" aria-hidden="true"></span>`}
+                  ${node.depth > 8 ? html`<span class="hierarchy-depth" title=${`Hierarchy level ${node.depth + 1}`}>L${node.depth + 1}</span>` : nothing}
+                  ${column.content ? this.renderMediaCell(row, column, cellKey) : html`<button class="cell-action hierarchy-label" type="button" title=${`${node.label} (level ${node.depth + 1})`}
+                    @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectRow(key, row, event) }}
+                  ><span class="cell-value">${node.label}</span></button>`}
+                </div>
+              ` : column.content && !this.syntheticMetric(row, column) ? this.renderMediaCell(row, column, cellKey) : html`<button
                 class="cell-action"
                 type="button"
                 aria-label=${`${column.label}: ${String(row[cell.column.id] ?? '')}`}
@@ -1610,9 +1919,9 @@ export class ReportTable extends LitElement {
                   this.selectCell(row, column, index, event)
                 }}
               >
-                ${this.formattingController.dataBar(column) ? html`<span class="cell-data-bar" aria-hidden="true"></span>` : nothing}
+                ${!this.syntheticMetric(row, column) && this.formattingController.dataBar(column) ? html`<span class="cell-data-bar" aria-hidden="true"></span>` : nothing}
                 <span class="cell-value">${this.renderCellValue(row, column, formatted)}</span>
-              </button>
+              </button>`}
             </div>
           `
         })}
@@ -1655,12 +1964,17 @@ export class ReportTable extends LitElement {
 
     return html`
       <section class=${shellClass} style=${shellStyle}>
+        <span class="allocation-probe-container" aria-hidden="true"><span class="allocation-probe"></span></span>
         ${this.table.highlight?.announcement ? html`<span class="conditional-cue-label" aria-live="polite">${this.table.highlight.announcement}</span>` : nothing}
         <div class="toolbar">
           <div class="toolbar-title">
             <h2>${this.table?.title ?? 'Orders'}</h2>
           </div>
           <div class="visual-actions">
+            ${this.hierarchyTree ? html`<div class="hierarchy-controls">
+              <button type="button" @click=${() => this.expandHierarchyAll(true)}>Expand all</button>
+              <button type="button" @click=${() => this.expandHierarchyAll(false)}>Collapse all</button>
+            </div>` : nothing}
             <slot name="agent-action"></slot>
             <button class="icon-action" type="button" data-visualization-expand aria-label="Expand table" title="Expand table" @click=${() => this.runAction('focus')}>${visualMenuIcon('focus')}</button>
             <details class="visual-options">
@@ -1697,10 +2011,10 @@ export class ReportTable extends LitElement {
             <slot name="focus-action"></slot>
           </div>
         </div>
-        ${this.table?.error ? html`<div class="error" role="status" aria-live="polite">${this.table.error}</div>` : nothing}
+        ${this.table?.error || this.hierarchyError ? html`<div class="error" role="status" aria-live="polite">${this.table.error || this.hierarchyError}</div>` : nothing}
         <div class="table-frame">
           ${loading ? html`<div class="loading" aria-hidden="true"></div>` : nothing}
-          <div class="table-scrollport" role="table" aria-label=${this.table?.title ?? 'Orders'} tabindex="0" ${ref(this.bodyViewportRef)} @scroll=${this.handleScroll}>
+          <div class="table-scrollport" role=${this.hierarchyTree ? 'treegrid' : 'table'} aria-label=${this.table?.title ?? 'Orders'} tabindex="0" ${ref(this.bodyViewportRef)} @scroll=${this.handleScroll}>
             <div class="table-plane">
               ${this.resizeGuideX >= 0 ? html`<span class="resize-guide" style=${`--lv-resize-guide-x:${this.resizeGuideX}px`}></span>` : nothing}
               ${showHeader ? this.renderGroupHeaderRows(headers) : nothing}
@@ -1712,18 +2026,18 @@ export class ReportTable extends LitElement {
                   </div>
                   ${visibleRows.map((slot) => {
                     if (slot.kind === 'skeleton') return this.renderSkeletonSegment(headers, slot.index)
-                    const key = rowKey(slot.row, slot.index)
+                    const key = this.keyForRow(slot.row, slot.index)
                     const tanstackRow = tanstackRows.get(key)
                     return this.renderRowSegment(tanstackRow ? visibleCellsForRow(tanstackRow, this.columnVisibility) : [], slot.row, slot.index, key)
                   })}
                 </div>
               `}
             </div>
-            ${this.availableRows === 0 && !loading ? html`<div class="empty">${this.table.cardinality.kind === 'exact' && this.table.cardinality.value === 0 ? 'No rows to display' : 'Waiting for table data'}</div>` : nothing}
+            ${this.availableRows === 0 ? html`<div class="empty" role="status">${loading ? 'Loading rows…' : this.table.error || this.hierarchyError ? 'Table data unavailable' : this.table.cardinality.kind === 'exact' && this.table.cardinality.value === 0 ? 'No rows to display' : 'Waiting for table data'}</div>` : nothing}
           </div>
         </div>
         <div class="footer">
-          <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.table.isCapped ? html` · browsing first ${this.availableRows.toLocaleString()}` : nothing}</span>
+          <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.hierarchyTree ? html` · ${this.hierarchyTree.sourceRowCount.toLocaleString()} source rows${this.table.isCapped || this.table.cardinality.kind !== 'exact' ? html` · partial result; branches may be incomplete` : nothing}` : nothing}${this.table.isCapped ? html` · browsing first ${this.sourceAvailableRows.toLocaleString()}` : nothing}</span>
           <span>${selectedText}</span>
         </div>
       </section>
@@ -1731,6 +2045,7 @@ export class ReportTable extends LitElement {
   }
 
   private ensureBlocksForScroll(): void {
+    if (this.hierarchyTree) return
     if (this.availableRows <= 0) return
     const currentStart = Math.floor(Math.floor(this.viewportTop / this.rowHeight) / this.chunkSize) * this.chunkSize
     const desired = this.desiredStarts(currentStart)
@@ -1848,6 +2163,7 @@ export class ReportTable extends LitElement {
   }
 
   private rowRangeText(): string {
+    if (this.hierarchyTree) return `${this.availableRows.toLocaleString()} visible of ${this.hierarchyTree.nodes.size.toLocaleString()} hierarchy rows`
 	return this.virtualizationController.rowRangeText(this.table, this.availableRows, this.rowHeight)
   }
 
@@ -1951,7 +2267,8 @@ export class ReportTable extends LitElement {
     return this.loadedRows.map(({ row }) => {
       const next: TableRow = {}
       for (const column of this.columns) {
-        next[column.key] = formatCell(row[column.key], column, this.table.type !== 'table')
+        next[column.key] = this.hierarchyNodes.get(row)?.synthetic && column.role === 'metric'
+          ? '' : column.content ? this.mediaSourceValue(row, column) : formatCell(row[column.key], column, this.table.type !== 'table' && this.table.hierarchy?.mode !== 'nested')
       }
       return next
     })

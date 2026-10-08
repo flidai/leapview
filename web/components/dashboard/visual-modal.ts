@@ -296,12 +296,8 @@ export class VisualModal extends LitElement {
 
   private renderFocusDialog(detail: VisualActionDetail) {
     const isTable = detail.visualType === 'table'
-    const availableRows = detail.table?.availableRows
-    const rowHeight = detail.table?.rowHeight
-    const rows = typeof availableRows === 'number' && Number.isFinite(availableRows) ? Math.max(0, availableRows) : detail.rows.length
-    const height = Math.min(920, Math.max(360, 150 + rows * (typeof rowHeight === 'number' && rowHeight > 0 ? rowHeight : 34)))
     return html`
-      <dialog class=${`dialog focus-dialog${isTable ? ' focus-table-dialog' : ''}`} style=${isTable ? `height:min(${height}px, calc(100dvh - 56px))` : ''} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
+      <dialog class=${`dialog focus-dialog${isTable ? ' focus-table-dialog' : ''}`} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
           <div class="focus-slot"><slot name="focus-visual"></slot></div>
         ${this.renderNotice()}
       </dialog>
