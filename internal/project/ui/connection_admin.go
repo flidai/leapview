@@ -13,11 +13,12 @@ import (
 )
 
 type ConnectionCommandBindings struct {
-	Create  uicommand.Binding
-	Update  uicommand.Binding
-	Refresh uicommand.Binding
-	Enable  uicommand.Binding
-	Disable uicommand.Binding
+	Credentials map[string]uicommand.Binding
+	Create      uicommand.Binding
+	Update      uicommand.Binding
+	Refresh     uicommand.Binding
+	Enable      uicommand.Binding
+	Disable     uicommand.Binding
 }
 
 type ConnectionBindingView struct {
@@ -45,12 +46,13 @@ type ConnectionBindingView struct {
 }
 
 type ConnectionAdministrationView struct {
-	Bindings        map[string]ConnectionBindingView
-	CanCreate       bool
-	CanManage       bool
-	CanRefresh      bool
-	RequiresBinding map[string]bool
-	Status          uisignals.ConnectionAdministrationStatusSignal
+	CredentialsAvailable bool
+	Bindings             map[string]ConnectionBindingView
+	CanCreate            bool
+	CanManage            bool
+	CanRefresh           bool
+	RequiresBinding      map[string]bool
+	Status               uisignals.ConnectionAdministrationStatusSignal
 }
 
 func emptyConnectionAdministrationSignal(status uisignals.ConnectionAdministrationStatusSignal) uisignals.ConnectionAdministrationSignal {
@@ -66,15 +68,16 @@ func connectionLifecycleSignal(asset projectview.DevelopAssetView, assets []proj
 	requiresBinding, classified := administration.RequiresBinding[logical]
 	binding, exists := administration.Bindings[logical]
 	lifecycle := uisignals.ConnectionLifecycleSignal{
-		Actions:           []uisignals.ConnectionLifecycleActionSignal{},
-		AssetID:           asset.ID,
-		CanManage:         administration.CanManage,
-		CanRefresh:        administration.CanRefresh,
-		ConnectorKind:     kind,
-		LogicalConnection: logical,
-		State:             "not_required",
-		StatusLabel:       "Not required",
-		Tone:              "neutral",
+		CredentialsAvailable: &administration.CredentialsAvailable,
+		Actions:              []uisignals.ConnectionLifecycleActionSignal{},
+		AssetID:              asset.ID,
+		CanManage:            administration.CanManage,
+		CanRefresh:           administration.CanRefresh,
+		ConnectorKind:        kind,
+		LogicalConnection:    logical,
+		State:                "not_required",
+		StatusLabel:          "Not required",
+		Tone:                 "neutral",
 	}
 	if !classified {
 		// A graph-only browser request has no binding administration snapshot.

@@ -588,6 +588,7 @@ func publicPipelineError(err error, action string) string {
 
 func (h *BrowserHandler) connectionAdministrationView(ctx context.Context, projectID projectgraph.ResourceID, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, r *stdhttp.Request) (projectui.ConnectionAdministrationView, error) {
 	view := projectui.ConnectionAdministrationView{Bindings: map[string]projectui.ConnectionBindingView{}, RequiresBinding: map[string]bool{}}
+	view.CredentialsAvailable = h.ConnectionCredentials != nil
 	for _, asset := range assets {
 		if asset.Type != string(projectview.AssetTypeConnection) {
 			continue

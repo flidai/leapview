@@ -1292,6 +1292,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		principal, ok := routes.accessModule.CurrentPrincipal(r)
 		return principal.ID, ok
 	}
+	if routes.projectBrowser != nil && credentialAPI.Service != nil && credentialAPI.Validation != nil && credentialAPI.Activation != nil {
+		routes.projectBrowser.ConnectionCommands.Credentials = credentialmodule.CredentialBrowserBindings()
+		routes.projectBrowser.ConnectionCredentials = connectionCredentialBrowser(credentialAPI, storage.instanceID)
+		routes.projectBrowser.ConnectionCredentialError = credentialmodule.CredentialBrowserError
+	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
 		return errors.New("application composition requires an explicit access module")

@@ -54917,6 +54917,8 @@ paths:
             example: {}
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -54960,6 +54962,8 @@ paths:
         target:
           parameter: connection
           type: connection
+        ui:
+          action_id: credential.activation.abort
         privilege: RESOURCE_MANAGE
       x-authz:
         action: connection.manage
@@ -55296,6 +55300,8 @@ paths:
               receiptId: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -55339,6 +55345,8 @@ paths:
         target:
           parameter: connection
           type: connection
+        ui:
+          action_id: credential.activation.retry
         privilege: RESOURCE_MANAGE
       x-authz:
         action: connection.manage
@@ -55954,6 +55962,8 @@ paths:
                 key: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -55995,6 +56005,8 @@ paths:
         target:
           parameter: connection
           type: connection
+        ui:
+          action_id: credential.draft.save
         privilege: RESOURCE_MANAGE
       x-authz:
         action: connection.manage
@@ -56633,6 +56645,8 @@ paths:
               receiptId: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -56676,6 +56690,8 @@ paths:
         target:
           parameter: connection
           type: connection
+        ui:
+          action_id: credential.activation.prepare
         privilege: RESOURCE_MANAGE
       x-authz:
         action: connection.manage
@@ -56991,6 +57007,8 @@ paths:
               expectedBindingRevision: 1
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -57044,6 +57062,8 @@ paths:
         target:
           parameter: connection
           type: connection
+        ui:
+          action_id: credential.draft.validate
         privilege: RESOURCE_MANAGE
       x-authz:
         action: connection.manage

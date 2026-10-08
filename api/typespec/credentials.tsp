@@ -116,6 +116,7 @@ interface ConnectionCredentialDrafts {
     nonReplayable: true,
   })
   @apigen.auditPayload(CredentialDraftAuditPayload)
+  @apigen.ui("credential.draft.save")
   saveCredentialDraft(
     @path project: ResourceId,
     @path target: ResourceId,
@@ -149,6 +150,7 @@ interface ConnectionCredentialDrafts {
   @apigen.failsWith(CredentialValidationFailedFailure)
   @apigen.command(#{ auditAction: "credential.draft.validated", guarantee: "transactional", nonReplayable: true })
   @apigen.auditPayload(CredentialValidationAuditPayload)
+  @apigen.ui("credential.draft.validate")
   validateCredentialDraft(
     @path project: ResourceId,
     @path target: ResourceId,
@@ -223,6 +225,7 @@ interface ConnectionCredentialActivations {
   @apigen.failsWith(CredentialActivationUnavailableFailure)
   @apigen.command(#{ auditAction: "credential.activation.requested", guarantee: "transactional", nonReplayable: true })
   @apigen.auditPayload(CredentialActivationAuditPayload)
+  @apigen.ui("credential.activation.prepare")
   startCredentialActivation(
     @path project: ResourceId,
     @path target: ResourceId,
@@ -255,6 +258,7 @@ interface ConnectionCredentialActivations {
   @apigen.failsWith(CredentialActivationUnavailableFailure)
   @apigen.command(#{ auditAction: "credential.activation.retried", guarantee: "transactional", nonReplayable: true })
   @apigen.auditPayload(CredentialActivationAuditPayload)
+  @apigen.ui("credential.activation.retry")
   retryCredentialActivation(
     @path project: ResourceId,
     @path target: ResourceId,
@@ -276,6 +280,7 @@ interface ConnectionCredentialActivations {
   @apigen.failsWith(CredentialActivationUnavailableFailure)
   @apigen.command(#{ auditAction: "credential.activation.aborted", guarantee: "transactional", nonReplayable: true })
   @apigen.auditPayload(CredentialActivationAuditPayload)
+  @apigen.ui("credential.activation.abort")
   abortCredentialActivation(
     @path project: ResourceId,
     @path target: ResourceId,

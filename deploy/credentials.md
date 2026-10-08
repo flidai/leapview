@@ -44,6 +44,28 @@ lost. Before commit, retry requires a fresh successful validation of the same
 version/configuration and current authority. After commit, retry installs only the
 committed replacement. Abort is allowed only before commit.
 
+For an existing enabled PostgreSQL connection, open **Credentials** on its
+connection page. The control is available when the instance has configured
+customer credential services and the caller can manage the connection. Save a
+password draft for the connection's existing user and endpoint, select the saved
+draft, then **Test draft**. Testing requires both manage and use authority.
+**Prepare activation** builds its candidate without claiming that the credential
+is in use. Test again when fresh validation is requested, then explicitly
+continue activation. Only the server's completed and ready result confirms use.
+The password field clears on submission and is never returned in page signals.
+
+Retain the displayed operation ID before leaving the page. After a lost response
+or reload, **Recover operation** reads that exact operation; it does not create
+a replacement. Recover a committed operation to finish installation, or cancel
+an uncommitted operation before choosing another draft. A completed operation
+whose readiness has not yet been confirmed can also be recovered. Metadata reads
+and explicit retries recheck current authority. Password submissions are never
+automatically replayed.
+
+This browser path manages credentials for an existing connection and active
+project. It does not bootstrap the first production source password, change the
+connection's endpoint or user, or retire historical credential versions.
+
 Agent Settings uses the same lifecycle behind **Test connection** and **Save and
 activate**. Testing the same pending proposal produces fresh validation for its
 existing version and operation. **Cancel pending change** restores readiness of

@@ -40,8 +40,8 @@ func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	if save.Command.Owner != "LeapViewAPI.Credential" || save.Command.Idempotency != "forbidden" || save.Command.Audit.SuccessAction != "credential.draft.saved" || save.Command.Audit.Guarantee != "transactional" {
 		t.Fatalf("credential draft save command contract = %#v", save.Command)
 	}
-	if save.Command.UI != nil || len(save.Command.AdditionalExposures) != 0 {
-		t.Fatalf("credential draft save unexpectedly exposes another command surface: %#v", save.Command)
+	if save.Command.UI == nil || len(save.Command.AdditionalExposures) != 1 || save.Command.AdditionalExposures[0] != "ui" {
+		t.Fatalf("credential draft save must expose only the audited UI surface: %#v", save.Command)
 	}
 	if payload := save.Command.Audit.Payload; payload == nil || payload.Schema != "CredentialDraftAuditPayload" {
 		t.Fatalf("credential draft audit payload contract = %#v", payload)
@@ -79,8 +79,8 @@ func TestCredentialActivationContractPreservesAuthorizationAndAtomicAudit(t *tes
 		if command == nil || command.Idempotency != "forbidden" || command.Audit.Guarantee != "transactional" || command.Audit.SuccessAction != action || command.Owner != "LeapViewAPI.Credential" {
 			t.Fatalf("%s activation/audit contract = %#v", operation, command)
 		}
-		if command.UI != nil || len(command.AdditionalExposures) != 0 || command.Audit.Payload == nil || command.Audit.Payload.Schema != "CredentialActivationAuditPayload" {
-			t.Fatalf("%s must expose only the reviewed activation API and metadata audit", operation)
+		if command.UI == nil || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" || command.Audit.Payload == nil || command.Audit.Payload.Schema != "CredentialActivationAuditPayload" {
+			t.Fatalf("%s must expose the audited UI and retain metadata-only audit", operation)
 		}
 	}
 	status, ok := contracts["getCredentialActivation"]
