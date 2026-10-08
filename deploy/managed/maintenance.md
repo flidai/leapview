@@ -249,7 +249,9 @@ enrollment operation. A different operation cannot take over the process.
 Readiness or capacity failures keep admission closed. Do not delete an unfinished
 journal, edit identities or bypass the capacity policy to restart enrollment.
 Once enrollment succeeds, retain its evidence and construct the next distinct
-image handoff from this admitted release.
+image handoff from this admitted release. A different enrollment request cannot
+replace an existing managed journal, even after completion or after the app is
+stopped. Reusing enrollment must not bypass the old/new compatibility contract.
 
 ## Handoff and recovery
 

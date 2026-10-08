@@ -179,3 +179,54 @@ func TestCompletedEnrollmentAllowsSubsequentCompatibleHandoff(t *testing.T) {
 		t.Fatalf("subsequent handoff failed: %+v %v", state, err)
 	}
 }
+
+func TestEnrollmentCannotReplaceACompletedManagedOperation(t *testing.T) {
+	for _, first := range []string{"enrollment", "handoff"} {
+		t.Run(first, func(t *testing.T) {
+			root := t.TempDir()
+			original := enrollmentFixture()
+			if first == "handoff" {
+				original = requestFixture()
+			}
+			journal, err := OpenJournal(root, original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			coordinator := Coordinator{Request: original, Journal: journal, Effects: &recordingEffects{}}
+			if err := coordinator.Run(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := journal.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(root, JournalName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := enrollmentFixture()
+			next.Predecessor = requestFixture().Candidate
+			next.Candidate = next.Predecessor
+			if reopened, err := OpenJournal(root, next); err == nil {
+				_ = reopened.Close()
+				t.Fatal("second enrollment bypassed the compatible handoff contract")
+			}
+			after, err := os.ReadFile(filepath.Join(root, JournalName))
+			if err != nil || string(after) != string(before) {
+				t.Fatal("rejected enrollment changed the existing operation")
+			}
+			if _, err := os.Stat(filepath.Join(root, "managed-image-history")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("rejected enrollment archived the existing operation: %v", err)
+			}
+			journal, err = OpenJournal(root, original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer journal.Close()
+			effects := &recordingEffects{}
+			coordinator.Journal, coordinator.Effects = journal, effects
+			if err := coordinator.Run(t.Context()); err != nil || len(effects.events) != 0 {
+				t.Fatalf("original operation lost terminal idempotence: %v %v", err, effects.events)
+			}
+		})
+	}
+}
