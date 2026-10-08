@@ -1,0 +1,153 @@
+[
+  {
+    "id": "explicit-create",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1321,
+    "files": [
+      "evaluation.yaml"
+    ],
+    "changedFiles": [
+      "evaluation.yaml"
+    ],
+    "sourceHash": "12508410463053ab1e16154c9d91c2db84db60b13be1e2da3f6a8f25e1ec6d12"
+  },
+  {
+    "id": "explicit-grain",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1338,
+    "files": [
+      "evaluation.yaml"
+    ],
+    "changedFiles": [
+      "evaluation.yaml"
+    ],
+    "sourceHash": "5539ec8d6d23eb84a36c7d084c63e8e8576d72b7d7a77280fe29c2b5797375c8"
+  },
+  {
+    "id": "explicit-reuse",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 2004,
+    "files": [
+      "evaluation.yaml"
+    ],
+    "changedFiles": [
+      "evaluation.yaml"
+    ],
+    "sourceHash": "b96ab12fc987fe532e525d4c571bf6e7f12f055cfd064ced2ac01a342dd33a7f"
+  },
+  {
+    "id": "fragments-create",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1345,
+    "files": [
+      "evaluation.yaml",
+      "pages.yaml",
+      "visuals.yaml"
+    ],
+    "changedFiles": [
+      "pages.yaml",
+      "visuals.yaml"
+    ],
+    "sourceHash": "1ce2fdcc079ff1f3884395c44ad2f52884f28495e5928596a590279df9e1c73b"
+  },
+  {
+    "id": "fragments-grain",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1342,
+    "files": [
+      "evaluation.yaml",
+      "pages.yaml",
+      "visuals.yaml"
+    ],
+    "changedFiles": [
+      "visuals.yaml"
+    ],
+    "sourceHash": "70a6f189c4d28360c06fe4cbb1a1adf7dfcbb365fd80ed4ba63d7ec0feed3c84"
+  },
+  {
+    "id": "fragments-reuse",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1952,
+    "files": [
+      "evaluation.yaml",
+      "pages.yaml",
+      "visuals.yaml"
+    ],
+    "changedFiles": [
+      "visuals.yaml"
+    ],
+    "sourceHash": "ab967aef53eaa7e733ec38855af4102e831da1a9d5df1972e3f1149da1bb95b5"
+  },
+  {
+    "id": "omitted-create",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1249,
+    "files": [
+      "evaluation.yaml"
+    ],
+    "changedFiles": [
+      "evaluation.yaml"
+    ],
+    "sourceHash": "439c4f6027c01dd3af83038da23360f900db179c6ff356b46965f7ee3042a38d"
+  },
+  {
+    "id": "omitted-grain",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1266,
+    "files": [
+      "evaluation.yaml"
+    ],
+    "changedFiles": [
+      "evaluation.yaml"
+    ],
+    "sourceHash": "12d1700f7260c80656691c4af484e89560941869407b7fb45c3ea34c7615dd2e"
+  },
+  {
+    "id": "omitted-reuse",
+    "parseAndSchema": true,
+    "compiler": true,
+    "intent": true,
+    "representation": true,
+    "pass": true,
+    "sourceBytes": 1932,
+    "files": [
+      "evaluation.yaml"
+    ],
+    "changedFiles": [
+      "evaluation.yaml"
+    ],
+    "sourceHash": "84d83205fa13fa84fc2a87117ace3be42dfcb94ff114f5b20ffad4908c1a7449"
+  }
+]

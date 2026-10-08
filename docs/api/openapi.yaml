@@ -77648,18 +77648,22 @@ components:
         columns:
           type: integer
           format: int32
+          minimum: 1
           example: 1
         rowHeight:
           type: integer
           format: int32
+          minimum: 1
           example: 1
         gap:
           type: integer
           format: int32
+          minimum: 0
           example: 1
         padding:
           type: integer
           format: int32
+          minimum: 0
           example: 1
       example:
         columns: 1
@@ -77672,18 +77676,22 @@ components:
         columns:
           type: integer
           format: int32
+          minimum: 1
           example: 1
         rowHeight:
           type: integer
           format: int32
+          minimum: 1
           example: 1
         gap:
           type: integer
           format: int32
+          minimum: 0
           example: 1
         padding:
           type: integer
           format: int32
+          minimum: 0
           example: 1
       example:
         columns: 1
@@ -78670,18 +78678,22 @@ components:
         column:
           type: integer
           format: int32
+          minimum: 1
           example: 1
         row:
           type: integer
           format: int32
+          minimum: 1
           example: 1
         columnSpan:
           type: integer
           format: int32
+          minimum: 1
           example: 1
         rowSpan:
           type: integer
           format: int32
+          minimum: 1
           example: 1
       example:
         column: 1

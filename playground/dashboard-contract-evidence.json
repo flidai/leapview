@@ -1,0 +1,2018 @@
+{
+  "formatVersion": 1,
+  "compileOnly": true,
+  "metadata": {
+    "diagnosticNormalization": "temporary source-root paths removed; complete diagnostic sibling subtrees sorted",
+    "compilerCommit": "6443c25befced1da531e4076c20b5a060d359a84",
+    "compilerVersion": "leapview-source-compiler:v1",
+    "compilerFingerprint": "sha256:7b9f699f7c20f98a74cde08925dc27954c26665efd9c3b1ce2afde7cfd4c6be3",
+    "compilerSourceDigest": "sha256:aea0d0d84ed4a8596ef31d50eea3274992ec7a4e8bc46e195c57210e52ccef50",
+    "build": {
+      "goVersion": "go1.27.1",
+      "goos": "linux",
+      "goarch": "amd64",
+      "tags": "duckdb_arrow",
+      "settings": {
+        "-tags": "duckdb_arrow",
+        "CGO_CFLAGS": "",
+        "CGO_CPPFLAGS": "",
+        "CGO_CXXFLAGS": "",
+        "CGO_ENABLED": "1",
+        "CGO_LDFLAGS": "",
+        "GOAMD64": "v1"
+      },
+      "dependencies": [
+        {
+          "Path": "cuelang.org/go",
+          "Version": "v0.16.1",
+          "Sum": "h1:iPN1lHZd2J0hjcr8hfq9PnIGk7VfPkKFfxH4de+m9sE="
+        },
+        {
+          "Path": "github.com/Yacobolo/toolbelt/apigen",
+          "Version": "v0.7.3",
+          "Replace": {
+            "Path": "./pkg/apigen",
+            "Version": "(devel)"
+          }
+        },
+        {
+          "Path": "github.com/apache/arrow-go/v18",
+          "Version": "v18.5.1",
+          "Sum": "h1:yaQ6zxMGgf9YCYw4/oaeOU3AULySDlAYDOcnr4LdHdI="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2",
+          "Version": "v1.42.1",
+          "Sum": "h1:9eOTgu1z/dVtYpNZ3/8/XbbaX0x/BqE3HUzAzs6K0ek="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream",
+          "Version": "v1.7.14",
+          "Sum": "h1:3IZY0XAJquT3aHzbkHfPzy4ACPcEjVG0x87KOwtpqGY="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/internal/configsources",
+          "Version": "v1.4.30",
+          "Sum": "h1:xM/Is9cKMHa8Jj8zkvWhvrFkZsXJV9E+BB4g0HW0duQ="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/internal/endpoints/v2",
+          "Version": "v2.7.30",
+          "Sum": "h1:jn46zC9LdsVR/ZpMIJqMqb8hHv31BlLx3ulVqNspUOk="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/internal/v4a",
+          "Version": "v1.4.31",
+          "Sum": "h1:3GUprIsfmGcC5SACIyB0e7E0BM1O1b3Erl5CePYIAeQ="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding",
+          "Version": "v1.13.13",
+          "Sum": "h1:mbRIur/BiHK6SKPjoBIXSE/hJ6g6JGRLuxQy1jGjlN4="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/service/internal/checksum",
+          "Version": "v1.9.23",
+          "Sum": "h1:9Fjh6fi/U5JEStVZijmaMpUwE/gvBJj7x2B/PjbO9To="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/service/internal/presigned-url",
+          "Version": "v1.13.30",
+          "Sum": "h1:/Z5jmNrKsSD7EmDjzAPsm/3L9IuOkzaynklJZ1qX7S4="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/service/internal/s3shared",
+          "Version": "v1.19.31",
+          "Sum": "h1:uao4A3QZ5UmB326V6KF+qRpv9Tjz7IlnlnTbbANntlU="
+        },
+        {
+          "Path": "github.com/aws/aws-sdk-go-v2/service/s3",
+          "Version": "v1.105.1",
+          "Sum": "h1:LkBKxAOE5WXjlFuFZqPG1rREnl6I6QCMElcXFDEidos="
+        },
+        {
+          "Path": "github.com/aws/smithy-go",
+          "Version": "v1.27.3",
+          "Sum": "h1:F3Zb497UhhskkfpJmfkXswyo+t0sh9OTBnIHjogWbVY="
+        },
+        {
+          "Path": "github.com/cockroachdb/apd/v3",
+          "Version": "v3.2.1",
+          "Sum": "h1:U+8j7t0axsIgvQUqthuNm82HIrYXodOV2iWLWtEaIwg="
+        },
+        {
+          "Path": "github.com/duckdb/duckdb-go-bindings",
+          "Version": "v0.10504.0",
+          "Sum": "h1:XKOXNRetaJnMvMIDqi6etZOmh/nlEHM7saaC5UxU17I="
+        },
+        {
+          "Path": "github.com/duckdb/duckdb-go-bindings/lib/linux-amd64",
+          "Version": "v0.10504.0",
+          "Sum": "h1:2gABzYp2KnclSpE4qqinTZYhGpWSxmNHQKjs9WZ7zWk="
+        },
+        {
+          "Path": "github.com/duckdb/duckdb-go/v2",
+          "Version": "v2.10504.0",
+          "Sum": "h1:bnkcNQpz3EaJmMmfOhFRFJ3ELVDHW4u3PDhZ78ZTCMY="
+        },
+        {
+          "Path": "github.com/emicklei/proto",
+          "Version": "v1.14.3",
+          "Sum": "h1:zEhlzNkpP8kN6utonKMzlPfIvy82t5Kb9mufaJxSe1Q="
+        },
+        {
+          "Path": "github.com/go-chi/chi/v5",
+          "Version": "v5.3.2",
+          "Sum": "h1:5YQkICvTCSZ25hoRsyJazN0scjzKGiu4VAUc7H1o1nY="
+        },
+        {
+          "Path": "github.com/go-viper/mapstructure/v2",
+          "Version": "v2.5.0",
+          "Sum": "h1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro="
+        },
+        {
+          "Path": "github.com/goccy/go-json",
+          "Version": "v0.10.5",
+          "Sum": "h1:Fq85nIqj+gXn/S5ahsiTlK3TmC85qgirsdTP/+DeaC4="
+        },
+        {
+          "Path": "github.com/google/flatbuffers",
+          "Version": "v25.12.19+incompatible",
+          "Sum": "h1:haMV2JRRJCe1998HeW/p0X9UaMTK6SDo0ffLn2+DbLs="
+        },
+        {
+          "Path": "github.com/google/uuid",
+          "Version": "v1.6.0",
+          "Sum": "h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0="
+        },
+        {
+          "Path": "github.com/klauspost/compress",
+          "Version": "v1.18.7",
+          "Sum": "h1:aUyZsS4kH3QTKurYhAOwAHxllVPnOthb3vPfnF1Ehjw="
+        },
+        {
+          "Path": "github.com/klauspost/cpuid/v2",
+          "Version": "v2.3.0",
+          "Sum": "h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y="
+        },
+        {
+          "Path": "github.com/mitchellh/go-wordwrap",
+          "Version": "v1.0.1",
+          "Sum": "h1:TLuKupo69TCn6TQSyGxwI1EblZZEsQ0vMlAFQflz0v0="
+        },
+        {
+          "Path": "github.com/opencontainers/go-digest",
+          "Version": "v1.0.0",
+          "Sum": "h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U="
+        },
+        {
+          "Path": "github.com/pelletier/go-toml/v2",
+          "Version": "v2.2.4",
+          "Sum": "h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4="
+        },
+        {
+          "Path": "github.com/pierrec/lz4/v4",
+          "Version": "v4.1.26",
+          "Sum": "h1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY="
+        },
+        {
+          "Path": "github.com/protocolbuffers/txtpbfmt",
+          "Version": "v0.0.0-20260217160748-a481f6a22f94",
+          "Sum": "h1:2PC6Ql3jipz1KvBlqUHjjk6v4aMwE86mfDu1XMH0LR8="
+        },
+        {
+          "Path": "github.com/robfig/cron/v3",
+          "Version": "v3.0.1",
+          "Sum": "h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs="
+        },
+        {
+          "Path": "github.com/santhosh-tekuri/jsonschema/v6",
+          "Version": "v6.0.3",
+          "Sum": "h1:1EYB5IzjZawrrnELUi78f9fPu57HuXjmddZPjrls/28="
+        },
+        {
+          "Path": "github.com/zeebo/xxh3",
+          "Version": "v1.1.0",
+          "Sum": "h1:s7DLGDK45Dyfg7++yxI0khrfwq9661w9EN78eP/UZVs="
+        },
+        {
+          "Path": "go.yaml.in/yaml/v3",
+          "Version": "v3.0.5",
+          "Sum": "h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw="
+        },
+        {
+          "Path": "golang.org/x/exp",
+          "Version": "v0.0.0-20260410095643-746e56fc9e2f",
+          "Sum": "h1:W3F4c+6OLc6H2lb//N1q4WpJkhzJCK5J6kUi1NTVXfM="
+        },
+        {
+          "Path": "golang.org/x/net",
+          "Version": "v0.58.0",
+          "Sum": "h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To="
+        },
+        {
+          "Path": "golang.org/x/sys",
+          "Version": "v0.48.0",
+          "Sum": "h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo="
+        },
+        {
+          "Path": "golang.org/x/text",
+          "Version": "v0.41.0",
+          "Sum": "h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8="
+        },
+        {
+          "Path": "golang.org/x/xerrors",
+          "Version": "v0.0.0-20240903120638-7835f813f4da",
+          "Sum": "h1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY="
+        },
+        {
+          "Path": "google.golang.org/protobuf",
+          "Version": "v1.36.11",
+          "Sum": "h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE="
+        },
+        {
+          "Path": "gopkg.in/yaml.v3",
+          "Version": "v3.0.1",
+          "Sum": "h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA="
+        }
+      ]
+    },
+    "trackedSourceCount": 286,
+    "untrackedSourcePaths": [
+      "internal/app/tools/dashboardcontractevidence/evidence.go",
+      "internal/app/tools/dashboardcontractevidence/main.go",
+      "internal/dashboard/api/gen/client.apigen.gen.go",
+      "internal/dashboard/api/gen/request_models.gen.go",
+      "internal/dashboard/api/gen/server.apigen.gen.go",
+      "internal/platform/http/api/gen/request_models.gen.go"
+    ],
+    "modifiedSourcePaths": [
+      "api/dashboard/main.tsp",
+      "schemas/json/dashboard-document.schema.json"
+    ],
+    "bundledResourcesDigest": "sha256:4b632c10fc29cbda059b27752d66ed17e81410286c2cb09668a5c1f0a8ddafb4",
+    "schemaDigest": "sha256:19c49ba464c1bf8cc49537e772914f4dfdde0b9f6a93da1b7402b33cac2fa48c"
+  },
+  "fixtures": [
+    {
+      "id": "original-guide",
+      "label": "Original guide: unknown dimension",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions: [purchase_month]\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:293276a651aa44ffd5c0a7b27c408bdfd1989377b2974a959a05afa13d48a16a",
+      "sourceRootDigest": "sha256:f96e2ec120c8802396e0cd6fe173402cf051e81a397eb721b5eec6d708bd9384",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:293276a651aa44ffd5c0a7b27c408bdfd1989377b2974a959a05afa13d48a16a"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": false,
+      "issues": [
+        {
+          "file": "dashboards/executive-sales.yaml",
+          "resourceId": "dashboard:executive-sales",
+          "fieldPath": "spec",
+          "severity": "error",
+          "code": "compiler.resource",
+          "message": "loading dashboard \"executive-sales\": visual \"revenue-by-month\" query: aggregate dimensions: unknown semantic dimension \"purchase_month\""
+        }
+      ]
+    },
+    {
+      "id": "corrected-monthly",
+      "label": "Corrected monthly guide",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:ddbb0e6a14f527f12ac1130b0339373784f9b40153dab2e7f64a665314830f58",
+      "sourceRootDigest": "sha256:a78842e1fb715b30f0aa6bdd5dd7e3914afc65542331eb8e08c040e3b79223d8",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:ddbb0e6a14f527f12ac1130b0339373784f9b40153dab2e7f64a665314830f58"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": true,
+      "issues": [],
+      "resolvedIntent": {
+        "dashboardId": "dashboard:executive-sales",
+        "semanticModel": "semantic-model:sales",
+        "layout": {
+          "defaults": {
+            "columns": 12,
+            "rowHeight": 48,
+            "gap": 16,
+            "padding": 16
+          },
+          "narrowView": "stack"
+        },
+        "pages": [
+          {
+            "id": "overview",
+            "title": "Overview",
+            "grid": {
+              "columns": 12,
+              "rowHeight": 48,
+              "gap": 16,
+              "padding": 16
+            },
+            "readingOrder": [
+              "revenue-trend",
+              "revenue-kpi"
+            ],
+            "components": [
+              {
+                "id": "revenue-trend",
+                "kind": "visual",
+                "visual": "revenue-by-month",
+                "placement": {
+                  "col": 1,
+                  "row": 1,
+                  "colSpan": 12,
+                  "rowSpan": 8
+                }
+              },
+              {
+                "id": "revenue-kpi",
+                "kind": "visual",
+                "visual": "total-revenue",
+                "placement": {
+                  "col": 1,
+                  "row": 10,
+                  "colSpan": 3,
+                  "rowSpan": 3
+                }
+              }
+            ],
+            "height": 784
+          }
+        ],
+        "visuals": [
+          {
+            "id": "revenue-by-month",
+            "mark": "area",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "category_value",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [
+                  {
+                    "fieldID": "purchase_date",
+                    "alias": "purchase_month",
+                    "grain": "month"
+                  }
+                ],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "sort": [
+                  {
+                    "fieldID": "purchase_month",
+                    "direction": "asc"
+                  }
+                ],
+                "limit": 30
+              }
+            }
+          },
+          {
+            "id": "total-revenue",
+            "mark": "kpi",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "scalar",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "limit": 1000
+              }
+            }
+          }
+        ]
+      },
+      "resolvedIntentDigest": "sha256:29b21a418b28150c6279bc145178a3852e6405ee459fb1036ad99d44131c3d4c",
+      "bundleDigest": "sha256:d14cb5b468ba5a4890dbc85496512adb3fc468841c98a2f570c60dcfbadebe3c"
+    },
+    {
+      "id": "zero-span",
+      "label": "Zero column span",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 0, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:910cf8a248f512dfe67b3fb348c68fc61652a913a358b997581233ceb9098668",
+      "sourceRootDigest": "sha256:6b4fabb0c150756aa5d76ea9e38aea08a41504eb527bc81fd1dfe39288d671a8",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:910cf8a248f512dfe67b3fb348c68fc61652a913a358b997581233ceb9098668"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": false,
+      "issues": [
+        {
+          "file": "dashboards/executive-sales.yaml",
+          "line": 51,
+          "column": 54,
+          "fieldPath": "spec.pages.0.components.0.placement.columnSpan",
+          "severity": "error",
+          "code": "schema.contract",
+          "message": "jsonschema validation failed with 'https://leapview.dev/schemas/dashboard-document.schema.json#'\n- at '': 'anyOf' failed\n  - at '/spec/pages/0/components/0': 'oneOf' failed, none matched\n    - at '/spec/pages/0/components/0': validation failed\n      - at '/spec/pages/0/components/0': 'allOf' failed\n        - at '/spec/pages/0/components/0/placement/columnSpan': minimum: got 0, want 1\n      - at '/spec/pages/0/components/0': missing property 'filter'\n      - at '/spec/pages/0/components/0/id': false schema\n      - at '/spec/pages/0/components/0/placement': false schema\n      - at '/spec/pages/0/components/0/type': value must be 'filter'\n      - at '/spec/pages/0/components/0/visual': false schema\n    - at '/spec/pages/0/components/0': validation failed\n      - at '/spec/pages/0/components/0': 'allOf' failed\n        - at '/spec/pages/0/components/0/placement/columnSpan': minimum: got 0, want 1\n      - at '/spec/pages/0/components/0/id': false schema\n      - at '/spec/pages/0/components/0/placement': false schema\n    - at '/spec/pages/0/components/0': validation failed\n      - at '/spec/pages/0/components/0': 'allOf' failed\n        - at '/spec/pages/0/components/0/placement/columnSpan': minimum: got 0, want 1\n      - at '/spec/pages/0/components/0/id': false schema\n      - at '/spec/pages/0/components/0/placement': false schema\n      - at '/spec/pages/0/components/0/type': value must be 'header'\n      - at '/spec/pages/0/components/0/visual': false schema"
+        }
+      ]
+    },
+    {
+      "id": "out-of-grid",
+      "label": "Positive span outside the grid",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 13, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:4508d1a2be7ff5fe38c48afdd4b8eba30b558a62509d4fd9c8078861f965c55b",
+      "sourceRootDigest": "sha256:12924a6f3588a5e8a0cd7d8f7c43348d02e7ea26784918b52e6dc889a5f579fa",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:4508d1a2be7ff5fe38c48afdd4b8eba30b558a62509d4fd9c8078861f965c55b"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": false,
+      "issues": [
+        {
+          "file": "dashboards/executive-sales.yaml",
+          "resourceId": "dashboard:executive-sales",
+          "fieldPath": "spec",
+          "severity": "error",
+          "code": "compiler.resource",
+          "message": "loading dashboard \"executive-sales\": compile dashboard layout: page \"overview\": component \"revenue-trend\": placement columns 1..13 exceed grid of 12 columns"
+        }
+      ]
+    },
+    {
+      "id": "overlap",
+      "label": "Overlapping components",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 1, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:eaed6541f69dbb6e2d10503bcf5b332b46f230aef4b04b5c9949f3b84a643de2",
+      "sourceRootDigest": "sha256:df2eb739a4297a111c48c64e92b74f158a2bbb0cbb809d8fc0349011ca399f59",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:eaed6541f69dbb6e2d10503bcf5b332b46f230aef4b04b5c9949f3b84a643de2"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": false,
+      "issues": [
+        {
+          "file": "dashboards/executive-sales.yaml",
+          "resourceId": "dashboard:executive-sales",
+          "fieldPath": "spec",
+          "severity": "error",
+          "code": "compiler.resource",
+          "message": "loading dashboard \"executive-sales\": compile dashboard layout: page \"overview\": components \"revenue-trend\" and \"revenue-kpi\" overlap"
+        }
+      ]
+    },
+    {
+      "id": "missing-visual",
+      "label": "Missing visual reference",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: missing-visual\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:74d293abba56eccb39dc18326b3ce658b9feff0cc7016b842063cd4035146614",
+      "sourceRootDigest": "sha256:6e674b57864ca31760acebb1f5051795d6ed10ff7b34d0d4435fcb055ba7b9ae",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:74d293abba56eccb39dc18326b3ce658b9feff0cc7016b842063cd4035146614"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": false,
+      "issues": [
+        {
+          "file": "dashboards/executive-sales.yaml",
+          "resourceId": "dashboard:executive-sales",
+          "fieldPath": "spec",
+          "severity": "error",
+          "code": "compiler.resource",
+          "message": "loading dashboard \"executive-sales\": compile dashboard filters: page \"overview\" component \"revenue-trend\" references unknown visual \"missing-visual\""
+        }
+      ]
+    },
+    {
+      "id": "duplicate-visual-id",
+      "label": "Duplicate visual identity",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: revenue-by-month\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:5a3a48f1c0823e88f31af503eabb3b4a97db65b9a4ea26a41e9b74e42e71a2f4",
+      "sourceRootDigest": "sha256:78e64fc2f6c4a5aed53838f0ff86eae1ca1a2e4b97a8f8100c64c2ce1eabdbd3",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:5a3a48f1c0823e88f31af503eabb3b4a97db65b9a4ea26a41e9b74e42e71a2f4"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": false,
+      "issues": [
+        {
+          "file": "dashboards/executive-sales.yaml",
+          "line": 34,
+          "column": 11,
+          "severity": "error",
+          "code": "schema.duplicate_identity",
+          "message": "visuals id \"revenue-by-month\" is duplicated (first defined at line 18)"
+        }
+      ]
+    },
+    {
+      "id": "omitted-defaults",
+      "label": "Omitted layout defaults",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:437a5cdd088ab2acecb4f0c108599699f88d3d36d595ff0f4aa913934931d6ec",
+      "sourceRootDigest": "sha256:ba3db3ead80dc31470f3a7bf3983881921bacc76c31765e86e88bdb792fccea0",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:437a5cdd088ab2acecb4f0c108599699f88d3d36d595ff0f4aa913934931d6ec"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": true,
+      "issues": [],
+      "resolvedIntent": {
+        "dashboardId": "dashboard:executive-sales",
+        "semanticModel": "semantic-model:sales",
+        "layout": {
+          "defaults": {
+            "columns": 12,
+            "rowHeight": 48,
+            "gap": 16,
+            "padding": 16
+          },
+          "narrowView": "stack"
+        },
+        "pages": [
+          {
+            "id": "overview",
+            "title": "Overview",
+            "grid": {
+              "columns": 12,
+              "rowHeight": 48,
+              "gap": 16,
+              "padding": 16
+            },
+            "readingOrder": [
+              "revenue-trend",
+              "revenue-kpi"
+            ],
+            "components": [
+              {
+                "id": "revenue-trend",
+                "kind": "visual",
+                "visual": "revenue-by-month",
+                "placement": {
+                  "col": 1,
+                  "row": 1,
+                  "colSpan": 12,
+                  "rowSpan": 8
+                }
+              },
+              {
+                "id": "revenue-kpi",
+                "kind": "visual",
+                "visual": "total-revenue",
+                "placement": {
+                  "col": 1,
+                  "row": 10,
+                  "colSpan": 3,
+                  "rowSpan": 3
+                }
+              }
+            ],
+            "height": 784
+          }
+        ],
+        "visuals": [
+          {
+            "id": "revenue-by-month",
+            "mark": "area",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "category_value",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [
+                  {
+                    "fieldID": "purchase_date",
+                    "alias": "purchase_month",
+                    "grain": "month"
+                  }
+                ],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "sort": [
+                  {
+                    "fieldID": "purchase_month",
+                    "direction": "asc"
+                  }
+                ],
+                "limit": 30
+              }
+            }
+          },
+          {
+            "id": "total-revenue",
+            "mark": "kpi",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "scalar",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "limit": 1000
+              }
+            }
+          }
+        ]
+      },
+      "resolvedIntentDigest": "sha256:29b21a418b28150c6279bc145178a3852e6405ee459fb1036ad99d44131c3d4c",
+      "bundleDigest": "sha256:351396fbc7beea71ee6ecda7b27e6c7e1dbf70426132c084c8fdc79ea05bc6cd"
+    },
+    {
+      "id": "explicit-defaults",
+      "label": "Explicit layout defaults",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:ddbb0e6a14f527f12ac1130b0339373784f9b40153dab2e7f64a665314830f58",
+      "sourceRootDigest": "sha256:a78842e1fb715b30f0aa6bdd5dd7e3914afc65542331eb8e08c040e3b79223d8",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:ddbb0e6a14f527f12ac1130b0339373784f9b40153dab2e7f64a665314830f58"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": true,
+      "issues": [],
+      "resolvedIntent": {
+        "dashboardId": "dashboard:executive-sales",
+        "semanticModel": "semantic-model:sales",
+        "layout": {
+          "defaults": {
+            "columns": 12,
+            "rowHeight": 48,
+            "gap": 16,
+            "padding": 16
+          },
+          "narrowView": "stack"
+        },
+        "pages": [
+          {
+            "id": "overview",
+            "title": "Overview",
+            "grid": {
+              "columns": 12,
+              "rowHeight": 48,
+              "gap": 16,
+              "padding": 16
+            },
+            "readingOrder": [
+              "revenue-trend",
+              "revenue-kpi"
+            ],
+            "components": [
+              {
+                "id": "revenue-trend",
+                "kind": "visual",
+                "visual": "revenue-by-month",
+                "placement": {
+                  "col": 1,
+                  "row": 1,
+                  "colSpan": 12,
+                  "rowSpan": 8
+                }
+              },
+              {
+                "id": "revenue-kpi",
+                "kind": "visual",
+                "visual": "total-revenue",
+                "placement": {
+                  "col": 1,
+                  "row": 10,
+                  "colSpan": 3,
+                  "rowSpan": 3
+                }
+              }
+            ],
+            "height": 784
+          }
+        ],
+        "visuals": [
+          {
+            "id": "revenue-by-month",
+            "mark": "area",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "category_value",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [
+                  {
+                    "fieldID": "purchase_date",
+                    "alias": "purchase_month",
+                    "grain": "month"
+                  }
+                ],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "sort": [
+                  {
+                    "fieldID": "purchase_month",
+                    "direction": "asc"
+                  }
+                ],
+                "limit": 30
+              }
+            }
+          },
+          {
+            "id": "total-revenue",
+            "mark": "kpi",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "scalar",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "limit": 1000
+              }
+            }
+          }
+        ]
+      },
+      "resolvedIntentDigest": "sha256:29b21a418b28150c6279bc145178a3852e6405ee459fb1036ad99d44131c3d4c",
+      "bundleDigest": "sha256:d14cb5b468ba5a4890dbc85496512adb3fc468841c98a2f570c60dcfbadebe3c"
+    },
+    {
+      "id": "reordered-definitions",
+      "label": "Independent visuals reordered",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals:\n    - id: total-revenue\n      title: Total revenue\n      type: kpi\n      query:\n        type: aggregate\n        dimensions: []\n        metrics: [revenue]\n      presentation:\n        type: kpi\n        displayUnits: auto\n    - id: revenue-by-month\n      title: Revenue by month\n      type: area\n      query:\n        type: aggregate\n        dimensions:\n          - dimension: purchase_date\n            grain: month\n            alias: purchase_month\n        metrics: [revenue]\n        sort:\n          - field: purchase_month\n            direction: asc\n        limit: 30\n      presentation:\n        type: cartesian\n  pages:\n    - id: overview\n      title: Overview\n      components:\n        - id: revenue-trend\n          type: visual\n          visual: revenue-by-month\n          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}\n        - id: revenue-kpi\n          type: visual\n          visual: total-revenue\n          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}\n",
+      "sourceDigest": "sha256:ba1fa69dfc196ae1a5bb729eca5ee101b5632bf7dcdc8e5bf202e06a9b6a4062",
+      "sourceRootDigest": "sha256:8f8f4da3182367a726519adc104091e31ea9e051abfc6cc322908ebe37ddfdc7",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:ba1fa69dfc196ae1a5bb729eca5ee101b5632bf7dcdc8e5bf202e06a9b6a4062"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "valid": true,
+      "issues": [],
+      "resolvedIntent": {
+        "dashboardId": "dashboard:executive-sales",
+        "semanticModel": "semantic-model:sales",
+        "layout": {
+          "defaults": {
+            "columns": 12,
+            "rowHeight": 48,
+            "gap": 16,
+            "padding": 16
+          },
+          "narrowView": "stack"
+        },
+        "pages": [
+          {
+            "id": "overview",
+            "title": "Overview",
+            "grid": {
+              "columns": 12,
+              "rowHeight": 48,
+              "gap": 16,
+              "padding": 16
+            },
+            "readingOrder": [
+              "revenue-trend",
+              "revenue-kpi"
+            ],
+            "components": [
+              {
+                "id": "revenue-trend",
+                "kind": "visual",
+                "visual": "revenue-by-month",
+                "placement": {
+                  "col": 1,
+                  "row": 1,
+                  "colSpan": 12,
+                  "rowSpan": 8
+                }
+              },
+              {
+                "id": "revenue-kpi",
+                "kind": "visual",
+                "visual": "total-revenue",
+                "placement": {
+                  "col": 1,
+                  "row": 10,
+                  "colSpan": 3,
+                  "rowSpan": 3
+                }
+              }
+            ],
+            "height": 784
+          }
+        ],
+        "visuals": [
+          {
+            "id": "revenue-by-month",
+            "mark": "area",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "category_value",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [
+                  {
+                    "fieldID": "purchase_date",
+                    "alias": "purchase_month",
+                    "grain": "month"
+                  }
+                ],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "sort": [
+                  {
+                    "fieldID": "purchase_month",
+                    "direction": "asc"
+                  }
+                ],
+                "limit": 30
+              }
+            }
+          },
+          {
+            "id": "total-revenue",
+            "mark": "kpi",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "scalar",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "limit": 1000
+              }
+            }
+          }
+        ]
+      },
+      "resolvedIntentDigest": "sha256:29b21a418b28150c6279bc145178a3852e6405ee459fb1036ad99d44131c3d4c",
+      "bundleDigest": "sha256:d14cb5b468ba5a4890dbc85496512adb3fc468841c98a2f570c60dcfbadebe3c"
+    },
+    {
+      "id": "confined-fragments",
+      "label": "Confined visual and page fragments",
+      "source": "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:executive-sales\n  name: executive-sales\n  displayName: Executive Sales\n  description: Revenue and order trends for sales leadership.\n  tags: [sales, revenue]\nspec:\n  semanticModel: sales\n  layout:\n    columns: 12\n    rowHeight: 48\n    gap: 16\n    padding: 16\n  filters: []\n  visuals: []\n  pages: []\n  includes:\n    visuals: [fragments/visuals.yaml]\n    pages: [fragments/pages.yaml]\n",
+      "sourceDigest": "sha256:eeee20e70543f35627c7faf1f763833f88a11fe5825583b93626a4e93ea11ddf",
+      "sourceRootDigest": "sha256:24b140e95bdc260c1c61b5511022b2db2890161a6ef88a76c0ffa099c9d4fc46",
+      "sourceFiles": [
+        {
+          "path": "connections/olist.yaml",
+          "digest": "sha256:bd6327ff707128a8b9bb320298736d2e35ce718bd10bd37521de7a7184bf4a40"
+        },
+        {
+          "path": "dashboards/executive-sales.yaml",
+          "digest": "sha256:eeee20e70543f35627c7faf1f763833f88a11fe5825583b93626a4e93ea11ddf"
+        },
+        {
+          "path": "dashboards/fragments/pages.yaml",
+          "digest": "sha256:f08e495b7d6a51631e806abc8123c537bf4f14ab18f205198b2a04ba16a15616"
+        },
+        {
+          "path": "dashboards/fragments/visuals.yaml",
+          "digest": "sha256:e1b6ac2b4e09c14039590bc82db63f7cc0fbf16ba678ddfb87ee68395d1f4fbc"
+        },
+        {
+          "path": "models/customers.yaml",
+          "digest": "sha256:fbf58d19e25c00a96d8104ea2ed0259f4cd678732b5e454ed2ae28d1c548fcdf"
+        },
+        {
+          "path": "models/delivery_routes.yaml",
+          "digest": "sha256:dcfd7619417714e77089c1c9cc091c5918a4e1d83d9f9b93bcebb7b384346037"
+        },
+        {
+          "path": "models/operations_customers.yaml",
+          "digest": "sha256:3d6c28cbff8779e3b058abad16ee5a5a661dd29a8a4f12c9c99f5a9957317002"
+        },
+        {
+          "path": "models/operations_orders.yaml",
+          "digest": "sha256:31c52469b00fad1b6e363348b86a65385fdd7f904fd71312b7d2c6d1884a0934"
+        },
+        {
+          "path": "models/orders.yaml",
+          "digest": "sha256:dcc20e34c506e0ae9f7f92c663ec4e4b337d009c994527e07f74be6a1fcea2d3"
+        },
+        {
+          "path": "models/sales_customers.yaml",
+          "digest": "sha256:1fe3802ca8c59cecd1121b2bb130eef0d9321c2057ff61fca5f02337ed00099c"
+        },
+        {
+          "path": "models/sales_orders.yaml",
+          "digest": "sha256:3d99ecd0798058e132cf67f43797d357131fee676e4d2379b9c1c6ab436ab5b2"
+        },
+        {
+          "path": "models/spatial_load_points.yaml",
+          "digest": "sha256:cb0c44149c476f80f83697df221ac4451b6aed19f8045bd01e7c490517babc95"
+        },
+        {
+          "path": "models/zip_geolocations.yaml",
+          "digest": "sha256:53dbed88bae23c90e2db557a585270a27076211d2ce097f0ebc334502c1c50de"
+        },
+        {
+          "path": "semantic-models/operations.yaml",
+          "digest": "sha256:14363865d9f32e31811bfca324d3c5d9ac6637bfd2a33e887078f9bb72a15733"
+        },
+        {
+          "path": "semantic-models/sales.yaml",
+          "digest": "sha256:9f501736c89f017d5a81bbcda8c60c7b20fd0e3e09a15be26277a0161562384f"
+        },
+        {
+          "path": "semantic-models/visuals.yaml",
+          "digest": "sha256:0aec411efc25a4dd907de5eaa1c0d12349189a14bd01ee999ea8683fbf0296ea"
+        },
+        {
+          "path": "sources/olist.customers.yaml",
+          "digest": "sha256:0a08985f9bf66b964bfd40be2b150c1bbdbc3140c57c64dfc920775dea19c87a"
+        },
+        {
+          "path": "sources/olist.geolocation.yaml",
+          "digest": "sha256:172aa2dda16c90e8e92c819c421e3362520ccc2052ed1a60e645f5532f99f355"
+        },
+        {
+          "path": "sources/olist.order_items.yaml",
+          "digest": "sha256:0759de566062afd9443907906ae1f7b6dd18ef09bdd5d497cc542e1b3ccb476b"
+        },
+        {
+          "path": "sources/olist.orders.yaml",
+          "digest": "sha256:8af5f8143ee6050412fac776d14a489eac8ca153fc93786deb019f47c257b8cf"
+        },
+        {
+          "path": "sources/olist.payments.yaml",
+          "digest": "sha256:eb98e18509bd1035592c268c36aa935f22596073834e4c1df92896bb710231f3"
+        },
+        {
+          "path": "sources/olist.products.yaml",
+          "digest": "sha256:3724e1e04113af92eb730afe31d1cf6daa091937be46c3826c02acd2901f66fd"
+        },
+        {
+          "path": "sources/olist.reviews.yaml",
+          "digest": "sha256:2ef937b7bb406ad678f497b7aec0212e96254948163ed93330c299c42ca9679b"
+        },
+        {
+          "path": "sources/olist.sellers.yaml",
+          "digest": "sha256:45314797acfc2df8afbc7d63e2f3da2963383a1c750263eedff55783fb29ca1d"
+        },
+        {
+          "path": "sources/olist.translations.yaml",
+          "digest": "sha256:5d908e1e1a1f0bd614b4b50dfe72ad102056c676ed5194ae38f6b6104c6df1ac"
+        }
+      ],
+      "fragmentPaths": [
+        "dashboards/fragments/pages.yaml",
+        "dashboards/fragments/visuals.yaml"
+      ],
+      "valid": true,
+      "issues": [],
+      "resolvedIntent": {
+        "dashboardId": "dashboard:executive-sales",
+        "semanticModel": "semantic-model:sales",
+        "layout": {
+          "defaults": {
+            "columns": 12,
+            "rowHeight": 48,
+            "gap": 16,
+            "padding": 16
+          },
+          "narrowView": "stack"
+        },
+        "pages": [
+          {
+            "id": "overview",
+            "title": "Overview",
+            "grid": {
+              "columns": 12,
+              "rowHeight": 48,
+              "gap": 16,
+              "padding": 16
+            },
+            "readingOrder": [
+              "revenue-trend",
+              "revenue-kpi"
+            ],
+            "components": [
+              {
+                "id": "revenue-trend",
+                "kind": "visual",
+                "visual": "revenue-by-month",
+                "placement": {
+                  "col": 1,
+                  "row": 1,
+                  "colSpan": 12,
+                  "rowSpan": 8
+                }
+              },
+              {
+                "id": "revenue-kpi",
+                "kind": "visual",
+                "visual": "total-revenue",
+                "placement": {
+                  "col": 1,
+                  "row": 10,
+                  "colSpan": 3,
+                  "rowSpan": 3
+                }
+              }
+            ],
+            "height": 784
+          }
+        ],
+        "visuals": [
+          {
+            "id": "revenue-by-month",
+            "mark": "area",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "category_value",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [
+                  {
+                    "fieldID": "purchase_date",
+                    "alias": "purchase_month",
+                    "grain": "month"
+                  }
+                ],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "sort": [
+                  {
+                    "fieldID": "purchase_month",
+                    "direction": "asc"
+                  }
+                ],
+                "limit": 30
+              }
+            }
+          },
+          {
+            "id": "total-revenue",
+            "mark": "kpi",
+            "query": {
+              "kind": "aggregate",
+              "resultShape": "scalar",
+              "modelID": "semantic-model:sales",
+              "datasetID": "primary",
+              "aggregate": {
+                "tableID": "sales_orders",
+                "dimensions": [],
+                "metrics": [
+                  {
+                    "fieldID": "revenue",
+                    "alias": "revenue"
+                  }
+                ],
+                "limit": 1000
+              }
+            }
+          }
+        ]
+      },
+      "resolvedIntentDigest": "sha256:29b21a418b28150c6279bc145178a3852e6405ee459fb1036ad99d44131c3d4c",
+      "bundleDigest": "sha256:d14cb5b468ba5a4890dbc85496512adb3fc468841c98a2f570c60dcfbadebe3c"
+    }
+  ]
+}

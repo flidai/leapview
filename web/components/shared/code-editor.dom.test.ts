@@ -80,6 +80,9 @@ test('code editor initializes Monaco, syncs values, emits changes, and disposes'
       const cursorBackground = getComputedStyle(root.querySelector('.cursors-layer > .cursor')!).backgroundColor
       const cursorWidth = getComputedStyle(root.querySelector('.cursors-layer > .cursor')!).width
       const activeLineNumberColor = getComputedStyle(root.querySelector('.line-numbers.active-line-number')!).color
+      document.documentElement.dataset.colorMode = 'dark'
+      document.documentElement.dataset.lightTheme = 'light'
+      document.documentElement.dataset.darkTheme = 'dark'
       document.documentElement.style.colorScheme = 'dark'
       document.dispatchEvent(new CustomEvent('leapview-theme-applied', { detail: { mode: 'dark', resolvedMode: 'dark' } }))
       await waitFor(() => getComputedStyle(monacoSurface!).backgroundColor === 'rgb(13, 17, 23)')
@@ -193,15 +196,123 @@ test('code editor initializes Monaco from value attribute', async () => {
   }
 })
 
+test('code editor reconnects with retained edits and one model and change listener per lifetime', async () => {
+  const page = await browser.newPage()
+  page.setDefaultTimeout(5000)
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-code-editor'))
+    const state = await page.evaluate(async () => {
+      const element = document.createElement('lv-code-editor') as any
+      element.setAttribute('value', 'Attribute seed')
+      const changes: string[] = []
+      element.addEventListener('lv-code-editor-change', (event: CustomEvent) => changes.push(event.detail.value))
+      const waitForEditor = async () => {
+        const deadline = performance.now() + 5000
+        while (!element.editor) {
+          if (performance.now() > deadline) throw new Error('editor did not initialize after reconnect')
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
+      }
+      document.body.append(element)
+      await waitForEditor()
+      const disposed: boolean[] = []
+      const restored: string[] = []
+      const surfaces: number[] = []
+      for (const value of ['Edited YAML', '']) {
+        element.editor.setValue(value)
+        await element.updateComplete
+        const previousEditor = element.editor
+        const previousModel = element.model
+        element.remove()
+        disposed.push(!element.editor && !element.model && previousModel.isDisposed())
+        document.body.append(element)
+        await waitForEditor()
+        if (element.editor === previousEditor) throw new Error('disposed editor was reused')
+        restored.push(element.editor.getValue())
+        surfaces.push(element.shadowRoot.querySelectorAll('.monaco-editor').length)
+      }
+      element.editor.setValue('Final edit')
+      element.remove()
+      return { disposed, restored, surfaces, changes }
+    })
+    expect(state).toEqual({
+      disposed: [true, true], restored: ['Edited YAML', ''], surfaces: [1, 1],
+      changes: ['Edited YAML', '', 'Final edit'],
+    })
+  } finally { await page.close() }
+}, 15000)
+
+for (const reconnectBeforeStylesLoad of [false, true]) {
+  test(`code editor survives disconnect during stylesheet initialization (${reconnectBeforeStylesLoad ? 'reconnect before load' : 'reconnect after load'})`, async () => {
+    const page = await browser.newPage()
+    page.setDefaultTimeout(5000)
+    let releaseStyles!: () => void
+    const stylesGate = new Promise<void>(resolve => { releaseStyles = resolve })
+    let requestedStyles!: () => void
+    const stylesRequested = new Promise<void>(resolve => { requestedStyles = resolve })
+    await page.route('**/static/monaco-editor-css.css', async route => {
+      requestedStyles()
+      await stylesGate
+      await route.continue()
+    })
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-code-editor'))
+      await page.evaluate(async () => {
+        const element = document.createElement('lv-code-editor') as any
+        element.value = 'Pending initialization'
+        ;(window as any).pendingEditor = element
+        document.body.append(element)
+        await element.updateComplete
+      })
+      await stylesRequested
+      await page.evaluate(() => {
+        const element = (window as any).pendingEditor
+        if (element.editor || element.model) throw new Error('stylesheet wait was not exercised')
+        element.remove()
+      })
+      if (reconnectBeforeStylesLoad) await page.evaluate(() => document.body.append((window as any).pendingEditor))
+      releaseStyles()
+      if (!reconnectBeforeStylesLoad) {
+        // Detached shadow stylesheets need not retain a sheet in Chromium.
+        // Settle the pending load signal and let its continuation run detached.
+        await page.evaluate(async () => {
+          ;(window as any).pendingEditor.shadowRoot.querySelector('link[data-monaco-styles]').dispatchEvent(new Event('load'))
+          await new Promise(resolve => setTimeout(resolve, 0))
+        })
+        await page.evaluate(() => document.body.append((window as any).pendingEditor))
+      }
+      await page.waitForFunction(() => Boolean((window as any).pendingEditor.editor))
+      const state = await page.evaluate(async () => {
+        const element = (window as any).pendingEditor
+        await element.updateComplete
+        const changes: string[] = []
+        element.addEventListener('lv-code-editor-change', (event: CustomEvent) => changes.push(event.detail.value))
+        const value = element.editor.getValue()
+        const surfaces = element.shadowRoot.querySelectorAll('.monaco-editor').length
+        element.editor.setValue('After reconnect')
+        const model = element.model
+        element.remove()
+        return { value, surfaces, changes, disposed: !element.editor && !element.model && model.isDisposed() }
+      })
+      expect(state).toEqual({ value: 'Pending initialization', surfaces: 1, changes: ['After reconnect'], disposed: true })
+    } finally {
+      releaseStyles()
+      await page.close()
+    }
+  }, 15000)
+}
+
 function testDocument(): string {
   return `
     <!doctype html>
-    <html>
+    <html data-color-mode="light" data-light-theme="light" data-dark-theme="dark" style="color-scheme: light">
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-accent-muted: #ddf4ff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-icon-muted: #57606a; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --base-size-8: 8px; --base-size-16: 16px; }
-          [data-color-mode='dark'] { --lv-bg-panel: #0d1117; }
+          :root { ${typographyTestTokens} --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-accent-muted: #ddf4ff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-icon-muted: #57606a; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --base-size-8: 8px; --base-size-16: 16px; }
+          [data-color-mode='dark'] { --lv-bg-panel: #0d1117; --lv-fg-muted: #9198a1; }
           lv-code-editor { display: block; width: 760px; margin: 24px; }
         </style>
       </head>

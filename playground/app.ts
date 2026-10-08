@@ -5,7 +5,7 @@ import { ChevronDown, Maximize2, Minimize2, Moon, PanelLeft, Star, Sun } from 'l
 import { lucideIcon } from '../web/components/shared/lucide-icons'
 import '../web/components/shared/brand-mark'
 import { settingsLayoutStyles } from '../web/components/shared/settings-layout'
-import { chartExamples, controlExamples, tokenExamples, graphExamples, contentExamples, tableExamples, surfaceExamples, filterExamples } from './catalog'
+import { chartExamples, controlExamples, tokenExamples, graphExamples, contentExamples, tableExamples, surfaceExamples, filterExamples, recipeExamples } from './catalog'
 import './reload-client'
 import { decodeSnapshot, snapshotKey, type ExampleSnapshot, type StatefulExample } from './example-state'
 import { copyText, snapshotURL } from './review-tools'
@@ -47,10 +47,7 @@ const groups = [
   { id: 'content', label: 'Editors & content', examples: contentExamples },
   { id: 'surfaces', label: 'Layout & identity', examples: surfaceExamples },
   { id: 'filters', label: 'Dashboard filters', examples: filterExamples },
-  { id: 'recipes', label: 'Combined examples', examples: [
-    { id: 'linked-visuals', label: 'Linked dashboard' },
-    { id: 'overlay-form', label: 'Drawer form' },
-  ] },
+  { id: 'recipes', label: 'Combined examples', examples: recipeExamples },
 ]
 const shortcutExamples = new Map(groups.flatMap(group => group.examples.map(example => [`${group.id}/${example.id}`, { label: example.label, groupLabel: group.label }] as const)))
 
@@ -65,6 +62,7 @@ const exampleModules = new Map<string, { tag: string; load: () => Promise<unknow
   ['filters', { tag: 'playground-filters', load: () => import('./filters') }],
   ['recipes/linked-visuals', { tag: 'playground-linked-visuals', load: () => import('./linked-visuals') }],
   ['recipes/overlay-form', { tag: 'playground-overlay-recipe', load: () => import('./overlay-recipe') }],
+  ['recipes/dashboard-contract', { tag: 'playground-dashboard-contract', load: () => import('./dashboard-contract') }],
 ])
 const moduleLoads = new Map<string, Promise<unknown>>()
 const moduleID = (route: string) => route.startsWith('recipes/') ? route : route.split('/')[0]
@@ -294,7 +292,9 @@ class PlaygroundApp extends LitElement {
       : groupID === 'filters' ? html`<playground-filters .example=${exampleID} ?preview-only=${this.previewOnly}></playground-filters>`
       : groupID === 'recipes' ? exampleID === 'linked-visuals'
         ? html`<playground-linked-visuals ?preview-only=${this.previewOnly}></playground-linked-visuals>`
-        : html`<playground-overlay-recipe ?preview-only=${this.previewOnly}></playground-overlay-recipe>`
+        : exampleID === 'dashboard-contract'
+          ? html`<playground-dashboard-contract ?preview-only=${this.previewOnly}></playground-dashboard-contract>`
+          : html`<playground-overlay-recipe ?preview-only=${this.previewOnly}></playground-overlay-recipe>`
       : groupID === 'controls'
         ? html`<playground-controls .example=${exampleID} ?preview-only=${this.previewOnly}></playground-controls>`
         : html`<playground-tokens .example=${exampleID} ?preview-only=${this.previewOnly}></playground-tokens>`)

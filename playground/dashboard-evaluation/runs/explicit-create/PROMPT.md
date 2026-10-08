@@ -1,0 +1,9 @@
+This is one exploratory dashboard-authoring trial, with one attempt and no repairs or compiler feedback.
+Read ONLY the files explicitly supplied below and the YAML inside your designated trial directory. Do not inspect implementation, other trial directories, evaluation/oracle files, or repository documentation.
+Use shell tools to read those inputs and write the requested YAML. Do not run validation, tests, servers, build, Git, or network tools. Do not ask questions. Make one authored submission; all saves belong to that one attempt.
+Preserve all unrelated authored meaning and identities. Write only inside your designated trial directory. Return a short final stating the files changed.
+Shared reference: /home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-evaluation/reference.md.
+Designated trial directory: /home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-evaluation/runs/explicit-create
+Input root document: /home/codex/.codex/worktrees/dashboard-yaml-playground/dev-anand/playground/dashboard-evaluation/runs/explicit-create/dashboards/evaluation.yaml
+Task: Create two visuals and one page in the supplied empty Dashboard. Visual revenue-by-month: title Revenue by month; area mark; aggregate query purchase_date grouped by month, result alias purchase_month; revenue metric; sort purchase_month ascending; limit 30; cartesian presentation. Visual total-revenue: title Total revenue; kpi mark; aggregate with no dimensions, revenue metric; KPI presentation with displayUnits auto. Page overview, title Overview, two visual components in this order: revenue-trend references revenue-by-month at column1,row1,columnSpan12,rowSpan8; revenue-kpi references total-revenue at column1,row10,columnSpan3,rowSpan3. Retain metadata, semantic model, filters and representation.
+Representation constraint: Keep explicit layout defaults in the root document.

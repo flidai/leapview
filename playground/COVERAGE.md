@@ -17,7 +17,7 @@ invented for controls that have no such interface.
 | Layout & identity | Drawer, avatar, brand/field icons, notification stack, one-time secret, empty state, page header, breadcrumbs, settings and entity-detail helpers; dashboard appearance and report view controls | Public properties, native form behavior, modal focus, local actions and production styling |
 | Dashboard filters | `lv-filter-leaf`, `lv-filter-pane-card`, `lv-slicer`, `lv-filter-dock` | Dropdown/list/buttons/text/numeric/date/relative presentations; local mutation, clear/reset, editable/stale/pending and validation. Dock supports immediate/deferred application, Apply/Cancel, page/report resets and visible applied/draft state |
 
-| Combined examples | Production filter + chart + table + KPI; drawer + select + date picker | Linked highlighting, local filtering/sorting, nested overlays, validation and focus restoration |
+| Combined examples | Production filter + chart + table + KPI; drawer + select + date picker; Dashboard YAML editor + compiler evidence | Linked highlighting, local filtering/sorting, nested overlays, validation and focus restoration; independent source/schema controls, generated structural diagnostics, eleven exact-source recorded compiler scenarios with verified query/layout intent and provenance, edit invalidation/recovery, stable control updates and expandable schema/reference details |
 
 Sharing/reload preserve exposed fixture controls. Code snippets export public inputs.
 The collapsed review panel provides a pinned interactive comparison, an opt-in
