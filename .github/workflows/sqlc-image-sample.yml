@@ -34,6 +34,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify trusted measurement authority
         run: |
@@ -42,6 +43,18 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Verify historical qualification source
+        run: |
+          predecessor=$(sed -nE 's/^[[:space:]]*(const[[:space:]]+)?qualificationHistoricalPredecessorRevision[[:space:]]*=[[:space:]]*"([a-f0-9]{40})"[[:space:]]*$/\2/p' internal/app/cli/composectl/qualification_historical_transition.go)
+          if [[ ! "$predecessor" =~ ^[a-f0-9]{40}$ ]]; then
+            echo 'Expected one pinned historical qualification predecessor revision' >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$predecessor^{commit}" ||
+             ! git archive --output=/dev/null "$predecessor" dashboards/experiments/cfo-demo; then
+            echo 'Historical qualification source is unavailable; fetch the required Git history before building' >&2
+            exit 1
+          fi
       - name: Prepare exact source and experimental recipe
         id: prepare
         run: |
