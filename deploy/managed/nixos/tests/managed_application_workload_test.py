@@ -31,6 +31,15 @@ class WorkloadTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "scope or lifetime"):
                         workload.Workload(path, "/unused/ca.crt")
                     tls.assert_not_called()
+            credential["uploadConnectionID"] = "connection:sample"
+            credential["actions"].remove("semantic.read")
+            path.chmod(0o600)
+            path.write_text(json.dumps(credential))
+            path.chmod(0o400)
+            with patch.object(workload.ssl, "create_default_context") as tls:
+                with self.assertRaisesRegex(ValueError, "scope or lifetime"):
+                    workload.Workload(path, "/unused/ca.crt")
+                tls.assert_not_called()
 
     def test_real_upload_contract_waits_for_completion_before_receipt(self):
         payload = b"value\n1\n"

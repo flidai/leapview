@@ -19,7 +19,7 @@ import uuid
 
 LIMIT = 1024 * 1024
 ACTIONS = {"connection.read", "connection.use", "connection.upload", "source.read",
-           "dashboard.read", "semantic.query", "semantic.consume"}
+           "dashboard.read", "semantic.read", "semantic.query", "semantic.consume"}
 
 
 def write_manifest(payload):

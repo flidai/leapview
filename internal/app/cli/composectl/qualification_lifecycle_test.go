@@ -49,6 +49,21 @@ func TestQualificationPreloadedBrowserForbidsImplicitPull(t *testing.T) {
 	require.Contains(t, executor.requests[0].Arguments, "--pull=never")
 }
 
+func TestQualificationLifecyclePermissionsAllowSemanticVisibilityAndGovernedQuery(t *testing.T) {
+	project := projectgraph.ResourceID(qualificationProjectID)
+	permissions, err := qualificationLifecyclePermissions(project)
+	require.NoError(t, err)
+	model, err := access.NewResourceRef("semantic-model:sales", projectgraph.KindSemanticModel)
+	require.NoError(t, err)
+	// The endpoint first checks metadata visibility, then independently checks
+	// query and consumption authority. Query permission does not imply read.
+	for _, action := range []access.Action{access.ActionSemanticRead, access.ActionSemanticQuery, access.ActionSemanticConsume} {
+		pair, err := access.NewExactPermissionPair(action, project, model)
+		require.NoError(t, err)
+		require.True(t, access.PermissionSetAllows(permissions, pair), "missing semantic endpoint permission %s", action)
+	}
+}
+
 func TestQualificationLifecycleTokenUsesBoundedProjectWorkloadAuthority(t *testing.T) {
 	clientChannel, serverChannel := channel.Direct()
 	worker := &qualificationJSONWorker{client: jrpc2.NewClient(clientChannel, nil)}
@@ -97,7 +112,7 @@ func TestQualificationLifecycleTokenUsesBoundedProjectWorkloadAuthority(t *testi
 		}
 	}
 	require.Equal(t, qualificationManagedConnectionID, scope.UploadConnectionID)
-	require.ElementsMatch(t, []string{"connection.read", "connection.use", "connection.upload", "source.read", "dashboard.read", "semantic.query", "semantic.consume"}, actions)
+	require.ElementsMatch(t, []string{"connection.read", "connection.use", "connection.upload", "source.read", "dashboard.read", "semantic.read", "semantic.query", "semantic.consume"}, actions)
 	require.Equal(t, request.ExpiresAt, scope.ExpiresAt)
 	raw, err := json.Marshal(scope)
 	require.NoError(t, err)

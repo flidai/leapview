@@ -32,7 +32,7 @@ type qualificationLifecycleCredential struct {
 }
 
 func qualificationLifecycleActions() []access.Action {
-	return []access.Action{access.ActionConnectionRead, access.ActionConnectionUse, access.ActionConnectionUpload, access.ActionSourceRead, access.ActionDashboardRead, access.ActionSemanticQuery, access.ActionSemanticConsume}
+	return []access.Action{access.ActionConnectionRead, access.ActionConnectionUse, access.ActionConnectionUpload, access.ActionSourceRead, access.ActionDashboardRead, access.ActionSemanticRead, access.ActionSemanticQuery, access.ActionSemanticConsume}
 }
 
 func validateQualificationLifecycleScope(retained *qualificationLifecycleCredentialScope, request qualificationFirstPublicationRequest) error {

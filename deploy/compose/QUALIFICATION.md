@@ -64,13 +64,15 @@ apply.
 
 The optional `--lifecycle-credential-file` exports a project-scoped token only
 after committed first publication. Its JSON contains `projectID`, `environment`,
-`targetURL`, `issuedAt`, `expiresAt`, `actions`, and the private `token`. It lasts
+`targetURL`, `issuedAt`, `expiresAt`, `actions`, `uploadConnectionID`, and the private `token`. It lasts
 two hours and grants exactly `connection.read`, `connection.use`,
-`connection.upload`, `source.read`, `dashboard.read`, `semantic.query`, and
+`connection.upload`, `source.read`, `dashboard.read`, `semantic.read`, `semantic.query`, and
 `semantic.consume`. Select a new absolute path in an existing mode-0700 parent,
 outside the evidence directory; the controller writes it with mode 0400 without
 overwriting a file and removes it if qualification fails. The public report
-contains only the scope and expiry. This is a retained workload credential:
+contains only the scope and expiry. Upload authority is restricted to
+`connection:sample`; the optional lifecycle path stages that exact grant before
+protected publication. This is a retained workload credential:
 the lifecycle runner must delete it on completion and must never upload it.
 No administrator password or browser session is exported.
 
