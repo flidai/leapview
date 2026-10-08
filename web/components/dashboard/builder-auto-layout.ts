@@ -14,7 +14,7 @@ export function arrangeDashboardVisuals(
   const ordered = [...visuals.filter(v => v.type === 'kpi'), ...visuals.filter(v => v.type !== 'kpi')]
   const charts = ordered.filter(v => !['kpi', 'table', 'matrix', 'pivot', 'map', 'heatmap'].includes(v.type))
   const hero = charts.length >= 3 && charts.length % 2 === 1 ? charts[0].id : visuals.length === 1 ? charts[0]?.id : undefined
-  const kpiColumns = Math.min(4, Math.max(1, ordered.filter(v => v.type === 'kpi' && !v.placement).length))
+  const kpiColumns = Math.min(4, Math.max(1, ordered.filter(v => v.type === 'kpi').length))
   const placements = ordered.map(visual => {
     if (visual.placement) {
       const p = visual.placement

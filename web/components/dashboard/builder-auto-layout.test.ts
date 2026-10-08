@@ -56,3 +56,14 @@ test('an odd mix of bar, line and pie charts uses a full-width chart and one pai
   {column:7,row:6,columnSpan:6,rowSpan:5},
  ])
 })
+
+test('new KPI cards fill a preserved KPI row without moving or resizing existing cards', () => {
+ const manual = [1,5].map(col => ({col,row:1,colSpan:4,rowSpan:2}))
+ const result = arrangeDashboardVisuals([
+  {id:'first',type:'kpi',placement:manual[0]},
+  {id:'second',type:'kpi',placement:manual[1]},
+  {id:'new',type:'kpi'},
+ ], [], {columns:12,rowHeight:48,gap:16})
+ expect(result.map(p=>p.placement)).toEqual([1,5,9].map(column=>({column,row:1,columnSpan:4,rowSpan:2})))
+ expect(manual).toEqual([1,5].map(col=>({col,row:1,colSpan:4,rowSpan:2})))
+})
