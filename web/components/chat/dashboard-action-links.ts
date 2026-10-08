@@ -44,7 +44,7 @@ export function dashboardActionLinks(item: ChatTranscriptItemSignal, conversatio
   // Fork inputs identify the source, so only a returned identity can reopen
   // the newly created dashboard.
   const dashboardID = text(lifecycle?.id) || text(revision?.dashboardId) || text(result.dashboardId)
-    || (createsDashboard ? '' : text(input.dashboardId))
+    || (createsDashboard ? text(result.id) : text(input.dashboardId))
   const draftID = text(draft?.id) || text(result.draftId) || (createsDashboard ? '' : text(input.draftId))
   if (!dashboardID) return []
   if (lifecycle && !draftID) return []
@@ -91,7 +91,8 @@ export function dashboardActionIdentity(item: ChatTranscriptItemSignal): string 
   const result = parseRecord(item.resultJson)
   const lifecycle = record(result.lifecycle)
   const revision = record(result.revision)
-  const returned = text(lifecycle?.id) || text(result.dashboardId) || text(revision?.dashboardId)
+  const createsDashboard = ['create_dashboard_draft', 'fork_dashboard'].includes(item.name ?? '')
+  const returned = text(lifecycle?.id) || text(result.dashboardId) || text(revision?.dashboardId) || (createsDashboard ? text(result.id) : '')
   if (returned || ['create_dashboard_draft', 'fork_dashboard'].includes(item.name ?? '')) return returned
   const envelope = parseRecord(item.inputJson)
   const input = item.argumentsJson ? parseRecord(item.argumentsJson)

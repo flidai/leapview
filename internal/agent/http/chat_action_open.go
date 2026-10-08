@@ -58,13 +58,8 @@ func (h *Handler) ChatActionOpen(w nethttp.ResponseWriter, r *nethttp.Request) {
 				continue
 			}
 			hydrateRetainedTool(&creation, messages)
-			var result struct {
-				Lifecycle struct {
-					ID string `json:"id"`
-				} `json:"lifecycle"`
-			}
-			if creation.Error == "" && json.Unmarshal([]byte(creation.ResultJSON), &result) == nil {
-				createdDashboard = result.Lifecycle.ID
+			if creation.Error == "" {
+				createdDashboard = dashboardCreationID(creation.ResultJSON)
 			}
 			break
 		}
@@ -138,6 +133,9 @@ func (h *Handler) ChatActionOpen(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	dashboardID := firstNonEmptyString(result.Lifecycle.ID, result.DashboardID, result.Revision.DashboardID)
 	draftID := firstNonEmptyString(result.Lifecycle.Draft.ID, result.DraftID)
+	if item.Name == "create_dashboard_draft" || item.Name == "fork_dashboard" {
+		dashboardID = firstNonEmptyString(dashboardID, dashboardCreationID(item.ResultJSON))
+	}
 	if item.Name != "create_dashboard_draft" && item.Name != "fork_dashboard" {
 		dashboardID = firstNonEmptyString(dashboardID, input.DashboardID)
 		draftID = firstNonEmptyString(draftID, input.DraftID)
@@ -212,6 +210,21 @@ func (h *Handler) ChatActionOpen(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	nethttp.Redirect(w, r, href, nethttp.StatusSeeOther)
+}
+
+// Current create/fork receipts contain id and status; retained conversations
+// may still contain the earlier lifecycle result.
+func dashboardCreationID(raw string) string {
+	var result struct {
+		ID        string `json:"id"`
+		Lifecycle struct {
+			ID string `json:"id"`
+		} `json:"lifecycle"`
+	}
+	if json.Unmarshal([]byte(raw), &result) != nil {
+		return ""
+	}
+	return firstNonEmptyString(result.Lifecycle.ID, result.ID)
 }
 
 func actionFromCompletedEvents(events []agent.Event, runID, callID string) *agent.ChatTranscriptItem {

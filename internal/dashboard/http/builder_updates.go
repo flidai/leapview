@@ -173,7 +173,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		// A one-shot Agent refresh replaces the complete visual graph. Datastar
 		// merges nested objects, so clear old envelopes before publishing a new
 		// chart type; otherwise stale union fields survive until a page reload.
-		if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": nil}); err != nil {
+		if err := updates.Patch(builderReplacementReset(nil)); err != nil {
 			return
 		}
 	}

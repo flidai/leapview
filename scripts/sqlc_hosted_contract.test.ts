@@ -57,7 +57,7 @@ test('historical source preflight rejects shallow history before image work', ()
     writeFileSync(join(repo, pinPath), pin(git('rev-parse', 'HEAD')))
     expect(run(repo).status).not.toBe(0)
   } finally {
-    rmSync(directory, { recursive: true })
+    rmSync(directory, { recursive: true, force: true })
   }
 })
 
@@ -106,7 +106,7 @@ test('producer cache access is exercised before the expensive measured build', (
     expect(readFileSync(join(directory, 'cache-probe/Dockerfile'), 'utf8')).toBe('FROM scratch\nCOPY marker /marker\n')
     expect(readFileSync(join(directory, 'cache-probe/marker'), 'utf8')).toBe('sqlc-cache-access-probe\n')
   } finally {
-    rmSync(directory, { recursive: true })
+    rmSync(directory, { recursive: true, force: true })
   }
 })
 
@@ -179,6 +179,6 @@ test('retained build metadata excludes credential-bearing cache attributes', () 
     }
     expect(JSON.parse(readFileSync(join(directory, 'build-history.json'), 'utf8')).Duration).toBe(123)
   } finally {
-    rmSync(directory, { recursive: true })
+    rmSync(directory, { recursive: true, force: true })
   }
 })

@@ -42,6 +42,9 @@ type Scope struct {
 	// resolves an open Builder surface; they are never accepted from tool input.
 	BuilderDashboardID string
 	BuilderDraftID     string
+	// MainChatAuthoring is set by the chat handler for the authenticated main
+	// chat surface. Embedded readers never inherit private draft creation.
+	MainChatAuthoring bool
 }
 
 type CredentialScope struct {

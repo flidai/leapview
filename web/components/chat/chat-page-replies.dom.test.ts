@@ -57,7 +57,7 @@ test('dashboard tables forward sorting and paging to the retained builder', asyn
  } finally { await page.close() }
 })
 
-test('reopening a generated dashboard reply loads all visual cards without leaving chat', async () => {
+for (const inspectedAgain of [false, true]) test(`reopening a generated dashboard reply loads all visual cards without leaving chat${inspectedAgain ? ' after a later read-only preview' : ''}`, async () => {
  const page = await fixture.browser.newPage()
  try {
   let loads = 0
@@ -68,15 +68,17 @@ test('reopening a generated dashboard reply loads all visual cards without leavi
   await page.goto(fixture.baseURL)
   const chat = page.locator('lv-chat-page')
   await chat.locator('lv-chat-composer').waitFor()
-  await chat.evaluate(async (e:any) => {
+  await chat.evaluate(async (e:any, inspectedAgain) => {
    const {mergePatch} = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
    mergePatch({agent:{status:{enabled:true,running:false},transcript:[
     ...['create_dashboard_draft','preview_dashboard_draft'].map(name => ({id:name,kind:'tool',name,runId:'saved-build',toolCallId:name,status:'complete'})),
     {id:'answer',kind:'assistant',text:'Your dashboard is ready.\n\nFull explanation.'},
+    ...(inspectedAgain ? [{id:'inspection',kind:'tool',name:'preview_dashboard_draft',runId:'later-inspection',toolCallId:'inspection',status:'complete'}] : []),
    ]}})
    await e.updateComplete
-  })
+  }, inspectedAgain)
   await page.waitForFunction(() => Boolean((document.querySelector('lv-chat-page') as any).restoredBuilderHref))
+  expect(await chat.evaluate((e:any) => e.restoredBuilderHref)).toContain('/actions/preview_dashboard_draft/open?run=saved-build')
   await page.frameLocator('.builder-frame').getByText('Existing preview').waitFor({state:'attached'})
   await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
    window.parent.postMessage({type:'lv-builder-saved',revisionId:'rev',pageId:'pies',pageTitle:'Pie charts',pages:[{id:'pies',title:'Pie charts'}],href:'/dashboards/demo/edit?embed=chat&page=pies',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components:[{id:'pie',pageId:'pies',artifactId:'pie'},{id:'bar',pageId:'pies',artifactId:'bar'}],artifacts:[{id:'pie',type:'pie',summary:'Revenue mix'},{id:'bar',type:'bar',summary:'Revenue trend'}],visuals:{}},window.parent.location.origin)
@@ -235,4 +237,60 @@ test('Search Ask AI opens an unsent draft once and clears only its prompt fragme
     expect(await composer.locator('textarea').inputValue()).toBe('My revised question')
     expect(fixture.draftTurnRequests).toBe(requestsBefore)
   } finally { await page.close() }
+})
+
+
+test('an unfinished newer dashboard does not restore unrelated older chart cards', async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  let loads = 0
+  await page.route('**/chats/*/actions/*/open?*', route => { loads++; return route.fulfill({contentType:'text/html',body:'Older dashboard'}) })
+  await page.goto(fixture.baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  const restored = await chat.evaluate(async (e:any) => {
+   const {mergePatch} = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{status:{enabled:true,running:false},transcript:[
+    ...['create_dashboard_draft','preview_dashboard_draft'].map(name=>({id:name,kind:'tool',name,runId:'older-build',toolCallId:name,status:'complete'})),
+    {id:'new-create',kind:'tool',name:'create_dashboard_draft',runId:'new-build',toolCallId:'new-create',status:'complete'},
+    {id:'new-preview',kind:'tool',name:'preview_dashboard_draft',runId:'new-build',toolCallId:'new-preview',status:'error',error:'Preview failed'},
+   ]}})
+   await e.updateComplete
+   return e.restoredBuilderHref
+  })
+  expect(restored).toBeUndefined()
+  expect(loads).toBe(0)
+  expect(await chat.evaluate((e:any)=>e.builderOpen)).toBe(false)
+ } finally { await page.close() }
+})
+
+
+for (const creation of [true, false]) test(`${creation ? 'new' : 'existing'} generated dashboard arranges only new pages after a ready projection`, async () => {
+ const page = await fixture.browser.newPage()
+ try {
+  await page.route('**/chats/*/actions/*/open?*', route => route.fulfill({contentType:'text/html',body:'<lv-dashboard-builder>Generated</lv-dashboard-builder><script>window.arrangements=[];addEventListener("message",event=>{if(event.data.type==="lv-arrange-dashboard-visuals")window.arrangements.push(event.data)})</script>'}))
+  await page.goto(fixture.baseURL)
+  const chat = page.locator('lv-chat-page')
+  await chat.locator('lv-chat-composer').waitFor()
+  await chat.evaluate(async(e:any) => {
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{status:{enabled:true,running:true,runId:'new-build'}}})
+   await e.updateComplete
+  })
+  await chat.evaluate(async(e:any, creation) => {
+   const {mergePatch}=await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+   mergePatch({agent:{status:{enabled:true,running:false,runId:'new-build'},transcript:[...(creation ? ['create_dashboard_draft'] : []),'edit_dashboard_source','preview_dashboard_draft'].map(name=>({id:name,kind:'tool',name,runId:'new-build',toolCallId:name,status:'complete',resultJson:JSON.stringify({dashboardId:'demo'})}))}})
+   await e.updateComplete
+  },creation)
+  const frame = page.frameLocator('.builder-frame')
+  await frame.getByText('Generated').waitFor()
+  for (const updating of [true, false, false]) {
+   await frame.locator('body').evaluate((_, updating) => {
+    window.parent.postMessage({type:'lv-builder-saved',canArrange:true,updating,revisionId:'rev',pageId:'overview',href:'/dashboards/demo/edit?embed=chat&page=overview',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components:[],artifacts:[],visuals:{}},window.parent.location.origin)
+   },updating)
+   await chat.evaluate(async(e:any)=>e.updateComplete)
+  }
+  await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).savedBuilderHref.includes('/dashboards/demo/edit'))
+  expect(await frame.locator('body').evaluate(()=>(window as any).arrangements)).toEqual(creation ? [{type:'lv-arrange-dashboard-visuals',reflow:true}] : [])
+ } finally {await page.close()}
 })

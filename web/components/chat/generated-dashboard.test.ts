@@ -7,7 +7,7 @@ import {generatedDashboardHref} from './generated-dashboard'
 const tool=(name:string,extra:Partial<ChatTranscriptItemSignal>={}):ChatTranscriptItemSignal=>({id:name,kind:'tool',name,runId:'run-new',toolCallId:name,status:'complete',...extra})
 test('completed new dashboard opens the exact retained preview within the current chat',()=>{
  const href=generatedDashboardHref([tool('create_dashboard_draft'),tool('edit_dashboard_source'),tool('preview_dashboard_draft')],'run-new','conversation')
- expect(href).toBe('/chats/conversation/actions/preview_dashboard_draft/open?run=run-new&embed=chat&createdBy=create_dashboard_draft')
+ expect(href).toBe('/chats/conversation/actions/preview_dashboard_draft/open?run=run-new&embed=chat&mode=preview&createdBy=create_dashboard_draft')
 })
 test('history, individual visuals, unfinished drafts and failed previews do not auto-open',()=>{
  expect(generatedDashboardHref([tool('create_dashboard_draft'),tool('preview_dashboard_draft')],'other-run','conversation')).toBe('')
@@ -26,7 +26,7 @@ test('a recovery run opens the newly completed dashboard after creation in an ea
  const preview=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
  const href=generatedDashboardHref([created,edit,preview],'run-new','conversation')
  expect(href).toContain('/actions/preview_dashboard_draft/open')
- expect(href).not.toContain('mode=preview')
+ expect(href).toContain('mode=preview')
  expect(generatedDashboardHref([created,preview],'run-new','conversation')).toBe('')
  expect(generatedDashboardHref([created,{...edit,argumentsJson:'{"dashboardId":"other"}'},preview],'run-new','conversation')).toBe('')
 })
@@ -87,4 +87,26 @@ test('Builder handoff resolves the recorded operation within its conversation an
   expect(dashboardActionLinks({ ...recordedVisual(), name: 'fork_dashboard' }, 'chat-1')).toEqual([
     { label: 'Open in Builder', href: '/chats/chat-1/actions/call-1/open?run=run-1' },
   ])
+})
+
+test('bounded recovery previews require retained server validation before automatic opening',()=>{
+ const edit=tool('edit_dashboard_source',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ const preview=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-a"}',resultJson:'visualErrors:\n  chart: Missing measure\n'})
+ expect(generatedDashboardHref([edit,preview],'run-new','conversation')).toContain('mode=preview')
+})
+
+test('compact create receipt identifies its dashboard and rejects another dashboard preview',()=>{
+ const created=tool('create_dashboard_draft',{resultJson:'{"id":"dashboard-a","status":"draft"}'})
+ const own=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ const other=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-b"}'})
+ expect(generatedDashboardHref([created,other],'run-new','conversation')).toBe('')
+ expect(generatedDashboardHref([created,own],'run-new','conversation')).toContain('createdBy=create_dashboard_draft')
+})
+
+test('field edits after preview require validation again',()=>{
+ const created=tool('create_dashboard_draft',{resultJson:'{"id":"dashboard-a","status":"draft"}'})
+ const preview=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ const field=tool('assign_dashboard_field',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ expect(generatedDashboardHref([created,preview,field],'run-new','conversation')).toBe('')
+ expect(generatedDashboardHref([created,field,preview],'run-new','conversation')).toContain('createdBy=create_dashboard_draft')
 })

@@ -6,6 +6,8 @@ LeapView conversations are global and owned by the authenticated principal. Proj
 
 Built-in chat, MCP discovery, and `leapview agent tools` expose one governed catalog. Its discovery, query, and documentation subset remains read-only; the dashboard-authoring subset adds the twelve bounded authoring tools documented in [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring).
 
+Main chat can create and edit private dashboard drafts when explicitly requested. Each tool still checks the authenticated user's dashboard and semantic-model permissions, records server-bound provenance, and uses exact revisions for edits. Inside Builder, the agent targets only the open draft and selected page. Embedded dashboard and Data Explorer chat remain read-only. These chat surfaces do not expose publishing, archiving, forking, deleting, or visibility changes. A successfully validated generated dashboard opens beside the same conversation.
+
 - `catalog_search` searches authorized resources in the server-bound Project when a resource's location is unknown, including visible semantic metric and dimension names and labels.
 - `catalog_list` browses the server-bound Project graph. Omit `parent` to list authorized resources across the active graph, pass an authorized active Project ref to list the same root, or pass a returned `{kind,id}` resource ref to browse its dependencies.
 - `catalog_get` returns the compact definition for one exact ref. Shared visuals and filters may require one of the returned dashboard/page locations.

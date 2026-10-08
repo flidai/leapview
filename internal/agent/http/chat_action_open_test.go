@@ -2,9 +2,15 @@ package http
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestHydratePreviewActionIgnoresRenderPayload(t *testing.T) {
@@ -93,6 +99,102 @@ error: failed
 	}
 	if len(result["lifecycle"]) == 0 || len(result["revision"]) == 0 || len(result["error"]) == 0 {
 		t.Fatalf("lost receipt: %s", item.ResultJSON)
+	}
+}
+
+func TestChatPreviewOpensCompactCreationReceiptAndChecksOwnership(t *testing.T) {
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "preview-owner@example.com", DisplayName: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "preview-other@example.com", DisplayName: "Other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := agent.NewService(fixture.Agent, agent.Config{APIKey: "test", Model: "test"})
+	scope := agent.Scope{PrincipalID: owner.ID, ProjectID: "project:preview"}
+	conversation, err := service.CreateConversation(t.Context(), scope, "Build dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []struct{ name, id, args, result string }{
+		{"create_dashboard_draft", "create-call", `{"title":"Sales","semanticModelId":"semantic-model:sales"}`, `{"id":"dashboard-1","status":"draft"}`},
+		{"preview_dashboard_draft", "preview-call", `{"dashboardId":"dashboard-1","draftId":"draft-1","page":"overview"}`, `{"visualErrors":{}}`},
+	} {
+		content, _ := json.Marshal(map[string]any{"tool_calls": []any{map[string]any{"id": tool.id, "name": tool.name, "arguments": json.RawMessage(tool.args)}}})
+		_, err = fixture.Agent.AppendMessage(t.Context(), agent.MessageInput{PrincipalID: owner.ID, ConversationID: conversation.ID, Role: agent.MessageRoleAssistant, ContentJSON: string(content)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = fixture.Agent.AppendMessage(t.Context(), agent.MessageInput{PrincipalID: owner.ID, ConversationID: conversation.ID, Role: agent.MessageRoleTool, ToolCallID: tool.id, ToolName: tool.name, ContentText: tool.result})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		principal, creation string
+		want                int
+	}{
+		{owner.ID, "create-call", http.StatusSeeOther},
+		{owner.ID, "wrong-call", http.StatusNotFound},
+		{other.ID, "create-call", http.StatusNotFound},
+	} {
+		handler := NewHandler(Options{Service: service, ActiveProjectID: "project:preview", CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: tc.principal}, true }})
+		router := chi.NewRouter()
+		router.Get("/chats/{conversation}/actions/{toolcall}/open", handler.ChatActionOpen)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/chats/"+conversation.ID+"/actions/preview-call/open?embed=chat&createdBy="+tc.creation, nil))
+		if response.Code != tc.want {
+			t.Fatalf("principal=%s creation=%s status=%d body=%s", tc.principal, tc.creation, response.Code, response.Body.String())
+		}
+		if tc.want == http.StatusSeeOther && !strings.HasPrefix(response.Header().Get("Location"), "/dashboards/dashboard-1/edit?") {
+			t.Fatalf("preview location=%s", response.Header().Get("Location"))
+		}
+	}
+}
+
+func TestChatAutomaticPreviewValidatesRetainedErrorsWithoutCreation(t *testing.T) {
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "recovery-owner@example.com", DisplayName: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := agent.NewService(fixture.Agent, agent.Config{APIKey: "test", Model: "test"})
+	scope := agent.Scope{PrincipalID: owner.ID, ProjectID: "project:preview"}
+	for _, tc := range []struct {
+		name, receipt, query string
+		want                 int
+	}{
+		{"valid recovery", "revision:\n  number: 4\n", "?embed=chat&mode=preview", http.StatusSeeOther},
+		{"invalid recovery", "visualErrors:\n  chart: Missing measure\n", "?embed=chat&mode=preview", http.StatusNotFound},
+		{"manual repair", "visualErrors:\n  chart: Missing measure\n", "?embed=chat", http.StatusSeeOther},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conversation, err := service.CreateConversation(t.Context(), scope, "Recover dashboard")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = fixture.Agent.AppendMessage(t.Context(), agent.MessageInput{PrincipalID: owner.ID, ConversationID: conversation.ID, Role: agent.MessageRoleAssistant, ContentJSON: `{"tool_calls":[{"id":"preview-call","name":"preview_dashboard_draft","arguments":{"dashboardId":"dashboard-1","draftId":"draft-1","page":"details"}}]}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = fixture.Agent.AppendMessage(t.Context(), agent.MessageInput{PrincipalID: owner.ID, ConversationID: conversation.ID, Role: agent.MessageRoleTool, ToolCallID: "preview-call", ToolName: "preview_dashboard_draft", ContentText: tc.receipt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler := NewHandler(Options{Service: service, ActiveProjectID: scope.ProjectID, CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: owner.ID}, true }})
+			router := chi.NewRouter()
+			router.Get("/chats/{conversation}/actions/{toolcall}/open", handler.ChatActionOpen)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/chats/"+conversation.ID+"/actions/preview-call/open"+tc.query, nil))
+			if response.Code != tc.want {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, tc.want, response.Body.String())
+			}
+			if tc.want == http.StatusSeeOther && !strings.Contains(response.Header().Get("Location"), "page=details") {
+				t.Fatalf("selected page lost: %s", response.Header().Get("Location"))
+			}
+		})
 	}
 }
 

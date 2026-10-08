@@ -627,7 +627,9 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	if previewVisualID != "" {
 		previewReset = map[string]any{previewVisualID: nil}
 	}
-	if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": previewReset}); err != nil {
+	// Authoring can replace binding keys and predicate kinds. Merge-patching
+	// their maps would retain removed scopes, controls and option pages.
+	if err := updates.Patch(builderReplacementReset(previewReset)); err != nil {
 		return
 	}
 	_ = updates.Patch(pagestream.SignalPatch{
@@ -641,6 +643,15 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		"builderFilterValidation":  envelope.BuilderFilterValidation,
 		"status":                   uisignals.DashboardStatus{Loading: false},
 	})
+}
+
+func builderReplacementReset(visualReset any) pagestream.SignalPatch {
+	return pagestream.SignalPatch{
+		"builderVisuals":           visualReset,
+		"builderFilterContract":    map[string]any{"definitions": nil, "bindings": nil},
+		"builderFilterState":       map[string]any{"appliedControls": nil, "draftControls": nil},
+		"builderFilterOptionPages": nil,
+	}
 }
 
 // builderCommandRuntime preserves the route identity needed by the canonical

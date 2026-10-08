@@ -100,6 +100,35 @@ func migrateCanonicalFilterState(filter *document.DashboardFilter, previousContr
 	}
 }
 
+func migrateCanonicalPageFilterState(value *document.DashboardDocument, filter *document.DashboardFilter, previousControlType, nextControlType string) {
+	if previousControlType == nextControlType {
+		return
+	}
+	for pageIndex := range value.Spec.Pages {
+		bindings := value.Spec.Pages[pageIndex].FilterBindings
+		if bindings == nil {
+			continue
+		}
+		for index := range *bindings {
+			binding := &(*bindings)[index]
+			if binding.Filter != filter.ID {
+				continue
+			}
+			pageFilter := document.DashboardFilter{Default: binding.Default}
+			migrateCanonicalFilterState(&pageFilter, previousControlType, nextControlType, filter.Control)
+			binding.Default = pageFilter.Default
+			effectiveDefault := binding.Default
+			if effectiveDefault == nil {
+				effectiveDefault = filter.Default
+			}
+			if binding.Required != nil && *binding.Required && !canonicalFilterHasDefault(effectiveDefault) {
+				required := false
+				binding.Required = &required
+			}
+		}
+	}
+}
+
 func canonicalFilterOperatorsCompatible(operators []document.DashboardFilterOperator, controlType string) bool {
 	if len(operators) == 0 {
 		return false
