@@ -36,7 +36,7 @@ Prior art remains scoped: Perses authoring helpers combine panel/layout authorin
 
 ## Results
 
-The nine first attempts were authored on `51022499221ad4e23f514a6db7becc7a9ef38482`. Final qualification regrades the same frozen submissions on latest main `6443c25befced1da531e4076c20b5a060d359a84`; this is no additional agent trial. Upstream changes do not change the canonical dashboard query/layout declarations.
+The nine first attempts were authored on `51022499221ad4e23f514a6db7becc7a9ef38482`. Initial qualification regraded the same frozen submissions on main `6443c25befced1da531e4076c20b5a060d359a84`. The review refresh regrades them again after merging main `f072723d3389cfaae27cb6621eb624ebd4858ca2`; neither regrading is an additional agent trial. Upstream changes do not change the canonical dashboard query/layout declarations.
 
 All nine first attempts passed generated-schema decoding, real project compilation, exact normalized intent comparison and their assigned representation check. No repairs or compiler feedback were provided to the trial agents. Frozen preregistration/reference/oracle hashes were verified unchanged before scoring. Final source hashes are in `dashboard-evaluation/submissions.json`; machine results are in `dashboard-evaluation/results.json`.
 

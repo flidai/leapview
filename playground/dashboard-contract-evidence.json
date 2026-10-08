@@ -3,10 +3,10 @@
   "compileOnly": true,
   "metadata": {
     "diagnosticNormalization": "temporary source-root paths removed; complete diagnostic sibling subtrees sorted",
-    "compilerCommit": "6443c25befced1da531e4076c20b5a060d359a84",
+    "compilerCommit": "2ae2c650fa284b68ec04300cabc0acd05d9f0348",
     "compilerVersion": "leapview-source-compiler:v1",
-    "compilerFingerprint": "sha256:7b9f699f7c20f98a74cde08925dc27954c26665efd9c3b1ce2afde7cfd4c6be3",
-    "compilerSourceDigest": "sha256:aea0d0d84ed4a8596ef31d50eea3274992ec7a4e8bc46e195c57210e52ccef50",
+    "compilerFingerprint": "sha256:98e4cd1824ed774e4286be45ac523df3371450d48e95b5ac9280e96506007217",
+    "compilerSourceDigest": "sha256:52b548ed75f7dbc2245c189ca8742551a549fb2ec3a8adc28f7eaca62ada3f5a",
     "build": {
       "goVersion": "go1.27.1",
       "goos": "linux",
@@ -237,19 +237,14 @@
         }
       ]
     },
-    "trackedSourceCount": 286,
+    "trackedSourceCount": 289,
     "untrackedSourcePaths": [
-      "internal/app/tools/dashboardcontractevidence/evidence.go",
-      "internal/app/tools/dashboardcontractevidence/main.go",
       "internal/dashboard/api/gen/client.apigen.gen.go",
       "internal/dashboard/api/gen/request_models.gen.go",
       "internal/dashboard/api/gen/server.apigen.gen.go",
       "internal/platform/http/api/gen/request_models.gen.go"
     ],
-    "modifiedSourcePaths": [
-      "api/dashboard/main.tsp",
-      "schemas/json/dashboard-document.schema.json"
-    ],
+    "modifiedSourcePaths": [],
     "bundledResourcesDigest": "sha256:4b632c10fc29cbda059b27752d66ed17e81410286c2cb09668a5c1f0a8ddafb4",
     "schemaDigest": "sha256:19c49ba464c1bf8cc49537e772914f4dfdde0b9f6a93da1b7402b33cac2fa48c"
   },

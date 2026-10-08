@@ -11,6 +11,8 @@ let server: Awaited<ReturnType<typeof startTestPlayground>>
 let page: Page
 let errors: string[]
 let unexpectedRequests: string[]
+let assetRequests: Map<string, string>
+let consoleErrors: string[]
 
 beforeAll(async () => {
   server = await startTestPlayground()
@@ -20,14 +22,20 @@ afterAll(async () => { await browser?.close(); await server?.stop(true) })
 beforeEach(async () => {
   errors = []
   unexpectedRequests = []
+  assetRequests = new Map()
+  consoleErrors = []
   page = await browser.newPage({ baseURL: server.url.href, viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   page.setDefaultTimeout(7000)
   page.on('pageerror', error => errors.push(error.message))
   page.on('request', request => {
+    assetRequests.set(request.url(), 'pending')
     const url = new URL(request.url())
     if (url.protocol === 'blob:' || url.protocol === 'data:') return
     if (url.origin !== server.url.origin || !['/', '/index.html', '/__playground/events'].includes(url.pathname) && !url.pathname.startsWith('/assets/') && !url.pathname.startsWith('/static/')) unexpectedRequests.push(request.url())
   })
+  page.on('requestfinished', request => { assetRequests.set(request.url(), 'finished') })
+  page.on('requestfailed', request => { assetRequests.set(request.url(), request.failure()?.errorText || 'failed') })
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
 })
 afterEach(async () => {
@@ -37,8 +45,23 @@ afterEach(async () => {
 })
 
 async function open(route: string) {
-  await page.goto(`${server.url}#${route}`)
-  await browserExpect(page.locator('playground-app')).toBeVisible()
+  try {
+    await page.goto(`${server.url}#${route}`)
+    await browserExpect(page.locator('playground-app')).toBeVisible()
+  } catch (error) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const state = await Promise.race([
+        page.evaluate(() => {
+          const app = document.querySelector('playground-app') as any
+          return { readyState: document.readyState, defined: Boolean(customElements.get('playground-app')), shadow: Boolean(app?.shadowRoot), route: app?.route, loading: app?.loadError, ready: app?.exampleReady, viewport: app?.shadowRoot?.querySelector('.viewport')?.textContent?.slice(0, 500) }
+        }).catch(error => ({ diagnosticError: String(error) })),
+        new Promise(resolve => { timer = setTimeout(() => resolve({ diagnosticError: 'Browser did not answer startup diagnostics' }), 1000) }),
+      ])
+      console.error('Playground startup failure', JSON.stringify({ route, url: page.url(), state, requests: [...assetRequests].filter(([, status]) => status !== 'finished'), consoleErrors }))
+    } finally { clearTimeout(timer) }
+    throw error
+  }
 }
 
 async function delayControlsModule() {
