@@ -3,7 +3,8 @@
 Updated: 29 September 2026
 Status as of 2 October 2026: implementation, qualification and all required live
 proofs passed. Fallback #748 was closed externally as superseded at 16:07:20 IST.
-Final documentation review and protected merge remain pending. The [final acceptance report](evidence/final-acceptance-20261002.md)
+Final documentation merged in [PR #803](https://github.com/flidai/leapview/pull/803)
+at `c7b16569b9e9da1331d1c2fbb27e1bbb91046984` on 2 October 2026. The [final acceptance report](evidence/final-acceptance-20261002.md)
 records the complete replacement observation, bound acceptance, and independent
 read-only audit. Requirements below remain the accepted execution specification;
 older pre-merge PR descriptions are historical.

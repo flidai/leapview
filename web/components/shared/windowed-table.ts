@@ -714,8 +714,9 @@ class WindowedTable extends LitElement {
                         tabindex="0"
                         aria-label=${`Resize ${column.label || column.key} column`}
                         aria-orientation="vertical"
-                        aria-valuemin=${this.minColumnWidth(column)}
-                        aria-valuenow=${widths[index]}
+                        aria-valuemin=${this.minColumnWidth(column) / tableWidth * 100}
+                        aria-valuenow=${widths[index] / tableWidth * 100}
+                        aria-valuetext=${`${widths[index]} pixels`}
                         @keydown=${(event: KeyboardEvent) => this.resizeColumnByKeyboard(table, column, event)}
                         @mousedown=${(event: MouseEvent) => this.beginColumnResize(table, column, event)}
                         @touchstart=${(event: TouchEvent) => this.beginColumnResize(table, column, event)}
