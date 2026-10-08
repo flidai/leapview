@@ -3,10 +3,10 @@
   "compileOnly": true,
   "metadata": {
     "diagnosticNormalization": "temporary source-root paths removed; complete diagnostic sibling subtrees sorted",
-    "compilerCommit": "2ae2c650fa284b68ec04300cabc0acd05d9f0348",
+    "compilerCommit": "232840f42dd2ad2a861586d5ac8c39b606dbb62d",
     "compilerVersion": "leapview-source-compiler:v1",
-    "compilerFingerprint": "sha256:98e4cd1824ed774e4286be45ac523df3371450d48e95b5ac9280e96506007217",
-    "compilerSourceDigest": "sha256:52b548ed75f7dbc2245c189ca8742551a549fb2ec3a8adc28f7eaca62ada3f5a",
+    "compilerFingerprint": "sha256:af2b98f856b66a5e0e917f230234d7a924fab4a8ee2778de86c7d1b8902f5367",
+    "compilerSourceDigest": "sha256:4206e329950cc6cddd957ee6d5185e8861bfdf57fd9ed8f5f03ea7bc03df2714",
     "build": {
       "goVersion": "go1.27.1",
       "goos": "linux",
