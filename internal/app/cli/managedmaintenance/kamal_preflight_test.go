@@ -17,9 +17,25 @@ import (
 )
 
 func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
-	for _, variant := range []string{"valid", "receipt-replaced", "configuration-drift", "credential-drift", "candidate-env-drift", "missing-image", "running-candidate", "closed-predecessor"} {
+	for _, variant := range []string{"valid", "receipt-replaced", "configuration-drift", "credential-drift", "candidate-env-drift", "missing-image", "running-candidate", "closed-predecessor", "capacity-bytes", "capacity-inodes", "capacity-policy-missing", "legacy-recovery", "capacity-policy-drift", "capacity-docker-drift"} {
 		t.Run(variant, func(t *testing.T) {
 			k, app, proxy := adapterFixture(t)
+			dockerRoot := k.Profile.Capacity.DockerRootDir
+			if variant == "capacity-policy-missing" || variant == "legacy-recovery" {
+				k.Profile.Capacity = nil
+				k.recovering = variant == "legacy-recovery"
+			}
+			if variant == "capacity-bytes" || variant == "capacity-inodes" {
+				k.capacityProbe = func(string) (filesystemCapacity, error) {
+					m := filesystemCapacity{Device: "1", FreeBytes: 100, FreeInodes: 100}
+					if variant == "capacity-bytes" {
+						m.FreeBytes = 2
+					} else {
+						m.FreeInodes = 2
+					}
+					return m, nil
+				}
+			}
 			for _, name := range profileFiles {
 				if name == "environment.json" {
 					continue
@@ -63,6 +79,10 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 				environment[key] = value
 			}
 			switch variant {
+			case "capacity-policy-drift":
+				k.Profile.Capacity.Home.FreeBytes++
+			case "capacity-docker-drift":
+				dockerRoot = filepath.Join(t.TempDir(), "another-daemon-root")
 			case "configuration-drift":
 				if err = os.WriteFile(filepath.Join(k.Profile.Root, "deploy.yml"), []byte("changed"), 0600); err != nil {
 					t.Fatal(err)
@@ -108,6 +128,8 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 				}
 				action := strings.Join(args[2:], " ")
 				switch {
+				case action == "info --format {{json .DockerRootDir}}":
+					return encode(dockerRoot)
 				case strings.HasPrefix(action, "image inspect "):
 					reference := args[len(args)-1]
 					revision := k.Request.Predecessor.Revision
@@ -130,8 +152,16 @@ func TestKamalPreflightBindsProducerAdmissionAndLiveEnvironment(t *testing.T) {
 				}
 			}
 			err = k.Preflight(t.Context())
-			if (err == nil) != (variant == "valid") {
+			if (err == nil) != (variant == "valid" || variant == "legacy-recovery") {
 				t.Fatalf("Preflight = %v", err)
+			}
+			if strings.HasPrefix(variant, "capacity-") {
+				// Exercise the production adapter through the coordinator: failed
+				// resource admission must precede private RPCs or any closure.
+				journal := &memoryJournal{}
+				if err := (&Coordinator{Request: k.Request, Journal: journal, Effects: k}).Run(t.Context()); err == nil || journal.exists {
+					t.Fatalf("capacity rejection mutated operation: %v, %+v", err, journal)
+				}
 			}
 		})
 	}

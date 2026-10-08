@@ -54,9 +54,40 @@ The root-owned mode-0600 profile has this shape (paths are examples):
   "service": "leapview",
   "hostname": "analytics.example.com",
   "proxyImage": "basecamp/kamal-proxy@sha256:<qualified-64-hex-digest>",
-  "admissionRoot": "/opt/leapview-admissions"
+  "admissionRoot": "/opt/leapview-admissions",
+  "capacity": {
+    "dockerRootDir": "/var/lib/docker",
+    "home": {"freeBytes": 5368709120, "freeInodes": 100000},
+    "stateRoot": {"freeBytes": 67108864, "freeInodes": 1000},
+    "docker": {"freeBytes": 2147483648, "freeInodes": 50000}
+  }
 }
 ```
+
+The example capacity values are illustrative, not qualified sizing defaults.
+Measure the application's temporary files, uploads and analytical work, Docker
+startup growth, and controller journal needs for the actual workload. Enroll
+positive byte and inode reserves for each role. Reserves are incremental: roles
+on the same backing filesystem share one budget and their required reserves
+are added. Separate filesystems must each meet their own requirement. The Docker
+path must match the dedicated daemon's reported data root.
+
+Before preparing a release request, inspect the enrolled headroom without
+changing application admission or creating a controller journal:
+
+```sh
+leapviewctl host managed-release capacity --profile /run/leapview/profile.json
+```
+
+The command reports measured capacity and exits unsuccessfully for missing,
+unsupported or insufficient measurements. Provision the private operator and
+state directories before using it. New handoffs require this
+capacity policy; its values and Docker path participate in the configuration
+digest. Obtain new fingerprints after enrolling or changing it. An already
+unfinished operation created with an older profile lacking this policy can still
+be recovered using its original profile and request; that compatibility path
+does not claim the new capacity guarantee. Do not edit a pending operation's
+profile to retrofit policy.
 
 Provision `stateRoot/ingress.json` as a private file containing
 `{"publish":false}` during initial enrollment. Its value becomes controller-owned
@@ -115,7 +146,8 @@ leapviewctl host managed-release recover \
 Keep the exact private profile/request available for recovery. The controller:
 
 1. Acquires the shared host lock and validates the artifact, configuration,
-   credentials, retained images and exclusive process/ingress inventory.
+   credentials, retained images, enrolled capacity and exclusive process/ingress
+   inventory. A shortage fails before closing the predecessor's work or ingress.
 2. Records closure intent durably. The predecessor immediately closes HTTP
    admission and cancels SSE subscriptions. Workers remain authorized during
    ordinary request drain, then stop and drain before the closure RPC acknowledges
@@ -124,7 +156,8 @@ Keep the exact private profile/request available for recovery. The controller:
 3. Writes the private ingress gate and recreates the proxy without host ports.
    It gracefully stops the app, verifies exit status and acquires/releases the
    home lock to prove the previous owner is gone.
-4. Boots the exact candidate digest through the pinned Kamal adapter. Its HTTP
+4. Rechecks capacity and retained rollback inputs, then boots the exact candidate
+   digest through the pinned Kamal adapter. Its HTTP
    and worker admission starts closed. The proxy's private preparation probe
    checks resources without running background jobs.
 5. Verifies process identity, resolved environment, database role/schema health,
@@ -149,6 +182,25 @@ After a durable publication commit, recovery reconciles the committed release
 instead. This rule survives another interruption during reconciliation. No path
 rewinds database or file state. Writes from authorized worker startup or a briefly
 published candidate remain present on rollback.
+
+Capacity checks are snapshots, not filesystem reservations. Other writers can
+consume space after a check. A shortage detected after closure leaves admission
+closed; free capacity outside the protected rollback inputs and invoke `recover`
+with the original request. Never delete the journal, alter its recorded identity,
+or weaken enrolled reserves to bypass a failed operation. Byte and inode checks
+do not qualify memory, CPU, database capacity or workload sizing.
+
+Retain both immutable application images, the enrolled proxy image, versioned
+operator configuration, and usable matching secret inputs throughout the approved
+rollback window. Align registry retention and host cleanup with that inventory;
+exclude these inputs from automatic pruning. The controller rechecks retained
+local content and never pulls or prunes images during handoff or recovery. It
+cannot prevent an external administrator from deleting them. A missing retained
+artifact stops the operation: restore the exact authenticated artifact through
+the producer handoff before retrying, or use the separately qualified recovery
+procedure. A stopped container alone does not prove configuration or credentials
+are recoverable. The enrollment owner must define and qualify the rollback window
+and registry-outage recovery bound before production adoption.
 
 A failed graceful drain, unavailable retained image, altered input, incompatible
 release or unhealthy dependency leaves maintenance unresolved. Do not delete the
@@ -181,6 +233,12 @@ verify the generated certificate. The exercise checks private ingress, proxy
 route restoration, retained-image boot, clean process stop and preservation of
 a file write acknowledged through the candidate proxy. Evidence is written to
 `.tmp/kamal-transport/transport.json` and retained by managed-scaffold CI.
+The same exercise runs the actual static controller's read-only capacity command
+against the private daemon. It measures shared-filesystem reserves and verifies
+that byte shortages, inode shortages and a mismatched Docker data root fail while
+the predecessor keeps serving verified HTTPS with an unchanged container and no
+journal or ingress mutation. The controller binary hash and capacity reports are
+retained with the transport evidence.
 
 This is **transport-only evidence**: the synthetic server is not LeapView and
 no artifact-admission records are issued. It does not qualify application
@@ -192,7 +250,8 @@ maintenance protocol and the actual application/database workload. Run
 `task ci` before promotion.
 
 Remaining D11 work includes qualified migration-authority coordination for
-schema-changing releases, capacity/retention evidence, and a real dedicated host
+schema-changing releases, workload-sized capacity and rollback-window evidence,
+authenticated producer handoff for the selected artifacts, and a real dedicated host
 run covering update, failure before/after publication, rollback after acknowledged
 writes, reboot, TLS renewal, uploads and public SSE reconnects. This command
 rejects schema-changing requests. D12 owns credential activation/rotation/recovery;

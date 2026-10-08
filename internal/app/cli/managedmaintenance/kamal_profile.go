@@ -19,19 +19,25 @@ import (
 // The authority directory is populated by the authenticated release producer;
 // this controller can consume admission records, never issue them.
 type HostProfile struct {
-	Version       int    `json:"version"`
-	Target        string `json:"target"`
-	Root          string `json:"root"`
-	StateRoot     string `json:"stateRoot"`
-	Home          string `json:"home"`
-	Socket        string `json:"socket"`
-	Service       string `json:"service"`
-	Hostname      string `json:"hostname"`
-	ProxyImage    string `json:"proxyImage"`
-	AdmissionRoot string `json:"admissionRoot"`
+	Version       int             `json:"version"`
+	Target        string          `json:"target"`
+	Root          string          `json:"root"`
+	StateRoot     string          `json:"stateRoot"`
+	Home          string          `json:"home"`
+	Socket        string          `json:"socket"`
+	Service       string          `json:"service"`
+	Hostname      string          `json:"hostname"`
+	ProxyImage    string          `json:"proxyImage"`
+	AdmissionRoot string          `json:"admissionRoot"`
+	Capacity      *CapacityPolicy `json:"capacity,omitempty"`
 }
 
 func (p HostProfile) Validate() error {
+	if p.Capacity != nil {
+		if err := p.Capacity.Validate(); err != nil {
+			return err
+		}
+	}
 	if p.Version != 1 || !targetPattern.MatchString(p.Target) || !targetPattern.MatchString(p.Service) || !targetPattern.MatchString(p.Hostname) {
 		return errors.New("invalid managed host profile")
 	}

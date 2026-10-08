@@ -23,11 +23,12 @@ import (
 // targets this host's loopback SSH and the same local Docker daemon. It never
 // downloads an image, restores state, or invokes a migration.
 type KamalEffects struct {
-	Profile    HostProfile
-	Request    Request
-	run        commandRunner
-	lockFile   *os.File
-	recovering bool
+	Profile       HostProfile
+	Request       Request
+	run           commandRunner
+	lockFile      *os.File
+	recovering    bool
+	capacityProbe func(string) (filesystemCapacity, error)
 }
 type commandRunner func(context.Context, string, []string, []string, string) ([]byte, error)
 type renderedProfile struct {
@@ -196,6 +197,9 @@ func (k *KamalEffects) Preflight(ctx context.Context) error {
 	}
 	if digest != k.Request.Candidate.ConfigurationDigest {
 		return errors.New("managed operator configuration changed")
+	}
+	if err := k.checkCapacity(ctx); err != nil {
+		return err
 	}
 	for _, r := range []Release{k.Request.Predecessor, k.Request.Candidate} {
 		raw, err := readOperatorFile(filepath.Join(k.Profile.AdmissionRoot, strings.TrimPrefix(r.ArtifactAdmissionDigest, "sha256:")+".json"))
@@ -380,6 +384,9 @@ func (k *KamalEffects) DrainAndStop(ctx context.Context) error {
 	return lock.Release()
 }
 func (k *KamalEffects) StartPrepared(ctx context.Context, r Release) error {
+	if err := k.checkBootInputs(ctx); err != nil {
+		return err
+	}
 	items, err := k.inventory(ctx, true)
 	if err != nil {
 		return err
