@@ -130,7 +130,17 @@ func TestMaintenanceControllerKilledAfterOpenExpiresWork(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("hard-killed controller left work admitted")
 	}
-	if state := gate.status().State; state != "failed" {
-		t.Fatalf("expired status=%s", state)
+	// The stop callback signals before close publishes its terminal status.
+	// Observe completed shutdown rather than racing that final state update.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		status := gate.status()
+		if status.State == "failed" && status.Drained {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expired maintenance did not finish draining: %+v", status)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
