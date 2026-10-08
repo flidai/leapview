@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -64,6 +65,72 @@ class DesktopLifecycleInputsTests(unittest.TestCase):
                 inputs.verify_retained(directory, identity, run, {'id': 7, 'path': inputs.WORKFLOW}, 101, 2)
             with self.assertRaises(ValueError):
                 inputs.verify_retained(directory, identity, run, {'id': 7, 'path': inputs.WORKFLOW}, 101, 3)
+
+    def retained_attempt(self):
+        run, template = self.metadata()
+        workflow = {'id': 7, 'path': inputs.WORKFLOW}
+        artifacts, archives, identities = [], {}, []
+        for index, phase in enumerate(inputs.PHASES):
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, 'w') as archive:
+                prefix = '' if phase == 'candidate' else 'candidate/'
+                archive.writestr(prefix + inputs.ARCHIVE, b'candidate bytes')
+                if phase != 'candidate':
+                    archive.writestr('qualified/candidate-manifest.json',
+                                     json.dumps({'source': {'revision': 'c' * 40}}))
+                    for item in range(6):
+                        archive.writestr(f'qualified/evidence-{item}.json', b'{}')
+            raw = data.getvalue()
+            artifact = dict(template, id=501 + index,
+                            name=f'nix-desktop-{phase}-101-2-amd64',
+                            digest=inputs.candidate.digest_bytes(raw), size_in_bytes=len(raw),
+                            expires_at='2099-01-01T00:00:00Z')
+            artifacts.append(artifact)
+            archives[f'actions/artifacts/{artifact["id"]}/zip'] = raw
+            identities.append(inputs.authorize(run, workflow, artifact, 101, 2, phase))
+        endpoints = {
+            'actions/runs/101': dict(run, run_attempt=3, conclusion='failure'),
+            'actions/runs/101/attempts/2': run,
+            'actions/workflows/nix-desktop-candidate.yml': workflow,
+            'actions/runs/101/artifacts?per_page=100&page=1': {'artifacts': artifacts},
+            **{f'actions/artifacts/{artifact["id"]}': artifact for artifact in artifacts},
+        }
+        identity = {'sourceRevision': 'c' * 40, 'signerRevision': run['head_sha'],
+                    'artifacts': identities}
+        return endpoints, archives, identity
+
+    def test_fetch_selects_successful_earlier_attempt_after_failed_rerun(self):
+        endpoints, archives, expected = self.retained_attempt()
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(inputs, 'api', side_effect=endpoints.__getitem__) as api, \
+                patch.object(inputs.github, '_github', side_effect=lambda path, **_: archives[path]):
+            directory = Path(temporary) / 'inputs'
+            self.assertEqual(inputs.fetch(101, 2, directory), expected)
+            self.assertEqual(inputs.candidate.read_json_file(directory / 'inputs.json'), expected)
+            api.assert_any_call('actions/runs/101/attempts/2')
+            self.assertNotIn(unittest.mock.call('actions/runs/101'), api.call_args_list)
+
+    def test_verify_selects_successful_earlier_attempt_after_failed_rerun(self):
+        endpoints, archives, identity = self.retained_attempt()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            inputs.attestation.desktop.write_json(directory / 'inputs.json', identity)
+            for record in identity['artifacts']:
+                raw = archives[f'actions/artifacts/{record["artifactId"]}/zip']
+                (directory / (record['phase'] + '.zip')).write_bytes(raw)
+                inputs.extract(raw, record['artifactSHA256'], directory / record['phase'], record['phase'])
+            with patch.object(inputs, 'api', side_effect=endpoints.__getitem__) as api, \
+                    patch.object(inputs.attestation, 'verify_signed', return_value={'verified': True}) as verify_signed:
+                result = inputs.verify(directory, 'source-root', 'signer-root', 101, 2)
+                self.assertEqual(result, {'producer': identity, 'binding': {'verified': True}})
+                api.assert_any_call('actions/runs/101/attempts/2')
+                self.assertNotIn(unittest.mock.call('actions/runs/101'), api.call_args_list)
+                for record in identity['artifacts']:
+                    api.assert_any_call(f'actions/artifacts/{record["artifactId"]}')
+                verify_signed.assert_called_once_with(
+                    directory / 'candidate' / inputs.ARCHIVE,
+                    directory / 'qualified', directory / 'signed', 'source-root', 'signer-root',
+                    identity['sourceRevision'], identity['signerRevision'])
 
     def test_duplicate_members_and_extra_inventory_are_rejected(self):
         data = io.BytesIO()

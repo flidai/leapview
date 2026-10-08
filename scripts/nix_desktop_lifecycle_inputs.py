@@ -109,7 +109,7 @@ def api(path, limit=8 * 1024 * 1024):
 def fetch(run_id, attempt, directory):
     directory = Path(directory)
     directory.mkdir(mode=0o700)
-    run = api(f'actions/runs/{run_id}')
+    run = api(f'actions/runs/{run_id}/attempts/{attempt}')
     workflow = api('actions/workflows/nix-desktop-candidate.yml')
     artifacts = []
     for page in range(1, 11):
@@ -170,7 +170,7 @@ def verify_retained(directory, identity, run, workflow, run_id, attempt):
 def verify(directory, source_root, signer_root, run_id, attempt):
     directory = Path(directory)
     inputs = candidate.read_json_file(directory / 'inputs.json')
-    run = api(f'actions/runs/{run_id}')
+    run = api(f'actions/runs/{run_id}/attempts/{attempt}')
     workflow = api('actions/workflows/nix-desktop-candidate.yml')
     records = inputs.get('artifacts', [])
     if len(records) != 3 or [record.get('phase') for record in records] != list(PHASES):
