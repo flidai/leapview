@@ -18,7 +18,7 @@ one `web` role, loopback root SSH with a pinned host key, and no other running
 containers. The application and controller inspect the same local Docker socket.
 The shared home has one owner and is an identity bind mount. Public ingress is
 exclusively the dedicated Kamal proxy. Existing deployments without the private
-maintenance socket must undergo separately qualified enrollment first.
+maintenance socket must undergo separately qualified conversion first.
 
 The private operator directory contains these versioned files:
 
@@ -196,6 +196,61 @@ The producer must preserve the enrolled read-only trust mounts and external
 service configuration throughout this operation. Credential rotation and external
 configuration changes require their separately admitted maintenance flow.
 
+## Initial enrollment
+
+`enroll` establishes the first admitted managed application using the same
+durable controller as subsequent handoffs. Its home must already be initialized
+and contain a published deployment with usable database roles and credentials.
+Enrollment does not initialize or migrate a database, publish a project, restore
+files, or convert an existing live deployment. An empty or unpublished home must
+complete its separately qualified first-publication procedure first. The app's
+real readiness check remains mandatory; bootstrap routes are never exposed
+through closed maintenance admission.
+
+Prepare the private host profile, positive capacity reserves, retained immutable
+application/proxy images, authenticated receipt, the dedicated Docker `kamal`
+network, and initial
+`ingress.json` containing `{"publish":false}`. No application may be serving on
+this dedicated Docker daemon. The initial inventory may contain no application,
+or the exact selected image in its fresh startup-closed state with no operation
+bound to it. A public proxy or an already-admitted application is rejected before
+any mutation.
+
+The enrollment request uses the same fields described above, plus
+`"operation":"enroll"`. Set `predecessor` and `candidate` to the **same complete
+release identity**, and `sourceBefore` and `sourceAfter` to the **same complete
+source compatibility record**. These repeated fields identify the one selected
+release; they do not represent an earlier deployment or authorize rollback to
+another image. Changing a revision, receipt, configuration, credential or source
+field on one side is rejected. Ordinary handoff requests omit `operation` and
+continue to require distinct immutable images.
+
+```sh
+leapviewctl host managed-release enroll \
+  --profile /run/leapview/profile.json --request /run/leapview/enrollment.json
+leapviewctl host managed-release status \
+  --profile /run/leapview/profile.json --request /run/leapview/enrollment.json
+leapviewctl host managed-release recover \
+  --profile /run/leapview/profile.json --request /run/leapview/enrollment.json
+```
+
+The controller records intent, establishes private ingress, drains any exact
+startup-closed process, proves the home lock is free and boots the selected image.
+It prepares the real runtime, opens workers with a bounded provisional lease,
+publishes verified HTTPS ingress, records the publication commit and finalizes
+admission. It never manufactures an admitted process status or seeds a successful
+journal. The shared host lock and durable journal exclude ordinary host changes
+throughout enrollment, including after controller interruption.
+
+If enrollment stops after durable intent, use `recover` with the original request
+and profile. Recovery selects the same image and preserves current durable data.
+It accepts only a fresh startup-closed selected process or one bound to that exact
+enrollment operation. A different operation cannot take over the process.
+Readiness or capacity failures keep admission closed. Do not delete an unfinished
+journal, edit identities or bypass the capacity policy to restart enrollment.
+Once enrollment succeeds, retain its evidence and construct the next distinct
+image handoff from this admitted release.
+
 ## Handoff and recovery
 
 ```sh
@@ -279,7 +334,13 @@ this code does not autonomously approve work after a machine restart.
 adapter against the locked gem. The Go suites cover the durable coordinator,
 cross-controller exclusion, compatibility checks, Unix control protocol,
 startup-closed HTTP, SSE/request draining, database privilege changes and loss of
-the controller during provisional admission. After proxy recreation, the
+the controller during provisional admission. Enrollment tests reject ambiguous
+release/source identities, public initial ingress, unrelated process operations
+and missing capacity policy. They exercise interruption at each durable phase
+and the transition from enrollment to an ordinary handoff. The application
+integration test joins the actual HTTP admission handler to the file journal,
+including readiness rejection and recovery after a publication commit; its
+process, ingress and data effects remain test-controlled. After proxy recreation, the
 controller waits for verified HTTPS readiness within the existing phase budget;
 Docker's detached startup is not itself evidence that the proxy is ready.
 
