@@ -1058,7 +1058,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
-					projectID, err := runtime.resolveProjectID(ctx)
+					resolve := runtime.resolveProjectID
+					if _, admitted := developmentProfileBootstrapAuthority(ctx, runtimeConfig.Production); admitted {
+						resolve = runtime.developmentProjectIDResolver
+					}
+					projectID, err := resolve(ctx)
 					if err != nil {
 						return err
 					}
@@ -1071,6 +1075,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					binding analyticsmodule.ConnectionTargetBinding,
 				) error {
 					if requestLocalDevelopmentAuthorization(ctx, principalID) {
+						return nil
+					}
+					if marker, admitted := developmentProfileBootstrapAuthority(ctx, runtimeConfig.Production); admitted && developmentProfileBootstrapBindingMatches(marker, principalID, permission, binding, storage.instanceID, runtimeConfig.DefaultEnvironment) {
 						return nil
 					}
 					var action access.Action
