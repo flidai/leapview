@@ -53,9 +53,9 @@ export const dashboardBuilderDensityStyles = css`
   .right-dock[hidden] { display: none; }
   .body.tools-hidden, .chat-preview .body.tools-hidden { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
 
-  /* Chat uses the original side-by-side tools. Opening one section never
-   * hides another; narrow screens retain the regular mobile flow. */
-  @media (min-width: 641px) {
+  /* Keep the desktop dock side by side when there is space. Embedded
+   * builders use the regular responsive dock below that width. */
+  @media (min-width: 1201px) {
     .chat-preview .body { grid-template-columns: minmax(0, 1fr) max-content; grid-template-rows: minmax(0, 1fr) auto; }
     .chat-preview .right-dock {
       grid-column: 2; grid-row: 1 / span 2; max-height: none; border-top: 0;
@@ -85,7 +85,6 @@ export const dashboardBuilderDensityStyles = css`
 
   @media (min-width: 961px) and (max-width: 1200px) {
     .body { grid-template-columns: minmax(0, 1fr) 288px; }
-    .chat-preview .body { grid-template-columns: minmax(0, 1fr) max-content; }
   }
 
   @media (max-width: 640px) {

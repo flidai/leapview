@@ -60,3 +60,19 @@ func toolNames(definitions []agentcore.ToolDefinition) []string {
 	}
 	return names
 }
+
+func TestMainChatCanAuthorPrivateDraftWithoutLifecycleTools(t *testing.T) {
+	names := []string{agenttools.CreateDashboardDraftToolName, agenttools.GetDashboardDraftToolName, agenttools.EditDashboardSourceToolName, agenttools.AddDashboardVisualToolName, agenttools.PreviewDashboardDraftToolName, agenttools.ForkDashboardToolName, agenttools.ExecuteDashboardCommandToolName, agenttools.SetDashboardVisibilityToolName}
+	definitions := make([]agentcore.ToolDefinition, 0, len(names))
+	for _, name := range names {
+		definitions = append(definitions, agentcore.ToolDefinition{Name: name})
+	}
+	got := scopedBuilderAuthoringTools(definitions, agent.Scope{PrincipalID: "author", MainChatAuthoring: true})
+	if len(got) != 5 {
+		t.Fatalf("main chat private authoring tools = %v", toolNames(got))
+	}
+	restricted := scopedBuilderAuthoringTools(definitions, agent.Scope{PrincipalID: "author", MainChatAuthoring: true, Credential: agent.CredentialScope{Restricted: true}})
+	if len(restricted) != 0 {
+		t.Fatalf("restricted credential exposed authoring: %v", toolNames(restricted))
+	}
+}

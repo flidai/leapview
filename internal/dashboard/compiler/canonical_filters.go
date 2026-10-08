@@ -1042,6 +1042,10 @@ func canonicalSemanticValueKind(dimension semanticmodel.SemanticDimension) (dash
 		return dashboardfilter.ValueDate, nil
 	case semanticmodel.DataTypeDateTime, semanticmodel.DataTypeDateTimeTZ:
 		return dashboardfilter.ValueTimestamp, nil
+	case semanticmodel.DataTypeTime, semanticmodel.DataTypeOpaque:
+		// Time-only and opaque values have no representation in the typed
+		// filter contract. Do not reinterpret a time of day as a timestamp.
+		return "", fmt.Errorf("dimension has unsupported filter datatype %q", dimension.Datatype)
 	}
 	switch strings.ToLower(dimension.Type) {
 	case "string":

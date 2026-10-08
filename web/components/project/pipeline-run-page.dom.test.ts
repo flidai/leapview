@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, expect as browserExpect, type Browser, type Page } from '@playwright/test'
+import { datastarRuntimeURL } from '../shared/datastar-runtime'
 
 let server: Server
 let baseURL = ''
@@ -422,5 +423,5 @@ function runDocument(activeTab: string, status: string): string {
     },
   }
   const signals = JSON.stringify({ page }).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-  return `<!doctype html><html><body><main data-init="0" data-signals="${signals}"><lv-pipeline-run-page></lv-pipeline-run-page></main><script type="module" src="/asset-lineage-graph.js"></script><script type="module" src="/project-page-under-test.js"></script></body></html>`
+  return `<!doctype html><html><head><script type="module" src="${datastarRuntimeURL}"></script></head><body><main data-init="0" data-signals="${signals}"><lv-pipeline-run-page></lv-pipeline-run-page></main><script type="module" src="/asset-lineage-graph.js"></script><script type="module" src="/project-page-under-test.js"></script></body></html>`
 }

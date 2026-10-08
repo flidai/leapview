@@ -109,6 +109,11 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.prepareSlicerTargets(ctx, project, request.Command, lifecycle, slicer)
 		}
 	}
+	if request.Command.SetFilterScope != nil {
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			return a.prepareFilterScope(ctx, project, request.Command, lifecycle)
+		}
+	}
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
 }
 

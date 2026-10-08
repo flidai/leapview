@@ -3,6 +3,7 @@ import type { Browser } from '@playwright/test'
 import { dashboardBuilderBrowserFixture } from './dashboard-builder-browser.test-fixture'
 import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope, windowedTablePreviewEnvelope } from './dashboard-builder-test-fixtures'
 import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test-fixture'
+import visualReference from '../../../docs/visuals/catalog.json'
 
 const fixture = dashboardBuilderBrowserFixture()
 let browser: Browser
@@ -18,10 +19,12 @@ test('saved visual imports update the current builder without navigation and ret
       await element.updateComplete
       ;(window as any).originalBuilder = element
       ;(window as any).originalCanvas = element.shadowRoot.querySelector('.canvas')
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builderFilterContract: { definitions: { old: { id: 'old' } }, bindings: { old_page: { key: 'old_page', id: 'old', filter: 'old', scope: 'page', pageID: 'overview', default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1, required: false, readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [] } } }, builderFilterState: { appliedControls: { old_page: { expression: { kind: 'unfiltered' } } }, draftControls: {} }, builderFilterOptionPages: { old_page: { bindingKey: 'old_page' } } })
       const builder = JSON.parse(JSON.stringify(element.builder))
       builder.revision = { id: 'rev-8', number: 8, contentHash: 'sha256:imported' }
       builder.pages[0].visuals.push({ ...builder.pages[0].visuals[0], id: 'saved-copy', visualId: 'saved-copy', placement: { col: 1, row: 7, colSpan: 6, rowSpan: 5 } })
-      return { builder, builderVisuals: {}, runtime: { servingStateId: 'generation-7' }, status: element.status }
+      return { builder, builderVisuals: {}, builderFilterContract: { applicationMode: 'immediate', definitions: {}, bindings: {} }, builderFilterState: { revision: 1, appliedControls: {}, draftControls: {}, dirtyBindings: [], defaultsRevision: 'current' }, builderFilterOptionPages: {}, runtime: { servingStateId: 'generation-7' }, status: element.status }
     })
     let imports = 0
     await page.route('**/draft/saved-visual', async route => {
@@ -47,11 +50,14 @@ test('saved visual imports update the current builder without navigation and ret
         undo: element.undoStack.map((revision: any) => revision.id),
         visuals: element.shadowRoot.querySelectorAll('.canvas .visual').length,
         importedSource: element.importedVisualSources.get(element.builder.pages[0].visuals[1].id),
+        staleBindings: Object.keys(element.builderFilterContract.bindings),
+        staleControls: Object.keys(element.builderFilterState.appliedControls),
+        staleOptions: Object.keys(element.rawBuilderFilterOptionPages),
       }
     })
     expect(imports).toBe(1)
     expect(page.url()).toBe(`${baseURL}/`)
-    expect(state).toEqual({ sameBuilder: true, sameCanvas: false, selectedPage: 'overview', pending: false, undo: ['rev-7'], visuals: 2, importedSource: 'saved-visual-1' })
+    expect(state).toEqual({ sameBuilder: true, sameCanvas: false, selectedPage: 'overview', pending: false, undo: ['rev-7'], visuals: 2, importedSource: 'saved-visual-1', staleBindings: [], staleControls: [], staleOptions: [] })
   } finally {
     await page.close()
   }
@@ -248,7 +254,7 @@ test('embedded chat panels keep distinct click targets and default Data to field
 })
 
 test('chat preview starts with side-by-side tools open and preserves independent manual collapse', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 850 } })
   try {
     await page.addInitScript(() => {
       if (!sessionStorage.getItem('seeded-pane-preferences')) {
@@ -422,6 +428,122 @@ test('filter menu excludes incompatible datasets without blocking unfinished vis
     })
     expect(result.commands).toEqual([])
     expect(result.message).toContain('does not apply')
+  } finally { await page.close() }
+})
+
+test('Add filter lists a shared semantic dimension once across datasets', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const editor = page.locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    await editor.evaluate(async (element: any) => {
+      const field = { id: 'country', label: 'Country', kind: 'dimension', dataType: 'string', roles: ['dimension'], canFilter: true }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder: { semanticModel: { datasets: ['sales', 'profit', 'cash'].map(id => ({ id, title: id, fields: [field] })) } } })
+      await element.updateComplete
+    })
+    await editor.getByRole('button', { name: 'Add filter', exact: true }).click()
+    expect(await editor.getByRole('menuitem', { name: 'Country', exact: true }).count()).toBe(1)
+    await editor.getByRole('menuitem', { name: 'Country', exact: true }).click()
+    expect(await editor.getByRole('button', { name: 'Add filter', exact: true }).getAttribute('aria-expanded')).toBe('false')
+  } finally { await page.close() }
+})
+
+test('filter settings stay open when changing scope moves the card between groups', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const editor = page.locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    await editor.evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder: { filters: [{ id: 'status-filter', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'status-filter', scope: 'report', targets: [] }] }] } })
+      element.selectFilterDefinition('status-filter')
+      await element.updateComplete
+    })
+    await editor.locator('.filter-settings summary').click()
+    expect(await editor.locator('.filter-settings').evaluate((details: HTMLDetailsElement) => details.open)).toBe(true)
+    await editor.evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const filter = { ...element.builder.filters[0], bindings: [{ id: 'status-filter', scope: 'page', pageId: 'overview', targets: [] }] }
+      mergePatch({ builder: { filters: [filter] } })
+      await element.updateComplete
+    })
+    expect(await editor.locator('.filter-settings').evaluate((details: HTMLDetailsElement) => details.open)).toBe(true)
+    await editor.locator('.filter-settings summary').click()
+    expect(await editor.locator('.filter-settings').evaluate((details: HTMLDetailsElement) => details.open)).toBe(false)
+  } finally { await page.close() }
+})
+
+for (const reference of visualReference.documents) test(`${reference.source} exposes applicable filter controls and sends scoped mutations`, async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const editor = page.locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    const result = await editor.evaluate(async (element: any, visualType: string) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      const commands: any[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      const initial = JSON.parse(JSON.stringify(element.builder))
+      const cases: Array<{ dataType: string; choices: string[] }> = [
+        { dataType: 'string', choices: ['multiSelect', 'singleSelect', 'text'] },
+        { dataType: 'boolean', choices: ['multiSelect', 'singleSelect'] },
+        ...['integer', 'decimal', 'float'].map(dataType => ({ dataType, choices: ['numericRange', 'singleSelect', 'multiSelect'] })),
+        ...['date', 'datetime', 'datetimetz'].map(dataType => ({ dataType, choices: ['relativePeriod', 'dateRange', 'singleSelect'] })),
+      ]
+      const fields = cases.map(({ dataType }) => ({ id: dataType, label: dataType, kind: 'dimension', dataType, roles: ['dimension'], canFilter: true }))
+      let revision = initial.revision.number
+      const reconcile = async (patch: Record<string, unknown>) => {
+        mergePatch({ builder: { ...patch, revision: { id: `filter-matrix-${++revision}`, number: revision, contentHash: `sha256:${revision}` } } })
+        await element.updateComplete
+        document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+        await element.updateComplete
+      }
+      let controls = 0
+      for (const visual of initial.visualCatalog.filter((visual: any) => visual.type === visualType)) {
+        const pages = JSON.parse(JSON.stringify(initial.pages))
+        pages[0].visuals[0].type = visual.type
+        await reconcile({ pages, selectedPageId: pages[0].id, selectedVisualId: pages[0].visuals[0].id, filters: [], semanticModel: { id: 'orders', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields }] } })
+        for (const { dataType, choices } of cases) {
+          element.shadowRoot.querySelector('.filter-add-trigger').click()
+          await element.updateComplete
+          element.shadowRoot.querySelector(`.filter-add-option[data-field-id="${dataType}"]`).click()
+          await element.updateComplete
+          const add = commands.at(-1)
+          if (add?.action !== 'add_filter' || add.fieldId !== dataType || add.dataset !== 'orders') throw new Error(`${visual.type}/${dataType}: missing Add filter command`)
+          let filter = { id: 'test_filter', label: dataType, dimension: dataType, controlType: add.controlType, required: false, readerEditable: true, targets: [], bindings: [{ id: 'test_filter', scope: 'report', targets: [] }] }
+          await reconcile({ filters: [filter] })
+          const root = element.shadowRoot
+          root.querySelector('.filter-card').click()
+          await element.updateComplete
+          root.querySelector('.filter-settings').open = true
+          let select = root.querySelector('.filter-editor select') as HTMLSelectElement
+          if (JSON.stringify([...select.options].map(option => option.value)) !== JSON.stringify(choices)) throw new Error(`${visual.type}/${dataType}: wrong controls`)
+          controls += choices.length
+          for (const control of choices) {
+            if (control === filter.controlType) continue
+            select = root.querySelector('.filter-editor select')
+            select.value = control
+            select.dispatchEvent(new Event('change', { bubbles: true }))
+            if (commands.at(-1)?.action !== 'update_filter' || commands.at(-1)?.controlType !== control) throw new Error(`${visual.type}/${dataType}/${control}: missing update`)
+            filter = { ...filter, controlType: control }
+            await reconcile({ filters: [filter] })
+          }
+          for (const index of [1, 0, 2]) {
+            root.querySelectorAll('.filter-scope-option input')[index].click()
+            if (commands.at(-1)?.action !== 'set_filter_scope') throw new Error(`${visual.type}/${dataType}: missing scope`)
+            await reconcile({ filters: [filter] })
+          }
+          root.querySelector('.filter-remove').click()
+          if (commands.at(-1)?.action !== 'remove_filter') throw new Error(`${visual.type}/${dataType}: missing removal`)
+          await reconcile({ filters: [] })
+        }
+      }
+      return { controls, additions: commands.filter(command => command.action === 'add_filter').length, scopes: commands.filter(command => command.action === 'set_filter_scope').length, removals: commands.filter(command => command.action === 'remove_filter').length }
+    }, reference.source)
+    expect(result).toEqual({ controls: 23, additions: 8, scopes: 24, removals: 8 })
   } finally { await page.close() }
 })
 
@@ -711,5 +833,33 @@ test('embedded builder relays table requests and publishes window changes with u
       await e.updateComplete
     })
     await page.waitForFunction(() => (window as any).projections.some((p: any) => Object.values(p.visuals).some((v: any) => v.dataState.blocks.b?.start === 150 && v.dataState.blocks.b.rows[0][0] === 99)))
+  } finally { await page.close() }
+})
+
+
+test('embedded builder can explicitly close layout gaps without requesting field repair', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    await editor.evaluate(async (e: any) => {
+      const builder = JSON.parse(JSON.stringify(e.builder))
+      const visual = builder.pages[0].visuals[0]
+      builder.pages[0].visuals = ['kpi', 'kpi', 'kpi', 'line', 'pie', 'bar'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, placement: { col: 1, row: 1 + i * 6, colSpan: 6, rowSpan: 5 } }))
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder })
+      e.testCommands = []
+      e.addEventListener('lv-builder-command', (event: CustomEvent) => e.testCommands.push(event.detail))
+      await e.updateComplete
+    })
+    await editor.getByLabel('More dashboard actions', {exact:true}).first().click()
+    await editor.getByRole('button', {name:'Arrange visuals',exact:true}).click()
+    const command = await editor.evaluate((e:any) => e.testCommands[0])
+    expect(command.action).toBe('set_placements')
+    expect(command.fillMissingFields).toBeUndefined()
+    for (const row of new Set(command.placements.map((p:any) => p.placement.row))) {
+      expect(command.placements.filter((p:any) => p.placement.row === row).reduce((width:number,p:any) => width + p.placement.columnSpan, 0)).toBe(12)
+    }
   } finally { await page.close() }
 })
