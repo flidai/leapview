@@ -37,6 +37,7 @@ type Paths struct {
 }
 
 type Lifecycle interface {
+	UpdateImage(string) error
 	PrepareFirstInstall(context.Context, composectl.FirstInstallOptions) error
 	InitializeFirstInstall(context.Context, composectl.InitOptions, composectl.FirstInstallOptions) error
 	ApplyFirstInstall(context.Context, composectl.FirstInstallOptions) error
@@ -175,6 +176,17 @@ func (i *Installer) Install(ctx context.Context) error {
 		return err
 	}
 	if installed == nil {
+		// The installed example is a link through the immutable generation.
+		// Seed from the payload we validated above instead of asking the flat-
+		// bundle fallback to follow that link. Preserve resumed operator input.
+		if err := installInitialFile(filepath.Join(i.paths.Root, "leapview.env"), payload["leapview.env.example"], 0o600); err != nil {
+			return fmt.Errorf("install application environment: %w", err)
+		}
+		// OCI payloads retain the image marker, unlike rendered Compose
+		// archives. The pool dry-run must already select the validated image.
+		if err := lifecycle.UpdateImage(normalized.Image); err != nil {
+			return fmt.Errorf("select first-install application image: %w", err)
+		}
 		if err := lifecycle.PrepareFirstInstall(ctx, operatorOptions); err != nil {
 			return fmt.Errorf("prepare production PostgreSQL and delivery-pool bootstrap: %w", err)
 		}

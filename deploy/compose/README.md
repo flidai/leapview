@@ -109,6 +109,12 @@ the Caddy overlay but preserves the HTTPS public URL and secure cookies.
 
 ## Private first publication on an installed host
 
+Before preparing PostgreSQL and the physical pool, `leapviewctl host install`
+creates the private `leapview.env` from the validated image payload. Resuming
+an interrupted install preserves that file and its operator-provided values.
+The pool dry-run uses the validated image digest from the install configuration,
+including when the payload was extracted directly from the OCI image.
+
 `leapviewctl host install` records `private-bootstrap` before it starts the
 application. With managed HTTPS, the app and Caddy ports bind only to host
 loopback, and the bootstrap Caddyfile uses Caddy's internal CA for the canonical

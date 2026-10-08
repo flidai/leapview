@@ -243,7 +243,19 @@ func (k *KamalEffects) Preflight(ctx context.Context) error {
 	if err != nil || json.Unmarshal(raw, &baseline) != nil || len(baseline) != 1 || baseline[0].ID != proxy.ID {
 		return errors.New("proxy digest differs from enrolled Kamal v0.9.2 baseline")
 	}
-	items, err := k.inventory(ctx, false)
+	enrollment := k.Request.Operation == "enroll"
+	if enrollment && !k.recovering {
+		var gate struct {
+			Publish *bool `json:"publish"`
+		}
+		if err := readPrivateJSON(filepath.Join(k.Profile.StateRoot, "ingress.json"), &gate); err != nil {
+			return err
+		}
+		if gate.Publish == nil || *gate.Publish {
+			return errors.New("initial managed enrollment requires an explicitly private ingress gate")
+		}
+	}
+	items, err := k.inventory(ctx, enrollment && !k.recovering)
 	if err != nil {
 		return err
 	}
@@ -257,7 +269,36 @@ func (k *KamalEffects) Preflight(ctx context.Context) error {
 			if environmentIdentity(c.Config.Env) != k.Request.Predecessor.CredentialDigest {
 				return errors.New("running process configuration/credentials changed")
 			}
+			if enrollment {
+				image, err := k.image(ctx, k.Request.Candidate.Image)
+				if err != nil {
+					return err
+				}
+				if c.Image != image.ID {
+					return errors.New("enrollment process content differs from admitted image")
+				}
+			}
 		}
+	}
+	if enrollment {
+		if !predecessorPresent {
+			return nil
+		}
+		status, err := k.control(ctx, "status", k.Request.Candidate)
+		if err != nil {
+			return err
+		}
+		if status.State == "closed" && status.Operation == "" {
+			return nil
+		}
+		operation, _ := k.Request.Digest()
+		if k.recovering && status.Operation == operation {
+			switch status.State {
+			case "closed", "prepared", "opening", "provisional", "admitted", "draining", "failed":
+				return nil
+			}
+		}
+		return errors.New("managed enrollment requires a startup-closed process or its own recoverable operation")
 	}
 	if !k.recovering {
 		if !predecessorPresent {

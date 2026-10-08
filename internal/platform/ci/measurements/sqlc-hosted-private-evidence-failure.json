@@ -1,0 +1,68 @@
+{
+  "status": "failed",
+  "adoption_qualified": false,
+  "source": "0b272743c546720355346612af88e84d5ad4fca8",
+  "run": "https://github.com/flidai/leapview/actions/runs/37723968919",
+  "attempt": 1,
+  "run_log_sha256": "f8edee63e3f5b5d61e9cef52da59159b1e87e38b96264697710ccc9195a84e65",
+  "producer_samples": [
+    {
+      "kind": "producer",
+      "mode": "baseline",
+      "status": "failed",
+      "build_elapsed_seconds": 1097,
+      "build_proof": {
+        "sqlc_seconds": 82
+      },
+      "failure": "historical transition evidence directory must be a private, non-symlink directory",
+      "qualification": "rejected evidence parent before scenario execution",
+      "receipt_sha256": "8c1b5aded87af7e2cee32e5f906659cf2bddce8dca2854318efd1f9ea299a33a",
+      "build_log_sha256": "3798315f4e1308e615fafde8260cbd534243c0fdf0902574ddf658984052c89a",
+      "image_identity": {
+        "product": "leapview",
+        "version": "development",
+        "revision": "0b272743c546720355346612af88e84d5ad4fca8",
+        "buildTime": "2026-10-08T03:21:59Z",
+        "dirty": false,
+        "development": true
+      },
+      "image_id": "sha256:719558feae222f70cea444f84d5f3a5dd987c71b90ef14438ed744eaaa79dc99"
+    },
+    {
+      "kind": "producer",
+      "mode": "treatment",
+      "status": "failed",
+      "build_elapsed_seconds": 1237,
+      "build_proof": {
+        "sqlc_seconds": 1,
+        "tool_cache_proof": {
+          "vertex": "31",
+          "cached": false
+        }
+      },
+      "failure": "historical transition evidence directory must be a private, non-symlink directory",
+      "qualification": "rejected evidence parent before scenario execution",
+      "receipt_sha256": "fd018adfed872c89925e7df54ac4e702c5f267213e1fefa8fbc97a16b28a2acf",
+      "build_log_sha256": "7c19350fba1113f5f5fdf3e106615f631d9c705b2fd2d8bb11c96b62e223d35d",
+      "image_identity": {
+        "product": "leapview",
+        "version": "development",
+        "revision": "0b272743c546720355346612af88e84d5ad4fca8",
+        "buildTime": "2026-10-08T03:21:59Z",
+        "dirty": false,
+        "development": true
+      },
+      "image_id": "sha256:a92ee90fa46cf8a44612c4de3573ae7c9a69f5e6f55f62d8d57b9421c348cbdb"
+    }
+  ],
+  "producer_generated_output_comparison": "equal manifests, verified after run from retained receipts",
+  "consumers": "all six skipped after producer failure",
+  "comparison": "failed; failed sample retained",
+  "root_cause": "prepare() created the shared evidence directory using default permissions; under normal 022 umask the resulting 0755 parent violates the historical fixture private-directory requirement.",
+  "limits": [
+    "Both producer full image builds, GHA cache exports, generation proof and identity checks passed; neither historical image qualification ran its scenario.",
+    "No consumer cache-hit, speedup, adoption or whole-CI SLO claim.",
+    "Build durations are isolated successful build observations within failed samples, not a complete producer-cost comparison.",
+    "Cache metadata snapshots and local inventory do not attribute exclusive billed storage amid concurrent CI."
+  ]
+}

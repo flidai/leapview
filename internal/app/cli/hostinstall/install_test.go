@@ -28,6 +28,8 @@ type recordingLifecycle struct {
 	beforePrivateStart func()
 }
 
+func (l *recordingLifecycle) UpdateImage(string) error { return nil }
+
 func (l *recordingLifecycle) PrepareFirstInstall(_ context.Context, options composectl.FirstInstallOptions) error {
 	l.events = append(l.events, "dry-run")
 	l.operator = append(l.operator, options)
