@@ -118,6 +118,35 @@ func TestTurnContextRejectsClientProjectSelector(t *testing.T) {
 	}
 }
 
+func TestTurnContextIgnoresBrowserReferenceLimit(t *testing.T) {
+	for _, limit := range []string{"0", "12", "1000000"} {
+		var context TurnContext
+		if err := json.Unmarshal([]byte(`{"surface":"chat","referenceLimit":`+limit+`,"references":[{"reference":{"kind":"metric","id":"orders.revenue"}}]}`), &context); err != nil {
+			t.Fatal(err)
+		}
+		if len(context.References) != 1 || context.References[0].Reference.ID != "orders.revenue" {
+			t.Fatalf("browser limit changed references: %#v", context.References)
+		}
+		payload, err := json.Marshal(context)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(payload), "referenceLimit") {
+			t.Fatal("browser presentation limit leaked into model context")
+		}
+	}
+	for _, payload := range []string{
+		`{"surface":"chat","referenceLimit":12,"projectId":"other-project"}`,
+		`{"surface":"chat","referenceLimit":12,"unknown":true}`,
+		`{"surface":"chat","referenceLimit":12,"referenceLimit":1000000}`,
+	} {
+		var context TurnContext
+		if err := json.Unmarshal([]byte(payload), &context); err == nil {
+			t.Fatalf("accepted invalid browser context: %s", payload)
+		}
+	}
+}
+
 func TestBuilderTurnContextIsIncludedForAgentPrompt(t *testing.T) {
 	items := turnContextItems(&TurnContext{Surface: "dashboard_builder", DashboardID: "dashboard_sales", DraftID: "draft_1", DraftRevision: &DraftRevision{RevisionID: "revision_7", Number: 7, ContentHash: "sha256:abc"}})
 	if len(items) != 2 {

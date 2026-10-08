@@ -67,11 +67,17 @@ func (c *TurnContext) UnmarshalJSON(data []byte) error {
 		}
 	}
 	type turnContext TurnContext
-	var decoded turnContext
+	// The browser context includes presentation metadata alongside the turn
+	// inputs. Accept it without letting it override MaxTurnReferences or enter
+	// the server-resolved context sent to the model.
+	var decoded struct {
+		turnContext
+		ReferenceLimit *int32 `json:"referenceLimit,omitempty"`
+	}
 	if err := strictjson.DecodeWithOptions(data, &decoded, turnContextJSONOptions); err != nil {
 		return err
 	}
-	*c = TurnContext(decoded)
+	*c = TurnContext(decoded.turnContext)
 	return nil
 }
 
