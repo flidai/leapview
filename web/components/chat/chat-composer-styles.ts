@@ -213,7 +213,7 @@ export const chatComposerStyles = css`
 			opacity: var(--opacity-disabled);
 		}
 
-    :host([hide-context-action]) .context-button {
+    :host([hide-context-action]) .context-picker-button {
       display: none;
     }
 
