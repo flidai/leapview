@@ -70,7 +70,6 @@ export class VisualModal extends LitElement {
 
     .dialog[open] { display: grid; }
     .dialog::backdrop { background: var(--lv-modal-backdrop); }
-    .focus-dialog::backdrop { background: var(--lv-bg-page); }
 
     .data-dialog.is-single,
     .data-dialog.is-compact {
