@@ -760,7 +760,7 @@ export class ReportTable extends LitElement {
     .table-frame {
       position: relative;
       display: flex;
-      flex: 0 1 auto;
+      flex: 1 1 auto;
       flex-direction: column;
       min-height: 0;
       min-width: 0;
@@ -773,13 +773,12 @@ export class ReportTable extends LitElement {
     .table-scrollport {
       max-height: var(--lv-table-max-body-height, none);
       position: relative;
-      flex: 0 1 auto;
+      flex: 1 1 auto;
       overflow: auto;
       min-height: 0;
       min-width: 0;
       background: var(--lv-chart-surface);
       overscroll-behavior: none;
-      scrollbar-gutter: stable;
     }
 
     .table-scrollport:focus-visible {
@@ -830,6 +829,7 @@ export class ReportTable extends LitElement {
 
     .row {
       position: absolute;
+      box-sizing: border-box;
       inset-inline: 0;
       z-index: 1;
       height: var(--lv-row-height, 34px);

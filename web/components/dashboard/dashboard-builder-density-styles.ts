@@ -36,7 +36,26 @@ export const dashboardBuilderDensityStyles = css`
     outline: 2px solid var(--lv-fg-accent); outline-offset: 2px;
   }
   .visual-format-controls { margin: 0; border-top: 0; padding-top: 4px; gap: 8px; }
-  .format-section { gap: 6px; padding-bottom: 8px; }
+  .format-section { gap: 10px; padding-bottom: 12px; }
+  details.format-column { display: block; }
+  .format-column > summary {
+    display: flex; align-items: center; gap: 7px; min-height: 28px;
+    color: var(--lv-fg-default); font-size: var(--text-body-size-small);
+    font-weight: var(--base-text-weight-semibold); list-style: none; cursor: pointer;
+  }
+  .format-column > summary::-webkit-details-marker { display: none; }
+  .format-column > summary::before {
+    content: ''; width: 5px; height: 5px; flex: 0 0 5px;
+    border-right: 1.5px solid var(--lv-fg-muted); border-bottom: 1.5px solid var(--lv-fg-muted);
+    transform: rotate(-45deg); margin-inline-start: 1px;
+  }
+  .format-column[open] > summary::before { transform: rotate(45deg); }
+  .format-column > summary:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; border-radius: var(--lv-radius-small); }
+  .format-column-controls { display: grid; min-width: 0; gap: 10px; padding-top: 8px; }
+  .format-option { display: grid; min-width: 0; gap: 6px; }
+  .format-option + .format-option { padding-top: 2px; }
+  .format-option .format-text-field { min-width: 0; gap: 5px; }
+  .format-option > .pane-hint { margin: 0; line-height: 1.5; text-wrap: pretty; }
   .format-text-field input, .format-text-field select { font-size: var(--text-body-size-small); min-height: 30px; }
   .query-control-list { gap: 6px; }
   .visual-type-disclosure > summary { min-height: 32px; line-height: 32px; font-size: var(--text-body-size-small); cursor: pointer; }

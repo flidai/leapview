@@ -49,7 +49,7 @@ func gridCellContentFormatSpecs(visual document.DashboardVisual) []visualFormatS
 			{Value: "image_tooltip", Label: "Image on hover"},
 			{Value: "link", Label: "Hyperlink"},
 		}
-		displaySpec.description = "Images and hyperlinks use the URL already returned in this field."
+		displaySpec.description = "Use an image URL or web link from this column."
 		result = append(result, displaySpec)
 		property := func(name, label, control, defaultValue string, optional bool) visualFormatSpec {
 			return formatSpec(key+name, label, section, control, []string{"cellContent", field, name}, defaultValue, optional)
@@ -60,7 +60,7 @@ func gridCellContentFormatSpecs(visual document.DashboardVisual) []visualFormatS
 			for _, alias := range fields {
 				spec.choices = append(spec.choices, VisualFormatChoice{Value: alias, Label: alias})
 			}
-			spec.description = "Choose a field already returned by this visual's query."
+			spec.description = "Use another returned column for the label."
 			return spec
 		}
 		switch display {
@@ -71,7 +71,10 @@ func gridCellContentFormatSpecs(visual document.DashboardVisual) []visualFormatS
 				spec.integer = true
 				minimum, maximum, step := float64(1), float64(512), float64(1)
 				spec.minimum, spec.maximum, spec.step = &minimum, &maximum, &step
-				spec.description = "Use 1–512 pixels, or leave empty for automatic sizing. Inline images fit within the row height."
+				spec.description = "1–512 px. Leave blank for automatic sizing."
+				if dimension.name == "height" && display == "image_inline" {
+					spec.description = "Inline images fit within the row height."
+				}
 				result = append(result, spec)
 			}
 			result = append(result, auxiliary("altField", "Image description field", "Automatic"))

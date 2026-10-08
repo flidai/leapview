@@ -225,6 +225,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private pendingVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
   private reversibleVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
   private copiedVisual: BuilderClipboard | null = null
+  private readonly formatColumnOpen = new Map<string, boolean>()
   private readonly visualizationDecoder = new BuilderVisualizationState()
   private gridInteracting = false
   private previewResizeSuspended = false
@@ -2368,13 +2369,29 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             </label>
             ${this.renderFormatToggle(visual, 'title-visible', 'Show title', visual.titleVisible !== false, editable, 'titleVisible')}
           </div>
-          ${[...sections.entries()].map(([section, options]) => html`
-            <div class="format-section" data-format-section=${section}>
-              <h3>${section}</h3>
-              ${options.map((option) => this.renderFormatOption(visual, option, editable))}
-              ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
-            </div>
-          `)}
+          ${[...sections.entries()].map(([section, options]) => {
+            const display = options.find(option => option.key.startsWith('cellContent.') && option.key.endsWith('.displayAs'))
+            if (display) {
+              const key = JSON.stringify([this.builder?.dashboardId, visual.visualId ?? visual.id, display.key])
+              const open = this.formatColumnOpen.get(key) ?? display.value !== 'text'
+              return html`
+                <details class="format-section format-column" data-format-section=${section} ?open=${open}
+                  @toggle=${(event: Event) => this.formatColumnOpen.set(key, (event.currentTarget as HTMLDetailsElement).open)}>
+                  <summary>${section}</summary>
+                  <div class="format-column-controls">
+                    ${options.map(option => this.renderFormatOption(visual, option, editable))}
+                  </div>
+                </details>
+              `
+            }
+            return html`
+              <div class="format-section" data-format-section=${section}>
+                <h3>${section}</h3>
+                ${options.map((option) => this.renderFormatOption(visual, option, editable))}
+                ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
+              </div>
+            `
+          })}
           ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no additional formatting controls. Configure advanced options in dashboard code.</p>` : nothing}
           ${reference ? html`<a class="visual-reference-link" href=${reference.referenceHref}>View every ${reference.label} option in the visual reference</a>` : nothing}
         </section>

@@ -112,7 +112,7 @@ export const dashboardBuilderDialogsStyles = css`
       width: 1rem;
       height: 1rem;
       margin: 0;
-      accent-color: var(--lv-data-3);
+      accent-color: var(--lv-fg-accent);
     }
 
     .format-toggle:has(input:disabled) {
