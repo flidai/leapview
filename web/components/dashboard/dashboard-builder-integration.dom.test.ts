@@ -248,7 +248,7 @@ test('embedded chat panels keep distinct click targets and default Data to field
 })
 
 test('chat preview starts with side-by-side tools open and preserves independent manual collapse', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 850 } })
   try {
     await page.addInitScript(() => {
       if (!sessionStorage.getItem('seeded-pane-preferences')) {
