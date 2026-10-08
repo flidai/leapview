@@ -933,7 +933,7 @@ class FirstInstallGuestFixtureTests(unittest.TestCase):
             environment = root / "leapview.env"
             command = host_guest._serving_credential_boundary_command(str(root))
             for name, contents, expected in (
-                ("runtime only", "LEAPVIEW_ENV=prod\n", 0),
+                ("runtime only", "FIXTURE_SETTING=prod\n", 0),
                 ("control migrator", "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=private-control\n", 1),
                 ("DuckLake migrator", "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=private-ducklake\n", 1),
                 ("empty", "", 1),
@@ -955,7 +955,7 @@ class FirstInstallGuestFixtureTests(unittest.TestCase):
                             "duckLakeMigratorURLAbsentFromServingEnvironment": True,
                         })
             # Failure to inspect the file is never proof that keys are absent.
-            environment.write_text("LEAPVIEW_ENV=prod\n")
+            environment.write_text("FIXTURE_SETTING=prod\n")
             unavailable = subprocess.run(
                 [shutil.which("sh"), "-ec", command],
                 env=dict(os.environ, PATH=str(root)), capture_output=True, timeout=5,

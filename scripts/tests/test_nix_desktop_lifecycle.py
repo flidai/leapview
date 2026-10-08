@@ -59,7 +59,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_offline_executor_rejects_host_interfaces_before_any_mutation(self):
         with patch.object(lifecycle.os, 'getuid', return_value=1000), \
-             patch.dict(lifecycle.os.environ, {'LEAPVIEW_DESKTOP_LIFECYCLE_OFFLINE': '1'}), \
+             patch.dict(lifecycle.os.environ, {'NIX_DESKTOP_LIFECYCLE_OFFLINE': '1'}), \
              patch.object(lifecycle.candidate, 'read_json_file', return_value={}), \
              patch.object(lifecycle.desktop, 'command_output', return_value='[{"ifname":"lo"},{"ifname":"eth0"}]'), \
              patch.object(lifecycle.desktop, 'run_command') as mutate:
@@ -71,7 +71,7 @@ class LifecycleTests(unittest.TestCase):
         runtime = Mock()
         runtime.probe.side_effect = ValueError('injected profile read failure')
         with patch.object(lifecycle.os, 'getuid', return_value=1000), \
-             patch.dict(lifecycle.os.environ, {'LEAPVIEW_DESKTOP_LIFECYCLE_OFFLINE': '1'}), \
+             patch.dict(lifecycle.os.environ, {'NIX_DESKTOP_LIFECYCLE_OFFLINE': '1'}), \
              patch.object(lifecycle.candidate, 'read_json_file', return_value={'work': '/private/work'}), \
              patch.object(lifecycle.desktop, 'command_output', return_value='[{"ifname":"lo"}]'), \
              patch.object(lifecycle.desktop, 'run_command'), \

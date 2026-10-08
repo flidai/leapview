@@ -90,7 +90,7 @@ class Runtime:
 
 def execute_offline(state_path):
     # The caller created a new network namespace; never touch the host interface.
-    if os.getuid() == 0 or os.environ.get('LEAPVIEW_DESKTOP_LIFECYCLE_OFFLINE') != '1':
+    if os.getuid() == 0 or os.environ.get('NIX_DESKTOP_LIFECYCLE_OFFLINE') != '1':
         raise ValueError('offline executor requires the isolated nonroot launcher')
     state = candidate.read_json_file(state_path)
     links = candidate.read_json(desktop.command_output(['ip', '-j', 'link']).encode())
@@ -149,7 +149,7 @@ def qualify(args):
             command = ['sudo', 'unshare', '--net', '--fork', '--kill-child=SIGKILL',
                 'sudo', '-u', f'#{os.getuid()}', 'env', '-i', f'PATH={os.environ["PATH"]}',
                 f'HOME={work / "home"}', f'USER={os.environ.get("USER", "runner")}',
-                'LEAPVIEW_DESKTOP_LIFECYCLE_OFFLINE=1', 'PYTHONDONTWRITEBYTECODE=1',
+                'NIX_DESKTOP_LIFECYCLE_OFFLINE=1', 'PYTHONDONTWRITEBYTECODE=1',
                 sys.executable, str(Path(__file__).resolve()), 'exercise', '--state', str(work / 'state.json')]
             desktop.run_command(command)
             result = candidate.read_json_file(work / 'offline-result.json')
