@@ -135,11 +135,11 @@ func TestMultipartRecoveryRejectsUntrustworthyPartsBeforeCompletion(t *testing.T
 	}
 }
 
-func TestMultipartRecoveryRejectsOversizedObjectBeforeListing(t *testing.T) {
+func TestMultipartRecoveryRejectsObjectBeyondBoundedReservationsBeforeListing(t *testing.T) {
 	store, client, upload, _ := multipartRecoveryFixture(t, false)
 	const maximumPartSize int64 = 5 * 1024 * 1024 * 1024
-	upload.Size = maximumPartSize * 1025
-	reserved := make([]storage.MultipartPartRequest, 1025)
+	upload.Size = maximumPartSize*10_000 + 1
+	reserved := make([]storage.MultipartPartRequest, 10_000)
 	for i := range reserved {
 		reserved[i] = storage.MultipartPartRequest{Number: int32(i + 1), Size: maximumPartSize}
 	}

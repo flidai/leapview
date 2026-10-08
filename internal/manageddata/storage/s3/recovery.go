@@ -108,7 +108,7 @@ func (s *Store) RecoverMultipart(ctx context.Context, upload storage.MultipartUp
 }
 
 func recoveryReservations(size int64, reserved []storage.MultipartPartRequest) ([]storage.MultipartPartRequest, error) {
-	if size > 5*1024*1024*1024*1024 || len(reserved) == 0 || len(reserved) > 10_000 {
+	if len(reserved) == 0 || len(reserved) > 10_000 {
 		return nil, fmt.Errorf("%w: multipart recovery requires bounded reservations", storage.ErrInvalid)
 	}
 	ordered := append([]storage.MultipartPartRequest(nil), reserved...)
