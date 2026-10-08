@@ -589,8 +589,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     // authorized builder stream to load their cards and existing membership,
     // while keeping the conversation visible and without another AI request.
     if (!running && !this.dashboardPreview && !this.savedBuilderHref && !this.restoredBuilderHref) {
-      const preview = [...this.agent.transcript ?? []].reverse().find(item => item.name === 'preview_dashboard_draft' && item.status === 'complete' && !item.error)
-      const href = generatedDashboardHref(this.agent.transcript ?? [], preview?.runId ?? '', this.agent.activeConversationId ?? '')
+      const authored = [...this.agent.transcript ?? []].reverse().find(item => item.kind === 'tool' && ['create_dashboard_draft', 'fork_dashboard', 'edit_dashboard_source'].includes(item.name ?? '') && item.status === 'complete' && !item.error)
+      const href = generatedDashboardHref(this.agent.transcript ?? [], authored?.runId ?? '', this.agent.activeConversationId ?? '')
       if (href) this.restoredBuilderHref = href
     }
     if (this.wasAgentRunning && !running && this.savedBuilderHref && !this.savingDashboard) {
