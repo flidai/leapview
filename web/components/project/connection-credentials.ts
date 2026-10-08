@@ -78,6 +78,11 @@ class LeapViewConnectionCredentials extends LitElement {
     if (this.terminal) { this.operationId = ''; this.versionId = ''; this.recoveryId = '' }
     this.emit('save', { ...fields, receiptId: '' })
   }
+  private resetMissing() {
+    if (this.operation?.phase !== 'not_found') return
+    this.operationId = ''; this.recoveryId = ''; this.failure = ''; this.pending = false
+    this.emit('list', { operationId: '', receiptId: '' }, true)
+  }
   private prepare() {
     if (!this.operationId || this.terminal) this.operationId = crypto.randomUUID()
     this.emit('prepare')
@@ -128,7 +133,7 @@ class LeapViewConnectionCredentials extends LitElement {
             <div class="actions">
               <button type="button" ?disabled=${this.busy} @click=${() => this.emit('list', {}, true)}>Refresh drafts</button>
               ${value?.nextBeforeVersionId ? html`<button type="button" ?disabled=${this.busy} @click=${() => this.emit('list', { beforeVersionId: value.nextBeforeVersionId }, true)}>Older drafts</button>` : nothing}
-              <button type="button" ?disabled=${!this.versionId || this.busy} @click=${() => this.emit('validate')}>Test draft</button>
+              <button type="button" ?disabled=${!this.versionId || this.busy || operation?.phase === 'not_found'} @click=${() => this.emit('validate')}>Test draft</button>
             </div>
             ${receiptCurrent ? html`<p>Draft tested. Activation requires a separate confirmation.</p>` : nothing}
             ${!inFlight ? html`<button type="button" ?disabled=${!receiptCurrent || this.busy} @click=${this.prepare}>Prepare activation</button>` : nothing}
@@ -149,7 +154,8 @@ class LeapViewConnectionCredentials extends LitElement {
             ${['preparing', 'prepared'].includes(operation?.phase ?? '') && !receiptCurrent ? html`<p class="hint">Test the selected draft again before continuing activation.</p>` : nothing}
             <div class="actions">
               <button type="button" @click=${() => this.emit('status', {}, true)}>Check activation status</button>
-              ${inFlight ? html`<button type="button" ?disabled=${this.busy || (['preparing', 'prepared'].includes(operation?.phase ?? '') && !receiptCurrent)} @click=${() => this.emit('retry')}>${operation?.phase === 'prepared' ? 'Continue activation' : 'Recover activation'}</button>` : nothing}
+              ${operation?.phase === 'not_found' ? html`<p>The server confirmed this operation does not exist.</p><button type="button" @click=${this.resetMissing}>Start again</button>` : nothing}
+              ${inFlight && operation?.phase !== 'not_found' ? html`<button type="button" ?disabled=${this.busy || (['preparing', 'prepared'].includes(operation?.phase ?? '') && !receiptCurrent)} @click=${() => this.emit('retry')}>${operation?.phase === 'prepared' ? 'Continue activation' : 'Recover activation'}</button>` : nothing}
               ${inFlight && ['preparing', 'prepared'].includes(operation?.phase ?? '') ? html`<button type="button" ?disabled=${this.busy} @click=${() => this.emit('abort')}>Cancel activation</button>` : nothing}
             </div>
           </section>` : nothing}

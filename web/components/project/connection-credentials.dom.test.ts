@@ -231,3 +231,31 @@ test('saving after a ready activation discards its operation and receipt identit
     expect(await page.getByText('Credentials are active and runtime is ready.', { exact: true }).count()).toBe(0)
   } finally { await page.close() }
 })
+
+
+test('only exact server-confirmed absence permits resetting an interrupted preparation', async () => {
+  const page = await browser.newPage()
+  try {
+    await open(page)
+    await page.getByRole('button', { name: 'Credentials', exact: true }).click()
+    await page.getByLabel('Saved draft').selectOption('version-one')
+    await signal(page, { receiptId: 'receipt', receiptExpiresAt: '2099-01-01T00:00:00Z', command: { logicalConnection: 'warehouse', assetId: 'warehouse', versionId: 'version-one' } })
+    await page.getByRole('button', { name: 'Prepare activation', exact: true }).click()
+    const id = await page.evaluate(() => (window as any).commands.at(-1).operationId)
+    await page.locator('lv-connection-administration').evaluate(element => {
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 0 } } }))
+    })
+    expect(await page.getByRole('button', { name: 'Start again', exact: true }).count()).toBe(0)
+    expect(await page.getByLabel('Saved draft').isDisabled()).toBe(true)
+    await signal(page, { operationId: 'another-operation', phase: 'not_found', runtimeReady: false })
+    expect(await page.getByRole('button', { name: 'Start again', exact: true }).count()).toBe(0)
+    await signal(page, { operationId: id, phase: 'not_found', runtimeReady: false, receiptId: '', receiptExpiresAt: '' })
+    await page.getByRole('button', { name: 'Start again', exact: true }).click()
+    expect(await page.getByLabel('Saved draft').isEnabled()).toBe(true)
+    await page.getByRole('button', { name: 'Test draft', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).commands.at(-1).operationId)).toBe('')
+    await signal(page, { operationId: '', phase: '', receiptId: 'fresh-receipt', receiptExpiresAt: '2099-01-01T00:00:00Z' })
+    await page.getByRole('button', { name: 'Prepare activation', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).commands.at(-1).operationId)).not.toBe(id)
+  } finally { await page.close() }
+})
