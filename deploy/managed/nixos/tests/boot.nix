@@ -115,6 +115,17 @@ pkgs.testers.runNixOSTest {
     };
     database = { lib, ... }: {
       imports = [ modules.database ];
+      # The disposable POSIX repository substitutes for production S3. Keep
+      # PostgreSQL's strict filesystem sandbox and expose only that test repo
+      # to archive-push; ordinary interactive backup commands do not exercise
+      # the service mount namespace.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/recovery-test 0700 postgres postgres -"
+        "d /var/lib/recovery-test/postgres 0700 postgres postgres -"
+      ];
+      systemd.services.postgresql.serviceConfig.ReadWritePaths = [
+        "/var/lib/recovery-test/postgres"
+      ];
       leapview = {
         operatorKeys = [ sshKeys.snakeOilPublicKey ];
         operatorCIDRs = [ "192.168.1.0/24" ];
