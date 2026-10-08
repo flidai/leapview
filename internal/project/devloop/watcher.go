@@ -283,7 +283,30 @@ func (watcher *Watcher) Run(ctx context.Context, report func(Update)) error {
 			authoredYAML := (extension == ".yaml" || extension == ".yml") && projectcompiler.IsAuthoredSourcePath(relative)
 			legacyManifest := relative == "leapview.yaml" || relative == "leapview.yml"
 			if !relevant && !directoryEvent && !authoredYAML && !legacyManifest {
-				continue
+				// A dashboard include glob may gain a new fragment in an
+				// already watched directory outside the six resource roots.
+				// Only a successful compiler resolution establishes ownership.
+				if extension != ".yaml" && extension != ".yml" {
+					continue
+				}
+				paths, resolveErr := watcher.resolveSources(watcher.sourceRoot)
+				if resolveErr != nil {
+					continue
+				}
+				for _, path := range paths {
+					absolute, absoluteErr := filepath.Abs(path)
+					if absoluteErr == nil && filepath.Clean(absolute) == eventPath {
+						relevant = true
+						break
+					}
+				}
+				if !relevant {
+					continue
+				}
+				if installErr := installSources(paths); installErr != nil {
+					report(Update{Result: lastResult, Err: installErr})
+					continue
+				}
 			}
 			retryDelay = watcher.retryMin
 			schedule(watcher.debounce)
