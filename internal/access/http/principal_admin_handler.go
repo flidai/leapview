@@ -331,7 +331,7 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	var updated access.Principal
 	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
-		current, err := tx.PrincipalByID(r.Context(), id)
+		current, err := access.PrincipalForMutation(r.Context(), tx, id)
 		if err != nil {
 			return "", err
 		}
