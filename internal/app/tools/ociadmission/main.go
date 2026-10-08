@@ -10,7 +10,13 @@ import (
 )
 
 func main() {
-	if err := runAdmission(os.Args[1:], os.Environ(), os.Stdout, os.Stderr); err != nil {
+	run := func() error {
+		if len(os.Args) > 1 && os.Args[1] == "verify-receipt" {
+			return runVerifyReceipt(os.Args[2:], os.Stdout, os.Stderr)
+		}
+		return runAdmission(os.Args[1:], os.Environ(), os.Stdout, os.Stderr)
+	}
+	if err := run(); err != nil {
 		var usage usageError
 		if errors.As(err, &usage) {
 			fmt.Fprintln(os.Stderr, redactError(usage, os.Environ()))

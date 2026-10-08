@@ -25,7 +25,7 @@ var (
 	credentialQueryPattern  = regexp.MustCompile(`(?i)(token|password|secret|key)=([^&\s]+)`)
 )
 
-func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPolicy, policySHA256 string, contract *securitypolicy.Exceptions, stdout io.Writer) error {
+func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPolicy, policyBytes []byte, policySHA256 string, contract *securitypolicy.Exceptions, stdout io.Writer) error {
 	report := newVulnerabilityReport(opts, policySHA256, "")
 	rejectNotScanned := func(message string) error {
 		return rejectWithReport(opts, report, outcomeNotScanned, message)
@@ -53,6 +53,16 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 	sbom, err := r.run(docker, []string{"buildx", "imagetools", "inspect", opts.image, "--format", "{{ json .SBOM }}"}, "")
 	if err != nil || !hasSPDXDocument(sbom) {
 		return rejectNotScanned("no SPDX SBOM was discoverable for this digest")
+	}
+	var imageConfig []byte
+	if opts.admissionBundlePath != "" {
+		imageConfig, err = r.run(docker, []string{"buildx", "imagetools", "inspect", opts.image, "--format", "{{ json .Image }}"}, "")
+		if err != nil {
+			return rejectNotScanned("exact image configuration is unavailable")
+		}
+		if err := verifyBundleImage(opts, imageConfig, sbom); err != nil {
+			return rejectNotScanned(err.Error())
+		}
 	}
 
 	cacheDir, err := os.MkdirTemp("", "ociadmission-trivy-cache-")
@@ -100,7 +110,7 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 		}
 		return rejectWithReport(opts, report, outcomeScannerError, summary)
 	}
-	if opts.vulnerabilityReportPath != "" {
+	if opts.vulnerabilityReportPath != "" || opts.admissionBundlePath != "" {
 		db := report.Database.Vulnerability
 		if db.Version == "" || db.UpdatedAt == "" || db.NextUpdate == "" || db.DownloadedAt == "" {
 			return rejectWithReport(opts, report, outcomeScannerError, "scanner vulnerability database metadata is unavailable")
@@ -109,6 +119,11 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 	parsed, err := parseVulnerabilityReport(trivyJSON, contract, r.env)
 	if err != nil {
 		return rejectWithReport(opts, report, outcomeInvalidReport, "vulnerability evidence is not machine-readable")
+	}
+	if opts.admissionBundlePath != "" {
+		if err := verifyBundleScan(opts, trivyJSON, sbom); err != nil {
+			return rejectWithReport(opts, report, outcomeInvalidReport, err.Error())
+		}
 	}
 	report.Revision = parsed.ImageRevision
 	max, err := maxUnresolved(policy.MaxUnresolved)
@@ -124,6 +139,11 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 	report.Outcome = outcomePassed
 	if err := writeVulnerabilityReport(opts.vulnerabilityReportPath, report); err != nil {
 		return errors.New("could not write vulnerability report")
+	}
+	if opts.admissionBundlePath != "" {
+		if err := writeAdmissionBundle(opts, r.env, policyBytes, attestation, sbom, imageConfig, trivyJSON, report); err != nil {
+			return err
+		}
 	}
 	digest := opts.image[strings.LastIndex(opts.image, "@")+1:]
 	vulnerabilityResult := map[string]any{"sha256": policySHA256, "scanner": "trivy", "passed": true}
