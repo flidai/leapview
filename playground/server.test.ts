@@ -45,7 +45,7 @@ test('browser contract validation is precompiled and matches both schemas for ev
       // Loading and using browser validators must also work without dynamic code evaluation.
       globalThis.Function = new Proxy(originalFunction, { apply() { throw new Error('Runtime schema compilation is forbidden') }, construct() { throw new Error('Runtime schema compilation is forbidden') } })
       const browserFixtures = await import(pathToFileURL(path).href)
-      const sources = [...fixtures.dashboardScenarios.map(fixture => fixture.source), 'spec: [', 'kind: Dashboard\nkind: Dashboard', fixtures.afterYAML.replace('columnSpan: 12', 'columnSpan: 0').replace('  id: dashboard:executive-sales\n', '')]
+      const sources = [...fixtures.dashboardScenarios.map(fixture => fixture.source), 'spec: [', 'kind: Dashboard\nkind: Dashboard', fixtures.afterYAML.replace('columnSpan: 12', 'columnSpan: 0').replace('  id: dashboard:executive-sales\n', ''), ...['.inf', '-.inf', '.nan'].map(value => fixtures.afterYAML.replace('gap: 16', `gap: ${value}`))]
       for (const source of sources) {
         for (const baseline of [false, true]) {
           expect(browserFixtures.inspectDashboard(source, baseline)).toEqual(fixtures.inspectDashboard(source, baseline))

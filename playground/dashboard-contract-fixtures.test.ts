@@ -91,3 +91,13 @@ test('large invalid documents retain all distinct diagnostics in both schemas', 
     expect(result.issues.some(issue => issue.path === '/spec/pages/0/components/2499')).toBe(true)
   }
 })
+
+
+test('both schemas reject nonfinite YAML numbers', () => {
+  for (const baseline of [false, true]) {
+    for (const value of ['.inf', '-.inf', '.nan']) {
+      expect(inspectDashboard(afterYAML.replace('gap: 16', `gap: ${value}`), baseline).valid).toBe(false)
+      expect(inspectDashboard(afterYAML.replace('columnSpan: 12', `columnSpan: ${value}`), baseline).valid).toBe(false)
+    }
+  }
+})

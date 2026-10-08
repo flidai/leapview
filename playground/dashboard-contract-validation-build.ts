@@ -14,7 +14,7 @@ export function createDashboardValidators(schema: DashboardSchema) {
       delete (property as { minimum?: number }).minimum
     }
   }
-  const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false, inlineRefs: false, code: { source: true, esm: true } })
+  const ajv = new Ajv({ strict: false, strictNumbers: true, allErrors: true, validateFormats: false, inlineRefs: false, code: { source: true, esm: true } })
   // Distinct IDs also keep this derivation safe if the canonical schema gains an ID.
   ajv.addSchema({ ...schema, $id: 'urn:leapview:playground:dashboard-current' })
   ajv.addSchema({ ...baselineSchema, $id: 'urn:leapview:playground:dashboard-baseline' })
