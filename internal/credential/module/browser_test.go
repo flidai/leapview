@@ -8,8 +8,29 @@ import (
 	"testing"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/credential"
 	credentialgen "github.com/flidai/leapview/internal/credential/api/gen"
 )
+
+func TestCredentialBrowserStatusDistinguishesScopedAbsenceFromAmbiguousFailure(t *testing.T) {
+	f := newValidationTransportFixture(t)
+	activation := &activationTransportFake{err: credential.ErrNotFound}
+	f.config.Activation = activation
+	run := func() (BrowserState, error) {
+		return RunCredentialBrowser(t.Context(), f.config, "principal_test", f.project, f.targetID, f.connection, BrowserInput{Action: "status", OperationID: activationOperation})
+	}
+	state, err := run()
+	if err != nil || state.Phase != "not_found" || state.OperationID != activationOperation || state.RuntimeReady || state.ReceiptID != "" {
+		t.Fatalf("scoped absence did not allow explicit UI recovery: %+v %v", state, err)
+	}
+	for _, failure := range []error{credential.ErrForbidden, credential.ErrUnavailable, errors.New("lost response")} {
+		activation.err = failure
+		state, err = run()
+		if !errors.Is(err, failure) || state.Phase == "not_found" {
+			t.Fatal("ambiguous or forbidden lookup was reported as absent")
+		}
+	}
+}
 
 func TestCredentialBrowserCommandsKeepAuditedNonReplayableContracts(t *testing.T) {
 	bindings := CredentialBrowserBindings()

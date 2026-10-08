@@ -89,6 +89,14 @@ func RunCredentialBrowser(ctx context.Context, config CredentialDraftAPIGenConfi
 	}
 	if input.Action == "status" {
 		status, err := config.Activation.GetActivation(ctx, actor, resource, input.OperationID)
+		if errors.Is(err, credential.ErrNotFound) {
+			// The service has checked current authority and exact actor/resource
+			// scope. Only this confirmed absence allows the UI to discard an
+			// operation ID whose preparation was never acknowledged.
+			state.OperationID, state.Phase = input.OperationID, "not_found"
+			state.Message = "No activation was found for this operation in the current connection. Start again to test the draft and prepare a new activation."
+			return state, nil
+		}
 		if err == nil {
 			setActivation(status)
 		}
