@@ -294,8 +294,40 @@ func qualify(repo, base string) error {
 func main() {
 	repo := flag.String("repo", ".", "repository root")
 	qualification := flag.Bool("qualify", false, "qualify frozen oracles before trials")
+	corpus := flag.String("qualify-corpus", "", "qualify a separate ten-task canonical corpus manifest; zero agent trials")
 	output := flag.String("output", "", "write scored results JSON")
 	flag.Parse()
+	if *corpus != "" {
+		if *qualification {
+			fmt.Fprintln(os.Stderr, "-qualify and -qualify-corpus are separate modes")
+			os.Exit(1)
+		}
+		path := *corpus
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(*repo, path)
+		}
+		report, qualificationError := qualifyCorpus(*repo, path)
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		data = append(data, '\n')
+		if *output != "" {
+			err = os.WriteFile(*output, data, 0644)
+		} else {
+			_, err = os.Stdout.Write(data)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if qualificationError != nil {
+			fmt.Fprintln(os.Stderr, qualificationError)
+			os.Exit(1)
+		}
+		return
+	}
 	base := filepath.Join(*repo, "playground", "dashboard-evaluation")
 	if *qualification {
 		if err := qualify(*repo, base); err != nil {

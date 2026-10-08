@@ -254,7 +254,7 @@ export class PlaygroundDashboardContract extends LitElement {
         </div>
         <div class="workspace">
           <div class="source-pane">
-            <div class="pane-heading"><h3>Editable dashboard YAML</h3><span class="badge">${dashboardScenario(this.scenario).label}</span></div>
+            <div class="pane-heading"><h3>Editable dashboard YAML</h3><span class="badge">${dashboardScenario(this.scenario).label}${this.source !== this.scenarioSource() ? ' · Edited' : ''}</span></div>
             <lv-code-editor .value=${this.source} language="yaml" aria-label="Dashboard YAML source" @lv-code-editor-change=${this.editSource}></lv-code-editor>
             ${this.inputNotice ? html`<p role="status" class="muted">${this.inputNotice}</p>` : ''}
             <details class="card references" @toggle=${(event: Event) => { this.referencesOpen = (event.target as HTMLDetailsElement).open }}><summary>Document references</summary>${this.referencesOpen ? this.documentSummary() : ''}</details>

@@ -36,12 +36,14 @@ afterEach(async () => {
 
 const example = () => page.locator('playground-dashboard-contract')
 const compiler = () => example().getByRole('region', { name: 'LeapView compiler check', exact: true })
+const sourceBadge = () => example().locator('.source-pane > .pane-heading .badge')
 
 test('schema rules switch without changing the chosen document or edited source', async () => {
   const host = example()
   await host.getByText('Compare with other schema', {exact:true}).click()
   await host.getByLabel('Document scenario', { exact: true }).selectOption('zero-span')
   const source = await host.evaluate((element: any) => element.getExampleCode())
+  await browserExpect(sourceBadge()).toHaveText('Zero column span')
   await host.getByLabel('Schema version', { exact: true }).selectOption('before')
   expect(await host.evaluate((element: any) => element.getExampleCode())).toBe(source)
   await browserExpect(host.getByLabel('Document scenario', { exact: true })).toHaveValue('zero-span')
@@ -49,8 +51,12 @@ test('schema rules switch without changing the chosen document or edited source'
   await browserExpect(host.getByRole('region', { name: 'Tightened schema validation' }).locator('.status')).toHaveText('Rejected')
   const edited = source + '\n# local note\n'
   await host.evaluate(async (element: any, value) => element.restoreExampleState({ version: 'before', scenario: 'zero-span', source: value }), edited)
+  await browserExpect(sourceBadge()).toHaveText('Zero column span · Edited')
   await host.getByLabel('Schema version', { exact: true }).selectOption('after')
   expect(await host.evaluate((element: any) => element.getExampleCode())).toBe(edited)
+  await browserExpect(sourceBadge()).toHaveText('Zero column span · Edited')
+  await host.evaluate(async (element: any, source) => element.restoreExampleState({ version: 'after', scenario: 'zero-span', source }), source)
+  await browserExpect(sourceBadge()).toHaveText('Zero column span')
 })
 
 test('real compiler evidence distinguishes valid shape from the original semantic error', async () => {
@@ -69,6 +75,7 @@ test('real compiler evidence distinguishes valid shape from the original semanti
 test('editing invalidates recorded compiler evidence until exact fixture bytes are restored', async () => {
   const host = example()
   await browserExpect(host.getByLabel('Document scenario', { exact: true })).toHaveValue('corrected-monthly')
+  await browserExpect(sourceBadge()).toHaveText('Corrected monthly guide')
   await browserExpect(compiler().locator('.status')).toHaveText('Accepted')
   const source = await host.evaluate((element: any) => element.getExampleCode())
   const textbox = host.getByRole('textbox', { name: 'Dashboard YAML source', exact: true })
@@ -77,17 +84,36 @@ test('editing invalidates recorded compiler evidence until exact fixture bytes a
   await textbox.press('ControlOrMeta+End')
   await page.keyboard.insertText('\n# editor change\n')
   await browserExpect(compiler()).toContainText('Compiler result unavailable for edited YAML')
+  await browserExpect(sourceBadge()).toHaveText('Corrected monthly guide · Edited')
+  const editedSnapshot = await host.evaluate((element: any) => element.getExampleState())
   await browserExpect(compiler().locator('.status')).toHaveCount(0)
   await browserExpect(host.getByRole('region', { name: 'Tightened schema validation' }).locator('.status')).toHaveText('Accepted')
   // Monaco can adjust indentation while inserting text; Reset restores the exact recorded bytes.
   await host.getByRole('button', { name: 'Reset YAML', exact: true }).click()
   expect(await host.evaluate((element: any) => element.getExampleCode())).toBe(source)
+  await browserExpect(sourceBadge()).toHaveText('Corrected monthly guide')
   await browserExpect(compiler().locator('.status')).toHaveText('Accepted')
   const snapshot = await host.evaluate((element: any) => element.getExampleState())
   await host.getByLabel('Document scenario', { exact: true }).selectOption('out-of-grid')
   await browserExpect(compiler().locator('.status')).toHaveText('Rejected')
   await host.evaluate(async (element: any, value) => element.restoreExampleState(value), snapshot)
   await browserExpect(compiler().locator('.status')).toHaveText('Accepted')
+  await browserExpect(sourceBadge()).toHaveText('Corrected monthly guide')
+  await host.evaluate(async (element: any, value) => element.restoreExampleState(value), editedSnapshot)
+  await browserExpect(sourceBadge()).toHaveText('Corrected monthly guide · Edited')
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value: string) => { (window as any).copiedContractLink = value },
+    } })
+  })
+  await page.getByRole('button', { name: 'Copy link', exact: true }).click()
+  const link = await page.evaluate(() => (window as any).copiedContractLink as string)
+  expect(JSON.parse(new URL(link).searchParams.get('state')!).example).toEqual(editedSnapshot)
+  await page.goto(link)
+  await browserExpect(sourceBadge()).toHaveText('Corrected monthly guide · Edited')
+  expect(await host.evaluate((element: any) => element.getExampleCode())).toBe(editedSnapshot.source)
+  await host.getByRole('button', { name: 'Reset YAML', exact: true }).click()
+  await browserExpect(sourceBadge()).toHaveText('Corrected monthly guide')
 })
 
 test('expanded compiler intent can be focused and scrolled with the keyboard', async () => {

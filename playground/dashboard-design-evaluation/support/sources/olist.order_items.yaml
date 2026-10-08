@@ -1,0 +1,17 @@
+apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:olist.order_items
+  name: olist.order_items
+  displayName: Order Items
+spec:
+  connection: olist
+  location:
+    type: path
+    path: olist_order_items_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+  fields:
+    - {name: order_id, datatype: String, description: Order identifier for the item row.}
+    - {name: product_id, datatype: String, description: Product identifier purchased in the order.}
