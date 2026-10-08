@@ -4,6 +4,7 @@ import { realpath } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import { datastarRuntimeURL } from '../web/components/shared/datastar-runtime'
 import { ensureManufacturingDemoAssets, manufacturingParts, manufacturingColumnLabels } from './table_manufacturing_fixture'
+import { handleTableExplorerRequest, tableExploreHref, tableExplorerDocument } from './table_explorer_playground'
 
 const root = resolve(import.meta.dir, '..')
 const output = resolve(root, '.tmp/table-formatting-playground')
@@ -12,7 +13,7 @@ const staticRoot = await realpath(resolve(root, 'static'))
 await ensureManufacturingDemoAssets(staticRoot)
 const port = Number(Bun.argv[2] ?? 18306)
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port')
-const build = await Bun.build({ entrypoints: [resolve(root, 'web/components/dashboard/dashboard-builder.ts')], target: 'browser', format: 'esm', splitting: true, outdir: output, external: [datastarRuntimeURL], naming: { entry: '[name].[ext]', chunk: 'chunks/[name]-[hash].[ext]' } })
+const build = await Bun.build({ entrypoints: [resolve(root, 'web/components/dashboard/dashboard-builder.ts'), resolve(root, 'web/components/data/data-explorer.ts')], target: 'browser', format: 'esm', splitting: true, outdir: output, external: [datastarRuntimeURL], naming: { entry: '[name].[ext]', chunk: 'chunks/[name]-[hash].[ext]' } })
 if (!build.success) throw new AggregateError(build.logs, 'Could not build dashboard builder')
 const buildGo = Bun.spawn(['go', 'build', '-o', resolve(output, 'authoring-demo'), './scripts/table_formatting_demo'], { cwd: root, env: { ...process.env, GOCACHE: '/tmp/leapview-hierarchy-go-cache' }, stdout: 'inherit', stderr: 'inherit' })
 if (await buildGo.exited !== 0) throw new Error('Could not build authoring adapter')
@@ -49,6 +50,8 @@ html,body{margin:0;height:100%;font-family:system-ui,sans-serif}body{background:
 import '${before ? sizingComparison ? '/sizing-before/' : '/before/' : '/bundle/'}dashboard-builder.js';
 import {mergePatch} from '${datastarRuntimeURL}';
 const before=${before};const sizingComparison=${sizingComparison};const seed=${JSON.stringify(seed).replaceAll('<', '\\u003c')};let current=structuredClone(seed);
+const storageKey='leapview:parts-formatting:local';
+try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||'null');if(saved?.document?.metadata?.id===seed.document.metadata.id&&saved.revision)current=saved;}catch{}
 const names=${JSON.stringify(manufacturingColumnLabels)};
 const records=${JSON.stringify(manufacturingParts).replaceAll('<', '\\u003c')};
 const numericFields=new Set(['stock','unit_cost']);
@@ -64,8 +67,19 @@ function signalsFor(state){
  const visual={id:'parts-table',visualId:'parts-table',title:authored.title,titleVisible:authored.titleVisible,type:'table',datasetId:'parts',legendVisible:false,axisVisible:false,dataLabelsVisible:false,formatOptions:formatOptions(state.options),placement:{col:1,row:1,colSpan:12,rowSpan:10},slots:Object.keys(names).map(id=>({id,label:names[id],kind:'detail',fieldId:'parts.'+id,required:false})),queryOptions:{supportsSort:true,supportsLimit:true,limit:100,sort:[]},filters:[]};
  return {builder:{projectId:'playground',dashboardId:'parts-formatting',draftId:'demo-draft',revision,title:'Manufacturing parts catalog',lifecycle:'draft',visibility:'private',hasUnpublishedChanges:true,appearance:{icon:'table',color:'green'},origin:{kind:'ui',label:'Playground'},semanticModel:{id:'parts',title:'Manufacturing',datasets:[{id:'parts',title:'Parts',fields:fields.map(f=>({id:'parts.'+f.id,label:f.label,kind:numericFields.has(f.id)?'metric':'dimension',dataType:f.dataType}))}]},visualCatalog:[{type:'table',label:'Table',group:'Tables',referenceHref:'/docs/visuals/table',roles:['detail']}],filters:[],pages:[{id:'overview',title:'Parts inventory',canvas:{width:1200,height:800},grid:{columns:12,rowHeight:48,gap:16,padding:16},visuals:[visual],filterComponents:[]}],selectedPageId:'overview',selectedVisualId:'parts-table',capabilities:{canEdit:true,canShare:false,canPublish:false,canArchive:false,canPreview:false,canExport:false,canAddPage:false,canAddVisual:false},diagnostics:[],preview:{active:false,mode:'draft',loading:false},save:{state:'saved',message:'Saved locally · revision '+revision.number}},builderVisuals:{'parts-table':envelope},status:{loading:false,error:'',generation:1,lastUpdated:'',refreshId:'',setupRequired:false,progressPercent:100},runtime:{kind:'dashboard_builder',projectId:'playground',servingStateId:'demo-generation',dashboardId:'parts-formatting'}};
 }
-function render(){mergePatch({builder:null,builderVisuals:null});mergePatch(signalsFor(current));}
+function render(){
+ try{sessionStorage.setItem(storageKey,JSON.stringify(current));}catch{}
+ mergePatch({builder:null,builderVisuals:null});mergePatch(signalsFor(current));
+}
 render();
+// The standalone fixture has no deployed dashboard session. Configure the
+// production host's existing action with a local records-query destination.
+const builder=document.querySelector('lv-dashboard-builder');await builder.updateComplete;
+function connectExplore(){for(const host of builder.shadowRoot.querySelectorAll('lv-visualization-host'))host.exploreHref=${JSON.stringify(tableExploreHref())};}
+const exploreObserver=new MutationObserver(connectExplore);
+exploreObserver.observe(builder.shadowRoot,{childList:true,subtree:true});connectExplore();
+window.addEventListener('pagehide',()=>exploreObserver.disconnect());
+window.addEventListener('pageshow',()=>{exploreObserver.observe(builder.shadowRoot,{childList:true,subtree:true});connectExplore();});
 document.querySelector('lv-dashboard-builder').addEventListener('lv-builder-command',async event=>{
  const detail=event.detail;if(detail.action==='select_visual'||detail.action==='select_page')return;
  if(detail.action!=='update_visual_format'||!detail.formatKey){document.querySelector('#notice').textContent='Use the column Format controls in this example.';render();document.dispatchEvent(new CustomEvent('datastar-fetch',{detail:{type:'finished',el:event.currentTarget}}));return;}
@@ -82,6 +96,8 @@ async function asset(base: string, relative: string, head: boolean) {
 }
 const server = Bun.serve({ hostname: '127.0.0.1', port, async fetch(request) {
  const url = new URL(request.url)
+ const explorerResponse = await handleTableExplorerRequest(request)
+ if (explorerResponse) return explorerResponse
  if (url.pathname === '/format' && request.method === 'POST') {
   const origin = request.headers.get('origin')
   let loopbackOrigin = false
@@ -91,8 +107,9 @@ const server = Bun.serve({ hostname: '127.0.0.1', port, async fetch(request) {
  }
  if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method not allowed', { status: 405 })
  const head = request.method === 'HEAD'
+ if (url.pathname === '/explore') return new Response(head ? null : tableExplorerDocument(url.search), { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
  if (url.pathname === '/' && url.searchParams.get('version') === 'before' && !(url.searchParams.get('comparison') === 'sizing' ? sizingBaselineRoot : baselineRoot)) return new Response('Before bundle unavailable. Open / for the current playground.', { status: 404 })
- if (url.pathname === '/') return new Response(head ? null : documentFor(url.searchParams.get('version') === 'before', url.searchParams.get('comparison') === 'sizing'), { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+ if (url.pathname === '/' || url.pathname === '/dashboards/parts-formatting/pages/overview') return new Response(head ? null : documentFor(url.searchParams.get('version') === 'before', url.searchParams.get('comparison') === 'sizing'), { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
  if (url.pathname.startsWith('/bundle/')) return asset(bundleRoot, url.pathname.slice(8), head)
  if (url.pathname.startsWith('/sizing-before/') && sizingBaselineRoot) return asset(sizingBaselineRoot, url.pathname.slice(15), head)
  if (url.pathname.startsWith('/before/') && baselineRoot) return asset(baselineRoot, url.pathname.slice(8), head)

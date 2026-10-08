@@ -86,6 +86,11 @@ part illustrations, example datasheets, sizing controls, and an editable JSON so
 Run `bun scripts/table_formatting_playground.ts` to adjust the same manufacturing example
 in the production dashboard editor. Its local adapter uses the production
 authoring reducer; it does not write to your dashboard database.
+Its three-dot menu also exposes **Explore**, opening the production Data Explorer
+component over the same local records. This example supports records queries,
+field selection, sorting, limits, and filters through a fixture adapter. It does
+not connect to a deployed semantic model or save explorations. Image and link
+formatting stays on the table; Explorer displays the underlying URL values.
 
 Use a table when readers need exact record-level values, sorting, and a virtualized window over a governed result set.
 
