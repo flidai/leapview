@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -316,91 +317,116 @@ func TestQualificationNestedAdmissionAndConflicts(t *testing.T) {
 }
 
 func TestQualificationCancellationTimeoutAndShutdown(t *testing.T) {
-	config := qualificationConfig()
-	config.MaximumRunning = 1
-	config.MaximumRunningPerPrincipal = 1
-	config.MaximumRunningPerGroup = 1
-	config.MaximumQueued = 8
-	config.Policies["interactive"] = Policy{MaximumRunning: 1, MaximumQueued: 8, QueueTimeout: 20 * time.Millisecond}
-	config.Policies["batch"] = Policy{MaximumRunning: 1, MaximumQueued: 8, ExecutionTimeout: 20 * time.Millisecond}
-	controller, err := New(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	held := qualificationAcquire(t, controller, qualificationRequest("interactive", "holder"))
-	requestCtx, cancel := context.WithCancel(context.Background())
-	canceled := make(chan error, 1)
-	go func() {
-		_, err := controller.Acquire(requestCtx, qualificationRequest("interactive", "cancel"))
-		canceled <- err
-	}()
-	qualificationWaitQueued(t, controller, 1)
-	cancel()
-	select {
-	case got := <-canceled:
-		if !errors.Is(got, context.Canceled) {
-			t.Fatalf("canceled waiter error = %v", got)
+	synctest.Test(t, func(t *testing.T) {
+		config := qualificationConfig()
+		config.MaximumRunning = 1
+		config.MaximumRunningPerPrincipal = 1
+		config.MaximumRunningPerGroup = 1
+		config.MaximumQueued = 8
+		config.Policies["interactive"] = Policy{MaximumRunning: 1, MaximumQueued: 8, QueueTimeout: 20 * time.Millisecond}
+		config.Policies["batch"] = Policy{MaximumRunning: 1, MaximumQueued: 8, ExecutionTimeout: 20 * time.Millisecond}
+		controller, err := New(config)
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("canceled waiter did not return")
-	}
-	if got := controller.Stats().Queued; got != 0 {
-		t.Fatalf("canceled waiter leaked queue count: %d", got)
-	}
-
-	timeoutDone := make(chan error, 1)
-	go func() {
-		_, err := controller.Acquire(context.Background(), qualificationRequest("interactive", "timeout"))
-		timeoutDone <- err
-	}()
-	qualificationWaitQueued(t, controller, 1)
-	select {
-	case got := <-timeoutDone:
-		if !IsReason(got, QueueTimeout) {
-			t.Fatalf("queue timeout error = %v", got)
+		t.Cleanup(controller.Close)
+		assertQueued := func(want int) {
+			t.Helper()
+			// Observe an established waiter before virtual time can advance to
+			// its deadline; real scheduler latency must not decide the outcome.
+			synctest.Wait()
+			if got := controller.Stats().Queued; got != want {
+				t.Fatalf("queued = %d, want %d", got, want)
+			}
 		}
-	case <-time.After(time.Second):
-		t.Fatal("queue timeout did not return")
-	}
-	held.Release()
-
-	execution := qualificationAcquire(t, controller, qualificationRequest("batch", "deadline"))
-	if _, ok := execution.Context().Deadline(); !ok {
-		t.Fatal("execution timeout was not reflected in lease context")
-	}
-	select {
-	case <-execution.Context().Done():
-	case <-time.After(time.Second):
-		t.Fatal("execution timeout did not cancel lease context")
-	}
-	execution.Release()
-
-	active := qualificationAcquire(t, controller, qualificationRequest("interactive", "active"))
-	queuedDone := make(chan error, 1)
-	go func() {
-		_, err := controller.Acquire(context.Background(), qualificationRequest("interactive", "queued"))
-		queuedDone <- err
-	}()
-	qualificationWaitQueued(t, controller, 1)
-	controller.Close()
-	select {
-	case got := <-queuedDone:
-		if !IsReason(got, ControllerShutdown) {
-			t.Fatalf("shutdown queued error = %v", got)
+		held := qualificationAcquire(t, controller, qualificationRequest("interactive", "holder"))
+		defer held.Release()
+		requestCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		canceled := make(chan error, 1)
+		go func() {
+			_, err := controller.Acquire(requestCtx, qualificationRequest("interactive", "cancel"))
+			canceled <- err
+		}()
+		assertQueued(1)
+		cancel()
+		select {
+		case got := <-canceled:
+			if !errors.Is(got, context.Canceled) {
+				t.Fatalf("canceled waiter error = %v", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("canceled waiter did not return")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not reject queued waiter")
-	}
-	select {
-	case <-active.Context().Done():
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not cancel active lease")
-	}
-	active.Release()
-	controller.Close()
-	if _, err := controller.Acquire(context.Background(), qualificationRequest("interactive", "after-close")); !IsReason(err, ControllerShutdown) {
-		t.Fatalf("post-shutdown error = %v, want controller shutdown", err)
-	}
+		if got := controller.Stats().Queued; got != 0 {
+			t.Fatalf("canceled waiter leaked queue count: %d", got)
+		}
+
+		timeoutDone := make(chan error, 1)
+		go func() {
+			_, err := controller.Acquire(context.Background(), qualificationRequest("interactive", "timeout"))
+			timeoutDone <- err
+		}()
+		assertQueued(1)
+		select {
+		case got := <-timeoutDone:
+			if !IsReason(got, QueueTimeout) {
+				t.Fatalf("queue timeout error = %v", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("queue timeout did not return")
+		}
+		held.Release()
+
+		execution := qualificationAcquire(t, controller, qualificationRequest("batch", "deadline"))
+		defer execution.Release()
+		if _, ok := execution.Context().Deadline(); !ok {
+			t.Fatal("execution timeout was not reflected in lease context")
+		}
+		select {
+		case <-execution.Context().Done():
+		case <-time.After(time.Second):
+			t.Fatal("execution timeout did not cancel lease context")
+		}
+		if err := execution.Context().Err(); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("execution timeout error = %v, want deadline exceeded", err)
+		}
+		execution.Release()
+
+		active := qualificationAcquire(t, controller, qualificationRequest("interactive", "active"))
+		defer active.Release()
+		queuedDone := make(chan error, 1)
+		go func() {
+			_, err := controller.Acquire(context.Background(), qualificationRequest("interactive", "queued"))
+			queuedDone <- err
+		}()
+		assertQueued(1)
+		controller.Close()
+		select {
+		case got := <-queuedDone:
+			if !IsReason(got, ControllerShutdown) {
+				t.Fatalf("shutdown queued error = %v", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("shutdown did not reject queued waiter")
+		}
+		select {
+		case <-active.Context().Done():
+		case <-time.After(time.Second):
+			t.Fatal("shutdown did not cancel active lease")
+		}
+		if stats := controller.Stats(); !stats.Closed || stats.Running != 1 || stats.Queued != 0 || stats.MemoryBytes != 1 {
+			t.Fatalf("shutdown changed unreleased lease accounting: %+v", stats)
+		}
+		active.Release()
+		controller.Close()
+		if stats := controller.Stats(); !stats.Closed || stats.Running != 0 || stats.Queued != 0 || stats.MemoryBytes != 0 {
+			t.Fatalf("released shutdown accounting: %+v", stats)
+		}
+		if _, err := controller.Acquire(context.Background(), qualificationRequest("interactive", "after-close")); !IsReason(err, ControllerShutdown) {
+			t.Fatalf("post-shutdown error = %v, want controller shutdown", err)
+		}
+	})
 }
 
 type qualificationObserver struct {

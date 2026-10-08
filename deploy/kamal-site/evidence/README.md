@@ -7,8 +7,8 @@ The [final acceptance report](final-acceptance-20261002.md) and
 24-hour interval, both boundary adoption smokes, actual observer and acceptance
 command exits, and the final read-only storage/retention/recovery audit.
 All required live proofs passed. Fallback #748 was subsequently closed externally
-as superseded at 16:07:20 IST on 2 October. Closeout documentation review and
-protected merge remain pending. Automatic VPS activation remains deferred.
+as superseded at 16:07:20 IST on 2 October. Closeout documentation merged in [PR #803](https://github.com/flidai/leapview/pull/803)
+at `c7b16569b9e9da1331d1c2fbb27e1bbb91046984` on 2 October 2026. Automatic VPS activation remains deferred.
 
 ## Historical live rollout snapshot — 30 September 2026
 
@@ -101,6 +101,5 @@ qualification, controlled handover/restoration, offline rollback, Caddy
 recreation and real host restart. The 2 October final acceptance report also
 records the completed 24-hour observation, both adoption boundary smokes,
 bound acceptance receipt and post-observation retention/recovery audit.
-Fallback PR #748 was closed externally after those proofs passed. Completion
-requires final documentation review and protected merge. Automatic VPS
+Fallback PR #748 was closed externally after those proofs passed. Final documentation review and protected merge completed in #803. Automatic VPS
 activation remains deferred.

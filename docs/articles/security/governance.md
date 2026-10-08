@@ -61,8 +61,8 @@ The dependency lane has two deliberately different inputs. Its required
 default evaluates the checked-in
 `.security/javascript-vulnerability-evidence.json` offline for JavaScript, then
 runs a live, source-aware `govulncheck` evaluation for every maintained Go
-module. The JavaScript evidence covers exactly five graphs: the root Bun graph,
-Desktop Bun, qualification Bun, the malicious-instance Electron Bun graph, and
+module. The JavaScript evidence covers exactly six graphs: the root Bun graph,
+Desktop Bun, qualification Bun and npm, the malicious-instance Electron Bun graph, and
 the APIGen TypeSpec npm graph. Every graph binds both its manifest and lockfile
 to SHA-256 identities and carries UTC generation and expiry timestamps. The
 evidence lifetime cannot exceed 7 days (168 hours).
@@ -78,7 +78,7 @@ commands are:
 
 | Scan | Command | Primary owner | Evidence |
 | --- | --- | --- | --- |
-| JavaScript vulnerability evidence evaluation | `task security:dependencies` → repository-owned evaluator (offline default) | Frontend/security owner | `.security/javascript-vulnerability-evidence.json`; five manifest+lock graphs and SHA-256 bindings |
+| JavaScript vulnerability evidence evaluation | `task security:dependencies` → repository-owned evaluator (offline default) | Frontend/security owner | `.security/javascript-vulnerability-evidence.json`; six manifest+lock graphs and SHA-256 bindings |
 | JavaScript vulnerability evidence refresh | `task security:dependencies:evidence:refresh` → same evaluator with `-refresh-javascript-evidence` | Frontend/security owner | Atomic replacement of the evidence document after live Bun/npm scans |
 | Go dependency and call-path audit | `task security:dependencies` → repository-owned private pinned `govulncheck@v1.6.0` bootstrap and live source-aware scan | Go/platform owner | Current source, every declared Go module, and govulncheck output |
 
@@ -188,7 +188,7 @@ includes an exact, recognized transport-failure diagnostic. It starts a fresh
 Bun process after a five-second backoff. A valid Critical finding is evaluated
 immediately and is never retried as an outage; unknown or malformed output,
 another transport failure, and retry exhaustion all remain gate failures. The
-single retry is shared by all five JavaScript graphs in the refresh so it cannot
+single retry is shared across the JavaScript graphs in the refresh so it cannot
 multiply against the dependency-job budget. npm has no retry path. The
 required default never refreshes evidence. A refresh outage fails the refresh
 and cannot create or extend evidence; already reviewed evidence remains usable

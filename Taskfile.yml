@@ -587,9 +587,13 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
       - bun test scripts/nix_ci_contract.test.ts
+      - bun test scripts/nix_desktop_candidate_contract.test.ts
       - bun test scripts/nix_compose_candidate_contract.test.ts
       - bun test scripts/managed_admission_contract.test.ts
+      - bun test scripts/managed_application_contract.test.ts
       - python3 -m unittest discover -s scripts/tests -p test_managed_admission_handoff.py
+      - python3 -m unittest discover -s scripts/tests -p test_managed_application_inputs.py
+      - python3 -m unittest discover -s deploy/managed/nixos/tests -p 'managed_application*_test.py'
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
       - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
       - python3 -m unittest discover -s scripts/tests -p 'test_ci_sqlc_hosted_*.py'
@@ -600,6 +604,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_cli_compatibility.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_attestation.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
@@ -612,6 +617,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_installer_diagnostics.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_site_image.py
@@ -1757,6 +1763,11 @@ tasks:
     cmds:
       - python3 deploy/managed/nixos/tests/kamal_transport_contract_test.py
       - bash deploy/managed/nixos/tests/run-kamal-transport.sh
+
+  managed:application:qualify:
+    desc: Qualify real admitted image enrollment, handoff and offline recovery in private namespaces (requires sudo)
+    cmds:
+      - bash deploy/managed/nixos/tests/run-managed-application.sh {{.CLI_ARGS}}
 
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures

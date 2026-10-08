@@ -36,7 +36,7 @@ surfaces:
   - path: deploy/compose/qualification/package.json
     kind: js-package
     updater: {ecosystem: npm, directory: /deploy/compose/qualification}
-    scanners: [bun-audit]
+    scanners: [bun-audit, npm-audit]
   - path: internal/app/testing/maliciousinstance/electron/package.json
     kind: js-package
     updater: {ecosystem: npm, directory: /internal/app/testing/maliciousinstance/electron}
@@ -53,6 +53,10 @@ surfaces:
     kind: js-lock
     updater: {ecosystem: npm, directory: /deploy/compose/qualification}
     scanners: [bun-audit]
+  - path: deploy/compose/qualification/package-lock.json
+    kind: js-lock
+    updater: {ecosystem: npm, directory: /deploy/compose/qualification}
+    scanners: [npm-audit]
   - path: desktop/bun.lock
     kind: js-lock
     updater: {ecosystem: npm, directory: /desktop}
@@ -115,6 +119,11 @@ surfaces:
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
     scanners: [trivy]
     images: ["${LEAPVIEW_IMAGE}", "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251"]
+  - path: deploy/compose/qualification/Dockerfile.authoring-browser
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /deploy/compose/qualification}
+    scanners: [trivy]
+    images: ["mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27"]
   - path: deploy/postgres/ha/Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/postgres/ha}
@@ -208,6 +217,10 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/workflows/managed-scaffold.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/managed-application-candidate.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

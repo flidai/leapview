@@ -14,8 +14,55 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/app/cli/installationstate"
+	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFirstInstallProbesKeepLoopbackConnectionWithConfiguredAuthority(t *testing.T) {
+	for _, operation := range []string{"startup", "activation", "activation rollback"} {
+		t.Run(operation, func(t *testing.T) {
+			controller, root := bootstrapLifecycleController(t, true)
+			controller.dockerBin = writeBootstrapDockerProbe(t, root, operation == "activation rollback")
+			var mu sync.Mutex
+			var paths []string
+			allowed := httpmiddleware.AllowedHosts([]string{"dash.example.com"})(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				mu.Lock()
+				paths = append(paths, request.URL.Path)
+				mu.Unlock()
+				response.WriteHeader(http.StatusOK)
+			}))
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				// Docker forwards the host's loopback publication over its bridge;
+				// the application sees a non-loopback peer and enforces Host.
+				request.RemoteAddr = "172.18.0.1:49152"
+				allowed.ServeHTTP(response, request)
+			}))
+			defer server.Close()
+			var err error
+			if operation == "startup" {
+				err = controller.startFirstInstallBootstrapAt(t.Context(), server.URL)
+			} else {
+				err = controller.activateFirstInstallAt(t.Context(), server.URL)
+			}
+			if operation == "activation rollback" {
+				require.ErrorContains(t, err, "activate public first-install configuration")
+				require.NotContains(t, err.Error(), "restore private first-install configuration")
+			} else {
+				require.NoError(t, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			switch operation {
+			case "startup":
+				require.Equal(t, []string{"/healthz"}, paths)
+			case "activation":
+				require.Equal(t, []string{"/readyz", "/readyz"}, paths)
+			case "activation rollback":
+				require.Equal(t, []string{"/readyz", "/healthz"}, paths)
+			}
+		})
+	}
+}
 
 func TestPrivateComposeArgumentsAndEnvironmentOverrideHostBindings(t *testing.T) {
 	root := t.TempDir()
@@ -134,7 +181,7 @@ func TestFirstInstallActivationRequiresExactReadinessBeforeCompose(t *testing.T)
 	require.True(t, present)
 	require.Equal(t, installationstate.PhasePrivate, marker.BootstrapPhase)
 
-	status, err := hostHTTPStatus(t.Context(), server.URL+"/redirect")
+	status, err := hostHTTPStatus(t.Context(), server.URL+"/redirect", "dash.example.com")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusFound, status, "readiness redirects are not followed")
 }

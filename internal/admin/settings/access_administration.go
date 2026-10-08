@@ -481,7 +481,11 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			event.Action, event.ResourceKind, event.ResourceID = "principal.local_user.created", "principal", created.Principal.ID
 			result.Message = "Local user created. Copy the temporary password now."
 		case "update_principal":
-			current, management, err := accessAdministrationPrincipal(ctx, tx, command.PrincipalID)
+			current, err := access.PrincipalForMutation(ctx, tx, command.PrincipalID)
+			if err != nil {
+				return event, err
+			}
+			management, err := accessAdministrationIdentityManagement(ctx, tx, current.ID)
 			if err != nil {
 				return event, err
 			}
@@ -566,17 +570,13 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			if command.PrincipalID == "" {
 				return event, errors.New("principal is required")
 			}
-			sessions, err := tx.ListSessions(ctx, command.PrincipalID)
-			if err != nil {
-				return event, err
+			writer, ok := tx.(interface {
+				RevokeSessionsForPrincipal(context.Context, string) error
+			})
+			if !ok {
+				return event, errors.New("session revocation is unavailable")
 			}
-			for _, session := range sessions {
-				if session.RevokedAt == "" {
-					if err := tx.RevokeSessionForPrincipal(ctx, command.PrincipalID, session.ID); err != nil {
-						return event, err
-					}
-				}
-			}
+			mutationErr = writer.RevokeSessionsForPrincipal(ctx, command.PrincipalID)
 			event.Action, event.ResourceKind, event.ResourceID = "principal.sessions.revoked", "principal", command.PrincipalID
 			result.Message = "All active sessions revoked."
 		case "create_group":
@@ -667,11 +667,16 @@ func accessAdministrationPrincipal(ctx context.Context, repository access.Reposi
 	if err != nil {
 		return access.Principal{}, access.PrincipalIdentityManagement{}, err
 	}
+	management, err := accessAdministrationIdentityManagement(ctx, repository, id)
+	return principal, management, err
+}
+
+func accessAdministrationIdentityManagement(ctx context.Context, repository access.Repository, id string) (access.PrincipalIdentityManagement, error) {
 	management := access.PrincipalIdentityManagement{Source: access.IdentityManagementSystem}
 	if reader, ok := repository.(access.PrincipalIdentityManagementRepository); ok {
-		management, err = reader.PrincipalIdentityManagement(ctx, id)
+		return reader.PrincipalIdentityManagement(ctx, id)
 	}
-	return principal, management, err
+	return management, nil
 }
 
 func accessAdministrationGroup(ctx context.Context, repository access.Repository, id string) (access.Group, error) {

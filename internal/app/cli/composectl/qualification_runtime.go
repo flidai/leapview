@@ -27,6 +27,7 @@ type qualificationContainerRequest struct {
 	ExposedPorts []string
 	User         string
 	ReadOnly     bool
+	NoPull       bool
 	Volumes      []qualificationContainerVolume
 	Tmpfs        []string
 	Environment  map[string]string
@@ -158,6 +159,9 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 		return nil, fmt.Errorf("qualification container entrypoint must be a single executable")
 	}
 	arguments := []string{"run", "--detach", "--name", request.Name}
+	if request.NoPull {
+		arguments = append(arguments, "--pull=never")
+	}
 	if request.ReadOnly {
 		arguments = append(arguments, "--read-only")
 	}
