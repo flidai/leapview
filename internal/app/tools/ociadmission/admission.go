@@ -53,6 +53,9 @@ type admissionOptions struct {
 	evidencePath            string
 	outputPath              string
 	vulnerabilityReportPath string
+	admissionBundlePath     string
+	releaseID               string
+	releaseVersion          string
 }
 
 const (
@@ -158,6 +161,9 @@ func runAdmission(args, env []string, stdout, stderr io.Writer) error {
 	if err := validateReportOutputPaths(opts, env); err != nil {
 		return err
 	}
+	if err := validateBundleOptions(opts, env); err != nil {
+		return err
+	}
 	policy, policyBytes, err := readPolicy(opts.policyPath)
 	if err != nil {
 		return err
@@ -202,7 +208,7 @@ func runAdmission(args, env []string, stdout, stderr io.Writer) error {
 	if githubRepository != repositoryIdentity {
 		return rejectWithReport(opts, report, outcomeNotScanned, "GitHub repository identity is not flidai/leapview")
 	}
-	if err := runner.verifyLive(opts, policy, policySHA256, contract, stdout); err != nil {
+	if err := runner.verifyLive(opts, policy, policyBytes, policySHA256, contract, stdout); err != nil {
 		return err
 	}
 	return nil
@@ -222,6 +228,9 @@ func parseOptions(args []string, stderr io.Writer) (admissionOptions, error) {
 	flags.StringVar(&opts.evidencePath, "evidence", "", "hermetic evidence path")
 	flags.StringVar(&opts.outputPath, "output", "", "optional output path")
 	flags.StringVar(&opts.vulnerabilityReportPath, "vulnerability-report", "", "optional sanitized vulnerability report path")
+	flags.StringVar(&opts.admissionBundlePath, "admission-bundle", "", "optional fresh directory for an authenticated producer's canonical receipt and evidence")
+	flags.StringVar(&opts.releaseID, "release-id", "", "immutable release identity for the canonical receipt")
+	flags.StringVar(&opts.releaseVersion, "release-version", "", "exact image version for the canonical receipt")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "usage: ociadmission --image REPOSITORY@sha256:DIGEST")
 		fmt.Fprintln(stderr, "  --repository OCI_REPOSITORY")
@@ -230,6 +239,7 @@ func parseOptions(args []string, stderr io.Writer) (admissionOptions, error) {
 		fmt.Fprintln(stderr, "  --policy PATH")
 		fmt.Fprintln(stderr, "  [--platform linux/amd64|linux/arm64]")
 		fmt.Fprintln(stderr, "  [--mode live|hermetic] [--evidence PATH] [--output PATH] [--vulnerability-report PATH]")
+		fmt.Fprintln(stderr, "  [--admission-bundle DIR --release-id ID --release-version VERSION]")
 	}
 	if err := flags.Parse(args); err != nil {
 		return opts, usageError{message: err.Error()}

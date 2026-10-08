@@ -106,6 +106,70 @@ This is the existing artifact-admission authority contract, not a new admission
 issuer. Copy receipts only through the authenticated producer handoff. Never
 manufacture receipts from booleans or use a fixture as live authorization.
 
+### Authenticated receipt handoff
+
+The conventional OCI verifier can export `oci-artifact-admission/v1` receipts
+after live provenance, per-platform Buildx SPDX, exact image labels and pinned
+vulnerability verification succeed. Two producer profiles publish the bundle:
+
+- `artifacts.yml`, a push to `main`, preserves the clean development-image
+  identity (`dev.leapview.build.release=false`).
+- `release.yml`, dispatched from `main`, preserves the clean release-candidate
+  identity (`dev.leapview.build.release=true`).
+
+Both bind the image revision to the workflow source commit. PR-dispatched main
+images, tag releases, other workflows and hermetic fixtures cannot use this
+export path. Nix candidate receipts retain their separate qualification contract;
+they are not converted into conventional admission receipts.
+
+Each native platform publishes
+`managed-admission-<run-id>-<run-attempt>-<architecture>`. The bundle contains the
+canonical receipt and digest, verified provenance, SPDX, image configuration,
+pinned vulnerability policy and scan evidence, plus a binding that hashes every
+evidence file. The importing run must have completed successfully. A bundle from
+a failed or canceled run cannot be used merely because its image build passed.
+
+Build the verifier from the reviewed controller source on the trusted operator
+machine, then install that executable and `scripts/managed_admission_handoff.py`
+on the Linux host using the established operator provisioning path. Go is needed
+for this build, not on the receiving host:
+
+```sh
+CGO_ENABLED=0 go build -trimpath -o /tmp/ociadmission ./internal/app/tools/ociadmission
+```
+
+The receiver requires Python 3, authenticated `gh` access to `flidai/leapview`,
+and Linux root. Provision the admission directory and evidence parent as
+root-owned mode 0700 outside application restore scopes. Select the exact source,
+platform, immutable image, run attempt and artifact ID from the reviewed producer
+result; the importer independently fetches their metadata from GitHub:
+
+```sh
+python3 scripts/managed_admission_handoff.py \
+  --run-id <run-id> --run-attempt <attempt> --artifact-id <artifact-id> \
+  --source-revision <full-commit> --platform linux/amd64 \
+  --image ghcr.io/flidai/leapview@sha256:<digest> \
+  --verifier /opt/leapview-tools/ociadmission \
+  --admission-root /opt/leapview-admissions \
+  --evidence-dir /opt/leapview-admission-evidence/<unique-import>
+```
+
+The importer checks authenticated repository, workflow, event, source, attempt,
+artifact expiry and archive SHA-256 before examining the bundle. It rejects
+unsafe ZIP entries, altered bindings, noncanonical receipts and mismatched image
+or evidence identities. It installs a mode-0400 receipt without replacing an
+existing file, and prints the authenticated artifact/receipt identities. Existing
+receipts and evidence directories are never overwritten. Retain the printed
+record and optional full evidence directory through the rollback/audit window;
+GitHub's producer artifacts expire after 14 days.
+
+Import each selected predecessor and candidate receipt separately. This does not
+pull images, create a maintenance request or journal, change traffic, activate a
+release, or establish full managed-profile acceptance. Continue preparing the
+private request from the exact compatibility and enrollment fingerprints below.
+Protected live producer-to-host qualification on the merged exporter remains an
+adoption requirement; fixture receipts are test evidence only.
+
 The request contains `version: 1`, `target`, `predecessor`, `candidate`,
 `sourceBefore`, `sourceAfter` and `budgets`. Each release binds `image`, the full
 40-character `revision`, `artifactAdmissionDigest`, `configurationDigest` and
@@ -251,7 +315,7 @@ maintenance protocol and the actual application/database workload. Run
 
 Remaining D11 work includes qualified migration-authority coordination for
 schema-changing releases, workload-sized capacity and rollback-window evidence,
-authenticated producer handoff for the selected artifacts, and a real dedicated host
+protected producer-to-host handoff evidence for the selected artifacts, and a real dedicated host
 run covering update, failure before/after publication, rollback after acknowledged
 writes, reboot, TLS renewal, uploads and public SSE reconnects. This command
 rejects schema-changing requests. D12 owns credential activation/rotation/recovery;
