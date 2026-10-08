@@ -6,8 +6,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
-	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -35,13 +33,13 @@ func (m *Module) authorizeRetainedVisual(ctx context.Context, scope agent.Scope,
 	if !ok || metrics == nil {
 		return errors.New("semantic runtime is unavailable")
 	}
-	authority := queryauthz.SemanticAuthorizationAdapter{
-		Model: metrics.SemanticModel, RequireConsumerModelID: true,
-	}
-	if provider, ok := metrics.(interface {
-		SemanticConsumer(context.Context, string) (*semanticquery.SemanticAccessConsumer, error)
-	}); ok {
-		authority.Consumer = provider.SemanticConsumer
+	// The governed runtime owns semantic projection decisions and forwards
+	// this capability through its admission and audit decorators.
+	authority, ok := metrics.(interface {
+		AuthorizeSemanticModelProjection(context.Context, string) error
+	})
+	if !ok {
+		return errors.New("semantic projection authority is unavailable")
 	}
 	return authority.AuthorizeSemanticModelProjection(ctx, resolvedModel.String())
 }

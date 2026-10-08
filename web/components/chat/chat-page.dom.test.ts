@@ -376,7 +376,8 @@ test('Search Ask AI opens an unsent draft once and clears only its prompt fragme
   const requestsBefore = fixture.draftTurnRequests
   const prompt = 'Why did sales fall in Europe?'
   try {
-    await page.goto(`${fixture.baseURL}/new#${new URLSearchParams({ prompt, source: 'search' })}`)
+    await page.addInitScript(() => window.history.replaceState({ fromSearch: 'retained-state' }, '', window.location.href))
+    await page.goto(`${fixture.baseURL}/new?context=search#${new URLSearchParams({ prompt, source: 'search' })}`)
     const composer = page.locator('lv-chat-page lv-chat-composer')
     await page.waitForFunction(prompt => {
       const composer = document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-composer') as any
@@ -384,6 +385,8 @@ test('Search Ask AI opens an unsent draft once and clears only its prompt fragme
     }, prompt)
     expect(await composer.locator('textarea').inputValue()).toBe(prompt)
     expect(new URL(page.url()).hash).toBe('#source=search')
+    expect(new URL(page.url()).search).toBe('?context=search')
+    expect(await page.evaluate(() => window.history.state)).toEqual({ fromSearch: 'retained-state' })
     await composer.locator('textarea').fill('My revised question')
     await page.locator('lv-chat-page').evaluate(async (chat: any) => { chat.requestUpdate(); await chat.updateComplete })
     expect(await composer.locator('textarea').inputValue()).toBe('My revised question')

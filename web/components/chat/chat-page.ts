@@ -1,3 +1,4 @@
+import { consumeChatPromptDraft, readChatPromptDraft } from './chat-draft-location'
 import { queryVisualExplorerURL, retainedVisualExplorerHref } from './visual-action-links'
 import { setChatPreviewLocation, clearChatDashboardLocation, rememberChatDashboardLocation } from './dashboard-preview-location'
 import { generatedDashboardHref } from './generated-dashboard'
@@ -650,17 +651,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private applySearchDraft(): void {
     if (this.searchDraftApplied || this.page?.view !== 'new') return
-    const parameters = new URLSearchParams(window.location.hash.slice(1))
-    const draft = parameters.get('prompt')
+    const draft = readChatPromptDraft()
     if (draft === null) return
     const composer = this.shadowRoot?.querySelector<LitElement & { setDraft(value: string): void; getDraft(): string }>('lv-chat-composer')
     if (!composer) return
     this.searchDraftApplied = true
     void composer.updateComplete.then(() => {
       if (!composer.getDraft()) composer.setDraft(draft)
-      parameters.delete('prompt')
-      const hash = parameters.toString()
-      window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}${hash ? `#${hash}` : ''}`)
+      consumeChatPromptDraft()
     })
   }
 
