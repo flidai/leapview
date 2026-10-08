@@ -49,6 +49,8 @@ on:
       - 'desktop/scripts/qualify-lifecycle-linux.mjs'
       - 'desktop/scripts/lifecycle-probe-policy.mjs'
       - 'desktop/scripts/lifecycle-probe-policy.test.mjs'
+      - 'desktop/scripts/lifecycle-probe-cdp.mjs'
+      - 'desktop/scripts/lifecycle-probe-cdp.test.mjs'
       - '.github/workflows/nix-desktop-lifecycle.yml'
       - 'scripts/tests/test_nix_desktop_attestation.py'
       - 'scripts/nix_oci_content.py'

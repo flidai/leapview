@@ -5,6 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { inspectTrustedShell } from './lifecycle-probe-cdp.mjs';
 import { verifyRetainedProfile, verifyTermination } from './lifecycle-probe-policy.mjs';
 
 const [executable, profile, expectedLabel, nextLabel, termination, output] = process.argv.slice(2);
@@ -62,11 +63,6 @@ async function call(socket, method, params = {}) {
     socket.send(JSON.stringify({ id, method, params }));
   });
 }
-async function evaluate(socket, expression) {
-  const result = await call(socket, 'Runtime.evaluate', { expression, returnByValue: true });
-  if (result.exceptionDetails) throw new Error('trusted UI evaluation failed');
-  return result.result?.value;
-}
 async function until(run, description) {
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
@@ -93,15 +89,14 @@ try {
     return Boolean(target?.webSocketDebuggerUrl);
   }, 'installed archive did not open its trusted shell');
   const socket = await connect(target.webSocketDebuggerUrl);
-  await until(async () => await evaluate(socket,
-    `document.querySelector('form.rename input[name="profileId"]')?.value === ${JSON.stringify(expectedID)} && document.querySelector('form.rename input[name="label"]')?.value === ${JSON.stringify(expectedLabel)}`),
-  'installed archive did not read the retained profile');
+  const inspect = (action, values) => inspectTrustedShell((method, params) => call(socket, method, params), action, values);
+  await until(async () => await inspect('read', [expectedID, expectedLabel]),
+    'installed archive did not read the retained profile');
   if (nextLabel !== '-') {
     // Submit the same form a user submits. The renderer never writes profiles.json.
-    await evaluate(socket, `(() => { const f = document.querySelector('form.rename'); f.querySelector('input[name="label"]').value = ${JSON.stringify(nextLabel)}; f.requestSubmit(); return true; })()`);
-    await until(async () => await evaluate(socket,
-      `document.querySelector('[data-state="success"]')?.textContent === 'Saved instance name updated.' && document.querySelector('form.rename input[name="label"]')?.value === ${JSON.stringify(nextLabel)}`),
-    'trusted UI did not acknowledge its durable profile write');
+    await inspect('rename', [nextLabel]);
+    await until(async () => await inspect('acknowledged', [nextLabel]),
+      'trusted UI did not acknowledge its durable profile write');
   }
   const document = JSON.parse(await readFile(join(profile, 'profiles.json'), 'utf8'));
   verifyRetainedProfile(document, nextLabel === '-' ? expectedLabel : nextLabel);

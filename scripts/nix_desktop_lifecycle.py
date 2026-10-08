@@ -171,7 +171,8 @@ def qualify(args):
         'verifierRevision': verifier['revision'], 'verifierFiles': [
             {'path': path, 'sha256': desktop.digest_file(Path(__file__).resolve().parents[1] / path)}
             for path in ('scripts/nix_desktop_lifecycle.py', 'scripts/nix_desktop_lifecycle_inputs.py',
-                         'desktop/scripts/qualify-lifecycle-linux.mjs', 'desktop/scripts/lifecycle-probe-policy.mjs')],
+                         'desktop/scripts/qualify-lifecycle-linux.mjs', 'desktop/scripts/lifecycle-probe-policy.mjs',
+                         'desktop/scripts/lifecycle-probe-cdp.mjs')],
         'lifecycle': result, 'privateProfileRemoved': not work.exists(), 'releaseAdmission': False,
         'scope': 'linux-amd64-preview-saved-profile-version-upgrade-crash-restart-offline-rollback',
         'pending': ['remote-authenticated-session', 'server-data-recovery', 'os-code-signing',
