@@ -70,6 +70,10 @@ func (r *currentUserRepository) PrincipalIdentityManagement(_ context.Context, p
 	return r.management, nil
 }
 
+func (r *currentUserRepository) PrincipalByIDForUpdate(ctx context.Context, id string) (access.Principal, error) {
+	return r.PrincipalByID(ctx, id)
+}
+
 func (r *currentUserRepository) UpsertPrincipal(_ context.Context, input access.PrincipalInput) (access.Principal, error) {
 	r.principal.DisplayName = input.DisplayName
 	r.principal.UpdatedAt = "2026-08-10T12:05:00Z"
