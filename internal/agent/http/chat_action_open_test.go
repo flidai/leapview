@@ -153,3 +153,47 @@ func TestChatPreviewOpensCompactCreationReceiptAndChecksOwnership(t *testing.T) 
 		}
 	}
 }
+
+func TestChatAutomaticPreviewValidatesRetainedErrorsWithoutCreation(t *testing.T) {
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "recovery-owner@example.com", DisplayName: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := agent.NewService(fixture.Agent, agent.Config{APIKey: "test", Model: "test"})
+	scope := agent.Scope{PrincipalID: owner.ID, ProjectID: "project:preview"}
+	for _, tc := range []struct {
+		name, receipt, query string
+		want                 int
+	}{
+		{"valid recovery", "revision:\n  number: 4\n", "?embed=chat&mode=preview", http.StatusSeeOther},
+		{"invalid recovery", "visualErrors:\n  chart: Missing measure\n", "?embed=chat&mode=preview", http.StatusNotFound},
+		{"manual repair", "visualErrors:\n  chart: Missing measure\n", "?embed=chat", http.StatusSeeOther},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conversation, err := service.CreateConversation(t.Context(), scope, "Recover dashboard")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = fixture.Agent.AppendMessage(t.Context(), agent.MessageInput{PrincipalID: owner.ID, ConversationID: conversation.ID, Role: agent.MessageRoleAssistant, ContentJSON: `{"tool_calls":[{"id":"preview-call","name":"preview_dashboard_draft","arguments":{"dashboardId":"dashboard-1","draftId":"draft-1","page":"details"}}]}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = fixture.Agent.AppendMessage(t.Context(), agent.MessageInput{PrincipalID: owner.ID, ConversationID: conversation.ID, Role: agent.MessageRoleTool, ToolCallID: "preview-call", ToolName: "preview_dashboard_draft", ContentText: tc.receipt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler := NewHandler(Options{Service: service, ActiveProjectID: scope.ProjectID, CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: owner.ID}, true }})
+			router := chi.NewRouter()
+			router.Get("/chats/{conversation}/actions/{toolcall}/open", handler.ChatActionOpen)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/chats/"+conversation.ID+"/actions/preview-call/open"+tc.query, nil))
+			if response.Code != tc.want {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, tc.want, response.Body.String())
+			}
+			if tc.want == http.StatusSeeOther && !strings.Contains(response.Header().Get("Location"), "page=details") {
+				t.Fatalf("selected page lost: %s", response.Header().Get("Location"))
+			}
+		})
+	}
+}

@@ -28,6 +28,9 @@ export function generatedDashboardHref(transcript: ChatTranscriptItemSignal[], r
   if (!href) return ''
   const url = new URL(href, 'http://local.invalid')
   url.searchParams.set('embed', 'chat')
+  // Retained receipts may omit chart errors from their browser summary.
+  // Automatic navigation must validate the full receipt, including recovery.
+  url.searchParams.set('mode', 'preview')
   // The retained route verifies that this preview belongs to this creation.
   if (created) url.searchParams.set('createdBy', created.toolCallId!)
   return url.pathname + url.search
