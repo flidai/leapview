@@ -200,10 +200,10 @@ export function axis(
     axisLine: { lineStyle: { color: context.colors.grid } },
     axisTick: { lineStyle: { color: context.colors.grid } },
     splitLine: { lineStyle: { color: context.colors.grid } },
-    axisLabel: { color: context.colors.muted, hideOverlap: true, formatter: (value: unknown) => resolvedType === 'value'
+    axisLabel: { color: context.colors.foreground, hideOverlap: true, formatter: (value: unknown) => resolvedType === 'value'
       ? formatDisplayField(envelope, ref, value, context, displayUnit)
       : resolvedType === 'time' ? formatAxisDate(envelope, ref, value, context, policy?.dateUnit) : formatField(envelope, ref, value, context) },
-    nameTextStyle: { color: context.colors.muted },
+    nameTextStyle: { color: context.colors.foreground },
   }
   applyAxisVisibility(result, policy)
   applyAxisRotation(result, policy?.labelRotation)
@@ -302,7 +302,7 @@ export function legend(
     } : {}),
     orient: position === 'left' || position === 'right' ? 'vertical' : 'horizontal',
     [position]: 0,
-    textStyle: { color: context.colors.muted, fontFamily: context.fontFamily },
+    textStyle: { color: context.colors.foreground, fontFamily: context.fontFamily },
   }
   if (selectedItems) {
     const configuredValues = new Set(selectedItems.map((item) => item.value))

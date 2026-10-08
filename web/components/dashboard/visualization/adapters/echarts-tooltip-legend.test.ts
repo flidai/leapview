@@ -83,7 +83,7 @@ test('ECharts appends known unconfigured legend values and themes title/text col
   const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', muted: '#8b949e' } }
   const option = echartsOption(envelope, dark) as any
   expect(option.legend.data).toEqual([{ name: 'open' }, { name: 'closed' }])
-  expect(option.legend.textStyle.color).toBe(dark.colors.muted)
+  expect(option.legend.textStyle.color).toBe(dark.colors.foreground)
   expect(option.graphic[0].style.fill).toBe(dark.colors.foreground)
 })
 

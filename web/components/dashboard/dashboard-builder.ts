@@ -964,7 +964,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
     const canDelete = this.canDeleteDashboard(builder)
-    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || (builder.capabilities.canArchive && !canDelete) || canDelete || Boolean(this.forkHref)
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || (builder.capabilities.canArchive && !canDelete) || canDelete || Boolean(this.forkHref) || (this.embeddedInChat && builder.capabilities.canEdit)
     const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
@@ -1011,7 +1011,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
               <div class="more-menu" aria-label="More dashboard actions">
-                ${this.embeddedInChat ? nothing : html`<button class="arrange-mobile" type="button" aria-label="Arrange visuals" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>Arrange visuals</button>`}
+                ${this.embeddedInChat ? html`<button type="button" aria-label="Arrange visuals" title="Close gaps by fitting charts into balanced rows" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${() => this.applyBalancedLayout(true)}>Arrange visuals</button>` : html`<button class="arrange-mobile" type="button" aria-label="Arrange visuals" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>Arrange visuals</button>`}
                 ${this.forkHref ? html`<a class="button" href=${this.forkHref}>Make a copy</a>` : nothing}
                 ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'organization' ? 'Make private' : 'Share with organization'}</button>` : nothing}
                 ${builder.capabilities.canExport
@@ -1403,7 +1403,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       }
       return
     }
-    if (fromParent && (event.data as { type: string }).type === 'lv-arrange-dashboard-visuals') this.arrangeVisuals()
+    if (fromParent && event.data?.type === 'lv-arrange-dashboard-visuals') {
+      if (event.data.reflow) this.applyBalancedLayout(false)
+      else this.arrangeVisuals()
+    }
     if (fromParent && (event.data as {type: string}).type === 'lv-select-dashboard-page') {
       const pageId = (event.data as unknown as {pageId: string}).pageId
       if (this.builder?.pages.some(page => page.id === pageId) && this.selectedPage(this.builder)?.id !== pageId) this.selectPage(pageId)

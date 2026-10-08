@@ -835,3 +835,31 @@ test('embedded builder relays table requests and publishes window changes with u
     await page.waitForFunction(() => (window as any).projections.some((p: any) => Object.values(p.visuals).some((v: any) => v.dataState.blocks.b?.start === 150 && v.dataState.blocks.b.rows[0][0] === 99)))
   } finally { await page.close() }
 })
+
+
+test('embedded builder can explicitly close layout gaps without requesting field repair', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/embed-host`)
+    const editor = page.frameLocator('iframe').locator('lv-dashboard-builder')
+    await editor.locator('.field-results').waitFor()
+    await editor.evaluate(async (e: any) => {
+      const builder = JSON.parse(JSON.stringify(e.builder))
+      const visual = builder.pages[0].visuals[0]
+      builder.pages[0].visuals = ['kpi', 'kpi', 'kpi', 'line', 'pie', 'bar'].map((type, i) => ({ ...visual, id: `chart-${i}`, type, placement: { col: 1, row: 1 + i * 6, colSpan: 6, rowSpan: 5 } }))
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      mergePatch({ builder })
+      e.testCommands = []
+      e.addEventListener('lv-builder-command', (event: CustomEvent) => e.testCommands.push(event.detail))
+      await e.updateComplete
+    })
+    await editor.getByLabel('More dashboard actions', {exact:true}).first().click()
+    await editor.getByRole('button', {name:'Arrange visuals',exact:true}).click()
+    const command = await editor.evaluate((e:any) => e.testCommands[0])
+    expect(command.action).toBe('set_placements')
+    expect(command.fillMissingFields).toBeUndefined()
+    for (const row of new Set(command.placements.map((p:any) => p.placement.row))) {
+      expect(command.placements.filter((p:any) => p.placement.row === row).reduce((width:number,p:any) => width + p.placement.columnSpan, 0)).toBe(12)
+    }
+  } finally { await page.close() }
+})

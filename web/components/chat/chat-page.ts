@@ -84,6 +84,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private saveRequestID = ''
   private saveTimer = 0
   private wasAgentRunning = false
+  private arrangeCreatedDashboard = false
   private sidebarScroll = 0
   private chatScroll: { top: number; autoScroll: boolean } | null = null
 
@@ -108,7 +109,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     setChatPreviewLocation('builder')
   }
 
-  private async openGeneratedDashboard(href: string): Promise<void> {
+  private async openGeneratedDashboard(href: string, arrangeLayout = false): Promise<void> {
+    this.arrangeCreatedDashboard = false
     this.dashboardSaveError = ''
     this.builderNeedsRefresh = false
     this.pendingDashboardChange = null
@@ -125,7 +127,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     clearChatDashboardLocation()
     this.enterBuilder()
     await this.updateComplete
-    if (this.builderFrame) this.builderFrame.src = href
+    if (this.builderFrame) {
+      this.arrangeCreatedDashboard = arrangeLayout
+      this.builderFrame.src = href
+    }
     window.clearTimeout(this.saveTimer)
     this.saveTimer = window.setTimeout(() => {
       if (!this.savingDashboard) return
@@ -232,6 +237,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       if (this.pendingDashboardPageId === event.data.pageId) this.pendingDashboardPageId = ''
       this.savedDashboardArtifacts = event.data.artifacts
       this.savedDashboardVisuals = event.data.visuals
+      if (this.arrangeCreatedDashboard && event.data.canArrange && !event.data.updating) {
+        this.arrangeCreatedDashboard = false
+        this.builderFrame?.contentWindow?.postMessage({ type: 'lv-arrange-dashboard-visuals', reflow: true } satisfies ChatDashboardMessage, window.location.origin)
+      }
     }
     const reference = event.data.reference
     this.references = mergeReferences([reference], this.references.filter(item => item.reference.kind !== reference.reference.kind || item.reference.id !== reference.reference.id))
@@ -583,7 +592,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       const completedRun = this.dashboardGenerationRun
       const href = generatedDashboardHref(this.agent.transcript ?? [], completedRun, this.agent.activeConversationId ?? '')
       if (href) this.completedDashboardGenerationRun = completedRun
-      if (href) void this.openGeneratedDashboard(href)
+      if (href) {
+        const created = (this.agent.transcript ?? []).some(item => item.runId === completedRun && item.name === 'create_dashboard_draft' && item.status === 'complete' && !item.error)
+        void this.openGeneratedDashboard(href, created)
+      }
     }
     // Reopened dashboard replies have no query_visual receipts. Reuse the
     // authorized builder stream to load their cards and existing membership,
