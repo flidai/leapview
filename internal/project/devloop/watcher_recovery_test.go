@@ -2,6 +2,8 @@ package devloop
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -156,6 +158,12 @@ func awaitWatcherSnapshot(t *testing.T, updates <-chan Update, path, content str
 	for {
 		select {
 		case update := <-updates:
+			// Removing an authored tree may race an in-flight directory scan.
+			// The watcher reports that transient state before reconciling the
+			// queued removal. Still require the final valid snapshot below.
+			if errors.Is(update.Err, fs.ErrNotExist) {
+				continue
+			}
 			require.NoError(t, update.Err)
 			for _, artifact := range update.Result.Snapshot.Artifacts {
 				if artifact.Path == path && string(artifact.Content) == content {
