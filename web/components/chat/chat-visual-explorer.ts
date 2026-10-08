@@ -27,7 +27,7 @@ class ChatVisualExplorer extends LitElement {
     * { box-sizing:border-box; }
     main { max-width:1440px; margin:0 auto; padding:24px; }
     header { display:flex; flex-wrap:wrap; align-items:start; justify-content:space-between; gap:16px; margin-bottom:20px; }
-    h1 { font:var(--lv-type-title, 600 24px/1.3 sans-serif); margin:6px 0; }
+    h1 { font:var(--lv-type-page-title); margin:6px 0; }
     .eyebrow, .description { color:var(--lv-fg-muted); font:var(--lv-type-body); margin:0; }
     nav { display:flex; gap:8px; flex-wrap:wrap; }
     a { color:var(--lv-fg-link, var(--lv-fg-default)); text-decoration:none; }
