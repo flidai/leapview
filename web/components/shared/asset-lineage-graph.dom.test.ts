@@ -610,6 +610,58 @@ test('run graph preserves status overlays, run scope labels, custom dialog title
   } finally { await page.close() }
 })
 
+test('changed lineage anchors center in the current canvas before resize observers deliver', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
+  try {
+    await page.addInitScript(() => {
+      const NativeResizeObserver = window.ResizeObserver
+      let paused = false
+      const pending = new Map<ResizeObserver, () => void>()
+      window.ResizeObserver = class extends NativeResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          super((entries, observer) => {
+            if (paused) pending.set(observer, () => callback(entries, observer))
+            else callback(entries, observer)
+          })
+        }
+      }
+      Object.defineProperty(window, 'lineageResizeGate', { value: {
+        pause: () => { paused = true },
+        release: () => {
+          paused = false
+          const callbacks = [...pending.values()]
+          pending.clear()
+          for (const callback of callbacks) callback()
+        },
+      } })
+    })
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.getByRole('button', { name: 'Focus selected', exact: true }).click()
+    const zoom = await graph.getByRole('status', { name: 'Zoom level' }).textContent()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      ;(window as unknown as { lineageResizeGate: { pause(): void } }).lineageResizeGate.pause()
+      element.style.width = '346px'
+      element.graph = {
+        nodes: [-2, -1, 0, 1, 2].map(rank => ({ id: `asset-${rank}`, label: `Asset ${rank}`, kind: 'model', rank, selected: rank === 0 })),
+        edges: [-2, -1, 0, 1].map(rank => ({ id: `edge-${rank}`, source: `asset-${rank}`, target: `asset-${rank + 1}`, kind: 'uses_model' })),
+      }
+    })
+    await browserExpect(graph.locator('.asset-lineage-node-selected')).toHaveText(/Asset 0/)
+    await browserExpect.poll(() => graph.evaluate(element => {
+      const flow = element.querySelector('.react-flow')!.getBoundingClientRect()
+      const anchor = element.querySelector('[data-id="asset-0"]')!.getBoundingClientRect()
+      return Math.max(Math.abs(anchor.left + anchor.width / 2 - (flow.left + flow.width / 2)),
+        Math.abs(anchor.top + anchor.height / 2 - (flow.top + flow.height / 2)))
+    }), { timeout: 2_000, message: 'Changed anchor must use current canvas dimensions before ResizeObserver delivery' }).toBeLessThanOrEqual(0.5)
+    await browserExpect(graph.getByRole('status', { name: 'Zoom level' })).toHaveText(zoom!)
+    await page.evaluate(() => {
+      ;(window as unknown as { lineageResizeGate: { release(): void } }).lineageResizeGate.release()
+    })
+  } finally { await page.close() }
+})
+
 test('external lineage scope changes keep the anchor visible and narrow Full Fit contains every node', async () => {
   const startedAt = performance.now()
   const events: Array<{ elapsedMs: number; phase: string; event: string; detail?: unknown }> = []
