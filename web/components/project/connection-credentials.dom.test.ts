@@ -185,7 +185,7 @@ for (const status of [200, 503]) {
         runtime.mergePatch({ connectionAdmin: { credentials: { command: {} } } })
         const host = document.querySelector('lv-connection-administration')!
         const initialize = "$connectionAdmin.credentials = {command: evt.detail, drafts: [], nextBeforeVersionId: '', receiptId: '', receiptExpiresAt: '', bindingRevision: 0, operationId: evt.detail.operationId, phase: '', runtimeReady: false, status: {loading: true, error: '', message: ''}}; "
-        const expression = initialize + "(async () => { try { switch ($connectionAdmin.credentials.command.action) {case 'save': await @post('/connections/administration/credentials', {retry: 'never', retryMaxCount: 0, openWhenHidden: true, filterSignals: {include: /^(?:connectionAdmin[.]credentials)(?:[.]|$)/}, headers: window.LeapViewCommand.nonReplayableHeaders('createCredentialDraft')}); break; } } finally { $connectionAdmin.credentials.command.username = ''; $connectionAdmin.credentials.command.password = ''; evt.detail.username = ''; evt.detail.password = ''; } })()"
+        const expression = initialize + "(async () => { try { switch ($connectionAdmin.credentials.command.action) {case 'save': await @post('/connections/administration/credentials', {retry: 'never', retryMaxCount: 0, openWhenHidden: true, filterSignals: {include: /^(?:connectionAdmin[.]credentials)(?:[.]|$)/}, headers: window.LeapViewCommand.nonReplayableHeaders('saveCredentialDraft')}); break; } } finally { $connectionAdmin.credentials.command.username = ''; $connectionAdmin.credentials.command.password = ''; evt.detail.username = ''; evt.detail.password = ''; } })()"
         host.setAttribute('data-on:lv-connection-credential-command', expression)
         ;(window as any).bridgeEvents = []
         document.addEventListener('datastar-fetch', (event: Event) => (window as any).bridgeEvents.push((event as CustomEvent).detail.type))
@@ -204,7 +204,7 @@ for (const status of [200, 503]) {
       expect(bridgeRequests).toHaveLength(1)
       expect(bridgeRequests[0].body.connectionAdmin.credentials.command.password).toBe('transient-secret')
       expect(bridgeRequests[0].headers['idempotency-key']).toBeUndefined()
-      expect(bridgeRequests[0].headers['x-leapview-operation-id']).toBe('createCredentialDraft')
+      expect(bridgeRequests[0].headers['x-leapview-operation-id']).toBe('saveCredentialDraft')
       expect(result.password).toBe('')
       expect(result.username).toBe('')
       expect(result.detail.password).toBe('')
