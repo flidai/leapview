@@ -216,3 +216,60 @@ func TestActivationStartupPreparedRequiresExplicitRecovery(t *testing.T) {
 		t.Fatal("safe abort did not restore work")
 	}
 }
+
+func TestRepeatedAbortDoesNotPauseHealthyProviderWork(t *testing.T) {
+	service, authority, _ := activationFixture(t)
+	authority.record.Status.State = "aborted"
+	if err := service.admission.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	work, release, err := service.admission.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	_, err = service.AbortActivation(t.Context(), "actor", authority.record.Resource, authority.record.Request.OperationID)
+	if !errors.Is(err, ErrConflict) || !service.admission.Ready() || work.Err() != nil || len(*authority.events) != 0 {
+		t.Fatalf("terminal abort disturbed current work: error=%v ready=%v work=%v events=%v", err, service.admission.Ready(), work.Err(), *authority.events)
+	}
+}
+
+type otherPendingActivation struct {
+	*activationAuthorityFake
+	pending ActivationRecord
+}
+
+func (a otherPendingActivation) Pending(context.Context) (ActivationRecord, error) {
+	return a.pending, nil
+}
+
+func TestCompletedRetryCannotReleaseAnotherPendingOperation(t *testing.T) {
+	service, authority, _ := activationFixture(t)
+	authority.record.Status.State = "completed"
+	pending := authority.record
+	pending.Request.OperationID = uuid.NewString()
+	pending.Status.OperationID = pending.Request.OperationID
+	pending.Status.State = "switching"
+	service.authority = otherPendingActivation{activationAuthorityFake: authority, pending: pending}
+	_, err := service.RetryActivation(t.Context(), "actor", authority.record.Resource, authority.record.Request.OperationID, "")
+	if !errors.Is(err, ErrConflict) || service.admission.Ready() || len(*authority.events) != 0 {
+		t.Fatalf("historical completion bypassed pending operation: error=%v ready=%v events=%v", err, service.admission.Ready(), *authority.events)
+	}
+}
+
+func TestCompletedRetryDoesNotPauseHealthyProviderWork(t *testing.T) {
+	service, authority, _ := activationFixture(t)
+	authority.record.Status.State = "completed"
+	if err := service.admission.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	work, release, err := service.admission.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	status, err := service.RetryActivation(t.Context(), "actor", authority.record.Resource, authority.record.Request.OperationID, "")
+	if err != nil || status.State != "completed" || !service.admission.Ready() || work.Err() != nil || len(*authority.events) != 0 {
+		t.Fatalf("historical retry disturbed healthy runtime: status=%+v error=%v ready=%v work=%v events=%v", status, err, service.admission.Ready(), work.Err(), *authority.events)
+	}
+}

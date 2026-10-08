@@ -115,6 +115,21 @@ func (service *ActivationCoordinator) RetryActivation(ctx context.Context, actor
 	if record.Status.State == "aborted" {
 		return service.status(record), ErrConflict
 	}
+	if record.Status.State == "completed" {
+		// A historical completion cannot release another operation's fence or
+		// disturb an already healthy runtime. Closed recovery still verifies
+		// and installs the exact current pointer below.
+		pending, pendingErr := service.authority.Pending(ctx)
+		if pendingErr == nil && pending.Request.OperationID != operationID {
+			return service.status(record), ErrConflict
+		}
+		if pendingErr != nil && !errors.Is(pendingErr, ErrNotFound) {
+			return service.status(record), pendingErr
+		}
+		if service.admission.Ready() {
+			return service.status(record), nil
+		}
+	}
 	if record.Status.State != "committed" && record.Status.State != "completed" {
 		if receiptID == "" {
 			return service.status(record), ErrInvalid
@@ -158,7 +173,7 @@ func (service *ActivationCoordinator) AbortActivation(ctx context.Context, actor
 	if err != nil {
 		return ActivationStatus{}, err
 	}
-	if record.Status.State == "committed" || record.Status.State == "completed" {
+	if record.Status.State == "committed" || record.Status.State == "completed" || record.Status.State == "aborted" {
 		return service.status(record), ErrConflict
 	}
 	if err := service.pause(ctx); err != nil {
