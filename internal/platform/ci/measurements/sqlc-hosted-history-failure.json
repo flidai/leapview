@@ -1,0 +1,41 @@
+{
+  "run_url": "https://github.com/flidai/leapview/actions/runs/37756187622",
+  "attempt": 1,
+  "source": "d81499a722024237b06afa554185c2ad825a3124",
+  "conclusion": "failure",
+  "adoption_qualified": false,
+  "producer_failures": [
+    {
+      "mode": "baseline",
+      "job_id": 113241220098,
+      "raw_log_sha256": "b70e45c5b47df65df6f6b71e74b7a8e93e235438eff14435e2b989c06ca7c471"
+    },
+    {
+      "mode": "treatment",
+      "job_id": 113241220533,
+      "raw_log_sha256": "5b6c787b50f55b3121a40552a9a05574a95e2a034f205d355ed64423d70c20d3"
+    }
+  ],
+  "passed_boundaries": ["cache access", "image build and export", "generated proof", "image identity"],
+  "failure": {
+    "step": "Qualify the exact full image",
+    "location": "internal/app/cli/composectl/qualification_historical_transition_e2e_test.go:802",
+    "command": "git archive 28bfc7e7e8f8074847229c05c42f0bbc2dd79336 dashboards/experiments/cfo-demo",
+    "exit_code": 128,
+    "checkout_depth": 1,
+    "cause": "Pinned predecessor source is absent from the shallow sample checkout."
+  },
+  "reproduction": {
+    "source": "d81499a722024237b06afa554185c2ad825a3124",
+    "depth_one_archive_exit_code": 128,
+    "depth_one_error": "fatal: not a tree object: 28bfc7e7e8f8074847229c05c42f0bbc2dd79336",
+    "full_history_archive_exit_code": 0
+  },
+  "intended_consumer_samples_skipped": 6,
+  "comparison_status": "failed",
+  "limitations": [
+    "Neither producer completed required image qualification.",
+    "No consumer cache-reuse or paired speed/cost result exists.",
+    "Repository cache metadata deltas include concurrent CI and do not attribute storage cost."
+  ]
+}
