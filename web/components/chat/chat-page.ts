@@ -84,6 +84,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private saveRequestID = ''
   private saveTimer = 0
   private wasAgentRunning = false
+  private arrangeCreatedDashboard = false
   private sidebarScroll = 0
   private chatScroll: { top: number; autoScroll: boolean } | null = null
 
@@ -96,6 +97,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private enterBuilder(): void {
+		this.closeVisual(false)
     this.sidebarScroll = this.shadowRoot?.querySelector<HTMLElement>('.preview-scroll')?.scrollTop ?? 0
     this.chatScroll = this.chatThread?.captureScroll() ?? null
     this.dashboardPreview = true
@@ -107,7 +109,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     setChatPreviewLocation('builder')
   }
 
-  private async openGeneratedDashboard(href: string): Promise<void> {
+  private async openGeneratedDashboard(href: string, arrangeLayout = false): Promise<void> {
+    this.arrangeCreatedDashboard = false
     this.dashboardSaveError = ''
     this.builderNeedsRefresh = false
     this.pendingDashboardChange = null
@@ -124,7 +127,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     clearChatDashboardLocation()
     this.enterBuilder()
     await this.updateComplete
-    if (this.builderFrame) this.builderFrame.src = href
+    if (this.builderFrame) {
+      this.arrangeCreatedDashboard = arrangeLayout
+      this.builderFrame.src = href
+    }
     window.clearTimeout(this.saveTimer)
     this.saveTimer = window.setTimeout(() => {
       if (!this.savingDashboard) return
@@ -231,6 +237,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       if (this.pendingDashboardPageId === event.data.pageId) this.pendingDashboardPageId = ''
       this.savedDashboardArtifacts = event.data.artifacts
       this.savedDashboardVisuals = event.data.visuals
+      if (this.arrangeCreatedDashboard && event.data.canArrange && !event.data.updating) {
+        this.arrangeCreatedDashboard = false
+        this.builderFrame?.contentWindow?.postMessage({ type: 'lv-arrange-dashboard-visuals', reflow: true } satisfies ChatDashboardMessage, window.location.origin)
+      }
     }
     const reference = event.data.reference
     this.references = mergeReferences([reference], this.references.filter(item => item.reference.kind !== reference.reference.kind || item.reference.id !== reference.reference.id))
@@ -456,6 +466,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private async openDashboardPreview(event?: CustomEvent<{ artifactId?: string }>): Promise<void> {
+		this.closeVisual(false)
     const fromBuilder = this.builderOpen
     const position = fromBuilder ? this.chatScroll : this.chatThread?.captureScroll()
     this.builderOpen = false
@@ -581,14 +592,17 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       const completedRun = this.dashboardGenerationRun
       const href = generatedDashboardHref(this.agent.transcript ?? [], completedRun, this.agent.activeConversationId ?? '')
       if (href) this.completedDashboardGenerationRun = completedRun
-      if (href) void this.openGeneratedDashboard(href)
+      if (href) {
+        const created = (this.agent.transcript ?? []).some(item => item.runId === completedRun && item.name === 'create_dashboard_draft' && item.status === 'complete' && !item.error)
+        void this.openGeneratedDashboard(href, created)
+      }
     }
     // Reopened dashboard replies have no query_visual receipts. Reuse the
     // authorized builder stream to load their cards and existing membership,
     // while keeping the conversation visible and without another AI request.
     if (!running && !this.dashboardPreview && !this.savedBuilderHref && !this.restoredBuilderHref) {
-      const preview = [...this.agent.transcript ?? []].reverse().find(item => item.name === 'preview_dashboard_draft' && item.status === 'complete' && !item.error)
-      const href = generatedDashboardHref(this.agent.transcript ?? [], preview?.runId ?? '', this.agent.activeConversationId ?? '')
+      const authored = [...this.agent.transcript ?? []].reverse().find(item => item.kind === 'tool' && ['create_dashboard_draft', 'fork_dashboard', 'edit_dashboard_source'].includes(item.name ?? '') && item.status === 'complete' && !item.error)
+      const href = generatedDashboardHref(this.agent.transcript ?? [], authored?.runId ?? '', this.agent.activeConversationId ?? '')
       if (href) this.restoredBuilderHref = href
     }
     if (this.wasAgentRunning && !running && this.savedBuilderHref && !this.savingDashboard) {
@@ -770,7 +784,8 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         </div>
         <div class="titlebar-actions">
           ${!this.dashboardPreview && this.previewArtifacts.length ? html`<button class="preview-action open-preview" type="button" @click=${() => this.openDashboardPreview()}>${lucideIcon(LayoutDashboard)} Visuals (${this.previewArtifacts.length})</button>` : null}
-          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" ?disabled=${this.savingDashboard} @click=${() => this.saveDashboard(true)}>${lucideIcon(Minimize2)}</button>` : null}
+          ${this.savedBuilderHref ? html`<button class="preview-action" type="button" @click=${() => this.enterBuilder()}>${lucideIcon(LayoutDashboard)} Preview dashboard</button>` : null}
+          ${this.previewArtifacts.length ? html`<button class="chat-size-toggle" type="button" aria-label="Shrink chat" title="Shrink chat" @click=${() => this.openDashboardPreview()}>${lucideIcon(Minimize2)}</button>` : null}
         </div>
       </div>
     `
@@ -892,6 +907,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private openVisual(event: CustomEvent<{ artifactId: string; explorerHref: string; title: string }>): void {
     const artifactId = event.detail?.artifactId ?? ''
     if (!artifactId || !this.visuals[artifactId]) return
+    if (this.dashboardPreview) {
+      void this.openDashboardPreview(new CustomEvent('lv-chat-dashboard-preview', { detail: { artifactId } }))
+      return
+    }
     this.dashboardPickerOpen = false
     this.selectedVisualID = artifactId
     this.selectedExplorerHref = event.detail.explorerHref ?? ''

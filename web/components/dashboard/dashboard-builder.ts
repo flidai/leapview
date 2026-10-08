@@ -197,6 +197,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private editingPage = false
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private selectedFilterID = ''
+  @state() private expandedFilterID = ''
   @state() private addFilterMenuOpen = false
   @state() private addFilterQuery = ''
   @state() private selectedFilterComponentID = ''
@@ -963,7 +964,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
     const canDelete = this.canDeleteDashboard(builder)
-    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || (builder.capabilities.canArchive && !canDelete) || canDelete || Boolean(this.forkHref)
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || (builder.capabilities.canArchive && !canDelete) || canDelete || Boolean(this.forkHref) || (this.embeddedInChat && builder.capabilities.canEdit)
     const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
@@ -1010,7 +1011,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
               <div class="more-menu" aria-label="More dashboard actions">
-                ${this.embeddedInChat ? nothing : html`<button class="arrange-mobile" type="button" aria-label="Arrange visuals" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>Arrange visuals</button>`}
+                ${this.embeddedInChat ? html`<button type="button" aria-label="Arrange visuals" title="Close gaps by fitting charts into balanced rows" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${() => this.applyBalancedLayout(true)}>Arrange visuals</button>` : html`<button class="arrange-mobile" type="button" aria-label="Arrange visuals" ?disabled=${!builder.capabilities.canEdit || this.commandPending || !this.selectedPage(builder)?.visuals.length} @click=${this.arrangeVisuals}>Arrange visuals</button>`}
                 ${this.forkHref ? html`<a class="button" href=${this.forkHref}>Make a copy</a>` : nothing}
                 ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'organization' ? 'Make private' : 'Share with organization'}</button>` : nothing}
                 ${builder.capabilities.canExport
@@ -1343,8 +1344,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.importedVisualSources.set(source.componentID, source.savedID)
     }
     const runtime = await loadDatastarRuntime()
-    // Replace discriminated chart envelopes instead of merging stale specs.
-    runtime.mergePatch({ builderVisuals: null })
+    // Replace chart unions and filter maps instead of retaining removed specs,
+    // binding keys or controls after a draft/page refresh.
+    runtime.mergePatch({
+      builderVisuals: null,
+      builderFilterContract: { definitions: null, bindings: null },
+      builderFilterState: { appliedControls: null, draftControls: null },
+      builderFilterOptionPages: null,
+    })
     runtime.mergePatch({
       builder: envelope.builder, builderVisuals: envelope.builderVisuals,
       agentContext: event.data.agentContext,
@@ -1396,7 +1403,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       }
       return
     }
-    if (fromParent && (event.data as { type: string }).type === 'lv-arrange-dashboard-visuals') this.arrangeVisuals()
+    if (fromParent && event.data?.type === 'lv-arrange-dashboard-visuals') {
+      if (event.data.reflow) this.applyBalancedLayout(false)
+      else this.arrangeVisuals()
+    }
     if (fromParent && (event.data as {type: string}).type === 'lv-select-dashboard-page') {
       const pageId = (event.data as unknown as {pageId: string}).pageId
       if (this.builder?.pages.some(page => page.id === pageId) && this.selectedPage(this.builder)?.id !== pageId) this.selectPage(pageId)
@@ -1627,7 +1637,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const scope = this.filterScope(filter, page, visual)
     return html`
       <section class="filter-editor" aria-label=${`Configure ${filter.label} filter`}>
-        <details class="filter-settings">
+        <details class="filter-settings" .open=${this.expandedFilterID === filter.id} @toggle=${(event: Event) => {
+          const details = event.currentTarget as HTMLDetailsElement
+          if (!details.isConnected) return
+          if (details.open) this.expandedFilterID = filter.id
+          else if (this.expandedFilterID === filter.id) this.expandedFilterID = ''
+        }}>
           <summary>${filter.label} settings</summary>
           <div class="filter-settings-body">
         <div class="filter-scope-options" role="radiogroup" aria-label="Filter scope">

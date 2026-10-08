@@ -106,6 +106,11 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			resolved.DashboardID = dashboardID
 			resolved.DashboardTitle = draft.Lifecycle.Title
 			resolved.ModelID = draft.Lifecycle.SemanticModel.String()
+			if draft.Lifecycle.Draft == nil {
+				return agent.TurnContext{}, errors.New("dashboard has no active draft")
+			}
+			resolved.DraftID = draft.Lifecycle.Draft.ID.String()
+			resolved.DraftRevision = &agent.DraftRevision{RevisionID: draft.Revision.ID.String(), Number: int64(draft.Revision.Number), ContentHash: draft.Revision.ContentHash}
 			return withChatDraftPage(resolved, draft.Revision.Document, pageID)
 		}
 		if resolved.Surface == "builder" {

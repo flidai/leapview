@@ -756,9 +756,11 @@ func (h *Handler) resolveChatTurnContext(r *nethttp.Request, scope agent.Scope, 
 
 func builderToolScope(scope agent.Scope, turnContext *agent.TurnContext) agent.Scope {
 	scope.BuilderDashboardID, scope.BuilderDraftID = "", ""
-	if turnContext != nil && turnContext.Surface == "dashboard_builder" {
+	scope.MainChatAuthoring = turnContext == nil || turnContext.Surface == "chat"
+	if turnContext != nil && (turnContext.Surface == "dashboard_builder" || turnContext.Surface == "builder" || turnContext.Surface == "chat") && turnContext.DashboardID != "" && turnContext.DraftID != "" {
 		scope.BuilderDashboardID = turnContext.DashboardID
 		scope.BuilderDraftID = turnContext.DraftID
+		scope.MainChatAuthoring = false
 	}
 	return scope
 }

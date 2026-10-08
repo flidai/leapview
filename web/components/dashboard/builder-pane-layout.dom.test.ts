@@ -156,6 +156,60 @@ test('visual inspector controls stay within the pane at desktop and narrow width
   }
 }, 15_000)
 
+for (const width of [390, 700, 855, 1120]) test(`embedded builder keeps canvas and controls usable at ${width}px`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: 820 } })
+  try {
+    await page.route('**/embedded', route => route.fulfill({ contentType: 'text/html', body: `<style>html,body{margin:0;height:100%}iframe{width:100%;height:100%;border:0;display:block}</style><iframe src="${baseURL}/?embed=chat"></iframe>` }))
+    await page.goto(`${baseURL}/embedded`)
+    const frame = page.frameLocator('iframe')
+    const builder = frame.locator('lv-dashboard-builder')
+    await builder.waitFor()
+    const geometry = async () => builder.evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const canvas = root.querySelector('.canvas-pane')!.getBoundingClientRect()
+      const footer = root.querySelector('.page-bar')!.getBoundingClientRect()
+      const controls = [...root.querySelectorAll('.page-tabs, .page-add, .page-bar-tools')].map(node => node.getBoundingClientRect())
+      return {
+        canvasWidth: canvas.width,
+        footerFits: controls.every(box => box.left >= footer.left && box.right <= footer.right + 1),
+        footerControlsSeparate: controls.every((box, i) => controls.slice(i + 1).every(other => box.right <= other.left + 1 || other.right <= box.left + 1 || box.bottom <= other.top + 1 || other.bottom <= box.top + 1)),
+        documentFits: document.documentElement.scrollWidth <= innerWidth,
+        authoring: JSON.stringify(element.builder.pages),
+      }
+    })
+    const initial = await geometry()
+    expect(initial.canvasWidth).toBeGreaterThanOrEqual(width / 2)
+    expect(initial.footerFits).toBe(true)
+    expect(initial.footerControlsSeparate).toBe(true)
+    expect(initial.documentFits).toBe(true)
+    for (const [trigger, menu] of [['.dashboard-metadata > summary', '.dashboard-metadata-form'], ['.more-actions > summary', '.more-menu'], ['.appearance-trigger', '.appearance-popover']]) {
+      await builder.locator(trigger).click()
+      const contained = await builder.locator(menu).evaluate(element => {
+        const box = element.getBoundingClientRect()
+        return box.left >= 0 && box.right <= innerWidth + 1
+      })
+      expect({ trigger, contained }).toEqual({ trigger, contained: true })
+      await builder.locator(trigger).click()
+    }
+    for (const pane of ['filters', 'visuals', 'data']) {
+      const toggle = builder.locator(`[data-pane-toggle="${pane}"]`)
+      const others = builder.locator(`[data-pane-toggle]:not([data-pane-toggle="${pane}"])`)
+      const before = await others.evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded')))
+      await toggle.click()
+      expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+      expect(await others.evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded')))).toEqual(before)
+      await toggle.click()
+      expect(await others.evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded')))).toEqual(before)
+    }
+    await builder.getByRole('button', { name: 'Hide tools', exact: true }).click()
+    expect(await builder.locator('.right-dock').isVisible()).toBe(false)
+    await builder.getByRole('button', { name: 'Show tools', exact: true }).click()
+    expect(await builder.locator('.right-dock').isVisible()).toBe(true)
+    expect((await geometry()).authoring).toBe(initial.authoring)
+  } finally { await page.close() }
+}, 15_000)
+
 test('builder agent uses the compact main-agent welcome layout and starter prompts only fill the composer', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 650 } })
   try {

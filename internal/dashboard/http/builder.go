@@ -544,7 +544,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		// A one-shot Agent refresh replaces the complete visual graph. Datastar
 		// merges nested objects, so clear old envelopes before publishing a new
 		// chart type; otherwise stale union fields survive until a page reload.
-		if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": nil}); err != nil {
+		if err := updates.Patch(builderReplacementReset(nil)); err != nil {
 			return
 		}
 	}
@@ -834,7 +834,9 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	if previewVisualID != "" {
 		previewReset = map[string]any{previewVisualID: nil}
 	}
-	if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": previewReset}); err != nil {
+	// Authoring can replace binding keys and predicate kinds. Merge-patching
+	// their maps would retain removed scopes, controls and option pages.
+	if err := updates.Patch(builderReplacementReset(previewReset)); err != nil {
 		return
 	}
 	_ = updates.Patch(pagestream.SignalPatch{
@@ -848,6 +850,15 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		"builderFilterValidation":  envelope.BuilderFilterValidation,
 		"status":                   uisignals.DashboardStatus{Loading: false},
 	})
+}
+
+func builderReplacementReset(visualReset any) pagestream.SignalPatch {
+	return pagestream.SignalPatch{
+		"builderVisuals":           visualReset,
+		"builderFilterContract":    map[string]any{"definitions": nil, "bindings": nil},
+		"builderFilterState":       map[string]any{"appliedControls": nil, "draftControls": nil},
+		"builderFilterOptionPages": nil,
+	}
 }
 
 // builderCommandRuntime preserves the route identity needed by the canonical

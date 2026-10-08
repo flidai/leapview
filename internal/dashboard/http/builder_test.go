@@ -461,6 +461,17 @@ func TestDashboardBuilderCommandPreservesRuntimeIdentityPatch(t *testing.T) {
 	if len(patches) != 2 || patches[0]["builderVisuals"] != nil {
 		t.Fatalf("patches = %#v", patches)
 	}
+	for root, keys := range map[string][]string{"builderFilterContract": {"definitions", "bindings"}, "builderFilterState": {"appliedControls", "draftControls"}} {
+		reset, ok := patches[0][root].(map[string]any)
+		if !ok {
+			t.Fatalf("%s must clear stale maps before replacement: %#v", root, patches[0])
+		}
+		for _, key := range keys {
+			if value, present := reset[key]; !present || value != nil {
+				t.Fatalf("%s.%s reset = %#v", root, key, reset)
+			}
+		}
+	}
 	runtime, ok := patches[1]["runtime"].(map[string]any)
 	if !ok {
 		t.Fatalf("runtime patch = %#v", patches[1]["runtime"])

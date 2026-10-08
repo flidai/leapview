@@ -17,8 +17,12 @@ func CompatibleDashboardFilterTargets(doc document.DashboardDocument, dimension 
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
-	if _, ok := model.Dimensions[dimension]; !ok {
+	semantic, ok := model.Dimensions[dimension]
+	if !ok {
 		return nil, fmt.Errorf("filter dimension %q is unavailable", dimension)
+	}
+	if _, err := canonicalSemanticValueKind(semantic); err != nil {
+		return nil, err
 	}
 	targets := map[string]bool{}
 	resolved := false
@@ -32,7 +36,7 @@ func CompatibleDashboardFilterTargets(doc document.DashboardDocument, dimension 
 			if !ok {
 				continue
 			}
-			datasets, err := canonicalQueryDatasets(definition.Query, model)
+			datasets, err := canonicalVisualQueryDatasets(definition.Query, model)
 			if err == nil {
 				resolved = true
 			}

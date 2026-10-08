@@ -16,8 +16,12 @@ func CanonicalCompatibleFilterVisualTargets(doc document.DashboardDocument, mode
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
-	if _, err := model.ResolveSemanticDimension(dimension); err != nil {
+	semantic, err := model.ResolveSemanticDimension(dimension)
+	if err != nil {
 		return nil, fmt.Errorf("dimension %q is not a semantic dimension: %w", dimension, err)
+	}
+	if _, err := canonicalSemanticValueKind(semantic); err != nil {
+		return nil, err
 	}
 	targets := make([]string, 0)
 	seen := make(map[string]struct{})
