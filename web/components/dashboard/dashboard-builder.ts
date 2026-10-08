@@ -197,6 +197,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private editingPage = false
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private selectedFilterID = ''
+  @state() private expandedFilterID = ''
   @state() private addFilterMenuOpen = false
   @state() private addFilterQuery = ''
   @state() private selectedFilterComponentID = ''
@@ -1343,8 +1344,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.importedVisualSources.set(source.componentID, source.savedID)
     }
     const runtime = await loadDatastarRuntime()
-    // Replace discriminated chart envelopes instead of merging stale specs.
-    runtime.mergePatch({ builderVisuals: null })
+    // Replace chart unions and filter maps instead of retaining removed specs,
+    // binding keys or controls after a draft/page refresh.
+    runtime.mergePatch({
+      builderVisuals: null,
+      builderFilterContract: { definitions: null, bindings: null },
+      builderFilterState: { appliedControls: null, draftControls: null },
+      builderFilterOptionPages: null,
+    })
     runtime.mergePatch({
       builder: envelope.builder, builderVisuals: envelope.builderVisuals,
       agentContext: event.data.agentContext,
@@ -1627,7 +1634,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const scope = this.filterScope(filter, page, visual)
     return html`
       <section class="filter-editor" aria-label=${`Configure ${filter.label} filter`}>
-        <details class="filter-settings">
+        <details class="filter-settings" .open=${this.expandedFilterID === filter.id} @toggle=${(event: Event) => {
+          const details = event.currentTarget as HTMLDetailsElement
+          if (!details.isConnected) return
+          if (details.open) this.expandedFilterID = filter.id
+          else if (this.expandedFilterID === filter.id) this.expandedFilterID = ''
+        }}>
           <summary>${filter.label} settings</summary>
           <div class="filter-settings-body">
         <div class="filter-scope-options" role="radiogroup" aria-label="Filter scope">

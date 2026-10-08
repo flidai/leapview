@@ -272,6 +272,17 @@ func TestDashboardBuilderAgentSnapshotPreservesAppliedFiltersAndSelection(t *tes
 	if len(patches) != 2 {
 		t.Fatalf("snapshot patches=%d, want visual clear and bootstrap: %s", len(patches), recorder.Body.String())
 	}
+	for root, keys := range map[string][]string{"builderFilterContract": {"definitions", "bindings"}, "builderFilterState": {"appliedControls", "draftControls"}} {
+		reset, ok := patches[0][root].(map[string]any)
+		if !ok {
+			t.Fatalf("snapshot must remove stale %s before replacement", root)
+		}
+		for _, key := range keys {
+			if value, present := reset[key]; !present || value != nil {
+				t.Fatalf("snapshot %s.%s was not reset", root, key)
+			}
+		}
+	}
 	bootstrap := patches[1]
 	filterState, ok := bootstrap["builderFilterState"].(map[string]any)
 	if !ok || filterState["revision"] != float64(selected.State.Revision) {
