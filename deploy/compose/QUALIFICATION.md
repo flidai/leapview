@@ -135,6 +135,18 @@ deliberately repeats restarts and recovery-boundary checks.
 
 ## Incident ownership
 
+The protected Nix Compose fresh-guest workflow retains
+`host-install-exit-code.txt` and `host-install-diagnostic.json` when the installer
+returns, including failures. The diagnostic classifies known installer
+boundaries (configuration, pool dry-run, initialization, pool apply, and private
+startup) and causes using a fixed vocabulary. These are hints from the final
+64 KiB of output, not proof of a root cause; unknown errors remain
+`unclassified`. The collector never uploads raw installer output, which can
+contain generated credentials, bootstrap responses, and private URLs. Guest
+timeouts are reported before the SSH deadline, and the private temporary log
+is removed on exit. Launcher lifecycle receipts separately record guest and
+temporary-directory cleanup.
+
 A scheduled or post-publication failure is a release/adoption incident. The
 workflow creates or updates a GitHub issue assigned to the repository owner;
 the release owner must post the affected digest, architecture, first failing

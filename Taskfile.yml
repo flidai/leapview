@@ -610,6 +610,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_controller_evidence.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_host_guest.py
+      - python3 -m unittest discover -s scripts/tests -p test_nix_compose_installer_diagnostics.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_compose_guest_launcher.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_site_image.py
