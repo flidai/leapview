@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -38,7 +39,7 @@ func (d credentialDraftAPIGenDispatcher) StartCredentialActivation(w http.Respon
 		Surface: apigencommand.SurfaceAPI, Connection: connection,
 		RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")), CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
 	}
-	executeCredentialActivation(w, r, credentialgen.GenCommandOperationStartCredentialActivation(),
+	executeCredentialActivation(w, r, credentialgen.GenCommandOperationStartCredentialActivation(), d.resource(project, target, connection),
 		func(ctx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
 			return credentialgen.ExecuteGenStartCredentialActivationCommand(ctx, executor, invocation, execution)
 		}, func(ctx context.Context) (credential.ActivationStatus, error) {
@@ -68,7 +69,7 @@ func (d credentialDraftAPIGenDispatcher) RetryCredentialActivation(w http.Respon
 		Surface: apigencommand.SurfaceAPI, Connection: connection,
 		RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")), CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
 	}
-	executeCredentialActivation(w, r, credentialgen.GenCommandOperationRetryCredentialActivation(),
+	executeCredentialActivation(w, r, credentialgen.GenCommandOperationRetryCredentialActivation(), d.resource(project, target, connection),
 		func(ctx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
 			return credentialgen.ExecuteGenRetryCredentialActivationCommand(ctx, executor, invocation, execution)
 		}, func(ctx context.Context) (credential.ActivationStatus, error) {
@@ -93,7 +94,7 @@ func (d credentialDraftAPIGenDispatcher) AbortCredentialActivation(w http.Respon
 		Surface: apigencommand.SurfaceAPI, Connection: connection,
 		RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")), CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
 	}
-	executeCredentialActivation(w, r, credentialgen.GenCommandOperationAbortCredentialActivation(),
+	executeCredentialActivation(w, r, credentialgen.GenCommandOperationAbortCredentialActivation(), d.resource(project, target, connection),
 		func(ctx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
 			return credentialgen.ExecuteGenAbortCredentialActivationCommand(ctx, executor, invocation, execution)
 		}, func(ctx context.Context) (credential.ActivationStatus, error) {
@@ -166,7 +167,7 @@ func credentialActivationUUID(value string) bool {
 	return err == nil && id != uuid.Nil && id.String() == value
 }
 
-func executeCredentialActivation(w http.ResponseWriter, r *http.Request, operation credentialgen.GenCommandOperationID,
+func executeCredentialActivation(w http.ResponseWriter, r *http.Request, operation credentialgen.GenCommandOperationID, resource credential.Resource,
 	execute func(context.Context, *apigencommand.Executor, apigencommand.Execution) error,
 	mutate func(context.Context) (credential.ActivationStatus, error),
 ) {
@@ -200,6 +201,10 @@ func executeCredentialActivation(w http.ResponseWriter, r *http.Request, operati
 	code := http.StatusAccepted
 	if status.State == "completed" || status.State == "aborted" {
 		code = http.StatusOK
+	} else {
+		w.Header().Set("Location", "/api/v1/projects/"+url.PathEscape(resource.ProjectID)+
+			"/targets/"+url.PathEscape(resource.TargetID)+"/connection-bindings/"+url.PathEscape(resource.ResourceID)+
+			"/credential-activations/"+url.PathEscape(status.OperationID))
 	}
 	apitransport.WriteJSON(w, code, credentialActivationResponse(status))
 }

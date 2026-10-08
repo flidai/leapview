@@ -27,6 +27,7 @@ func TestCredentialActivationTransportUsesServerScopeAndReportsDurablePreparatio
 	if response.Code != http.StatusAccepted || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 	}
+	assertActivationLocation(t, response)
 	wantResource := credential.Resource{ScopeKind: "connection", ProjectID: "project_one", TargetID: "lvinst_0123456789abcdefghijklmnopqrstuv", Environment: "production", ResourceID: "warehouse"}
 	if service.actor != "principal_test" || service.resource != wantResource || service.input != (credential.ActivationRequest{
 		OperationID: activationOperation, VersionID: activationVersion, ReceiptID: activationReceipt, ExpectedBindingRevision: 41,
@@ -84,6 +85,9 @@ func TestCredentialActivationTransportStatusRetryAndAbortUseExactOperation(t *te
 			if response.Code != test.status || service.operationID != activationOperation || service.calls != 1 {
 				t.Fatalf("wrong operation dispatch: status=%d service=%#v body=%s", response.Code, service, response.Body.String())
 			}
+			if test.status == http.StatusAccepted {
+				assertActivationLocation(t, response)
+			}
 			var result map[string]any
 			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 				t.Fatal(err)
@@ -95,6 +99,24 @@ func TestCredentialActivationTransportStatusRetryAndAbortUseExactOperation(t *te
 				t.Fatal("retry lost exact receipt")
 			}
 		})
+	}
+}
+
+func assertActivationLocation(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	want := "/api/v1/projects/project_one/targets/lvinst_0123456789abcdefghijklmnopqrstuv/connection-bindings/warehouse/credential-activations/" + activationOperation
+	if got := response.Header().Get("Location"); got != want {
+		t.Fatalf("accepted response does not identify exact activation status: got %q want %q", got, want)
+	}
+}
+
+func TestCredentialActivationLocationUsesReturnedOperation(t *testing.T) {
+	const returned = "11111111-1111-4111-8111-111111111111"
+	service := &activationTransportFake{state: "committed", returnedOperation: returned}
+	response := callActivationTransport(t, service, "retryCredentialActivation", `{}`)
+	want := "/api/v1/projects/project_one/targets/lvinst_0123456789abcdefghijklmnopqrstuv/connection-bindings/warehouse/credential-activations/" + returned
+	if response.Code != http.StatusAccepted || response.Header().Get("Location") != want || !strings.Contains(response.Body.String(), returned) {
+		t.Fatalf("accepted status URL differs from returned operation: %d %q %s", response.Code, response.Header().Get("Location"), response.Body.String())
 	}
 }
 
@@ -186,6 +208,7 @@ func callActivationTransport(t *testing.T, service credential.ActivationService,
 
 type activationTransportFake struct {
 	state, actor, operationID, receiptID string
+	returnedOperation                    string
 	resource                             credential.Resource
 	input                                credential.ActivationRequest
 	calls                                int
@@ -197,6 +220,9 @@ func (s *activationTransportFake) result(actor string, resource credential.Resou
 	s.actor = actor
 	s.resource = resource
 	s.operationID = operation
+	if s.returnedOperation != "" {
+		operation = s.returnedOperation
+	}
 	return credential.ActivationStatus{OperationID: operation, VersionID: activationVersion, State: s.state, BindingRevision: 41, RuntimeReady: s.state == "completed", CreatedAt: time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 10, 8, 12, 1, 0, 0, time.UTC)}, s.err
 }
 func (s *activationTransportFake) StartActivation(_ context.Context, actor string, resource credential.Resource, input credential.ActivationRequest) (credential.ActivationStatus, error) {
