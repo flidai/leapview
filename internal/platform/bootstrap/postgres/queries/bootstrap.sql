@@ -37,7 +37,9 @@ WHERE singleton_id = 1;
 -- name: InsertInstanceCustomerOwner :execrows
 INSERT INTO platform.instance_customer_owner(singleton_id, instance_id, owner_id)
 VALUES (1, sqlc.arg(instance_id), sqlc.arg(owner_id))
-ON CONFLICT (singleton_id) DO NOTHING;
+-- Concurrent declarations can collide on either singleton_id or instance_id.
+-- The repository reads the winner and rejects a different owner after this.
+ON CONFLICT DO NOTHING;
 
 -- name: GetInstanceEnvironment :one
 SELECT environment, bound_at

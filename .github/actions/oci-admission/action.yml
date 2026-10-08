@@ -34,6 +34,15 @@ inputs:
   vulnerability-report:
     description: Optional path for a sanitized vulnerability diagnostic report.
     required: false
+  admission-bundle:
+    description: Optional fresh directory for a canonical owner receipt and its verified evidence. Live supported main producers only.
+    required: false
+  release-id:
+    description: Exact release identity for an explicitly requested owner receipt.
+    required: false
+  release-version:
+    description: Expected image version label for an explicitly requested owner receipt.
+    required: false
 
 outputs:
   image:
@@ -66,6 +75,9 @@ runs:
         EVIDENCE: ${{ inputs.evidence }}
         ADMISSION_OUTPUT: ${{ inputs.output }}
         VULNERABILITY_REPORT: ${{ inputs.vulnerability-report }}
+        ADMISSION_BUNDLE: ${{ inputs.admission-bundle }}
+        RELEASE_ID: ${{ inputs.release-id }}
+        RELEASE_VERSION: ${{ inputs.release-version }}
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
@@ -82,6 +94,10 @@ runs:
         if [[ -n "$VULNERABILITY_REPORT" ]]; then
           vulnerability_report_args=(--vulnerability-report "$VULNERABILITY_REPORT")
         fi
+        admission_bundle_args=()
+        if [[ -n "$ADMISSION_BUNDLE" ]]; then
+          admission_bundle_args=(--admission-bundle "$ADMISSION_BUNDLE" --release-id "$RELEASE_ID" --release-version "$RELEASE_VERSION")
+        fi
         go run ./internal/app/tools/ociadmission \
           --image "$IMAGE" \
           --repository "$OCI_REPOSITORY" \
@@ -90,6 +106,7 @@ runs:
           --policy "$POLICY" \
           "${platform_args[@]}" \
           "${vulnerability_report_args[@]}" \
+          "${admission_bundle_args[@]}" \
           --mode "$MODE" \
           --evidence "$EVIDENCE" \
           --output "$output_path"
