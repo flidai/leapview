@@ -77,11 +77,35 @@ pinned source. Producer `write` access repairs that incompatibility without addi
 an image cache import. The new scratch export probe detects backend access failure
 before full-image work; an unsuccessful probe blocks the measured build.
 
-After the correction is reviewed and merged, dispatch a fresh screen and retain
-this original failure. The correction has not yet demonstrated successful hosted
-cache publication, consumer hits, image qualification or adoption. Probe caches
-also count toward repository cache retention; no eviction or billing attribution
-is inferred from local inventory bytes.
+The corrected run below demonstrated cache publication, while consumer hits,
+image qualification and adoption remain unproven. Probe caches also count toward
+repository cache retention; no eviction or billing attribution is inferred from
+local inventory bytes.
+
+## Corrected export attempt and private evidence directory
+
+[Run 37723968919](https://github.com/flidai/leapview/actions/runs/37723968919),
+attempt 1 at `0b272743c546720355346612af88e84d5ad4fca8`, passed both cache
+access probes, full image builds and exports, generated-content proofs and image
+identity checks. The retained producer receipts have equal generated manifests.
+Both samples then failed before the historical scenario started: its options
+validator requires a private, non-symlink parent for `transition.json`, but the
+experiment's Python preparation created that parent with default permissions
+(`0755` under a normal `022` umask). All six consumers were skipped;
+the comparison correctly failed closed.
+
+The [second failed receipt](measurements/sqlc-hosted-private-evidence-failure.json)
+retains source, sample observations, image identities and raw-log hashes. Neither
+failed sample qualifies as a complete producer-cost or performance comparison.
+No consumer cache reuse or end-to-end image qualification has been demonstrated.
+
+Preparation now creates its new evidence root with explicit `0700` permissions.
+The regression exercises the actual Git-archive preparation under `000`, `022`
+and `077` umasks and preserves refusal to reuse an existing output directory.
+The historical fixture's privacy and image-validation requirements remain intact.
+After this correction merges, dispatch one fresh screen with fresh cache scopes;
+retain both failed runs and assess the complete eight-sample result before any
+adoption decision.
 
 ## Remaining whole-CI work
 
