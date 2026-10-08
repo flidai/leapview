@@ -29,12 +29,6 @@ INSERT INTO credential.activation_request_receipt(operation_id,deployment_id,rec
 VALUES(sqlc.arg(operation_id),sqlc.arg(deployment_id),sqlc.arg(receipt_id))
 ON CONFLICT(receipt_id) DO NOTHING;
 
--- name: GetActivationRequestReceipt :one
-SELECT receipt.* FROM credential.activation_request_receipt AS attempt
-JOIN credential.validation_receipt AS receipt USING (deployment_id,receipt_id)
-WHERE attempt.operation_id=sqlc.arg(operation_id) AND attempt.deployment_id=sqlc.arg(deployment_id)
-ORDER BY attempt.observed_at DESC,attempt.receipt_id DESC LIMIT 1;
-
 -- name: GetActivationReceiptReservation :one
 SELECT operation_id FROM credential.activation_request_receipt
 WHERE deployment_id=sqlc.arg(deployment_id) AND receipt_id=sqlc.arg(receipt_id);

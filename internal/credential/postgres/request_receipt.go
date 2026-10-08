@@ -64,21 +64,3 @@ func (r *Repository) CheckActivationReceiptFreshTx(ctx context.Context, tx Tx, d
 	}
 	return nil
 }
-
-func (r *Repository) CurrentActivationReceipt(ctx context.Context, deploymentID, operationID string) (credential.ValidationReceipt, error) {
-	if r == nil || ctx == nil || !canonical(deploymentID, 255) || !canonicalPreparationUUID(operationID) {
-		return credential.ValidationReceipt{}, credential.ErrInvalid
-	}
-	row, err := credentialdb.New(r.db).GetActivationRequestReceipt(ctx, credentialdb.GetActivationRequestReceiptParams{DeploymentID: deploymentID, OperationID: operationID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return credential.ValidationReceipt{}, credential.ErrNotFound
-	}
-	if err != nil {
-		return credential.ValidationReceipt{}, normalizeDatabaseError(err)
-	}
-	receipt := validationReceiptFromRow(row)
-	if receipt.Validate() != nil {
-		return credential.ValidationReceipt{}, credential.ErrUnavailable
-	}
-	return receipt, nil
-}
