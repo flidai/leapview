@@ -78,16 +78,19 @@ test('dashboard handoff keeps a compact return link through Explorer URL edits',
       document.body.append(explorer)
       await explorer.updateComplete
       const before = (explorer.shadowRoot.querySelector('.return-link') as HTMLAnchorElement | null)?.getAttribute('href')
-      explorer.replaceDataExplorerURL({ mode: 'browse', objectKey: 'model:orders' })
+      const historyLength = window.history.length
+      explorer.syncDataExplorerURL({ mode: 'browse', objectKey: 'model:orders' })
       await explorer.updateComplete
       const after = (explorer.shadowRoot.querySelector('.return-link') as HTMLAnchorElement | null)?.getAttribute('href')
       const search = window.location.search
       explorer.remove()
-      return { before, after, search }
+      return { before, after, search, historyLength, updatedHistoryLength: window.history.length }
     })
     expect(state.before).toBe('/dashboards/dashboard:executive-sales/pages/overview')
     expect(state.after).toBe(state.before)
     expect(new URLSearchParams(state.search).get('returnTo')).toBe(state.before ?? null)
+    expect(new URLSearchParams(state.search).get('object')).toBe('model:orders')
+    expect(state.updatedHistoryLength).toBe(state.historyLength)
   } finally { await page.close() }
 })
 
