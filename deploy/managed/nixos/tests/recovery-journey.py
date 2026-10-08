@@ -113,8 +113,17 @@ with subtest("replacement recovers exact database, jobs, files and publication a
                    "hba_file='/var/lib/recovery-test/restored-pg/pg_hba.conf'\n")
     recovery_write(app, "/var/lib/recovery-test/restored-pg/pg_hba.conf", "local all postgres peer\n")
     app.succeed("chown postgres:postgres /var/lib/recovery-test/restored-pg/postgresql.conf /var/lib/recovery-test/restored-pg/pg_hba.conf")
-    app.succeed("sudo -u postgres pg_ctl -D /var/lib/recovery-test/restored-pg -l /var/lib/recovery-test/postgresql.log "
-                "-o \"-p 55432 -k /var/lib/recovery-test/socket -c listen_addresses=127.0.0.1 -c ssl=off -c archive_mode=off\" -w start", timeout=120)
+    try:
+        app.succeed("sudo -u postgres pg_ctl -D /var/lib/recovery-test/restored-pg -l /var/lib/recovery-test/postgresql.log "
+                    "-o \"-p 55432 -k /var/lib/recovery-test/socket -c listen_addresses=127.0.0.1 -c ssl=off -c archive_mode=off\" -w start", timeout=120)
+        # pg_ctl readiness can mean hot-standby read-only acceptance while PITR
+        # is still promoting. Replacement writes require completed promotion.
+        app.wait_until_succeeds("test \"$(sudo -u postgres psql -XAt -v ON_ERROR_STOP=1 "
+                                "-h /var/lib/recovery-test/socket -p 55432 -d leapview_control "
+                                "-c 'SELECT NOT pg_is_in_recovery()')\" = t", timeout=120)
+    except Exception:
+        print(app.succeed("tail -n 80 /var/lib/recovery-test/postgresql.log"))
+        raise
     restored = recovery_sql(app, "SELECT job_id,job_state,publication_id,acknowledgment,file_digest FROM recovery_frontier ORDER BY job_id", restored=True)
     assert restored == "job-before|completed|publication-before|ack-before|" + file_digest, restored
     remote_restic = "restic --password-file /var/lib/recovery-test/restic-password --repo sftp:root@192.168.1.2:/var/lib/recovery-test/home-repo "
