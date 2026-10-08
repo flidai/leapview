@@ -1006,3 +1006,59 @@ test('token creation opens directly with the scoped permission picker', async ()
     await page.close()
   }
 })
+
+
+test('personal token reconnect preserves copying until an explicit clear or principal change', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-personal-settings'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+        writeText: async (value: string) => { document.body.dataset.copiedToken = value },
+      } })
+      mergePatch({ page: { kind: 'admin', active: 'api-tokens', title: 'API tokens' }, personalSettings: {
+        active: 'api-tokens',
+        profile: { id: 'principal-1', email: 'user@example.com', displayName: 'User', theme: 'system', identitySource: 'local' },
+        security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
+        tokens: { items: [{ id: 'token-1', name: 'Current token', description: '', createdAt: '2026-10-01T00:00:00Z', modifiedAt: '2026-10-02T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z', permissions: [], capabilities: [] }], capabilities: [], permissionOptionsReady: true, newToken: 'lv_browser_only_secret' },
+      } })
+    })
+    const secret = page.locator('lv-one-time-secret')
+    await secret.waitFor()
+    // A matching authorized updates response omits only the transient secret.
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ personalSettings: { profile: { id: 'principal-1', displayName: 'Updated user', avatarUrl: null }, tokens: { permissionOptionsReady: true, capabilities: [] } } })
+    })
+    expect(await secret.locator('code').textContent()).toBe('lv_browser_only_secret')
+    await secret.getByRole('button', { name: 'Copy personal access token' }).click()
+    expect(await page.locator('body').getAttribute('data-copied-token')).toBe('lv_browser_only_secret')
+
+    for (const cause of ['explicit clear', 'principal change', 'revocation']) {
+      await page.evaluate(async () => {
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+        mergePatch({ personalSettings: { tokens: { newToken: 'lv_next_secret' } } })
+      })
+      await secret.waitFor()
+      await page.evaluate(async (cause) => {
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+        mergePatch({ personalSettings: {
+          ...(cause === 'principal change' ? { profile: { id: 'principal-2' } } : {}),
+          tokens: { newToken: null, ...(cause === 'revocation' ? { items: [] } : {}) },
+        } })
+      }, cause)
+      await secret.waitFor({ state: 'detached' })
+      expect(await secret.count()).toBe(0)
+      // A subsequent omission cannot resurrect a deliberately cleared secret.
+      await page.evaluate(async () => {
+        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+        mergePatch({ personalSettings: { tokens: { permissionOptionsReady: true } } })
+      })
+      expect(await secret.count()).toBe(0)
+    }
+  } finally {
+    await page.close()
+  }
+})

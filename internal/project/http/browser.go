@@ -939,35 +939,17 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			// A resumed stream carries the current browser command. The original
 			// stream URL describes only the initial deep link, so replaying it
 			// would discard edits whenever the user returns to this tab.
-			var resumed struct {
-				Command  *projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
-				Agent    any                                 `json:"agent"`
-				Explorer *struct {
-					Explore struct {
-						Status struct {
-							State string `json:"state"`
-						} `json:"status"`
-					} `json:"explore"`
-					Preview struct {
-						Columns []any `json:"columns"`
-					} `json:"preview"`
-				} `json:"dataExplorer"`
-			}
+			var resumed dataExplorerResumeSignals
 			_ = pagestream.ReadSignals(r, &resumed)
-			if resumed.Command != nil && resumed.Explorer != nil {
-				state := resumed.Explorer.Explore.Status.State
-				mounted := strings.TrimSpace(projectsignals.ValueOrZero(resumed.Command.ClientID)) != "" ||
-					state == "success" || state == "error" || state == "cancelled" || len(resumed.Explorer.Preview.Columns) > 0
-				if mounted {
-					// Commands deliver their own results. Resuming the idle page
-					// stream must preserve pending edits, results and saved-view drafts.
-					stream := pagestream.NewSignalStream(w, streamRequest)
-					if err := stream.Patch(pagestream.SignalPatch{"pageStreamRecovery": false}); err != nil {
-						return
-					}
-					stream.Wait(streamRequest.Context())
+			if resumed.mounted() {
+				// Commands deliver their own results. Resuming the idle page
+				// stream must preserve pending edits, results and saved-view drafts.
+				stream := pagestream.NewSignalStream(w, streamRequest)
+				if err := stream.Patch(pagestream.SignalPatch{"pageStreamRecovery": false}); err != nil {
 					return
 				}
+				stream.Wait(streamRequest.Context())
+				return
 			}
 			var page projectsignals.DataExplorerPageSignal
 			var explorer projectsignals.DataExplorerSignal
@@ -1208,6 +1190,9 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 	if r.URL.Query().Get("surface") == "asset" {
 		patch := projectui.ProjectAssetBootstrapSignalsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.layout(r))
 		if r.URL.Query().Get("section") == "data" && (projection.Asset.Type == string(projectview.AssetTypeModel) || projection.Asset.Type == string(projectview.AssetTypeSemanticModel)) {
+			if mountedAssetDataExplorer(r, projection.Asset) {
+				return patch, true
+			}
 			_, explorer, _, explorerOK := h.dataExplorerSignalsForAssetCommand(w, r, projection.Asset.ID, projectsignals.DataExplorerCommand{})
 			if !explorerOK {
 				return nil, false

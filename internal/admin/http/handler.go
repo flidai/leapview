@@ -557,7 +557,7 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		if err != nil {
 			return err
 		}
-		for key, value := range personalsettings.BootstrapSignals(state) {
+		for key, value := range personalsettings.UpdatesSignals(r, state) {
 			signals[key] = value
 		}
 	case "general", "authentication", "system":
