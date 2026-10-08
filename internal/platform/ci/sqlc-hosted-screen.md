@@ -107,6 +107,27 @@ After this correction merges, dispatch one fresh screen with fresh cache scopes;
 retain both failed runs and assess the complete eight-sample result before any
 adoption decision.
 
+## Historical source prerequisite
+
+[Run 37756187622](https://github.com/flidai/leapview/actions/runs/37756187622),
+at `d81499a722024237b06afa554185c2ad825a3124`, passed both image builds,
+cache exports, generated-content proofs and image identity checks. Both required
+historical qualifications then failed when `git archive` tried to read the pinned
+predecessor source. The sample workflow had fetched only the candidate commit.
+The fixture also needs the predecessor revision for its historical browser client.
+All six consumers were skipped and comparison failed; this is not a valid paired
+performance result. The [failed receipt](measurements/sqlc-hosted-history-failure.json)
+retains source, logs and the shallow-checkout reproduction.
+
+Every sample now fetches full history, as the normal CI workflow does, while
+checking out the exact run SHA and retaining no Git credentials. Before any image
+work, a preflight reads the predecessor pin from the canonical qualification
+source, verifies that commit, and archives its CFO fixture to `/dev/null`. Missing
+or ambiguous pins and unavailable historical source fail immediately. No pin is
+duplicated in the workflow. An executable regression reproduces the missing
+history in a depth-one clone and verifies that fetching history repairs it without
+changing HEAD. Full qualification still runs against the measured image.
+
 ## Remaining whole-CI work
 
 The two successful merge runs immediately before this screen are observations,
