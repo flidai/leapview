@@ -50,6 +50,9 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 	}
 	lifecycle, err := newCredentialLifecycle(ctx, c.Services, credentialagent.AgentCredentialConfig{
 		Pool: c.Pool, RecordAudit: c.Graph.ConnectionBindingAudit.RecordAuditEvent, Store: store, CustomerOwner: c.Graph.Bootstrap,
+		CustomerOwnerTx: func(ctx context.Context, tx pgx.Tx) (string, error) {
+			return c.Graph.Bootstrap.WithTx(tx).CustomerOwner(ctx)
+		},
 		InstanceID: c.TargetID, KeyringPath: c.KeyringPath, LockFence: lock,
 	}, c.Analytics)
 	if err != nil {

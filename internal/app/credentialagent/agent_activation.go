@@ -43,15 +43,30 @@ func (a *AgentCredentials) Pending(ctx context.Context) (credential.ActivationRe
 	return record.ActivationRecord(), err
 }
 
-func (a *AgentCredentials) candidate(ctx context.Context, receipt credential.ValidationReceipt) (agentmodule.ConfigurationCandidate, error) {
+func (a *AgentCredentials) candidate(ctx context.Context, tx pgx.Tx, receipt credential.ValidationReceipt) (agentmodule.ConfigurationCandidate, error) {
 	if receipt.Binding.DeploymentID != a.config.InstanceID || receipt.Binding.ScopeKind != "agent" || receipt.Binding.ResourceID != a.config.InstanceID {
 		return agentmodule.ConfigurationCandidate{}, credential.ErrInvalid
 	}
-	candidate, err := a.config.Store.ConfigurationCandidate(ctx, receipt.BindingID)
+	var candidate agentmodule.ConfigurationCandidate
+	var owner string
+	var err error
+	if tx == nil {
+		candidate, err = a.config.Store.ConfigurationCandidate(ctx, receipt.BindingID)
+	} else {
+		candidate, err = a.config.Store.ConfigurationCandidateTx(ctx, tx, receipt.BindingID)
+	}
 	if err != nil {
 		return candidate, credential.ErrConflict
 	}
-	scope, err := a.scope(ctx, candidate.ConfigurationRevision, receipt.Binding.Provider)
+	if tx == nil {
+		owner, err = a.config.CustomerOwner.CustomerOwner(ctx)
+	} else {
+		owner, err = a.config.CustomerOwnerTx(ctx, tx)
+	}
+	if err != nil {
+		return candidate, credential.ErrUnavailable
+	}
+	scope, err := a.ownedScope(owner, candidate.ConfigurationRevision, receipt.Binding.Provider)
 	if err != nil || scope.OwnerID != receipt.Binding.OwnerID || scope.Purpose != receipt.Binding.Purpose || scope.Destination != receipt.Binding.Destination ||
 		scope.Destination != receipt.ConfigurationDigest || candidate.ActorID != receipt.ActorID || candidate.ExpectedRevision != receipt.BindingRevision {
 		return candidate, credential.ErrConflict
@@ -68,7 +83,7 @@ func (a *AgentCredentials) authorizeTx(record credential.ActivationRequestRecord
 		if err != nil || a.config.AuthorizeTx(ctx, tx, actor, pair) != nil {
 			return credential.ErrForbidden
 		}
-		candidate, err := a.candidate(ctx, record.Receipt)
+		candidate, err := a.candidate(ctx, tx, record.Receipt)
 		if err != nil {
 			return err
 		}
@@ -120,7 +135,7 @@ func (a *AgentCredentials) Prepare(ctx context.Context, actor string, resource c
 	if receipt.ActorID != actor {
 		return credential.ActivationRecord{}, credential.ErrForbidden
 	}
-	if _, err := a.candidate(ctx, receipt); err != nil {
+	if _, err := a.candidate(ctx, nil, receipt); err != nil {
 		return credential.ActivationRecord{}, err
 	}
 	seed := credential.ActivationRequestRecord{Request: request, Receipt: receipt}
@@ -187,7 +202,7 @@ func (a *AgentCredentials) Commit(ctx context.Context, actor string, record cred
 		if err := a.repository.CheckActivationReceiptFreshTx(ctx, tx, a.config.InstanceID, before.Request.OperationID); err != nil {
 			return err
 		}
-		candidate, err := a.candidate(ctx, before.Receipt)
+		candidate, err := a.candidate(ctx, tx, before.Receipt)
 		if err != nil {
 			return err
 		}
@@ -233,7 +248,7 @@ func (a *AgentCredentials) Complete(ctx context.Context, record credential.Activ
 			if current.Revision != before.ConfigurationRevision || current.CredentialVersionID != before.Request.VersionID || agentConfigurationDigest(current) != before.Receipt.ConfigurationDigest {
 				return credential.ErrConflict
 			}
-			_, err = a.candidate(ctx, before.Receipt)
+			_, err = a.candidate(ctx, tx, before.Receipt)
 			return err
 		}
 		next := before

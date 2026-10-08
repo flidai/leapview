@@ -32,6 +32,7 @@ type AgentConfigurationStore interface {
 	SaveConfigurationTx(context.Context, pgx.Tx, int64, agentmodule.ConfigurationRevision) (agentmodule.ConfigurationRevision, error)
 	SaveConfigurationCandidate(context.Context, agentmodule.ConfigurationCandidate) error
 	ConfigurationCandidate(context.Context, string) (agentmodule.ConfigurationCandidate, error)
+	ConfigurationCandidateTx(context.Context, pgx.Tx, string) (agentmodule.ConfigurationCandidate, error)
 }
 
 type AgentCredentialConfig struct {
@@ -39,6 +40,7 @@ type AgentCredentialConfig struct {
 	RecordAudit             credentialmodule.AuditRecorder
 	Store                   AgentConfigurationStore
 	CustomerOwner           credentialmodule.CustomerOwnerReader
+	CustomerOwnerTx         func(context.Context, pgx.Tx) (string, error)
 	InstanceID, KeyringPath string
 	Authorize               func(context.Context, string, access.PermissionPair) error
 	AuthorizeTx             func(context.Context, pgx.Tx, string, access.PermissionPair) error
@@ -58,7 +60,7 @@ type AgentCredentials struct {
 }
 
 func NewAgentCredentials(ctx context.Context, repository *credentialpostgres.Repository, config AgentCredentialConfig) (*AgentCredentials, error) {
-	if repository == nil || config.Pool == nil || config.RecordAudit == nil || typednil.IsNil(config.Store) || config.Authorize == nil || config.AuthorizeTx == nil || config.LockFence == nil || config.Probe == nil {
+	if repository == nil || config.Pool == nil || config.RecordAudit == nil || typednil.IsNil(config.Store) || config.CustomerOwnerTx == nil || config.Authorize == nil || config.AuthorizeTx == nil || config.LockFence == nil || config.Probe == nil {
 		return nil, credential.ErrUnavailable
 	}
 	keys, configured, err := credentialmodule.LoadConfiguredKeyring(ctx, config.CustomerOwner, config.InstanceID, config.KeyringPath)
@@ -133,7 +135,14 @@ func agentConfigurationDigest(record agentmodule.ConfigurationRevision) string {
 }
 func (a *AgentCredentials) scope(ctx context.Context, record agentmodule.ConfigurationRevision, provider string) (credential.Scope, error) {
 	owner, err := a.config.CustomerOwner.CustomerOwner(ctx)
-	if err != nil || !canonicalCredentialValue(owner) {
+	if err != nil {
+		return credential.Scope{}, credential.ErrUnavailable
+	}
+	return a.ownedScope(owner, record, provider)
+}
+
+func (a *AgentCredentials) ownedScope(owner string, record agentmodule.ConfigurationRevision, provider string) (credential.Scope, error) {
+	if !canonicalCredentialValue(owner) {
 		return credential.Scope{}, credential.ErrUnavailable
 	}
 	if provider != "openai-compatible" && !(provider == "agent-disabled" && !record.Enabled) {
@@ -246,7 +255,7 @@ func (a *AgentCredentials) Test(ctx context.Context, actor string, expected int6
 			pending.Receipt.ConfigurationDigest != agentConfigurationDigest(record) || pending.State == "committed" {
 			return "", credential.ErrConflict
 		}
-		candidate, err = a.candidate(ctx, pending.Receipt)
+		candidate, err = a.candidate(ctx, nil, pending.Receipt)
 		if err != nil {
 			return "", err
 		}

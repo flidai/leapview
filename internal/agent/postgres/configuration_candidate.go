@@ -49,3 +49,11 @@ func (r *Repository) ConfigurationCandidate(ctx context.Context, id string) (age
 	}
 	return agent.ConfigurationCandidate{ID: id, ExpectedRevision: row.ExpectedRevision, ConfigurationRevision: record}, nil
 }
+
+// ConfigurationCandidateTx retains the caller's transaction and pool lease.
+func (r *Repository) ConfigurationCandidateTx(ctx context.Context, tx pgx.Tx, id string) (agent.ConfigurationCandidate, error) {
+	if tx == nil {
+		return agent.ConfigurationCandidate{}, fmt.Errorf("agent configuration candidate requires a transaction")
+	}
+	return r.WithTx(tx).ConfigurationCandidate(ctx, id)
+}

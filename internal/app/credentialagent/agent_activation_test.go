@@ -16,6 +16,7 @@ import (
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	"github.com/flidai/leapview/internal/credential"
 	credentialpostgres "github.com/flidai/leapview/internal/credential/postgres"
+	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,15 +37,28 @@ type agentLifecycleFixture struct {
 
 func newAgentLifecycleFixture(t *testing.T) *agentLifecycleFixture {
 	t.Helper()
+	return newAgentLifecycleFixtureWithPoolLimit(t, 8)
+}
+
+func newAgentLifecycleFixtureWithPoolLimit(t *testing.T, limit int32) *agentLifecycleFixture {
+	t.Helper()
 	h := postgrestest.Start(t)
 	database := h.NewDatabase(t, "agent_credential_activation")
-	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	poolConfig, err := pgxpool.ParseConfig(database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolConfig.MaxConns = limit
+	pool, err := pgxpool.NewWithConfig(t.Context(), poolConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = platformbootstrap.ApplySchema(t.Context(), tx); err != nil {
 		t.Fatal(err)
 	}
 	if err = accesspostgres.ApplySchema(t.Context(), tx); err != nil {
@@ -78,7 +92,15 @@ func newAgentLifecycleFixture(t *testing.T) *agentLifecycleFixture {
 	if err = os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
-	f.config = AgentCredentialConfig{Pool: pool, Store: f.store, RecordAudit: audit, InstanceID: instance, KeyringPath: path, CustomerOwner: credentialOwnerReader{owner: "customer:one"},
+	owner := platformbootstrap.New(pool)
+	if err = owner.EnsureInstanceID(t.Context(), instance); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = owner.DeclareCustomerOwner(t.Context(), "customer:one"); err != nil {
+		t.Fatal(err)
+	}
+	f.config = AgentCredentialConfig{Pool: pool, Store: f.store, RecordAudit: audit, InstanceID: instance, KeyringPath: path, CustomerOwner: owner,
+		CustomerOwnerTx: func(ctx context.Context, tx pgx.Tx) (string, error) { return owner.WithTx(tx).CustomerOwner(ctx) },
 		Authorize: func(_ context.Context, actor string, pair access.PermissionPair) error {
 			if f.deny || actor != "admin" || pair.Action != access.ActionPlatformSettingsUpdate || pair.Target.InstanceID != instance {
 				return credential.ErrForbidden
@@ -354,14 +376,42 @@ func TestPostgreSQLAgentActivationPrecommitAbortRestoresCurrentAndReleasesFence(
 	}
 }
 
-type credentialOwnerReader struct{ owner string }
-
-func (r credentialOwnerReader) CustomerOwner(context.Context) (string, error) { return r.owner, nil }
-
 type credentialAuditAdapter struct {
 	record func(context.Context, pgx.Tx, access.AuditIntent) error
 }
 
 func (a credentialAuditAdapter) RecordAuditEvent(ctx context.Context, tx pgx.Tx, intent access.AuditIntent) error {
 	return a.record(ctx, tx, intent)
+}
+
+func TestPostgreSQLAgentActivationUsesSingleConnectionThroughRestart(t *testing.T) {
+	f := newAgentLifecycleFixtureWithPoolLimit(t, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	input := agentCandidateInput("private-one-connection-key")
+	token, err := f.adapter.Test(ctx, "admin", 0, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.failInstall = true
+	if _, err = f.adapter.Activate(ctx, "admin", 0, input, token); err == nil {
+		t.Fatal("accepted failed runtime installation")
+	}
+	// A database acquisition deadlock must not be mistaken for the injected
+	// post-commit failure; restart must finish the exact committed operation.
+	if err = ctx.Err(); err != nil {
+		t.Fatalf("activation exhausted pool: %v", err)
+	}
+	saved, err := f.store.CurrentConfiguration(ctx)
+	if err != nil || saved.CredentialVersionID == "" {
+		t.Fatalf("missing committed configuration: %v", err)
+	}
+	f.failInstall = false
+	f.restart(t)
+	if err = f.coordinator.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !f.gate.Ready() || f.installed.APIKey != input.APIKey {
+		t.Fatal("restart did not install committed credential")
+	}
 }
