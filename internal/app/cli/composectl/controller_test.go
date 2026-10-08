@@ -196,6 +196,45 @@ func TestInitializeRejectsInvalidPublicDomainBeforeStateMutation(t *testing.T) {
 	}
 }
 
+func TestInitializeUsesMissingPolicyForImmutableImage(t *testing.T) {
+	for _, cached := range []bool{true, false} {
+		name := "missing image pull failure"
+		if cached {
+			name = "cached image reaches validation offline"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			image := "example.com/leapview@sha256:" + strings.Repeat("a", 64)
+			example := "LEAPVIEW_IMAGE=" + image + "\nCADDY_IMAGE=example.com/caddy@sha256:" + strings.Repeat("b", 64) + "\nCADDY_DOMAIN=localhost\nCOMPOSE_HTTPS=1\nCOMPOSE_APP_BIND=127.0.0.1:8080\n"
+			require.NoError(t, os.WriteFile(filepath.Join(root, "deployment.env.example"), []byte(example), 0o600))
+			controller, err := New(Options{Root: root, Stdout: io.Discard, Stderr: io.Discard})
+			require.NoError(t, err)
+			validationReached := false
+			controller.composeOverride = func(_ context.Context, _ io.Reader, _, _ io.Writer, args ...string) error {
+				if args[0] == "pull" {
+					require.Equal(t, []string{"pull", "--policy", "missing", "leapview"}, args)
+					if !cached {
+						return errors.New("registry unavailable")
+					}
+					return nil
+				}
+				require.Equal(t, []string{"run", "--rm", "--no-deps", "leapview", "config", "validate", "--production"}, args)
+				validationReached = true
+				return errors.New("validation boundary")
+			}
+			err = controller.Initialize(t.Context(), InitOptions{AdminEmail: "admin@example.com", Domain: "localhost", Environment: "prod"})
+			require.Equal(t, cached, validationReached)
+			if cached {
+				require.ErrorContains(t, err, "validation boundary")
+			} else {
+				require.ErrorContains(t, err, "initial image pull failed")
+			}
+			_, err = os.Stat(filepath.Join(root, appEnvName))
+			require.True(t, os.IsNotExist(err), "failed initialization must remain retryable")
+		})
+	}
+}
+
 func TestCanonicalPublicDomain(t *testing.T) {
 	for _, test := range []struct {
 		input string

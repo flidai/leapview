@@ -50,6 +50,30 @@ fork pull-request production-image jobs run this gate.
 
 ## Qualification read credentials
 
+For an isolated managed lifecycle rehearsal, `qualify first-publication` accepts
+`--preloaded-client-image` and `--preloaded-browser-image` together. Both must be
+exact local `sha256:` image IDs, already loaded into the selected Docker daemon.
+Build the helpers from `qualification/Dockerfile.authoring-client` (with the
+exact release `LEAPVIEW_IMAGE`) and `qualification/Dockerfile.authoring-browser`
+before network isolation, using `qualification/` as their build context. The
+browser helper installs the checked-in npm lock into `/work/node_modules`.
+The controller verifies both local identities and uses them without helper
+pulls, builds, or runtime package installation. The caller owns their cleanup.
+The fixed fresh-host profile and release-only first-publication checks still
+apply.
+
+The optional `--lifecycle-credential-file` exports a project-scoped token only
+after committed first publication. Its JSON contains `projectID`, `environment`,
+`targetURL`, `issuedAt`, `expiresAt`, `actions`, and the private `token`. It lasts
+two hours and grants exactly `connection.read`, `connection.use`,
+`connection.upload`, `source.read`, `dashboard.read`, `semantic.query`, and
+`semantic.consume`. Select a new absolute path in an existing mode-0700 parent,
+outside the evidence directory; the controller writes it with mode 0400 without
+overwriting a file and removes it if qualification fails. The public report
+contains only the scope and expiry. This is a retained workload credential:
+the lifecycle runner must delete it on completion and must never upload it.
+No administrator password or browser session is exported.
+
 The installed journey issues separate, short-lived project credentials for its
 evidence and upload calls. `delivery.read` is used only for the candidate and
 generation status reads before and after application upgrade. `connection.read`

@@ -99,6 +99,8 @@
             iptables
             util-linux
             curl
+            dnsmasq
+            slirp4netns
             coreutils
             bash
           ];

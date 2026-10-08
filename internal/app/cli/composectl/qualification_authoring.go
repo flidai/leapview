@@ -29,19 +29,22 @@ const (
 )
 
 type qualificationAuthoringOptions struct {
-	BundleRoot           string
-	Image                string
-	ClientBaseImage      string
-	CredentialsFile      string
-	ComposeProject       string
-	EvidenceDir          string
-	SourceRevision       string
-	Target               string
-	SourceRoot           string
-	ProjectID            string
-	Environment          string
-	AssetsRoot           string
-	FirstPublicationOnly bool
+	BundleRoot              string
+	Image                   string
+	ClientBaseImage         string
+	CredentialsFile         string
+	ComposeProject          string
+	EvidenceDir             string
+	SourceRevision          string
+	Target                  string
+	SourceRoot              string
+	ProjectID               string
+	Environment             string
+	AssetsRoot              string
+	FirstPublicationOnly    bool
+	PreloadedClientImage    string
+	PreloadedBrowserImage   string
+	LifecycleCredentialFile string
 }
 
 func qualificationWorkloadActions() []access.Action {
@@ -80,39 +83,40 @@ func qualificationActionNames(actions []access.Action) []string {
 }
 
 type qualificationAuthoringReport struct {
-	SchemaVersion               int                           `json:"schemaVersion"`
-	Result                      string                        `json:"result"`
-	Target                      string                        `json:"target"`
-	Candidate                   string                        `json:"candidate"`
-	Revision                    int64                         `json:"revision"`
-	SourceArtifact              string                        `json:"sourceArtifact"`
-	Artifact                    string                        `json:"artifact"`
-	ReleaseDigest               string                        `json:"releaseDigest"`
-	PublicationID               string                        `json:"publicationId"`
-	PublicationStatus           string                        `json:"publicationStatus"`
-	PublishedCandidateID        string                        `json:"publishedCandidateId"`
-	PublishedCandidateRevision  int64                         `json:"publishedCandidateRevision"`
-	PublishedTargetID           string                        `json:"publishedTargetId"`
-	PublishedPrincipalID        string                        `json:"publishedPrincipalId"`
-	PublishedSourceArtifact     string                        `json:"publishedSourceArtifact"`
-	PublishedArtifact           string                        `json:"publishedArtifact"`
-	PublishedReleaseDigest      string                        `json:"publishedReleaseDigest"`
-	PublishedSourceRevision     string                        `json:"publishedSourceRevision"`
-	PublishedGenerationID       string                        `json:"publishedGenerationId"`
-	PublishedPlanID             string                        `json:"publishedPlanId"`
-	PublishedPlanDigest         string                        `json:"publishedPlanDigest"`
-	PlanID                      string                        `json:"planId"`
-	PlanDigest                  string                        `json:"planDigest"`
-	AuthorPrincipalID           string                        `json:"authorPrincipalId"`
-	ReviewerPrincipalID         string                        `json:"reviewerPrincipalId"`
-	Approval                    qualificationApprovalEvidence `json:"approval,omitempty"`
-	Principal                   string                        `json:"principal"`
-	SourceRevision              string                        `json:"sourceRevision"`
-	GenerationID                string                        `json:"generationId"`
-	SnapshotSealID              string                        `json:"snapshotSealId"`
-	AuthorizationPolicyRevision int64                         `json:"authorizationPolicyRevision"`
-	AuthorizationPolicyDigest   string                        `json:"authorizationPolicyDigest"`
-	Phases                      []qualificationPhaseEvidence  `json:"phases"`
+	SchemaVersion               int                                    `json:"schemaVersion"`
+	Result                      string                                 `json:"result"`
+	Target                      string                                 `json:"target"`
+	Candidate                   string                                 `json:"candidate"`
+	Revision                    int64                                  `json:"revision"`
+	SourceArtifact              string                                 `json:"sourceArtifact"`
+	Artifact                    string                                 `json:"artifact"`
+	ReleaseDigest               string                                 `json:"releaseDigest"`
+	PublicationID               string                                 `json:"publicationId"`
+	PublicationStatus           string                                 `json:"publicationStatus"`
+	PublishedCandidateID        string                                 `json:"publishedCandidateId"`
+	PublishedCandidateRevision  int64                                  `json:"publishedCandidateRevision"`
+	PublishedTargetID           string                                 `json:"publishedTargetId"`
+	PublishedPrincipalID        string                                 `json:"publishedPrincipalId"`
+	PublishedSourceArtifact     string                                 `json:"publishedSourceArtifact"`
+	PublishedArtifact           string                                 `json:"publishedArtifact"`
+	PublishedReleaseDigest      string                                 `json:"publishedReleaseDigest"`
+	PublishedSourceRevision     string                                 `json:"publishedSourceRevision"`
+	PublishedGenerationID       string                                 `json:"publishedGenerationId"`
+	PublishedPlanID             string                                 `json:"publishedPlanId"`
+	PublishedPlanDigest         string                                 `json:"publishedPlanDigest"`
+	PlanID                      string                                 `json:"planId"`
+	PlanDigest                  string                                 `json:"planDigest"`
+	AuthorPrincipalID           string                                 `json:"authorPrincipalId"`
+	ReviewerPrincipalID         string                                 `json:"reviewerPrincipalId"`
+	Approval                    qualificationApprovalEvidence          `json:"approval,omitempty"`
+	Principal                   string                                 `json:"principal"`
+	SourceRevision              string                                 `json:"sourceRevision"`
+	GenerationID                string                                 `json:"generationId"`
+	SnapshotSealID              string                                 `json:"snapshotSealId"`
+	AuthorizationPolicyRevision int64                                  `json:"authorizationPolicyRevision"`
+	AuthorizationPolicyDigest   string                                 `json:"authorizationPolicyDigest"`
+	Phases                      []qualificationPhaseEvidence           `json:"phases"`
+	LifecycleCredential         *qualificationLifecycleCredentialScope `json:"lifecycleCredential,omitempty"`
 	Assertions                  struct {
 		BrowserApprovedLogin    bool `json:"browserApprovedLogin"`
 		NativeKeyring           bool `json:"nativeKeyring"`
@@ -159,6 +163,7 @@ func (c *Controller) runQualificationAuthoring(
 	report.Result = "failure"
 	phases := newQualificationPhaseTracker(c.now)
 	cleanup := qualificationCleanup{}
+	lifecycleWritten := false
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), qualificationCleanupTimeout)
 		defer cancel()
@@ -166,6 +171,9 @@ func (c *Controller) runQualificationAuthoring(
 		runErr = phases.Finish(runErr)
 		if runErr != nil {
 			report.Result = "failure"
+			if lifecycleWritten {
+				runErr = joinQualificationError(runErr, os.Remove(options.LifecycleCredentialFile))
+			}
 		}
 		report.Phases = phases.Evidence()
 		if runErr != nil {
@@ -227,27 +235,14 @@ func (c *Controller) runQualificationAuthoring(
 	if qualificationRoot == "" {
 		return report, errors.New("qualification authoring assets root is required")
 	}
-	if _, err := c.qualificationDocker(
-		ctx,
-		nil,
-		"build",
-		"--file", filepath.Join(qualificationRoot, "Dockerfile.authoring-client"),
-		"--build-arg", "LEAPVIEW_IMAGE="+options.ClientBaseImage,
-		"--tag", clientImage,
-		qualificationRoot,
-	); err != nil {
-		return report, fmt.Errorf("build qualification client: %w", err)
-	}
-	cleanup.Add(func(cleanupCtx context.Context) error {
-		_, err := c.qualificationDocker(cleanupCtx, nil, "image", "rm", "--force", clientImage)
-		return err
-	})
-	if _, err := c.qualificationDocker(ctx, nil, "pull", qualificationBrowserImage); err != nil {
-		return report, fmt.Errorf("pull qualification browser: %w", err)
+	clientImage, browserImage, err := c.prepareQualificationAuthoringImages(ctx, options, clientImage, &cleanup)
+	if err != nil {
+		return report, err
 	}
 
 	browser, err := c.qualificationContainers.Start(ctx, qualificationContainerRequest{
-		Name: browserContainer, Image: qualificationBrowserImage, NetworkMode: "host",
+		Name: browserContainer, Image: browserImage, NetworkMode: "host",
+		NoPull: options.PreloadedBrowserImage != "",
 		Volumes: []qualificationContainerVolume{
 			{Source: qualificationRoot, Target: "/qualification", ReadOnly: true},
 			{Source: options.EvidenceDir, Target: "/evidence"},
@@ -266,29 +261,8 @@ func (c *Controller) runQualificationAuthoring(
 		_, err := browser.Remove(cleanupCtx)
 		return err
 	})
-	if _, err := browser.Exec(ctx, nil, "mkdir", "-p", "/work"); err != nil {
-		return report, qualificationContainerOperationError(
-			ctx, browser, "prepare authoring browser work directory", err,
-		)
-	}
-	for _, name := range []string{"package.json", "authoring-worker.mjs"} {
-		if _, err := browser.CopyTo(
-			ctx,
-			filepath.Join(qualificationRoot, name),
-			"/work/"+name,
-		); err != nil {
-			return report, qualificationContainerOperationError(
-				ctx, browser, "copy authoring browser asset "+name, err,
-			)
-		}
-	}
-	if _, err := browser.Exec(
-		ctx, nil,
-		"npm", "install", "--prefix", "/work", "--no-audit", "--no-fund", "--silent",
-	); err != nil {
-		return report, qualificationContainerOperationError(
-			ctx, browser, "install authoring browser dependencies", err,
-		)
+	if err := prepareQualificationBrowserAssets(ctx, browser, qualificationRoot, options.PreloadedBrowserImage != ""); err != nil {
+		return report, err
 	}
 	browserWorker, err := c.startQualificationDockerJSONWorker(
 		rootContext, os.Environ(),
@@ -431,7 +405,7 @@ func (c *Controller) runQualificationAuthoring(
 	)
 	clientWorker, err := c.startQualificationDockerJSONWorker(
 		rootContext, clientEnvironment,
-		"run", "--rm", "-i",
+		"run", "--rm", "-i", "--pull=never",
 		"--name", clientContainer,
 		"--network", "host",
 		"--volume", certificateFile+":/run/certs/caddy-root.crt:ro",
@@ -570,6 +544,14 @@ func (c *Controller) runQualificationAuthoring(
 	report.GenerationID = deployment.GenerationID
 	report.SnapshotSealID = deployment.SnapshotSealID
 	if options.FirstPublicationOnly {
+		if options.LifecycleCredentialFile != "" {
+			scope, err := c.issueQualificationLifecycleCredential(ctx, browserWorker, options)
+			if err != nil {
+				return report, err
+			}
+			report.LifecycleCredential = scope
+			lifecycleWritten = true
+		}
 		if err := phases.Finish(nil); err != nil {
 			return report, err
 		}
@@ -744,6 +726,9 @@ func normalizeQualificationAuthoringOptions(options qualificationAuthoringOption
 }
 
 func validateQualificationAuthoringOptions(options qualificationAuthoringOptions) error {
+	if err := validateQualificationLifecycleOptions(options); err != nil {
+		return err
+	}
 	for label, value := range map[string]string{
 		"bundle root":        options.BundleRoot,
 		"image":              options.Image,
