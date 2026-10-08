@@ -94,16 +94,28 @@ if [[ "$leapview_image" == "$revision019_image" ]]; then
 fi
 
 docker pull "$leapview_image"
-payload_container="$(docker create "$leapview_image")"
-payload_dir="$(mktemp -d /run/leapview-payload.XXXXXX)"
+payload_container=
+payload_dir=
 cleanup() {
-  docker rm --force "$payload_container" >/dev/null 2>&1 || true
-  rm -rf -- "$payload_dir"
+  if [[ -n "$payload_container" ]]; then
+    docker rm --force "$payload_container" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$payload_dir" ]]; then
+    rm -rf -- "$payload_dir"
+  fi
 }
 trap cleanup EXIT
+# /run may be noexec. Stage beside the installed /opt/leapview controller;
+# mktemp keeps the extracted payload private until the installer validates it.
+mkdir -p /opt
+payload_dir="$(mktemp -d /opt/leapview-payload.XXXXXX)"
+payload_container="$(docker create "$leapview_image")"
 
 docker cp "$payload_container:/usr/local/share/leapview/deployment/." "$payload_dir"
-test -x "$payload_dir/leapviewctl"
+if [[ ! -x "$payload_dir/leapviewctl" ]]; then
+  printf 'LeapView deployment controller is not executable on the payload filesystem\n' >&2
+  exit 1
+fi
 install_arguments=(
   host install
   --config "$install_config"

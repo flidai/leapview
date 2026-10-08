@@ -42,6 +42,13 @@ func TestBootstrapIsProviderNeutralAndDelegatesLifecycleToGo(t *testing.T) {
 	if operatorCheck < prepare+prepareExit || operatorCheck > installPull {
 		t.Fatal("install must require private operator input before pulling or mutating the instance")
 	}
+	cleanup := strings.Index(bootstrap, "trap cleanup EXIT")
+	staging := strings.Index(bootstrap, `payload_dir="$(mktemp -d /opt/leapview-payload.XXXXXX)"`)
+	container := strings.Index(bootstrap, `payload_container="$(docker create "$leapview_image")"`)
+	if cleanup < 0 || staging < cleanup || container < staging {
+		t.Fatal("bootstrap must register cleanup before allocating private executable payload or container")
+	}
+	requireContains(t, bootstrap, "LeapView deployment controller is not executable on the payload filesystem")
 	for _, forbidden := range []string{
 		"docker compose up", "docker compose down", "leapviewctl init", "leapviewctl start", "terraform", "hcloud", "hetzner", "netcup",
 	} {

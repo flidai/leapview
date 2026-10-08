@@ -376,6 +376,44 @@ application qualification requires two admitted images supporting the private
 maintenance protocol and the actual application/database workload. Run
 `task ci` before promotion.
 
+`task managed:application:qualify -- BOOTSTRAP_RELEASE_RUN PREDECESSOR_RUN CANDIDATE_RUN NEW_EVIDENCE_DIRECTORY`
+exercises the actual application separately. It authenticates the complete
+successful producer runs and original artifact ZIPs through the canonical
+admission importer, requires identical full source contracts, and keeps the
+original pulled repository digests in two dedicated Docker stores. Bootstrap
+must be a release image: its real installer, TLS PostgreSQL pool qualification,
+independent review and first publication initialize the shared home legitimately.
+Preloaded authoring helpers and a two-hour project-scoped token support the
+offline observations without retaining administrator credentials.
+
+Online pulls and helper builds run as root PID 1 in separate mount/network/PID
+namespaces. A parent `slirp4netns` process provides userspace egress without
+changing host bridges, links, routes or firewall rules. Online staging hides
+`/root`, `/run`, `/var` and `/etc`. Both private Docker daemons and the network
+helper stop before the offline child reopens the same raw Docker stores,
+preserving the original repository digests.
+
+The offline child has no external interface or default route. It verifies root
+PID 1 in new mount/network/PID namespaces and hides
+`/root`, `/run`, `/var`, `/opt`, `/etc`, and `/usr` before any installation.
+Keep inputs and evidence outside those directories. PostgreSQL uses a separate
+support daemon; the application daemon contains only the application and proxy
+during maintenance. A successful run requires actual enrollment, compatible
+handoff, dashboard SSE draining, unchanged governed query results, a reverse
+handoff, and interrupted provisional publication followed by explicit recovery.
+A write acknowledged by the candidate must retain its exact immutable revision
+manifest after recovery. This write is **staged**, not activated as a publication.
+Verified HTTPS stays enabled; the interruption deliberately withholds the
+fixture CA from one controller process so it cannot establish the commit.
+
+The protected `managed-application-candidate.yml` workflow runs this same task
+on main and uploads only the two public JSON reports. `application.json` records
+input identities, the controller hash, real phase journals, observations and
+cleanup. Both private Docker stores and all generated credentials are removed.
+Passing remains development lifecycle evidence, not full managed-profile or
+production admission. It does not qualify reboot, ACME, schema migration,
+credential rotation, production capacity or provider recovery.
+
 Remaining D11 work includes qualified migration-authority coordination for
 schema-changing releases, workload-sized capacity and rollback-window evidence,
 protected producer-to-host handoff evidence for the selected artifacts, and a real dedicated host
