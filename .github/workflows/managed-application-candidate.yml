@@ -1,0 +1,116 @@
+name: Protected managed application candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap_release_run:
+        description: Successful main release.yml run used for protected first publication
+        required: true
+        type: string
+      predecessor_run:
+        description: Successful main managed-admission producer run for the predecessor
+        required: true
+        type: string
+      candidate_run:
+        description: Successful main managed-admission producer run for the candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: managed-application-candidate-${{ inputs.bootstrap_release_run }}-${{ inputs.predecessor_run }}-${{ inputs.candidate_run }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out the protected verifier and lifecycle runner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require explicit positive producer run identities
+        id: validate
+        env:
+          BOOTSTRAP_RELEASE_RUN: ${{ inputs.bootstrap_release_run }}
+          PREDECESSOR_RUN: ${{ inputs.predecessor_run }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+        run: |
+          for run_id in "$BOOTSTRAP_RELEASE_RUN" "$PREDECESSOR_RUN" "$CANDIDATE_RUN"; do
+            if [[ ! "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "all three producer run IDs must be positive decimal integers" >&2
+              exit 2
+            fi
+          done
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            max-jobs = 1
+            cores = 2
+
+      - name: Authenticate inputs and qualify the isolated application lifecycle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_RELEASE_RUN: ${{ inputs.bootstrap_release_run }}
+          PREDECESSOR_RUN: ${{ inputs.predecessor_run }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+        run: |
+          bash deploy/managed/nixos/tests/run-managed-application.sh \
+            "$BOOTSTRAP_RELEASE_RUN" "$PREDECESSOR_RUN" "$CANDIDATE_RUN" \
+            "$RUNNER_TEMP/managed-application-evidence"
+
+      - name: Copy only public lifecycle reports for artifact upload
+        id: collect
+        if: always()
+        run: |
+          sudo python3 - "$RUNNER_TEMP" "$(id -u)" "$(id -g)" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import stat
+          import sys
+
+          root, uid, gid = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+          source = root / "managed-application-evidence"
+          destination = root / "managed-application-public"
+          destination.mkdir(mode=0o755)
+          os.chown(destination, uid, gid)
+          for name in ("application.json", "first-publication.json"):
+              try:
+                  descriptor = os.open(source / name, os.O_RDONLY | os.O_NOFOLLOW)
+              except FileNotFoundError:
+                  continue
+              with os.fdopen(descriptor, "r") as stream:
+                  info = os.fstat(stream.fileno())
+                  if not stat.S_ISREG(info.st_mode) or info.st_size > 8 * 1024 * 1024:
+                      raise SystemExit("public qualification report must be a bounded regular JSON file")
+                  report = json.load(stream)
+              if not isinstance(report, dict):
+                  raise SystemExit("public qualification report must be a JSON object")
+              output = destination / name
+              with output.open("x") as stream:
+                  json.dump(report, stream, sort_keys=True)
+                  stream.write("\n")
+                  os.fchmod(stream.fileno(), 0o644)
+                  os.fchown(stream.fileno(), uid, gid)
+          PY
+
+      - name: Retain bounded development lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-application-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-application-public/
+          if-no-files-found: ignore
+          retention-days: 14

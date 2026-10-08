@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,13 +53,17 @@ func TestQualificationAuthoringAssetsRequireAllRegularProtectedFiles(t *testing.
 func TestQualificationReadinessStatusUsesLoopbackReadyzStatus(t *testing.T) {
 	for _, status := range []int{http.StatusServiceUnavailable, http.StatusOK} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			allowed := httpmiddleware.AllowedHosts([]string{"localhost"})(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				require.Equal(t, http.MethodGet, request.Method)
 				require.Equal(t, "/readyz", request.URL.Path)
 				writer.WriteHeader(status)
 			}))
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				request.RemoteAddr = "172.18.0.1:49152"
+				allowed.ServeHTTP(writer, request)
+			}))
 			defer server.Close()
-			got, err := qualificationReadinessStatus(t.Context(), server.URL+"/readyz")
+			got, err := qualificationReadinessStatus(t.Context(), server.URL+"/readyz", "localhost")
 			require.NoError(t, err)
 			require.Equal(t, status, got)
 		})

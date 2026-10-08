@@ -27,8 +27,11 @@ const (
 var qualificationFirstPublicationImage = regexp.MustCompile(`^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$`)
 
 type QualificationFirstPublicationOptions struct {
-	EvidenceDir string
-	AssetsRoot  string
+	EvidenceDir             string
+	AssetsRoot              string
+	PreloadedClientImage    string
+	PreloadedBrowserImage   string
+	LifecycleCredentialFile string
 }
 
 type qualificationFirstPublicationProfile struct {
@@ -95,6 +98,7 @@ type qualificationFirstPublicationReport struct {
 	ReadinessAfter       int                                     `json:"readinessAfter"`
 	Phases               []qualificationPhaseEvidence            `json:"phases"`
 	Assertions           qualificationFirstPublicationAssertions `json:"assertions"`
+	LifecycleCredential  *qualificationLifecycleCredentialScope  `json:"lifecycleCredential,omitempty"`
 }
 
 func validateQualificationFirstPublicationProfile(profile qualificationFirstPublicationProfile) error {
@@ -157,7 +161,7 @@ func validateQualificationFirstPublicationReport(report qualificationFirstPublic
 		!report.Assertions.TemporaryCredentialsRemoved || !report.Assertions.SecretsExcludedFromEvidence {
 		return errors.New("first-publication readiness or credential-boundary evidence is incomplete")
 	}
-	return nil
+	return validateQualificationLifecycleScope(report.LifecycleCredential, request)
 }
 
 func qualificationSHA256Identity(value string) bool {
@@ -169,16 +173,28 @@ func (c *Controller) QualifyFirstPublication(ctx context.Context, options Qualif
 	if err != nil || strings.TrimSpace(options.EvidenceDir) == "" {
 		return errors.New("first-publication qualification requires an absolute evidence directory")
 	}
+	if err := validateQualificationPreloadedImages(options.PreloadedClientImage, options.PreloadedBrowserImage); err != nil {
+		return err
+	}
+	if options.LifecycleCredentialFile != "" {
+		if err := validateQualificationLifecycleOutput(options.LifecycleCredentialFile, evidenceDir); err != nil {
+			return err
+		}
+	}
 	if err := os.Mkdir(evidenceDir, 0o700); err != nil {
 		return fmt.Errorf("create private first-publication evidence directory: %w", err)
 	}
 	completed := false
+	lifecycleWritten := false
 	cleanup := qualificationCleanup{}
 	var secrets []string
 	defer func() {
 		runErr = joinQualificationError(runErr, cleanup.Run(context.Background()))
 		if !completed || runErr != nil {
 			runErr = joinQualificationError(runErr, os.RemoveAll(evidenceDir))
+			if lifecycleWritten {
+				runErr = joinQualificationError(runErr, os.Remove(options.LifecycleCredentialFile))
+			}
 		}
 		secrets = nil
 	}()
@@ -253,7 +269,7 @@ func (c *Controller) QualifyFirstPublication(ctx context.Context, options Qualif
 		return fmt.Errorf("protected first-publication assets: %w", err)
 	}
 
-	readinessBefore, err := qualificationReadinessStatus(ctx, qualificationFirstPublicationReadyURL)
+	readinessBefore, err := qualificationReadinessStatus(ctx, qualificationFirstPublicationReadyURL, profile.CaddyDomain)
 	if err != nil {
 		return fmt.Errorf("probe installed readiness before first publication: %w", err)
 	}
@@ -333,15 +349,25 @@ func (c *Controller) QualifyFirstPublication(ctx context.Context, options Qualif
 		SourceRevision: sourceRevision, Target: profile.Target,
 		ProjectID: qualificationProjectID, Environment: profile.Environment,
 		AssetsRoot: assetsRoot, FirstPublicationOnly: true,
+		PreloadedClientImage: options.PreloadedClientImage, PreloadedBrowserImage: options.PreloadedBrowserImage,
+		LifecycleCredentialFile: options.LifecycleCredentialFile,
 	})
 	if err != nil {
 		return fmt.Errorf("qualify first publication through installed authoring path: %w", err)
+	}
+	lifecycleWritten = authoring.LifecycleCredential != nil
+	if lifecycleWritten {
+		var retained qualificationLifecycleCredential
+		if err := readQualificationJSON(options.LifecycleCredentialFile, &retained); err != nil {
+			return err
+		}
+		secrets = append(secrets, retained.Token)
 	}
 	if authoring.Result != "success" || authoring.Principal == "" || authoring.ReviewerPrincipalID == "" ||
 		authoring.Approval.Status != "approved" || authoring.Approval.ApprovedBy != authoring.ReviewerPrincipalID {
 		return errors.New("installed authoring path did not return a complete independent approval and publication")
 	}
-	readinessAfter, err := waitQualificationReadinessStatus(ctx, qualificationFirstPublicationReadyURL, 3*time.Minute)
+	readinessAfter, err := waitQualificationReadinessStatus(ctx, qualificationFirstPublicationReadyURL, profile.CaddyDomain, 3*time.Minute)
 	if err != nil {
 		return fmt.Errorf("installed application did not become ready after first publication: %w", err)
 	}
@@ -375,6 +401,7 @@ func (c *Controller) QualifyFirstPublication(ctx context.Context, options Qualif
 		Approval:             authoring.Approval,
 		PublisherPrincipalID: authoring.AuthorPrincipalID, ReviewerPrincipalID: authoring.ReviewerPrincipalID,
 		ReadinessBefore: readinessBefore, ReadinessAfter: readinessAfter, Phases: authoring.Phases,
+		LifecycleCredential: authoring.LifecycleCredential,
 		Assertions: qualificationFirstPublicationAssertions{
 			FirstLoginConsumedOnce: true, ReadinessTransitionObserved: readinessBefore == http.StatusServiceUnavailable && readinessAfter == http.StatusOK,
 			TemporaryCredentialsRemoved: true, SecretsExcludedFromEvidence: true,
@@ -445,27 +472,17 @@ func qualificationPostgresAuthorityURL(value string) bool {
 	return err == nil && (parsed.Scheme == "postgres" || parsed.Scheme == "postgresql") && parsed.Hostname() == "postgres"
 }
 
-func qualificationReadinessStatus(ctx context.Context, endpoint string) (int, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return 0, err
-	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		return 0, err
-	}
-	defer response.Body.Close()
-	return response.StatusCode, nil
+func qualificationReadinessStatus(ctx context.Context, endpoint, authority string) (int, error) {
+	return hostHTTPStatus(ctx, endpoint, authority)
 }
 
-func waitQualificationReadinessStatus(ctx context.Context, endpoint string, timeout time.Duration) (int, error) {
+func waitQualificationReadinessStatus(ctx context.Context, endpoint, authority string, timeout time.Duration) (int, error) {
 	waitCtx, cancel := qualificationContext(ctx, timeout)
 	defer cancel()
 	var status int
 	err := qualificationWait(waitCtx, 2*time.Second, func(waitCtx context.Context) (bool, error) {
 		var err error
-		status, err = qualificationReadinessStatus(waitCtx, endpoint)
+		status, err = qualificationReadinessStatus(waitCtx, endpoint, authority)
 		if err != nil {
 			return false, nil
 		}

@@ -279,7 +279,8 @@ func (c *Controller) initialize(ctx context.Context, options InitOptions, operat
 		}
 		_ = os.Remove(c.path(credentialsName))
 	}
-	if err := c.compose(ctx, nil, c.stdout, c.stderr, "pull", "leapview"); err != nil {
+	// The digest is immutable: a preloaded exact image needs no registry access.
+	if err := c.compose(ctx, nil, c.stdout, c.stderr, "pull", "--policy", "missing", "leapview"); err != nil {
 		cleanupInitialization()
 		return fmt.Errorf("initial image pull failed; initialization can be retried: %w", err)
 	}

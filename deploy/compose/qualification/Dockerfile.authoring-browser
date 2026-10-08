@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+
+FROM mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+
+WORKDIR /work
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 HOME=/home/pwuser
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund \
+    && mkdir -p /home/pwuser \
+    && chown -R 1000:1000 /work /home/pwuser
+
+USER 1000:1000
+ENTRYPOINT []
+CMD ["node", "/work/authoring-worker.mjs"]

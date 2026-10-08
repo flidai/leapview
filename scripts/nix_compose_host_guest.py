@@ -1267,6 +1267,7 @@ def _run_host_installer(guest: SSHGuest, evidence: Path, command: str, *, timeou
         "pool-output": "physical-pool bootstrap returned", "pool-compatibility": "compatibility differ",
         "missing-bootstrap-input": "bootstrap input is missing",
         "missing-prerequisites": "host prerequisites are missing",
+        "controller-not-executable": "leapview deployment controller is not executable on the payload filesystem",
         "docker-unavailable": "cannot connect to the docker daemon", "image-pull": "pull access denied",
         "csrf-key": "leapview_csrf_key", "agent-key": "leapview_agent_credential_key",
         "disk-full": "no space left on device", "deadline": "deadline exceeded",
