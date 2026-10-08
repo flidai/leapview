@@ -142,14 +142,19 @@ func maintenanceRuntimeFixture(t *testing.T) (*runtimeview.Cache, manageddata.Re
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := lease.Release(); err != nil {
+				t.Error(err)
+			}
+			if err := cache.DeleteRevision(cleanupCtx, manifest.RevisionID()); err != nil {
+				t.Error(err)
+			}
+		})
 		return lease
 	}
 	leased := materialize("leased revision")
-	t.Cleanup(func() {
-		if err := leased.Release(); err != nil {
-			t.Error(err)
-		}
-	})
 	idle := materialize("idle revision")
 	if leased.Root() == idle.Root() {
 		t.Fatal("leased/idle control revisions are not distinct")
