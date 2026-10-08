@@ -59,6 +59,55 @@ func TestCoordinatorRecoveryStopsOnCallerCancellation(t *testing.T) {
 	assertRecoveryStatus(t, parent, repo, healthy, manageddata.S3MultipartStatusAborting)
 }
 
+func TestCoordinatorRecoveryRetainsIndependentErrorClasses(t *testing.T) {
+	ctx, repo, blocked, healthy := recoveryProgressFixture(t)
+	provider := &failedAbortRecoveryStore{fakeMultipartStore: &fakeMultipartStore{listErr: storage.ErrBackend}}
+	result, err := newTestService(t, repo, provider).RecoverOrphaned(ctx, time.Now().UTC().Add(time.Hour), 10)
+	if !errors.Is(err, control.ErrBackend) || !errors.Is(err, control.ErrIntegrity) || result != (RecoveryResult{}) {
+		t.Fatalf("independent recovery errors = %#v, %v", result, err)
+	}
+	if provider.listCalls != 1 || provider.abortCalls != 1 {
+		t.Fatalf("both failing rows must execute: list=%d abort=%d", provider.listCalls, provider.abortCalls)
+	}
+	assertRecoveryStatus(t, ctx, repo, blocked, manageddata.S3MultipartStatusCreating)
+	assertRecoveryStatus(t, ctx, repo, healthy, manageddata.S3MultipartStatusAborting)
+}
+
+func TestCoordinatorCompletingRecoveryRequiresProviderCapability(t *testing.T) {
+	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
+	provider := &fakeMultipartStore{}
+	service := newTestService(t, repo, provider)
+	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "missing-capability"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	failing, err := New(&failingMultipartRepository{Repository: repo, finishErr: errors.New("controlled SQL finish failure")}, provider, Config{Backend: "s3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failing.Complete(ctx, CompleteRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, IdempotencyKey: "missing-capability-completion", Parts: []CompletedPart{{PartNumber: 1, ETag: "fixture-etag"}}}); err == nil {
+		t.Fatal("completion fixture must retain its durable intent")
+	}
+	withoutRecovery := newTestService(t, repo, completionOnlyStore{MultipartStore: provider})
+	result, err := withoutRecovery.RecoverOrphaned(ctx, time.Now().UTC().Add(time.Hour), 10)
+	if !errors.Is(err, control.ErrBackend) || result != (RecoveryResult{}) || provider.completeCalls != 1 {
+		t.Fatalf("unsupported recovery = %#v, %v; completion calls=%d", result, err, provider.completeCalls)
+	}
+	assertRecoveryStatus(t, ctx, repo, manageddata.MultipartUploadID(upload.ID), manageddata.S3MultipartStatusCompleting)
+}
+
+type completionOnlyStore struct{ MultipartStore }
+
+type failedAbortRecoveryStore struct{ *fakeMultipartStore }
+
+func (s *failedAbortRecoveryStore) AbortMultipart(context.Context, storage.MultipartUpload) error {
+	s.abortCalls++
+	return storage.ErrIntegrity
+}
+
 func recoveryProgressFixture(t *testing.T) (context.Context, *managedpostgres.Repository, manageddata.MultipartUploadID, manageddata.MultipartUploadID) {
 	t.Helper()
 	_, repo, session := coordinatorFixture(t, []manageddata.File{
