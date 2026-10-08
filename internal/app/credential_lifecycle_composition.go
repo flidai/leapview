@@ -69,6 +69,18 @@ func composeCredentialLifecycle(ctx context.Context, c credentialLifecycleConfig
 			return err
 		}
 		target, err := c.Reader.OperatorSnapshot(ctx, c.TargetID)
+		if errors.Is(err, deploymentpostgres.ErrNotFound) {
+			// Customer keys may be installed before the first project claim.
+			// Only the same fully unclaimed state accepted by startup has no
+			// source runtime to restore; a claimed but missing target is corrupt.
+			claimed, claimErr := postgresAuthoringProjectIDResolver(c.Graph.DeploymentRepository, c.Graph.ServingState, c.TargetID, servingstate.Environment(c.Environment))(ctx)
+			if claimErr != nil {
+				return claimErr
+			}
+			if claimed == "" {
+				return nil
+			}
+		}
 		if err != nil {
 			return err
 		}
