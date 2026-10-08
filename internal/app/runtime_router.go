@@ -244,6 +244,8 @@ type persistenceInputs struct {
 }
 
 type workflowInputs struct {
+	agentCredentials               agentmodule.ConfigurationCredentials
+	agentProviderAdmission         agentmodule.ProviderAdmission
 	managedDataResolver            runtimehostmodule.ManagedDataResolver
 	refreshPipelineClock           refreshmodule.Clock
 	refreshTargetRevision          func(context.Context, projectgraph.ServingIdentity) (int64, error)
@@ -355,6 +357,8 @@ type capabilityAssemblyInputs struct {
 }
 
 type workflowAssemblyInputs struct {
+	AgentCredentials               agentmodule.ConfigurationCredentials
+	AgentProviderAdmission         agentmodule.ProviderAdmission
 	AgentSettings                  agentmodule.Settings
 	AgentConfigFile                string
 	ManagedDataResolver            runtimehostmodule.ManagedDataResolver
@@ -801,6 +805,8 @@ func buildApplicationSurfaces(
 	moduleWorkflow.agent = capabilities.Agent
 	moduleWorkflow.agentConfig = workflow.AgentConfig
 	moduleWorkflow.agentConfigFile = workflow.AgentConfigFile
+	moduleWorkflow.agentCredentials = workflow.AgentCredentials
+	moduleWorkflow.agentProviderAdmission = workflow.AgentProviderAdmission
 	platform.auth = workflow.Auth
 	routes.accessModule = capabilities.AccessModule
 	moduleWorkflow.reloader = workflow.Reloader
@@ -1568,8 +1574,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		agentConfig := agentmodule.Config{
 			Persistence: persistence.agentPersistence, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
-			ModelConfigFile: moduleWorkflow.agentConfigFile,
-			Service:         moduleWorkflow.agent, Jobs: platform.asyncJobs,
+			ModelConfigFile:          moduleWorkflow.agentConfigFile,
+			ConfigurationCredentials: moduleWorkflow.agentCredentials,
+			ProviderAdmission:        moduleWorkflow.agentProviderAdmission,
+			Service:                  moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
 			BuildVersion:       platform.buildIdentity.Version,

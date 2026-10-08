@@ -3,6 +3,8 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +37,51 @@ func (s *routeConfigurationStore) SaveConfiguration(_ context.Context, expected 
 	return r, nil
 }
 
+type routeConfigurationCredentials struct {
+	store        agent.ConfigurationStore
+	probes       int
+	actor, token string
+	expected     int64
+	input        agent.ConfigurationInput
+	versions     map[string]string
+	install      func(context.Context, int64) error
+}
+
+func (c *routeConfigurationCredentials) BindRuntime(install func(context.Context, int64) error, _ func(context.Context) error) error {
+	c.install = install
+	return nil
+}
+func (c *routeConfigurationCredentials) Test(_ context.Context, actor string, expected int64, input agent.ConfigurationInput) (string, error) {
+	c.probes++
+	c.actor, c.expected, c.input = actor, expected, input
+	c.token = fmt.Sprintf("validation:%d", c.probes)
+	return c.token, nil
+}
+func (c *routeConfigurationCredentials) Activate(ctx context.Context, actor string, expected int64, input agent.ConfigurationInput, token string) (agent.ConfigurationRevision, error) {
+	if token == "" || token != c.token || actor != c.actor || expected != c.expected || input != c.input {
+		return agent.ConfigurationRevision{}, errors.New("validation receipt mismatch")
+	}
+	version := fmt.Sprintf("immutable:%d", expected+1)
+	saved, err := c.store.SaveConfiguration(ctx, expected, agent.ConfigurationRevision{Enabled: input.Enabled, ActorID: actor, CredentialVersionID: version, Config: agent.Config{Model: input.Model, BaseURL: input.BaseURL, APIMode: input.APIMode, ReasoningEffort: input.ReasoningEffort}})
+	if err != nil {
+		return agent.ConfigurationRevision{}, err
+	}
+	if c.versions == nil {
+		c.versions = map[string]string{}
+	}
+	c.versions[version] = input.APIKey
+	return saved, c.install(ctx, saved.Revision)
+}
+func (c *routeConfigurationCredentials) UseConfiguration(_ context.Context, r agent.ConfigurationRevision, use func(agent.Config) error) error {
+	key, ok := c.versions[r.CredentialVersionID]
+	if !ok {
+		return errors.New("credential version missing")
+	}
+	config := r.Config
+	config.APIKey = key
+	return use(config)
+}
+
 func TestMountedAdminConfigurationTestAndSave(t *testing.T) {
 	service := agent.NewService(nil, agent.Config{})
 	service.ConfigureDefaultModel(func(agent.Config) agentcore.Model {
@@ -43,8 +90,8 @@ func TestMountedAdminConfigurationTestAndSave(t *testing.T) {
 		})
 	})
 	store := &routeConfigurationStore{}
-	probes := 0
-	manager, err := agent.NewConfigurationManager(store, service, strings.Repeat("12", 32), func(context.Context, agent.Config) error { probes++; return nil })
+	credentials := &routeConfigurationCredentials{store: store}
+	manager, err := agent.NewConfigurationManager(store, service, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +127,19 @@ func TestMountedAdminConfigurationTestAndSave(t *testing.T) {
 	if err := json.Unmarshal(tested.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.TestToken == "" || probes != 1 || service.Enabled() {
+	if response.TestToken == "" || credentials.probes != 1 || service.Enabled() {
 		t.Fatal("test must probe without activation")
 	}
 	saved := request("save", response.TestToken)
 	if saved.Code != http.StatusOK || !service.Enabled() || store.current.Revision != 1 {
 		t.Fatalf("mounted save: %d %s", saved.Code, saved.Body.String())
+	}
+	if store.current.CredentialVersionID != "immutable:1" || store.current.Config.APIKey != "" || len(store.current.Credential) != 0 {
+		t.Fatal("mounted route persisted credentials instead of an immutable reference")
+	}
+	for _, response := range []*httptest.ResponseRecorder{tested, saved} {
+		if strings.Contains(response.Body.String(), `"apiKey":"secret"`) {
+			t.Fatal("mounted route returned provider credentials")
+		}
 	}
 }

@@ -130,6 +130,8 @@ func (s *QueryAuditSurface) Recorder() queryaudit.Recorder {
 }
 
 type Module struct {
+	localCredentialReader        LocalCredentialReader
+	providerAdmission            analyticsduckdb.ProviderAdmission
 	environment                  *analyticsducklake.Environment
 	cache                        *resultcache.Pool
 	queryAudit                   queryaudit.Store

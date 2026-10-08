@@ -158,3 +158,129 @@ interface ConnectionCredentialDrafts {
   ): OkJson<CredentialValidationResponse> | CommonErrors;
 
 }
+
+scalar CredentialActivationOperationId extends CredentialDraftVersionId;
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model CredentialActivationAuditPayload {
+  @apigen.auditInternal operation_id: string;
+  @apigen.auditInternal version_id: string;
+  @apigen.auditInternal state: string;
+}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 400, code: "INVALID_CREDENTIAL_ACTIVATION", publicDetail: "Credential activation request is invalid." })
+model InvalidCredentialActivationFailure {}
+@apigen.failureDefinition(#{ kind: "unauthorized", statusCode: 403, code: "CREDENTIAL_ACTIVATION_FORBIDDEN", publicDetail: "Credential activation access is forbidden." })
+model ForbiddenCredentialActivationFailure {}
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "CREDENTIAL_ACTIVATION_NOT_FOUND", publicDetail: "Credential activation was not found." })
+model CredentialActivationNotFoundFailure {}
+@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "CREDENTIAL_ACTIVATION_CONFLICT", publicDetail: "Credential activation conflicts with stored state." })
+model CredentialActivationConflictFailure {}
+@apigen.failureDefinition(#{ kind: "provider_unavailable", statusCode: 503, code: "CREDENTIAL_ACTIVATION_UNAVAILABLE", publicDetail: "Credential activation service is unavailable." })
+model CredentialActivationUnavailableFailure {}
+
+@doc("Durable operation metadata only. Committed means the exact publication pointer is durable; only completed with runtimeReady=true confirms that the replacement runtime is ready. No credential values, ciphertext or provider references are returned.")
+model CredentialActivationResponse {
+  operationId: CredentialActivationOperationId;
+  versionId: CredentialDraftVersionId;
+  state: "preparing" | "prepared" | "switching" | "committed" | "completed" | "aborted";
+  @minValue(1) bindingRevision: int64;
+  createdAt: utcDateTime;
+  updatedAt: utcDateTime;
+  runtimeReady: boolean;
+  candidateId?: string;
+  generationId?: string;
+  publicationId?: string;
+}
+
+@doc("The caller retains this operation UUID to resolve a lost response. Reusing it requires the same immutable version, validation receipt and binding revision. Destination, ownership and publication inputs are resolved by the server.")
+model CredentialActivationRequest {
+  operationId: CredentialActivationOperationId;
+  receiptId: CredentialValidationReceiptId;
+  @minValue(1) expectedBindingRevision: int64;
+}
+
+@doc("Before commit, supply a fresh receipt for the same version and current binding. After commit the receipt may be omitted; recovery restores only that exact committed publication. Retry is explicit and rechecks current caller authority.")
+model CredentialActivationRetryRequest {
+  receiptId?: CredentialValidationReceiptId;
+}
+
+model CredentialActivationAbortRequest {}
+
+@route("/projects/{project}/targets/{target}/connection-bindings/{connection}")
+@tag("Credentials")
+interface ConnectionCredentialActivations {
+  @summary("Prepare activation of a validated connection credential")
+  @doc("Requires connection.manage and connection.use on the exact connection. Persists the operation and prepares its exact candidate without claiming runtime use. Idempotency-Key is forbidden; retain operationId and query status after a lost response.")
+  @route("/credential-drafts/{version}/activate")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  @apigen.failsWith(InvalidCredentialActivationFailure)
+  @apigen.failsWith(ForbiddenCredentialActivationFailure)
+  @apigen.failsWith(CredentialActivationNotFoundFailure)
+  @apigen.failsWith(CredentialActivationConflictFailure)
+  @apigen.failsWith(CredentialActivationUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.activation.requested", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(CredentialActivationAuditPayload)
+  startCredentialActivation(
+    @path project: ResourceId,
+    @path target: ResourceId,
+    @path @apigen.target connection: ResourceId,
+    @path version: CredentialDraftVersionId,
+    @body body: CredentialActivationRequest,
+  ): AcceptedJson<CredentialActivationResponse> | OkJson<CredentialActivationResponse> | CommonErrors;
+
+  @summary("Read a connection credential activation")
+  @route("/credential-activations/{operation}")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.read", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  getCredentialActivation(
+    @path project: ResourceId,
+    @path target: ResourceId,
+    @path @apigen.target connection: ResourceId,
+    @path operation: CredentialActivationOperationId,
+  ): OkJson<CredentialActivationResponse> | CommonErrors;
+
+  @summary("Continue or recover an exact connection credential activation")
+  @route("/credential-activations/{operation}/retry")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  @apigen.failsWith(InvalidCredentialActivationFailure)
+  @apigen.failsWith(ForbiddenCredentialActivationFailure)
+  @apigen.failsWith(CredentialActivationNotFoundFailure)
+  @apigen.failsWith(CredentialActivationConflictFailure)
+  @apigen.failsWith(CredentialActivationUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.activation.retried", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(CredentialActivationAuditPayload)
+  retryCredentialActivation(
+    @path project: ResourceId,
+    @path target: ResourceId,
+    @path @apigen.target connection: ResourceId,
+    @path operation: CredentialActivationOperationId,
+    @body body: CredentialActivationRetryRequest,
+  ): AcceptedJson<CredentialActivationResponse> | OkJson<CredentialActivationResponse> | CommonErrors;
+
+  @summary("Abort an uncommitted connection credential activation")
+  @doc("Aborting does not reverse a committed publication. Inspect status and use retry to complete recovery after commit.")
+  @route("/credential-activations/{operation}/abort")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
+  @extension("x-leapview-object-scope", "connection")
+  @apigen.failsWith(InvalidCredentialActivationFailure)
+  @apigen.failsWith(ForbiddenCredentialActivationFailure)
+  @apigen.failsWith(CredentialActivationNotFoundFailure)
+  @apigen.failsWith(CredentialActivationConflictFailure)
+  @apigen.failsWith(CredentialActivationUnavailableFailure)
+  @apigen.command(#{ auditAction: "credential.activation.aborted", guarantee: "transactional", nonReplayable: true })
+  @apigen.auditPayload(CredentialActivationAuditPayload)
+  abortCredentialActivation(
+    @path project: ResourceId,
+    @path target: ResourceId,
+    @path @apigen.target connection: ResourceId,
+    @path operation: CredentialActivationOperationId,
+    @body body: CredentialActivationAbortRequest,
+  ): OkJson<CredentialActivationResponse> | CommonErrors;
+}

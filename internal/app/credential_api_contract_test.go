@@ -11,7 +11,7 @@ import (
 
 func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := credentialgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 4; got != want {
+	if got, want := len(contracts), 8; got != want {
 		t.Fatalf("Credential generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range contracts {
@@ -61,6 +61,31 @@ func TestAPIGenCredentialCapabilityOwnsItsOperationSurface(t *testing.T) {
 	}
 	if got, want := len(apiaggregate.GetAPIGenOperationContracts()), expectedAPIGenAggregateOperationCount; got != want {
 		t.Fatalf("aggregate generated operations = %d, want %d", got, want)
+	}
+}
+
+func TestCredentialActivationContractPreservesAuthorizationAndAtomicAudit(t *testing.T) {
+	contracts := credentialgen.GetAPIGenOperationContracts()
+	for operation, action := range map[string]string{
+		"startCredentialActivation": "credential.activation.requested",
+		"retryCredentialActivation": "credential.activation.retried",
+		"abortCredentialActivation": "credential.activation.aborted",
+	} {
+		contract, ok := contracts[operation]
+		if !ok || contract.Authz == nil || contract.Authz.Action != "connection.manage" || contract.Authz.Resolver != "connection" {
+			t.Fatalf("%s must require exact connection management", operation)
+		}
+		command := contract.Command
+		if command == nil || command.Idempotency != "forbidden" || command.Audit.Guarantee != "transactional" || command.Audit.SuccessAction != action || command.Owner != "LeapViewAPI.Credential" {
+			t.Fatalf("%s activation/audit contract = %#v", operation, command)
+		}
+		if command.UI != nil || len(command.AdditionalExposures) != 0 || command.Audit.Payload == nil || command.Audit.Payload.Schema != "CredentialActivationAuditPayload" {
+			t.Fatalf("%s must expose only the reviewed activation API and metadata audit", operation)
+		}
+	}
+	status, ok := contracts["getCredentialActivation"]
+	if !ok || status.Authz == nil || status.Authz.Action != "connection.read" || status.Authz.Resolver != "connection" || status.Command != nil {
+		t.Fatal("activation status must remain an authorized read")
 	}
 }
 

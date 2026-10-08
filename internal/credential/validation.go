@@ -12,7 +12,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/credential/encryption"
 	"github.com/flidai/leapview/internal/platform/typednil"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 )
 
@@ -42,9 +41,9 @@ type ValidationReceipt struct {
 func (receipt ValidationReceipt) Validate() error {
 	parsedReceiptID, err := uuid.Parse(receipt.ReceiptID)
 	if err != nil || parsedReceiptID.String() != receipt.ReceiptID || parsedReceiptID == uuid.Nil ||
-		receipt.Binding.Validate() != nil || receipt.Binding.ScopeKind != "connection" ||
+		receipt.Binding.Validate() != nil ||
 		!canonical(receipt.ActorID) || !canonicalBindingID(receipt.BindingID) ||
-		receipt.BindingRevision < 1 || !destinationDigest(receipt.ConfigurationDigest) ||
+		!validCredentialRevision(receipt.Binding.ScopeKind, receipt.BindingRevision) || !destinationDigest(receipt.ConfigurationDigest) ||
 		receipt.ValidatedAt.IsZero() || receipt.ExpiresAt.IsZero() ||
 		!receipt.ExpiresAt.Equal(receipt.ValidatedAt.Add(validationReceiptTTL)) {
 		return ErrInvalid
@@ -77,11 +76,12 @@ func (receipt ValidationReceipt) AuditIntent() (access.AuditIntent, error) {
 	if id, err := uuid.Parse(receipt.ActorID); err == nil && id.String() == receipt.ActorID {
 		principalID = receipt.ActorID
 	}
+	scopeID, resourceKind := credentialAuditScope(receipt.Binding)
 	return (access.AuditIntent{
 		EventID: uuid.NewString(), DomainEventID: receipt.ReceiptID,
-		ScopeID: receipt.Binding.ProjectID, ActorID: receipt.ActorID,
+		ScopeID: scopeID, ActorID: receipt.ActorID,
 		PrincipalID: principalID, Source: "credential", Operation: "validateCredentialDraft",
-		Action: "credential.draft.validated", ResourceKind: "connection",
+		Action: "credential.draft.validated", ResourceKind: resourceKind,
 		ResourceID: receipt.Binding.ResourceID, Outcome: "success",
 		AggregateKey:      "credential-validation:" + receipt.ReceiptID,
 		AggregateSequence: 1, MetadataJSON: string(metadata),
@@ -119,11 +119,12 @@ func ValidateValidationAuditIntent(receipt ValidationReceipt, intent access.Audi
 	if actorID, err := uuid.Parse(receipt.ActorID); err == nil && actorID.String() == receipt.ActorID {
 		actorPrincipal = receipt.ActorID
 	}
+	scopeID, resourceKind := credentialAuditScope(receipt.Binding)
 	if eventErr != nil || eventID == uuid.Nil || expiryErr != nil || !parsedExpiry.Equal(receipt.ExpiresAt) ||
-		canonicalIntent.DomainEventID != receipt.ReceiptID || canonicalIntent.ScopeID != receipt.Binding.ProjectID ||
+		canonicalIntent.DomainEventID != receipt.ReceiptID || canonicalIntent.ScopeID != scopeID ||
 		canonicalIntent.ActorID != receipt.ActorID || canonicalIntent.PrincipalID != actorPrincipal ||
 		canonicalIntent.Source != "credential" || canonicalIntent.Operation != "validateCredentialDraft" ||
-		canonicalIntent.Action != "credential.draft.validated" || canonicalIntent.ResourceKind != "connection" ||
+		canonicalIntent.Action != "credential.draft.validated" || canonicalIntent.ResourceKind != resourceKind ||
 		canonicalIntent.ResourceID != receipt.Binding.ResourceID || canonicalIntent.Outcome != "success" ||
 		canonicalIntent.AggregateKey != "credential-validation:"+receipt.ReceiptID || canonicalIntent.AggregateSequence != 1 ||
 		canonicalIntent.RequestDigest != "" || canonicalIntent.Capability != "" || canonicalIntent.RequestID != "" ||
@@ -149,7 +150,7 @@ func (target ValidationTarget) Validate(resource Resource) error {
 	if target.Scope.Resource != resource || !canonical(target.Scope.OwnerID) ||
 		!canonical(target.Scope.Purpose) || !canonical(target.Scope.Provider) ||
 		!destinationDigest(target.Scope.Destination) || !canonicalBindingID(target.BindingID) ||
-		target.BindingRevision < 1 || !destinationDigest(target.ConfigurationDigest) {
+		!validCredentialRevision(resource.ScopeKind, target.BindingRevision) || !destinationDigest(target.ConfigurationDigest) {
 		return ErrInvalid
 	}
 	return nil
@@ -218,8 +219,7 @@ func (service *ValidationService) ValidateDraft(
 		typednil.IsNil(service.scopes) || typednil.IsNil(service.authorizer) || typednil.IsNil(service.probe) {
 		return ValidationReceipt{}, ErrUnavailable
 	}
-	if resource.Validate() != nil || resource.ScopeKind != "connection" || !canonical(actor) ||
-		expectedBindingRevision < 1 {
+	if resource.Validate() != nil || !canonical(actor) || !validCredentialRevision(resource.ScopeKind, expectedBindingRevision) {
 		return ValidationReceipt{}, ErrInvalid
 	}
 	parsedVersionID, err := uuid.Parse(versionID)
@@ -247,7 +247,7 @@ func (service *ValidationService) ValidateDraft(
 	// V1 validation deliberately accepts only a PostgreSQL password field.
 	// Connection strings can override the server-resolved endpoint and mixed
 	// forms make the destination ambiguous.
-	if scope.Provider != "postgres" {
+	if resource.ScopeKind == "connection" && scope.Provider != "postgres" {
 		return ValidationReceipt{}, ErrValidationFailed
 	}
 
@@ -268,7 +268,7 @@ func (service *ValidationService) ValidateDraft(
 		return ValidationReceipt{}, ErrValidationFailed
 	}
 	defer clear(plaintext)
-	fields, ok := decodePostgresPassword(plaintext)
+	fields, ok := decodeValidatedCredential(scope, plaintext)
 	if !ok {
 		return ValidationReceipt{}, ErrValidationFailed
 	}
@@ -334,20 +334,6 @@ func (service *ValidationService) ValidateDraft(
 		return ValidationReceipt{}, ErrConflict
 	}
 	return receipt, nil
-}
-
-func (service *ValidationService) authorize(ctx context.Context, actor string, resource Resource) error {
-	ref, err := access.NewResourceRef(projectgraph.ResourceID(resource.ResourceID), projectgraph.KindConnection)
-	if err != nil {
-		return ErrInvalid
-	}
-	for _, action := range []access.Action{access.ActionConnectionManage, access.ActionConnectionUse} {
-		pair, err := access.NewExactPermissionPair(action, projectgraph.ResourceID(resource.ProjectID), ref)
-		if err != nil || service.authorizer.RequirePermission(ctx, actor, pair) != nil {
-			return ErrForbidden
-		}
-	}
-	return nil
 }
 
 func (service *ValidationService) resolveScope(ctx context.Context, resource Resource) (Scope, error) {

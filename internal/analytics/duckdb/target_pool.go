@@ -92,7 +92,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	ctx context.Context,
 	binding connectionbinding.TargetBinding,
 	snapshot connectionbinding.CredentialSnapshot,
-) (connectionbinding.RuntimePool, error) {
+) (result connectionbinding.RuntimePool, resultErr error) {
 	if factory == nil || factory.open == nil {
 		return nil, connectionbinding.ErrProviderUnavailable
 	}
@@ -158,7 +158,9 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	closeOnFailure := true
 	defer func() {
 		if closeOnFailure {
-			_ = session.Close()
+			if session.Close() != nil {
+				resultErr = connectionbinding.ErrProviderCleanupUncertain
+			}
 		}
 	}()
 	statements, err := (duckdbsession.ResourcePolicy{
