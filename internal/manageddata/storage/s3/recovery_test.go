@@ -110,6 +110,13 @@ func TestMultipartRecoveryRejectsUntrustworthyPartsBeforeCompletion(t *testing.T
 		{"short-nonfinal-reservation", func(_ *multipartRecoveryClient, r *[]storage.MultipartPartRequest) { (*r)[0].Size--; (*r)[1].Size++ }, storage.ErrInvalid},
 		{"invalid-reserved-checksum", func(_ *multipartRecoveryClient, r *[]storage.MultipartPartRequest) { (*r)[0].SHA256 = "bad" }, storage.ErrInvalid},
 		{"empty-reservations", func(_ *multipartRecoveryClient, r *[]storage.MultipartPartRequest) { *r = nil }, storage.ErrInvalid},
+		{"oversized-reservation", func(_ *multipartRecoveryClient, r *[]storage.MultipartPartRequest) {
+			(*r)[0].Size = 5*1024*1024*1024 + 1
+		}, storage.ErrInvalid},
+		{"out-of-range-part", func(_ *multipartRecoveryClient, r *[]storage.MultipartPartRequest) { (*r)[1].Number = 10_001 }, storage.ErrInvalid},
+		{"too-many-reservations", func(_ *multipartRecoveryClient, r *[]storage.MultipartPartRequest) {
+			*r = make([]storage.MultipartPartRequest, 10_001)
+		}, storage.ErrInvalid},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,6 +132,19 @@ func TestMultipartRecoveryRejectsUntrustworthyPartsBeforeCompletion(t *testing.T
 				t.Fatal("invalid recovery destroyed retryable provider upload")
 			}
 		})
+	}
+}
+
+func TestMultipartRecoveryRejectsOversizedObjectBeforeListing(t *testing.T) {
+	store, client, upload, _ := multipartRecoveryFixture(t, false)
+	const maximumPartSize int64 = 5 * 1024 * 1024 * 1024
+	upload.Size = maximumPartSize * 1025
+	reserved := make([]storage.MultipartPartRequest, 1025)
+	for i := range reserved {
+		reserved[i] = storage.MultipartPartRequest{Number: int32(i + 1), Size: maximumPartSize}
+	}
+	if _, err := store.RecoverMultipart(t.Context(), upload, reserved); !errors.Is(err, storage.ErrInvalid) || client.listPartsCalls != 0 || client.completeCalls != 0 {
+		t.Fatalf("oversized recovery error = %v, list=%d complete=%d", err, client.listPartsCalls, client.completeCalls)
 	}
 }
 
