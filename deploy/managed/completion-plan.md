@@ -7,7 +7,15 @@ has been removed from main pending renewed review. The baseline and overlap gate
 below describe the earlier roadmap, not permission to deploy overlapping processes
 against the locked application home. The separately merged
 [maintenance implementation](maintenance.md) remains available; architecture
-acceptance and full managed-profile qualification remain outstanding.
+acceptance and full managed-profile qualification were outstanding at that review.
+
+**9 October 2026 amendment:** the project owner has now accepted the bounded
+maintenance application update design. The [decision record](decision-reconciliation-20261009.md)
+supersedes the historical overlap requirement and pending update-design statements
+below. The old proposal remains reference-only; profile qualification and
+operational acceptance still require their own evidence. This document preserves
+the earlier takeover findings and does not describe the current issue completion
+state; use the project's delivery ledger for current PRs and results.
 
 ## Execution baseline
 
