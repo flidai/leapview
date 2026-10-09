@@ -2456,7 +2456,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 	text := string(dockerfile)
 	for _, want := range []string{
 		"FROM node:26-bookworm@sha256:",
-		"FROM golang:1.27.1-bookworm@sha256:",
+		"FROM golang:1.27.2-bookworm@sha256:",
 		"AS go-deps",
 		"FROM go-deps AS sourcegen",
 		"COPY --from=node /usr/local/bin/node /usr/local/bin/node",
@@ -2671,7 +2671,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 	text := string(dockerfile)
 	for _, want := range []string{
 		"FROM node:26-bookworm@sha256:",
-		"FROM golang:1.27.1-bookworm@sha256:",
+		"FROM golang:1.27.2-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
@@ -2682,7 +2682,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 		"RUN bun install --frozen-lockfile --no-cache",
 		"bun scripts/generate_visualization_validator.ts",
 		"bun run build:site",
-		"FROM golang:1.27.1-bookworm@sha256:",
+		"FROM golang:1.27.2-bookworm@sha256:",
 		"CGO_ENABLED=0 go build -trimpath",
 		"./cmd/leapview-site",
 		"FROM gcr.io/distroless/static-debian12:nonroot@sha256:",
@@ -2716,7 +2716,7 @@ func TestBuildSourceGenerationContract(t *testing.T) {
 	}
 	text := string(body)
 	commands := []string{
-		"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
+		"GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 		"go run ./internal/app/tools/configgen",
 		"go run ./internal/app/tools/layoutcontractgen",
 		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target leapview-v1",
@@ -3843,7 +3843,7 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 	files := map[string][]string{
 		"Taskfile.yml": {
 			"db:generate:",
-			"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
+			"GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 			"- task: db:generate",
 		},
 		".gitignore": {
@@ -3855,7 +3855,7 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"internal/**/internal/db/",
 		},
 		filepath.Join("scripts", "generate_build_sources.sh"): {
-			"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
+			"GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 		},
 		"Dockerfile": {
 			"./scripts/generate_build_sources.sh",

@@ -976,7 +976,7 @@ test('Nix development evaluates both native host-verifier shells and generation 
   expect(steps[verifierShell].run).toContain("('x86_64-linux', 'aarch64-linux')")
   expect(steps[verifierShell].run).toContain("f'{shell}.system'")
   expect(steps[verifierShell].run).toContain("f'{shell}.nativeBuildInputs'")
-  for (const tool of ['go-', 'bun-', 'go1.26.7', 'nodejs-', 'go-task-']) {
+  for (const tool of ['go-', 'bun-', 'go1.26.9', 'nodejs-', 'go-task-']) {
     expect(steps[verifierShell].run).toContain(tool)
   }
   expect(verifierShell).toBeGreaterThan(steps.findIndex((step: any) => step.name === 'Check the native ARM runtime-security shell'))

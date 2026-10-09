@@ -13,7 +13,7 @@ import time
 import uuid
 
 SQLC = "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1"
-ENV = "GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7"
+ENV = "GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9"
 PIN = r"[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}"
 
 
@@ -183,7 +183,7 @@ def build(runner, context, recipe, image, mode, kind, cache_in, cache_out):
         sample["tool_identity"] = {p.name: p.read_text() for p in sorted((output / "tool").iterdir())}
         identity = json.loads(sample["tool_identity"]["environment.json"])
         if (sample["tool_identity"]["version.txt"].strip() != "v1.31.1" or
-                identity != {"CGO_ENABLED": "1", "GOARCH": "amd64", "GOFLAGS": "", "GOOS": "linux", "GOVERSION": "go1.26.7"}):
+                identity != {"CGO_ENABLED": "1", "GOARCH": "amd64", "GOFLAGS": "", "GOOS": "linux", "GOVERSION": "go1.26.9"}):
             raise ValueError("SQLC version or compilation environment differs from expected Docker contract")
         return sample
     finally:

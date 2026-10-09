@@ -7,10 +7,20 @@ let
     )
   );
   bunVersion = pkgs.lib.removePrefix "bun@" manifest.packageManager;
-  # The locked package includes the fuzztime cancellation fix (Go issue 75804).
+  # Keep the locked Nix packaging and host-data patches while taking the official
+  # security releases for GO-2026-6603. Hashes are from go.dev/dl/?mode=json.
+  patchedGo =
+    package: version: hash:
+    package.overrideAttrs {
+      inherit version;
+      src = pkgs.fetchurl {
+        url = "https://go.dev/dl/go${version}.src.tar.gz";
+        inherit hash;
+      };
+    };
   go =
-    assert pkgs.go_1_27.version == goVersion;
-    pkgs.go_1_27;
+    assert goVersion == "1.27.2";
+    patchedGo pkgs.go_1_27 goVersion "sha256-A0ldorpkiU1A9cSZLklFT6eLUGkGBP+Stq//UIG3bmI=";
   bunArtifact =
     if pkgs.stdenv.hostPlatform.isx86_64 then
       {
@@ -34,12 +44,13 @@ let
   };
   # sqlc currently deliberately selects this version through GOTOOLCHAIN. Expose
   # a native Nix executable so Go never downloads an unpatched Linux toolchain.
-  sqlcGo =
-    assert pkgs.go_1_26.version == "1.26.7";
-    pkgs.writeShellScriptBin "go1.26.7" ''
-      unset GOROOT
-      exec ${pkgs.go_1_26}/bin/go "$@"
-    '';
+  sqlcCompiler =
+    patchedGo pkgs.go_1_26 "1.26.9"
+      "sha256-lzXX3Ntls10/pXfwQGRzfAO4nPGitx5uaf4vPG+f1Mo=";
+  sqlcGo = pkgs.writeShellScriptBin "go1.26.9" ''
+    unset GOROOT
+    exec ${sqlcCompiler}/bin/go "$@"
+  '';
   playwright =
     (pkgs.callPackage "${playwright-nixpkgs}/pkgs/development/web/playwright/driver.nix" { })
     .playwright-core;
