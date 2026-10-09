@@ -85,7 +85,8 @@ class CapacityTests(unittest.TestCase):
             stats = type('Stats', (), {'f_blocks': 10000000, 'f_frsize': 4096,
                                       'f_bavail': 9000000, 'f_favail': 100000})()
             device = type('Device', (), {'st_dev': 1})()
-            with patch.object(capacity.os, 'statvfs', return_value=stats), \
+            with patch.object(capacity, 'require_host_runtime'), \
+                    patch.object(capacity.os, 'statvfs', return_value=stats), \
                     patch.object(capacity.os, 'stat', return_value=device), \
                     patch.object(capacity.os, 'geteuid', return_value=0), \
                     patch.object(capacity.Path, 'lstat', return_value=type('Meta', (), {'st_mode': 0o100700, 'st_uid': 0})()):
@@ -153,3 +154,46 @@ class CapacityTests(unittest.TestCase):
                 with self.assertRaises(FileExistsError):
                     capacity_register.main()
                 owner.assert_not_called()
+
+    def test_changed_host_containerd_is_refused_before_capacity_policy_mutation(self):
+        import types
+        candidate, baseline_raw, report = self.inputs()
+        baseline = json.loads(baseline_raw)
+        payload = capacity.registration_payload(candidate, baseline_raw, json.dumps(report).encode())
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'ready.json').write_text(json.dumps(baseline['handover']))
+            (root / 'state.json').write_text(json.dumps(baseline['state']))
+            before = (root / 'ready.json').read_bytes()
+            responses = [types.SimpleNamespace(stdout=json.dumps({'ServerVersion': '29.1.3', 'Driver': 'overlayfs'})),
+                         types.SimpleNamespace(stdout=json.dumps([{'Name': 'containerd', 'Version': '2.2.2'}]))]
+            stats = type('Stats', (), {'f_blocks': 10000000, 'f_frsize': 4096,
+                                      'f_bavail': 9000000, 'f_favail': 100000})()
+            with patch.object(capacity, 'subprocess', create=True) as process, \
+                    patch.object(capacity.os, 'statvfs', return_value=stats), \
+                    patch.object(capacity.os, 'stat', return_value=type('Device', (), {'st_dev': 1})()), \
+                    patch.object(capacity.os, 'geteuid', return_value=0), \
+                    patch.object(capacity.Path, 'lstat', return_value=type('Meta', (), {'st_mode': 0o100700, 'st_uid': 0})()):
+                process.run.side_effect = responses
+                with self.assertRaisesRegex(ValueError, 'host runtime'):
+                    capacity.register(root, payload)
+                self.assertEqual(before, (root / 'ready.json').read_bytes())
+
+    def test_host_runtime_parser_requires_exact_engine_driver_and_one_containerd(self):
+        import types
+        info = {'ServerVersion': '29.1.3', 'Driver': 'overlayfs'}
+        components = [{'Name': 'Engine', 'Version': '29.1.3'}, {'Name': 'containerd', 'Version': '2.2.1'}]
+        cases = [(info, components, True), (dict(info, ServerVersion='29.2.0'), components, False),
+                 (dict(info, Driver='overlay2'), components, False), (info, [], False),
+                 (info, components + [components[1]], False)]
+        for engine, values, allowed in cases:
+            with self.subTest(engine=engine, components=values), \
+                    patch.object(capacity.subprocess, 'run', side_effect=[
+                        types.SimpleNamespace(stdout=json.dumps(engine)),
+                        types.SimpleNamespace(stdout=json.dumps(values))]) as command:
+                if allowed:
+                    capacity.require_host_runtime()
+                else:
+                    with self.assertRaisesRegex(ValueError, 'host runtime'):
+                        capacity.require_host_runtime()
+                self.assertEqual([call.args[0][1] for call in command.call_args_list], ['info', 'version'])

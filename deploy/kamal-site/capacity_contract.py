@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import tarfile
 
 from contract import validate_record
@@ -96,6 +97,17 @@ def registration_payload(candidate_raw, baseline_raw, report_raw):
             'ready_sha256': digest(json.dumps(baseline['handover'], sort_keys=True).encode())}
 
 
+def require_host_runtime():
+    info = json.loads(subprocess.run(['docker', 'info', '--format', '{{json .}}'],
+        capture_output=True, text=True, check=True, timeout=10).stdout)
+    components = json.loads(subprocess.run(['docker', 'version', '--format', '{{json .Server.Components}}'],
+        capture_output=True, text=True, check=True, timeout=10).stdout)
+    require(info.get('ServerVersion') == '29.1.3' and info.get('Driver') == 'overlayfs' and
+            isinstance(components, list) and
+            [component.get('Version') for component in components if component.get('Name') == 'containerd'] == ['2.2.1'],
+            'host runtime differs from measured Docker/containerd profile')
+
+
 def register(root, payload):
     """Caller must retain the normal site supervisor owner for this entire CAS."""
     target = root / 'ready.json'
@@ -103,6 +115,7 @@ def register(root, payload):
         meta = path.lstat()
         require(not stat.S_ISLNK(meta.st_mode) and meta.st_uid == os.geteuid() == 0 and
                 not meta.st_mode & 0o022, 'unsafe capacity policy ownership')
+    require_host_runtime()
     before = target.read_bytes()
     ready = json.loads(before)
     require(digest(json.dumps(ready, sort_keys=True).encode()) == payload['ready_sha256'],

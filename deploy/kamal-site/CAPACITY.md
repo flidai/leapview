@@ -46,7 +46,8 @@ SITE_SSH_KEY=/private/operator-key python3 deploy/kamal-site/capacity_register.p
 
 Registration repeats live release admission, recomputes the peaks from raw
 samples, and checks the exact candidate and retained input hashes. Under the
-existing supervisor, it rechecks the active/prior state and the capacity policy
+existing supervisor, it rechecks the actual Docker/containerd versions and
+overlayfs driver, the active/prior state and the capacity policy
 CAS. It only raises measured envelopes and reserves, requires actual backing
 filesystem headroom, retains an exclusive private backup, and atomically fsyncs
 the new policy. It never pulls, switches or prunes production images. State or
