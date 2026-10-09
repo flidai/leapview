@@ -39,10 +39,16 @@ func TestWatcherDebouncesReachableChangesAndIgnoresUnrelatedFiles(t *testing.T) 
 		t.Fatalf("initial update = %#v", update)
 	}
 	source.events <- fileEvent{name: filepath.Join(root, "notes.txt")}
+	source.events <- fileEvent{name: filepath.Join(root, "notes.yaml")}
+	source.events <- fileEvent{name: filepath.Join(filepath.Dir(root), "outside.yaml")}
+	unrelatedDirectory := filepath.Join(root, "node_modules")
+	require.NoError(t, os.Mkdir(unrelatedDirectory, 0o700))
+	source.events <- fileEvent{name: unrelatedDirectory}
 	time.Sleep(30 * time.Millisecond)
 	if got := builder.Calls(); got != 1 {
 		t.Fatalf("builds after unrelated event = %d, want 1", got)
 	}
+	require.False(t, source.Added(unrelatedDirectory))
 
 	for range 5 {
 		source.events <- fileEvent{name: modelPath}
@@ -232,6 +238,8 @@ func (source *fakeWatchSource) Add(path string) error {
 	source.added = append(source.added, path)
 	return nil
 }
+
+func (source *fakeWatchSource) Remove(string) error { return nil }
 
 func (source *fakeWatchSource) Events() <-chan fileEvent { return source.events }
 func (source *fakeWatchSource) Errors() <-chan error     { return source.errors }
