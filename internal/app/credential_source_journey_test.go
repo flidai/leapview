@@ -37,6 +37,7 @@ type sourceCredentialHTTPJourney struct {
 	authoringToken string
 	source         sourceCredentialUpstream
 	snapshot       projectdevloop.Snapshot
+	control        *postgrestest.Database
 }
 
 func newSourceCredentialHTTPJourney(t *testing.T) *sourceCredentialHTTPJourney {
@@ -117,7 +118,7 @@ func newSourceCredentialHTTPJourney(t *testing.T) *sourceCredentialHTTPJourney {
 		t.Fatal(err)
 	}
 	setupPostgresOnboardingCustomerCredentials(t, &cfg)
-	journey := &sourceCredentialHTTPJourney{config: cfg, graph: graph, initial: initial, instance: instance, source: source, snapshot: snapshot}
+	journey := &sourceCredentialHTTPJourney{config: cfg, graph: graph, initial: initial, instance: instance, source: source, snapshot: snapshot, control: control}
 	journey.start(t)
 	t.Cleanup(func() {
 		if journey.target != nil {
@@ -176,7 +177,7 @@ func TestPostgresSourceCredentialHTTPJourney(t *testing.T) {
 	initial := f.publishSource(t, f.authoringToken)
 	f.request(t, http.MethodPost, "/api/v1/projects/"+sourceJourneyProject+"/targets/"+f.instance+"/connection-bindings/connection:warehouse/credential-drafts", f.authoringToken, map[string]any{"fields": map[string]string{"password": "attenuated-request-must-not-be-saved"}}, http.StatusForbidden)
 	beforeSnapshot := f.querySource(t, token, "30")
-	f.source.rotatePasswordAndData(t)
+	f.source.rotatePasswordAndData(t, "source-journey-rotated-password")
 	activated := f.activateSourceCredential(t, token)
 	if *activated.GenerationId == initial.GenerationId {
 		t.Fatal("credential activation did not publish its own native generation")
@@ -185,9 +186,30 @@ func TestPostgresSourceCredentialHTTPJourney(t *testing.T) {
 	if activatedSnapshot == beforeSnapshot {
 		t.Fatal("credential rebuild query retained the predecessor serving snapshot")
 	}
-	f.restartWithoutEnvironment(t)
+	f.restartWithoutEnvironment(t, false)
 	f.retryCompletedSource(t, token, activated)
 	if f.querySource(t, token, "40") != activatedSnapshot {
 		t.Fatal("restart query did not retain the committed serving snapshot")
+	}
+	// Production has a stricter probe policy. A stale development receipt must
+	// not acknowledge that new policy, even while the committed runtime serves.
+	f.restartWithoutEnvironment(t, true)
+	f.request(t, http.MethodPost, "/api/v1/projects/"+sourceJourneyProject+"/targets/"+f.instance+"/connection-bindings/connection:warehouse/credential-activations/"+activated.OperationId+"/retry", token, map[string]any{}, http.StatusConflict)
+	f.request(t, http.MethodGet, "/readyz", "", nil, http.StatusOK)
+	if f.querySource(t, token, "40") != activatedSnapshot {
+		t.Fatal("stale-policy retry disturbed the current production snapshot")
+	}
+	// Rotate again under actual production authority and outbound probe policy,
+	// then prove exact completed-operation recovery across a production restart.
+	f.source.rotatePasswordAndData(t, "source-journey-production-password")
+	productionActivation := f.activateSourceCredential(t, token)
+	productionSnapshot := f.querySource(t, token, "50")
+	if productionSnapshot == activatedSnapshot {
+		t.Fatal("production credential rebuild retained its predecessor snapshot")
+	}
+	f.restartWithoutEnvironment(t, true)
+	f.retryCompletedSource(t, token, productionActivation)
+	if f.querySource(t, token, "50") != productionSnapshot {
+		t.Fatal("production restart query lost the exact committed snapshot")
 	}
 }

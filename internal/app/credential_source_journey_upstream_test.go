@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
@@ -46,15 +47,16 @@ func newSourceCredentialUpstream(t *testing.T, h *postgrestest.Harness) sourceCr
 	return sourceCredentialUpstream{endpoint: analyticsgen.TargetConnectionEndpoint{Host: &cfg.Host, Port: &port, Database: &cfg.Database, SourceIdentity: &role.Name, TlsMode: &tlsMode}, password: role.Password, database: db, role: role.Name}
 }
 
-func (source *sourceCredentialUpstream) rotatePasswordAndData(t *testing.T) {
+func (source *sourceCredentialUpstream) rotatePasswordAndData(t *testing.T, password string) {
 	t.Helper()
 	admin, err := pgx.Connect(t.Context(), source.database.AdminURL())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admin.Close(context.Background())
-	source.password = "source-journey-rotated-password"
-	if _, err = admin.Exec(t.Context(), `ALTER ROLE `+pgx.Identifier{source.role}.Sanitize()+` PASSWORD 'source-journey-rotated-password'`); err != nil {
+	oldPassword := source.password
+	source.password = password
+	if _, err = admin.Exec(t.Context(), `ALTER ROLE `+pgx.Identifier{source.role}.Sanitize()+` PASSWORD '`+strings.ReplaceAll(password, "'", "''")+`'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = admin.Exec(t.Context(), `UPDATE public.orders SET amount=amount+5`); err != nil {
@@ -65,7 +67,7 @@ func (source *sourceCredentialUpstream) rotatePasswordAndData(t *testing.T) {
 	if _, err = admin.Exec(t.Context(), `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename=$1 AND pid<>pg_backend_pid()`, source.role); err != nil {
 		t.Fatal(err)
 	}
-	old, err := pgx.Connect(t.Context(), source.database.URL(postgrestest.Role{Name: source.role, Password: "source-journey-password", Login: true}))
+	old, err := pgx.Connect(t.Context(), source.database.URL(postgrestest.Role{Name: source.role, Password: oldPassword, Login: true}))
 	if err == nil {
 		_ = old.Close(context.Background())
 		t.Fatal("upstream still accepted the obsolete password")

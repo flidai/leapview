@@ -44,7 +44,18 @@ func (f *sourceCredentialHTTPJourney) activateSourceCredential(t *testing.T, tok
 	if err != nil {
 		t.Fatalf("revalidate prepared credential: %v", err)
 	}
-	activated, err := client.RetryCredentialActivation(t.Context(), credentialgen.GenRetryCredentialActivationClientRequest{Project: sourceJourneyProject, Target: f.instance, Connection: "connection:warehouse", Operation: operation, Body: credentialgen.CredentialActivationRetryRequest{ReceiptId: &fresh.Body.ReceiptId}})
+	removeInterruption := f.interruptSourceCompletion(t)
+	retry := credentialgen.GenRetryCredentialActivationClientRequest{Project: sourceJourneyProject, Target: f.instance, Connection: "connection:warehouse", Operation: operation, Body: credentialgen.CredentialActivationRetryRequest{ReceiptId: &fresh.Body.ReceiptId}}
+	if _, err := client.RetryCredentialActivation(t.Context(), retry); err == nil {
+		t.Fatal("completion interruption did not fail the first retry")
+	}
+	interrupted, err := client.GetCredentialActivation(t.Context(), credentialgen.GenGetCredentialActivationClientRequest{Project: sourceJourneyProject, Target: f.instance, Connection: "connection:warehouse", Operation: operation})
+	if err != nil || interrupted.Body.State != "committed" || interrupted.Body.RuntimeReady {
+		t.Fatalf("interrupted activation did not retain closed committed state: %v", err)
+	}
+	f.request(t, http.MethodGet, "/readyz", "", nil, http.StatusServiceUnavailable)
+	removeInterruption()
+	activated, err := client.RetryCredentialActivation(t.Context(), retry)
 	if err != nil {
 		current, readErr := client.GetCredentialActivation(t.Context(), credentialgen.GenGetCredentialActivationClientRequest{Project: sourceJourneyProject, Target: f.instance, Connection: "connection:warehouse", Operation: operation})
 		if readErr == nil {
@@ -95,7 +106,7 @@ func (f *sourceCredentialHTTPJourney) querySource(t *testing.T, token string, ex
 	return response.Body.ServingSnapshot
 }
 
-func (f *sourceCredentialHTTPJourney) restartWithoutEnvironment(t *testing.T) {
+func (f *sourceCredentialHTTPJourney) restartWithoutEnvironment(t *testing.T, production bool) {
 	t.Helper()
 	if err := f.target.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
@@ -108,13 +119,17 @@ func (f *sourceCredentialHTTPJourney) restartWithoutEnvironment(t *testing.T) {
 	f.config.DevelopmentProfileName = ""
 	f.config.DevelopmentGraphDigest = ""
 	f.config.DevelopmentProfileDigest = ""
-	target, err := BuildProduction(t.Context(), f.config)
+	build := BuildDevelopment
+	if production {
+		build = BuildProduction
+	}
+	target, err := build(t.Context(), f.config)
 	if err != nil {
-		t.Fatalf("production rebuild with saved credential: %v", err)
+		t.Fatalf("rebuild with saved credential (production=%v): %v", production, err)
 	}
 	if err = target.Start(t.Context()); err != nil {
 		_ = target.Shutdown(context.Background())
-		t.Fatalf("production restart with saved credential: %v", err)
+		t.Fatalf("restart with saved credential (production=%v): %v", production, err)
 	}
 	f.target = target
 	f.request(t, http.MethodGet, "/readyz", "", nil, http.StatusOK)
