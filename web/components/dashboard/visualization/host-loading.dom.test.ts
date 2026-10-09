@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { Page } from '@playwright/test'
-import { hostBrowserFixture } from './host-browser.test-fixture'
+import { hostBrowserFixture, hostBrowserStep } from './host-browser.test-fixture'
 
 const fixture = hostBrowserFixture()
 
@@ -22,9 +22,9 @@ async function waitForPanelState(page: Page, stage: 'failure' | 'visibility' | '
 }
 
 test('deferred initial invalid visual data shows an error and recovers when replaced', async () => {
-  const page = await fixture.browser.newPage()
+  const page = await fixture.newPage()
   try {
-    await page.goto(fixture.baseURL)
+    await hostBrowserStep('navigate loading fixture', page.goto(fixture.baseURL, { waitUntil: 'domcontentloaded', timeout: 5_000 }))
     await page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_kpi?.envelope)
     for (const boundaryFailure of [true, false]) {
       const result = await page.evaluate(async (boundaryFailure) => {
@@ -52,29 +52,32 @@ test('deferred initial invalid visual data shows an error and recovers when repl
       expect(result.loading).toBe(false)
       expect(result.recovered).toBe(true)
     }
-  } finally { await page.close() }
+  } finally { await hostBrowserStep('close loading-test page', page.close(), 2_000) }
 })
 
 test('a stalled renderer reaches a retryable error and the selected visual can recover', async () => {
-  const page = await fixture.browser.newPage()
+  const page = await fixture.newPage()
   let releaseRenderer!: () => void
   let rendererRequested!: () => void
   const blocked = new Promise<void>(resolve => { releaseRenderer = resolve })
   const requested = new Promise<void>(resolve => { rendererRequested = resolve })
   try {
-    await page.route('**/chunks/echarts-*.js', async route => {
+    await hostBrowserStep('intercept renderer module', page.route('**/chunks/echarts-*.js', async route => {
       rendererRequested()
       await blocked
-      await route.continue()
-    })
-    await page.goto(fixture.baseURL)
-    await page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_kpi?.envelope)
-    await page.waitForFunction(() => !(window as any).__lvSourceHosts.orders_kpi.shadowRoot.querySelector('[data-visualization-loading]'))
-    await page.evaluate(() => {
+      await route.continue().catch(error => { if (!page.isClosed()) throw error })
+    }))
+    await hostBrowserStep('navigate loading fixture', page.goto(fixture.baseURL, { waitUntil: 'domcontentloaded', timeout: 5_000 }))
+    await hostBrowserStep('load source envelope', page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_kpi?.envelope, undefined, { timeout: 5_000 }))
+    await hostBrowserStep('present source KPI', page.waitForFunction(() => (window as any).__lvSourceHosts.orders_kpi.presented, undefined, { timeout: 5_000 }))
+    await hostBrowserStep('create stalled visual', page.evaluate(() => {
       const original = window.setTimeout.bind(window)
-      let shortened = false
+      let captured = false
       window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
-        if (timeout === 30_000 && !shortened) { shortened = true; timeout = 150 }
+        if (timeout === 30_000 && !captured && typeof handler === 'function') {
+          captured = true
+          ;(window as any).__expireStalledPreparation = () => handler(...args)
+        }
         return original(handler, timeout, ...args)
       }) as typeof window.setTimeout
       const host = document.createElement('lv-visualization-host') as any
@@ -82,9 +85,11 @@ test('a stalled renderer reaches a retryable error and the selected visual can r
       host.envelope = JSON.parse(JSON.stringify((window as any).__lvSourceHosts.orders_chart.envelope))
       document.body.append(host)
       ;(window as any).__lvStalledVisual = host
-    })
-    await requested
-    await page.waitForFunction(() => (window as any).__lvStalledVisual.shadowRoot.querySelector('[data-visualization-retry]'))
+    }))
+    await hostBrowserStep('request renderer module', requested)
+    // Start the timeout assertion only after the renderer is actually blocked.
+    await hostBrowserStep('expire blocked preparation', page.evaluate(() => (window as any).__expireStalledPreparation()))
+    await hostBrowserStep('show preparation timeout', page.waitForFunction(() => (window as any).__lvStalledVisual.shadowRoot.querySelector('[data-visualization-retry]'), undefined, { timeout: 5_000 }))
     const pending = await page.evaluate(() => {
       const host = (window as any).__lvStalledVisual
       return { error: host.shadowRoot.querySelector('[role="alert"]')?.textContent, loading: Boolean(host.shadowRoot.querySelector('[data-visualization-loading]')), busy: host.applying }
@@ -94,18 +99,18 @@ test('a stalled renderer reaches a retryable error and the selected visual can r
     expect(pending.busy).toBe(false)
     releaseRenderer()
     await page.evaluate(() => (window as any).__lvStalledVisual.shadowRoot.querySelector('[data-visualization-retry]').click())
-    await page.waitForFunction(() => {
+    await hostBrowserStep('recover blocked renderer', page.waitForFunction(() => {
       const host = (window as any).__lvStalledVisual
       return host.presented && !host.shadowRoot.querySelector('[role="alert"]') && !host.shadowRoot.querySelector('[data-visualization-loading]')
-    })
-  } finally { releaseRenderer(); await page.close() }
+    }, undefined, { timeout: 5_000 }))
+  } finally { releaseRenderer(); await hostBrowserStep('close loading-test page', page.close(), 2_000) }
 }, 20_000)
 
 
 test('a selected chart recovers when its panel becomes visible after first-frame failure', async () => {
-  const page = await fixture.browser.newPage()
+  const page = await fixture.newPage()
   try {
-    await page.goto(fixture.baseURL)
+    await hostBrowserStep('navigate loading fixture', page.goto(fixture.baseURL, { waitUntil: 'domcontentloaded', timeout: 5_000 }))
     await page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_chart?.envelope)
     await page.evaluate(() => {
       const original = window.setTimeout.bind(window)
@@ -135,13 +140,13 @@ test('a selected chart recovers when its panel becomes visible after first-frame
     await waitForPanelState(page, 'recovery')
     const mounted = await page.evaluate(() => (window as any).__lvHiddenPanel.host.shadowRoot.querySelector('.renderer').childElementCount)
     expect(mounted).toBeGreaterThan(0)
-  } finally { await page.close() }
+  } finally { await hostBrowserStep('close loading-test page', page.close(), 2_000) }
 }, 20_000)
 
 for (const recovery of ['visibility', 'retry'] as const) test(`a selected chart queues ${recovery} recovery while its failed apply is settling`, async () => {
-  const page = await fixture.browser.newPage()
+  const page = await fixture.newPage()
   try {
-    await page.goto(fixture.baseURL)
+    await hostBrowserStep('navigate loading fixture', page.goto(fixture.baseURL, { waitUntil: 'domcontentloaded', timeout: 5_000 }))
     await page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_chart?.envelope)
     await page.evaluate((recovery) => {
       const original = window.setTimeout.bind(window)
@@ -186,11 +191,11 @@ for (const recovery of ['visibility', 'retry'] as const) test(`a selected chart 
     await waitForPanelState(page, 'recovery')
     const mounted = await page.evaluate(() => (window as any).__lvHiddenPanel.host.shadowRoot.querySelector('.renderer').childElementCount)
     expect(mounted).toBeGreaterThan(0)
-  } finally { await page.close() }
+  } finally { await hostBrowserStep('close loading-test page', page.close(), 2_000) }
 }, 20_000)
 
 test('a late timed-out mount cannot overwrite a recovered visual', async () => {
-  const page = await fixture.browser.newPage()
+  const page = await fixture.newPage()
   try {
     await page.route('**/chunks/echarts-*.js', route => route.fulfill({ contentType: 'text/javascript', body: `export const adapter = { async mount(container) {
       window.__lateMountStarted = true;
@@ -200,7 +205,7 @@ test('a late timed-out mount cannot overwrite a recovered visual', async () => {
       window.__lateMountFinished = true;
       return { update(){}, resize(){}, snapshot(){}, dispose(){container.replaceChildren()} };
     } };` }))
-    await page.goto(fixture.baseURL)
+    await hostBrowserStep('navigate loading fixture', page.goto(fixture.baseURL, { waitUntil: 'domcontentloaded', timeout: 5_000 }))
     await page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_kpi?.presented)
     await page.evaluate(() => {
       const original = window.setTimeout.bind(window)
@@ -226,5 +231,5 @@ test('a late timed-out mount cannot overwrite a recovered visual', async () => {
     await page.evaluate(() => (window as any).__releaseLateMount())
     await page.waitForFunction(() => (window as any).__lateMountFinished)
     expect(await page.evaluate(() => (window as any).__lvLateMountHost.shadowRoot.querySelector('.renderer').textContent)).toBe(recovered)
-  } finally { await page.close() }
+  } finally { await hostBrowserStep('close loading-test page', page.close(), 2_000) }
 }, 20_000)

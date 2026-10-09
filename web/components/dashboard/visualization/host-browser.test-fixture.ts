@@ -2,14 +2,38 @@ import { afterAll, beforeAll } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, type Browser, type Page } from '@playwright/test'
 import { testVisualizationEnvelopes } from '../dashboard-page-test-fixtures'
 
+
+/** Fail inside the test so finally releases intercepted requests before Bun's outer deadline. */
+export async function hostBrowserStep<T>(name: string, operation: Promise<T>, timeout = 5_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Visualization browser step timed out: ${name}`)), timeout)
+    })])
+  } finally { clearTimeout(timer!) }
+}
+
 export function hostBrowserFixture() {
-  const fixture = { browser: undefined as unknown as Browser, baseURL: '' }
+  const fixture = { browser: undefined as unknown as Browser, baseURL: '', newPage }
   let server: Server
   const projectRoot = process.cwd()
   const fixtureRoot = join(projectRoot, '.tmp/visualization-host-test')
+
+  async function newPage(): Promise<Page> {
+    const pending = fixture.browser.newPage()
+    try {
+      const page = await hostBrowserStep('create loading-test page', pending)
+      page.setDefaultTimeout(5_000)
+      return page
+    } catch (error) {
+      // A late protocol response must not leak a page after the test unwinds.
+      void pending.then(page => page.close()).catch(() => {})
+      throw error
+    }
+  }
 
   function testDocument(): string {
     // Exercise the real host and adapters without requiring dashboard/Datastar
@@ -52,8 +76,12 @@ export function hostBrowserFixture() {
   })
 
   afterAll(async () => {
-    await fixture.browser?.close()
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    try { await hostBrowserStep('close fixture browser', fixture.browser?.close()) }
+    finally {
+      const closed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+      server.closeAllConnections()
+      await hostBrowserStep('close fixture server', closed)
+    }
   }, 15_000)
 
   return fixture
