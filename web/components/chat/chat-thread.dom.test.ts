@@ -426,12 +426,13 @@ test('chat thread renders visual artifacts with dashboard web components', async
   await page.close()
 })
 
-test('chat thread hides Explorer action when aggregate query has unsupported state', async () => {
+test('chat thread explains unsupported queries and offers saved visuals separately from Explore', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
+    thread.conversationId = 'conversation-1'
     thread.visuals = Object.fromEntries(['filtered', 'secondary', 'records', 'input-only', 'unqualified'].map((id) => [id, {
       schemaVersion: 14, visualID: id, rendererID: 'echarts', specRevision: `sha256:${id}`, dataRevision: 1,
       spec: { kind: 'cartesian', mark: 'bar', title: 'Orders', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Orders' }] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], x: { dataset: 'primary', field: 'value' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
@@ -448,7 +449,7 @@ test('chat thread hides Explorer action when aggregate query has unsupported sta
       fields: [{ fieldId: 'semantic:sales.status', role: 'dimension', alias: 'status', ...(explorerFieldId ? { explorerFieldId } : {}), label: 'Status' }],
     })
     thread.transcript = [
-      { id: 'filtered', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args({}, [{ id: 'status-filter', dimension: 'status', control: { type: 'singleSelect' } }]), resultJson: result('filtered', 'orders.status'), artifact: { type: 'bar', id: 'filtered', summary: 'Filtered chart.' } },
+      { id: 'filtered', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args({}, [{ id: 'status-filter', dimension: 'status', default: { type: 'relativePeriod', direction: 'previous', count: 1, unit: 'month' }, control: { type: 'singleSelect' } }]), resultJson: result('filtered', 'orders.status'), artifact: { type: 'bar', id: 'filtered', summary: 'Filtered chart.' } },
       { id: 'secondary', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args({ datasets: { comparison: { type: 'aggregate', dimensions: [], metrics: ['orders.count'] } } }), resultJson: result('secondary', 'orders.status'), artifact: { type: 'bar', id: 'secondary', summary: 'Secondary chart.' } },
       { id: 'records', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: JSON.stringify({ semanticModelId: 'semantic:sales', visual: { type: 'bar', query: { type: 'records', dataset: 'orders', fields: ['status'] } } }), resultJson: result('records', 'orders.status'), artifact: { type: 'bar', id: 'records', summary: 'Record chart.' } },
       { id: 'input-only', kind: 'tool', name: 'query_visual', status: 'complete', inputJson: args(), resultJson: result('input-only', 'orders.status'), artifact: { type: 'bar', id: 'input-only', summary: 'Input only chart.' } },
@@ -460,6 +461,10 @@ test('chat thread hides Explorer action when aggregate query has unsupported sta
   await page.waitForFunction(() => document.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll('lv-visual-artifact').length === 5)
   const actions = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => Boolean(artifact.shadowRoot.querySelector('lv-visualization-host')?.querySelector('[slot="agent-action"]'))))
   expect(actions).toEqual([false, false, false, false, false])
+  const exploreLinks = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => artifact.explorerHref))
+  expect(exploreLinks).toEqual(['', '', '', '', ''])
+  const auditLinks = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => artifact.shadowRoot.querySelector('a')?.getAttribute('href')))
+  expect(auditLinks).toEqual(['filtered', 'secondary', 'records', 'input-only', 'unqualified'].map(id => `/chats/conversation-1/visuals/${id}/explore`))
   await page.close()
 })
 
@@ -857,8 +862,9 @@ test('chat thread keeps structured tool history when durable history replaces li
     { name: 'catalog_search', status: 'complete', resultJson: 'items[1]{id}: sales' },
     { name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
   ])
-  expect(state.stepsOpen).toBeUndefined()
+  expect(state.stepsOpen).toBe(false)
   expect(state.stepText).toBeUndefined()
+  expect(await page.locator('.run-steps a').getAttribute('href')).toBe('/search?q=sales&limit=10')
   await page.close()
 })
 
@@ -1162,5 +1168,30 @@ test('chat keeps retries in collapsed activity while showing the final answer', 
       await e.updateComplete
     })
     expect(await page.getByRole('alert').getByText('Unable to finish this request.', {exact:true}).isVisible()).toBe(true)
+  } finally { await page.close() }
+})
+
+
+test('catalog search receipts retain their exact destination once in reply details', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-thread'))
+    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [{ id: 'search', kind: 'tool', name: 'catalog_search', status: 'complete',
+        argumentsJson: JSON.stringify({ query: 'sales', kinds: ['dashboard', 'model'], domain: 'finance', cursor: 'page/2', limit: 7 }),
+      }]
+      await thread.updateComplete
+    })
+    const thread = page.locator('lv-chat-thread')
+    const link = thread.getByRole('link', { name: 'Open in Search', exact: true, includeHidden: true })
+    expect(await link.count()).toBe(1)
+    await thread.locator('.run-steps summary').click()
+    expect(await link.isVisible()).toBe(true)
+    const destination = new URL((await link.getAttribute('href'))!, baseURL)
+    expect(destination.pathname).toBe('/search')
+    expect(destination.searchParams.getAll('kind')).toEqual(['dashboard', 'model'])
+    expect(Object.fromEntries(['q', 'domain', 'cursor', 'limit'].map(key => [key, destination.searchParams.get(key)]))).toEqual({ q: 'sales', domain: 'finance', cursor: 'page/2', limit: '7' })
   } finally { await page.close() }
 })

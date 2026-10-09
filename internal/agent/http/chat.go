@@ -373,7 +373,26 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		streamID = chatConversationStreamID(scope, clientID, conversationID)
 	}
 	updates := pagestream.NewSignalStream(w, r)
-	if err := updates.Patch(ui.ChatBootstrapSignals(projectID, view, signal, h.layout(r))); err != nil {
+	bootstrap := ui.ChatBootstrapSignals(projectID, view, signal, h.layout(r))
+	var mounted struct {
+		Agent *struct {
+			ActiveConversationID string    `json:"activeConversationId"`
+			Composer             *struct{} `json:"composer"`
+		} `json:"agent"`
+	}
+	if pagestream.ReadSignals(r, &mounted) == nil && mounted.Agent != nil && mounted.Agent.Composer != nil && mounted.Agent.ActiveConversationID == signal.Agent.ActiveConversationID {
+		// Refresh server-owned transcript/status while leaving text and reference
+		// edits in the browser, including edits made while this request runs.
+		bootstrap["agent"] = struct {
+			ui.ChatSignal
+			Composer map[string]any `json:"composer"`
+		}{signal.Agent, map[string]any{
+			"disabled": signal.Agent.Composer.Disabled, "placeholder": signal.Agent.Composer.Placeholder,
+		}}
+		delete(bootstrap, "agentContext")
+		delete(bootstrap, "agentReferenceSearch")
+	}
+	if err := updates.Patch(bootstrap); err != nil {
 		return
 	}
 	if h.options.Service == nil || !h.options.Service.Enabled() || scope.PrincipalID == "" || h.options.Broker == nil {

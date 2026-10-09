@@ -5,7 +5,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	stdhttp "net/http"
@@ -375,54 +374,6 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/models/search", wrap(h.ModelsSearch))
 	r.Get("/semantic-models/search", wrap(h.SemanticModelsSearch))
 	r.Get("/dashboards/search", wrap(h.DashboardsSearch))
-}
-
-func (h *BrowserHandler) ProductSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	principal, ok := h.currentPrincipal(r)
-	if !ok || strings.TrimSpace(principal.ID) == "" {
-		stdhttp.Error(w, "authentication is required", stdhttp.StatusUnauthorized)
-		return
-	}
-	if h.SearchCatalog == nil {
-		stdhttp.Error(w, "search is temporarily unavailable", stdhttp.StatusServiceUnavailable)
-		return
-	}
-	credential := h.currentCredential(r)
-	projectID := projectgraph.ResourceID("")
-	if !principal.DevBypass || typedBrowserCredential(credential) {
-		var err error
-		projectID, err = h.boundProject(r.Context())
-		if err != nil {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-			return
-		}
-	}
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	limit := 24
-	request := projectcatalog.SearchRequest{
-		PrincipalID: principal.ID, DevAuthBypass: principal.DevBypass, Query: query,
-		Kinds: append([]projectgraph.Kind(nil), productSearchKinds...), Limit: limit,
-	}
-	page, err := searchCatalogAuthorized(r.Context(), h.SearchCatalog, request, credential, projectID)
-	if err != nil {
-		status := stdhttp.StatusServiceUnavailable
-		if errors.Is(err, projectcatalog.ErrInvalidRequest) || errors.Is(err, projectcatalog.ErrInvalidCursor) {
-			status = stdhttp.StatusBadRequest
-		}
-		stdhttp.Error(w, stdhttp.StatusText(status), status)
-		return
-	}
-	items := make([]productSearchResult, 0, len(page.Items))
-	for _, item := range page.Items {
-		if result, ok := productSearchResultFor(item); ok {
-			items = append(items, result)
-		}
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
-		Items []productSearchResult `json:"items"`
-	}{Items: items})
 }
 
 type productSearchResult struct {
@@ -989,7 +940,29 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	case "data":
 		surface := r.URL.Query().Get("surface")
 		if surface == "explore" {
-			page, explorer, ok := h.dataExplorerSignalsForURL(w, r, true)
+			// A resumed stream carries the current browser command. The original
+			// stream URL describes only the initial deep link, so replaying it
+			// would discard edits whenever the user returns to this tab.
+			var resumed dataExplorerResumeSignals
+			_ = pagestream.ReadSignals(r, &resumed)
+			if resumed.mounted() {
+				// Commands deliver their own results. Resuming the idle page
+				// stream must preserve pending edits, results and saved-view drafts.
+				stream := pagestream.NewSignalStream(w, streamRequest)
+				if err := stream.Patch(pagestream.SignalPatch{"pageStreamRecovery": false}); err != nil {
+					return
+				}
+				stream.Wait(streamRequest.Context())
+				return
+			}
+			var page projectsignals.DataExplorerPageSignal
+			var explorer projectsignals.DataExplorerSignal
+			var ok bool
+			if resumed.Command != nil {
+				page, explorer, ok = h.dataExplorerSignalsForCommand(w, r, *resumed.Command)
+			} else {
+				page, explorer, ok = h.dataExplorerSignalsForURL(w, r, true)
+			}
 			if !ok {
 				return
 			}
@@ -1000,6 +973,10 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
 			}
 			patch = projectui.DataExplorerBootstrapSignalsWithSavedExplorations(h.navigationCatalog(r), page, explorer, savedState, h.layout(r))
+			if resumed.Agent != nil {
+				delete(patch, "agent")
+				delete(patch, "agentVisuals")
+			}
 		} else if surface == "asset" {
 			if assetPatch, ok := h.assetBootstrap(w, r); ok {
 				patch = assetPatch
@@ -1217,6 +1194,9 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 	if r.URL.Query().Get("surface") == "asset" {
 		patch := projectui.ProjectAssetBootstrapSignalsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.layout(r))
 		if r.URL.Query().Get("section") == "data" && (projection.Asset.Type == string(projectview.AssetTypeModel) || projection.Asset.Type == string(projectview.AssetTypeSemanticModel)) {
+			if mountedAssetDataExplorer(r, projection.Asset) {
+				return patch, true
+			}
 			_, explorer, _, explorerOK := h.dataExplorerSignalsForAssetCommand(w, r, projection.Asset.ID, projectsignals.DataExplorerCommand{})
 			if !explorerOK {
 				return nil, false

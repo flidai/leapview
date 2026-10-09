@@ -1,3 +1,5 @@
+import { consumeChatPromptDraft, readChatPromptDraft } from './chat-draft-location'
+import { queryVisualExplorerURL, retainedVisualExplorerHref } from './visual-action-links'
 import { setChatPreviewLocation, clearChatDashboardLocation, rememberChatDashboardLocation } from './dashboard-preview-location'
 import { generatedDashboardHref } from './generated-dashboard'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
@@ -50,6 +52,7 @@ const promptStarters: Array<{ label: string; prompt: string; icon: IconNode }> =
 
 class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
+  private searchDraftApplied = false
   private dashboardGenerationRun = ''
   private completedDashboardGenerationRun = ''
   @state() private visualLibraryState: VisualLibraryState = { savedIds: [], savingId: '', error: '' }
@@ -534,10 +537,22 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   @state() private selectedVisualID = ''
-  @state() private selectedExplorerHref = ''
-  @state() private selectedVisualTitle = ''
+  private get selectedVisualReceipt(): ChatTranscriptItemSignal | undefined {
+    return [...(this.agent.transcript ?? [])].reverse().find(item => item.artifact?.id === this.selectedVisualID && item.status === 'complete')
+  }
+
+  private get selectedExplorerHref(): string {
+    const receipt = this.selectedVisualReceipt
+    const payload = this.visuals[this.selectedVisualID]
+    return receipt?.artifact && payload?.visualID === this.selectedVisualID
+      ? queryVisualExplorerURL(receipt, receipt.artifact.type, this.selectedVisualID) : ''
+  }
+
+  private get selectedVisualTitle(): string {
+    return this.visuals[this.selectedVisualID]?.spec.title || this.selectedVisualReceipt?.artifact?.summary || 'Visual result'
+  }
   @state() private visualSaving = false
-  @state() private visualSaved = false
+  @state() private savedExplorerHref = ''
   @state() private visualSaveError = ''
   @state() private dashboardPickerOpen = false
   @state() private dashboardDestination?: ChatDashboardResult
@@ -584,6 +599,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		this.syncEditState()
 		this.syncOptimisticTurn()
     if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
+    this.applySearchDraft()
     this.navigateFromDraft()
     const running = Boolean(this.agent.status.running)
     const runId = this.agent.status.runId || latestAcceptedRunId(this.agent.transcript ?? [])
@@ -646,6 +662,19 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 		this.trackedConversationID = conversationID
 		this.trackedAcceptedRunID = acceptedRunID
 	}
+
+  private applySearchDraft(): void {
+    if (this.searchDraftApplied || this.page?.view !== 'new') return
+    const draft = readChatPromptDraft()
+    if (draft === null) return
+    const composer = this.shadowRoot?.querySelector<LitElement & { setDraft(value: string): void; getDraft(): string }>('lv-chat-composer')
+    if (!composer) return
+    this.searchDraftApplied = true
+    void composer.updateComplete.then(() => {
+      if (!composer.getDraft()) composer.setDraft(draft)
+      consumeChatPromptDraft()
+    })
+  }
 
   private navigateFromDraft(): void {
     const conversationID = this.agent.activeConversationId?.trim()
@@ -750,8 +779,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
             title=${this.selectedVisualTitle || selectedVisual.spec.title || 'Visual result'}
             .payload=${selectedVisual}
             .explorerHref=${this.selectedExplorerHref}
+            .auditHref=${retainedVisualExplorerHref(agent.activeConversationId ?? '', this.selectedVisualReceipt, agent.status)}
             .saving=${this.visualSaving}
-            .saved=${this.visualSaved}
+            .saved=${Boolean(this.selectedExplorerHref) && this.savedExplorerHref === this.selectedExplorerHref}
             .saveError=${this.visualSaveError}
             .modal=${this.compactViewport}
             .dashboardAvailable=${Boolean(agent.activeConversationId) && (agent.transcript ?? []).some(item => item.kind === 'tool' && item.name === 'query_visual' && item.status === 'complete' && item.artifact?.id === this.selectedVisualID)}
@@ -832,10 +862,12 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           ${this.dashboardPreview ? repeat(artifacts, artifact => artifact.id, artifact => {
             const payload = visuals[artifact.id]
             const kind = payload?.spec.kind ?? artifact.type
+            const item = [...(this.agent.transcript ?? [])].reverse().find(item => item.artifact?.id === artifact.id && item.status === 'complete')
+            const explorerHref = payload?.visualID === artifact.id ? queryVisualExplorerURL(item, artifact.type, artifact.id) : ''
             return html`
               <div class=${`preview-card${kind === 'kpi' ? ' kpi' : ''}${['table', 'matrix', 'pivot'].includes(kind) ? ' wide' : ''}${this.selectedPreviewVisual === artifact.id ? ' selected' : ''}`}
                 ?hidden=${artifact.id !== selected?.id} data-preview-visual=${artifact.id} tabindex="-1" aria-label=${payload?.spec.title || artifact.summary || 'Visual'}>
-                ${payload ? html`<lv-visual-artifact eager type=${artifact.type} artifact-id=${artifact.id} .payload=${payload}></lv-visual-artifact>` : html`<p class="preview-empty" role="status">Loading visual…</p>`}
+                ${payload ? html`<lv-visual-artifact eager type=${artifact.type} artifact-id=${artifact.id} .payload=${payload} .explorerHref=${explorerHref} .auditHref=${retainedVisualExplorerHref(this.agent.activeConversationId ?? '', item, this.agent.status)}></lv-visual-artifact>` : html`<p class="preview-empty" role="status">Loading visual…</p>`}
               </div>`
           }) : null}
         </div>
@@ -913,9 +945,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
     this.dashboardPickerOpen = false
     this.selectedVisualID = artifactId
-    this.selectedExplorerHref = event.detail.explorerHref ?? ''
-    this.selectedVisualTitle = event.detail.title ?? ''
-    this.visualSaved = false
+    this.savedExplorerHref = ''
     this.visualSaveError = ''
     void this.updateComplete.then(() => this.shadowRoot?.querySelector<ChatVisualPanel>('lv-chat-visual-panel')?.focusClose())
   }
@@ -925,8 +955,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.dashboardPickerOpen = false
     if (!artifactId) return
     this.selectedVisualID = ''
-    this.selectedExplorerHref = ''
-    this.selectedVisualTitle = ''
     this.visualSaveError = ''
     if (restoreFocus) void this.updateComplete.then(() => {
       const cards = this.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll<HTMLButtonElement>('.artifact-card')
@@ -967,15 +995,16 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private saveVisual = async (event: CustomEvent<{ title: string; explorerHref: string; artifactId: string }>): Promise<void> => {
     if (this.visualSaving || !this.selectedVisualID || event.detail?.artifactId !== this.selectedVisualID) return
-    const { title, explorerHref } = event.detail
+    const title = this.selectedVisualTitle
+    const explorerHref = this.selectedExplorerHref
     if (!explorerHref) return
     this.visualSaving = true
     this.visualSaveError = ''
     try {
       await saveChatVisual(title, explorerHref)
-      if (event.detail.artifactId === this.selectedVisualID) this.visualSaved = true
+      if (event.detail.artifactId === this.selectedVisualID && explorerHref === this.selectedExplorerHref) this.savedExplorerHref = explorerHref
     } catch {
-      if (event.detail.artifactId === this.selectedVisualID) this.visualSaveError = 'Could not save this visual. Please try again.'
+      if (event.detail.artifactId === this.selectedVisualID && explorerHref === this.selectedExplorerHref) this.visualSaveError = 'Could not save this visual. Please try again.'
     } finally {
       this.visualSaving = false
     }

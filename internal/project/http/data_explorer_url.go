@@ -272,7 +272,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		if sorting.Direction != "asc" && sorting.Direction != "desc" {
 			return fmt.Errorf("sort %d uses unsupported direction %q; choose asc or desc", index+1, sorting.Direction)
 		}
-		if !containsRestoredExploreSelection(sorting.Field, command.Dimensions, command.Metrics) {
+		if !containsRestoredExploreSelection(sorting.Field, command.Dimensions, command.Metrics) && (command.Time == nil || command.Time.Field != sorting.Field) {
 			return fmt.Errorf("sort %d field %q is not selected; choose a selected dimension or metric", index+1, sorting.Field)
 		}
 	}

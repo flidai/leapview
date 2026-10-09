@@ -89,6 +89,22 @@ func TestTranscriptUsesStructuredVisualResultForExplorerLink(t *testing.T) {
 	}
 }
 
+func TestVisualPreviewRecoversLegacyReceipt(t *testing.T) {
+	display := `{"id":"visual_1","patch":{"visuals":{}}}`
+	for _, content := range []string{
+		`{"id":"visual_1","ok":true,"datasetId":"orders"}`,
+		"id: visual_1\nok: true\ndatasetId: orders",
+	} {
+		preview := PreviewToolResult(content, display)
+		if preview.Format != "json" || !strings.Contains(preview.ResultJSON, `"datasetId": "orders"`) {
+			t.Fatalf("legacy visual preview = %#v", preview)
+		}
+	}
+	if _, ok := previewVisualDisplayResult(display, "id: another_visual\nok: true"); ok {
+		t.Fatal("accepted a receipt for another visual")
+	}
+}
+
 func TestTranscriptProjectsResolvedReferencesOntoUserTurn(t *testing.T) {
 	transcript := transcriptFromMessages("conv_1", []Message{{
 		ID:          "user_1",

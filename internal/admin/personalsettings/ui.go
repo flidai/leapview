@@ -1,9 +1,13 @@
 package personalsettings
 
 import (
+	"net/http"
+	"time"
+
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/flidai/leapview/pkg/pagestream"
 	g "maragu.dev/gomponents"
 )
 
@@ -41,6 +45,52 @@ func BootstrapSignals(state Signal) map[string]any {
 		"personalAuthoringSessionCommand": AuthoringSessionCommand{},
 		"personalTokenCommand":            TokenCommand{},
 	}
+}
+
+// UpdatesSignals retains a browser-owned one-time secret across an updates
+// reconnect only while its mounted principal and displayed token are current.
+// Commands continue to use BootstrapSignals so explicit clears remain effective.
+func UpdatesSignals(r *http.Request, state Signal) map[string]any {
+	signals := BootstrapSignals(state)
+	if state.Active != "api-tokens" || state.Profile.ID == "" || state.Tokens.NewToken != nil || len(state.Tokens.Items) == 0 {
+		return signals
+	}
+	// Decode identity and revision metadata only, never the browser's secret.
+	var mounted struct {
+		Settings struct {
+			Active  string `json:"active"`
+			Profile struct {
+				ID string `json:"id"`
+			} `json:"profile"`
+			Tokens struct {
+				Items []struct {
+					ID         string `json:"id"`
+					CreatedAt  string `json:"createdAt"`
+					ModifiedAt string `json:"modifiedAt"`
+				} `json:"items"`
+			} `json:"tokens"`
+		} `json:"personalSettings"`
+	}
+	if pagestream.ReadSignals(r, &mounted) != nil || mounted.Settings.Active != state.Active || mounted.Settings.Profile.ID != state.Profile.ID || len(mounted.Settings.Tokens.Items) == 0 {
+		return signals
+	}
+	current, previous := state.Tokens.Items[0], mounted.Settings.Tokens.Items[0]
+	if current.ID == "" || current.CreatedAt == "" || current.RevokedAt != "" || current.ID != previous.ID || current.CreatedAt != previous.CreatedAt || current.ModifiedAt != previous.ModifiedAt {
+		return signals
+	}
+	if current.ExpiresAt != "" {
+		expires, err := time.Parse(time.RFC3339Nano, current.ExpiresAt)
+		if err != nil || !time.Now().Before(expires) {
+			return signals
+		}
+	}
+	// The generated tokens payload omits absent newToken, preserving only the
+	// already-mounted value. Keep the explicit avatar null in every refresh.
+	signals["personalSettings"] = struct {
+		Signal
+		Profile personalProfileWire `json:"profile"`
+	}{Signal: state, Profile: personalProfileWire{ProfileSignal: state.Profile, AvatarURL: state.Profile.AvatarURL}}
+	return signals
 }
 
 // Generated optional fields use omitempty, while Datastar merge patches need

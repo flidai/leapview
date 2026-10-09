@@ -295,6 +295,23 @@ func hydrateRetainedTool(item *agent.ChatTranscriptItem, messages []agent.Messag
 			if message.IsError {
 				item.Error = "Action failed"
 			}
+			// Visual tools retain a full structured receipt alongside their
+			// rendering envelope. Prefer it over the model-facing text, which
+			// may be compacted or encoded as TOON with nested data rows.
+			if item.Name == "query_visual" && item.Artifact != nil {
+				var retained struct {
+					Display struct {
+						Result json.RawMessage `json:"result"`
+					} `json:"display_content"`
+				}
+				var receipt struct {
+					ID string `json:"id"`
+				}
+				if json.Unmarshal([]byte(message.ContentJSON), &retained) == nil && json.Unmarshal(retained.Display.Result, &receipt) == nil && receipt.ID == item.Artifact.ID {
+					item.ResultJSON = string(retained.Display.Result)
+					continue
+				}
+			}
 			item.ResultJSON = message.ContentText
 			if !json.Valid([]byte(item.ResultJSON)) {
 				content := item.ResultJSON

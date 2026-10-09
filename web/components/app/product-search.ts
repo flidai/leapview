@@ -1,10 +1,11 @@
 import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Search, type IconNode } from 'lucide'
+import { Search, WandSparkles, type IconNode } from 'lucide'
 import { assetAccentColor, assetPresentation } from '../shared/asset-presentation'
 import { lucideIcon } from '../shared/lucide-icons'
 import {
   ProductSearchService,
+  productSearchPageHref,
   type ProductSearchItem,
 } from './product-search-service'
 
@@ -55,9 +56,37 @@ class LeapViewProductSearch extends LitElement {
       display: grid;
       min-width: 0;
       grid-template-columns: var(--control-medium-size) minmax(0, 1fr) auto;
+      gap: var(--base-size-8);
       align-items: center;
       border-bottom: var(--lv-border-muted);
       padding: var(--base-size-8) var(--base-size-12);
+    }
+
+    .result.ask-ai-row {
+      margin-bottom: var(--base-size-4);
+      box-sizing: border-box;
+      min-height: var(--base-size-32);
+      grid-template-columns: var(--base-size-20) minmax(0, 1fr) auto;
+      align-items: center;
+      padding: var(--base-size-6) var(--base-size-12);
+      background: var(--lv-bg-panel-muted);
+    }
+
+    .ask-ai-row .result-icon {
+      width: 18px;
+      height: 18px;
+      grid-row: 1;
+      color: var(--lv-fg-accent);
+    }
+
+    .ask-ai-row .result-icon svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .ask-ai-row .result-label {
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .search-icon {
@@ -92,7 +121,7 @@ class LeapViewProductSearch extends LitElement {
     }
 
     .results {
-      min-height: 8rem;
+      min-height: 0;
       overflow-y: auto;
       padding: var(--base-size-8);
       scrollbar-gutter: stable;
@@ -163,7 +192,7 @@ class LeapViewProductSearch extends LitElement {
 
     .empty {
       margin: 0;
-      padding: var(--base-size-24) var(--base-size-12);
+      padding: var(--base-size-8) var(--base-size-12);
       text-align: center;
     }
 
@@ -182,11 +211,23 @@ class LeapViewProductSearch extends LitElement {
       margin-left: auto;
     }
 
+    .search-page-link { margin-left: auto; color: var(--lv-fg-accent); text-decoration: none; }
+    .search-page-link:hover { text-decoration: underline; }
+
     @media (max-width: 640px) {
       dialog {
         width: calc(100vw - var(--base-size-16));
         max-height: calc(100svh - var(--base-size-16));
         margin-top: var(--base-size-8);
+      }
+
+      .search-field {
+        grid-template-columns: var(--control-medium-size) minmax(0, 1fr) auto;
+        gap: var(--base-size-4);
+      }
+
+      .search-field kbd {
+        display: none;
       }
 
       .search-help {
@@ -228,31 +269,48 @@ class LeapViewProductSearch extends LitElement {
     return html`
       <dialog role="dialog" aria-modal="true" aria-label="Search LeapView" @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
         <div class="search-shell">
-          <label class="search-field">
+          <div class="search-field">
             <span class="search-icon" aria-hidden="true">${icon(Search)}</span>
             <input
               type="search"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded=${String(this.open)}
               aria-label="Search LeapView"
               aria-controls="product-search-results"
-              aria-activedescendant=${this.results[this.selectedIndex]?.id ?? ''}
-              placeholder="Search assets"
+              aria-activedescendant=${this.selectedOptionID}
+              placeholder="Search assets or ask a question"
               autocomplete="off"
               .value=${this.query}
               @input=${this.inputChanged}
               @keydown=${this.inputKeydown}
             >
-            <kbd aria-hidden="true">Ctrl+K</kbd>
-          </label>
+            <kbd aria-hidden="true">Esc</kbd>
+          </div>
           <div id="product-search-results" class="results" role="listbox" aria-label="Search results" aria-busy=${String(this.loading)}>
+            <a
+              id="product-search-ask-ai"
+              class="result ask-ai-row"
+              role="option"
+              aria-selected=${String(this.selectedIndex === 0)}
+              href=${this.askAIHref}
+              @mouseenter=${() => { this.selectedIndex = 0 }}
+              @focus=${() => { this.selectedIndex = 0 }}
+              @click=${this.resultClicked}
+            >
+              <span class="result-icon" aria-hidden="true">${lucideIcon(WandSparkles, { size: 18 })}</span>
+              <span class="result-label">${this.query.trim() ? `Ask AI about “${this.query.trim()}”` : 'Ask AI'}</span>
+              <span class="result-kind">Chat</span>
+            </a>
             ${this.results.map((result, index) => html`
               <a
                 id=${result.id}
                 class="result"
                 role="option"
-                aria-selected=${String(index === this.selectedIndex)}
+                aria-selected=${String(index + 1 === this.selectedIndex)}
                 href=${result.href}
-                @mouseenter=${() => { this.selectedIndex = index }}
-                @focus=${() => { this.selectedIndex = index }}
+                @mouseenter=${() => { this.selectedIndex = index + 1 }}
+                @focus=${() => { this.selectedIndex = index + 1 }}
                 @click=${this.resultClicked}
               >
                 <span class="result-icon" aria-hidden="true">${resultIcon(result.resourceKind)}</span>
@@ -263,20 +321,28 @@ class LeapViewProductSearch extends LitElement {
             `)}
             ${this.loading ? html`<p class="empty" role="status">Searching…</p>` : null}
             ${!this.loading && this.error ? html`<p class="empty" role="alert">${this.error}</p>` : null}
-            ${!this.loading && !this.error && this.results.length === 0 ? html`
-              <p class="empty">${this.query.trim()
-                ? 'No matching assets'
-                : 'Search dashboards, models, sources, connections, semantic models, and pipelines'}</p>
+            ${!this.loading && !this.error && this.results.length === 0 && this.query.trim() ? html`
+              <p class="empty">No matching assets</p>
             ` : null}
           </div>
-          <footer class="search-help" aria-hidden="true">
+          <footer class="search-help">
             <span>Arrow keys Navigate</span>
             <span>Enter Open</span>
             <span>Esc Close</span>
+            <a class="search-page-link" href=${productSearchPageHref(this.query)}>Open Search</a>
           </footer>
         </div>
       </dialog>
     `
+  }
+
+  private get selectedOptionID(): string {
+    return this.selectedIndex === 0 ? 'product-search-ask-ai' : this.results[this.selectedIndex - 1]?.id ?? 'product-search-ask-ai'
+  }
+
+  private get askAIHref(): string {
+    const query = this.query.trim()
+    return query ? `/chats/new#${new URLSearchParams({ prompt: query })}` : '/chats/new'
   }
 
   private inputChanged = (event: InputEvent): void => {
@@ -296,11 +362,12 @@ class LeapViewProductSearch extends LitElement {
       const results = await this.service.search(query, controller.signal)
       if (controller.signal.aborted) return
       this.results = results
-      this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, results.length - 1))
+      this.selectedIndex = Math.min(this.selectedIndex, results.length)
       this.error = ''
     } catch (error) {
       if (controller.signal.aborted) return
       this.results = []
+      this.selectedIndex = 0
       this.error = 'Search is temporarily unavailable'
     } finally {
       if (!controller.signal.aborted) this.loading = false
@@ -308,9 +375,10 @@ class LeapViewProductSearch extends LitElement {
   }
 
   private inputKeydown = (event: KeyboardEvent): void => {
+    if (event.isComposing) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      this.selectedIndex = Math.min(this.results.length - 1, this.selectedIndex + 1)
+      this.selectedIndex = Math.min(this.results.length, this.selectedIndex + 1)
       this.scrollSelectedIntoView()
       return
     }
@@ -320,9 +388,9 @@ class LeapViewProductSearch extends LitElement {
       this.scrollSelectedIntoView()
       return
     }
-    if (event.key === 'Enter' && this.results[this.selectedIndex]) {
+    if (event.key === 'Enter') {
       event.preventDefault()
-      window.location.assign(this.results[this.selectedIndex].href)
+      window.location.assign(this.selectedIndex === 0 ? this.askAIHref : this.results[this.selectedIndex - 1]?.href ?? this.askAIHref)
     }
   }
 
@@ -334,7 +402,7 @@ class LeapViewProductSearch extends LitElement {
   }
 
   private scrollSelectedIntoView(): void {
-    void this.updateComplete.then(() => this.shadowRoot?.getElementById(this.results[this.selectedIndex]?.id ?? '')?.scrollIntoView({ block: 'nearest' }))
+    void this.updateComplete.then(() => this.shadowRoot?.getElementById(this.selectedOptionID)?.scrollIntoView({ block: 'nearest' }))
   }
 
   private cancel = (event: Event): void => {

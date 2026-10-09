@@ -146,6 +146,15 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private exploreTransportAction: 'run' | 'stop' | null = null
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
+  private restoringHistory = false
+  private restoreHistory = (): void => {
+    if (this.embedded) return
+    this.restoringHistory = true
+    window.cancelAnimationFrame(this.exploreFrame)
+    window.clearTimeout(this.filterSuggestionTimer)
+    // Restore through the authorized URL loader, not the departing query's signals.
+    window.location.reload()
+  }
   private exploreFrame = 0
   private filterSuggestionTimer = 0
   private latestExploreRequestSeq = 0
@@ -617,6 +626,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   connectedCallback(): void {
+    window.addEventListener('popstate', this.restoreHistory)
     if (!this.embedded && window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
     if (!this.agentStateInitialized) {
       const stored = this.agentStateController.initialize()
@@ -631,6 +641,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   disconnectedCallback(): void {
+    window.removeEventListener('popstate', this.restoreHistory)
     window.cancelAnimationFrame(this.exploreFrame)
     window.clearTimeout(this.filterSuggestionTimer)
     this.browserResizeCleanup?.()
@@ -641,6 +652,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   updated(): void {
+    if (this.restoringHistory) return
     const observedExploreRequestSeq = this.dataExplorer.explore?.command?.requestSeq ?? 0
     if (observedExploreRequestSeq > this.latestExploreRequestSeq) this.latestExploreRequestSeq = observedExploreRequestSeq
     const exploreCommand = this.dataExplorer.explore?.command
@@ -677,7 +689,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     if (this.optimisticExplore && (this.dataExplorer.explore?.command?.requestSeq ?? 0) >= this.optimisticExplore.requestSeq) {
       this.optimisticExplore = null
-      if (!this.embedded) this.replaceDataExplorerURL(this.dataExplorer.command)
+      if (!this.embedded) this.syncDataExplorerURL(this.dataExplorer.command)
     }
     const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
@@ -1085,6 +1097,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private emitExplore(next: DataExploreCommand, immediate = false) {
+    if (this.restoringHistory) return
     window.cancelAnimationFrame(this.exploreFrame)
     const current = this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.explore(current, next, immediate)
@@ -1092,13 +1105,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     delete command.filterSuggestions
     this.optimisticExplore = command
     if (this.exploreExecutionState !== 'uncertain') this.exploreTransportFailure = null
-    if (!this.embedded) this.replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
+    if (!this.embedded) this.syncDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ action: 'configure', mode: 'explore', explore: command })
     if (immediate) dispatch()
     else this.exploreFrame = window.requestAnimationFrame(dispatch)
   }
 
   private emitExploreSpec(next: Partial<ExplorationSpec>, baseCommand?: DataExploreCommand, immediate = false): void {
+    if (this.restoringHistory) return
     window.cancelAnimationFrame(this.exploreFrame)
     const current = baseCommand ?? this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.exploreSpec(current, next)
@@ -1106,7 +1120,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.optimisticExplore = command
     this.requestUpdate()
     if (this.exploreExecutionState !== 'uncertain') this.exploreTransportFailure = null
-    if (!this.embedded) this.replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
+    if (!this.embedded) this.syncDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ action: 'configure', mode: 'explore', explore: command })
     if (immediate) dispatch()
     else this.exploreFrame = window.requestAnimationFrame(dispatch)
@@ -1245,9 +1259,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({ visibleColumns: configured })
   }
 
-  private replaceDataExplorerURL(command: DataExplorerCommand): void {
+  private syncDataExplorerURL(command: DataExplorerCommand, historyMode: 'push' | 'replace' = 'replace'): void {
+    if (this.restoringHistory) return
     const saved = this.savedExplorations
-    updateDataExplorerURL(command, 'replace', saved.list?.selectedId, savedExplorationSelectionIncludesArchived(saved))
+    updateDataExplorerURL(command, historyMode, saved.list?.selectedId, savedExplorationSelectionIncludesArchived(saved))
   }
 
   private persistAgentState(): void {
@@ -1569,6 +1584,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private selectObject(object: DataExplorerObjectSignal): void {
+    window.cancelAnimationFrame(this.exploreFrame)
+    window.clearTimeout(this.filterSuggestionTimer)
     this.browseVisibleColumns = null
     this.resetExplorePresentation()
     if (window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
@@ -1603,7 +1620,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       sort: {},
       visibleColumns: [],
       columnWidths: {},
-    })
+    }, 'push')
   }
 
   private handleObjectNodeClick(event: MouseEvent, object: DataExplorerObjectSignal, selected: boolean): void {
@@ -1657,7 +1674,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     `
   }
 
-  private emitCommand(partial: Partial<DataExplorerCommand>) {
+  private emitCommand(partial: Partial<DataExplorerCommand>, historyMode: 'push' | 'replace' = 'replace') {
+    if (this.restoringHistory) return
     const current = this.dataExplorer?.command ?? emptyExplorer.command
     const local = this.browseVisibleColumns
     const next = this.queryController.command({
@@ -1670,7 +1688,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }, partial)
     next.clientId = this.clientState.clientID(next.clientId)
     if (!this.embedded && (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined)) {
-      this.replaceDataExplorerURL(next)
+      this.syncDataExplorerURL(next, historyMode)
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
   }

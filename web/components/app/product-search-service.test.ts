@@ -30,7 +30,7 @@ test('product search returns only supported assets with canonical destinations',
 
   const results = await service.search('dash')
 
-  expect(requestedURL).toBe('/search?q=dash')
+  expect(requestedURL).toBe('/search?q=dash&view=palette')
   expect(results.map((result) => result.href)).toEqual([
     '/dashboards/dashboard:sales',
     '/models/model:orders/details',

@@ -2,14 +2,17 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/admin/personalsettings"
 	"github.com/flidai/leapview/internal/admin/ui"
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -141,5 +144,113 @@ func TestBuildAdminPrincipalsKeepsEmailDuplicatesIDDistinct(t *testing.T) {
 	}
 	if len(oldPrincipal.Groups) != 1 || len(newPrincipal.Groups) != 1 {
 		t.Fatalf("principal groups = %#v / %#v, want independent Sales memberships", oldPrincipal.Groups, newPrincipal.Groups)
+	}
+}
+
+// End each idle updates stream after its first complete signal patch.
+type personalSettingsUpdatesRecorder struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+}
+
+func (r *personalSettingsUpdatesRecorder) Flush() {
+	r.ResponseRecorder.Flush()
+	if strings.Contains(r.Body.String(), "data: signals ") {
+		r.cancel()
+	}
+}
+
+type personalSettingsUpdatesRepository struct {
+	personalsettings.Repository
+	tokens []access.APIToken
+}
+
+func (*personalSettingsUpdatesRepository) PrincipalByID(_ context.Context, id string) (access.Principal, error) {
+	return access.Principal{ID: id, Kind: access.PrincipalKindUser}, nil
+}
+
+func (*personalSettingsUpdatesRepository) ListSessions(context.Context, string) ([]access.Session, error) {
+	return nil, nil
+}
+
+func (r *personalSettingsUpdatesRepository) ListAPITokens(context.Context, string) ([]access.APIToken, error) {
+	return r.tokens, nil
+}
+
+func TestPersonalTokenUpdatesPreserveOnlyCurrentMountedSecret(t *testing.T) {
+	const created = "2026-10-01T00:00:00Z"
+	const modified = "2026-10-02T00:00:00Z"
+	const mounted = `{"personalSettings":{"active":"api-tokens","profile":{"id":"principal-1"},"tokens":{"newToken":"browser-only-secret","items":[{"id":"token-1","createdAt":"` + created + `","modifiedAt":"` + modified + `"}]}}}`
+	for _, test := range []struct {
+		name, section, signals string
+		changeToken            func(*access.APIToken)
+		preserve               bool
+	}{
+		{name: "fresh bootstrap", section: "api-tokens"},
+		{name: "same mounted principal and token", section: "api-tokens", signals: mounted, preserve: true},
+		{name: "created token route reconnect", section: "api-token-new", signals: mounted, preserve: true},
+		{name: "rotated token route reconnect", section: "api-token-edit", signals: mounted, preserve: true},
+		{name: "already cleared remains cleared", section: "api-tokens", signals: strings.Replace(mounted, `"browser-only-secret"`, `null`, 1), preserve: true},
+		{name: "secret input is ignored", section: "api-tokens", signals: strings.Replace(mounted, `"browser-only-secret"`, `{"untrusted":"never decode this secret"}`, 1), preserve: true},
+		{name: "different principal", section: "api-tokens", signals: strings.Replace(mounted, "principal-1", "principal-2", 1)},
+		{name: "different mounted surface", section: "api-tokens", signals: strings.Replace(mounted, "api-tokens", "profile", 1)},
+		{name: "different requested surface", section: "profile", signals: mounted},
+		{name: "revoked token", section: "api-tokens", signals: mounted, changeToken: func(token *access.APIToken) { token.RevokedAt = modified }},
+		{name: "expired token", section: "api-tokens", signals: mounted, changeToken: func(token *access.APIToken) { token.ExpiresAt = "2000-01-01T00:00:00Z" }},
+		{name: "replaced token", section: "api-tokens", signals: mounted, changeToken: func(token *access.APIToken) { token.ID = "replacement" }},
+		{name: "changed token revision", section: "api-tokens", signals: mounted, changeToken: func(token *access.APIToken) { token.ModifiedAt = "2026-10-03T00:00:00Z" }},
+		{name: "missing mounted token", section: "api-tokens", signals: `{"personalSettings":{"active":"api-tokens","profile":{"id":"principal-1"},"tokens":{"items":[]}}}`},
+		{name: "malformed mounted signals", section: "api-tokens", signals: `{`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			token := access.APIToken{ID: "token-1", Name: "Current token", CreatedAt: created, ModifiedAt: modified}
+			if test.changeToken != nil {
+				test.changeToken(&token)
+			}
+			repository := &personalSettingsUpdatesRepository{tokens: []access.APIToken{token}}
+			handler := Handler{PersonalSettings: &personalsettings.Handler{
+				Service:          &personalsettings.Service{Repository: repository},
+				CurrentPrincipal: func(*http.Request) (string, bool) { return "principal-1", true },
+			}}
+			query := url.Values{"route": {"admin"}, "section": {test.section}, "datastar": {test.signals}}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			recorder := &personalSettingsUpdatesRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+			handler.BootstrapUpdates(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+query.Encode(), nil).WithContext(ctx))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var patch struct {
+				Settings struct {
+					Profile struct {
+						ID     string          `json:"id"`
+						Avatar json.RawMessage `json:"avatarUrl"`
+					} `json:"profile"`
+					Tokens map[string]json.RawMessage `json:"tokens"`
+				} `json:"personalSettings"`
+			}
+			found := false
+			for _, line := range strings.Split(recorder.Body.String(), "\n") {
+				if data, ok := strings.CutPrefix(line, "data: signals "); ok {
+					if err := json.Unmarshal([]byte(data), &patch); err != nil {
+						t.Fatal(err)
+					}
+					found = true
+				}
+			}
+			if !found || patch.Settings.Profile.ID != "principal-1" || string(patch.Settings.Profile.Avatar) != "null" {
+				t.Fatalf("missing authorized settings refresh: %s", recorder.Body.String())
+			}
+			secret, present := patch.Settings.Tokens["newToken"]
+			if test.preserve && present {
+				t.Fatalf("reconnect overwrote the browser-only secret with %s", secret)
+			}
+			if !test.preserve && string(secret) != "null" {
+				t.Fatalf("fresh or stale state must clear the secret, got %s", secret)
+			}
+			if strings.Contains(recorder.Body.String(), "browser-only-secret") || strings.Contains(recorder.Body.String(), "never decode this secret") {
+				t.Fatal("updates reflected the browser's one-time secret")
+			}
+		})
 	}
 }

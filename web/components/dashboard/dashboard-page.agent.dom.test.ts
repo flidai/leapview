@@ -901,6 +901,31 @@ test('dashboard agent opens an eligible query visual with a Save action', async 
     await page.waitForFunction(() => document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
     expect(savedVisual as unknown).toEqual({ title: 'Revenue by country', explorerUrl: panelState.explorerHref })
 
+    const refreshed = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer')
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const original = drawer.agent.transcript[0]
+      const input = JSON.parse(original.argumentsJson)
+      input.visual.query.metrics = ['profit']
+      const visual = drawer.visuals['chat-chart']
+      mergePatch({ agent: { transcript: [original, { ...original, id: 'replacement-tool', runId: 'replacement-run', argumentsJson: JSON.stringify(input) }] },
+        agentVisuals: { 'chat-chart': { ...visual, specRevision: `sha256:${'9'.repeat(64)}` } },
+      })
+      await drawer.updateComplete
+      const panel = drawer.shadowRoot.querySelector('lv-chat-visual-panel')
+      await panel.updateComplete
+      return { explorerHref: panel.explorerHref, auditHref: panel.auditHref, saved: panel.saved,
+        saveDisabled: panel.shadowRoot.querySelector('[aria-label="Save visual to Data Explorer"]').disabled }
+    })
+    expect(refreshed.explorerHref).not.toBe(panelState.explorerHref)
+    expect(JSON.parse(new URL(refreshed.explorerHref, baseURL).searchParams.get('state')!).metrics).toEqual([{ field: 'profit' }])
+    expect(refreshed.auditHref).toBe('/chats/chat-one/visuals/chat-chart/explore?run=replacement-run')
+    expect(refreshed.saved).toBe(false)
+    expect(refreshed.saveDisabled).toBe(false)
+    await page.locator('lv-chat-drawer lv-chat-visual-panel').getByRole('button', { name: 'Save visual to Data Explorer', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')?.shadowRoot?.querySelector('lv-chat-visual-panel')?.shadowRoot?.textContent?.includes('Saved to Data Explorer.'))
+    expect(savedVisual as unknown).toEqual({ title: 'Revenue by country', explorerUrl: refreshed.explorerHref })
+
     const drawerRemainsOpen = await page.locator('lv-dashboard-page').evaluate((element: any) => {
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
       const panel = drawer.shadowRoot.querySelector('lv-chat-visual-panel') as HTMLElement

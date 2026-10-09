@@ -16,6 +16,13 @@ const searchableAssetKinds = new Set([
   'source',
 ])
 
+/** Continue with the palette's exact asset scope. */
+export function productSearchPageHref(query: string): string {
+  const params = new URLSearchParams({ q: query.trim(), limit: '24' })
+  for (const kind of searchableAssetKinds) params.append('kind', kind)
+  return `/search?${params.toString()}`
+}
+
 type CatalogSearchResponse = {
   items?: Array<{
     reference?: { id?: string; kind?: string }
@@ -33,7 +40,7 @@ export class ProductSearchService {
     const normalized = query.trim()
     if (!normalized) return []
 
-    const response = await this.fetcher(`/search?q=${encodeURIComponent(normalized)}`, {
+    const response = await this.fetcher(`/search?q=${encodeURIComponent(normalized)}&view=palette`, {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
       signal,

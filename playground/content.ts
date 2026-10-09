@@ -1,3 +1,4 @@
+import './assistant-handoffs'
 import { previewCode } from './example-code'
 import { readState } from './example-state'
 import { LitElement, css, html, nothing } from 'lit'
@@ -18,6 +19,13 @@ import { codeFixtures, composerReferences, configurationJSON, configurationYAML,
 export { contentExamples } from './content-fixtures'
 
 const documentation: Record<string, { tag: string; source: string; properties: string; events: string; note: string; usage: string }> = {
+  'assistant-handoffs': {
+    tag: 'lv-chat-thread + lv-chat-visual-panel', source: 'web/components/chat/chat-thread.ts',
+    properties: 'transcript · visuals · conversationId · auditHref',
+    events: 'lv-chat-visual-open · lv-chat-visual-close · local destination preview',
+    note: 'Recorded chart, Builder, and filtered Search handoffs use production components and illustrative receipts. Destinations are displayed locally.',
+    usage: '<lv-chat-thread conversation-id="demo-conversation" .transcript=${receipts} .visuals=${visuals}></lv-chat-thread>',
+  },
   'chat-composer': {
     tag: 'lv-chat-composer', source: 'web/components/chat/chat-composer.ts',
     properties: 'value · disabled · pending · running · runId · canContinue · editing · editMessageId · references · pinnedSuggestions · suggestions · suggestionQuery · suggestionRequestId · referenceLimit · acceptedRunId',
@@ -95,6 +103,7 @@ export class PlaygroundContent extends LitElement {
     const inputs = new Map<Element, Record<string, unknown>>()
     if (composer) inputs.set(composer, { value: composer.getDraft() })
     return previewCode(this, [
+      "import './assistant-handoffs'",
       "import '../web/components/shared/code-editor'",
       "import '../web/components/shared/code-block'",
       "import '../web/components/shared/config-viewer'",
@@ -240,6 +249,7 @@ export class PlaygroundContent extends LitElement {
 
   private renderExample() {
     switch (this.example) {
+      case 'assistant-handoffs': return html`<playground-assistant-handoffs></playground-assistant-handoffs>`
       case 'code-editor': return html`<lv-code-editor .value=${this.empty ? '' : this.source} .language=${this.language} ?disabled=${this.readOnly} aria-label="Playground code editor" @lv-code-editor-change=${(event: CustomEvent<{ value: string }>) => { this.source = event.detail.value; this.empty = !this.source; this.record(event) }}></lv-code-editor>`
       case 'code-block': return html`<lv-code-block .code=${this.empty ? '' : this.source} .language=${this.language} ?toolbar=${this.toolbar} ?copy=${this.copy} ?compact=${this.compact} ?dense=${this.dense} ?inline=${this.inline} ?format=${this.format} .highlightedLines=${this.highlight ? [2, 3] : []}></lv-code-block>`
       case 'config-viewer': return html`<lv-config-viewer .configuration=${this.configState === 'empty' ? '' : this.configState === 'invalid' ? 'model: [unterminated' : this.language === 'json' ? configurationJSON : configurationYAML} .language=${this.language} .defaultView=${this.configView}></lv-config-viewer>`

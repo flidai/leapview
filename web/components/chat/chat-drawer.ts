@@ -1,3 +1,4 @@
+import { queryVisualExplorerURL, retainedVisualExplorerHref } from './visual-action-links'
 import { chatDrawerStyles } from './chat-drawer.styles'
 import './agent-visual-library'
 import type { VisualLibraryState } from './agent-visual-library'
@@ -76,10 +77,22 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @state() private referenceLimitMessage = ''
 	@state() private editMessageId = ''
   @state() private selectedVisualID = ''
-  @state() private selectedExplorerHref = ''
-  @state() private selectedVisualTitle = ''
+  private get selectedVisualReceipt(): ChatTranscriptItemSignal | undefined {
+    return [...(this.agent.transcript ?? [])].reverse().find(item => item.artifact?.id === this.selectedVisualID && item.status === 'complete')
+  }
+
+  private get selectedExplorerHref(): string {
+    const receipt = this.selectedVisualReceipt
+    const payload = this.visuals[this.selectedVisualID]
+    return receipt?.artifact && payload?.visualID === this.selectedVisualID
+      ? queryVisualExplorerURL(receipt, receipt.artifact.type, this.selectedVisualID) : ''
+  }
+
+  private get selectedVisualTitle(): string {
+    return this.visuals[this.selectedVisualID]?.spec.title || this.selectedVisualReceipt?.artifact?.summary || 'Visual result'
+  }
   @state() private visualSaving = false
-  @state() private visualSaved = false
+  @state() private savedExplorerHref = ''
   @state() private visualSaveError = ''
   private focusReturnTarget: HTMLElement | null = null
 	private trackedConversationID: string | null = null
@@ -305,8 +318,9 @@ class ChatDrawer extends DatastarLit(LitElement) {
             title=${this.selectedVisualTitle || this.visuals[this.selectedVisualID].spec.title || 'Visual result'}
             .payload=${this.visuals[this.selectedVisualID]}
             .explorerHref=${this.selectedExplorerHref}
+            .auditHref=${retainedVisualExplorerHref(agent.activeConversationId ?? '', this.selectedVisualReceipt, agent.status)}
             .saving=${this.visualSaving}
-            .saved=${this.visualSaved}
+            .saved=${Boolean(this.selectedExplorerHref) && this.savedExplorerHref === this.selectedExplorerHref}
             .saveError=${this.visualSaveError}
             @lv-chat-visual-close=${() => this.closeVisual()}
             @lv-chat-visual-save=${this.saveVisual}
@@ -345,9 +359,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
     const artifactId = event.detail?.artifactId ?? ''
     if (!artifactId || !this.visuals[artifactId]) return
     this.selectedVisualID = artifactId
-    this.selectedExplorerHref = event.detail.explorerHref ?? ''
-    this.selectedVisualTitle = event.detail.title ?? ''
-    this.visualSaved = false
+    this.savedExplorerHref = ''
     this.visualSaveError = ''
     void this.updateComplete.then(() => this.shadowRoot?.querySelector<ChatVisualPanel>('lv-chat-visual-panel')?.focusClose())
   }
@@ -365,23 +377,22 @@ class ChatDrawer extends DatastarLit(LitElement) {
 
   private clearSelectedVisual(): void {
     this.selectedVisualID = ''
-    this.selectedExplorerHref = ''
-    this.selectedVisualTitle = ''
-    this.visualSaved = false
+    this.savedExplorerHref = ''
     this.visualSaveError = ''
   }
 
   private saveVisual = async (event: CustomEvent<{ title: string; explorerHref: string; artifactId: string }>): Promise<void> => {
     if (this.visualSaving || !this.selectedVisualID || event.detail?.artifactId !== this.selectedVisualID) return
-    const { title, explorerHref } = event.detail
+    const title = this.selectedVisualTitle
+    const explorerHref = this.selectedExplorerHref
     if (!explorerHref) return
     this.visualSaving = true
     this.visualSaveError = ''
     try {
       await saveChatVisual(title, explorerHref)
-      if (event.detail.artifactId === this.selectedVisualID) this.visualSaved = true
+      if (event.detail.artifactId === this.selectedVisualID && explorerHref === this.selectedExplorerHref) this.savedExplorerHref = explorerHref
     } catch {
-      if (event.detail.artifactId === this.selectedVisualID) this.visualSaveError = 'Could not save this visual. Please try again.'
+      if (event.detail.artifactId === this.selectedVisualID && explorerHref === this.selectedExplorerHref) this.visualSaveError = 'Could not save this visual. Please try again.'
     } finally {
       this.visualSaving = false
     }

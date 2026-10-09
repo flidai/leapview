@@ -49,7 +49,16 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if dashboardID == "" {
 		dashboardID = metrics.DefaultDashboardID()
 	}
+	var resumed dashboardStreamResume
+	_ = pagestream.ReadSignals(r, &resumed)
+	resumeMatches := resumed.Runtime.DashboardID == dashboardID &&
+		resumed.Runtime.StreamInstanceID != "" && resumed.Runtime.StreamInstanceID == r.URL.Query().Get("streamInstance") &&
+		resumed.Runtime.ClientID == webtransport.ClientIDFromRequest(r, strings.TrimSpace(r.URL.Query().Get("clientId"))) &&
+		resumed.Runtime.ModelID == metrics.ModelIDForDashboard(dashboardID)
 	pageID := strings.TrimSpace(r.URL.Query().Get("page"))
+	if resumeMatches && resumed.Runtime.PageID != "" {
+		pageID = resumed.Runtime.PageID
+	}
 	resolved, err := resolveDashboard(metrics, dashboardID)
 	if err != nil {
 		nethttp.NotFound(w, r)
@@ -101,6 +110,20 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		state := dashboardsession.NewState(activePage.ID, dashboardfilter.MachineSnapshot{
 			Version: dashboardfilter.MachineSnapshotVersion, State: filterState,
 		})
+		// The server record is authoritative while it exists. Only recover a
+		// missing/expired session from the matching mounted page's signals.
+		if resumeMatches && resumed.FilterState != nil {
+			if _, loadErr := h.SessionStore.Load(r.Context(), key); errors.Is(loadErr, dashboardsession.ErrNotFound) {
+				snapshot, restoreErr := resumeDashboardFilters(reportDefinition, *resumed.FilterState)
+				if restoreErr != nil {
+					nethttp.Error(w, "invalid resumed dashboard filters", nethttp.StatusBadRequest)
+					return
+				}
+				state.Filters = snapshot
+				state.InteractionSelections = resumed.InteractionSelections
+				state.SpatialSelections = resumed.SpatialSelections
+			}
+		}
 		record, createErr := h.SessionStore.Create(r.Context(), key, state)
 		newSession = createErr == nil
 		if errors.Is(createErr, dashboardsession.ErrConflict) {

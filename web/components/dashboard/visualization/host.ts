@@ -424,15 +424,17 @@ export class VisualizationHost extends LitElement {
 
   private visualActions() {
     const envelope = this.envelope
-    if (!envelope || !supportsHostDataActions(envelope)) return null
+    if (!envelope) return null
+    const dataActions = supportsHostDataActions(envelope)
+    if (!dataActions && !this.exploreHref) return null
     return html`<div class="visual-options">
       <button class="options-trigger" type="button" aria-label="Visual options" aria-haspopup="menu" aria-expanded=${String(this.optionsOpen)} popovertarget="visual-options-menu" title="Visual options" @click=${this.toggleOptions} @keydown=${this.optionsTriggerKeydown}>${lucideIcon(EllipsisVertical)}</button>
       <div id="visual-options-menu" class="menu" popover="auto" role="menu" aria-label="Visualization actions" @toggle=${this.optionsToggled} @keydown=${this.optionsKeydown}>
-        <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
+        ${dataActions ? html`<button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>` : null}
         ${this.exploreHref ? html`<a role="menuitem" href=${this.exploreHref}>${visualMenuIcon('explore')}<span>Explore</span></a>` : null}
-        <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
+        ${dataActions ? html`<button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
-        ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
+        ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}` : null}
       </div>
     </div>`
   }

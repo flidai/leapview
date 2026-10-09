@@ -42,6 +42,7 @@ export const contentExamples = [
   { id: 'config-viewer', label: 'Configuration viewer' },
   { id: 'markdown-view', label: 'Markdown' },
   { id: 'visual-artifact', label: 'Visual artifact' },
+  { id: 'assistant-handoffs', label: 'Assistant handoffs' },
   { id: 'chat-composer', label: 'Chat composer' },
 ]
 

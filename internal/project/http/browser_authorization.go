@@ -48,6 +48,35 @@ func searchCatalogAuthorized(ctx context.Context, catalog ProductSearchCatalog, 
 	}
 }
 
+// searchCatalogPageAuthorized preserves catalog continuations for navigable
+// search results. Skip entirely denied pages, but return a partially authorized
+// page as-is: filling it from the next page would either discard surplus results
+// or change the page size to which the catalog's signed cursor is bound.
+func searchCatalogPageAuthorized(ctx context.Context, catalog ProductSearchCatalog, request projectcatalog.SearchRequest, credential *access.APICredential, projectID projectgraph.ResourceID) (projectcatalog.Page, error) {
+	if catalog == nil {
+		return projectcatalog.Page{}, projectcatalog.ErrUnavailable
+	}
+	seenCursors := map[string]struct{}{request.Cursor: {}}
+	for pages := 0; pages < 10000; pages++ {
+		page, err := catalog.Search(ctx, request)
+		if err != nil {
+			return projectcatalog.Page{}, err
+		}
+		page = filterCatalogPageForCredential(page, credential, projectID)
+		if page.NextCursor != "" {
+			if _, seen := seenCursors[page.NextCursor]; seen {
+				return projectcatalog.Page{}, fmt.Errorf("catalog search pagination cursor repeated")
+			}
+			seenCursors[page.NextCursor] = struct{}{}
+		}
+		if len(page.Items) != 0 || page.NextCursor == "" {
+			return page, nil
+		}
+		request.Cursor = page.NextCursor
+	}
+	return projectcatalog.Page{}, fmt.Errorf("catalog search pagination exceeded safety bound")
+}
+
 func (h *BrowserHandler) currentCredential(r *stdhttp.Request) *access.APICredential {
 	if h == nil || h.CurrentCredential == nil || r == nil {
 		return nil
