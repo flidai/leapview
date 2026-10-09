@@ -769,7 +769,7 @@ for (const start of [50, 950]) {
     try {
       await page.goto(baseURL)
       await page.waitForFunction(() => customElements.get('lv-report-table'))
-      const result = await page.evaluate(async (start) => {
+      await page.evaluate(async (start) => {
         const table = document.createElement('lv-report-table') as any
         table.style.cssText = 'display:block;width:500px;height:320px;'
         const sort = { key: 'id', direction: 'asc' }
@@ -785,22 +785,32 @@ for (const start of [50, 950]) {
           const request = event.detail
           const starts = request.start ? [request.start - 50, request.start, request.start + 50] : [0, 50, 100]
           const blocks = Object.fromEntries(['a', 'b', 'c'].flatMap((id, i) => starts[i]! >= 1000 ? [] : [[id, block(starts[i]!, Math.min(50, 1000 - starts[i]!), request.requestSeq)]]))
-          table.table = { ...table.table, blocks }
+          // Real window responses are asynchronous and may arrive after a
+          // frame/timer turn; keep completion assertions independent of delay.
+          setTimeout(() => { table.table = { ...table.table, blocks } }, 350)
         })
         const viewport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
         viewport.scrollTop = start * 32
         viewport.dispatchEvent(new Event('scroll'))
-        await new Promise(resolve => setTimeout(resolve, 200))
-        await table.updateComplete
-        return { footer: table.shadowRoot.querySelector('.footer').textContent, requests: requests.length, loading: table.visibleLoading, pending: table.expectedBlocks.size, skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length }
+        ;(window as any).__lvBrowseBoundary = { table, requests }
       }, start)
+      await page.waitForFunction((start) => {
+        const { table, requests } = (window as any).__lvBrowseBoundary
+        return requests.some((request: any) => request.start === start)
+          && table.expectedBlocks.size === 0 && !table.visibleLoading
+          && table.visibleRows.every((row: any) => row.kind !== 'skeleton')
+      }, start, { timeout: 5_000 })
+      const result = await page.evaluate(() => {
+        const { table, requests } = (window as any).__lvBrowseBoundary
+        return { footer: table.shadowRoot.querySelector('.footer').textContent, requests: requests.length, loading: table.visibleLoading, pending: table.expectedBlocks.size, skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length }
+      })
       expect(result.requests).toBeGreaterThan(0)
       expect(result.loading).toBe(false)
       expect(result.pending).toBe(0)
       expect(result.footer).toContain('browsing first 1,000')
       expect(result.skeletons).toBe(0)
     } finally { await page.close() }
-  })
+  }, 15_000)
 }
 
 test('phone headers keep page actions below the title and default table values readable', async () => {

@@ -56,6 +56,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private completedDashboardGenerationRun = ''
   @state() private generationPrompt = ''
   private generationConversationId = ''
+  private generationRunId = ''
   @state() private visualWaitExpired = false
   private visualWaitKey = ''
   private visualWaitTimer = 0
@@ -694,11 +695,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const conversationId = this.agent.activeConversationId ?? ''
     if (this.generationPrompt && this.generationConversationId && this.generationConversationId !== conversationId) {
       this.generationPrompt = ''
+      this.generationRunId = ''
       this.builderOpen = false
       this.dashboardPreview = false
     }
     if (this.generationPrompt && conversationId) this.generationConversationId = conversationId
-    if (running && !this.generationPrompt) {
+    if (running && runId && !this.optimisticTurn && this.generationRunId && this.generationRunId !== runId) {
+      this.clearDashboardGeneration()
+    }
+    if (running && !this.generationPrompt && !this.optimisticTurn) {
       const latestUser = [...this.agent.transcript ?? []].reverse().find(item => item.kind === 'user')
       const authoring = Boolean(runId && (this.agent.transcript ?? []).some(item => item.kind === 'tool' && item.runId === runId
         && ['create_dashboard_draft', 'fork_dashboard', 'edit_dashboard_source'].includes(item.name ?? '') && item.status !== 'error' && !item.error))
@@ -708,7 +713,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         this.enterBuilder()
       }
     }
-    if (running && runId) this.dashboardGenerationRun = runId
+    if (running && runId) {
+      this.dashboardGenerationRun = runId
+      if (this.generationPrompt && !this.optimisticTurn) this.generationRunId = runId
+    }
     if (!running && this.dashboardGenerationRun && this.dashboardGenerationRun !== this.completedDashboardGenerationRun) {
       const completedRun = this.dashboardGenerationRun
       const href = generatedDashboardHref(this.agent.transcript ?? [], completedRun, this.agent.activeConversationId ?? '')
@@ -1155,10 +1163,22 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(prompt)
   }
 
+  private clearDashboardGeneration(): void {
+    this.generationPrompt = ''
+    this.generationRunId = ''
+    if (!this.savedBuilderHref && !this.restoredBuilderHref) {
+      this.builderOpen = false
+      this.dashboardPreview = false
+      setChatPreviewLocation(null, true)
+    }
+  }
+
 	private showOptimisticTurn = (event: CustomEvent<{ input?: string; references?: AgentReferenceSignal[]; editMessageId?: string; surface?: string }>): void => {
     const submittedInput = event.detail?.input?.trim() ?? ''
-    if (isDashboardBuildPrompt(submittedInput)) {
-      this.generationPrompt = submittedInput
+    if (!isDashboardBuildPrompt(submittedInput) && this.generationPrompt) this.clearDashboardGeneration()
+    this.generationPrompt = isDashboardBuildPrompt(submittedInput) ? submittedInput : ''
+    this.generationRunId = ''
+    if (this.generationPrompt) {
       this.generationConversationId = this.agent.activeConversationId ?? ''
       this.enterBuilder()
     }

@@ -121,3 +121,43 @@ test('a selected chart recovers when its panel becomes visible after first-frame
     expect(mounted).toBeGreaterThan(0)
   } finally { await page.close() }
 }, 20_000)
+
+test('a late timed-out mount cannot overwrite a recovered visual', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.route('**/chunks/echarts-*.js', route => route.fulfill({ contentType: 'text/javascript', body: `export const adapter = { async mount(container) {
+      window.__lateMountStarted = true;
+      window.__expirePreparation();
+      await new Promise(resolve => { window.__releaseLateMount = resolve });
+      container.replaceChildren(document.createTextNode('expired mount'));
+      window.__lateMountFinished = true;
+      return { update(){}, resize(){}, snapshot(){}, dispose(){container.replaceChildren()} };
+    } };` }))
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts?.orders_kpi?.presented)
+    await page.evaluate(() => {
+      const original = window.setTimeout.bind(window)
+      window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        if (timeout === 30_000 && typeof handler === 'function') (window as any).__expirePreparation = () => handler(...args)
+        return original(handler, timeout, ...args)
+      }) as typeof window.setTimeout
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:600px;height:320px'
+      host.envelope = structuredClone((window as any).__lvSourceHosts.orders_chart.envelope)
+      document.body.append(host)
+      ;(window as any).__lvLateMountHost = host
+    })
+    await page.waitForFunction(() => (window as any).__lateMountStarted && (window as any).__lvLateMountHost.shadowRoot.querySelector('[data-visualization-retry]'))
+    await page.evaluate(async () => {
+      const host = (window as any).__lvLateMountHost
+      host.envelope = structuredClone((window as any).__lvSourceHosts.orders_kpi.envelope)
+      await host.ensureMounted()
+      await host.updateComplete
+    })
+    const recovered = await page.evaluate(() => (window as any).__lvLateMountHost.shadowRoot.querySelector('.renderer').textContent)
+    expect(recovered.length).toBeGreaterThan(0)
+    await page.evaluate(() => (window as any).__releaseLateMount())
+    await page.waitForFunction(() => (window as any).__lateMountFinished)
+    expect(await page.evaluate(() => (window as any).__lvLateMountHost.shadowRoot.querySelector('.renderer').textContent)).toBe(recovered)
+  } finally { await page.close() }
+}, 20_000)

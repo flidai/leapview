@@ -3,6 +3,7 @@ import { EllipsisVertical } from 'lucide'
 import { lucideIcon } from '../../shared/lucide-icons'
 import { toggleAnchoredPopover } from '../../shared/anchored-popover'
 import { property, query, state } from 'lit/decorators.js'
+import { keyed } from 'lit/directives/keyed.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
@@ -15,40 +16,14 @@ import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
 import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
 import { clearInteractionCommand } from './interaction-command'
-import { resolveVisualizationMetadata } from './metadata'
+import { resolveVisualizationMetadata, visualizationSharedHeader } from './metadata'
 import { visualizationHostStyles } from './host-styles'
+import { generatedEnvelopeValidator, loadEnvelopeValidator, prepareVisual, VisualPreparationTimeout } from './preparation'
 
 export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, supportsHostDataActions, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
 
 /** Start mounting within 600 CSS pixels above or below the viewport. */
 export const visualizationNearViewportRootMargin = '600px 0px'
-
-type GeneratedEnvelopeValidator = typeof import('../../../generated/visualization/validate')['default']
-let generatedEnvelopeValidator: GeneratedEnvelopeValidator | undefined
-let envelopeValidatorLoad: Promise<GeneratedEnvelopeValidator> | undefined
-
-function loadEnvelopeValidator(): Promise<GeneratedEnvelopeValidator> {
-  if (generatedEnvelopeValidator) return Promise.resolve(generatedEnvelopeValidator)
-  return envelopeValidatorLoad ??= import('../../../generated/visualization/validate').then(({ default: validate }) => {
-    generatedEnvelopeValidator = validate
-    return validate
-  }, (error: unknown) => {
-    envelopeValidatorLoad = undefined
-    throw error
-  })
-}
-
-class VisualPreparationTimeout extends Error {
-  constructor() { super('Loading this visual took too long. Try again.') }
-}
-
-function prepareVisual<T>(operation: () => Promise<T>): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout>
-  const deadline = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new VisualPreparationTimeout()), 30_000)
-  })
-  return Promise.race([Promise.resolve().then(operation), deadline]).finally(() => clearTimeout(timeout))
-}
 
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
@@ -132,6 +107,7 @@ export class VisualizationHost extends LitElement {
   @property({ type: Boolean, attribute: 'actions-enabled' }) actionsEnabled = true
   @property({ type: Boolean, attribute: 'visual-options-open', reflect: true }) visualOptionsOpen = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
+  @state() private rendererGeneration = 0
   @state() private error = ''
   @state() private applying = false
   @state() private presented = false
@@ -275,6 +251,7 @@ export class VisualizationHost extends LitElement {
       this.applyQueued = false
       this.controller?.dispose()
       this.controller = undefined
+      this.rendererGeneration++
       this.mountRequested = false
       this.presented = false
       this.presentedRendererID = ''
@@ -351,7 +328,7 @@ export class VisualizationHost extends LitElement {
   protected render() {
     const statusError = this.envelope?.status.kind === 'error' ? this.envelope.status.message ?? 'Visualization error' : ''
     const error = this.error || statusError
-    const header = this.sharedHeader()
+    const header = visualizationSharedHeader(this.envelope)
     const metadata = this.envelope ? resolveVisualizationMetadata(this.envelope) : undefined
     const titleVisible = this.envelope?.spec.titleVisible !== false
     const showHeader = Boolean((header && titleVisible) || this.authoring)
@@ -376,7 +353,7 @@ export class VisualizationHost extends LitElement {
         </header>
       ` : !this.actionsEnabled ? html`<div class="headerless-actions"><div class="visual-actions"><slot name="focus-action"></slot></div></div>` : tableActions && this.presented && !error ? null : html`<div class="headerless-actions"><div class="visual-actions">${tableActions && this.presented ? null : html`<slot name="agent-action"></slot>`}${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}<slot name="focus-action"></slot></div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
-        <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
+        ${keyed(this.rendererGeneration, html`<div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>`)}
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
           <lv-loading-spinner size="medium" aria-hidden="true"></lv-loading-spinner>
           <span>${loadingLabel}</span>
@@ -485,6 +462,9 @@ export class VisualizationHost extends LitElement {
         // retrying creates an independent controller and cannot reuse its queue.
         controller.dispose()
         this.controller = undefined
+        // Late adapter mounts may still mutate their container. Detach that
+        // generation before any retry can attach a replacement renderer.
+        this.rendererGeneration++
         this.resizeObserver?.disconnect()
         this.resizeObserver = undefined
         this.rendererHasSize = false
@@ -496,16 +476,9 @@ export class VisualizationHost extends LitElement {
     }
   }
 
-  private sharedHeader(): 'chart' | 'map' | 'visualization' | undefined {
-    const kind = this.envelope?.spec.kind
-    if (!kind || kind === 'kpi' || kind === 'table' || kind === 'matrix' || kind === 'pivot') return undefined
-    if (kind === 'geographic') return 'map'
-    return 'chart'
-  }
-
   private expand = (): void => {
     const envelope = this.envelope
-    const visualType = this.sharedHeader()
+    const visualType = visualizationSharedHeader(this.envelope)
     if (!envelope || !visualType) return
     const detail: VisualActionDetail = {
       action: 'focus',
@@ -638,7 +611,7 @@ export class VisualizationHost extends LitElement {
       composed: true,
       detail: {
         action,
-        visualType: envelope.spec.kind === 'geographic' ? 'map' : this.sharedHeader() === 'chart' ? 'chart' : 'visualization',
+        visualType: envelope.spec.kind === 'geographic' ? 'map' : visualizationSharedHeader(this.envelope) === 'chart' ? 'chart' : 'visualization',
         visualId: envelope.visualID,
         title: metadata.title,
         columns: [...data.columns],

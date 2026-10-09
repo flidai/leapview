@@ -118,3 +118,25 @@ test('confirmed current-run authoring opens assembly and a conversation switch c
     expect(await chat.evaluate((e: any) => ({ builder: e.builderOpen, preview: e.dashboardPreview }))).toEqual({ builder: false, preview: false })
   } finally { await page.close() }
 })
+
+test('a later ordinary run clears dashboard assembly progress in the same conversation', async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.goto(fixture.baseURL)
+    const chat = page.locator('lv-chat-page')
+    await chat.locator('lv-chat-composer').waitFor()
+    const state = await chat.evaluate(async (e: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev' as string)
+      e.showOptimisticTurn(new CustomEvent('lv-chat-submit', { detail: { input: 'Build a sales dashboard', references: [] } }))
+      mergePatch({ agent: { transcript: [{ id: 'build-user', kind: 'user', text: 'Build a sales dashboard' }], status: { enabled: true, running: false, runId: 'build-run' } } })
+      await e.updateComplete
+      e.showOptimisticTurn(new CustomEvent('lv-chat-submit', { detail: { input: 'Explain revenue', references: [] } }))
+      mergePatch({ agent: { transcript: [{ id: 'explain-user', kind: 'user', text: 'Explain revenue' }], status: { enabled: true, running: true, runId: 'explain-run' } } })
+      await e.updateComplete
+      await e.updateComplete
+      const thread = e.shadowRoot.querySelector('lv-chat-thread')
+      return { prompt: e.generationPrompt, assembly: Boolean(e.shadowRoot.querySelector('lv-dashboard-generation')), dashboardGenerating: thread.dashboardGenerating, builder: e.builderOpen, preview: e.dashboardPreview, frameVisible: !e.shadowRoot.querySelector('.builder-stage').hidden, previewParam: new URL(location.href).searchParams.get('preview') }
+    })
+    expect(state).toEqual({ prompt: '', assembly: false, dashboardGenerating: false, builder: false, preview: false, frameVisible: false, previewParam: null })
+  } finally { await page.close() }
+})
