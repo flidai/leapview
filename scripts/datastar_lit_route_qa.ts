@@ -566,7 +566,7 @@ async function verifyFilterShowcase(): Promise<void> {
         label: 'state dropdown',
         bindingID: 'state',
         mutate: async () => {
-          const dropdown = page.getByRole('button', { name: /^State:/ })
+          const dropdown = page.locator('lv-slicer').getByRole('button', { name: /^State:/ })
           await dropdown.click()
           await page.waitForFunction(() => {
             const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }

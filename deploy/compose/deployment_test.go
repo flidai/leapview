@@ -384,7 +384,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	for name, script := range map[string]string{"browser": browser, "performance": performance} {
 		for _, required := range []string{
-			`getByRole('button', { name: /^State:/ })`,
+			`locator('lv-slicer').getByRole('button', { name: /^State:/ })`,
 			`getByRole('dialog', { name: 'State filter options', exact: true })`,
 		} {
 			if !strings.Contains(script, required) {

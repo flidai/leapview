@@ -229,8 +229,9 @@ export class ReportTable extends LitElement {
 
   static styles = [visualActionStyles, css`
     :host {
+      --lv-table-content-height: var(--lv-visual-height, 100%);
       display: block;
-      height: var(--lv-table-content-height, var(--lv-visual-height, 100%));
+      height: var(--lv-table-content-height);
       min-height: 0;
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
@@ -241,7 +242,7 @@ export class ReportTable extends LitElement {
       --lv-table-cell-font: var(--lv-type-body);
       display: flex;
       flex-direction: column;
-      height: var(--lv-table-content-height, var(--lv-visual-height, 100%));
+      height: var(--lv-table-content-height);
       min-height: 0;
       min-width: 0;
       background: var(--lv-chart-surface);
@@ -262,7 +263,7 @@ export class ReportTable extends LitElement {
     .allocation-probe {
       display: block;
       width: 0;
-      height: var(--lv-table-max-height, 0px);
+      height: var(--lv-table-max-height, 0);
       padding: 0;
       margin: 0;
       border: 0;
@@ -344,7 +345,7 @@ export class ReportTable extends LitElement {
     .hierarchy-controls button {
       padding: 4px 7px;
       white-space: nowrap;
-      font-size: 11px;
+      font-size: var(--text-caption-size);
     }
 
     .hierarchy-cell {
@@ -369,7 +370,7 @@ export class ReportTable extends LitElement {
     .hierarchy-disclosure svg { flex: 0 0 14px; width: 14px; min-width: 14px; height: 14px; }
     .hierarchy-disclosure:hover { background: var(--lv-bg-panel); color: var(--lv-fg-default); }
     .hierarchy-label { flex: 1; min-width: 0; }
-    .hierarchy-depth { flex: 0 0 auto; font-size: 10px; color: var(--lv-fg-muted); padding-inline-end: 4px; }
+    .hierarchy-depth { flex: 0 0 auto; font-size: var(--text-caption-size); color: var(--lv-fg-muted); padding-inline-end: 4px; }
 
     .hierarchy-controls button:focus-visible, .hierarchy-disclosure:focus-visible {
       outline: 2px solid var(--lv-line-accent);

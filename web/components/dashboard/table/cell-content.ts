@@ -81,19 +81,19 @@ export class TableCellContentElement extends LitElement {
 
   static styles = css`
     :host { display: flex; align-items: center; width: 100%; height: 100%; min-width: 0; overflow: hidden; color: inherit; font: inherit; }
-    .inline-image { display: block; object-fit: contain; margin: 2px var(--lv-table-cell-padding-inline, 8px); flex: 0 1 auto; max-width: calc(100% - 2 * var(--lv-table-cell-padding-inline, 8px)); }
-    .placeholder, .preview-trigger, .cell-link { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 var(--lv-table-cell-padding-inline, 8px); box-sizing: border-box; height: 100%; font: inherit; }
-    .placeholder { color: var(--lv-fg-muted); font-size: 11px; }
+    .inline-image { display: block; object-fit: contain; margin: 2px var(--lv-table-cell-padding-inline, var(--base-size-8)); flex: 0 1 auto; max-width: calc(100% - 2 * var(--lv-table-cell-padding-inline, var(--base-size-8))); }
+    .placeholder, .preview-trigger, .cell-link { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 var(--lv-table-cell-padding-inline, var(--base-size-8)); box-sizing: border-box; height: 100%; font: inherit; }
+    .placeholder { color: var(--lv-fg-muted); font-size: var(--text-caption-size); }
     .placeholder svg, .preview-trigger svg, .cell-link svg { flex: 0 0 14px; width: 14px; height: 14px; }
     .preview-trigger { width: 100%; border: 0; background: transparent; color: var(--lv-fg-link); cursor: pointer; text-align: inherit; }
     .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cell-link { max-width: 100%; color: var(--lv-fg-link); text-decoration: underline; text-underline-offset: 2px; }
     .preview-trigger:hover, .cell-link:hover { background: var(--lv-bg-panel-muted); }
     .preview-trigger:focus-visible, .cell-link:focus-visible { outline: 2px solid var(--lv-line-accent); outline-offset: -2px; }
-    .preview { position: fixed; inset: auto; margin: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--lv-line-default); border-radius: 8px; background: var(--lv-chart-surface, white); color: var(--lv-fg-default); box-shadow: 0 8px 24px rgb(0 0 0 / 18%); overflow: auto; }
+    .preview { position: fixed; inset: auto; margin: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--lv-line-default); border-radius: 8px; background: var(--lv-chart-surface, var(--lv-bg-panel)); color: var(--lv-fg-default); box-shadow: var(--lv-shadow-floating); overflow: auto; }
     .preview:popover-open { display: grid; gap: 8px; }
     .preview img { display: block; width: 100%; object-fit: contain; max-height: 100%; }
-    .preview-label { font: inherit; font-size: 12px; overflow-wrap: anywhere; }
+    .preview-label { font: inherit; font-size: var(--text-caption-size); overflow-wrap: anywhere; }
   `
 
   willUpdate(changes: Map<PropertyKey, unknown>): void {

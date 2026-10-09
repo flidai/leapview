@@ -217,6 +217,7 @@ class WindowedTable extends LitElement {
 
   static styles = css`
     :host {
+      --lv-windowed-table-height: 100%;
       display: grid;
       min-width: 0;
       min-height: 0;
@@ -229,7 +230,7 @@ class WindowedTable extends LitElement {
       display: grid;
       align-self: start;
       box-sizing: border-box;
-      height: var(--lv-windowed-table-height, 100%);
+      height: var(--lv-windowed-table-height);
       min-width: 0;
       min-height: 0;
       grid-template-rows: auto minmax(0, 1fr) auto auto;

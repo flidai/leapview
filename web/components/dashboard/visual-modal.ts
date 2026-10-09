@@ -95,7 +95,7 @@ export class VisualModal extends LitElement {
     }
 
     .focus-dialog.focus-table-dialog {
-      height: auto;
+      height: fit-content;
       min-height: 0;
     }
 

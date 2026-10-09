@@ -41,7 +41,7 @@ try {
   await page.getByText('Governed order rows', { exact: true }).waitFor({ state: 'visible', timeout: 60_000 })
   await page.getByText('24', { exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
 
-  const state = page.getByRole('button', { name: /^State:/ })
+  const state = page.locator('lv-slicer').getByRole('button', { name: /^State:/ })
   await state.click({ force: true })
   const stateOptions = page.getByRole('dialog', { name: 'State filter options', exact: true })
   await stateOptions.waitFor({ state: 'visible', timeout: 30_000 })
