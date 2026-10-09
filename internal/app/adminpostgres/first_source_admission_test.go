@@ -307,6 +307,29 @@ func TestFirstSourceAdmissionRefusesForeignScopeAndRevokedOperator(t *testing.T)
 	}
 }
 
+func TestFirstSourceAdmissionRefusesNonUserOperator(t *testing.T) {
+	for _, kind := range []access.PrincipalKind{access.PrincipalKindServicePrincipal, access.PrincipalKindDashboardPublication} {
+		t.Run(string(kind), func(t *testing.T) {
+			f := newFirstSourceFixture(t)
+			principal, err := f.repo.UpsertPrincipal(t.Context(), access.PrincipalInput{Kind: kind, DisplayName: "Non-user operator"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := f.request
+			request.Intent.OperatorPrincipalID = principal.ID
+			for _, apply := range []bool{false, true} {
+				request.Apply = apply
+				if err := f.ops.AdmitFirstSource(t.Context(), request, io.Discard); !errors.Is(err, credential.ErrForbidden) {
+					t.Errorf("apply=%t: non-user admission error=%v, want forbidden", apply, err)
+				}
+				if a, b, r := f.counts(t); a != 0 || b != 0 || r != f.policy.Revision {
+					t.Fatalf("apply=%t: non-user admission mutated authority: admissions=%d bindings=%d revision=%d", apply, a, b, r)
+				}
+			}
+		})
+	}
+}
+
 func TestFirstSourceAdmissionReplayRequiresCurrentExactGrant(t *testing.T) {
 	f := newFirstSourceFixture(t)
 	if err := f.ops.AdmitFirstSource(t.Context(), f.request, io.Discard); err != nil {
