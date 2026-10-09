@@ -80,6 +80,7 @@ type Admission struct {
 	Provenance         ProvenanceResult              `json:"provenance"`
 	SBOM               SBOMResult                    `json:"sbom"`
 	SecurityPolicy     SecurityPolicyResult          `json:"securityPolicy"`
+	NixEvidence        *NixEvidence                  `json:"nixEvidence,omitempty"`
 	AdmittedAt         time.Time                     `json:"admittedAt"`
 }
 
@@ -218,18 +219,24 @@ func (a Admission) normalized() (Admission, error) {
 			return Admission{}, fmt.Errorf("OCI artifact admission %s: %w", field.name, err)
 		}
 	}
-	if a.Provenance.Repository != SourceRepository || !approvedWorkflow(a.Provenance.Workflow) {
+	if a.Provenance.Repository != SourceRepository || (a.NixEvidence == nil && !approvedWorkflow(a.Provenance.Workflow)) {
 		return Admission{}, errors.New("OCI artifact admission provenance authority is not approved")
 	}
 	if !sourceRevisionPattern.MatchString(a.Release.SourceRevision) ||
 		a.Provenance.SourceRevision != a.Release.SourceRevision {
 		return Admission{}, errors.New("OCI artifact admission provenance is not verified for the release")
 	}
-	if a.SBOM.PredicateType != SBOMPredicateSPDX || a.SBOM.Producer != SBOMProducerBuildx {
-		return Admission{}, errors.New("OCI artifact admission SBOM evidence is unsupported")
-	}
-	if a.SecurityPolicy.Version != SecurityPolicyVersion || a.SecurityPolicy.Scanner != SecurityScannerTrivy {
-		return Admission{}, errors.New("OCI artifact admission security policy is unsupported or failed")
+	if a.NixEvidence != nil {
+		if err := a.validateNixEvidence(); err != nil {
+			return Admission{}, err
+		}
+	} else {
+		if a.SBOM.PredicateType != SBOMPredicateSPDX || a.SBOM.Producer != SBOMProducerBuildx {
+			return Admission{}, errors.New("OCI artifact admission SBOM evidence is unsupported")
+		}
+		if a.SecurityPolicy.Version != SecurityPolicyVersion || a.SecurityPolicy.Scanner != SecurityScannerTrivy {
+			return Admission{}, errors.New("OCI artifact admission security policy is unsupported or failed")
+		}
 	}
 	if a.AdmittedAt.IsZero() {
 		return Admission{}, errors.New("OCI artifact admission timestamp is missing")
