@@ -85,4 +85,8 @@ END $$;
 RESET ROLE;
 
 -- +goose Down
-SELECT 1;
+-- +goose StatementBegin
+DO $$ BEGIN
+    RAISE EXCEPTION 'credential first-source preparation is forward-only; preserve exact source, receipt, and plan identity and restore a coordinated backup';
+END $$;
+-- +goose StatementEnd

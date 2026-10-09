@@ -40,6 +40,20 @@ func TestFirstSourcePreparationMigrationUsesExclusiveReceiptSchemaAndRestrictsRo
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	var beforeHistory, afterHistory string
+	const historyQuery = `SELECT json_agg(v ORDER BY id)::text FROM goose_db_version v`
+	if err := db.QueryRow(historyQuery).Scan(&beforeHistory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Down(t.Context()); err == nil || !strings.Contains(err.Error(), "first-source preparation is forward-only") {
+		t.Fatalf("first-source preparation downgrade was not refused: %v", err)
+	}
+	if err := db.QueryRow(historyQuery).Scan(&afterHistory); err != nil {
+		t.Fatal(err)
+	}
+	if beforeHistory != afterHistory {
+		t.Fatal("denied first-source preparation downgrade changed immutable migration history")
+	}
 	for _, table := range []string{"credential.first_source_preparation", "credential.first_source_plan_link"} {
 		var read, insert, update, remove, backupRead, backupInsert, guarded bool
 		if err := db.QueryRow(`SELECT has_table_privilege('leapview_control_runtime',$1,'SELECT'),has_table_privilege('leapview_control_runtime',$1,'INSERT'),has_table_privilege('leapview_control_runtime',$1,'UPDATE'),has_table_privilege('leapview_control_runtime',$1,'DELETE'),has_table_privilege('leapview_control_backup',$1,'SELECT'),has_table_privilege('leapview_control_backup',$1,'INSERT'),EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=$1::regclass AND NOT tgisinternal AND tgenabled='O')`, table).Scan(&read, &insert, &update, &remove, &backupRead, &backupInsert, &guarded); err != nil {

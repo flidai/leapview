@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -45,6 +46,11 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"056_saved_explorations.sql", "057_saved_visuals.sql", "058_unsave_visuals.sql", "059_managed_multipart_gc_reachability.sql", "060_credential_activation_completion.sql", "061_agent_credential_version_reference.sql", "062_credential_activation_requests.sql", "063_credential_envelope_rewrap.sql", "063_credential_first_source_admission.sql", "064_credential_first_source_preparation.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
+	}
+	latestPrefix, _, _ := strings.Cut(sqlFiles[len(sqlFiles)-1], "_")
+	latestRevision, err := strconv.ParseInt(latestPrefix, 10, 64)
+	if err != nil || latestRevision != CurrentRevision || int64(len(sqlFiles)) != CurrentRevision {
+		t.Fatalf("embedded migration history: latest=%d count=%d declared current=%d, parse error=%v", latestRevision, len(sqlFiles), CurrentRevision, err)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
 	if err != nil {

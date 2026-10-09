@@ -51,4 +51,8 @@ END $$;
 RESET ROLE;
 
 -- +goose Down
-SELECT 1;
+-- +goose StatementBegin
+DO $$ BEGIN
+    RAISE EXCEPTION 'credential first-source admission is forward-only; preserve exact operator and binding authority and restore a coordinated backup';
+END $$;
+-- +goose StatementEnd

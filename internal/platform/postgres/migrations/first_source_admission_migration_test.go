@@ -40,6 +40,20 @@ func TestFirstSourceAdmissionMigrationRestrictsRolesAndPreservesCanonicalSchema(
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	var beforeHistory, afterHistory string
+	const historyQuery = `SELECT json_agg(v ORDER BY id)::text FROM goose_db_version v`
+	if err := db.QueryRow(historyQuery).Scan(&beforeHistory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Down(t.Context()); err == nil || !strings.Contains(err.Error(), "first-source admission is forward-only") {
+		t.Fatalf("first-source admission downgrade was not refused: %v", err)
+	}
+	if err := db.QueryRow(historyQuery).Scan(&afterHistory); err != nil {
+		t.Fatal(err)
+	}
+	if beforeHistory != afterHistory {
+		t.Fatal("denied first-source admission downgrade changed immutable migration history")
+	}
 	var read, insert, update, remove, backupRead, backupInsert, publicRead, guarded bool
 	if err := db.QueryRow(`SELECT
 		has_table_privilege('leapview_control_runtime', 'credential.first_source_admission', 'SELECT'),
