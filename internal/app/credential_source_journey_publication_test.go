@@ -71,7 +71,7 @@ spec:
 	return snapshot
 }
 
-func (f *sourceCredentialHTTPJourney) publishSource(t *testing.T, token string) deploymentgen.DeliveryPublicationEvidenceResponse {
+func (f *sourceCredentialHTTPJourney) retainSource(t *testing.T, token string) deploymentgen.GenSchemaCandidateSourceSnapshotResponse {
 	t.Helper()
 	snapshot := f.snapshot
 	sourceOnly := true
@@ -108,7 +108,14 @@ func (f *sourceCredentialHTTPJourney) publishSource(t *testing.T, token string) 
 	if err != nil {
 		t.Fatalf("retain exact source: %v", err)
 	}
-	plan, err := client.CreateDeliveryPlan(t.Context(), deploymentgen.GenCreateDeliveryPlanClientRequest{Project: sourceJourneyProject, Headers: deploymentgen.GenCreateDeliveryPlanClientHeaders{IdempotencyKey: "source-journey-delivery-plan"}, Body: deploymentgen.DeliveryPlanRequest{TargetId: f.instance, Operation: deploymentgen.DeliveryOperationKindCodeChange, SourceDigest: retained.Body.SourceDigest, SourceAttestationDigest: retained.Body.SourceAttestationDigest}})
+	return retained.Body
+}
+
+func (f *sourceCredentialHTTPJourney) publishSource(t *testing.T, token string) deploymentgen.DeliveryPublicationEvidenceResponse {
+	t.Helper()
+	retained := f.retainSource(t, token)
+	client := deploymentgen.NewGenClient(f.transport(token))
+	plan, err := client.CreateDeliveryPlan(t.Context(), deploymentgen.GenCreateDeliveryPlanClientRequest{Project: sourceJourneyProject, Headers: deploymentgen.GenCreateDeliveryPlanClientHeaders{IdempotencyKey: "source-journey-delivery-plan"}, Body: deploymentgen.DeliveryPlanRequest{TargetId: f.instance, Operation: deploymentgen.DeliveryOperationKindCodeChange, SourceDigest: retained.SourceDigest, SourceAttestationDigest: retained.SourceAttestationDigest}})
 	if err != nil {
 		t.Fatalf("plan native source: %v", err)
 	}

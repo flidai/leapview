@@ -25,6 +25,11 @@ func validateNativeCreatePlanRequest(request deploymentmodule.NativeDeliveryPlan
 	if request.SourceOwnerID != strings.TrimSpace(request.SourceOwnerID) {
 		return fmt.Errorf("%w: source owner is not canonical", deployment.ErrDeliveryInvalid)
 	}
+	if request.FirstSourcePreparationID != "" {
+		if _, err := canonicalNonNilUUID(request.FirstSourcePreparationID, "first-source preparation"); err != nil || request.Operation != string(deployment.DeliveryOperationCodeChange) || request.PipelinePlan != nil {
+			return fmt.Errorf("%w: first-source preparation requires canonical identity and a code-change plan", deployment.ErrDeliveryInvalid)
+		}
+	}
 	if err := platformdigest.ValidateSHA256Identity(request.SourceDigest); err != nil {
 		return fmt.Errorf("%w: source digest: %v", deployment.ErrDeliveryInvalid, err)
 	}

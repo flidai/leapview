@@ -78,6 +78,7 @@ type AdminAgentToolResponse struct {
 }
 
 type AdminAgentResponse struct {
+	CredentialVersionID    string `json:"credentialVersionId,omitempty"`
 	BaseURL                string `json:"baseUrl,omitempty"`
 	APIMode                string `json:"apiMode,omitempty"`
 	ConfigurationRevision  int64  `json:"configurationRevision"`

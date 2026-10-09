@@ -52,8 +52,12 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	artifacts release.CandidateArtifactSet,
 	successor NativeBuildSuccessorAdmissionResult,
 ) (deploymentmodule.NativeDeliveryBuild, error) {
-	if c == nil || c.repository == nil || c.connections == nil || c.managedData == nil || c.physicalFactory == nil || c.qualificationFactory == nil {
+	if c == nil || c.repository == nil || (c.planConnections == nil && c.connections == nil) || c.managedData == nil || c.physicalFactory == nil || c.qualificationFactory == nil {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	planConnections, err := c.selectPlanConnections(ctx, plan.DeliveryPlan)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	if successor.Operation.AttemptID == "" || successor.Delivery.Successor.AttemptID != successor.Operation.AttemptID || successor.Artifact.AttemptID != successor.Operation.AttemptID {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor admission identities differ", deploymentdomain.ErrDeliveryConflict)
@@ -77,7 +81,7 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	}
 
 	bindingRequest := nativeCandidateConnectionRequest(candidateID, request.PrincipalID, request.TargetID, artifacts)
-	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, c.bindingEvidence, bindingRequest)
+	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, planConnections.BindingEvidence, bindingRequest)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
@@ -155,7 +159,7 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
 	physicalContext := materialize.WithObservationBudget(buildCtx, materialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis, MaxRows: c.bounds.MaxRows})
 	physicalContext = materialize.WithSourceCheckEvaluator(physicalContext, sourceCheckEvaluator)
-	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
+	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, planConnections.Connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if releaseErr := releaseManagedData(); releaseErr != nil {
 		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native successor managed-data roots: %w", releaseErr)))
 	}
