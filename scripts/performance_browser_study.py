@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 from performance_capacity import digest, identity, resources, write
+from performance_process import run_owned
 
 
 METRICS = ("optimisticFeedbackMs", "firstTargetPaintMs", "criticalKPISettlementMs", "allTargetSettlementMs")
@@ -72,8 +73,11 @@ def run(directory):
             env = {**os.environ, "LEAPVIEW_PERF_ITERATIONS": "20", "LEAPVIEW_PERF_ENFORCE_THRESHOLDS": "1",
                    "LEAPVIEW_PERF_OUTPUT": str(report)}
             with (directory / f"session-{session}.log").open("xb") as log:
-                subprocess.run(["bun", "scripts/dashboard_performance.ts"], env=env,
-                               stdout=log, stderr=subprocess.STDOUT, timeout=1200, check=True)
+                execution = run_owned(["bun", "scripts/dashboard_performance.ts"], env=env,
+                                      stdout=log, timeout=1200)
+            write(directory / f"session-{session}-execution.json", execution)
+            if execution["exitCode"] != 0 or execution["terminationReason"]:
+                raise ValueError(f"browser execution failed: {execution}")
             samples = validate_session(json.loads(report.read_text()), names)
             sessions.append({"session": session, "reportSHA256": digest(report), "samples": len(samples)})
         if identity() != source:

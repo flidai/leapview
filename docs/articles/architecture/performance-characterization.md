@@ -29,6 +29,15 @@ timeout and 150-second outer timeout bound the experiment, not a product SLO.
 The driver stops on the first error, timeout, observed cgroup OOM kill, missing
 or altered benchmark row, source drift or cleanup failure. An observed OOM may
 come from unrelated cgroup work; it still invalidates the controlled study.
+Unavailable cgroup accounting is recorded as unknown. The runner separately
+enforces a prospective four-GiB process-tree RSS stop on the observed 32-GiB
+host, sampled every 100 milliseconds. This bounds the experiment, not a product
+memory budget; brief peaks can fall between samples. Source admission binds the
+maintained Go receipt fingerprint of selected Go/native/embed inputs, including
+ignored generated files and effective settings, before and after compilation
+and measurement. Unexpected untracked Go code is rejected. External system
+libraries/headers and unrecorded runtime environment remain explicit identity
+limitations rather than being inferred from HEAD.
 
 | Family | Fixed fixture and measured boundary | Correctness guards |
 | --- | --- | --- |
@@ -72,6 +81,9 @@ warm across sessions. Source identity alone does not admit that server's image
 or dataset: retain its independent build and fixture admission alongside these
 reports. Dense dashboard, scrolling, map and teardown workloads require their
 own applicable maintained scenarios rather than extrapolation from MovieLens.
+The browser launcher owns and subreaps its descendants, including browser
+processes in separate groups. Normal exit, timeout and RSS termination all
+require bounded process-tree cleanup before admitting a session.
 
 ## Experiment decisions
 

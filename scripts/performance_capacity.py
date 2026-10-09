@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import time
+from performance_process import run_owned
 
 LADDER = (1, 10, 20, 100)
 FAMILIES = {
@@ -32,7 +33,20 @@ def git(*args):
 def identity():
     if git("status", "--porcelain", "--untracked-files=no"):
         raise ValueError("tracked source must be clean before qualification")
+    unexpected = [path for path in subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"], text=True).split("\0") if path.endswith(".go")]
+    if unexpected:
+        raise ValueError("unexpected untracked Go sources")
     return {"commit": git("rev-parse", "HEAD"), "tree": git("rev-parse", "HEAD^{tree}")}
+
+
+def build_environment():
+    return {**os.environ, "GOFLAGS": "", "GOENV": "off", "GOWORK": "off", "GOTOOLCHAIN": "local", "CGO_ENABLED": "1"}
+
+
+def build_inputs():
+    return json.loads(subprocess.check_output(["node", "scripts/performance_build_inputs.mjs"],
+                      env=build_environment(), text=True, timeout=180))
 
 
 def write(path, value):
@@ -86,7 +100,9 @@ def resources():
 
 
 def oom_count(snapshot):
-    return dict(line.split() for line in (snapshot["memoryEvents"] or "").splitlines()).get("oom_kill", "0")
+    if snapshot["memoryEvents"] is None:
+        return None
+    return dict(line.split() for line in snapshot["memoryEvents"].splitlines()).get("oom_kill")
 
 
 def measure(binary, benchmark, readers, output):
@@ -101,46 +117,46 @@ def measure(binary, benchmark, readers, output):
     before = resources()
     started = time.monotonic()
     with Path(output + ".log").open("xb") as log:
-        child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        timed_out = False
-        try:
-            code = child.wait(timeout=150)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            os.killpg(child.pid, signal.SIGKILL)
-            code = child.wait()
+        execution = run_owned(command, stdout=log, env=build_environment(), timeout=150)
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     after = resources()
     write(output + ".json", {
-        "command": command, "exitCode": code, "timedOut": timed_out,
+        "command": command, **execution,
         "wallSeconds": time.monotonic() - started, "userCPUSeconds": usage.ru_utime,
         "systemCPUSeconds": usage.ru_stime, "maxResidentMemoryKiB": usage.ru_maxrss,
         "resourceBefore": before, "resourceAfter": after,
-        "oomKillObserved": oom_count(before) != oom_count(after), "logSHA256": digest(output + ".log"),
+        "oomAccountingAvailable": oom_count(before) is not None and oom_count(after) is not None,
+        "oomKillObserved": None if oom_count(before) is None or oom_count(after) is None else oom_count(before) != oom_count(after),
+        "logSHA256": digest(output + ".log"),
     })
-    return code
+    return execution["exitCode"] if execution["terminationReason"] is None else 1
 
 
 def prepare(directory):
     directory.mkdir(parents=True, exist_ok=False)
     source = identity()
+    inputs = build_inputs()
     binaries = {}
     for name, (package, _, _, _) in FAMILIES.items():
         binary = directory / (name + ".test")
-        command = ["go", "test", "-tags=duckdb_arrow", "-p", "1", "-c", "-o", str(binary), package]
+        command = ["go", "test", "-mod=readonly", "-tags=duckdb_arrow", "-p", "1", "-c", "-o", str(binary), package]
         with (directory / (name + "-build.log")).open("xb") as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=600, check=True)
+            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=build_environment(), timeout=600, check=True)
         binaries[name] = {"path": str(binary), "sha256": digest(binary), "package": package, "command": command}
-    if identity() != source:
-        raise ValueError("source changed during preparation")
+    if identity() != source or build_inputs() != inputs:
+        raise ValueError("source or selected generated/native/embed inputs changed during preparation")
+    write(directory / "build-inputs.json", inputs)
     write(directory / "prepared.json", {"schemaVersion": 1, "source": source, "binaries": binaries,
         "goVersion": subprocess.check_output(["go", "version"], text=True).strip(),
-        "nixLockSHA256": digest("flake.lock")})
+        "nixLockSHA256": digest("flake.lock"), "buildInputsSHA256": digest(directory / "build-inputs.json")})
 
 
 def run(directory):
     prepared = json.loads((directory / "prepared.json").read_text())
     source = identity()
+    original_inputs = json.loads((directory / "build-inputs.json").read_text())
+    if digest(directory / "build-inputs.json") != prepared["buildInputsSHA256"] or build_inputs() != original_inputs:
+        raise ValueError("prepared actual Go/generated/native/embed inputs or settings changed")
     if source != prepared["source"] or digest("flake.lock") != prepared["nixLockSHA256"]:
         raise ValueError("prepared source/toolchain differs from current source")
     for binary in prepared["binaries"].values():
@@ -153,6 +169,7 @@ def run(directory):
         "batchOperationsPerProcess": 1, "timeoutSeconds": 150,
         "decision": "no optimization candidate; no adoption or user-p95 claim",
         "resourceAccounting": "whole process, including fixture setup and cleanup; RSS in Linux KiB",
+        "resourceStop": "4GiB observed process-tree RSS, polled every100ms; prospective experiment safety bound on32GiB host, not product budget",
         "stop": "first exit failure, timeout, OOM kill, missing/wrong row, source drift or cleanup failure",
         "families": FAMILIES, "resources": resources()}
     write(output / "protocol.json", protocol)
@@ -169,13 +186,13 @@ def run(directory):
                                prepared["binaries"][name]["path"], benchmark, str(readers), prefix]
                     subprocess.run(command, check=True)
                     receipt = json.loads(Path(prefix + ".json").read_text())
-                    if receipt["timedOut"] or receipt["oomKillObserved"]:
+                    if receipt["terminationReason"] or receipt["oomKillObserved"]:
                         raise ValueError("resource/timeout stop condition")
                     rows = validate_rows(Path(prefix + ".log").read_text(), benchmark, readers, expected)
                     results.append({"family": name, "readers": readers, "repetition": repetition,
                                     "rows": rows, "receiptSHA256": digest(prefix + ".json")})
-        if identity() != source:
-            raise ValueError("source changed before final receipt")
+        if identity() != source or build_inputs() != original_inputs:
+            raise ValueError("source or actual build inputs changed before final receipt")
     except (ValueError, subprocess.SubprocessError) as error:
         failure = str(error)
     write(output / "decision.json", {"source": source, "result": "complete" if failure is None else "stopped",

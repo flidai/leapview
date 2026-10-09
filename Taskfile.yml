@@ -601,6 +601,7 @@ tasks:
       - python3 -m unittest discover -s deploy/managed/nixos/tests -p 'managed_application*_test.py'
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
       - python3 -m unittest discover -s scripts/tests -p 'test_performance_*.py'
+      - node --test scripts/performance_build_inputs.test.mjs
       - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
       - python3 -m unittest discover -s scripts/tests -p 'test_ci_sqlc_hosted_*.py'
       - bun test scripts/sqlc_hosted_contract.test.ts

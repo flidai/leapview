@@ -38,6 +38,10 @@ class CapacityEvidenceTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.check(self.valid().replace("42 ns/op", value + " ns/op"))
 
+    def test_missing_oom_accounting_is_explicitly_unknown(self):
+        self.assertIsNone(capacity.oom_count({"memoryEvents": None}))
+        self.assertEqual(capacity.oom_count({"memoryEvents": "oom 0\noom_kill 2\n"}), "2")
+
 
 if __name__ == "__main__":
     unittest.main()
