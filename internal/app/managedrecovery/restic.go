@@ -33,6 +33,7 @@ type ResticConfig struct {
 	Destination      string
 	Manifest         FileManifest
 	ManifestDigest   string
+	SSH              *ResticSSHConfig
 	ArtifactMetadata *objectstore.ObjectMetadata
 }
 
@@ -40,9 +41,10 @@ type ResticConfig struct {
 // Calling composition must hold host exclusion and the original-writer fence.
 // The operation does not select latest, delete existing data or reopen traffic.
 type Restic struct {
-	config  ResticConfig
-	source  string
-	execute func(context.Context, string, []string, *os.File) error
+	config     ResticConfig
+	source     string
+	sshCommand string
+	execute    func(context.Context, string, []string, *os.File) error
 }
 
 func NewRestic(config ResticConfig) (*Restic, error) {
@@ -85,8 +87,16 @@ func NewRestic(config ResticConfig) (*Restic, error) {
 		return nil, errors.New("non-artifact root rejects envelope metadata")
 	}
 
+	sshCommand, err := managedResticSSHCommand(config.Repository, config.SSH)
+	if err != nil {
+		return nil, err
+	}
+	if config.SSH != nil {
+		transport := *config.SSH
+		config.SSH = &transport
+	}
 	config.Manifest.Files = append([]FileContent(nil), config.Manifest.Files...)
-	return &Restic{config: config, source: source, execute: runPinnedRestore}, nil
+	return &Restic{config: config, source: source, sshCommand: sshCommand, execute: runPinnedRestore}, nil
 }
 
 func runPinnedRestore(ctx context.Context, program string, args []string, lockFile *os.File) error {
@@ -125,7 +135,8 @@ func (restorer *Restic) RestoreObject(ctx context.Context, request providerresto
 		Repository       string                        `json:"repository"`
 		Destination      string                        `json:"destination"`
 		ArtifactMetadata *objectstore.ObjectMetadata   `json:"artifactMetadata,omitempty"`
-	}{request, restorer.config.ManifestDigest, restorer.config.Repository, restorer.config.Destination, restorer.config.ArtifactMetadata})
+		SSH              *ResticSSHConfig              `json:"ssh,omitempty"`
+	}{request, restorer.config.ManifestDigest, restorer.config.Repository, restorer.config.Destination, restorer.config.ArtifactMetadata, restorer.config.SSH})
 	if err != nil {
 		return providerrestore.ObjectResult{}, err
 	}
@@ -167,6 +178,9 @@ func (restorer *Restic) RestoreObject(ctx context.Context, request providerresto
 	args := []string{"--no-cache", "--repo", restorer.config.Repository, "--password-file", restorer.config.PasswordFile, "restore", restorer.config.Root.VersionID + ":" + source, "--target", stage, "--verify"}
 	if artifactFile {
 		args = append(args, "--include", "/"+filepath.Base(restorer.source))
+	}
+	if restorer.sshCommand != "" {
+		args = append(args, "--option", "sftp.command="+restorer.sshCommand)
 	}
 	if err := restorer.execute(ctx, restorer.config.Restic, args, lock.InheritedFile()); err != nil {
 		return providerrestore.ObjectResult{}, err
