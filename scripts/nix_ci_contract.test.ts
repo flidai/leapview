@@ -1101,3 +1101,38 @@ test('hosted Linux CI configures the Docker Hub cache before container work', ()
   if (result.status !== 0) throw new Error(result.stdout + result.stderr)
   expect(result.status).toBe(0)
 })
+
+test('standalone Electron Linux proof configures the guarded mirror immediately after checkout', () => {
+  const proof = parse(readFileSync('.github/workflows/electron-security-proof.yml', 'utf8'))
+  const setup = proof.jobs.linux.steps
+  const checkout = setup.findIndex((step: any) => step.uses?.startsWith('actions/checkout@'))
+  const mirror = setup.findIndex((step: any) => step.run?.includes('scripts/configure_ci_docker_mirror.py'))
+  expect(mirror).toBe(checkout + 1)
+  expect(setup[mirror].if).toBe("runner.os == 'Linux' && runner.environment == 'github-hosted'")
+  expect(setup[mirror].run).toContain('sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT python3')
+  expect(setup[mirror]['continue-on-error']).toBeUndefined()
+  expect(mirror).toBeLessThan(setup.findIndex((step: any) => step.run?.includes('docker build')))
+})
+
+test('managed scaffold Ruby bootstrap keeps the exact official-image digest on the public mirror', () => {
+  const scaffold = parse(readFileSync('.github/workflows/managed-scaffold.yml', 'utf8'))
+  expect(scaffold.jobs['application-template'].container.image).toBe(
+    'public.ecr.aws/docker/library/ruby:3.4@sha256:c4428c90c4e80ee5848c31912969e73c9f48ac45ec45dfb5f76d1a821358771e')
+})
+
+test('active recovery qualification configures its separate BuildKit resolver before building', () => {
+  const ci = parse(readFileSync('.github/workflows/ci.yml', 'utf8'))
+  expect(ci.jobs['host-recovery-validation'].uses).toBe('./.github/workflows/demo-upgrade-qualification.yml')
+  const recovery = parse(readFileSync('.github/workflows/demo-upgrade-qualification.yml', 'utf8'))
+  const setup = recovery.jobs['historical-transition'].steps
+  const toolchain = setup.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
+  const builder = setup.findIndex((step: any) => step.uses?.startsWith('docker/setup-buildx-action@'))
+  const build = setup.findIndex((step: any) => step.uses?.startsWith('docker/build-push-action@'))
+  expect(toolchain).toBeLessThan(builder)
+  expect(builder).toBeLessThan(build)
+  expect(setup[builder].if).toBe('${{ !inputs.final_artifact }}')
+  expect(setup[builder]['continue-on-error']).toBeUndefined()
+  expect(setup[builder].with?.['buildkitd-config-inline'].trim()).toBe(
+    '[registry."docker.io"]\n  mirrors = ["mirror.gcr.io"]')
+  expect(setup[build].with.file).toBe('Dockerfile')
+})
