@@ -14,7 +14,7 @@ test('removed generated cards recover from the account library after reload and 
    {id:'other-page',title:'Other page',semanticModelId:'sales',sourceKey:'c1/dashboard:demo:details:pie'},
    {id:'other-dashboard',title:'Other dashboard',semanticModelId:'sales',sourceKey:'c1/dashboard:elsewhere:overview:pie'},
   ],savedId:'',sourceKey:'',error:''})}},location.origin)</script>`}))
-  await page.route('**/dashboards/demo/edit?*', route => route.fulfill({contentType:'text/html',body:`<lv-dashboard-builder></lv-dashboard-builder><script>window.requests=[];parent.postMessage(${JSON.stringify({type:'lv-builder-saved',revisionId:'rev-removed',pageId:'overview',pageTitle:'Overview',href:'/dashboards/demo/edit?embed=chat&page=overview',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components:[],artifacts:[],visuals:{}})},location.origin);addEventListener('message',e=>window.requests.push(e.data))</script>`}))
+  await page.route('**/dashboards/demo/edit?*', route => route.fulfill({contentType:'text/html',body:`<lv-dashboard-builder></lv-dashboard-builder><script>window.requests=[];window.projection=${JSON.stringify({type:'lv-builder-saved',canEdit:false,revisionId:'rev-removed',pageId:'overview',pageTitle:'Overview',href:'/dashboards/demo/edit?embed=chat&page=overview',reference:{reference:{kind:'dashboard',id:'demo'},name:'Demo',hierarchy:[],locations:[],context:[]},components:[],artifacts:[],visuals:{}})};parent.postMessage(window.projection,location.origin);addEventListener('message',e=>window.requests.push(e.data))</script>`}))
   const url = fixture.baseURL+'/chats/c1?preview=dashboard&dashboard='+encodeURIComponent('/dashboards/demo/edit?embed=chat&page=overview')
   for (const navigation of ['open', 'reload', 'reopen']) {
    if (navigation === 'reload') await page.reload()
@@ -26,7 +26,12 @@ test('removed generated cards recover from the account library after reload and 
   }
   await page.getByRole('button',{name:'Open Revenue mix in visuals sidebar'}).click()
   await page.getByText('Add this visual back to the dashboard to view it.').waitFor()
-  await page.getByRole('button',{name:'Add to dashboard',exact:true}).click()
+  const add = page.getByRole('button',{name:'Add to dashboard',exact:true})
+  expect(await add.isDisabled()).toBe(true)
+  await page.frameLocator('.builder-frame').locator('body').evaluate(() => {
+   parent.postMessage({...(window as any).projection, canEdit:true},location.origin)
+  })
+  await add.click()
   await page.waitForFunction(()=>(document.querySelector('lv-chat-page') as any).builderFrame.contentWindow.requests.some((r:any)=>r.type==='lv-add-saved-visual'))
   expect(await page.locator('lv-chat-page').evaluate((e:any)=>e.builderFrame.contentWindow.requests.find((r:any)=>r.type==='lv-add-saved-visual'))).toMatchObject({id:'saved-pie',pageId:'overview'})
  } finally {await page.close()}

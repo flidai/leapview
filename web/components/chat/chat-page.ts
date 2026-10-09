@@ -77,6 +77,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   @state() private dashboardPageTitle = ''
   @state() private dashboardPages: Array<{id: string; title: string}> = []
   @state() private builderUpdating = false
+  @state() private builderCanEdit = true
   @state() private pendingDashboardPageId = ''
   private builderNeedsRefresh = false
   private visualCacheKey = ''
@@ -127,6 +128,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.retainedDashboardVisuals = {}
     this.pendingVisualRemoval = null
     this.projectedDashboardId = ''
+    this.builderCanEdit = true
     this.dashboardCopies = {}
     this.dashboardCopyLinks = {}
     this.dashboardPageId = ''
@@ -242,6 +244,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       this.dashboardPageTitle = event.data.pageTitle || event.data.pageId
       this.dashboardPages = event.data.pages ?? this.dashboardPages
       this.builderUpdating = event.data.updating === true
+      this.builderCanEdit = event.data.canEdit !== false
       if (this.pendingDashboardPageId === event.data.pageId) this.pendingDashboardPageId = ''
       this.savedDashboardArtifacts = event.data.artifacts
       this.savedDashboardVisuals = event.data.visuals
@@ -356,7 +359,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private addAgentVisual = async (event: CustomEvent<{ savedId: string; artifactId: string }>): Promise<void> => {
     event.preventDefault()
-    if (this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId || this.dashboardCopies[event.detail.artifactId]) return
+    if (!this.builderCanEdit || this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId || this.dashboardCopies[event.detail.artifactId]) return
     const requestId = uuidv7()
     this.pendingDashboardChange = {
       artifactId: event.detail.artifactId,
@@ -385,7 +388,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private toggleDashboardVisual(artifactId: string): void {
-    if (this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId || this.visualLibraryState.savingId) return
+    if (!this.builderCanEdit || this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId || this.visualLibraryState.savingId) return
     const copy = this.dashboardCopies[artifactId]
     if (!copy) {
       this.savePreviewVisual(artifactId, true)
@@ -403,7 +406,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   private removeDashboardVisual(artifactId: string): void {
     const copy = this.dashboardCopies[artifactId]
-    if (!copy || this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId) return
+    if (!copy || !this.builderCanEdit || this.savingDashboard || this.builderUpdating || this.pendingDashboardPageId) return
     if (!this.agent.transcript?.some(item => item.artifact?.id === artifactId)) {
       const artifact = this.previewArtifacts.find(item => item.id === artifactId)
       if (artifact && !this.retainedDashboardArtifacts.some(item => item.id === artifactId)) this.retainedDashboardArtifacts = [...this.retainedDashboardArtifacts, artifact]
@@ -886,7 +889,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           <h2>Visual</h2>
           <div class="preview-actions">
             ${canSave ? html`<button class="preview-action" type="button" ?disabled=${!selected || saving} aria-pressed=${saved} title=${saved ? 'Unsave visual' : 'Save visual'} @click=${() => selected && this.savePreviewVisual(selected.id, false)}>${lucideIcon(saved ? Check : Save)} ${selected && this.visualLibraryState.savingId === selected.id ? 'Updating…' : saved ? 'Saved' : 'Unsaved'}</button>` : null}
-            <button class="preview-action" type="button" ?disabled=${!selected || saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
+            <button class="preview-action" type="button" ?disabled=${!selected || !this.builderCanEdit || saving || this.savingDashboard || this.builderUpdating || Boolean(this.pendingDashboardPageId) || Boolean(this.savedBuilderHref && !this.dashboardPageId)} aria-pressed=${added} @click=${() => selected && this.toggleDashboardVisual(selected.id)}>${lucideIcon(added ? Minus : Plus)} ${this.savingDashboard ? 'Updating…' : added ? 'Remove from dashboard' : 'Add to dashboard'}</button>
             <button class="preview-action close-visuals" type="button" aria-label="Close visuals sidebar" @click=${this.closeVisualSidebar}>${lucideIcon(X)}</button>
           </div>
         </div>
