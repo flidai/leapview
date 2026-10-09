@@ -63,6 +63,19 @@ type FirstSourcePreparation struct {
 	CreatedAt    time.Time
 }
 
+// Stored identity is historical metadata. The explicit reservation state may
+// be terminal; reading it cannot renew a receipt or authorize runtime work.
+type FirstSourceStoredPreparation struct {
+	Preparation FirstSourcePreparation
+	Admission   FirstSourceAdmission
+	Reservation ActivationRequestRecord
+}
+
+type FirstSourceStoredPlanLink struct {
+	Link        FirstSourcePlanLink
+	Preparation FirstSourceStoredPreparation
+}
+
 func (p FirstSourcePreparation) Validate() error {
 	digest, err := p.Intent.Digest()
 	if err != nil || digest != p.IntentDigest || p.CreatedAt.IsZero() {

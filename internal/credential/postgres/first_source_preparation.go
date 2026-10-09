@@ -48,20 +48,44 @@ func (r *FirstSourcePreparations) Preparation(ctx context.Context, target, id st
 }
 
 func (r *FirstSourcePreparations) read(ctx context.Context, db FirstSourceAdmissionDB, target, id string) (credential.FirstSourcePreparation, error) {
+	stored, err := r.readStored(ctx, db, target, id)
+	if err != nil {
+		return credential.FirstSourcePreparation{}, err
+	}
+	if !firstSourceReservationActive(stored.Reservation.State) {
+		return credential.FirstSourcePreparation{}, credential.ErrConflict
+	}
+	return stored.Preparation, nil
+}
+
+func firstSourceReservationActive(state string) bool {
+	return state == "preparing" || state == "prepared" || state == "switching"
+}
+
+// StoredPreparationTx returns exact historical identity without inferring
+// active authority, receipt freshness or successful publication.
+func (r *FirstSourcePreparations) StoredPreparationTx(ctx context.Context, tx Tx, target, id string) (credential.FirstSourceStoredPreparation, error) {
+	if r == nil || ctx == nil || typednil.IsNil(tx) || !canonical(target, 255) || !canonicalPreparationUUID(id) {
+		return credential.FirstSourceStoredPreparation{}, credential.ErrInvalid
+	}
+	return r.readStored(ctx, tx, target, id)
+}
+
+func (r *FirstSourcePreparations) readStored(ctx context.Context, db FirstSourceAdmissionDB, target, id string) (credential.FirstSourceStoredPreparation, error) {
 	q := credentialdb.New(db)
 	row, err := q.GetFirstSourcePreparation(ctx, credentialdb.GetFirstSourcePreparationParams{TargetID: target, OperationID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return credential.FirstSourcePreparation{}, credential.ErrNotFound
+		return credential.FirstSourceStoredPreparation{}, credential.ErrNotFound
 	}
 	if err != nil {
-		return credential.FirstSourcePreparation{}, normalizeDatabaseError(err)
+		return credential.FirstSourceStoredPreparation{}, normalizeDatabaseError(err)
 	}
 	var intent credential.FirstSourcePreparationIntent
 	if err := strictjson.DecodeWithOptions(row.IntentDocument, &intent, strictjson.Options{MaxBytes: 32 << 10, MaxDepth: 16, DuplicateKeys: strictjson.CaseFoldedKeys}); err != nil {
-		return credential.FirstSourcePreparation{}, credential.ErrInvalid
+		return credential.FirstSourceStoredPreparation{}, credential.ErrInvalid
 	}
-	result := credential.FirstSourcePreparation{Intent: intent, IntentDigest: row.IntentDigest, CreatedAt: row.CreatedAt}
-	if result.Validate() != nil || intent.PreparationID != row.OperationID || intent.Receipt.ReceiptID != row.OriginalReceiptID || intent.Receipt.Binding.TargetID != row.TargetID {
+	result := credential.FirstSourceStoredPreparation{Preparation: credential.FirstSourcePreparation{Intent: intent, IntentDigest: row.IntentDigest, CreatedAt: row.CreatedAt}}
+	if result.Preparation.Validate() != nil || intent.PreparationID != row.OperationID || intent.Receipt.ReceiptID != row.OriginalReceiptID || intent.Receipt.Binding.TargetID != row.TargetID {
 		return result, credential.ErrConflict
 	}
 	request, err := q.GetActivationRequest(ctx, credentialdb.GetActivationRequestParams{DeploymentID: target, OperationID: id})
@@ -72,7 +96,7 @@ func (r *FirstSourcePreparations) read(ctx context.Context, db FirstSourceAdmiss
 	if err != nil {
 		return result, err
 	}
-	if !reserved.Receipt.Equal(intent.Receipt) || reserved.Request != firstSourceReservation(intent) || (reserved.State != "preparing" && reserved.State != "prepared" && reserved.State != "switching") {
+	if !reserved.Receipt.Equal(intent.Receipt) || reserved.Request != firstSourceReservation(intent) {
 		return result, credential.ErrConflict
 	}
 	if reserved.PlanID != "" {
@@ -88,6 +112,7 @@ func (r *FirstSourcePreparations) read(ctx context.Context, db FirstSourceAdmiss
 	if !intent.MatchesAdmission(admission) {
 		return result, credential.ErrConflict
 	}
+	result.Admission, result.Reservation = admission, reserved
 	return result, nil
 }
 
@@ -247,25 +272,38 @@ func (r *FirstSourcePreparations) LinkPlanTx(ctx context.Context, tx Tx, link cr
 }
 
 func (r *FirstSourcePreparations) PlanLinkTx(ctx context.Context, tx Tx, target, planID string) (credential.FirstSourcePlanLink, error) {
+	stored, err := r.StoredPlanLinkTx(ctx, tx, target, planID)
+	if err != nil {
+		return credential.FirstSourcePlanLink{}, err
+	}
+	if !firstSourceReservationActive(stored.Preparation.Reservation.State) {
+		return credential.FirstSourcePlanLink{}, credential.ErrConflict
+	}
+	return stored.Link, nil
+}
+
+// StoredPlanLinkTx resolves the immutable selection by exact normal plan ID,
+// retaining terminal state explicitly. It neither renews nor revives it.
+func (r *FirstSourcePreparations) StoredPlanLinkTx(ctx context.Context, tx Tx, target, planID string) (credential.FirstSourceStoredPlanLink, error) {
 	if r == nil || ctx == nil || typednil.IsNil(tx) || !canonical(target, 255) || !canonicalPreparationUUID(planID) {
-		return credential.FirstSourcePlanLink{}, credential.ErrInvalid
+		return credential.FirstSourceStoredPlanLink{}, credential.ErrInvalid
 	}
 	row, err := credentialdb.New(tx).GetFirstSourcePlanLink(ctx, credentialdb.GetFirstSourcePlanLinkParams{TargetID: target, PlanID: planID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return credential.FirstSourcePlanLink{}, credential.ErrNotFound
+		return credential.FirstSourceStoredPlanLink{}, credential.ErrNotFound
 	}
 	if err != nil {
-		return credential.FirstSourcePlanLink{}, normalizeDatabaseError(err)
+		return credential.FirstSourceStoredPlanLink{}, normalizeDatabaseError(err)
 	}
 	link := firstSourceLinkFromRow(row)
-	prepared, err := r.read(ctx, tx, target, link.PreparationID)
+	prepared, err := r.readStored(ctx, tx, target, link.PreparationID)
 	if err != nil {
-		return link, err
+		return credential.FirstSourceStoredPlanLink{}, err
 	}
-	if link.Validate() != nil || prepared.Intent.PlanRequestDigest != link.RequestDigest {
-		return link, credential.ErrConflict
+	if link.Validate() != nil || prepared.Preparation.Intent.PlanRequestDigest != link.RequestDigest {
+		return credential.FirstSourceStoredPlanLink{}, credential.ErrConflict
 	}
-	return link, nil
+	return credential.FirstSourceStoredPlanLink{Link: link, Preparation: prepared}, nil
 }
 
 func firstSourceLinkFromRow(row credentialdb.CredentialFirstSourcePlanLink) credential.FirstSourcePlanLink {
