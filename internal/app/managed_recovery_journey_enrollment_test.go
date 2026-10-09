@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/url"
 	"os"
@@ -14,9 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/app/adminpostgres"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/managedrecovery"
-	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
-	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
@@ -29,24 +26,21 @@ import (
 func managedJourneyEnrollment(t *testing.T, f *sourceCredentialHTTPJourney, set recoveryset.RecoverySet) {
 	independent := postgrestest.StartTLS(t)
 	database := independent.NewDatabase(t, "managed_recovery_authority")
-	authority, err := pgxpool.New(t.Context(), productionAdmissionTLSURL(database.AdminURL(), independent.RootCertPath()))
+	admin, err := pgxpool.New(t.Context(), productionAdmissionTLSURL(database.AdminURL(), independent.RootCertPath()))
+	require.NoError(t, err)
+	defer admin.Close()
+	sourceSystemID := strings.TrimPrefix(set.ClusterPoints[0].ClusterIdentity, "postgres-system-id:")
+	operatorURL, authoritySystemID := managedJourneyInitializeAuthority(t, independent, database, sourceSystemID)
+	authority, err := pgxpool.New(t.Context(), productionAdmissionTLSURL(operatorURL, independent.RootCertPath()))
 	require.NoError(t, err)
 	defer authority.Close()
-	require.NoError(t, migrations.ApplyRiver(t.Context(), authority))
-	tx, err := authority.Begin(t.Context())
-	require.NoError(t, err)
-	defer tx.Rollback(context.Background())
-	require.NoError(t, jobspostgres.ApplySchema(t.Context(), tx))
-	require.NoError(t, refreshpostgres.ApplySchema(t.Context(), tx))
-	require.NoError(t, recoverypostgres.ApplySchema(t.Context(), tx))
-	require.NoError(t, tx.Commit(t.Context()))
 	source, err := pgxpool.New(t.Context(), productionAdmissionTLSURL(f.control.AdminURL(), f.harness.RootCertPath()))
 	require.NoError(t, err)
 	defer source.Close()
 	now := time.Now().UTC().Truncate(time.Second)
 	frontier, err := set.Digest()
 	require.NoError(t, err)
-	request := managedrecovery.ManagedEnrollmentRequest{InstanceHome: f.config.HomeDir, RecoverySetID: set.ID, FrontierDigest: frontier, RetentionRootID: set.ID, SourceSystemID: strings.TrimPrefix(set.ClusterPoints[0].ClusterIdentity, "postgres-system-id:"), Actor: "actual-publication-enrollment-test", PlannedAt: now, ExpiresAt: now.Add(time.Hour),
+	request := managedrecovery.ManagedEnrollmentRequest{InstanceHome: f.config.HomeDir, RecoverySetID: set.ID, FrontierDigest: frontier, RetentionRootID: set.ID, SourceSystemID: sourceSystemID, AuthoritySystemID: authoritySystemID, Actor: "actual-publication-enrollment-test", PlannedAt: now, ExpiresAt: now.Add(time.Hour),
 		// This is a pending operator intent, never artifact qualification or a
 		// claim that this test starts a protected release image.
 		ArtifactIdentity: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("1", 64)}
@@ -61,13 +55,13 @@ func managedJourneyEnrollment(t *testing.T, f *sourceCredentialHTTPJourney, set 
 	require.Equal(t, frontier, prepared.Set.FrontierDigest)
 	// Deny the second write in the independent transaction. The copied set
 	// must not survive without its exact pending restore intent.
-	_, err = authority.Exec(t.Context(), `ALTER TABLE refresh.recovery_qualification_occurrence ADD CONSTRAINT enrollment_test_deny CHECK (false) NOT VALID`)
+	_, err = admin.Exec(t.Context(), `ALTER TABLE refresh.recovery_qualification_occurrence ADD CONSTRAINT enrollment_test_deny CHECK (false) NOT VALID`)
 	require.NoError(t, err)
 	_, err = managedrecovery.EnrollManagedRecovery(t.Context(), source, authority, request)
 	require.Error(t, err)
 	_, err = recoverypostgres.New(authority).ReadExact(t.Context(), set.ID)
 	require.ErrorIs(t, err, recoveryset.ErrNotFound)
-	_, err = authority.Exec(t.Context(), `ALTER TABLE refresh.recovery_qualification_occurrence DROP CONSTRAINT enrollment_test_deny`)
+	_, err = admin.Exec(t.Context(), `ALTER TABLE refresh.recovery_qualification_occurrence DROP CONSTRAINT enrollment_test_deny`)
 	require.NoError(t, err)
 	for _, mutate := range []func(*managedrecovery.ManagedEnrollmentRequest){
 		func(r *managedrecovery.ManagedEnrollmentRequest) { r.SourceSystemID = r.AuthoritySystemID },
@@ -135,7 +129,7 @@ func managedJourneyEnrollment(t *testing.T, f *sourceCredentialHTTPJourney, set 
 		require.NoError(t, os.WriteFile(input.RootCAFile, ca, 0600))
 		return input
 	}
-	input := managedrecovery.ManagedEnrollmentInput{SchemaVersion: 1, Request: request, ReceiptFile: filepath.Join(privateRoot, "receipt.json"), Source: privateAuthority("source", f.control.AdminURL(), f.harness.RootCertPath(), request.SourceSystemID), Authority: privateAuthority("authority", database.AdminURL(), independent.RootCertPath(), request.AuthoritySystemID)}
+	input := managedrecovery.ManagedEnrollmentInput{SchemaVersion: 1, Request: request, ReceiptFile: filepath.Join(privateRoot, "receipt.json"), Source: privateAuthority("source", f.control.AdminURL(), f.harness.RootCertPath(), request.SourceSystemID), Authority: privateAuthority("authority", operatorURL, independent.RootCertPath(), request.AuthoritySystemID)}
 	inputPath := filepath.Join(privateRoot, "enrollment.json")
 	value, err := json.Marshal(input)
 	require.NoError(t, err)
