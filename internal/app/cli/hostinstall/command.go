@@ -75,6 +75,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	addManagedRecoveryCommand(host)
 	addManagedRecoveryAuthorityCommand(host)
 	addManagedRecoveryEnrollmentCommand(host)
+	addManagedRecoveryAdmissionCommand(host)
 	addUpgradeCommand(ctx, host, options)
 	addMaintenanceCommands(ctx, host, options)
 	host.AddCommand(managedmaintenance.Command(ctx))

@@ -47,6 +47,20 @@ type ManagedAuthorities struct {
 // retained credentials and the enrolled original-host fence over the existing
 // RecoverySet coordinator. It supplies no generic provider fallback.
 func NewManaged(ctx context.Context, config ManagedConfig, authority ManagedAuthorities) (*providerrestore.Coordinator, error) {
+	composition, err := prepareManagedComposition(ctx, config, authority)
+	if err != nil {
+		return nil, err
+	}
+	return providerrestore.NewManaged(composition.dependencies, composition.fence)
+}
+
+type managedComposition struct {
+	dependencies providerrestore.Dependencies
+	fence        *providerrestore.SSHPrimaryFence
+	components   *managedComponents
+}
+
+func prepareManagedComposition(ctx context.Context, config ManagedConfig, authority ManagedAuthorities) (*managedComposition, error) {
 	if typednil.IsNil(authority.Ledger) || typednil.IsNil(authority.Sets) || config.RecoverySetID == "" || config.OccurrenceID == "" || !pinnedProgram(config.PrimaryFence.SSH) {
 		return nil, errors.New("exact managed recovery authorities and pinned original-host trust required")
 	}
@@ -151,7 +165,7 @@ func NewManaged(ctx context.Context, config ManagedConfig, authority ManagedAuth
 		return nil, err
 	}
 	component := &managedComponents{set: set, occurrenceID: occurrence.ID, postgres: postgres, roots: roots, handoff: preview, secretStore: store, roles: config.Roles, credentials: config.Credentials}
-	return providerrestore.NewManaged(providerrestore.Dependencies{Ledger: authority.Ledger, Sets: authority.Sets, Databases: postgres, Objects: component, Verifier: component, Evidence: providerrestore.FileEvidenceStore{Root: config.EvidenceRoot}, Handoff: component}, fence)
+	return &managedComposition{dependencies: providerrestore.Dependencies{Ledger: authority.Ledger, Sets: authority.Sets, Databases: postgres, Objects: component, Verifier: component, Evidence: providerrestore.FileEvidenceStore{Root: config.EvidenceRoot}, Handoff: component}, fence: fence, components: component}, nil
 }
 
 func managedPostgresEndpoints(credentials ManagedCredentials, set recoveryset.RecoverySet) ([]providerrestore.ProviderEndpoint, error) {
