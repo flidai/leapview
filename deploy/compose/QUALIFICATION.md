@@ -123,6 +123,12 @@ The Go controller supplies disk growth independently. Missing or inconsistent
 candidate or supplied baseline resource evidence fails qualification; this
 validation does not establish independent acceptance of a baseline.
 
+A supplied baseline must be a successfully finalized report with passing
+environment, absolute-budget and error-free assertions and no recorded failures.
+A successful absolute-only baseline need not have a passing comparison assertion;
+requiring that would make the first comparison circular. These outcome checks do
+not establish the baseline's independent acceptance or provenance.
+
 The installed-candidate gate assumes a dedicated Docker runtime with at least
 2 logical CPUs and 4 GiB memory. Its bundled Olist workload contains 24
 synthetic orders. The absolute rc.1 ceilings are:

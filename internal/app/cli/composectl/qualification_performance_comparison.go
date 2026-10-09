@@ -60,3 +60,34 @@ func validQualificationDatasetIdentity(dataset map[string]int64) bool {
 	}
 	return true
 }
+
+func qualificationPerformanceBaselineFailures(baseline qualificationPerformanceReport) []string {
+	// The first successful absolute-only report has no comparison assertion.
+	// Its finalized outcome is required; independent acceptance is a separate gate.
+	var failures []string
+	if baseline.Result != "success" {
+		failures = append(failures, fmt.Sprintf("baseline result must be success, got %q", baseline.Result))
+	}
+	for _, assertion := range []struct {
+		name   string
+		passed bool
+	}{
+		{"environment", baseline.Assertions.Environment},
+		{"absoluteBudgets", baseline.Assertions.AbsoluteBudgets},
+		{"errorFree", baseline.Assertions.ErrorFree},
+	} {
+		if !assertion.passed {
+			failures = append(failures, "baseline assertions."+assertion.name+" must be true")
+		}
+	}
+	if len(baseline.Failures) > 0 {
+		failures = append(failures, "baseline failures: "+strings.Join(baseline.Failures, "; "))
+	}
+	if baseline.Reliability.Errors != 0 {
+		failures = append(failures, fmt.Sprintf("baseline reliability.errors must be zero, got %d", baseline.Reliability.Errors))
+	}
+	if len(baseline.Reliability.Failures) > 0 {
+		failures = append(failures, "baseline reliability.failures: "+strings.Join(baseline.Reliability.Failures, "; "))
+	}
+	return failures
+}

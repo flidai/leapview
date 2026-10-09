@@ -268,6 +268,7 @@ func compareQualificationPerformance(
 	policy qualificationPerformancePolicy,
 ) []string {
 	failures := qualificationPerformanceComparisonIdentity(candidate, baseline, policy)
+	failures = append(failures, qualificationPerformanceBaselineFailures(baseline)...)
 	for _, failure := range append(validateQualificationPerformanceLatencies(candidate, policy), validateQualificationResources(candidate.Resources, policy)...) {
 		failures = append(failures, "candidate "+failure)
 	}

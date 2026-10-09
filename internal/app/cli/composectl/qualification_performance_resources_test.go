@@ -206,7 +206,7 @@ func TestQualificationResourcesRejectInvalidMeasurements(t *testing.T) {
 				t.Fatalf("invalid resource evidence lacks %s diagnostic: %v", test.field, failures)
 			}
 			for _, which := range []string{"candidate", "baseline"} {
-				candidate, baseline := comparableQualificationPerformanceReport(), comparableQualificationPerformanceReport()
+				candidate, baseline := comparableQualificationPerformanceReport(), finalizedQualificationPerformanceBaseline(t)
 				if which == "candidate" {
 					candidate.Resources = resources
 				} else {
@@ -274,7 +274,6 @@ func TestQualificationResourceEvidencePreservesMeasurementAndControllerInputs(t 
 func TestFinalizeQualificationPerformanceRejectsIncompleteBaselineResources(t *testing.T) {
 	policy, candidate := qualificationResourceWorkerEvidence(t)
 	_, baseline := qualificationResourceWorkerEvidence(t)
-	delete(baseline["resources"].(map[string]any), "metricSamples")
 	environment := map[string]any{
 		"runtime": "Docker Engine test", "logicalCPUs": policy.Assumptions.MinimumLogicalCPUs,
 		"memoryBytes": policy.Assumptions.MinimumMemoryBytes, "dataset": map[string]int{"orders": 24},
@@ -289,6 +288,16 @@ func TestFinalizeQualificationPerformanceRejectsIncompleteBaselineResources(t *t
 	}
 	environmentJSON, err := json.Marshal(environment)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeQualificationPerformanceReport(baselinePath, policy, 0, 0, environmentJSON, "reference-fixture-image", "amd64", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := readQualificationJSON(baselinePath, &baseline); err != nil {
+		t.Fatal(err)
+	}
+	delete(baseline["resources"].(map[string]any), "metricSamples")
+	if err := writeQualificationJSON(baselinePath, baseline); err != nil {
 		t.Fatal(err)
 	}
 	err = finalizeQualificationPerformanceReport(path, policy, 0, 0, environmentJSON, "candidate-fixture-image", "amd64", baselinePath)
