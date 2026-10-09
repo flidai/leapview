@@ -224,6 +224,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/managed-recovery-inventory.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/nightly.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
