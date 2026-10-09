@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"regexp"
 	"strings"
@@ -270,16 +269,17 @@ type Requirement struct {
 }
 
 type BindingEvidence struct {
-	BindingID          BindingID                      `json:"bindingId"`
-	TargetID           TargetID                       `json:"targetId"`
-	ConnectionID       projectgraph.ResourceID        `json:"connectionId"`
-	ConnectorKind      string                         `json:"connectorKind"`
-	Scope              BindingScope                   `json:"scope"`
-	BindingRevision    int64                          `json:"bindingRevision"`
-	ValidatedVersion   string                         `json:"validatedVersion,omitempty"`
-	EndpointConfigHash string                         `json:"endpointConfigHash"`
-	Health             BindingHealth                  `json:"health"`
-	Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+	BindingID           BindingID                      `json:"bindingId"`
+	TargetID            TargetID                       `json:"targetId"`
+	ConnectionID        projectgraph.ResourceID        `json:"connectionId"`
+	ConnectorKind       string                         `json:"connectorKind"`
+	Scope               BindingScope                   `json:"scope"`
+	BindingRevision     int64                          `json:"bindingRevision"`
+	ValidatedVersion    string                         `json:"validatedVersion,omitempty"`
+	CredentialVersionID string                         `json:"credentialVersionId,omitempty"`
+	EndpointConfigHash  string                         `json:"endpointConfigHash"`
+	Health              BindingHealth                  `json:"health"`
+	Access              semanticmodel.ConnectionAccess `json:"access,omitempty"`
 }
 
 // RuntimeBindingEvidence adds the exact immutable serving generation to
@@ -492,86 +492,4 @@ func endpointDigest(endpoint EndpointConfig) string {
 	encoded, _ := json.Marshal(endpoint)
 	sum := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-type CredentialSnapshot struct {
-	values          map[string]string
-	providerVersion string
-	retrievedAt     time.Time
-	expiresAt       time.Time
-}
-
-func NewCredentialSnapshot(values map[string]string, providerVersion string, retrievedAt, expiresAt time.Time) (CredentialSnapshot, error) {
-	providerVersion = strings.TrimSpace(providerVersion)
-	retrievedAt = retrievedAt.UTC()
-	expiresAt = expiresAt.UTC()
-	if len(values) == 0 || providerVersion == "" || retrievedAt.IsZero() ||
-		!expiresAt.IsZero() && !expiresAt.After(retrievedAt) {
-		return CredentialSnapshot{}, fmt.Errorf("%w: credential fields, provider version, and retrieval time are required", ErrInvalidBinding)
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		if !optionKeyPattern.MatchString(key) || value == "" {
-			return CredentialSnapshot{}, fmt.Errorf("%w: credential bundle contains an invalid field", ErrInvalidBinding)
-		}
-		cloned[key] = value
-	}
-	return CredentialSnapshot{values: cloned, providerVersion: providerVersion, retrievedAt: retrievedAt, expiresAt: expiresAt}, nil
-}
-
-// NewNoAuthCredentialSnapshot produces non-secret activation evidence for a
-// public binding. It contains no credential values and is consumed only by
-// target-pool preparation.
-func NewNoAuthCredentialSnapshot(now time.Time) CredentialSnapshot {
-	return CredentialSnapshot{providerVersion: NoAuthProviderVersion, retrievedAt: now.UTC()}
-}
-
-func (snapshot CredentialSnapshot) ProviderVersion() string { return snapshot.providerVersion }
-func (snapshot CredentialSnapshot) ExpiresAt() time.Time    { return snapshot.expiresAt }
-
-func (snapshot CredentialSnapshot) Use(consumer func(map[string]string) error) error {
-	if consumer == nil || len(snapshot.values) == 0 {
-		return fmt.Errorf("%w: credential snapshot consumer is required", ErrInvalidBinding)
-	}
-	values := make(map[string]string, len(snapshot.values))
-	for key, value := range snapshot.values {
-		values[key] = value
-	}
-	defer clear(values)
-	return consumer(values)
-}
-
-func (snapshot *CredentialSnapshot) Destroy() {
-	if snapshot == nil {
-		return
-	}
-	clear(snapshot.values)
-	snapshot.values = nil
-	snapshot.providerVersion = ""
-	snapshot.retrievedAt = time.Time{}
-	snapshot.expiresAt = time.Time{}
-}
-
-func (CredentialSnapshot) MarshalJSON() ([]byte, error) {
-	return nil, ErrCredentialSerialization
-}
-
-func (CredentialSnapshot) MarshalYAML() (any, error) {
-	return nil, ErrCredentialSerialization
-}
-
-func (CredentialSnapshot) String() string { return "<credential-snapshot:redacted>" }
-func (CredentialSnapshot) GoString() string {
-	return "connectionbinding.CredentialSnapshot{<redacted>}"
-}
-
-func (snapshot CredentialSnapshot) LogValue() slog.Value {
-	attributes := []slog.Attr{
-		slog.String("provider_version", snapshot.providerVersion),
-		slog.Time("retrieved_at", snapshot.retrievedAt),
-	}
-	if !snapshot.expiresAt.IsZero() {
-		attributes = append(attributes, slog.Time("expires_at", snapshot.expiresAt))
-	}
-	return slog.GroupValue(attributes...)
 }

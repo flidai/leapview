@@ -14,6 +14,7 @@ export class AgentProviderSettings extends LitElement {
   private initialized = false
   private draftRevision = 0
   private sentToken = ''
+  private sentMessage = ''
   private sentRevision = -1
 
   static styles = [settingsFieldStyles, css`
@@ -45,7 +46,7 @@ export class AgentProviderSettings extends LitElement {
       this.draftRevision = a.configurationRevision ?? 0
       this.initialized = true
     }
-    if (this.busy && (a.testToken && a.testToken !== this.sentToken || (a.configurationRevision ?? 0) !== this.sentRevision)) {
+    if (this.busy && (a.testToken && a.testToken !== this.sentToken || a.testMessage && a.testMessage !== this.sentMessage || (a.configurationRevision ?? 0) !== this.sentRevision)) {
       this.busy = false
       this.token = a.testToken || ''
       this.message = a.testMessage || ''
@@ -57,8 +58,8 @@ export class AgentProviderSettings extends LitElement {
     const failure = browserCommandFailure(event, 'Agent configuration')
     if (failure) {
       this.busy = false
-      this.message = failure.kind === 'validation'
-        ? 'We couldn’t verify these settings. Check the provider endpoint, model ID, API key, API mode, and reasoning setting, then test again. Your active configuration hasn’t changed.'
+      this.message = ['validation', 'unavailable', 'network', 'unknown'].includes(failure.kind)
+        ? 'We couldn’t complete this provider change. Reload settings to check the saved configuration, then retry validation or cancel the pending change.'
         : failure.message
       this.token = ''
     }
@@ -70,10 +71,10 @@ export class AgentProviderSettings extends LitElement {
   private normalizeReasoning() {
     if (this.draft.apiMode === 'chat-completions') this.draft = { ...this.draft, reasoningEffort: this.deepSeekV4 ? 'none' : '' }
   }
-  private send(action: 'test' | 'save') {
+  private send(action: 'test' | 'save' | 'abort') {
     if (!this.agent?.canWrite || this.busy) return
-    this.busy = true; this.message = action === 'test' ? 'Testing connection…' : 'Saving configuration…'
-    this.sentToken = this.agent.testToken || ''; this.sentRevision = this.draftRevision
+    this.busy = true; this.message = action === 'test' ? 'Testing connection…' : action === 'abort' ? 'Canceling pending change…' : 'Saving configuration…'
+    this.sentMessage = this.agent.testMessage || ''; this.sentToken = this.agent.testToken || ''; this.sentRevision = this.draftRevision
     this.dispatchEvent(new CustomEvent('lv-agent-config-command', { bubbles: true, composed: true, detail: { action, provider: { ...this.draft }, expectedRevision: this.sentRevision, restoreRevision: this.restoreRevision, testToken: this.token } }))
   }
   render() {
@@ -103,7 +104,7 @@ export class AgentProviderSettings extends LitElement {
         </select></label>
         <label>${a.credentialConfigured ? 'Replace API key (leave blank to keep)' : 'API key'}<input type="password" autocomplete="new-password" .value=${this.draft.apiKey || ''} @input=${(e: Event) => this.change('apiKey', (e.target as HTMLInputElement).value)}></label>
         ${a.credentialConfigured ? html`<label class="checkbox"><span>Remove saved API key</span><input type="checkbox" .checked=${this.draft.removeKey || false} @change=${(e: Event) => this.change('removeKey', (e.target as HTMLInputElement).checked)}></label>` : ''}
-        <div class="actions"><button type="button" @click=${() => this.send('test')}>${this.draft.enabled ? 'Test connection' : 'Validate settings'}</button><button class="primary" type="button" ?disabled=${!this.token} @click=${() => this.send('save')}>${this.restoreRevision ? 'Restore tested revision' : 'Save and activate'}</button>
+        <div class="actions"><button type="button" @click=${() => this.send('test')}>${this.draft.enabled ? 'Test connection' : 'Validate settings'}</button><button class="primary" type="button" ?disabled=${!this.token} @click=${() => this.send('save')}>${this.restoreRevision ? 'Restore tested revision' : 'Save and activate'}</button><button type="button" @click=${() => this.send('abort')}>Cancel pending change</button>
           ${(a.configurationRevision ?? 0) > 1 ? html`<button type="button" @click=${() => { this.restoreRevision = this.draftRevision - 1; this.token = ''; this.send('test') }}>Test previous configuration</button>` : ''}
         </div>
       </fieldset>

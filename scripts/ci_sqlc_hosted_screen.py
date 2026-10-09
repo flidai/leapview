@@ -178,8 +178,8 @@ def validate(output):
         receipt["tool_identity"][path.name] = path.read_text()
     if receipt["mode"] == "treatment":
         tool = receipt["tool_identity"]
-        if (json.loads(tool["environment.json"]) != {"CGO_ENABLED": "1", "GOARCH": "amd64", "GOFLAGS": "", "GOOS": "linux", "GOVERSION": "go1.26.7"}
-                or tool["version.txt"].strip() != "v1.31.1" or "go1.26.7" not in tool["build.txt"]
+        if (json.loads(tool["environment.json"]) != {"CGO_ENABLED": "1", "GOARCH": "amd64", "GOFLAGS": "", "GOOS": "linux", "GOVERSION": "go1.26.9"}
+                or tool["version.txt"].strip() != "v1.31.1" or "go1.26.9" not in tool["build.txt"]
                 or not re.fullmatch(r"[0-9a-f]{64}  /out/sqlc\n", tool["binary.sha256"])):
             raise ValueError("SQLC executable identity differs from the pinned contract")
     receipt["status"] = "passed"

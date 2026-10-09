@@ -10,6 +10,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import '../shared/drawer'
 import '../shared/loading-spinner'
+import './connection-credentials'
 
 class LeapViewConnectionAdministration extends LitElement {
   @property({ attribute: false }) lifecycles: ConnectionLifecycleSignal[] = []
@@ -84,6 +85,7 @@ class LeapViewConnectionAdministration extends LitElement {
     return html`
       ${this.terminalFailure && !this.drawerOpen ? this.renderTerminalFailure() : nothing}
       ${this.renderTrigger(lifecycle)}
+      ${this.surface === 'detail' && lifecycle ? html`<lv-connection-credentials .lifecycle=${lifecycle} .credentials=${this.administration.credentials}></lv-connection-credentials>` : nothing}
       ${this.drawerOpen && lifecycle ? this.renderDrawer(lifecycle) : nothing}
     `
   }

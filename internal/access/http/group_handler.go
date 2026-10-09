@@ -1,7 +1,6 @@
 package http
 
 import (
-	"database/sql"
 	stdhttp "net/http"
 
 	"github.com/flidai/leapview/internal/access"
@@ -108,17 +107,12 @@ func (h Handler) UpdateGroup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	original := row
 	var currentGroup access.Group
 	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
-		rows, err := tx.ListGroups(r.Context())
+		current, err := access.GroupForMutation(r.Context(), tx, original.ID)
 		if err != nil {
 			return "", err
 		}
-		for _, current := range rows {
-			if current.ID == original.ID {
-				currentGroup = current
-				return access.GroupRevision(current)
-			}
-		}
-		return "", sql.ErrNoRows
+		currentGroup = current
+		return access.GroupRevision(current)
 	}, func(tx access.Repository) (access.AuditEventInput, error) {
 		if !groupIsLocallyManaged(currentGroup) {
 			return access.AuditEventInput{}, groupManagedExternallyError(currentGroup)

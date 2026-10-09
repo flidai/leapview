@@ -69,7 +69,9 @@ func TestProjectMaterializerResolvesConnectionsAgainstActiveReleaseState(t *test
 		Environment:                      servingstate.Environment("prod"),
 	})
 
-	active, ok := resolver.(*activeRuntimeConnectionResolver)
+	named, ok := resolver.(*compiledConnectionNameResolver)
+	require.True(t, ok)
+	active, ok := named.resolver.(*activeRuntimeConnectionResolver)
 	require.True(t, ok)
 	require.Same(t, module, active.module)
 	require.Equal(t, "state_active", active.servingStateID)
@@ -98,7 +100,9 @@ func TestProjectMaterializerResolvesConnectionsAgainstCandidateRuntime(t *testin
 		// Active evidence must not be consulted for candidate requests.
 		ConnectionEvidenceServingStateID: "state_active",
 	})
-	require.Equal(t, candidate, resolver)
+	named, ok := resolver.(*compiledConnectionNameResolver)
+	require.True(t, ok)
+	require.Equal(t, candidate, named.resolver)
 }
 
 func TestProjectMaterializerFailsClosedForMissingCandidateRuntime(t *testing.T) {

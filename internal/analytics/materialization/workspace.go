@@ -14,8 +14,10 @@ import (
 type Request struct {
 	Models      map[string]*semanticmodel.Model
 	ModelTables map[string]semanticmodel.Table
-	Identity    projectgraph.ServingIdentity
-	CandidateID string
+	// ConnectionIDs maps authored connection names to exact compiled resource IDs.
+	ConnectionIDs map[string]string
+	Identity      projectgraph.ServingIdentity
+	CandidateID   string
 	// RelationNamespace is the value-only, authority-derived DuckDB schema
 	// used by candidate materialization. Native candidate callers must supply
 	// it; legacy callers may leave it empty and retain the model schema.

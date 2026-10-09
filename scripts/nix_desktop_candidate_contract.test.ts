@@ -45,3 +45,27 @@ test('desktop trust regressions run in the fast contract and trigger Nix validat
     expect(development.on.pull_request.paths).toContain(path)
   }
 })
+
+test('desktop lifecycle isolates execution and uploads only public exact-version evidence', () => {
+  const workflow = parse(readFileSync('.github/workflows/nix-desktop-lifecycle.yml', 'utf8'))
+  expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch'])
+  expect(workflow.permissions).toEqual({ contents: 'read', actions: 'read', attestations: 'read' })
+  expect(workflow.concurrency['cancel-in-progress']).toBe(false)
+  const job = workflow.jobs.qualify
+  expect(job.if).toContain("github.repository == 'flidai/leapview'")
+  expect(job.if).toContain("github.ref == 'refs/heads/main'")
+  expect(job['runs-on']).toBe('ubuntu-22.04')
+  expect(job.environment).toBe('leapview-ephemeral-qualification')
+  expect(job.steps[0].with.ref).toBe('${{ github.sha }}')
+  const commands = job.steps.map((step: any) => step.run ?? '').join('\n')
+  expect(commands).toContain('protected/scripts/nix_desktop_lifecycle_inputs.py')
+  expect(commands).toContain('protected/scripts/nix_desktop_lifecycle.py qualify')
+  expect(commands).not.toMatch(/nix build|gh workflow run|--no-sandbox|ignore-certificate-errors/)
+  expect(job.steps.at(-1).with.path).toBe('${{ runner.temp }}/desktop-lifecycle-public/desktop-lifecycle.json')
+  const runtime = readFileSync('scripts/nix_desktop_lifecycle.py', 'utf8')
+  expect(runtime).toContain("'--net', '--fork', '--kill-child=SIGKILL'")
+  expect(runtime).toContain("'env', '-i'")
+  expect(runtime).toContain("'--no-download'")
+  const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
+  expect(tasks['ci:test:frontend:core'].cmds).toContain("python3 -m unittest discover -s scripts/tests -p 'test_nix_desktop_lifecycle*.py'")
+})

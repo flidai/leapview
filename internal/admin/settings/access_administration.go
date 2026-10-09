@@ -588,7 +588,13 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			event.Action, event.ResourceKind, event.ResourceID = "group.created", "group", group.ID
 			result.Message = "Group created."
 		case "update_group", "delete_group", "add_group_member", "remove_group_member":
-			group, err := accessAdministrationGroup(ctx, tx, command.GroupID)
+			var group access.Group
+			var err error
+			if command.Action == "update_group" {
+				group, err = access.GroupForMutation(ctx, tx, command.GroupID)
+			} else {
+				group, err = accessAdministrationGroup(ctx, tx, command.GroupID)
+			}
 			if err != nil {
 				return event, err
 			}

@@ -137,11 +137,41 @@ func runGitleaks(parent context.Context, cfg Config, root, baseRef string) error
 		writeBytes(cfg.Stderr, diagnostics)
 		return commandFailure("gitleaks history baseline", err)
 	}
+	if err := rejectRuntimeStateHistory(parent, cfg, root, baseRef); err != nil {
+		return err
+	}
 	historyArgs := []string{"run", "github.com/zricethezav/gitleaks/v8@" + gitleaksVersion, "git", "--no-banner", "--no-color", "--redact=100", "--timeout=300", "--log-opts=" + baseRef + "..HEAD", "."}
 	if err := runCommand(parent, cfg, root, cfg.Stdout, cfg.Stderr, "go", historyArgs...); err != nil {
 		return commandFailure("gitleaks candidate-history scan", err)
 	}
 	return nil
+}
+
+func rejectRuntimeStateHistory(parent context.Context, cfg Config, root, baseRef string) error {
+	// Binary runtime state can contain credentials that pattern scanners cannot
+	// identify. Removing an accidentally committed file in a later commit does
+	// not remove the exposure, so inspect every candidate revision as well.
+	out, diagnostics, err := runCapture(parent, cfg, root, "git", "log", "--format=", "--name-only", "--full-history", "-m", "--no-renames", "--diff-filter=AMT", "-z", baseRef+"..HEAD", "--", ".libredash", ".leapview", ".data")
+	if err != nil {
+		writeBytes(cfg.Stderr, diagnostics)
+		return commandFailure("runtime state history check", err)
+	}
+	for _, encoded := range bytes.Split(out, []byte{0}) {
+		if path := strings.Trim(string(encoded), "\n"); path != "" {
+			return fmt.Errorf("candidate history contains runtime state %q; remove it from the candidate commits", path)
+		}
+	}
+	return nil
+}
+
+func isRuntimeStatePath(path string) bool {
+	root, _, _ := strings.Cut(path, "/")
+	switch root {
+	case ".libredash", ".leapview", ".data":
+		return true
+	default:
+		return false
+	}
 }
 
 func materializeGitView(parent context.Context, cfg Config, root, scanRoot string) error {
@@ -153,6 +183,9 @@ func materializeGitView(parent context.Context, cfg Config, root, scanRoot strin
 	for _, encoded := range bytes.Split(out, []byte{0}) {
 		if len(encoded) == 0 {
 			continue
+		}
+		if isRuntimeStatePath(string(encoded)) {
+			return fmt.Errorf("Git view contains runtime state %q; keep local databases and data out of Git", string(encoded))
 		}
 		rel := filepath.FromSlash(string(encoded))
 		if filepath.IsAbs(rel) || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {

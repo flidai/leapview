@@ -582,6 +582,8 @@ tasks:
     cmds:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - node --test desktop/scripts/lifecycle-probe-policy.test.mjs desktop/scripts/lifecycle-probe-cdp.test.mjs
+      - node --test deploy/compose/qualification/performance-resources.test.mjs
       - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
@@ -605,6 +607,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_attestation.py
+      - python3 -m unittest discover -s scripts/tests -p 'test_nix_desktop_lifecycle*.py'
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
@@ -1164,13 +1167,13 @@ tasks:
     # Match setup-ci's HTTP/1.1 workaround for checksum-service HTTP/2 stream
     # failures; transport only, with sqlc checksums and TLS integrity unchanged.
     cmds:
-      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
 
   db:verify:
     desc: Compile generated PostgreSQL sqlc packages and audit handwritten SQL boundaries
     cmds:
-      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 vet --no-remote
-      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff --no-remote
+      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 vet --no-remote
+      - GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff --no-remote
       - |
         packages="$(
           find internal -type f -name '*.go' -print |
@@ -1238,7 +1241,7 @@ tasks:
             done
         }
         git diff --binary -- '*.go' >"$before"
-        GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+        GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
         generated_snapshot >"$generated_after"
         git diff --binary -- '*.go' >"$after"
         if ! cmp -s "$before" "$after"; then
@@ -1249,7 +1252,7 @@ tasks:
         # A second local generation catches nondeterministic or newly emitted
         # untracked sqlc files without rejecting the intentionally build-only
         # output created by a clean checkout.
-        GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
+        GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.9 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote
         generated_snapshot >"$generated_repeat"
         cmp -s "$generated_after" "$generated_repeat" || {
           printf '%s\n' 'sqlc generation is nondeterministic across generated Go outputs' >&2

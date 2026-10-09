@@ -110,6 +110,10 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	}
 	cfg.DeliveryPhysicalPoolID = pool.ID.String()
 	cfg.DeliveryPhysicalPoolCompatibilityDigest = compatibilityDigest
+	// Customer keys are installed offline before the first project claim.
+	// Empty source and agent state must reopen provider admission on both
+	// initial startup and restart, while readiness still awaits publication.
+	setupPostgresOnboardingCustomerCredentials(t, &cfg)
 	originalConfig := cfg
 
 	target, err := BuildProduction(t.Context(), cfg)
@@ -179,6 +183,9 @@ func assertPostgresOnboardingTarget(t *testing.T, target *Application, claimToke
 	target.Handler().ServeHTTP(response, requestHTTP)
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"runtime":"no_active_deployments"`) {
 		t.Fatalf("onboarded production readiness = %d, want %d with no_active_deployments; body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"customerCredentials":"ok"`) {
+		t.Fatalf("onboarded customer credential readiness: %s", response.Body.String())
 	}
 
 	instanceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil)

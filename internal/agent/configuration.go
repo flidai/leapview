@@ -2,20 +2,13 @@ package agent
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/flidai/leapview/internal/platform/typednil"
 )
 
 var (
@@ -30,8 +23,10 @@ type ConfigurationRevision struct {
 	Enabled    bool
 	Config     Config
 	Credential []byte
-	ActorID    string
-	CreatedAt  time.Time
+	// CredentialVersionID pins an immutable version in the customer credential store.
+	CredentialVersionID string
+	ActorID             string
+	CreatedAt           time.Time
 }
 type ConfigurationStore interface {
 	CurrentConfiguration(context.Context) (ConfigurationRevision, error)
@@ -50,50 +45,63 @@ type ConfigurationInput struct {
 	APIKey          string `json:"apiKey,omitempty"`
 	RemoveKey       bool   `json:"removeKey,omitempty"`
 }
-type ConfigurationManager struct {
-	mu      sync.Mutex
-	store   ConfigurationStore
-	service *Service
-	aead    cipher.AEAD
-	key     []byte
-	probe   func(context.Context, Config) error
+
+// ConfigurationCredentials is the shared customer credential lifecycle port.
+// Test persists a draft and isolated validation receipt; Activate uses the
+// durable activation coordinator and returns only after the exact runtime is
+// ready. BindRuntime is called once during process construction.
+type ConfigurationCredentials interface {
+	Test(context.Context, string, int64, ConfigurationInput) (string, error)
+	Activate(context.Context, string, int64, ConfigurationInput, string) (ConfigurationRevision, error)
+	UseConfiguration(context.Context, ConfigurationRevision, func(Config) error) error
+	BindRuntime(func(context.Context, int64) error, func(context.Context) error) error
 }
 
-func NewConfigurationManager(store ConfigurationStore, service *Service, key string, probe func(context.Context, Config) error) (*ConfigurationManager, error) {
-	decoded, err := hex.DecodeString(key)
-	if err != nil || len(decoded) != 32 {
-		return nil, fmt.Errorf("LEAPVIEW_AGENT_CREDENTIAL_KEY must be a 64-character hexadecimal encryption key")
+type ConfigurationManager struct {
+	mu          sync.Mutex
+	store       ConfigurationStore
+	service     *Service
+	credentials ConfigurationCredentials
+}
+
+func NewConfigurationManager(store ConfigurationStore, service *Service, credentials ConfigurationCredentials) (*ConfigurationManager, error) {
+	if typednil.IsNil(store) || service == nil || typednil.IsNil(credentials) {
+		return nil, fmt.Errorf("agent configuration requires storage, runtime, and customer credential setup")
 	}
-	block, err := aes.NewCipher(decoded)
-	if err != nil {
+	m := &ConfigurationManager{store: store, service: service, credentials: credentials}
+	if err := credentials.BindRuntime(m.installRevision, m.Refresh); err != nil {
 		return nil, err
 	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if store == nil || service == nil || probe == nil {
-		return nil, fmt.Errorf("agent configuration requires storage, runtime, and connection tester")
-	}
-	return &ConfigurationManager{store: store, service: service, aead: aead, key: decoded, probe: probe}, nil
+	return m, nil
 }
-func (m *ConfigurationManager) decrypt(r ConfigurationRevision) (Config, error) {
-	c := r.Config
-	c.Revision = r.Revision
-	if len(r.Credential) == 0 {
-		return c, nil
+
+func (m *ConfigurationManager) readConfiguration(ctx context.Context, r ConfigurationRevision) (Config, error) {
+	if len(r.Credential) != 0 {
+		return Config{}, fmt.Errorf("legacy agent credential format is unsupported; retain the old deployment for recovery and configure customer credential storage before explicitly re-entering the provider key")
 	}
-	if len(r.Credential) < m.aead.NonceSize() {
-		return Config{}, fmt.Errorf("agent credential cannot be decrypted")
+	if r.CredentialVersionID == "" {
+		return Config{}, fmt.Errorf("agent configuration has no customer credential version; complete credential setup and explicitly re-enter the provider settings")
 	}
-	nonce := r.Credential[:m.aead.NonceSize()]
-	clear, err := m.aead.Open(nil, nonce, r.Credential[m.aead.NonceSize():], []byte("leapview.agent.credential.v1"))
-	if err != nil {
-		return Config{}, fmt.Errorf("agent credential cannot be decrypted; check the deployment encryption key")
-	}
-	c.APIKey = string(clear)
-	return c, nil
+	var result Config
+	err := m.credentials.UseConfiguration(ctx, r, func(c Config) error { result = c; result.Revision = r.Revision; return nil })
+	return result, err
 }
+
+func (m *ConfigurationManager) installRevision(ctx context.Context, revision int64) error {
+	r, err := m.store.CurrentConfiguration(ctx)
+	if err != nil {
+		return err
+	}
+	if r.Revision != revision {
+		return ErrConfigurationConflict
+	}
+	c, err := m.readConfiguration(ctx, r)
+	if err != nil {
+		return err
+	}
+	return m.service.ApplyRuntimeConfig(c, r.Enabled)
+}
+
 func (m *ConfigurationManager) resolve(ctx context.Context, expected int64, in ConfigurationInput) (Config, error) {
 	current, err := m.store.CurrentConfiguration(ctx)
 	if err != nil && !errors.Is(err, ErrConfigurationNotFound) {
@@ -110,13 +118,13 @@ func (m *ConfigurationManager) resolve(ctx context.Context, expected int64, in C
 		c.APIKey = strings.TrimSpace(in.APIKey)
 	} else if !in.RemoveKey {
 		if current.Revision > 0 {
-			saved, e := m.decrypt(current)
+			saved, e := m.readConfiguration(ctx, current)
 			if e != nil {
 				return Config{}, e
 			}
 			c.APIKey = saved.APIKey
-		} else if live := m.service.runtimeSnapshot(); live != nil {
-			c.APIKey = live.config.APIKey
+		} else if in.Enabled {
+			return Config{}, fmt.Errorf("enter a credential for the first customer-managed agent configuration")
 		}
 	}
 	// A credential must never be implicitly forwarded to a different endpoint.
@@ -151,19 +159,6 @@ func (m *ConfigurationManager) resolve(ctx context.Context, expected int64, in C
 	}
 	return c, nil
 }
-func (m *ConfigurationManager) signature(actor string, expected int64, in ConfigurationInput, c Config, expires int64, nonce string) string {
-	raw, _ := json.Marshal(struct {
-		Actor    string
-		Expected int64
-		Input    ConfigurationInput
-		Config   Config
-		Nonce    string
-		Expires  int64
-	}{actor, expected, in, c, nonce, expires})
-	mac := hmac.New(sha256.New, m.key)
-	mac.Write(raw)
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
 func (m *ConfigurationManager) Test(ctx context.Context, actor string, expected int64, in ConfigurationInput) (string, error) {
 	if actor == "" {
 		return "", fmt.Errorf("administrator identity is required")
@@ -172,56 +167,39 @@ func (m *ConfigurationManager) Test(ctx context.Context, actor string, expected 
 	if err != nil {
 		return "", err
 	}
-	if in.Enabled {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err = m.probe(ctx, c); err != nil {
-			return "", fmt.Errorf("connection test failed; check provider, model, credentials, and supported API mode")
-		}
-	}
-	expires := time.Now().Add(5 * time.Minute).Unix()
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return "", err
-	}
-	nonceText := base64.RawURLEncoding.EncodeToString(nonce)
-	return strconv.FormatInt(expires, 10) + "." + nonceText + "." + m.signature(actor, expected, in, c, expires, nonceText), nil
+	return m.credentials.Test(ctx, actor, expected, configurationInput(c, in.Enabled))
 }
 func (m *ConfigurationManager) Save(ctx context.Context, actor string, expected int64, in ConfigurationInput, token string) (ConfigurationRevision, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if actor == "" {
+		return ConfigurationRevision{}, fmt.Errorf("administrator identity is required")
+	}
 	c, err := m.resolve(ctx, expected, in)
-	if err != nil {
-		return ConfigurationRevision{}, err
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return ConfigurationRevision{}, fmt.Errorf("test this configuration before activating")
-	}
-	expires, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || time.Now().Unix() > expires || !hmac.Equal([]byte(parts[2]), []byte(m.signature(actor, expected, in, c, expires, parts[1]))) {
-		return ConfigurationRevision{}, fmt.Errorf("connection test expired or settings changed; test again")
-	}
-	prepared, err := m.service.prepareRuntimeConfig(c, in.Enabled)
-	if err != nil {
-		return ConfigurationRevision{}, err
-	}
-	r := ConfigurationRevision{Enabled: in.Enabled, Config: c, ActorID: actor}
-	if c.APIKey != "" {
-		nonce := make([]byte, m.aead.NonceSize())
-		if _, err = rand.Read(nonce); err != nil {
-			return r, err
+	if errors.Is(err, ErrConfigurationConflict) {
+		current, readErr := m.store.CurrentConfiguration(ctx)
+		if readErr != nil || expected < 0 || current.Revision != expected+1 {
+			return ConfigurationRevision{}, ErrConfigurationConflict
 		}
-		r.Credential = m.aead.Seal(nonce, nonce, []byte(c.APIKey), []byte("leapview.agent.credential.v1"))
+		// The prior attempt may have committed before its acknowledgment was
+		// lost. The lifecycle backend must match the same immutable operation
+		// before recovering its exact committed runtime.
+		in.Model = strings.TrimSpace(in.Model)
+		in.BaseURL = strings.TrimSpace(in.BaseURL)
+		in.APIMode = strings.TrimSpace(in.APIMode)
+		in.ReasoningEffort = strings.ToLower(strings.TrimSpace(in.ReasoningEffort))
+		in.APIKey = strings.TrimSpace(in.APIKey)
+		return m.credentials.Activate(ctx, actor, expected, in, token)
 	}
-	r.Config.APIKey = ""
-	r, err = m.store.SaveConfiguration(ctx, expected, r)
 	if err != nil {
 		return ConfigurationRevision{}, err
 	}
-	prepared.config.Revision = r.Revision
-	m.service.installRuntimeConfig(prepared)
-	return r, nil
+	// Fail before durable mutation if this process cannot construct the model.
+	if _, err := m.service.prepareRuntimeConfig(c, in.Enabled); err != nil {
+		return ConfigurationRevision{}, err
+	}
+	return m.credentials.Activate(ctx, actor, expected, configurationInput(c, in.Enabled), token)
+}
+func configurationInput(c Config, enabled bool) ConfigurationInput {
+	return ConfigurationInput{Enabled: enabled, Model: c.Model, BaseURL: c.BaseURL, APIMode: c.APIMode, ReasoningEffort: c.ReasoningEffort, APIKey: c.APIKey, RemoveKey: c.APIKey == ""}
 }
 func (m *ConfigurationManager) Refresh(ctx context.Context) error {
 	m.mu.Lock()
@@ -236,7 +214,7 @@ func (m *ConfigurationManager) Refresh(ctx context.Context) error {
 	if live := m.service.runtimeSnapshot(); live != nil && live.config.Revision == r.Revision {
 		return nil
 	}
-	c, err := m.decrypt(r)
+	c, err := m.readConfiguration(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -247,7 +225,7 @@ func (m *ConfigurationManager) runtimeForRevision(ctx context.Context, revision 
 	if err != nil {
 		return nil, err
 	}
-	c, err := m.decrypt(r)
+	c, err := m.readConfiguration(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +254,7 @@ func (m *ConfigurationManager) RestoreInput(ctx context.Context, revision int64)
 	if err != nil {
 		return ConfigurationInput{}, err
 	}
-	c, err := m.decrypt(r)
+	c, err := m.readConfiguration(ctx, r)
 	if err != nil {
 		return ConfigurationInput{}, err
 	}
@@ -295,4 +273,16 @@ func (s *Service) ReportDeploymentConfigError() {
 	if !s.AdminManaged() {
 		s.ReportRuntimeConfigError()
 	}
+}
+
+// Abort cancels the current precommit provider change through the same durable
+// lifecycle; cancellation after commit is refused by its authority.
+func (m *ConfigurationManager) Abort(ctx context.Context, actor string) error {
+	lifecycle, ok := m.credentials.(interface {
+		AbortConfiguration(context.Context, string) error
+	})
+	if !ok {
+		return fmt.Errorf("agent credential activation recovery is unavailable")
+	}
+	return lifecycle.AbortConfiguration(ctx, actor)
 }

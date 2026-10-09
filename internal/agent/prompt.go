@@ -56,17 +56,18 @@ type StartedPrompt struct {
 	// cannot overwrite a newer turn from another replica.
 	transcriptRevision int64
 
-	service       *Service
-	runtime       *agentRuntime
-	systemPrompt  string
-	initial       []agentcore.Message
-	runContext    context.Context
-	cancel        context.CancelFunc
-	mu            sync.Mutex
-	closed        bool
-	durablyQueued bool
-	claimID       string
-	claimFence    jobs.Fence
+	service         *Service
+	runtime         *agentRuntime
+	systemPrompt    string
+	initial         []agentcore.Message
+	runContext      context.Context
+	cancel          context.CancelFunc
+	mu              sync.Mutex
+	closed          bool
+	durablyQueued   bool
+	claimID         string
+	claimFence      jobs.Fence
+	providerRelease func()
 }
 
 func promptDigest(input PromptInput) string {
@@ -111,6 +112,16 @@ func (s *Service) StartDurablePrompt(ctx context.Context, input PromptInput, dis
 }
 
 func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *PromptDispatch) (*StartedPrompt, error) {
+	ctx, providerRelease, err := s.acquireProvider(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	keepProvider := false
+	defer func() {
+		if !keepProvider {
+			providerRelease()
+		}
+	}()
 	if s.configuration != nil {
 		if err := s.configuration.Refresh(ctx); err != nil {
 			return nil, err
@@ -379,6 +390,13 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		durablyQueued = true
 	}
 	runContext, cancel := context.WithCancel(context.Background())
+	var retainedProviderRelease func()
+	if !durablyQueued && s.providerAdmission != nil {
+		cancel()
+		runContext, cancel = context.WithCancel(ctx)
+		keepProvider = true
+		retainedProviderRelease = providerRelease
+	}
 	s.attachRun(input.ConversationID, run.ID, cancel, runtime)
 	release = false
 	return &StartedPrompt{
@@ -397,6 +415,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		runContext:         runContext,
 		cancel:             cancel,
 		durablyQueued:      durablyQueued,
+		providerRelease:    retainedProviderRelease,
 	}, nil
 }
 
@@ -405,6 +424,16 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 // transcript before it returns, so no request body or in-memory closure is
 // required to continue execution.
 func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID, runID, correlationID string) (*StartedPrompt, error) {
+	ctx, providerRelease, err := s.acquireProvider(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	keepProvider := false
+	defer func() {
+		if !keepProvider {
+			providerRelease()
+		}
+	}()
 	if s.repo == nil {
 		return nil, fmt.Errorf("agent store is required")
 	}
@@ -425,6 +454,11 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	run, err := s.repo.GetRun(ctx, scope.PrincipalID, conversationID, runID)
 	if err != nil {
 		return nil, err
+	}
+	if s.providerAdmission != nil && s.configuration != nil {
+		// A queued model may contain a credential retired while it waited.
+		// Resolve its exact saved configuration again under the new lease.
+		runtime = nil
 	}
 	if runtime == nil {
 		var saved struct {
@@ -485,7 +519,8 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	runContext, cancel := context.WithCancel(ctx)
 	s.attachRun(conversationID, runID, cancel, runtime)
 	release = false
-	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, transcriptRevision: conversation.TranscriptRevision, service: s, runtime: runtime, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
+	keepProvider = true
+	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, transcriptRevision: conversation.TranscriptRevision, service: s, runtime: runtime, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true, providerRelease: providerRelease}, nil
 }
 
 func (s *Service) acquireForResume(conversationID, runID string) (*agentRuntime, error) {
@@ -518,6 +553,25 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		return PromptResult{}, err
 	}
 	defer p.release()
+	if p.durablyQueued && p.service.providerAdmission != nil && p.providerRelease == nil {
+		admitted, release, err := p.service.acquireProvider(ctx, true)
+		if err != nil {
+			return PromptResult{}, err
+		}
+		p.providerRelease = release
+		if p.service.configuration != nil {
+			p.runtime, err = p.service.configuration.runtimeForRevision(admitted, p.runtime.config.Revision)
+			if err != nil {
+				return PromptResult{}, err
+			}
+		}
+		previous := p.runContext
+		p.runContext, p.cancel = context.WithCancel(admitted)
+		if previous != nil {
+			stop := context.AfterFunc(previous, p.cancel)
+			defer stop()
+		}
+	}
 	executionContext := p.runContext
 	if executionContext == nil {
 		executionContext = ctx
@@ -756,6 +810,9 @@ func (p *StartedPrompt) claim() error {
 func (p *StartedPrompt) release() {
 	if p.service != nil {
 		p.service.release(p.ConversationID)
+	}
+	if p.providerRelease != nil {
+		p.providerRelease()
 	}
 }
 

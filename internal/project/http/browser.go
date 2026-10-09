@@ -225,6 +225,8 @@ type BrowserHandler struct {
 	TargetID                       string
 	ConnectionAdministration       connectionadmin.Administration
 	ConnectionCommands             projectui.ConnectionCommandBindings
+	ConnectionCredentials          ConnectionCredentialCommand
+	ConnectionCredentialError      func(error) string
 	PipelineRunCommand             uicommand.Binding
 	PipelineCancelCommand          uicommand.Binding
 	RunPipeline                    func(context.Context, string, string, string, string) error
@@ -364,6 +366,8 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/connections/{asset}/{section}", wrap(h.ConnectionAsset))
 	r.Post("/connections/administration/configuration", wrapMutation(h.ConnectionAdministrationConfigurationCommand))
 	r.Post("/connections/administration/lifecycle", wrapMutation(h.ConnectionAdministrationLifecycleCommand))
+	r.Get("/connections/administration/credentials", wrap(h.ConnectionCredentialQuery))
+	r.Post("/connections/administration/credentials", wrapMutation(h.ConnectionCredentialMutation))
 	r.Get("/catalog/search", wrap(h.CatalogSearch))
 	r.Get("/sources/search", wrap(h.SourcesSearch))
 	r.Get("/connections/search", wrap(h.ConnectionsSearch))

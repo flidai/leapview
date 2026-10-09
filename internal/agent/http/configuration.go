@@ -40,13 +40,17 @@ func (h *Handler) updateProviderConfig(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	manager := h.options.Service.ConfigurationManager()
-	if input.RestoreRevision > 0 {
+	if input.Action != "abort" && input.RestoreRevision > 0 {
 		previous, err := manager.RestoreInput(r.Context(), input.RestoreRevision)
 		if err != nil {
 			h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", fmt.Errorf("previous configuration is unavailable")))
 			return
 		}
 		input.Provider = &previous
+	}
+	if (input.Action == "test" || input.Action == "save") && input.Provider == nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", fmt.Errorf("provider configuration is required")))
+		return
 	}
 
 	principal, _ := h.options.CurrentPrincipal(r)
@@ -61,11 +65,14 @@ func (h *Handler) updateProviderConfig(w http.ResponseWriter, r *http.Request, i
 		if input.RestoreRevision > 0 {
 			message = fmt.Sprintf("Revision %d verified: model %s at %s (enabled: %t). Restore tested revision to apply it.", input.RestoreRevision, input.Provider.Model, input.Provider.BaseURL, input.Provider.Enabled)
 		}
+	case "abort":
+		err = manager.Abort(r.Context(), principal.ID)
+		message = "Pending provider change canceled. The saved configuration is ready."
 	case "save":
 		_, err = manager.Save(r.Context(), principal.ID, input.ExpectedRevision, *input.Provider, input.TestToken)
 		message = "Configuration saved and activated."
 	default:
-		err = fmt.Errorf("action must be test or save")
+		err = fmt.Errorf("action must be test, save, or abort")
 	}
 	if err != nil {
 		if errors.Is(err, agent.ErrConfigurationConflict) {
@@ -86,6 +93,9 @@ func (h *Handler) updateProviderConfig(w http.ResponseWriter, r *http.Request, i
 	}
 	if input.Action == "save" {
 		h.recordCommandAudit(r, updateAgentConfigOperation, h.chatScope(r), "agent_config", fmt.Sprintf("revision:%d", details.ConfigurationRevision))
+	}
+	if input.Action == "abort" {
+		h.recordCommandAudit(r, updateAgentConfigOperation, h.chatScope(r), "agent_config_abort", fmt.Sprintf("revision:%d", details.ConfigurationRevision))
 	}
 	revision := agentResourceETag(details)
 	w.Header().Set("ETag", revision)

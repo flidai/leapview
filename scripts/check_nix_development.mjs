@@ -25,7 +25,7 @@ const run = (command, args, options = {}) => execFileSync(command, args, {
 assert.equal(run('go', ['env', 'GOVERSION']), `go${goVersion}`)
 assert.equal(run('bun', ['--version']), manifest.packageManager.replace(/^bun@/, ''))
 assert.match(run('node', ['--version']), /^v24\./)
-assert.match(run('go', ['version'], { env: { ...process.env, GOTOOLCHAIN: 'go1.26.7' } }), /go1\.26\.7 /)
+assert.match(run('go', ['version'], { env: { ...process.env, GOTOOLCHAIN: 'go1.26.9' } }), /go1\.26\.9 /)
 const { chromium } = await import('@playwright/test')
 assert.ok(chromium.executablePath().startsWith('/nix/store/'), 'Chromium must come from the Nix store')
 const browser = await chromium.launch({ headless: true })

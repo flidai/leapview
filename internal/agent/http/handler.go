@@ -667,7 +667,7 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		input.SystemPrompt = signals.AdminAgentCommand.SystemPrompt
 	}
 	auditInput := ""
-	if input.Provider != nil || input.RestoreRevision > 0 {
+	if input.Provider != nil || input.RestoreRevision > 0 || input.Action != "" {
 		auditInput = "provider-configuration"
 	} else if input.SystemPrompt != nil {
 		auditInput = *input.SystemPrompt
@@ -719,7 +719,7 @@ func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, input api.AdminAgentConfigPatchRequest) {
-	if input.Provider != nil || input.RestoreRevision > 0 {
+	if input.Provider != nil || input.RestoreRevision > 0 || input.Action != "" {
 		h.updateProviderConfig(w, r, input)
 		return
 	}

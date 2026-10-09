@@ -60,14 +60,15 @@ type ToolProvider func(scope Scope) []agentcore.ToolDefinition
 type SystemPromptProvider func(ctx context.Context) (string, error)
 
 type Service struct {
-	configuration *ConfigurationManager
-	repo          Repository
-	pending       *pendingConversationLifecycle
-	runtime       atomic.Pointer[agentRuntime]
-	health        atomic.Pointer[agentRuntimeHealth]
-	reloadMu      sync.Mutex
-	modelFactory  func(Config) agentcore.Model
-	initialModel  agentcore.Model
+	configuration     *ConfigurationManager
+	providerAdmission ProviderAdmission
+	repo              Repository
+	pending           *pendingConversationLifecycle
+	runtime           atomic.Pointer[agentRuntime]
+	health            atomic.Pointer[agentRuntimeHealth]
+	reloadMu          sync.Mutex
+	modelFactory      func(Config) agentcore.Model
+	initialModel      agentcore.Model
 
 	toolProviders        []ToolProvider
 	systemPromptProvider SystemPromptProvider

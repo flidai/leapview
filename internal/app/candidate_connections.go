@@ -130,7 +130,7 @@ func candidateConnectionEvidence(source []analyticsmodule.ConnectionBindingEvide
 		result = append(result, deploymentmodule.CandidateConnectionEvidence{
 			BindingID: evidence.BindingID.String(), ConnectionID: evidence.ConnectionID,
 			ConnectorKind: evidence.ConnectorKind, Revision: evidence.BindingRevision, Access: evidence.Access,
-			ProviderVersion: evidence.ValidatedVersion, EndpointConfigHash: evidence.EndpointConfigHash,
+			ProviderVersion: evidence.ValidatedVersion, CredentialVersionID: evidence.CredentialVersionID, EndpointConfigHash: evidence.EndpointConfigHash,
 		})
 	}
 	return result
