@@ -72,7 +72,7 @@ class SQLCHostedScreenTests(unittest.TestCase):
         self.assertEqual(script.replace("/opt/sqlc generate --no-remote", hosted.INVOCATION), self.script)
         tool_stage = recipe[recipe.index("FROM go-deps AS sqlc-tool\n"):recipe.index("FROM go-deps AS sourcegen\n")]
         self.assertIn("source=/go/pkg/mod,sharing=locked", tool_stage)
-        self.assertIn("GOTOOLCHAIN=go1.26.7 GOBIN=/out go install", tool_stage)
+        self.assertIn("GOTOOLCHAIN=go1.26.9 GOBIN=/out go install", tool_stage)
         restored = recipe.replace(tool_stage, "", 1).replace("COPY --from=sqlc-tool /out/sqlc /opt/sqlc\n", "", 1)
         self.assertTrue(restored.startswith(self.docker))
         self.assertEqual(script.count("/opt/sqlc"), 1)

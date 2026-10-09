@@ -87,8 +87,8 @@ in
     mkdir "$TMPDIR/sqlc"
     (cd "$TMPDIR/sqlc"
       go mod init leapview-build-sqlc
-      go mod edit -go=1.26.7 -require=github.com/sqlc-dev/sqlc@v1.31.1
-      GOTOOLCHAIN=go1.26.7 go mod download all)
+      go mod edit -go=1.26.9 -require=github.com/sqlc-dev/sqlc@v1.31.1
+      GOTOOLCHAIN=go1.26.9 go mod download all)
     mkdir -p "$out"
     cp -R "$GOPATH/pkg/mod/cache/download" "$out/download"
     # Only module data belongs in the immutable proxy, not sumdb/cache state.

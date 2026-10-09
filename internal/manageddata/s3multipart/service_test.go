@@ -565,6 +565,14 @@ func (f *fakeMultipartStore) CompleteMultipart(_ context.Context, upload storage
 	return storage.Blob{SHA256: upload.SHA256, Size: upload.Size, URI: "s3://bucket/" + upload.Key}, nil
 }
 
+func (f *fakeMultipartStore) RecoverMultipart(ctx context.Context, upload storage.MultipartUpload, reserved []storage.MultipartPartRequest) (storage.Blob, error) {
+	parts := make([]storage.CompletedMultipartPart, len(reserved))
+	for i, part := range reserved {
+		parts[i] = storage.CompletedMultipartPart{Number: part.Number, ETag: "fake-provider-etag", SHA256: part.SHA256}
+	}
+	return f.CompleteMultipart(ctx, upload, parts)
+}
+
 func (f *fakeMultipartStore) AbortMultipart(context.Context, storage.MultipartUpload) error {
 	f.abortCalls++
 	return nil

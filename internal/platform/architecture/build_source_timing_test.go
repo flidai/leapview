@@ -48,7 +48,7 @@ func TestBuildSourceTimingPreservesExecution(t *testing.T) {
 			for i := range count {
 				debug, toolchain := "caller-debug", "caller-toolchain"
 				if i == 0 {
-					debug, toolchain = "http2client=0", "go1.26.7"
+					debug, toolchain = "http2client=0", "go1.26.9"
 				}
 				fmt.Fprintf(&wantCalls, "%s|%s|", debug, toolchain)
 				for _, arg := range strings.Fields(commands[i]) {
