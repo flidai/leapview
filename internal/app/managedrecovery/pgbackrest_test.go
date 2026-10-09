@@ -75,7 +75,7 @@ func TestPGBackRestRequiresExactCommandAndVerifiedReadbackBeforeExposure(t *test
 	calls := 0
 	restorer.execute = func(_ context.Context, program string, args []string, lock *os.File) error {
 		calls++
-		if program != restorer.config.Bubblewrap || lock == nil || !strings.Contains(strings.Join(args, " "), "--set=20261009-080000F") || !strings.Contains(strings.Join(args, " "), "--target=0/1700000 --target-action=pause") {
+		if program != restorer.config.Bubblewrap || lock == nil || !strings.Contains(strings.Join(args, " "), "--set=20261009-080000F") || !strings.Contains(strings.Join(args, " "), "--target=0/1700000 --target-timeline=1 --target-action=pause") {
 			t.Fatalf("wrong exact restore command: %v", args)
 		}
 		if _, err := os.Lstat(restorer.config.Destination); !errors.Is(err, os.ErrNotExist) {

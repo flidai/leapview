@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/analytics/ducklake/metadata"
 	"github.com/flidai/leapview/internal/app/managedrecovery"
 	"github.com/flidai/leapview/internal/app/providerrestore"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
@@ -33,7 +34,11 @@ func TestManagedRecoveryLocksActualHomeWithExternalKeyringBeforeAuthorityEffects
 	if err := os.WriteFile(credentialsPath, value, 0600); err != nil {
 		t.Fatal(err)
 	}
-	input := managedrecovery.ManagedInput{SchemaVersion: 1, Profile: providerrestore.ManagedLocalProfile, InstanceHome: home, RecoverySetID: "set", OccurrenceID: "occurrence", CredentialsFile: credentialsPath, ValidationAttemptID: "validation", Validator: "operator", Publisher: "publisher", Authority: managedrecovery.AuthorityInput{URLFile: filepath.Join(secretRoot, "must-not-be-read")}}
+	closure, err := metadata.NewNativeSnapshotClosureEvidence("catalog", 1, filepath.Join(home, "data"), "_candidate", []metadata.BaseTable{{Schema: "_candidate", Table: "orders"}}, []metadata.NativeSnapshotObject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := managedrecovery.ManagedInput{SchemaVersion: 1, Profile: providerrestore.ManagedLocalProfile, InstanceHome: home, RecoverySetID: "set", OccurrenceID: "occurrence", CredentialsFile: credentialsPath, Closure: closure, ValidationAttemptID: "validation", Validator: "operator", Publisher: "publisher", Authority: managedrecovery.AuthorityInput{URLFile: filepath.Join(secretRoot, "must-not-be-read")}}
 	value, err = json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
