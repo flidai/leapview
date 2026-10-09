@@ -158,7 +158,10 @@ type Dependencies struct {
 	Now       func() time.Time
 }
 
-type Coordinator struct{ dependencies Dependencies }
+type Coordinator struct {
+	dependencies Dependencies
+	primaryFence PrimaryFence
+}
 
 func New(dependencies Dependencies) (*Coordinator, error) {
 	if dependencies.Ledger == nil || dependencies.Sets == nil || dependencies.Databases == nil || dependencies.Objects == nil || dependencies.Verifier == nil || dependencies.Evidence == nil || dependencies.Handoff == nil {
@@ -210,6 +213,9 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 	}
 	if set.Delivery.TargetID != request.TargetID || (set.Status != recoveryset.StatusPrepared && set.Status != recoveryset.StatusPublished) {
 		return Report{}, fmt.Errorf("%w: recovery set target or status mismatch", ErrInconsistent)
+	}
+	if err := coordinator.verifyPrimaryFence(ctx, request, set); err != nil {
+		return Report{}, err
 	}
 	report, found, err := coordinator.loadCheckpoint(ctx, occurrence)
 	if err != nil {
@@ -533,6 +539,27 @@ func (coordinator *Coordinator) activeOccurrence(ctx context.Context, request Re
 	}
 	if err := coordinator.requireActiveOccurrence(occurrence); err != nil {
 		return recovery.Occurrence{}, err
+	}
+	if coordinator.primaryFence != nil {
+		set, err := coordinator.dependencies.Sets.ReadExact(ctx, request.RecoverySetID)
+		if err != nil {
+			return recovery.Occurrence{}, err
+		}
+		if err := coordinator.verifyPrimaryFence(ctx, request, set); err != nil {
+			return recovery.Occurrence{}, err
+		}
+		// Provider observation can take time. Do not let it extend the ledger
+		// owner's lease or substitute for its independent write fence.
+		occurrence, err = coordinator.dependencies.Ledger.Occurrence(ctx, request.OccurrenceID)
+		if err != nil {
+			return recovery.Occurrence{}, err
+		}
+		if err := validateOccurrenceIdentity(occurrence, request); err != nil {
+			return recovery.Occurrence{}, err
+		}
+		if err := coordinator.requireActiveOccurrence(occurrence); err != nil {
+			return recovery.Occurrence{}, err
+		}
 	}
 	return occurrence, nil
 }

@@ -15,6 +15,7 @@ let
     databaseUpdate = nodes.database.specialisation.update.configuration;
     appFailedActivation = nodes.app.specialisation.failed-activation.configuration;
     databaseUnconfirmed = nodes.database.specialisation.unconfirmed.configuration;
+    databaseNetworkLoss = nodes.database.specialisation.network-loss.configuration;
   };
   activate = config: deployRs.lib.${system}.activate.nixos { inherit config; };
   mkDeploymentNode = hostname: activation: {
@@ -97,11 +98,34 @@ pkgs.testers.runNixOSTest {
         serviceConfig.TimeoutStartSec = 300;
       };
       systemd.services.containerd.serviceConfig.TimeoutStartSec = 300;
-      environment.systemPackages = [ pkgs.postgresql_18 ];
+      environment.systemPackages = [
+        pkgs.postgresql_18
+        pkgs.pgbackrest
+        pkgs.restic
+        pkgs.openssl
+      ];
+      users.groups.postgres = { };
+      users.users.postgres = {
+        isSystemUser = true;
+        group = "postgres";
+        home = "/var/lib/postgresql";
+        createHome = true;
+      };
       virtualisation.additionalPaths = [ portProbe ];
     };
     database = { lib, ... }: {
       imports = [ modules.database ];
+      # The disposable POSIX repository substitutes for production S3. Keep
+      # PostgreSQL's strict filesystem sandbox and expose only that test repo
+      # to archive-push; ordinary interactive backup commands do not exercise
+      # the service mount namespace.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/recovery-test 0700 postgres postgres -"
+        "d /var/lib/recovery-test/postgres 0700 postgres postgres -"
+      ];
+      systemd.services.postgresql.serviceConfig.ReadWritePaths = [
+        "/var/lib/recovery-test/postgres"
+      ];
       leapview = {
         operatorKeys = [ sshKeys.snakeOilPublicKey ];
         operatorCIDRs = [ "192.168.1.0/24" ];
@@ -128,6 +152,13 @@ pkgs.testers.runNixOSTest {
             '';
           };
         };
+        "network-loss".configuration = {
+          imports = [ (markerModule "network-loss") ];
+          # Change the actual interface address. A firewall-only mutation can
+          # preserve the deployer's already-established SSH connection.
+          leapview.privateAddress = lib.mkForce "192.168.1.22";
+          systemd.network.networks."20-private".address = lib.mkForce [ "192.168.1.22/24" ];
+        };
       };
       virtualisation.writableStore = true;
       # Boot the installed disk through BIOS GRUB so a reboot selects the
@@ -143,7 +174,10 @@ pkgs.testers.runNixOSTest {
         address = [ "192.168.1.2/24" ];
         linkConfig.RequiredForOnline = lib.mkForce "degraded";
       };
-      environment.systemPackages = [ pkgs.openssl ];
+      environment.systemPackages = [
+        pkgs.openssl
+        pkgs.restic
+      ];
     };
     outsider = {
       virtualisation.memorySize = 256;
@@ -186,6 +220,7 @@ pkgs.testers.runNixOSTest {
               targets.databaseUpdate
               targets.appFailedActivation
               targets.databaseUnconfirmed
+              targets.databaseNetworkLoss
             ];
         nix.settings = {
           experimental-features = [
@@ -207,6 +242,7 @@ pkgs.testers.runNixOSTest {
       databaseActivation = activate targets.databaseUpdate;
       failedAppActivation = activate targets.appFailedActivation;
       unconfirmedDatabaseActivation = activate targets.databaseUnconfirmed;
+      networkLossDatabaseActivation = activate targets.databaseNetworkLoss;
       deploymentData = {
         deploy.nodes = {
           # These RFC 1918 addresses exist only on this disposable NixOS test VLAN.
@@ -215,6 +251,9 @@ pkgs.testers.runNixOSTest {
           database = mkDeploymentNode "192.168.1.2" databaseActivation;
           "app-failed-activation" = mkDeploymentNode "192.168.1.1" failedAppActivation;
           database-unconfirmed = mkDeploymentNode "192.168.1.2" unconfirmedDatabaseActivation;
+          database-network-loss = (mkDeploymentNode "192.168.1.2" networkLossDatabaseActivation) // {
+            confirmTimeout = 30;
+          };
         };
       };
       deploymentFile = pkgs.writeTextDir "default.nix" (
@@ -252,6 +291,8 @@ pkgs.testers.runNixOSTest {
           "  UserKnownHostsFile /root/.ssh/known_hosts\n"
           "  StrictHostKeyChecking yes\n"
           "  ConnectTimeout 5\n"
+          "  ServerAliveInterval 1\n"
+          "  ServerAliveCountMax 3\n"
           "SSH\n"
       )
       operator.succeed("chmod 600 /root/.ssh/config")
@@ -413,5 +454,32 @@ pkgs.testers.runNixOSTest {
           assert app.succeed("PGPASSWORD=disposable-test-only psql -XAt \"" + connection + "\" -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
       with subtest("GRUB boots the recovered generations after both rollback paths"):
           reboot_updated_hosts()
+
+      with subtest("actual operator network loss triggers bounded remote rollback"):
+          previous = database.succeed("readlink -f /run/current-system").strip()
+          previous_profile = database.succeed("readlink -f /nix/var/nix/profiles/system").strip()
+          operator.succeed("(if deploy --file ${deploymentFile} --targets database-network-loss > /root/network-loss.log 2>&1; then deploy_result=0; else deploy_result=$?; fi; echo $deploy_result > /root/network-loss.status) </dev/null >/dev/null 2>&1 &")
+          database.wait_until_succeeds("ip -4 -o addr show dev eth1 | grep -Fq '192.168.1.22/24'", timeout=120)
+          database.fail("ip -4 -o addr show dev eth1 | grep -Fq '192.168.1.2/24'")
+          operator.fail("ssh -o ConnectTimeout=2 root@192.168.1.2 true", timeout=10)
+          database.wait_until_succeeds("grep -qx updated /etc/leapview-managed-generation", timeout=120)
+          database.wait_until_succeeds("ip -4 -o addr show dev eth1 | grep -Fq '192.168.1.2/24'", timeout=60)
+          operator.wait_until_succeeds("ssh root@192.168.1.2 true", timeout=60)
+          try:
+              operator.wait_until_succeeds("test -f /root/network-loss.status", timeout=60)
+          except Exception:
+              print(operator.succeed("tail -n 80 /root/network-loss.log"))
+              raise
+          assert operator.succeed("cat /root/network-loss.status").strip() != "0"
+          assert database.succeed("readlink -f /run/current-system").strip() == previous
+          assert database.succeed("readlink -f /nix/var/nix/profiles/system").strip() == previous_profile
+          database.wait_for_unit("postgresql.service", timeout=120)
+          assert database.succeed("sudo -u postgres psql -d leapview_control -XAt -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
+          assert app.succeed("PGPASSWORD=disposable-test-only psql -XAt \"" + connection + "\" -c 'SELECT value FROM managed_update_state'").strip() == "database-state"
+          reboot_updated_hosts()
+
+      recovery_postgres_bin = "${pkgs.postgresql_18}/bin"
+      recovery_setsid = "${pkgs.util-linux}/bin/setsid"
+      ${builtins.readFile ./recovery-journey.py}
     '';
 }
