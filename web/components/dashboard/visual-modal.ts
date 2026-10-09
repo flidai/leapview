@@ -97,6 +97,15 @@ export class VisualModal extends LitElement {
       background: var(--lv-chart-surface);
     }
 
+    .focus-dialog.table-focus {
+      top: 50%;
+      bottom: auto;
+      transform: translateY(-50%);
+      height: auto;
+      min-height: 0;
+      max-height: min(920px, calc(100dvh - 56px));
+    }
+
     header {
       display: flex;
       min-width: 0;
@@ -289,7 +298,7 @@ export class VisualModal extends LitElement {
 
   private renderFocusDialog(detail: VisualActionDetail) {
     return html`
-      <dialog class="dialog focus-dialog" role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
+      <dialog class=${`dialog focus-dialog${detail.visualType === 'table' ? ' table-focus' : ''}`} role="dialog" aria-modal="true" aria-label=${detail.title} @cancel=${this.cancel} @click=${this.closeFromBackdrop}>
           <div class="focus-slot"><slot name="focus-visual"></slot></div>
         ${this.renderNotice()}
       </dialog>

@@ -569,19 +569,19 @@ test('a previous action timer cannot clear a newer repeated notice', async () =>
   }
 })
 
-test('table focus uses the same large viewport as chart focus', async () => {
+test('table focus fits its content while chart focus stays large', async () => {
   const page = await setupPage()
   try {
-    await page.addStyleTag({ content: ':root { --base-size-28: 28px; }' })
+    await page.addStyleTag({ content: ':root { --base-size-28: 28px; } #second { display: block; height: 300px; }' })
     await dispatchVisualAction(page, 'second', 'focus')
     const modal = page.locator('lv-visual-modal')
     const dialog = modal.getByRole('dialog')
     const tableBounds = await dialog.boundingBox()
-    expect(tableBounds!.height).toBeGreaterThan(600)
-    expect(tableBounds!.y + tableBounds!.height).toBeLessThanOrEqual(720 - 28)
+    expect(tableBounds!.height).toBeLessThan(400)
+    expect(tableBounds!.height).toBeGreaterThanOrEqual(300)
     await page.keyboard.press('Escape')
     await dispatchVisualAction(page, 'first', 'focus')
-    expect((await dialog.boundingBox())!.height).toBe(tableBounds!.height)
+    expect((await dialog.boundingBox())!.height).toBeGreaterThan(600)
   } finally {
     await page.close()
   }
@@ -622,7 +622,7 @@ async function setupRenderedPage() {
   return page
 }
 
-test('focused tables fill the dialog and preserve a rendered tile, live state, and updates', async () => {
+test('long focused tables stay bounded and preserve a rendered tile, live state, and updates', async () => {
   const page = await setupRenderedPage()
   try {
     await page.locator('#second').evaluate((host: any) => {
@@ -651,6 +651,12 @@ test('focused tables fill the dialog and preserve a rendered tile, live state, a
       await host.ensureMounted()
     })
     await browserExpect.poll(() => preview.locator('lv-report-table .cell-value').first().innerText()).toContain('updated-order')
+    await page.setViewportSize({ width: 844, height: 390 })
+    await browserExpect.poll(async () => (await shell.boundingBox())?.height ?? 0).toBeLessThan(340)
+    const smallDialog = (await modal.getByRole('dialog').boundingBox())!
+    const smallFooter = (await footer.boundingBox())!
+    expect(smallFooter.y + smallFooter.height).toBeLessThanOrEqual(smallDialog.y + smallDialog.height)
+    expect(await table.locator('.table-scrollport').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
     await page.keyboard.press('Escape')
     expect(await preview.count()).toBe(0)
     expect(await page.locator('#second').evaluate((host: any) => (
@@ -663,7 +669,7 @@ test('focused tables fill the dialog and preserve a rendered tile, live state, a
   }
 }, 20_000)
 
-test('short tables stay expanded and remain usable when the viewport shrinks', async () => {
+test('short tables fit their rows without empty space and remain usable when the viewport shrinks', async () => {
   const page = await setupRenderedPage()
   try {
     await page.locator('#second').evaluate(async (host: any) => {
@@ -677,8 +683,25 @@ test('short tables stay expanded and remain usable when the viewport shrinks', a
     await dispatchVisualAction(page, 'second', 'focus')
     const modal = page.locator('lv-visual-modal')
     const tableShell = modal.locator('lv-report-table .shell')
-    await browserExpect.poll(async () => (await tableShell.boundingBox())?.height ?? 0).toBeGreaterThan(800)
+    await browserExpect.poll(async () => (await tableShell.boundingBox())?.height ?? 0).toBeLessThan(400)
+    expect((await tableShell.boundingBox())!.height).toBeGreaterThan(200)
+    const lastRow = (await modal.locator('lv-report-table .row:not(.skeleton-row)').last().boundingBox())!
+    const compactFooter = (await modal.locator('lv-report-table .footer').boundingBox())!
+    expect(compactFooter.y - lastRow.y - lastRow.height).toBeLessThanOrEqual(2)
     expect(await modal.locator('lv-report-table .row:not(.skeleton-row)').count()).toBe(5)
+    const fiveRowHeight = (await tableShell.boundingBox())!.height
+    await page.locator('#second').evaluate(async (host: any) => {
+      const envelope = structuredClone(host.envelope)
+      envelope.dataRevision++
+      envelope.dataState.dataRevision++
+      envelope.dataState.cardinality.count = 3
+      envelope.dataState.availableRows = 3
+      envelope.dataState.blocks.a.rows = envelope.dataState.blocks.a.rows.slice(0, 3)
+      host.envelope = envelope
+      await host.ensureMounted()
+    })
+    await browserExpect.poll(async () => (await tableShell.boundingBox())?.height ?? 0).toBeLessThan(fiveRowHeight - 50)
+    expect(await modal.locator('lv-report-table .row:not(.skeleton-row)').count()).toBe(3)
     await page.setViewportSize({ width: 844, height: 390 })
     await browserExpect.poll(async () => (await tableShell.boundingBox())?.height ?? 0).toBeLessThan(340)
     const bounds = (await modal.getByRole('dialog').boundingBox())!
