@@ -166,18 +166,12 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	actor := h.currentActor(r)
-	slug := strings.TrimSpace(r.FormValue("slug"))
-	if slug == "" && r.FormValue("embed") == "chat" {
-		// Separate chat drafts can share a display title. Use the stable create
-		// request identity so their project-wide slugs do not collide.
-		slug = "chat-" + idempotencyKey
-	}
 	var result authoringservice.Result
 	target := authoringAuditTarget{}
 	err = executeAuthoringUIMutation(r, "createDashboardAuthoringDraft", project.String(), idempotencyKey, actor, "", "", authoring.OriginUI, access.CapabilityResourceEdit, &target, func(ctx context.Context) error {
 		var mutationErr error
 		result, mutationErr = creator.Create(ctx, authoringservice.CreateRequest{
-			ProjectID: project, ActorID: actor, Title: strings.TrimSpace(r.FormValue("title")), Slug: slug,
+			ProjectID: project, ActorID: actor, Title: strings.TrimSpace(r.FormValue("title")), Slug: chatDashboardDraftSlug(r.FormValue("embed"), r.FormValue("slug"), idempotencyKey),
 			SemanticModel: semanticModel, Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: idempotencyKey,
 		})
 		if mutationErr == nil {
