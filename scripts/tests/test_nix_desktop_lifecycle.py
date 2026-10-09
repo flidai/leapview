@@ -57,6 +57,16 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(runtime.events[-1], ('install', 'candidate'))
         self.assertEqual(len(runtime.events), 3)
 
+    def test_changed_retained_archive_is_rejected_before_package_mutation(self):
+        runtime = lifecycle.Runtime({'packages': {'predecessor': {
+            'archive': '/private/predecessor.deb', 'sha256': 'sha256:' + 'a' * 64}}})
+        with patch.object(lifecycle.desktop, 'digest_file', return_value='sha256:' + 'b' * 64), \
+             patch.object(lifecycle.desktop, 'run_command') as mutate:
+            with self.assertRaisesRegex(ValueError, 'archive bytes changed'):
+                runtime.install('predecessor')
+            mutate.assert_not_called()
+        self.assertEqual(runtime.results, [])
+
     def test_offline_executor_rejects_host_interfaces_before_any_mutation(self):
         with patch.object(lifecycle.os, 'getuid', return_value=1000), \
              patch.dict(lifecycle.os.environ, {'NIX_DESKTOP_LIFECYCLE_OFFLINE': '1'}), \
