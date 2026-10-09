@@ -73,6 +73,7 @@ test('route receipt associations establish registration/access parity without cl
     { id: 'route', kind: 'route-registration', source: 'internal/app/route_inventory_test.go', currentDisposition: 'not_run' },
     { id: 'site', kind: 'route-registration', source: 'internal/app/site/http/routes.go', currentDisposition: 'not_run' },
     { id: 'api', kind: 'api-operation', source: 'docs/api/openapi.yaml', currentDisposition: 'not_run' },
+    { id: 'protocol', kind: 'route-registration', source: 'internal/app/conditional_route_inventory_test.go', currentDisposition: 'not_run' },
   ]
   const input = { path: '/receipt.json', sha256: 'a'.repeat(64), receipt: { execution: { exitCode: 0 } },
     index: { tests: [{ package: 'github.com/flidai/leapview/internal/app', test: 'TestRouteInventory', fresh: true, cached: false, outcome: 'passed', packageOutcome: 'passed' }] } }
@@ -82,6 +83,14 @@ test('route receipt associations establish registration/access parity without cl
   assert.match(result[0].executionEvidence[0].scope, /handler journeys/)
   assert.equal(result[1].executionEvidence.length, 0)
   assert.equal(result[2].executionEvidence.length, 0)
+  assert.equal(result[3].executionEvidence.length, 0)
+  input.index.tests.push({ ...input.index.tests[0], test: 'TestConditionalRouteInventory' })
+  const conditional = attachGoEvidence(features, [input])[3]
+  assert.equal(conditional.currentDisposition, 'not_run')
+  assert.equal(conditional.executionEvidence[0].classification, 'conditional_registration_contract')
+  assert.match(conditional.executionEvidence[0].scope, /protocol operations.*unverified/)
+  input.index.tests[1].fresh = false
+  assert.equal(attachGoEvidence(features, [input])[3].executionEvidence.length, 0)
   input.index.tests[0].fresh = false
   assert.equal(attachGoEvidence(features, [input])[0].executionEvidence.length, 0)
 })

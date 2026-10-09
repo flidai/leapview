@@ -1,54 +1,74 @@
 # Cross-role journey qualification
 
-This manifest is the executable qualification contract for Linear FAI-492.
-It maps the consumer, creator, and operator states that must be observed in a
-real assembled application. A row is qualified only when its named check
-produces the expected status, signal, redirect, or persisted evidence.
+This manifest maps consumer, creator, and operator states to maintained checks.
+A state is qualified only when its named check produces the expected status,
+signal, redirect, or persisted evidence in a source-bound execution receipt.
+Route registration and component event assertions provide supporting evidence;
+they do not establish a complete authenticated browser journey.
 
 ## Scope and evidence rules
 
-- **Real application boundary.** Checks use `assembleRuntime(...).Routes()` or
-  the deployed qualification image. Feature-handler unit tests are supporting
-  evidence, never a substitute for assembled-router coverage.
-- **Deterministic failure injection.** Use a missing/invalid bearer token, a
-  viewer role, a missing CSRF token, a missing `X-Request-ID`, an unknown
-  candidate, or a fixed unavailable dependency. Do not use sleeps, random
-  retries, network flakiness, or a product-masking retry loop.
-- **Evidence capture.** Record route, method, role, request identity, expected
-  outcome, observed status/signal/redirect, and (for mutations) the durable
-  audit or idempotency result. Redact bearer tokens, cookies, credentials, and
-  provider diagnostics. Attach the focused `go test` output or qualification
-  artifact digest to the run record.
-- **Bounded and parallel-safe.** Each check owns a temporary database and
-  immutable fixture IDs. Tests may run in parallel only when they do not share
-  a database, target binding, idempotency key, or candidate. Keep streams and
-  background workers bounded and close them in test cleanup.
-- **No hidden approval.** Candidate approval and serving activation are
-  intentional headless/operator-only steps. Browser creator journeys stop at a
-  private draft or candidate review handoff; they must not auto-approve,
-  publish, or activate a generation.
+- **Real application boundary.** Assembled checks use `assembleRuntime(...).Routes()`
+  or `NewPostgresJourneyFixture`. Domain handlers, recording ports, deterministic
+  serving readers, and renderer fixtures have narrower boundaries, described below.
+- **Deterministic failure injection.** Use an invalid credential, revoked session,
+  denied resource, missing request identity, unknown candidate, or fixed unavailable
+  dependency. Do not use sleeps, random retries, or a product-masking retry loop.
+- **Evidence capture.** Record the source, environment, command, exit, skips, role,
+  request identity, and expected and observed status, signal, redirect, or durable
+  outcome. Redact tokens, cookies, credentials, and provider diagnostics. A listed
+  check without a qualifying execution receipt remains unqualified.
+- **Bounded and parallel-safe.** Each check owns its database or immutable fixture
+  identity. Close streams, listeners, and background workers in cleanup.
+- **No hidden approval.** Candidate approval and serving activation remain explicit
+  operator actions. Browser creator journeys must not auto-approve or activate.
 
-## State manifest
+## Maintained checks and boundaries
 
-| Actor / state | Required success and failure observations | Real-app check | Supporting ownership | Evidence / injection |
-| --- | --- | --- | --- | --- |
-| Consumer, signed out | Protected dashboard, develop, candidate, and command routes reject the request; public documents remain reachable only where configured. | `internal/app/journey_qualification_integration_test.go` (`TestJourneyQualificationAssembledRouter`) and the route inventory contract. | App router + access module | Invalid bearer (`401`) and no-credential state-changing request (`403` CSRF); capture status and `Location` without credentials. |
-| Consumer, project viewer | Read surfaces render only authorized graph resources; creator, review, connection mutation, and pipeline execution are denied before mutation. | Assembled router test viewer cases; dashboard/project browser route tests. | Access snapshot + project guards + domain authorizers | Fixed viewer principal in a private test DB; assert `403` or forbidden signal and zero mutation/audit rows. |
-| Consumer, authorized reader | Dashboard document/page, catalog, connection detail, pipeline detail, and candidate owner preview use the active serving generation and bounded signals. | Existing dashboard stream, project browser, and candidate preview integration tests; route inventory digest. | Dashboard/project HTTP + runtime host | Fixed active generation and snapshot; capture response status, signal root, generation ID, and query audit. |
-| Creator, dashboard create | `/dashboards/new` is authenticated/project-edit guarded, renders a CSRF field and fresh idempotency key, and creates a private draft through the composed authoring application. The generated form key is the stable retry identity consumed by the authoring service. | `TestJourneyQualificationAssembledRouter` create page, CSRF rejection, missing request identity, and successful create assertions; authoring service idempotency tests cover replay semantics. | Dashboard module + authoring application + app router | Missing CSRF and missing form key are deterministic failures; capture the generated key contract and resulting draft redirect. |
-| Creator, dashboard fork | `/dashboards/{dashboard}/fork` requires target project edit plus source dashboard view/edit, renders a bounded form, and preserves source immutability. | Assembled fork-page check plus dashboard authoring fork tests; a published-source fixture is required for the mutation lane. | Dashboard module + source adapter + authoring service | Fixed published source; capture new draft ID, source revision, provenance, and unchanged source revision. |
-| Creator, connection administration | Configuration/lifecycle commands require the generated operation claim, CSRF for cookie sessions, a stable `X-Request-ID`, and connection-scoped authorization; a valid command reaches the assembled browser's Administration port. | `TestJourneyQualificationAssembledRouter` connection command gate/role cases uses a recording port; connection administration integration tests cover the real service. | Project browser + analytics connection administration | Missing request ID and viewer role are deterministic; capture signal status and recording-port call. Real-service lanes additionally capture audit action, target/binding revision, and idempotency identity. |
-| Creator, pipeline command | Run/retry/cancel requires generated claim, CSRF, stable `X-Request-ID`, pipeline `RESOURCE_USE`, and a callback boundary carrying the active request identity. | Assembled pipeline command lane (recording callback) and refresh visibility integration tests for the real active-generation callback. | Project browser + refresh module + runtime host | Missing CSRF/request ID and viewer denial are deterministic; capture callback invocation, queued/cancelled signal, and request identity. Real-service lanes capture run ID, serving identity, and audit row. |
-| Operator, candidate review | Review route requires authentication and project edit. The lightweight assembled app reports a bounded dependency diagnostic when deployment composition is intentionally absent; the production deployment review handler and unknown-candidate `404` are covered by deployment candidate tests. | `TestJourneyQualificationAssembledRouter` candidate guard/availability cases; deployment candidate tests for the production handler. | App candidate routes + deployment module | Fixed unknown candidate (no retry); capture `403` viewer and `503` lightweight dependency result, or `404` in the production qualification image, plus request identity. |
-| Operator, approval / activation | Candidate approval, publish, and serving-generation activation are explicit headless/operator actions. Browser review cannot mutate approval or activation state. | Deployment lifecycle, sealed publication, and CLI qualification tests; route inventory must list the headless commands. | Deployment/release/runtime-host owners | Inject unavailable gate, stale candidate, or stale target revision; capture durable rejection and unchanged active generation. |
-| Recovery / failure | Runtime, connection provider, refresh worker, or storage failure produces a bounded public error and audit without leaking secrets or retrying indefinitely. | Existing lifecycle, connection binding, refresh, and runtime-host failure suites. | Owning domain service + app transport | Deterministic fake error/closed lease; capture stable public code, audit outcome, and bounded worker completion. |
+| Named check | Source | Observations and limits |
+| --- | --- | --- |
+| `TestCredentialedBrowserAndPipelineJourney` | `internal/app/credentialed_journey_integration_test.go` | One auth-enabled assembled HTTP fixture covers invalid and successful local login, session expiry, return to Sources, renewed login, logout and protected admin recovery. The connection command reaches a recording Administration port with a credential reference. Pipeline callbacks return queued, target-active, and fixed failure outcomes. These recording seams do not prove provider mutation or durable pipeline execution. |
+| `TestOIDCBrowserJourneyCreatesIsolatedDurableSessions` | `internal/app/oidc_journey_test.go` | Real TLS issuer metadata, JWKS and token endpoints feed the actual OIDC client, with local issuer trust injected. Cookie-jar requests traverse the application's authorization redirect and callback into native PostgreSQL sessions and authenticated admin/profile access. Negative state, nonce and audience, replay, principal isolation, and durable revocation are asserted. Provider consent UI, an actual browser renderer, and third-party issuer integration are outside this fixture. |
+| `TestPostgresRefreshRouteJourney` | `internal/app/postgres_refresh_journey_test.go` | Generated routes use native PostgreSQL refresh, job, event and idempotency authorities. Checks cover admission, identical replay, list/detail/events, foreign-project and missing-run responses, and the admin storage shell. Serving readers and artifact loading are deterministic seams; this is not a real browser renderer or the complete production authorization composition. |
+| `TestPostgresPublicDashboardJourney` | `internal/app/postgres_public_dashboard_journey_test.go` | Native assembled public-dashboard publication and delivery journey. Keep its visibility and persistence evidence distinct from private authoring and creator permissions. |
+| `TestRouteInventory` | `internal/app/route_inventory_test.go` | Enumerates default mounted routes exactly once and checks owner/access/privilege metadata against the contract digest. It does not send every request or establish each role's complete journey. |
+| `TestConditionalRouteInventory` | `internal/app/conditional_route_inventory_test.go` | Enumerates the additional MCP, SCIM, TUS and OAuth registrations for enabled, disabled and persistence-unavailable configurations. Opaque protocol mounts are registration evidence, not an inventory of every operation behind the mount. |
+| `TestProjectAuthoringGuardRejectsDashboardReadToken` | `internal/app/project_authorization_typed_test.go` | A dashboard-read token cannot satisfy the project authoring guard. This is an authorization boundary check, not an assembled create/fork mutation journey. |
+| `TestDashboardReadAuthorizationReturnsForbiddenForDeniedResource` | `internal/dashboard/http/dashboard_read_authorization_test.go` | Dashboard resource denial is explicit at the feature HTTP boundary. |
+| `TestPipelineMutationProjectionRequiresResourceUse` | `internal/project/http/browser_test.go` | Pipeline mutation presentation requires resource-use authority. Presentation gating does not substitute for command authorization or durable execution. |
+| `TestPipelineRunRouteFailsClosedForUnauthorizedWrongPipelineAndChildRuns` | `internal/project/http/pipeline_run_detail_test.go` | Run routes fail closed for denied resources, wrong pipeline scope, and child-run scope. |
+| `TestProtectCandidateProjectResourcesRequiresAuthenticationOnFreshTarget` | `internal/app/candidate_preview_authorization_test.go` | Fresh-target candidate protection requires authentication. This exercises the protection boundary rather than a rendered review journey. |
+| `TestProtectCandidateProjectResourcesDeniesFreshTargetNonAdmin` | `internal/app/candidate_preview_authorization_test.go` | Fresh-target candidate protection denies a non-admin principal. |
+| `TestServeCandidateReviewRejectsIncompleteScope` | `internal/app/candidate_routes_test.go` | Incomplete review scope is rejected; production candidate service and activation checks belong to deployment qualification. |
+
+## State coverage to reconcile
+
+The checks above establish their stated boundaries. A complete consumer, creator,
+and operator qualification must additionally bind the actual dashboard/develop
+read surfaces, create/fork idempotency and source immutability, connection-service
+mutation and audit, pipeline cancellation/retry and durable execution, and candidate
+review/approval/activation to their owning domain receipts. Do not substitute a
+recording callback or route metadata row for those outcomes.
+
+The mounted route and keyboard harnesses complement these server checks with
+actual browser signals, modal interactions, Explorer keyboard navigation, and
+accessibility scans. Their source-bound receipts must retain failed readiness or
+rendering budgets and explicit skipped/unavailable states. A package test pass
+alone does not qualify those browser outcomes.
 
 ## Qualification command set
 
-Run the focused assembled lane first:
+Run the maintained assembled HTTP and route-contract lane:
 
 ```sh
-go test ./internal/app -run 'TestJourneyQualificationAssembledRouter|TestRouteInventory' -count=1
+go test ./internal/app -run 'TestCredentialedBrowserAndPipelineJourney|TestOIDCBrowserJourneyCreatesIsolatedDurableSessions|TestRouteInventory|TestConditionalRouteInventory' -count=1
+```
+
+With the native PostgreSQL fixture prerequisites available, run the durable
+refresh and public-delivery journeys:
+
+```sh
+go test ./internal/app -run 'TestPostgresRefreshRouteJourney|TestPostgresPublicDashboardJourney' -count=1
 ```
 
 Then run the supporting domain lanes and documentation contract:
@@ -58,6 +78,6 @@ go test ./internal/dashboard/http ./internal/project/http ./internal/deployment/
 task docs:check
 ```
 
-Any unavailable state must remain a visible failed row with its captured
-diagnostic. Do not turn the row green by skipping the request, retrying until a
-different state appears, or weakening the expected authorization boundary.
+Capture actual skips: a missing native prerequisite is not a successful state
+qualification. Do not retry until a different state appears or weaken an expected
+authorization boundary to make the manifest green.
