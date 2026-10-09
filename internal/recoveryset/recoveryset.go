@@ -864,6 +864,13 @@ func (r ObjectRoot) Validate() error {
 		if (scheme != "s3" && scheme != "gs" && scheme != "az" && scheme != "file") || (u.Host == "" && scheme != "file") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("%w: object root URI must be a supported absolute location without credentials, query, or fragment", ErrInvalid)
 		}
+	} else if strings.HasPrefix(r.URI, "serving-artifacts/") {
+		// Native publication retains this exact digest-derived file locator.
+		// Local consumers must also bind their explicit trusted storage root;
+		// this locator alone does not authorize a filesystem destination.
+		if r.Kind != ObjectRootServingArtifact || r.URI != "serving-artifacts/"+strings.TrimPrefix(r.Digest, "sha256:")+".tar.gz" {
+			return fmt.Errorf("%w: native serving-artifact locator must match its immutable digest", ErrInvalid)
+		}
 	} else if !strings.HasPrefix(r.URI, "/") && !strings.HasPrefix(r.URI, "./") && !strings.HasPrefix(r.URI, "objects/") && !strings.HasPrefix(r.URI, "artifacts/") {
 		return fmt.Errorf("%w: object root must be an absolute or supported relative path", ErrInvalid)
 	}
