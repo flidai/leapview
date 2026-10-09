@@ -135,7 +135,7 @@ surfaces:
     updater: {ecosystem: docker, directory: /internal/platform/testminio}
     scanners: [trivy]
     images:
-      - golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+      - public.ecr.aws/docker/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}

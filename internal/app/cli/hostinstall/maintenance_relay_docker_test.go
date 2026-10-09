@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -36,7 +37,7 @@ func TestInternalNetworkRecoveryRelay(t *testing.T) {
 		_ = exec.Command("docker", "network", "rm", name).Run()
 	})
 	docker("network", "create", "--internal", name)
-	docker("run", "-d", "--name", name, "--network", name, "-e", "POSTGRES_PASSWORD=isolated-relay-test", nativePGImage)
+	docker("run", "-d", "--name", name, "--network", name, "-e", "POSTGRES_PASSWORD=isolated-relay-test", postgrestest.PostgreSQL18Image)
 	for attempt := 0; attempt < 100; attempt++ {
 		if exec.CommandContext(ctx, "docker", "exec", name, "pg_isready", "-h", "127.0.0.1").Run() == nil {
 			break

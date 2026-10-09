@@ -1,11 +1,32 @@
-"""Configure only an early GitHub-hosted Linux CI daemon, preserving image pins."""
+"""Prepare Docker cache and the pinned reaper on early hosted Linux CI only."""
 
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 
 MIRROR = "https://mirror.gcr.io"
+# Official publisher index: identical to the SDK's Docker Hub image. Preserve
+# its stock tag so Testcontainers keeps its normal mandatory cleanup behavior.
+RYUK_SOURCE = "ghcr.io/testcontainers/ryuk:0.13.0@sha256:31b31269d06603366cbfd0284708dcd2e281e8a4188e53fce3d3304439d0df3d"
+RYUK_STOCK_IMAGE = "testcontainers/ryuk:0.13.0"
+
+
+def image_id(image):
+    identity = subprocess.check_output(
+        ["docker", "image", "inspect", image, "--format", "{{.Id}}"], text=True).strip()
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", identity):
+        raise RuntimeError("Invalid Docker image identity")
+    return identity
+
+
+def preload_ryuk():
+    subprocess.run(["docker", "pull", RYUK_SOURCE], check=True)
+    source_id = image_id(RYUK_SOURCE)
+    subprocess.run(["docker", "tag", RYUK_SOURCE, RYUK_STOCK_IMAGE], check=True)
+    if image_id(RYUK_STOCK_IMAGE) != source_id:
+        raise RuntimeError("Ryuk image identity differs after assigning the SDK tag")
 
 
 def active_mirror():
@@ -35,6 +56,7 @@ def configure(config_path=Path("/etc/docker/daemon.json")):
         subprocess.run(["systemctl", "restart", "docker"], check=True)
     if not active_mirror():
         raise RuntimeError("Docker daemon did not activate the CI registry mirror")
+    preload_ryuk()
 
 
 if __name__ == "__main__":
