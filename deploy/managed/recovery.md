@@ -202,6 +202,22 @@ PRs; Go regressions cover exact canonical RecoverySet binding, missing cluster
 coverage, stale receipts, lost fences before publication, controller retries,
 explicit SSH trust, and independently available authority.
 
+`TestManagedRecoveryProductionNativeReadback` additionally creates the real
+first-source publication through production HTTP routes, restarts and queries
+it, initializes an independent TLS authority, and enrolls the retained prepared
+frontier using its dedicated operator. It checks refusal of an unprepared set,
+transaction rollback, exact retries and altered enrollment identities. With
+explicit pinned `LEAPVIEW_TEST_MANAGED_RESTIC`,
+`LEAPVIEW_TEST_MANAGED_POSTGRES_BIN`, `LEAPVIEW_TEST_MANAGED_PGBACKREST` and
+`LEAPVIEW_TEST_MANAGED_BWRAP` inputs, it also performs encrypted backup/restore of
+the actual native DuckLake files and serving-artifact envelope, plus a physical
+PostgreSQL backup and confined TLS/WAL restore of the actual publication and
+ownership, with the retained private keyring verified separately. The provider
+subtests skip when these tools are absent;
+an ordinary test run alone is not native restore qualification. This journey
+proves the concrete provider/readback and enrollment components; the full
+coordinator's original-host fence remains a separate qualified boundary.
+
 The VM journey uses disposable test data and a copied encrypted POSIX repository;
 it does not establish production S3 retention, real application credential/key
 recovery, Hetzner fencing/rescue, UEFI, an actual customer RecoverySet restore, or
