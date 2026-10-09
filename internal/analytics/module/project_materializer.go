@@ -42,6 +42,7 @@ func (e *duckDBProjectMaterializer) MaterializeWithObservationWriter(ctx context
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
 		ProviderAdmission:  e.module.providerAdmission,
+		ExtensionAdmission: e.module.extensionAdmission,
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
@@ -99,6 +100,7 @@ func (e *duckDBProjectMaterializer) MaterializeWithObservations(ctx context.Cont
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
 		ProviderAdmission:  e.module.providerAdmission,
+		ExtensionAdmission: e.module.extensionAdmission,
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,

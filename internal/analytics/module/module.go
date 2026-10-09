@@ -130,6 +130,7 @@ func (s *QueryAuditSurface) Recorder() queryaudit.Recorder {
 }
 
 type Module struct {
+	extensionAdmission           extension.Admission
 	localCredentialReader        LocalCredentialReader
 	providerAdmission            analyticsduckdb.ProviderAdmission
 	environment                  *analyticsducklake.Environment
@@ -289,7 +290,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return nil, err
 	}
 	return &Module{
-		environment: environment, cache: cache, queryAudit: queryAudit,
+		extensionAdmission: config.ExtensionAdmission,
+		environment:        environment, cache: cache, queryAudit: queryAudit,
 		connectionBindings: connectionBindings,
 		credentials:        credentials, targetResolvers: targetResolvers,
 		targetID: config.CredentialTargetID, targetEnvironment: config.CredentialEnvironment,
