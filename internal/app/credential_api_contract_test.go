@@ -101,8 +101,8 @@ func TestCredentialValidationContractRequiresFreshExplicitProbe(t *testing.T) {
 	if command.Idempotency != "forbidden" || command.Audit.SuccessAction != "credential.draft.validated" || command.Audit.Guarantee != "transactional" {
 		t.Fatalf("validation command: %#v", command)
 	}
-	if command.UI != nil || len(command.AdditionalExposures) != 0 {
-		t.Fatal("validation must remain API only until saved draft selection is implemented")
+	if command.UI == nil || command.UI.ActionID != "credential.draft.validate" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {
+		t.Fatal("validation must expose only the explicit saved-draft UI action")
 	}
 	if payload := command.Audit.Payload; payload == nil || payload.Schema != "CredentialValidationAuditPayload" || len(payload.Fields) != 6 {
 		t.Fatalf("validation audit payload: %#v", payload)

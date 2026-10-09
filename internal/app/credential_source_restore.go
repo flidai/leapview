@@ -8,12 +8,12 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/typednil"
-	projectruntime "github.com/flidai/leapview/internal/project/runtime"
+	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
 type sourceCredentialInstalledRuntime interface {
-	projectruntime.Provider
+	runtimehostmodule.Provider
 	CurrentServingStateID() servingstate.ID
 	AcquireCutoverFence(context.Context) (func(), error)
 	LeaseRenewalError() error
