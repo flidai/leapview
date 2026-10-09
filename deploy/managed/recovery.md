@@ -169,6 +169,11 @@ Use the following order before attempting a managed-local restore.
    identity file and enrolled known-hosts file. SSH ignores ambient config,
    agents and passwords and requires the pinned host key.
 
+   Supply the closure's value JSON, including `catalog_id`, `snapshot_id`,
+   `object_root`, `relation_namespace`, sorted `relations`/`objects`, and their
+   three digests. Input decoding reconstructs the omitted canonical documents
+   and verifies the supplied digests; invented canonical-byte fields are rejected.
+
    The coordinator claims the exact pending occurrence and maintains its lease
    while restoring. It verifies fencing around provider effects and final
    publication, confines native PostgreSQL restore/readback, verifies every
