@@ -66,9 +66,7 @@ func newFirstSourcePreparationServiceFixture(t *testing.T) *firstSourcePreparati
 	require.NoError(t, err)
 	receipt, err := services.Validation.ValidateDraft(f.ctx, f.actor, f.resource, metadata.Binding.VersionID, 1)
 	require.NoError(t, err)
-	claim, err := platformbootstrap.New(f.pool).GetProjectClaim(t.Context())
-	require.NoError(t, err)
-	retained := retainFirstSourcePreparationFixture(t, f.resource.ProjectID, claim.ClaimedBy)
+	retained := retainFirstSourcePreparationFixture(t, f.resource.ProjectID, f.actor)
 	journal, err := credentialmodule.NewFirstSourcePreparationMutations(pool, firstSourceAuthorityAudit{}.RecordAuditEvent)
 	require.NoError(t, err)
 	service := firstSourceCredentialPreparationService{authority: authority, receipts: services.ActivationRepository(), preparations: journal, targets: deploymentpostgres.New(f.pool), probePolicy: probe.CredentialProbePolicyIdentity,
@@ -78,7 +76,7 @@ func newFirstSourcePreparationServiceFixture(t *testing.T) *firstSourcePreparati
 		}}
 	return &firstSourcePreparationServiceFixture{firstSourceAuthorityFixture: f, service: service, services: services, pool: pool, probe: probe,
 		request: firstSourceCredentialPreparationRequest{PreparationID: uuid.NewString(), VersionID: metadata.Binding.VersionID, ReceiptID: receipt.ReceiptID,
-			PublisherID: claim.ClaimedBy, SourceOwnerID: claim.ClaimedBy, SourceDigest: retained.source.ArtifactDigest, SourceAttestationDigest: retained.source.SourceAttestationDigest, PlanIdempotencyKey: "first-source-explicit-plan", ExpectedTargetRevision: 1}}
+			PublisherID: f.actor, SourceOwnerID: f.actor, SourceDigest: retained.source.ArtifactDigest, SourceAttestationDigest: retained.source.SourceAttestationDigest, PlanIdempotencyKey: "first-source-explicit-plan", ExpectedTargetRevision: 1}}
 }
 
 type firstSourceRetainedFixture struct {
@@ -126,7 +124,7 @@ func TestFirstSourceCredentialPreparationPersistsExactIntentAndRetry(t *testing.
 	stored, err := f.service.preparations.Preparation(t.Context(), f.resource.TargetID, result.PreparationID)
 	require.NoError(t, err)
 	require.Equal(t, f.request.PublisherID, stored.Intent.PublisherID)
-	require.NotEqual(t, f.actor, stored.Intent.PublisherID, "operator never becomes publisher implicitly")
+	require.Equal(t, f.actor, stored.Intent.PublisherID, "preparation cannot delegate the operator's validation proof")
 	require.Equal(t, f.request.SourceOwnerID, stored.Intent.SourceOwnerID)
 	require.Equal(t, f.request.PlanIdempotencyKey, stored.Intent.PlanIdempotencyKey)
 	require.Equal(t, f.request.VersionID, stored.Intent.Receipt.Binding.VersionID)
@@ -134,7 +132,7 @@ func TestFirstSourceCredentialPreparationPersistsExactIntentAndRetry(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, expectedDigest, result.PlanRequestDigest)
 	changed := f.request
-	changed.PublisherID = f.actor
+	changed.PublisherID = uuid.NewString()
 	_, err = f.service.Prepare(ctx, f.actor, f.resource, changed)
 	require.ErrorIs(t, err, credentialmodule.ErrValidationConflict)
 	changed = f.request
@@ -145,6 +143,73 @@ func TestFirstSourceCredentialPreparationPersistsExactIntentAndRetry(t *testing.
 }
 
 type firstSourceReceiptReaderFunc func(context.Context, string, string) (credentialmodule.ValidationReceipt, error)
+
+func TestFirstSourceCredentialPreparationRejectsDifferentPublisherOrOwnerBeforeReservation(t *testing.T) {
+	f := newFirstSourcePreparationServiceFixture(t)
+	for _, field := range []string{"publisher", "source-owner"} {
+		t.Run(field, func(t *testing.T) {
+			service, request := f.service, f.request
+			if field == "publisher" {
+				request.PublisherID = uuid.NewString()
+			} else {
+				request.SourceOwnerID = uuid.NewString()
+			}
+			service.receipts = firstSourceReceiptReaderFunc(func(context.Context, string, string) (credentialmodule.ValidationReceipt, error) {
+				t.Fatal("different actor intent must be denied before loading a receipt")
+				return credentialmodule.ValidationReceipt{}, nil
+			})
+			service.retainedSource = func(context.Context, string, string, string, string) (firstSourceRetainedSource, error) {
+				t.Fatal("different actor intent must be denied before retained-source work")
+				return firstSourceRetainedSource{}, nil
+			}
+			result, err := service.Prepare(f.ctx, f.actor, f.resource, request)
+			require.ErrorIs(t, err, credentialmodule.ErrValidationConflict)
+			require.Empty(t, result.PreparationID)
+			var count int
+			require.NoError(t, f.pool.QueryRow(t.Context(), "SELECT count(*) FROM credential.activation_request WHERE operation_id=$1", request.PreparationID).Scan(&count))
+			require.Zero(t, count, "different actor intent cannot reserve the operator's receipt")
+		})
+	}
+}
+
+func TestFirstSourceCredentialPreparationRenewRejectsDifferentOriginalPublisherOrOwner(t *testing.T) {
+	for _, field := range []string{"publisher", "source-owner"} {
+		t.Run(field, func(t *testing.T) {
+			f := newFirstSourcePreparationServiceFixture(t)
+			receipt, err := f.service.receipts.ReadValidationReceipt(t.Context(), f.resource.TargetID, f.request.ReceiptID)
+			require.NoError(t, err)
+			intent := credentialmodule.FirstSourcePreparationIntent{PreparationID: f.request.PreparationID, Receipt: receipt, PublisherID: f.actor, SourceOwnerID: f.actor,
+				SourceDigest: f.request.SourceDigest, SourceAttestationDigest: f.request.SourceAttestationDigest, PlanOperation: "code_change", PlanIdempotencyKey: f.request.PlanIdempotencyKey, ExpectedTargetRevision: f.request.ExpectedTargetRevision}
+			if field == "publisher" {
+				intent.PublisherID = uuid.NewString()
+			} else {
+				intent.SourceOwnerID = uuid.NewString()
+			}
+			intent.PlanRequestDigest, err = deploymentmodule.NativeDeliveryPlanRequestDigest(deploymentmodule.NativeDeliveryPlanRequest{ProjectID: projectgraph.ResourceID(f.resource.ProjectID), TargetID: f.resource.TargetID, Environment: f.resource.Environment,
+				PrincipalID: intent.PublisherID, SourceOwnerID: intent.SourceOwnerID, Operation: intent.PlanOperation, SourceDigest: intent.SourceDigest, SourceAttestationDigest: intent.SourceAttestationDigest,
+				IdempotencyKey: intent.PlanIdempotencyKey, FirstSourcePreparationID: intent.PreparationID})
+			require.NoError(t, err)
+			// Seed a valid immutable journal row through the storage port to prove
+			// the service cannot adopt a previously stored different-actor intent.
+			err = f.service.authority.WithAuthorization(f.ctx, f.actor, f.resource, access.ActionConnectionManage, func(ctx context.Context, tx pgx.Tx, admission credentialmodule.FirstSourceAdmission) error {
+				intent.AdmissionOperationID, intent.AdmissionDigest = admission.Intent.OperationID, admission.IntentDigest
+				_, err := f.service.preparations.PrepareTx(ctx, tx, intent, func(context.Context, pgx.Tx, credentialmodule.FirstSourcePreparationIntent) error { return nil })
+				return err
+			})
+			require.NoError(t, err)
+			f.service.receipts = firstSourceReceiptReaderFunc(func(context.Context, string, string) (credentialmodule.ValidationReceipt, error) {
+				t.Fatal("renewal must reject original different-actor intent before loading new proof")
+				return credentialmodule.ValidationReceipt{}, nil
+			})
+			result, err := f.service.Renew(f.ctx, f.actor, f.resource, intent.PreparationID, uuid.NewString())
+			require.ErrorIs(t, err, credentialmodule.ErrValidationConflict)
+			require.Empty(t, result.PreparationID)
+			var count int
+			require.NoError(t, f.pool.QueryRow(t.Context(), "SELECT count(*) FROM credential.activation_request_receipt WHERE operation_id=$1", intent.PreparationID).Scan(&count))
+			require.Equal(t, 1, count, "renewal cannot append evidence to different-actor intent")
+		})
+	}
+}
 
 func (r firstSourceReceiptReaderFunc) ReadValidationReceipt(ctx context.Context, target, id string) (credentialmodule.ValidationReceipt, error) {
 	return r(ctx, target, id)
@@ -165,7 +230,7 @@ func TestFirstSourceCredentialPreparationRejectsUnprovenIntent(t *testing.T) {
 			case "foreign-version":
 				request.VersionID = uuid.NewString()
 			case "foreign-actor":
-				actor = f.request.PublisherID
+				actor = uuid.NewString()
 			case "foreign-resource":
 				resource.ResourceID = "connection:other"
 			case "missing-key":

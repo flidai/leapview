@@ -19,9 +19,9 @@ import (
 
 type firstSourceCredentialPreparationRequest struct {
 	PreparationID, VersionID, ReceiptID string
-	// Ordinary HTTP planning sets source owner to publisher. Explicit owner
-	// intent here also preserves normal internal author/reviewer workflows;
-	// neither identity is inferred from the credential operator's session.
+	// Ordinary HTTP planning uses the authenticated actor as publisher and
+	// source owner. Keep both identities in the immutable intent, but never
+	// delegate this actor's validation proof to another publisher or owner.
 	PublisherID, SourceOwnerID            string
 	SourceDigest, SourceAttestationDigest string
 	PlanIdempotencyKey                    string
@@ -66,6 +66,9 @@ func (s firstSourceCredentialPreparationService) Prepare(ctx context.Context, ac
 	if !firstSourcePreparationUUID(request.PreparationID) || !firstSourcePreparationUUID(request.VersionID) || !firstSourcePreparationUUID(request.ReceiptID) ||
 		!firstSourcePreparationText(request.PublisherID) || !firstSourcePreparationText(request.SourceOwnerID) || !firstSourcePreparationText(request.PlanIdempotencyKey) || request.ExpectedTargetRevision < 1 {
 		return firstSourceCredentialPreparationResult{}, credentialmodule.ErrInvalidValidation
+	}
+	if request.PublisherID != actor || request.SourceOwnerID != actor {
+		return firstSourceCredentialPreparationResult{}, credentialmodule.ErrValidationConflict
 	}
 	receipt, err := s.receipts.ReadValidationReceipt(ctx, s.authority.targetID, request.ReceiptID)
 	if err != nil {
@@ -118,6 +121,9 @@ func (s firstSourceCredentialPreparationService) Renew(ctx context.Context, acto
 		return firstSourceCredentialPreparationResult{}, err
 	}
 	i := prepared.Intent
+	if i.Receipt.ActorID != actor || i.PublisherID != actor || i.SourceOwnerID != actor {
+		return firstSourceCredentialPreparationResult{}, credentialmodule.ErrValidationConflict
+	}
 	receipt, err := s.receipts.ReadValidationReceipt(ctx, s.authority.targetID, receiptID)
 	if err != nil {
 		return firstSourceCredentialPreparationResult{}, err
@@ -174,7 +180,8 @@ func (s firstSourceCredentialPreparationService) checkRetainedSource(ctx context
 // This callback performs only bounded reads using the supplied transaction.
 // Publication remains a separately authorized normal native plan operation.
 func (s firstSourceCredentialPreparationService) checkIntentTx(ctx context.Context, tx pgx.Tx, admission credentialmodule.FirstSourceAdmission, i credentialmodule.FirstSourcePreparationIntent) error {
-	if i.Validate() != nil || !i.MatchesAdmission(admission) || i.Receipt.Binding.Purpose != "connection-authentication" {
+	if i.Validate() != nil || !i.MatchesAdmission(admission) || i.Receipt.Binding.Purpose != "connection-authentication" ||
+		i.PublisherID != i.Receipt.ActorID || i.SourceOwnerID != i.Receipt.ActorID {
 		return credentialmodule.ErrValidationConflict
 	}
 	binding, err := s.authority.lockAdmittedStateTx(ctx, tx, admission)

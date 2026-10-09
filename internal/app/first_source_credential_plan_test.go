@@ -56,11 +56,13 @@ func (f *firstSourcePlanAuthorityFixture) plan(t *testing.T, evidence []deployme
 // These tests qualify the actual preparation journal/authority boundary. The
 // native coordinator's separate PG tests cover the full plan transaction; the
 // production first-publication journey remains a separate integration gate.
-func TestFirstSourceNativePlanUsesExplicitDelegationWithoutImpersonatingOperator(t *testing.T) {
+func TestFirstSourceNativePlanRequiresCurrentValidatingOperator(t *testing.T) {
 	f := newFirstSourcePlanAuthorityFixture(t)
-	require.NotEqual(t, f.actor, f.request.PrincipalID)
-	evidence, err := f.authority.Resolve(t.Context(), f.request, f.target, f.candidate)
-	require.NoError(t, err, "stored delegation works without an operator session in publisher context")
+	require.Equal(t, f.actor, f.request.PrincipalID)
+	_, err := f.authority.Resolve(t.Context(), f.request, f.target, f.candidate)
+	require.Error(t, err, "stored preparation cannot replace current request authority")
+	evidence, err := f.authority.Resolve(f.ctx, f.request, f.target, f.candidate)
+	require.NoError(t, err)
 	require.Len(t, evidence, 1)
 	require.Equal(t, f.firstSourcePreparationServiceFixture.request.VersionID, evidence[0].CredentialVersionID)
 	require.Empty(t, evidence[0].ProviderVersion)
@@ -68,7 +70,7 @@ func TestFirstSourceNativePlanUsesExplicitDelegationWithoutImpersonatingOperator
 	tx, err := f.pool.Begin(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback(context.Background())
-	require.NoError(t, f.authority.BindTx(t.Context(), tx, f.request, f.target, plan))
+	require.NoError(t, f.authority.BindTx(f.ctx, tx, f.request, f.target, plan))
 	require.NoError(t, tx.Commit(t.Context()))
 	tx, err = f.pool.Begin(t.Context())
 	require.NoError(t, err)
@@ -88,9 +90,9 @@ func TestFirstSourceNativePlanRejectsMovingPublisherSourceAndTargetIntent(t *tes
 			candidate.Requirements = append([]deployment.CandidateConnectionRequirement(nil), candidate.Requirements...)
 			switch scenario {
 			case "publisher":
-				request.PrincipalID = f.actor
+				request.PrincipalID = uuid.NewString()
 			case "source-owner":
-				request.SourceOwnerID = f.actor
+				request.SourceOwnerID = uuid.NewString()
 			case "source":
 				request.SourceDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			case "attestation":
@@ -106,21 +108,23 @@ func TestFirstSourceNativePlanRejectsMovingPublisherSourceAndTargetIntent(t *tes
 			case "extra-connection":
 				candidate.Requirements = append(candidate.Requirements, candidate.Requirements[0])
 			}
-			_, err := f.authority.Resolve(t.Context(), request, target, candidate)
+			_, err := f.authority.Resolve(f.ctx, request, target, candidate)
 			require.Error(t, err)
 		})
 	}
 }
 
 func TestFirstSourceNativePlanRechecksOperatorAndProbePolicyBeforeLink(t *testing.T) {
-	for _, revoke := range []string{"grant", "probe-policy"} {
+	for _, revoke := range []string{"grant", "probe-policy", "session"} {
 		t.Run(revoke, func(t *testing.T) {
 			f := newFirstSourcePlanAuthorityFixture(t)
-			evidence, err := f.authority.Resolve(t.Context(), f.request, f.target, f.candidate)
+			evidence, err := f.authority.Resolve(f.ctx, f.request, f.target, f.candidate)
 			require.NoError(t, err)
 			plan := f.plan(t, evidence)
 			if revoke == "probe-policy" {
 				f.probe.policy = "changed-production-policy"
+			} else if revoke == "session" {
+				require.NoError(t, f.repository.DeleteSession(t.Context(), f.session))
 			} else {
 				grant, err := f.admission.Intent.Grant()
 				require.NoError(t, err)
@@ -131,7 +135,7 @@ func TestFirstSourceNativePlanRechecksOperatorAndProbePolicyBeforeLink(t *testin
 			tx, err := f.pool.Begin(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback(context.Background())
-			require.Error(t, f.authority.BindTx(t.Context(), tx, f.request, f.target, plan))
+			require.Error(t, f.authority.BindTx(f.ctx, tx, f.request, f.target, plan))
 			_, err = f.service.preparations.StoredPlanLinkTx(t.Context(), tx, f.target.TargetID, plan.ID)
 			require.ErrorIs(t, err, credentialmodule.ErrValidationNotFound)
 		})

@@ -103,7 +103,7 @@ func (a firstSourceCredentialAuthority) WithAuthorization(ctx context.Context, a
 }
 
 // lockAdmittedStateTx checks live authority shared by session preparation and
-// an explicitly delegated native plan. The caller must already hold the target
+// a currently authorized native plan. The caller must already hold the target
 // fence; the returned binding and exact current grant stay locked through tx.
 // This read does not establish a session, a preparation or publisher authority.
 func (a firstSourceCredentialAuthority) lockAdmittedStateTx(ctx context.Context, tx pgx.Tx, admission credentialmodule.FirstSourceAdmission) (connectionbinding.TargetBinding, error) {

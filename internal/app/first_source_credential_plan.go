@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	credentialmodule "github.com/flidai/leapview/internal/credential/module"
@@ -17,9 +18,9 @@ type firstSourceReceiptFreshness interface {
 	CheckActivationReceiptFreshTx(context.Context, pgx.Tx, string, string) error
 }
 
-// A native plan consumes an operator's explicit stored delegation. The normal
-// native coordinator still authorizes the publisher against the candidate graph
-// and retains its semantic/reviewer policy. No operator session is impersonated.
+// A native plan uses the validating operator's exact stored preparation and
+// current request authority. The normal native coordinator also authorizes that
+// actor as publisher and retains its independent semantic/reviewer policy.
 type firstSourceCredentialPlan struct {
 	authority   firstSourceCredentialAuthority
 	journal     credentialmodule.FirstSourcePreparationMutations
@@ -77,6 +78,17 @@ func (p *firstSourceCredentialPlan) checkIntentTx(ctx context.Context, tx pgx.Tx
 	if stored.Reservation.State != "preparing" || target.ActiveGenerationID != "" || target.ActivePublicationID != "" || target.TargetID != p.authority.targetID || target.TargetID != request.TargetID || target.ProjectID != request.ProjectID.String() || target.Environment != p.authority.environment || target.Environment != request.Environment || !firstSourcePlanIntentMatches(i, request, target.TargetRevision) {
 		return connectionbinding.TargetBinding{}, credentialmodule.ErrValidationConflict
 	}
+	issuer, err := accessmodule.CredentialTransactionEvidence(ctx, i.Receipt.ActorID)
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	grant, err := stored.Admission.Intent.Grant()
+	if err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
+	if err := accessmodule.RecheckCredentialAuthorityTx(ctx, tx, issuer, grant.Permissions); err != nil {
+		return connectionbinding.TargetBinding{}, err
+	}
 	binding, err := p.authority.lockAdmittedStateTx(ctx, tx, stored.Admission)
 	if err != nil {
 		return connectionbinding.TargetBinding{}, err
@@ -100,7 +112,7 @@ func (p *firstSourceCredentialPlan) checkIntentTx(ctx context.Context, tx pgx.Tx
 
 func firstSourcePlanIntentMatches(i credentialmodule.FirstSourcePreparationIntent, request deploymentmodule.NativeDeliveryPlanRequest, revision int64) bool {
 	digest, err := deploymentmodule.NativeDeliveryPlanRequestDigest(request)
-	return err == nil && i.Validate() == nil && i.PreparationID == request.FirstSourcePreparationID && i.PlanRequestDigest == digest && i.PlanOperation == request.Operation && i.PlanIdempotencyKey == request.IdempotencyKey && i.PublisherID == request.PrincipalID && i.SourceOwnerID == request.SourceOwnerID && i.SourceDigest == request.SourceDigest && i.SourceAttestationDigest == request.SourceAttestationDigest && i.ExpectedTargetRevision == revision && i.Receipt.Binding.ProjectID == request.ProjectID.String() && i.Receipt.Binding.TargetID == request.TargetID && i.Receipt.Binding.Environment == request.Environment
+	return err == nil && i.Validate() == nil && i.PublisherID == i.Receipt.ActorID && i.SourceOwnerID == i.Receipt.ActorID && i.PreparationID == request.FirstSourcePreparationID && i.PlanRequestDigest == digest && i.PlanOperation == request.Operation && i.PlanIdempotencyKey == request.IdempotencyKey && i.PublisherID == request.PrincipalID && i.SourceOwnerID == request.SourceOwnerID && i.SourceDigest == request.SourceDigest && i.SourceAttestationDigest == request.SourceAttestationDigest && i.ExpectedTargetRevision == revision && i.Receipt.Binding.ProjectID == request.ProjectID.String() && i.Receipt.Binding.TargetID == request.TargetID && i.Receipt.Binding.Environment == request.Environment
 }
 
 func firstSourceCredentialEvidence(binding connectionbinding.TargetBinding, i credentialmodule.FirstSourcePreparationIntent) []deployment.CandidateConnectionEvidence {
