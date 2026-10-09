@@ -1,14 +1,17 @@
 import { LitElement, css, html } from 'lit'
 import { property } from 'lit/decorators.js'
-import type { ChatSignal, SavedVisualLibrarySignal } from '../../generated/signals'
+import type { ChatArtifactSignal, ChatSignal, SavedVisualLibrarySignal } from '../../generated/signals'
+import type { DashboardChatComponent } from './dashboard-preview-contract'
 import { submitVisualForm, type SavedVisualLibraryMessage } from './visual-library-bridge'
 
-export type VisualLibraryState = { savedIds: string[]; libraryIds?: Record<string, string>; savingId: string; error: string }
+export type VisualLibraryState = { savedIds: string[]; libraryIds?: Record<string, string>; dashboardArtifacts?: ChatArtifactSignal[]; savingId: string; error: string }
+export type DashboardVisualSource = { dashboardId: string; revisionId: string; pageId: string; components: DashboardChatComponent[]; artifacts: ChatArtifactSignal[] }
 
 // Native forms keep saving inside the authenticated, CSRF-protected page flow.
 // Both chat surfaces share this controller and the account's server-side library.
 class AgentVisualLibrary extends LitElement {
   @property({ attribute: false }) agent?: ChatSignal
+  @property({ attribute: false }) dashboardSource?: DashboardVisualSource
   private readonly frameName = `visual-library-${crypto.randomUUID()}`
   private library?: SavedVisualLibrarySignal
   private pending: { artifactId: string; add: boolean; remove?: boolean } | null = null
@@ -38,13 +41,13 @@ class AgentVisualLibrary extends LitElement {
     // Closed, empty chat drawers do not need another document and update
     // stream. Start loading once there is an artifact that can be saved,
     // and retain the frame afterward so pending saves keep their target.
-    this.libraryRequested ||= Boolean(this.agent?.transcript?.some(item => item.artifact))
+    this.libraryRequested ||= Boolean(this.agent?.transcript?.some(item => item.artifact) || this.dashboardSource?.dashboardId)
     if (!this.libraryRequested) return null
     return html`<iframe name=${this.frameName} title="Saved visual library" src="/visuals/saved" @load=${this.loaded}></iframe>`
   }
 
   updated(): void {
-    const key = JSON.stringify([this.agent?.activeConversationId, (this.agent?.transcript ?? []).map(item => item.artifact?.id)])
+    const key = JSON.stringify([this.agent?.activeConversationId, this.artifacts.map(item => item.id)])
     if (key === this.agentKey) return
     this.agentKey = key
     this.emitState()
@@ -54,41 +57,59 @@ class AgentVisualLibrary extends LitElement {
     return `${this.agent?.activeConversationId ?? 'chat'}/${id}`
   }
 
+  private get artifacts(): ChatArtifactSignal[] {
+    return [...(this.agent?.transcript ?? []).flatMap(item => item.artifact ? [item.artifact] : []), ...(this.dashboardSource?.artifacts ?? []), ...this.dashboardArtifacts]
+  }
+
+  private get dashboardArtifacts(): ChatArtifactSignal[] {
+    const source = this.dashboardSource
+    const conversationId = this.agent?.activeConversationId
+    if (!conversationId || !source?.dashboardId || !source.pageId) return []
+    const prefix = `${conversationId}/dashboard:${source.dashboardId}:${source.pageId}:`
+    return (this.library?.visuals ?? []).filter(visual => visual.sourceKey.startsWith(prefix) && visual.sourceKey.length > prefix.length)
+      .map(visual => ({id: visual.sourceKey.slice(conversationId.length + 1), type: 'visual', summary: visual.title}))
+  }
+
   private emitState(error = ''): void {
-    const savedIds = (this.agent?.transcript ?? [])
-      .filter(item => item.artifact && this.library?.visuals.some(visual => visual.sourceKey === this.sourceKey(item.artifact!.id)))
-      .map(item => item.artifact!.id)
+    const savedIds = [...new Set(this.artifacts.filter(item => this.library?.visuals.some(visual => visual.sourceKey === this.sourceKey(item.id))).map(item => item.id))]
     const libraryIds = Object.fromEntries(savedIds.map(id => [id, this.library!.visuals.find(visual => visual.sourceKey === this.sourceKey(id))!.id]))
     this.dispatchEvent(new CustomEvent<VisualLibraryState>('lv-visual-library-state', {
-      bubbles: true, composed: true, detail: { savedIds, libraryIds, savingId: this.pending?.artifactId ?? '', error },
+      bubbles: true, composed: true, detail: { savedIds, libraryIds, dashboardArtifacts: this.dashboardArtifacts, savingId: this.pending?.artifactId ?? '', error },
     }))
   }
 
-  private save = (event: CustomEvent<{ artifactId: string; add: boolean }>): void => {
+  private save = (event: CustomEvent<{ artifactId: string; add: boolean; retain?: boolean }>): void => {
     if (this.pending) return
     const { artifactId, add } = event.detail
     const item = [...(this.agent?.transcript ?? [])].reverse().find(item => item.artifact?.id === artifactId && item.status === 'complete')
-    if (!item?.artifact) return
+    const artifact = item?.artifact ?? this.dashboardSource?.artifacts.find(item => item.id === artifactId)
+    if (!artifact) return
     const saved = this.library?.visuals.find(visual => visual.sourceKey === this.sourceKey(artifactId))
     if (saved && add) {
       this.addToDashboard(saved.id, artifactId)
       return
     }
     try {
-      if (saved) {
+      if (saved && !event.detail.retain) {
         this.pending = { artifactId, add: false, remove: true }
         this.emitState()
         submitVisualForm('/visuals/saved/remove', this.shadowRoot?.querySelector('iframe') ?? null, { savedVisualId: saved.id })
       } else {
-        const definition = JSON.parse(item.argumentsJson || item.inputJson || '')
-        if (!definition.visual || !definition.semanticModelId) {
-          throw new Error('This visual has no editable definition. Ask the agent to recreate it.')
+        let fields: Record<string, string>
+        if (item?.artifact) {
+          const definition = JSON.parse(item.argumentsJson || item.inputJson || '')
+          if (!definition.visual || !definition.semanticModelId) throw new Error('This visual has no editable definition. Ask the agent to recreate it.')
+          fields = { definition: JSON.stringify(definition), title: definition.visual.title || artifact.summary || 'Saved visual' }
+        } else {
+          const source = this.dashboardSource
+          const component = source?.components.find(component => component.artifactId === artifactId && component.pageId === source.pageId)
+          if (!source || !component) throw new Error('Open this visual on its dashboard page before saving it.')
+          fields = { dashboardId: source.dashboardId, revisionId: source.revisionId, pageId: component.pageId, componentId: component.id, title: artifact.summary || 'Saved visual' }
         }
         this.pending = { artifactId, add }
         this.emitState()
         submitVisualForm('/visuals/saved', this.shadowRoot?.querySelector('iframe') ?? null, {
-          definition: JSON.stringify(definition), sourceKey: this.sourceKey(artifactId),
-          title: definition.visual.title || item.artifact.summary || 'Saved visual',
+          ...fields, sourceKey: this.sourceKey(artifactId),
         })
       }
       window.clearTimeout(this.timer)

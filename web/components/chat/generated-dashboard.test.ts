@@ -2,6 +2,11 @@ import {expect,test} from 'bun:test'
 import type {ChatTranscriptItemSignal} from '../../generated/signals'
 import {generatedDashboardHref} from './generated-dashboard'
 const tool=(name:string,extra:Partial<ChatTranscriptItemSignal>={}):ChatTranscriptItemSignal=>({id:name,kind:'tool',name,runId:'run-new',toolCallId:name,status:'complete',...extra})
+test('a truncated full-dashboard edit uses the retained edit identity to restore its chart cards',()=>{
+ const edit=tool('edit_dashboard_source',{argumentsJson:'{"source":"truncated…'})
+ const preview=tool('preview_dashboard_draft',{argumentsJson:'{"dashboardId":"dashboard-a"}'})
+ expect(generatedDashboardHref([edit,preview],'run-new','conversation')).toBe('/chats/conversation/actions/preview_dashboard_draft/open?run=run-new&embed=chat&mode=preview&authoredBy=edit_dashboard_source')
+})
 test('completed new dashboard opens the exact retained preview within the current chat',()=>{
  const href=generatedDashboardHref([tool('create_dashboard_draft'),tool('edit_dashboard_source'),tool('preview_dashboard_draft')],'run-new','conversation')
  expect(href).toBe('/chats/conversation/actions/preview_dashboard_draft/open?run=run-new&embed=chat&mode=preview&createdBy=create_dashboard_draft')
