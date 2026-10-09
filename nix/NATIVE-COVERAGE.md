@@ -90,3 +90,33 @@ blocking finding, investigate a patched source build with static extension
 registration first. Preserve official trust keys for other extensions; unsigned
 loading is not a remediation. A separate signing authority requires a concrete
 governed design and review before generating any key.
+
+## Pinned source-built Lance candidate
+
+`duckdb.nix` builds the same DuckDB 1.5.4 engine revision with the exact upstream
+Lance C++ wrapper at `350060612087e1138ffa1bbb11a535013558241a` statically linked.
+`lance.nix` supplies its independently locked Rust static library. The reviewed
+`lance-Cargo.lock` changes aws-smithy-json 0.62.5 to 0.62.7, with the minimum
+compatible aws-smithy-types 1.4.9 and runtime-api 1.12.3 plus their schema/macro
+dependencies. ethnum 1.5.3 replaces 1.5.2 because the locked Rust compiler rejects
+the older conversion-error representation. These are ordinary dependency fixes;
+the remaining locked Linux runtime package versions are retained.
+
+The application enables this implementation only with `leapview_static_lance`
+and the external static-library binding mode. A closed registry binds the
+engine revision, Lance revision, platform and exact Cargo-lock SHA256. Packaging
+and runtime admission require the canonical descriptor and actual DuckDB
+`STATICALLY_LINKED` / `(BUILT-IN)` state before loading the fixed name. Ordinary
+builds cannot enable a builtin from manifest flags. The other 13 extensions retain
+their pinned official signed payloads and exact file loads; no signing key or
+unsigned loading mode is introduced.
+
+Both replacement supply NAR hashes were computed from the retained official
+sets with only Lance replaced by its canonical descriptor and the manifest
+updated. Production Go serialization independently byte-matches both resulting
+manifests and descriptors. That reconstruction establishes the exact desired
+bytes, not successful execution of a new engine or either architecture's build.
+The upstream Rust tests, static registration and two-session Lance write/read
+tests must pass on actual built outputs. Protected artifact qualification,
+complete compiled dependency evidence and fresh advisory disposition remain
+required; this candidate does not turn the diagnostic collector into admission.

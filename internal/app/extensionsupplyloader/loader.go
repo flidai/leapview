@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/flidai/leapview/internal/analytics/duckdbsession"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	"github.com/flidai/leapview/internal/extension"
@@ -173,7 +174,7 @@ func Load(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, erro
 // verification. Automatic acquisition is disabled first, so a dependency
 // cannot turn this build/runtime check into a network install. The callback is
 // run before Supply links the staged file into cache.
-func verifyDuckDBArtifactAtPath(ctx context.Context, _ extensionsupply.Artifact, path string, dependencies ...string) error {
+func verifyDuckDBArtifactAtPath(ctx context.Context, artifact extensionsupply.Artifact, path string, dependencies ...string) error {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		return fmt.Errorf("open DuckDB extension verifier: %w", err)
@@ -186,6 +187,16 @@ func verifyDuckDBArtifactAtPath(ctx context.Context, _ extensionsupply.Artifact,
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("configure DuckDB extension verifier: %w", err)
 		}
+	}
+	if artifact.Identity.Builtin {
+		payload, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("%w: builtin descriptor unavailable", extension.ErrExtensionIntegrity)
+		}
+		if err := extension.VerifyBuiltinDescriptor(artifact.Identity, payload, artifact.Provenance, artifact.Signature); err != nil {
+			return err
+		}
+		return duckdbsession.VerifyCompiledBuiltin(ctx, db, artifact.Identity)
 	}
 	for _, dependency := range dependencies {
 		if info, statErr := os.Stat(dependency); statErr != nil || !info.Mode().IsRegular() {

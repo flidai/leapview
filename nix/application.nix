@@ -11,6 +11,7 @@ let
   manifest = builtins.fromJSON (builtins.readFile ../package.json);
   canonicalVersion = pkgs.lib.trim (builtins.readFile ../VERSION);
   dependencies = import ./dependencies.nix { inherit pkgs toolchain src; };
+  duckdb = import ./duckdb.nix { inherit pkgs; };
   buildVersion =
     if purpose == "compose" then
       canonicalVersion
@@ -48,6 +49,7 @@ pkgs.stdenv.mkDerivation {
   GOPROXY = "file://${dependencies.go}/download";
   GOFLAGS = "-mod=readonly";
   CGO_ENABLED = "1";
+  CGO_CFLAGS = "-I${duckdb.dev}/include";
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
   BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   dontConfigure = true;
@@ -92,9 +94,15 @@ pkgs.stdenv.mkDerivation {
     flags="-w -X ${buildInfo}.version=${buildVersion} -X ${buildInfo}.revision=${revision} -X ${buildInfo}.buildTime=${buildTime} -X ${buildInfo}.dirty=${
       if dirty then "true" else "false"
     } -X ${buildInfo}.release=${if purpose == "compose" then "true" else "false"}"
-    go build -tags=duckdb_arrow -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview
-    go build -tags=duckdb_arrow -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapviewctl" ./cmd/leapviewctl
-    go build -tags=duckdb_arrow -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply
+    # Use reviewed source-built DuckDB with patched, statically linked Lance.
+    # A link group retains dependency resolution without unsigned extension
+    # loading or a new extension signing-key custody requirement.
+    nativeLibraries=$(find ${duckdb.lib}/lib -maxdepth 1 -name '*.a' ! -name 'libdummy_static_extension_loader.a' -type f | LC_ALL=C sort)
+    export CGO_LDFLAGS="-Wl,--start-group $nativeLibraries ${duckdb.lance.rust}/lib/liblance_duckdb_ffi.a -Wl,--end-group -lstdc++ -ldl -lm"
+    tags=duckdb_arrow,duckdb_use_static_lib,leapview_static_lance
+    go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapview" ./cmd/leapview
+    go build -tags="$tags" -trimpath -buildvcs=false -ldflags="$flags" -o "$out/bin/leapviewctl" ./cmd/leapviewctl
+    go build -tags="$tags" -trimpath -buildvcs=false -o "$tools/bin/extensionsupply" ./internal/app/tools/extensionsupply
     go build -trimpath -buildvcs=false -o "$tools/bin/mapassets" ./internal/app/tools/mapassets
     runHook postBuild
   '';
@@ -124,6 +132,6 @@ pkgs.stdenv.mkDerivation {
     "$out/bin/leapview" version
     "$out/bin/leapviewctl" --help >/dev/null
   '';
-  passthru = { inherit dependencies; };
+  passthru = { inherit dependencies duckdb; };
   meta.mainProgram = "leapview";
 }

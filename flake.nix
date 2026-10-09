@@ -186,6 +186,8 @@
           leapview-tools = developmentBuild.tools;
           map-assets = assets.maps;
           extension-supply = assets.extensions;
+          duckdb = developmentBuild.duckdb;
+          lance-ffi = developmentBuild.duckdb.lance.rust;
           glibc-runtime = developmentRuntime.glibc;
           go-dependencies = developmentBuild.dependencies.go;
           javascript-dependencies = developmentBuild.dependencies.javascript;

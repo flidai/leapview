@@ -1,8 +1,8 @@
 // Command extensionsupply builds LeapView's production DuckDB extension
 // supply. It is packaging tooling only: all network acquisition happens at
-// image build time, each artifact is loaded by its exact absolute path for
-// DuckDB's official signature check, and the resulting runtime manifest is
-// consumed offline by the application.
+// image build time. File artifacts retain exact-path official signature checks;
+// source-built Lance requires the closed compiled-input descriptor and actual
+// static engine registration. The runtime consumes the manifest offline.
 package main
 
 import (
@@ -24,6 +24,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/flidai/leapview/internal/analytics/duckdbsession"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	"github.com/flidai/leapview/internal/extension"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -221,6 +222,11 @@ func check(ctx context.Context, rawRoot, profile, rawRuntimeRoot string) error {
 		if got := sha256.Sum256(contents); "sha256:"+hex.EncodeToString(got[:]) != artifact.Identity.Digest {
 			return fmt.Errorf("packaged %s artifact digest does not match the manifest", artifact.Identity.Name)
 		}
+		if artifact.Identity.Builtin {
+			if err := verifyPackagedBuiltin(ctx, artifact, contents); err != nil {
+				return err
+			}
+		}
 	}
 	for _, name := range required {
 		if _, ok := seen[name]; !ok {
@@ -245,6 +251,18 @@ func verifyManifestDigest(payload, sidecar []byte) error {
 	return nil
 }
 
+func verifyPackagedBuiltin(ctx context.Context, artifact extensionsupply.Artifact, contents []byte) error {
+	if err := extension.VerifyBuiltinDescriptor(artifact.Identity, contents, artifact.Provenance, artifact.Signature); err != nil {
+		return err
+	}
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return duckdbsession.VerifyCompiledBuiltin(ctx, db, artifact.Identity)
+}
+
 func isRequiredExtension(required []string, candidate string) bool {
 	for _, name := range required {
 		if name == candidate {
@@ -263,6 +281,22 @@ func prepareOne(ctx context.Context, installRoot, outputRoot, version, platform,
 		return extensionsupply.Artifact{}, fmt.Errorf("open DuckDB extension provisioner: %w", err)
 	}
 	defer db.Close()
+	if builtin, ok := extension.CompiledBuiltin(name, platform); ok {
+		identity := extension.Identity{Builtin: true, DuckDBVersion: version, ExtensionVersion: builtin.SourceRevision, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: builtin.Digest(), SupportProfile: profile}
+		for _, statement := range []string{"SET autoinstall_known_extensions = false", "SET autoload_known_extensions = false"} {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				return extensionsupply.Artifact{}, err
+			}
+		}
+		if err := duckdbsession.VerifyCompiledBuiltin(ctx, db, identity); err != nil {
+			return extensionsupply.Artifact{}, err
+		}
+		path := filepath.Join(outputRoot, name+"-"+identity.ExtensionVersion+"-"+platform+".duckdb_extension")
+		if err := copyPrivateFile(path, builtin.Bytes()); err != nil {
+			return extensionsupply.Artifact{}, err
+		}
+		return extensionsupply.Artifact{Identity: identity, Origins: []string{originID}, Provenance: builtin.Provenance(), Signature: "package:compiled-engine"}, nil
+	}
 	escapedRoot := strings.ReplaceAll(installRoot, "'", "''")
 	if _, err := db.ExecContext(ctx, "SET extension_directory = '"+escapedRoot+"'"); err != nil {
 		return extensionsupply.Artifact{}, fmt.Errorf("set extension directory for %s: %w", name, err)

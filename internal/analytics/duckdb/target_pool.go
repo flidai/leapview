@@ -183,7 +183,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		if err := validateAdmittedExtension(extension, admitted); err != nil {
 			return nil, err
 		}
-		statements = append(statements, loadExtensionStatement(admitted.Path))
+		statements = append(statements, loadAdmittedExtensionStatement(admitted))
 	}
 	statements = append(statements, secret)
 	statements = append(statements, activationStatements...)
