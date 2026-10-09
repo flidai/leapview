@@ -1,0 +1,26 @@
+name: Configure hosted Docker pulls
+description: Prefer Google's Docker Hub cache on GitHub-hosted Linux runners.
+
+runs:
+  using: composite
+  steps:
+    - name: Configure Docker Hub mirror before starting containers
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo python3 - <<'PY'
+        import json
+        from pathlib import Path
+
+        path = Path('/etc/docker/daemon.json')
+        config = json.loads(path.read_text()) if path.exists() else {}
+        mirror = 'https://mirror.gcr.io'
+        config['registry-mirrors'] = [mirror] + [
+            value for value in config.get('registry-mirrors', []) if value != mirror
+        ]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(config, indent=2) + '\n')
+        PY
+        sudo systemctl restart docker
+        docker info --format '{{json .RegistryConfig.Mirrors}}'

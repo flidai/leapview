@@ -8,7 +8,7 @@ name: ${COMPOSE_PROJECT_NAME:-leapview-postgres-dev}
 
 services:
   postgres:
-    image: docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8
+    image: public.ecr.aws/docker/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8
     restart: unless-stopped
     environment:
       POSTGRES_DB: postgres
