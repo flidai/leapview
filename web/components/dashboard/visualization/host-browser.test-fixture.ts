@@ -13,6 +13,10 @@ export async function hostBrowserStep<T>(name: string, operation: Promise<T>, ti
     return await Promise.race([operation, new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(`Visualization browser step timed out: ${name}`)), timeout)
     })])
+  } catch (error) {
+    // Cleanup can also time out; retain the first failing operation in CI logs.
+    console.error(`Visualization browser step failed: ${name}`, error)
+    throw error
   } finally { clearTimeout(timer!) }
 }
 
