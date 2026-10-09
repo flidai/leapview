@@ -59,10 +59,17 @@ func TestWatcherDiscoversNewNestedDirectoryAndKeepsWatching(t *testing.T) {
 func TestWatcherReportsInvalidNewResourceAndPreservesCandidate(t *testing.T) {
 	root := t.TempDir()
 	writeWatcherResource(t, filepath.Join(root, "connections", "warehouse.yaml"), watcherConnection("warehouse"))
-	updates, _, _ := runFilesystemWatcher(t, root)
+	updates, events, _ := runFilesystemWatcher(t, root)
 	initial := awaitUpdate(t, updates)
 	require.Equal(t, StatusSynchronized, initial.Result.Status)
 	require.NoError(t, initial.Err)
+
+	// Initial success is reported before source resolution finishes. Witness
+	// the event loop so this edit cannot instead fail that initial resolution,
+	// which reports its error with the previous synchronized result.
+	ready := filepath.Join(root, "ready-for-invalid-edit.txt")
+	require.NoError(t, os.WriteFile(ready, []byte("not a resource\n"), 0o600))
+	awaitWatcherEvent(t, events, ready)
 
 	resource := filepath.Join(root, "connections", "customer.yaml")
 	writeWatcherResource(t, resource, "not a resource envelope\n")
