@@ -73,6 +73,64 @@ test('only an independent human collaborator approval of the current head counts
   assert.equal(hasIndependentApproval(pull, [approval, { ...approval, id: 2, state: 'COMMENTED' }]), true)
 })
 
+function hiddenMemberApi(review, permission, calls = []) {
+  return path => {
+    calls.push(path)
+    if (path.endsWith('/permission')) {
+      if (permission instanceof Error) throw permission
+      return permission
+    }
+    if (path.includes('/reviews')) return [[review]]
+    if (path.includes('/files')) return [[{ filename: 'package.json' }]]
+    return [pull]
+  }
+}
+
+const hiddenMemberApproval = { ...approval, author_association: 'CONTRIBUTOR' }
+const writerPermission = { permission: 'write', user: { login: 'reviewer', type: 'User' } }
+
+test('Actions hidden membership uses authoritative repository write permission', () => {
+  for (const permission of ['write', 'admin']) {
+    const calls = []
+    const api = hiddenMemberApi(hiddenMemberApproval, [{ ...writerPermission, permission }], calls)
+    assert.match(checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', api, null), /independently reviewed/)
+    assert.ok(calls.includes('repos/owner/repo/collaborators/reviewer/permission'))
+  }
+})
+
+test('permission fallback cannot approve stale, self, bot or withdrawn reviews', () => {
+  for (const review of [
+    { ...hiddenMemberApproval, commit_id: 'old' },
+    { ...hiddenMemberApproval, user: { login: 'author', type: 'User' } },
+    { ...hiddenMemberApproval, user: { login: 'reviewer', type: 'Bot' } },
+    { ...hiddenMemberApproval, state: 'DISMISSED' },
+    { ...hiddenMemberApproval, state: 'CHANGES_REQUESTED' },
+  ]) {
+    const calls = []
+    assert.throws(() => checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', hiddenMemberApi(review, [writerPermission], calls), null), /independent repository collaborator/)
+    assert.equal(calls.some(path => path.endsWith('/permission')), false)
+  }
+})
+
+test('permission fallback rejects nonwriters and another principal identity', () => {
+  for (const permission of [
+    { ...writerPermission, permission: 'read' },
+    { ...writerPermission, permission: 'none' },
+    { ...writerPermission, permission: 'triage' },
+    { ...writerPermission, user: { login: 'other', type: 'User' } },
+    { ...writerPermission, user: { login: 'reviewer', type: 'Bot' } },
+    { permission: 'write' },
+  ]) {
+    assert.throws(() => checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', hiddenMemberApi(hiddenMemberApproval, [permission]), null), /independent repository collaborator/)
+  }
+})
+
+test('permission lookup failures and ambiguous responses fail closed', () => {
+  for (const permission of [new Error('API unavailable'), [], [writerPermission, writerPermission]]) {
+    assert.throws(() => checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', hiddenMemberApi(hiddenMemberApproval, permission), null), /repository permission.*inconclusive/)
+  }
+})
+
 test('trusted performance reference requires the upstream run, matching commit, and successful qualification job', () => {
   const calls = []
   const api = (path) => {
