@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/platform/ociref"
 	"github.com/flidai/leapview/internal/recoveryset"
 )
@@ -18,10 +19,11 @@ const ManagedLocalProfile = "managed-local-v1"
 // ManagedLocalRoot retains native path/artifact identity separately from a
 // file-content manifest captured under the selected backup writer frontier.
 type ManagedLocalRoot struct {
-	Root                  recoveryset.ObjectRoot `json:"root"`
-	StorageRoot           string                 `json:"storageRoot,omitempty"`
-	Destination           string                 `json:"destination"`
-	ContentManifestDigest string                 `json:"contentManifestDigest"`
+	Root                  recoveryset.ObjectRoot      `json:"root"`
+	StorageRoot           string                      `json:"storageRoot,omitempty"`
+	Destination           string                      `json:"destination"`
+	ContentManifestDigest string                      `json:"contentManifestDigest"`
+	ArtifactMetadata      *objectstore.ObjectMetadata `json:"artifactMetadata,omitempty"`
 }
 
 type ManagedLocalHandoff struct {
@@ -45,6 +47,13 @@ func validateManagedLocalHandoff(handoff ReplacementHandoff, set recoveryset.Rec
 	for _, entry := range local.Roots {
 		if entry.Root.Validate() != nil || !slices.Contains(set.ObjectRoots, entry.Root) || seen[entry.Root.Kind+"\x00"+entry.Root.URI] || !validLocalContentDigest(entry.ContentManifestDigest) {
 			return fmt.Errorf("%w: managed-local root differs from authoritative frontier", ErrInconsistent)
+		}
+		if strings.HasPrefix(entry.Root.URI, "serving-artifacts/") {
+			if entry.ArtifactMetadata == nil || entry.ArtifactMetadata.Digest != entry.Root.Digest || objectstore.ValidateFilesystemBackupMetadata(*entry.ArtifactMetadata) != nil {
+				return fmt.Errorf("%w: exact native artifact envelope metadata required", ErrInconsistent)
+			}
+		} else if entry.ArtifactMetadata != nil {
+			return fmt.Errorf("%w: envelope metadata on non-artifact root", ErrInconsistent)
 		}
 		seen[entry.Root.Kind+"\x00"+entry.Root.URI] = true
 		location, err := ManagedLocalRootPath(entry.Root, entry.StorageRoot)
@@ -84,7 +93,11 @@ func ManagedLocalRootPath(root recoveryset.ObjectRoot, storageRoot string) (stri
 		if !canonicalLocalPath(storageRoot) {
 			return "", fmt.Errorf("%w: explicit trusted artifact storage root required", ErrInconsistent)
 		}
-		return filepath.Join(storageRoot, location), nil
+		physical, err := objectstore.FilesystemBackupRelativePath(location)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(storageRoot, physical), nil
 	}
 	if storageRoot != "" {
 		return "", fmt.Errorf("%w: absolute root rejects relative storage mapping", ErrInconsistent)

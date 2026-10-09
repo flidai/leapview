@@ -18,20 +18,22 @@ import (
 	"github.com/flidai/leapview/internal/app/providerrestore"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
+	"github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/recoveryset"
 )
 
 type ResticConfig struct {
-	TargetID       string
-	RecoverySetID  string
-	Root           recoveryset.ObjectRoot
-	StorageRoot    string
-	Restic         string
-	Repository     string
-	PasswordFile   string
-	Destination    string
-	Manifest       FileManifest
-	ManifestDigest string
+	TargetID         string
+	RecoverySetID    string
+	Root             recoveryset.ObjectRoot
+	StorageRoot      string
+	Restic           string
+	Repository       string
+	PasswordFile     string
+	Destination      string
+	Manifest         FileManifest
+	ManifestDigest   string
+	ArtifactMetadata *objectstore.ObjectMetadata
 }
 
 // Restic restores one explicit snapshot's local subtree to an absent target.
@@ -73,9 +75,16 @@ func NewRestic(config ResticConfig) (*Restic, error) {
 	if config.Root.Kind == recoveryset.ObjectRootDuckLake && config.Root.Digest != digestBytes([]byte(source)) {
 		return nil, errors.New("native local root-path digest mismatch")
 	}
-	if strings.HasPrefix(config.Root.URI, "serving-artifacts/") && (len(config.Manifest.Files) != 1 || config.Manifest.Files[0].Path != filepath.Base(source) || "sha256:"+config.Manifest.Files[0].SHA256 != config.Root.Digest) {
-		return nil, errors.New("native artifact requires its exact single-file content proof")
+	if strings.HasPrefix(config.Root.URI, "serving-artifacts/") {
+		if len(config.Manifest.Files) != 1 || config.Manifest.Files[0].Path != filepath.Base(source) || config.ArtifactMetadata == nil || config.ArtifactMetadata.Digest != config.Root.Digest || objectstore.ValidateFilesystemBackupMetadata(*config.ArtifactMetadata) != nil {
+			return nil, errors.New("native artifact requires exact envelope content and payload metadata proofs")
+		}
+		metadata := *config.ArtifactMetadata
+		config.ArtifactMetadata = &metadata
+	} else if config.ArtifactMetadata != nil {
+		return nil, errors.New("non-artifact root rejects envelope metadata")
 	}
+
 	config.Manifest.Files = append([]FileContent(nil), config.Manifest.Files...)
 	return &Restic{config: config, source: source, execute: runPinnedRestore}, nil
 }
@@ -111,11 +120,12 @@ func (restorer *Restic) RestoreObject(ctx context.Context, request providerresto
 	defer lock.Release()
 	intentPath := filepath.Join(parent, ".managed-restic-"+filepath.Base(restorer.config.Destination)+".json")
 	intent, err := json.Marshal(struct {
-		Request       providerrestore.ObjectRequest `json:"request"`
-		ContentDigest string                        `json:"contentDigest"`
-		Repository    string                        `json:"repository"`
-		Destination   string                        `json:"destination"`
-	}{request, restorer.config.ManifestDigest, restorer.config.Repository, restorer.config.Destination})
+		Request          providerrestore.ObjectRequest `json:"request"`
+		ContentDigest    string                        `json:"contentDigest"`
+		Repository       string                        `json:"repository"`
+		Destination      string                        `json:"destination"`
+		ArtifactMetadata *objectstore.ObjectMetadata   `json:"artifactMetadata,omitempty"`
+	}{request, restorer.config.ManifestDigest, restorer.config.Repository, restorer.config.Destination, restorer.config.ArtifactMetadata})
 	if err != nil {
 		return providerrestore.ObjectResult{}, err
 	}
@@ -136,7 +146,7 @@ func (restorer *Restic) RestoreObject(ctx context.Context, request providerresto
 	started := time.Now().UTC()
 	result := providerrestore.ObjectResult{Provider: "restic-managed-local", OperationID: request.IdempotencyKey, Kind: request.Root.Kind, URI: request.Root.URI, RequiredVersionID: request.Root.VersionID, ObservedVersionID: request.Root.VersionID, Digest: request.Root.Digest, StartedAt: started}
 	if _, err := os.Lstat(restorer.config.Destination); err == nil {
-		if err := restorer.verifyDestination(); err != nil {
+		if err := restorer.verifyDestination(ctx); err != nil {
 			return providerrestore.ObjectResult{}, err
 		}
 		result.CompletedAt = time.Now().UTC()
@@ -171,6 +181,9 @@ func (restorer *Restic) RestoreObject(ctx context.Context, request providerresto
 	expose := stage
 	if artifactFile {
 		expose = filepath.Join(stage, filepath.Base(restorer.source))
+		if _, err := objectstore.VerifyFilesystemBackupFile(ctx, expose, restorer.config.Root.URI, *restorer.config.ArtifactMetadata); err != nil {
+			return providerrestore.ObjectResult{}, err
+		}
 	}
 	if err := os.Rename(expose, restorer.config.Destination); err != nil {
 		return providerrestore.ObjectResult{}, err
@@ -187,7 +200,7 @@ func (restorer *Restic) RestoreObject(ctx context.Context, request providerresto
 	return result, nil
 }
 
-func (restorer *Restic) verifyDestination() error {
+func (restorer *Restic) verifyDestination(ctx context.Context) error {
 	if !strings.HasPrefix(restorer.config.Root.URI, "serving-artifacts/") {
 		return restorer.config.Manifest.Verify(restorer.config.Destination)
 	}
@@ -209,5 +222,6 @@ func (restorer *Restic) verifyDestination() error {
 	if err != nil || size != proof.Size || hex.EncodeToString(hash.Sum(nil)) != proof.SHA256 {
 		return errors.New("managed restored artifact differs from retained frontier")
 	}
-	return nil
+	_, err = objectstore.VerifyFilesystemBackupFile(ctx, restorer.config.Destination, restorer.config.Root.URI, *restorer.config.ArtifactMetadata)
+	return err
 }

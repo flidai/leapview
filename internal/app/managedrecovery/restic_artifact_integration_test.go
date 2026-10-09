@@ -3,12 +3,14 @@ package managedrecovery
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/flidai/leapview/internal/app/providerrestore"
+	"github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/recoveryset"
 )
 
@@ -26,8 +28,13 @@ func TestActualPinnedResticRestoresExactNativeArtifactFile(t *testing.T) {
 	data := []byte("actual immutable native artifact bytes")
 	digest := digestBytes(data)
 	locator := "serving-artifacts/" + digest[7:] + ".tar.gz"
-	source := filepath.Join(storage, locator)
-	if err := os.WriteFile(source, data, 0600); err != nil {
+	source := filepath.Join(storage, locator+".lvobj")
+	store, err := objectstore.NewFilesystemStore(objectstore.FilesystemStoreConfig{Root: storage, StorageSecurityDomain: "managed-artifact-domain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := objectstore.ObjectMetadata{StorageSecurityDomain: "managed-artifact-domain", Digest: digest, SizeBytes: int64(len(data)), ContentType: "application/gzip", MetadataDigest: digestBytes([]byte("actual canonical artifact metadata"))}
+	if _, err := store.PutImmutable(t.Context(), locator, bytes.NewReader(data), metadata); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := CaptureFiles(directory)
@@ -71,12 +78,13 @@ func TestActualPinnedResticRestoresExactNativeArtifactFile(t *testing.T) {
 	if len(snapshot) != 64 {
 		t.Fatal("full actual snapshot missing")
 	}
-	destinationDirectory := filepath.Join(base, "replacement")
-	if err := os.Mkdir(destinationDirectory, 0700); err != nil {
+	replacementStorage := filepath.Join(base, "replacement")
+	destinationDirectory := filepath.Join(replacementStorage, "serving-artifacts")
+	if err := os.MkdirAll(destinationDirectory, 0700); err != nil {
 		t.Fatal(err)
 	}
 	root := recoveryset.ObjectRoot{Kind: recoveryset.ObjectRootServingArtifact, URI: locator, Digest: digest, VersionID: snapshot, ProviderRecoveryFrontier: "restic:" + snapshot}
-	config := ResticConfig{TargetID: "target", RecoverySetID: "set", Root: root, StorageRoot: storage, Restic: program, Repository: repository, PasswordFile: password, Destination: filepath.Join(destinationDirectory, filepath.Base(source)), Manifest: manifest, ManifestDigest: manifestDigest}
+	config := ResticConfig{TargetID: "target", RecoverySetID: "set", Root: root, StorageRoot: storage, Restic: program, Repository: repository, PasswordFile: password, Destination: filepath.Join(destinationDirectory, filepath.Base(source)), Manifest: manifest, ManifestDigest: manifestDigest, ArtifactMetadata: &metadata}
 	restorer, err := NewRestic(config)
 	if err != nil {
 		t.Fatal(err)
@@ -85,9 +93,23 @@ func TestActualPinnedResticRestoresExactNativeArtifactFile(t *testing.T) {
 	if _, err := restorer.RestoreObject(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
+	restoredStore, err := objectstore.NewFilesystemStore(objectstore.FilesystemStoreConfig{Root: replacementStorage, StorageSecurityDomain: metadata.StorageSecurityDomain})
+	if err != nil {
+		t.Fatal(err)
+	}
 	restored, err := os.ReadFile(config.Destination)
-	if err != nil || !bytes.Equal(restored, data) {
+	original, originalErr := os.ReadFile(source)
+	if err != nil || originalErr != nil || !bytes.Equal(restored, original) {
 		t.Fatal("native artifact bytes differ")
+	}
+	object, err := restoredStore.Open(t.Context(), locator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := io.ReadAll(object.Body)
+	object.Body.Close()
+	if err != nil || !bytes.Equal(payload, data) {
+		t.Fatal("owner envelope parser did not retain actual payload")
 	}
 	if _, err := os.Lstat(filepath.Join(destinationDirectory, "another.tar.gz")); !os.IsNotExist(err) {
 		t.Fatal("another generation exposed")

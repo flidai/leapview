@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/recoveryset"
 )
 
@@ -28,7 +29,8 @@ func managedLocalHandoffFixture(t *testing.T) (recoveryset.RecoverySet, Replacem
 		entry := ManagedLocalRoot{Root: root, Destination: root.URI, ContentManifestDigest: "sha256:" + strings.Repeat("c", 64)}
 		if root.Kind == recoveryset.ObjectRootServingArtifact {
 			entry.StorageRoot = "/var/lib/leapview/artifacts"
-			entry.Destination = entry.StorageRoot + "/" + root.URI
+			entry.Destination = entry.StorageRoot + "/" + root.URI + ".lvobj"
+			entry.ArtifactMetadata = &objectstore.ObjectMetadata{StorageSecurityDomain: "managed-artifact-domain", Digest: root.Digest, SizeBytes: 123, ContentType: "application/gzip", MetadataDigest: "sha256:" + strings.Repeat("c", 64)}
 		}
 		handoff.ManagedLocal.Roots = append(handoff.ManagedLocal.Roots, entry)
 	}
