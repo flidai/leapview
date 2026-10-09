@@ -146,7 +146,7 @@ func TestFinalizeQualificationPerformanceRejectsFailedBaseline(t *testing.T) {
 		{"failed absolute assertion", "baseline assertions.absoluteBudgets", func(r *qualificationPerformanceReport) { r.Assertions.AbsoluteBudgets = false }},
 		{"failed error-free assertion", "baseline assertions.errorFree", func(r *qualificationPerformanceReport) { r.Assertions.ErrorFree = false }},
 		{"aggregate failure", "baseline failures", func(r *qualificationPerformanceReport) { r.Failures = []string{"baseline qualification failed"} }},
-		{"counted request error", "baseline reliability.errors", func(r *qualificationPerformanceReport) { r.Reliability.Errors = 1 }},
+		{"counted request error", "baseline reliability.errors", func(r *qualificationPerformanceReport) { r.Reliability.Errors = resourceEvidencePointer(1) }},
 		{"reliability failure", "baseline reliability.failures", func(r *qualificationPerformanceReport) {
 			r.Reliability.Failures = []string{"baseline browser console failure"}
 		}},

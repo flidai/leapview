@@ -108,6 +108,18 @@ used in a baseline comparison. An absolute-budget run without a supplied
 baseline leaves `assertions.comparisonTolerance` false; its success is not
 evidence that a regression comparison ran.
 
+Every phase also retains its raw measured durations with the same exact count.
+Null, missing, nonnumeric, nonfinite or negative observations fail; summaries must
+match nearest-rank percentiles rounded to 0.01 ms. Observed zero durations remain
+valid. The concurrency reader count must match the protocol and its measured wave
+must cover the longest query. Reliability counts must be present and nonnegative;
+the operation count must cover all warm, filter, table, query and concurrent
+operations, plus a creation and at least one poll per measured refresh. Additional
+polls are valid; browser error observations are not bounded by operation count.
+Worker schema, workload and sampling protocol are checked before recording the
+controller's authoritative budgets; disk, environment and image are also
+controller-owned inputs.
+
 Resource evidence uses `resources.schemaVersion: 1`. Unversioned aggregate-only
 reports and unknown resource protocols fail; they are not converted into complete
 evidence. The outer report and performance policy retain their existing version.
