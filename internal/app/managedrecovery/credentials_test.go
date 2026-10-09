@@ -136,6 +136,20 @@ func TestManagedTLSConfigDiscardsAmbientAuthorityAndPlaintextFallback(t *testing
 	}
 }
 
+func TestManagedTLSConfigPinsImplicitPortAndDiscardsAmbientSessionTarget(t *testing.T) {
+	_, credentials, roles := managedCredentialFixture(t)
+	t.Setenv("PGPORT", "5545")
+	t.Setenv("PGTARGETSESSIONATTRS", "read-write")
+	value := strings.Replace(credentials.ControlURL, ":5544/", "/", 1)
+	config, err := managedConnectionConfig(value, roles.Control, credentials.PostgresRootCA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Port != 5432 || config.Host != "postgres.leapview.dev" || config.User != roles.Control || config.Database != "control" || config.Password != "control-secret" || config.ValidateConnect != nil {
+		t.Fatal("implicit endpoint inherited ambient port or session authority")
+	}
+}
+
 func TestManagedPrivateBundleRoundTripRejectsTamperingLinksAndRemoteConsumption(t *testing.T) {
 	handoff, credentials, roles := managedCredentialFixture(t)
 	store := ManagedSecretStore{Root: t.TempDir()}

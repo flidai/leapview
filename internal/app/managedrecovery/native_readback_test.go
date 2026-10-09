@@ -25,6 +25,7 @@ func TestNativeManagedReadbackUsesRealSchemasTLSAndRuntimeRoles(t *testing.T) {
 	h := postgrestest.StartTLS(t)
 	controlRole := h.EnsureRole(t, postgrestest.Role{Name: "managed_control_reader", Password: "control-reader-password", Login: true})
 	duckRole := h.EnsureRole(t, postgrestest.Role{Name: "managed_duck_reader", Password: "duck-reader-password", Login: true})
+	ownerRole := h.EnsureRole(t, postgrestest.Role{Name: "managed_schema_owner"})
 	controlDB, duckDB := h.NewDatabase(t, ""), h.NewDatabase(t, "")
 	h.GrantDatabase(t, controlDB.Name, controlRole, "CONNECT")
 	h.GrantDatabase(t, duckDB.Name, duckRole, "CONNECT")
@@ -192,6 +193,33 @@ func TestNativeManagedReadbackUsesRealSchemasTLSAndRuntimeRoles(t *testing.T) {
 		defer controlAdmin.Exec(context.Background(), "ALTER ROLE managed_control_reader NOCREATEDB")
 		if _, err := readback.Verify(t.Context()); err == nil {
 			t.Fatal("privileged runtime role accepted")
+		}
+	})
+	t.Run("ordinary schema owner", func(t *testing.T) {
+		if _, err := controlAdmin.Exec(t.Context(), "ALTER SCHEMA delivery OWNER TO managed_control_reader"); err != nil {
+			t.Fatal(err)
+		}
+		defer controlAdmin.Exec(context.Background(), "ALTER SCHEMA delivery OWNER TO postgres; GRANT USAGE ON SCHEMA delivery TO managed_control_reader")
+		if _, err := readback.Verify(t.Context()); err == nil {
+			t.Fatal("ordinary nonsuperuser schema owner accepted as runtime")
+		}
+	})
+	t.Run("ordinary owner membership", func(t *testing.T) {
+		if _, err := controlAdmin.Exec(t.Context(), "ALTER SCHEMA delivery OWNER TO "+pgx.Identifier{ownerRole.Name}.Sanitize()+"; GRANT managed_schema_owner TO managed_control_reader"); err != nil {
+			t.Fatal(err)
+		}
+		defer controlAdmin.Exec(context.Background(), "ALTER SCHEMA delivery OWNER TO postgres; REVOKE managed_schema_owner FROM managed_control_reader; GRANT USAGE ON SCHEMA delivery TO managed_control_reader")
+		if _, err := readback.Verify(t.Context()); err == nil {
+			t.Fatal("ordinary schema-owner membership accepted as runtime")
+		}
+	})
+	t.Run("ordinary protected table owner", func(t *testing.T) {
+		if _, err := controlAdmin.Exec(t.Context(), "ALTER TABLE delivery.delivery_target OWNER TO managed_control_reader"); err != nil {
+			t.Fatal(err)
+		}
+		defer controlAdmin.Exec(context.Background(), "ALTER TABLE delivery.delivery_target OWNER TO postgres; GRANT SELECT ON delivery.delivery_target TO managed_control_reader")
+		if _, err := readback.Verify(t.Context()); err == nil {
+			t.Fatal("ordinary nonsuperuser protected table owner accepted as runtime")
 		}
 	})
 	if _, err := readback.Verify(t.Context()); err != nil {

@@ -140,9 +140,20 @@ func managedConnectionConfig(value, expectedRole, rootCA string) (*pgx.ConnConfi
 	// authority and session option used here; no plaintext/address fallback,
 	// client key, ambient root CA, pgpass or attacker-controlled SQL options.
 	config.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: parsed.Hostname()}
+	config.Host = parsed.Hostname()
+	config.Port = 5432
+	if port := parsed.Port(); port != "" {
+		integer, _ := strconv.ParseUint(port, 10, 16)
+		config.Port = uint16(integer)
+	}
+	config.Database = strings.TrimPrefix(parsed.Path, "/")
+	config.User = parsed.User.Username()
+	config.Password, _ = parsed.User.Password()
 	config.Fallbacks = nil
+	config.ValidateConnect = nil
 	config.ConnectTimeout = 10 * time.Second
 	config.RuntimeParams = map[string]string{"application_name": "leapview-managed-recovery", "default_transaction_read_only": "on", "statement_timeout": "15000"}
 	config.DialFunc = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
+	config.LookupFunc = net.DefaultResolver.LookupHost
 	return config, nil
 }
