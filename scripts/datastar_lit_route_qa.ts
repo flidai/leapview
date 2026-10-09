@@ -9,6 +9,7 @@ import {
   verifyDataExplorerResponsiveLayout,
 } from './datastar_lit_data_explorer_qa'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
+import { verifyDevelopAdminRouteState } from './datastar_lit_develop_admin_qa'
 
 type RouteExpectation = {
   path: string
@@ -18,6 +19,7 @@ type RouteExpectation = {
 
 type AccessibilityRoute = RouteExpectation & {
   label: string
+  qualifyCompactState?: boolean
 }
 
 const baseURL = Bun.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195'
@@ -30,6 +32,14 @@ const accessibilityRoutes: AccessibilityRoute[] = [
   { label: 'Dashboard', path: '/dashboards/dashboard:executive-sales/pages/overview', root: 'lv-dashboard-page', shell: true },
   { label: 'Visual Showcase', path: dashboardPath, root: 'lv-dashboard-page', shell: true },
   { label: 'Data Explorer', path: '/explore', root: 'lv-data-explorer', shell: true },
+  { label: 'Models', path: '/models', root: 'lv-project-page', shell: true, qualifyCompactState: true },
+  { label: 'Semantic models', path: '/semantic-models', root: 'lv-project-page', shell: true, qualifyCompactState: true },
+  { label: 'Pipelines', path: '/pipelines', root: 'lv-pipelines-page', shell: true, qualifyCompactState: true },
+  { label: 'Connections', path: '/connections', root: 'lv-connections-page', shell: true, qualifyCompactState: true },
+  { label: 'Personal profile', path: '/admin/profile', root: 'lv-admin-page', shell: true, qualifyCompactState: true },
+  { label: 'Administration', path: '/admin/general', root: 'lv-admin-page', shell: true, qualifyCompactState: true },
+  { label: 'Idle chat history', path: '/chats', root: 'lv-chat-page', shell: true, qualifyCompactState: true },
+  { label: 'Login', path: '/login', root: 'lv-login-page', shell: false, qualifyCompactState: true },
 ]
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const routes: RouteExpectation[] = [
@@ -163,14 +173,24 @@ async function verifyRoute(route: RouteExpectation): Promise<void> {
 
 async function verifyWCAGAccessibilityRoutes(): Promise<void> {
   for (const route of accessibilityRoutes) {
-    await verifyWCAGAccessibilityRoute(route)
+    await verifyWCAGAccessibilityRoute(route, { width: 1280, height: 820 })
+    if (route.qualifyCompactState) {
+      await verifyWCAGAccessibilityRoute(route, { width: 390, height: 900 })
+    }
   }
 }
 
-async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute): Promise<void> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 820 }, ...(storageState ? { storageState } : {}) })
+async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute, viewport: { width: number, height: number }): Promise<void> {
+  const context = await browser.newContext({ viewport, ...(route.path !== '/login' && storageState ? { storageState } : {}) })
   const page = await context.newPage()
   const messages = collectBlockingConsoleMessages(page)
+  const failures: string[] = []
+  const recordFailure = (message: string) => {
+    failures.push(message.slice(0, 1000))
+    if (failures.length > 20) failures.shift()
+  }
+  page.on('requestfailed', request => recordFailure(`${request.method()} ${new URL(request.url()).pathname}: ${request.failure()?.errorText ?? 'unknown transport failure'}`))
+  page.on('pageerror', error => recordFailure(error.message))
   const updates: string[] = []
   page.on('request', (request) => {
     if (new URL(request.url()).pathname === '/updates') updates.push(request.url())
@@ -179,6 +199,7 @@ async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute): Promise<
   try {
     const response = await page.goto(new URL(route.path, baseURL).toString(), { waitUntil: 'domcontentloaded' })
     if (!response?.ok()) throw new Error(`${route.label} accessibility scan (${route.path}): status ${response?.status() ?? 'unknown'}`)
+    if (new URL(page.url()).pathname !== route.path) throw new Error(`${route.path}: unexpected redirect to ${new URL(page.url()).pathname}`)
     await page.waitForSelector(route.root)
     await waitForUpdatesRequest(`${route.label} accessibility scan`, updates)
     await page.waitForFunction(({ root, dashboard }) => {
@@ -189,19 +210,38 @@ async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute): Promise<
     await page.locator(route.root).evaluate(async (element: any) => {
       if (element.updateComplete) await element.updateComplete
     })
-
-    const results = await new AxeBuilder({ page })
-      .withTags(wcagTags)
-      .analyze()
-    const blocking = blockingAxeViolations(results.violations)
-    const nonBlocking = nonBlockingAxeViolationDetails(results.violations)
-    if (nonBlocking.length > 0) {
-      console.log(`${route.label} (${route.path}): WCAG non-blocking findings: ${JSON.stringify(nonBlocking)}`)
+    if (route.root === 'lv-chat-page') {
+      // The page signal can precede the agent bootstrap. Scan the rendered
+      // history, rather than the transient loading shell, without sending a prompt.
+      await expect(page.locator('lv-chat-list').getByRole('heading', { name: 'Chats', exact: true })).toBeVisible()
     }
-    if (blocking.length > 0) throw new Error(formatAxeViolations(route, blocking))
+
+    const scan = async (state: string) => {
+      const label = `${route.label} / ${state} / ${viewport.width}x${viewport.height}`
+      const presentation = await page.evaluate(() => ({
+        path: window.location.pathname,
+        colorScheme: getComputedStyle(document.documentElement).colorScheme,
+        prefersDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+      }))
+      const results = await new AxeBuilder({ page }).withTags(wcagTags).analyze()
+      const blocking = blockingAxeViolations(results.violations)
+      const nonBlocking = nonBlockingAxeViolationDetails(results.violations)
+      if (nonBlocking.length > 0) {
+        console.log(`${label} (${route.path}): WCAG non-blocking findings: ${JSON.stringify(nonBlocking)}`)
+      }
+      if (blocking.length > 0) throw new Error(formatAxeViolations({ ...route, label }, blocking))
+      console.log(`${label} (${route.path}): WCAG scan passed ${JSON.stringify(presentation)}`)
+    }
+    await scan('hydrated page')
+    if (route.qualifyCompactState) {
+      await verifyDevelopAdminRouteState({ page, path: route.path, root: route.root, focusByTab, scan })
+    }
 
     assertNoBlockingConsoleMessages(`${route.label} accessibility scan`, messages)
-    console.log(`${route.label} (${route.path}): WCAG scan passed`)
+  } catch (error) {
+    const label = `${route.label} accessibility scan (${route.path}, ${viewport.width}x${viewport.height})`
+    const diagnostics = [...failures, ...messages.slice(-20)].join('\n')
+    throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}${diagnostics ? `\n${diagnostics}` : ''}`, { cause: error })
   } finally {
     await context.close()
   }

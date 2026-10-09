@@ -582,6 +582,7 @@ tasks:
     cmds:
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
+      - node --test desktop/scripts/lifecycle-probe-policy.test.mjs desktop/scripts/lifecycle-probe-cdp.test.mjs
       - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
@@ -605,6 +606,7 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_nix_candidate_manifest.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_qualification.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_desktop_attestation.py
+      - python3 -m unittest discover -s scripts/tests -p 'test_nix_desktop_lifecycle*.py'
       - python3 -m unittest discover -s scripts/tests -p test_nix_oci_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_registry_content.py
       - python3 -m unittest discover -s scripts/tests -p test_nix_signed_evidence.py
