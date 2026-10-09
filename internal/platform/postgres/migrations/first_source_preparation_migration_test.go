@@ -26,7 +26,7 @@ func TestFirstSourcePreparationMigrationUsesExclusiveReceiptSchemaAndRestrictsRo
 	}
 	defer db.Close()
 	source := make(fstest.MapFS)
-	for _, name := range []string{"048_credential_draft_storage.sql", "050_credential_validation_receipts.sql", "051_credential_activation_preparation.sql", "061_credential_activation_requests.sql", "063_credential_first_source_admission.sql", "064_credential_first_source_preparation.sql"} {
+	for _, name := range []string{"048_credential_draft_storage.sql", "050_credential_validation_receipts.sql", "051_credential_activation_preparation.sql", "062_credential_activation_requests.sql", "064_credential_first_source_admission.sql", "065_credential_first_source_preparation.sql"} {
 		body, err := fs.ReadFile(MigrationFS(), name)
 		if err != nil {
 			t.Fatal(err)
@@ -63,7 +63,7 @@ func TestFirstSourcePreparationMigrationUsesExclusiveReceiptSchemaAndRestrictsRo
 			t.Fatalf("unsafe %s grants %v/%v/%v/%v backup=%v/%v guarded=%v", table, read, insert, update, remove, backupRead, backupInsert, guarded)
 		}
 	}
-	body := string(source["064_credential_first_source_preparation.sql"].Data)
+	body := string(source["065_credential_first_source_preparation.sql"].Data)
 	start := strings.Index(body, "-- First-source source/publisher intent")
 	end := strings.Index(body, "-- +goose StatementEnd")
 	if start < 0 || end < start || !strings.Contains(credentialpostgres.SchemaSQL(), body[start:end]) {

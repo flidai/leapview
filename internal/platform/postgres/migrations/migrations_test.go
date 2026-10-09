@@ -43,7 +43,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"045_refresh_manual_intent.sql", "046_connection_upload_permission.sql", "047_saved_explorations.sql",
 		"048_credential_draft_storage.sql", "049_instance_customer_owner.sql", "050_credential_validation_receipts.sql",
 		"051_credential_activation_preparation.sql", "052_credential_activation_abort.sql", "053_credential_activation_switching.sql", "054_credential_activation_commit.sql", "055_compound_snapshot_grants.sql",
-		"056_saved_explorations.sql", "057_saved_visuals.sql", "058_unsave_visuals.sql", "059_managed_multipart_gc_reachability.sql", "060_credential_activation_completion.sql", "061_agent_credential_version_reference.sql", "062_credential_activation_requests.sql", "063_credential_envelope_rewrap.sql", "063_credential_first_source_admission.sql", "064_credential_first_source_preparation.sql",
+		"056_saved_explorations.sql", "057_saved_visuals.sql", "058_unsave_visuals.sql", "059_managed_multipart_gc_reachability.sql", "060_credential_activation_completion.sql", "061_agent_credential_version_reference.sql", "062_credential_activation_requests.sql", "063_credential_envelope_rewrap.sql", "064_credential_first_source_admission.sql", "065_credential_first_source_preparation.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}

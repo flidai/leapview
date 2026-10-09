@@ -26,7 +26,7 @@ func TestFirstSourceAdmissionMigrationRestrictsRolesAndPreservesCanonicalSchema(
 	}
 	defer db.Close()
 	source := make(fstest.MapFS)
-	for _, name := range []string{"048_credential_draft_storage.sql", "063_credential_first_source_admission.sql"} {
+	for _, name := range []string{"048_credential_draft_storage.sql", "064_credential_first_source_admission.sql"} {
 		body, err := fs.ReadFile(MigrationFS(), name)
 		if err != nil {
 			t.Fatal(err)
@@ -70,7 +70,7 @@ func TestFirstSourceAdmissionMigrationRestrictsRolesAndPreservesCanonicalSchema(
 	if !read || !insert || update || remove || !backupRead || backupInsert || publicRead || !guarded {
 		t.Fatalf("admission grants runtime=%v/%v/%v/%v backup=%v/%v public=%v guarded=%v", read, insert, update, remove, backupRead, backupInsert, publicRead, guarded)
 	}
-	body := string(source["063_credential_first_source_admission.sql"].Data)
+	body := string(source["064_credential_first_source_admission.sql"].Data)
 	start := strings.Index(body, "-- Immutable installation-operator admission")
 	end := strings.Index(body, "-- +goose StatementEnd")
 	if start < 0 || end < start || !strings.Contains(credentialpostgres.SchemaSQL(), body[start:end]) {
