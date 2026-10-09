@@ -283,6 +283,19 @@ test('fresh-host first publication uses a protected verifier and protected autho
   expect(hostGuest).not.toContain('public-proxy-gating')
 })
 
+test('fresh-host qualification exercises both production PostgreSQL profiles without duplicate artifacts', () => {
+  const host = composeCandidateWorkflow.jobs['host-qualification']
+  expect(host.strategy.matrix['postgres-profile']).toEqual(['external', 'bundled'])
+  expect(host.strategy.matrix.arch).toEqual(['amd64', 'arm64'])
+  expect(host.strategy.matrix['guest-os']).toEqual(['ubuntu2404', 'debian13'])
+  expect(host.strategy.matrix['install-mode']).toEqual(['bootstrap', 'nix-controller'])
+  const qualify = host.steps.find((step: any) => step.name?.includes('qualify a fresh disposable guest'))
+  expect(qualify.env.POSTGRES_PROFILE).toBe(ghExpr('matrix.postgres-profile'))
+  expect(qualify.run).toContain('--postgres-profile "$POSTGRES_PROFILE"')
+  const retain = host.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(retain.with.name).toContain(ghExpr('matrix.postgres-profile'))
+})
+
 test('Compose signer anchors every qualified copy to original build and pre-execution artifacts', () => {
   const { sign, 'verify-attestations': verify } = composeCandidateWorkflow.jobs
   expect(sign.needs).toEqual(['authorize', 'build-bundles', 'preflight', 'controller-evidence', 'qualify'])

@@ -1,0 +1,1674 @@
+{
+  "version": 1,
+  "duckdbVersion": "v1.5.4",
+  "duckdbSourceRevision": "08e34c447bae34eaee3723cac61f2878b6bdf787",
+  "bindingsVersion": "v0.10504.0",
+  "staticReleaseMatches": {
+    "amd64": {
+      "assetSHA256": "44edc1b55365624b4aa4a4f1d8087f75c4bfaceed4494b71059f54a8fa2f6e45",
+      "matchingStaticLibraries": [
+        {
+          "name": "libduckdb_fsst.a",
+          "sha256": "463b3c0a3f7d1a01d94571432d6f64cf04eeb48f6fb1f66a1d6734430da420cd"
+        },
+        {
+          "name": "libtpcds_extension.a",
+          "sha256": "8b49c3138cbb994d1c160437fe7ae7fb9dce05d11b531defbb1a5ff87ad74179"
+        },
+        {
+          "name": "libduckdb_zstd.a",
+          "sha256": "0664ed63a236877803ab4c525926b0272d751253d0bdb6b4f30f66a01d0b2963"
+        },
+        {
+          "name": "libduckdb_mbedtls.a",
+          "sha256": "e0f36b22cacbd495eebe68817b3c06717c3fb34dfba6d2ab8b11eca5823b366a"
+        },
+        {
+          "name": "libicu_extension.a",
+          "sha256": "84bd08fe3d746914535d5cc9ed9ec69ee654cdf04770630a067d19a76d977e66"
+        },
+        {
+          "name": "libtpch_extension.a",
+          "sha256": "67698d2ed4d300cbed81553ece89f4b951ab43613398c17151f8e41dbabcfe79"
+        },
+        {
+          "name": "libjson_extension.a",
+          "sha256": "a053d4031bdf487eb7a6ff0388949148f9f70c05e6cc6737aa2b54befb53c0a2"
+        },
+        {
+          "name": "libduckdb_miniz.a",
+          "sha256": "1ef16fd45f9ee99b9fb19693c65bde6589e45bf0584eba51dd1c5bf9773842b2"
+        },
+        {
+          "name": "libparquet_extension.a",
+          "sha256": "ac283b1a8d5d0e23060a78c139b966f3d1182d3e363da22b1466ea5ead40f624"
+        },
+        {
+          "name": "libduckdb_static.a",
+          "sha256": "773fad35a856e13e7e8069a94a90aa65fcc71d977f996922f6edda30eb15ca33"
+        },
+        {
+          "name": "libduckdb_fmt.a",
+          "sha256": "eae23ad27b66386072a6803185c2f32e428e24b379d737d49601834cb6034daa"
+        },
+        {
+          "name": "libduckdb_hyperloglog.a",
+          "sha256": "581e01c188ebe2c5e40e220b6bd2471bccc16fb2429fbb899af4aa50018580a9"
+        },
+        {
+          "name": "libduckdb_fastpforlib.a",
+          "sha256": "cc325660c6990f912c2aab80a8d57e27621bc0af60f0f7d05e9153f06ae3693e"
+        },
+        {
+          "name": "libautocomplete_extension.a",
+          "sha256": "fbc165ce86dae3be9ac121d2ccc52f565f31467ff8825fea2fbc71479c4b1b98"
+        },
+        {
+          "name": "libduckdb_yyjson.a",
+          "sha256": "49a95cfd454538b32f376845e9581629953d62098c02c37ed9188c4602230951"
+        },
+        {
+          "name": "libduckdb_utf8proc.a",
+          "sha256": "f3d4aacdb55f10c5b4dfce9f66e817487c47bace583cd9f4e4806eace758c552"
+        },
+        {
+          "name": "libduckdb_re2.a",
+          "sha256": "a9fce48d9317b5f3fcc03547f9bdf6855c7a118205b800ad6795234cf9023fb0"
+        },
+        {
+          "name": "libcore_functions_extension.a",
+          "sha256": "b3bf4088d6df9991f5bddc5129dc31d8252c9c1f2064ba874aff52741f142ff0"
+        },
+        {
+          "name": "libduckdb_pg_query.a",
+          "sha256": "3478464bf4b4375267013f6a68a25cda2bdab90b3f09f68594205e3a1c992cd7"
+        },
+        {
+          "name": "libduckdb_generated_extension_loader.a",
+          "sha256": "8bda29953a785c6be3457465a9d504c37e66b78408cc453c15b9c93681d52b61"
+        },
+        {
+          "name": "libduckdb_jemalloc.a",
+          "sha256": "1e213eecf31cba0eddefed99514f9b062db07805974a099cd9e9559c010d00d4"
+        },
+        {
+          "name": "libduckdb_skiplistlib.a",
+          "sha256": "74a46347c44963e564247b33a93169c530713b04a51ba15c6bbf1487f43b8ebc"
+        }
+      ]
+    },
+    "arm64": {
+      "assetSHA256": "68133154f3f62f5b8704656ece5b67989a3089537e4944e0b372518843155e62",
+      "matchingStaticLibraries": [
+        {
+          "name": "libduckdb_yyjson.a",
+          "sha256": "2c3bad701b503579a54464642bdca61768e36d8c8a502d035f03c663f3601332"
+        },
+        {
+          "name": "libjson_extension.a",
+          "sha256": "a2a2d7c25ab161a89ffb9860599b15f043317783a25f4604a95718e6ce8d8fd4"
+        },
+        {
+          "name": "libduckdb_utf8proc.a",
+          "sha256": "8e7a4de0a7ffecc06a7efdcc6b06f9e438fd6fc772a7c6118c64b96351fbdf95"
+        },
+        {
+          "name": "libduckdb_miniz.a",
+          "sha256": "d55761870121a9f23fd774d8353cecdcb8c08df3e4e76b196c550f66e191def2"
+        },
+        {
+          "name": "libduckdb_pg_query.a",
+          "sha256": "bd4c36eaae75fbb98dc72371b75b865377eb9754454861ceaa60323c6a5564f9"
+        },
+        {
+          "name": "libduckdb_generated_extension_loader.a",
+          "sha256": "160079a7d72d088f37ad5bf31524e80dddb8fa547bb06b46ed992b6a6ca2ba3f"
+        },
+        {
+          "name": "libduckdb_mbedtls.a",
+          "sha256": "83fce37bdec87fcbd04b729f521f88f926f0602d0f03c6ab73c0fcc9a589458e"
+        },
+        {
+          "name": "libduckdb_fmt.a",
+          "sha256": "960bdaedb843378c108649a8657da614ba94dac540ad9930ab6d271e32454976"
+        },
+        {
+          "name": "libduckdb_static.a",
+          "sha256": "1f8aa8f08ab85a0869772829cc7422a4842b7134e26eb4a1cbd4ef2fb07faa92"
+        },
+        {
+          "name": "libduckdb_fsst.a",
+          "sha256": "50517856cd428d4f040c87ce765666ba481b583b0bf5c9aba5c024b199d0eea1"
+        },
+        {
+          "name": "libautocomplete_extension.a",
+          "sha256": "35e0969fd8ee8404894b4f7d1f50b9d826e99a9dc02d517d756f449ce0f01ac0"
+        },
+        {
+          "name": "libduckdb_fastpforlib.a",
+          "sha256": "49c34314d9d7d521f2570719a20935d0a35c768043c55092d8d62708f47d7745"
+        },
+        {
+          "name": "libtpch_extension.a",
+          "sha256": "8d1892f00b2dbc87e9a086ed1bf0e0b3aa0f7f06234991f97841f69b32c25a2a"
+        },
+        {
+          "name": "libparquet_extension.a",
+          "sha256": "524f351a1c4ee7995f5950f97507983fa3fc929b94036c36478bf707a7f885d2"
+        },
+        {
+          "name": "libduckdb_zstd.a",
+          "sha256": "ba88e666179221d81d3fea87e812f3a9b2c1c027f562c7413fefe172e7c1f157"
+        },
+        {
+          "name": "libicu_extension.a",
+          "sha256": "3d265074bce248b23abd6fa5daaada35fde27587cf32c0554aa2daef0764191c"
+        },
+        {
+          "name": "libduckdb_skiplistlib.a",
+          "sha256": "fbb65d11c8dd3804d2e1f2d8010959bab5efd6e63d3b95d1c4036346a6ab360c"
+        },
+        {
+          "name": "libcore_functions_extension.a",
+          "sha256": "97b683df0474ce3d79b7ed0050b128631ee06b0d0015213a4e20a11ebb3c3b26"
+        },
+        {
+          "name": "libduckdb_jemalloc.a",
+          "sha256": "c4180cd4d76acc5c6d7329275f9fa8587553aece26fb0faf8836c9dde09bec7f"
+        },
+        {
+          "name": "libduckdb_hyperloglog.a",
+          "sha256": "83bb361b779b17d1186cfbe2d564718a39200c23566be61c46e999d521e0df56"
+        },
+        {
+          "name": "libtpcds_extension.a",
+          "sha256": "7f86613bb5dd2c2d12c8ce386f1810051f12c0fced1dd95de6fa186b39dda9ff"
+        },
+        {
+          "name": "libduckdb_re2.a",
+          "sha256": "ea6fc84ae48bf31184d0cdf2832d8d1faf2c6c017f7e407e4f66138f5af08522"
+        }
+      ]
+    }
+  },
+  "extensionRoots": [
+    {
+      "name": "avro",
+      "repository": "duckdb/duckdb-avro",
+      "sourceRevision": "f9d590297485f0318f480372c70bdd852826e258",
+      "signedVersion": "f9d5902",
+      "payloads": {
+        "linux/amd64": "sha256:a9171a93d12899ca01007c7e083c81f0710724cf26ed0fee0c6a27fd3210f279",
+        "linux/arm64": "sha256:91516d5a8cedead17d35a7b9b0a1fbfe8c3f335cbf639d7e700afb3cac40dbfd"
+      }
+    },
+    {
+      "name": "azure",
+      "repository": "duckdb/duckdb-azure",
+      "sourceRevision": "563589b2f24290a4dcdd4247eaedf2b544f9dbcd",
+      "signedVersion": "563589b",
+      "payloads": {
+        "linux/amd64": "sha256:d245454b603dec347764e7feb11c17353ca7d1d99fd329b60356b32b34bbd90d",
+        "linux/arm64": "sha256:4df1288da9db1cf582d588893337d038419fa31aeacb9efb193f9ae850267718"
+      }
+    },
+    {
+      "name": "delta",
+      "repository": "duckdb/duckdb-delta",
+      "sourceRevision": "45c40878601b54b4188b09e08732fe0d576ad222",
+      "signedVersion": "45c4087",
+      "payloads": {
+        "linux/amd64": "sha256:592af61bc87dc30aab40e3dbcfbe43341c4669c7efa6698a34b0b79a58ece232",
+        "linux/arm64": "sha256:bfaab897af48ebf221749191ce16e1f02eff793e3616e5c53f6757bb55e4dbb4"
+      }
+    },
+    {
+      "name": "ducklake",
+      "repository": "duckdb/ducklake",
+      "sourceRevision": "d318a545571d7d46eb751fa2aa5f6f4389285d3c",
+      "signedVersion": "d318a545",
+      "payloads": {
+        "linux/amd64": "sha256:00f72402c9c5d1f69c3329f38837f4abd100cddb7c69e76650f46bf35a17babe",
+        "linux/arm64": "sha256:f73ec9ab68a6de5c3c190cd1ecbba553a5791bf5821a991d70ea65abc5e45562"
+      }
+    },
+    {
+      "name": "excel",
+      "repository": "duckdb/duckdb-excel",
+      "sourceRevision": "f4c72b5ef04a03b3a78a95b5a2ee94ba93e3178d",
+      "signedVersion": "f4c72b5",
+      "payloads": {
+        "linux/amd64": "sha256:9d299334ece218ffabacda7d3cfa5b149cf7bd7b097826cf7b451d44d7e64ddc",
+        "linux/arm64": "sha256:fe8ffc44c7f3ed12de47fef6b1a62b2981ba528f63bbc715bfd103a20a32bd66"
+      }
+    },
+    {
+      "name": "httpfs",
+      "repository": "duckdb/duckdb-httpfs",
+      "sourceRevision": "c3f215ab360f04dc3d3d5305fa81849c0121f111",
+      "signedVersion": "c3f215a",
+      "payloads": {
+        "linux/amd64": "sha256:2e020c7e89b11364e413ddfab8b9ca870b1fc0a16eaf612c9445773ef68989ef",
+        "linux/arm64": "sha256:6d30a487968cbe5553b7272fd5bad0e4485c4117db96e21fd1e5e2a225a5a538"
+      }
+    },
+    {
+      "name": "iceberg",
+      "repository": "duckdb/duckdb-iceberg",
+      "sourceRevision": "757264559e745be697e9306e144e8889eb1dc024",
+      "signedVersion": "75726455",
+      "payloads": {
+        "linux/amd64": "sha256:9aa62a0e0ea0e10c694619a71c22a240a3dcd9d35d5c1879a393241143266841",
+        "linux/arm64": "sha256:321f957a3cdc04944086ce5013d70e86e7aa5b6c6ad8424d6da3890fc0ca4422"
+      }
+    },
+    {
+      "name": "lance",
+      "repository": "lance-format/lance-duckdb",
+      "sourceRevision": "350060612087e1138ffa1bbb11a535013558241a",
+      "signedVersion": "3500606",
+      "payloads": {
+        "linux/amd64": "sha256:df0901f075ffe91911a386767364118b10bce75f933f81f69ec47de7eea94fdb",
+        "linux/arm64": "sha256:81a9f544f9f56be18db46060baf596ab973e17b50785a1eb1edd4885908b2158"
+      }
+    },
+    {
+      "name": "mysql",
+      "repository": "duckdb/duckdb-mysql",
+      "sourceRevision": "37006e53a58ddc31eeb96ff95c21f3196e27fcf2",
+      "signedVersion": "37006e5",
+      "payloads": {
+        "linux/amd64": "sha256:e67dab11cdf9d433177517d30f7f425889f65b72233614cf78c9a7a62c417195",
+        "linux/arm64": "sha256:554ef47671c10a5616e6e1a2528f92117718e4046466d26dc30781e22f703cf9"
+      }
+    },
+    {
+      "name": "postgres",
+      "repository": "duckdb/duckdb-postgres",
+      "sourceRevision": "8f813f9b9c9e52a9074a050a0be60f49160a6baa",
+      "signedVersion": "8f813f9",
+      "payloads": {
+        "linux/amd64": "sha256:460ecb44641d9f0064002f2a0a49e3fe9e2fa1f13f43a00a59788f20bfd5fdd7",
+        "linux/arm64": "sha256:102f71e6d2e603b1056407410f981c7ec141375e1edd16f2cb61e901e9c6d617"
+      }
+    },
+    {
+      "name": "quack",
+      "repository": "duckdb/duckdb-quack",
+      "sourceRevision": "40de7badae4193c29d9c0834473fb76acc6c51e6",
+      "signedVersion": "40de7ba",
+      "payloads": {
+        "linux/amd64": "sha256:1f3a4a1ccaf5388c7b32ec8822c40cd29b9acb3ce69936212ac6fb6e5e22cc5d",
+        "linux/arm64": "sha256:52612f68c5c7f9a5e0f4316c01b8e81d7e9ed32171473e71cff279e7a353faa7"
+      }
+    },
+    {
+      "name": "spatial",
+      "repository": "duckdb/duckdb-spatial",
+      "sourceRevision": "28db190f7184bcf61eb01d291e0cba79849bddb6",
+      "signedVersion": "28db190",
+      "payloads": {
+        "linux/amd64": "sha256:819a0fa94d2e8257371bb4d97f32c47586b42c85e24bab1bcbf8712a88b8ccfa",
+        "linux/arm64": "sha256:af2547875834496f3112261631cc8d8c96ae67912edab6b4e3d5f4f7545e547a"
+      }
+    },
+    {
+      "name": "sqlite",
+      "repository": "duckdb/duckdb-sqlite",
+      "sourceRevision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+      "signedVersion": "494e9fe",
+      "payloads": {
+        "linux/amd64": "sha256:ec474084780c5e596c490822c17f2a6bfd42d1b59c6c0d156ff71629efe6e2ba",
+        "linux/arm64": "sha256:81135f8c3b4064bc5031c3bc08473a7224851461fa9a2b645ea8f851eba4a621"
+      }
+    },
+    {
+      "name": "vortex",
+      "repository": "vortex-data/duckdb-vortex",
+      "sourceRevision": "275ac230e1d9afd08926b6989ec2467f92fae6e3",
+      "signedVersion": "275ac23",
+      "payloads": {
+        "linux/amd64": "sha256:10d9edf0a430a2a56a9ee68ccd37a793a828f02c01cb3706d896cf1ea549ec3f",
+        "linux/arm64": "sha256:f2a915fdaf851cf55822c84b2740a05398a4baa7c63b1997b04cb7ad9f8610a3"
+      }
+    }
+  ],
+  "engineVendoredTrees": [
+    {
+      "name": "brotli",
+      "sourceTree": "b98679bf023fcfa69a86943482b560842cfcd06d"
+    },
+    {
+      "name": "catch",
+      "sourceTree": "253756176372747d61ffabd310cced1adf6105f2"
+    },
+    {
+      "name": "concurrentqueue",
+      "sourceTree": "242f1e891ae17fae48618d52b869330432ae616f"
+    },
+    {
+      "name": "fast_float",
+      "sourceTree": "8a6193adc187cd2e303c795e9161702c389f616e"
+    },
+    {
+      "name": "fastpforlib",
+      "sourceTree": "1fb61b033c74fa19eb6294ad48d54e5722675a67"
+    },
+    {
+      "name": "fmt",
+      "sourceTree": "0b215d28520af3b0c66ea7bba0782f4777fc3304"
+    },
+    {
+      "name": "fsst",
+      "sourceTree": "2ef306c23c6b85d3e6bb341b22a5156b82a7e198"
+    },
+    {
+      "name": "httplib",
+      "sourceTree": "8d58abb621c2eaba9647f104a592155d6d5142b3"
+    },
+    {
+      "name": "hyperloglog",
+      "sourceTree": "c7e0f42b2011d6585f344c7a78f3b354beff1347"
+    },
+    {
+      "name": "imdb",
+      "sourceTree": "3de4c3a6a2c5af6821201383febf69f535594b2a"
+    },
+    {
+      "name": "jaro_winkler",
+      "sourceTree": "25bc4edfe8729115ef335e5f3ffaa1c1e0fc5688"
+    },
+    {
+      "name": "jemalloc",
+      "sourceTree": "9a207cd13f6f988d963accb0d11b59979ec590b1"
+    },
+    {
+      "name": "libpg_query",
+      "sourceTree": "a6917436c04049b6658bd8ef33c45e88c06ada82"
+    },
+    {
+      "name": "lz4",
+      "sourceTree": "47659754ef0c884322805a3fcf29336073f1dafb"
+    },
+    {
+      "name": "mbedtls",
+      "sourceTree": "e56cc14c574917438f244fc926e62ee8b41bdd82"
+    },
+    {
+      "name": "miniz",
+      "sourceTree": "7c9ec98b95790c871c92d5e72bf581f49d199158"
+    },
+    {
+      "name": "parquet",
+      "sourceTree": "067c61179ffdbfb67497810cad8b911e39d2083f"
+    },
+    {
+      "name": "pcg",
+      "sourceTree": "fb9169ed9b46b1add1c11945a891a77d7a81709c"
+    },
+    {
+      "name": "pdqsort",
+      "sourceTree": "9f2be9c73ff9deea2590703ce3d1ec57d244423e"
+    },
+    {
+      "name": "re2",
+      "sourceTree": "8ca0023ecdeca5a6f5e9b17c5531930507be113a"
+    },
+    {
+      "name": "ska_sort",
+      "sourceTree": "f9e46f02d448a38fc6471b9c170c4355399f0b00"
+    },
+    {
+      "name": "skiplist",
+      "sourceTree": "fdf0fdcb15b0ef1fdf142f5643a7cfcf130bc1b0"
+    },
+    {
+      "name": "snappy",
+      "sourceTree": "2b52eb9f4a65bbc69ba81a8a4e39f69bfd521e77"
+    },
+    {
+      "name": "snowball",
+      "sourceTree": "e398513eb36e073108af6df5f19e710da33592a7"
+    },
+    {
+      "name": "tdigest",
+      "sourceTree": "924171b358c315c0e2f88226f8e147b0425cbeed"
+    },
+    {
+      "name": "thrift",
+      "sourceTree": "cbfd9f7d7eb15efa8e3a93e3eeeace7ebb8e608d"
+    },
+    {
+      "name": "utf8proc",
+      "sourceTree": "14c62e449c235e626c4fb4006d342332bb8e3a16"
+    },
+    {
+      "name": "vergesort",
+      "sourceTree": "8224ab84109356f577bf3dabc0f34dc7111bdf92"
+    },
+    {
+      "name": "yyjson",
+      "sourceTree": "a7ecc3c3a7689604069cf7eadcaadef89ca45643"
+    },
+    {
+      "name": "zstd",
+      "sourceTree": "4cdc30a279c84f104164ee47db28c195f696c2ff"
+    }
+  ],
+  "sources": [
+    {
+      "name": "extensions/avro",
+      "repository": "https://github.com/duckdb/duckdb-avro",
+      "sourceRevision": "f9d590297485f0318f480372c70bdd852826e258",
+      "files": [
+        {
+          "path": "extensions/avro/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:e24d75577230e88ebd237659bdc5dc166f7965d8a47d9fb053f5f954f38afcb1",
+          "gitBlob": "b3de36d704de0cfa7e8316e10bf2a65495ebc4f0"
+        },
+        {
+          "path": "extensions/avro/.gitmodules",
+          "sha256": "sha256:9e36d1ec63016d45b9a4c0ec2923e242a90e55df327f52bce3d92687fe1ef9d0",
+          "gitBlob": "86e8a7ee5a435b7a5eb58db025a35efb8c1eae20"
+        },
+        {
+          "path": "extensions/avro/CMakeLists.txt",
+          "sha256": "sha256:79aa19f57c95dfd7306bf9b526126b24a3157be3bab8a861945a476a7e117e24",
+          "gitBlob": "610eb2cacd3933b3f3dabf096f9fe5fcbd2e598c"
+        },
+        {
+          "path": "extensions/avro/Makefile",
+          "sha256": "sha256:0966c79c50c9446dc5c926f5f2a1a2615c3ce3c176f1402da41c87f9d086944f",
+          "gitBlob": "2e88b51bdfa2ed0ae4f067095e8f1e81b143d05c"
+        },
+        {
+          "path": "extensions/avro/vcpkg.json",
+          "sha256": "sha256:0fc2cd55cf57a2bc00093805b8e56ccaa33e9c0024ee14c2efce3b471ab33020",
+          "gitBlob": "69e4960d54cf93bcbe32ca0396c67aef0b1ca495"
+        },
+        {
+          "path": "extensions/avro/vcpkg_ports/liblzma/vcpkg.json",
+          "sha256": "sha256:fa72a9d3eb35f64d2b72b38851c014e2f99229f1b060a61bbab1a7d45be061f8",
+          "gitBlob": "b75fef920d75d477fa2f3d1a3f095ade0c8baed8"
+        },
+        {
+          "path": "extensions/avro/vcpkg_ports/snappy/vcpkg.json",
+          "sha256": "sha256:7094f02e2eae748cbd3603ebe5e8e2807cc89948dae69b38fef98d439ff811f8",
+          "gitBlob": "5b84796338b43ccb85e37ad035c3e9a68c7d5526"
+        },
+        {
+          "path": "extensions/avro/vcpkg_ports/zlib/vcpkg.json",
+          "sha256": "sha256:4e7685b68ec377aca428829bbba1753647ea08244bcfa2008b702b0568fa4463",
+          "gitBlob": "d0d939fef2979e67ec5bd7de61350c1f846c9c59"
+        }
+      ]
+    },
+    {
+      "name": "extensions/azure",
+      "repository": "https://github.com/duckdb/duckdb-azure",
+      "sourceRevision": "563589b2f24290a4dcdd4247eaedf2b544f9dbcd",
+      "files": [
+        {
+          "path": "extensions/azure/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:ef55c10c103f85c8e80fb1ba34aa273e7e05685fa4bf05a51c6c944e488d3a3e",
+          "gitBlob": "2824230b8979b9c2b0e8ebffcf4151a7961ea7a1"
+        },
+        {
+          "path": "extensions/azure/.gitmodules",
+          "sha256": "sha256:75c0593cc949df77737df3a3df0cc72e743232cf1d716d1897da8044502a5168",
+          "gitBlob": "3efaa063ef6802ef1ddb9659ddce12a2798d9814"
+        },
+        {
+          "path": "extensions/azure/CMakeLists.txt",
+          "sha256": "sha256:5c2c297b5e9e997f142abc4b25d2d633ee8750267301e9f58d4b1091e363a172",
+          "gitBlob": "6f2c2914411c7b2c76afd850f4d2b75ddcbef263"
+        },
+        {
+          "path": "extensions/azure/Makefile",
+          "sha256": "sha256:c6b660b40f50d45fe236bb7a07c8226f38be99c2d1a7272b01e6ce737510f403",
+          "gitBlob": "81a8420d74994f046e7999c850eaae3f37c7762e"
+        },
+        {
+          "path": "extensions/azure/vcpkg.json",
+          "sha256": "sha256:9ee5aba4842df0bebffb5c2d3393e68d37f3e0b488b1f4b68749fcdeaa0ea353",
+          "gitBlob": "e3f4654b40871a970936a4d011573771ef77ac71"
+        }
+      ]
+    },
+    {
+      "name": "extensions/delta",
+      "repository": "https://github.com/duckdb/duckdb-delta",
+      "sourceRevision": "45c40878601b54b4188b09e08732fe0d576ad222",
+      "files": [
+        {
+          "path": "extensions/delta/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:93e07b90ddad66243ab41492fc48981c9ecf0c758d6c35a026c61aeae736dde4",
+          "gitBlob": "b3be4b996a9cb5a188105c60e399a1ce56d7adcd"
+        },
+        {
+          "path": "extensions/delta/.gitmodules",
+          "sha256": "sha256:d6decbba059cac201ef0dc328cd0f6ca454d4d59cc01d735e49687249ecd6dc7",
+          "gitBlob": "859dbd957430f1cf042b2d66acc8cddb91280c1d"
+        },
+        {
+          "path": "extensions/delta/CMakeLists.txt",
+          "sha256": "sha256:d1ec11b292d2805751e87e7fbaf9081cb0c5b219d3300f8f613e704e93eceac0",
+          "gitBlob": "e9a2a17b8c961ef1b62a8786426029ad0fdeacaf"
+        },
+        {
+          "path": "extensions/delta/Makefile",
+          "sha256": "sha256:47431b571a084d6d9244e2cf5539888f1a711349674d0b996299ca104216ae74",
+          "gitBlob": "f6d3e3a0af3c48fed2cea95122592500375b88de"
+        },
+        {
+          "path": "extensions/delta/vcpkg.json",
+          "sha256": "sha256:9d51b2bcb4c9f509aa39d9d652392d3ea3ad3864b1b4612ddb09d54433b740dc",
+          "gitBlob": "4a7d48581e32248163848526dc604d256032544a"
+        }
+      ]
+    },
+    {
+      "name": "extensions/ducklake",
+      "repository": "https://github.com/duckdb/ducklake",
+      "sourceRevision": "d318a545571d7d46eb751fa2aa5f6f4389285d3c",
+      "files": [
+        {
+          "path": "extensions/ducklake/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:65c5ab141645cbf0c01311637f72957e5c93eb0ed6e314f09601470390368702",
+          "gitBlob": "924fc2dbb70698e4a90aa6d5cf22e1d292b7a2f9"
+        },
+        {
+          "path": "extensions/ducklake/.gitmodules",
+          "sha256": "sha256:2ed0cacdd6581b3695eef356e33ac75f83889a52b05b2f8630d18798139dee7d",
+          "gitBlob": "01b02cb4f79ef65c9b814dc34585db0e600ecad9"
+        },
+        {
+          "path": "extensions/ducklake/CMakeLists.txt",
+          "sha256": "sha256:5e3ca4f743af248bb37931cf7fcce234f24c8bf81bba8227e5091894e424b3f0",
+          "gitBlob": "92773c92b422f5efe88873448e779f692a7b747b"
+        },
+        {
+          "path": "extensions/ducklake/Makefile",
+          "sha256": "sha256:7c497f7ba29aa505433572ee97856990e74a22d42d3bea7587a74176570cb761",
+          "gitBlob": "78732f34759ac93122f78c122229a6521bc94f15"
+        },
+        {
+          "path": "extensions/ducklake/src/CMakeLists.txt",
+          "sha256": "sha256:385a8452f6c58584ce1dc438af150b73c898aa60883576682333d64051f7fa05",
+          "gitBlob": "338ea7834b1d3895f6f4f76461f91027578b1f3d"
+        },
+        {
+          "path": "extensions/ducklake/vcpkg.json",
+          "sha256": "sha256:8218bbb2fa7a864a0fab8f3147b66e183c87c21ca7e9d65f8282ece849fd7dd9",
+          "gitBlob": "fa76d31707675226b5604e1fff6672228c5a2683"
+        }
+      ]
+    },
+    {
+      "name": "extensions/excel",
+      "repository": "https://github.com/duckdb/duckdb-excel",
+      "sourceRevision": "f4c72b5ef04a03b3a78a95b5a2ee94ba93e3178d",
+      "files": [
+        {
+          "path": "extensions/excel/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:e063491023df667b586149733040574f6dedbfb3ed32d9941fc8c79185138c6b",
+          "gitBlob": "400e99a745db5d705f8fe33ab5907129aaffa7e7"
+        },
+        {
+          "path": "extensions/excel/.gitmodules",
+          "sha256": "sha256:bbbd55ee835b0441f17629c9834c98b32e1ab2775ab0f9421997ad9fb2ce4377",
+          "gitBlob": "45589912916b292228790103fac480a0e4201330"
+        },
+        {
+          "path": "extensions/excel/CMakeLists.txt",
+          "sha256": "sha256:7428aab6bf83c421fb1696e38d0d75940ae6b8c199c8ac5a468fa43e7aa319da",
+          "gitBlob": "981de80b80b0dc062124b044638a2d030c7b713d"
+        },
+        {
+          "path": "extensions/excel/Makefile",
+          "sha256": "sha256:cc634d582baf4c4ee3683401ff5b9fa1cd0077255977254e968d6341a699c2f0",
+          "gitBlob": "a8ea67dbfd15f0130e615a0c627ef5c8a794794d"
+        },
+        {
+          "path": "extensions/excel/vcpkg.json",
+          "sha256": "sha256:9be155a4d6aecfb0ab2363584e3df4ab2df91be4af30514ec4197e0333e5cbb6",
+          "gitBlob": "b7540a54384ef61b2221d61c2f69086de9c55f46"
+        },
+        {
+          "path": "extensions/excel/vcpkg_ports/expat/vcpkg.json",
+          "sha256": "sha256:b25dba63a7e7aca258970628b923934d4b2c0b8292d10fcf9ad7ceb4bd774c16",
+          "gitBlob": "f3827e51662edc701f6b231f830c7e9c27211c94"
+        },
+        {
+          "path": "extensions/excel/vcpkg_ports/minizip-ng/vcpkg.json",
+          "sha256": "sha256:12a3f5be5dab2f2430e608c1e126f9e49270c3417981e61c560e56f9d73f2054",
+          "gitBlob": "5126e4f80eaf1110ddaf64cb4c77fd541e5163ad"
+        },
+        {
+          "path": "extensions/excel/vcpkg_ports/zlib/vcpkg.json",
+          "sha256": "sha256:8ad7072167e1bf56d2ed531e43ecc95026d5b305ed0393140d5ec78f5c6b6c00",
+          "gitBlob": "f54a99d43e600ceea175205850560f6dd37ea6cf"
+        }
+      ]
+    },
+    {
+      "name": "extensions/httpfs",
+      "repository": "https://github.com/duckdb/duckdb-httpfs",
+      "sourceRevision": "c3f215ab360f04dc3d3d5305fa81849c0121f111",
+      "files": [
+        {
+          "path": "extensions/httpfs/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:3af2898709d89c2a3a7828ac5ef004b3c065974f0534578e40162d2d2b5bcc2a",
+          "gitBlob": "7b20de83d863df710256314d584e254810088f6b"
+        },
+        {
+          "path": "extensions/httpfs/.gitmodules",
+          "sha256": "sha256:bbbd55ee835b0441f17629c9834c98b32e1ab2775ab0f9421997ad9fb2ce4377",
+          "gitBlob": "45589912916b292228790103fac480a0e4201330"
+        },
+        {
+          "path": "extensions/httpfs/CMakeLists.txt",
+          "sha256": "sha256:1142513f5ea5e474935ebd96443029ba7bccefe26a36836444de6c7b04b816d3",
+          "gitBlob": "6954beba38929a1a05752912425938f32e61bf42"
+        },
+        {
+          "path": "extensions/httpfs/Makefile",
+          "sha256": "sha256:41421109f6a07c8101c01a175c92873966426af230fba2f9e35e097243741af7",
+          "gitBlob": "d28cea4c2988ab6804aead8262cc08914687a6ea"
+        },
+        {
+          "path": "extensions/httpfs/src/CMakeLists.txt",
+          "sha256": "sha256:0050ac6046b24e22e717e582128cd2aaf8c65851ab77442af206061e6c5b155c",
+          "gitBlob": "ef57ab8d3b9f745bc2d530c3fa7e15a48ce815aa"
+        },
+        {
+          "path": "extensions/httpfs/src/vcpkg.json",
+          "sha256": "sha256:75f7107cf26020fdcf9de1f0d1361dea8a0a2027f2476fc1f4fb06c994a3b7e7",
+          "gitBlob": "85936bf44cc4c2bce37cf5b4d16105d14832dd0a"
+        },
+        {
+          "path": "extensions/httpfs/vcpkg.json",
+          "sha256": "sha256:b5e8c3f85cac7949aab41270b29281c904c398616c3ebfcbc2fe5a4cb4fcc115",
+          "gitBlob": "809e67b19597961425232731737bcb9f548e6c91"
+        }
+      ]
+    },
+    {
+      "name": "extensions/iceberg",
+      "repository": "https://github.com/duckdb/duckdb-iceberg",
+      "sourceRevision": "757264559e745be697e9306e144e8889eb1dc024",
+      "files": [
+        {
+          "path": "extensions/iceberg/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:7cf8b2594d0bce64cc0062d332cb18f52323f4d793cae01b5613f2153364208c",
+          "gitBlob": "ea3aab2c3cb057edea321a0a98847e5bdea175f2"
+        },
+        {
+          "path": "extensions/iceberg/.gitmodules",
+          "sha256": "sha256:3a1ee1273d696dd4371c5eac9faa974f7f226e5cf80c0ea0b99c45072ed15816",
+          "gitBlob": "dd490ea868ab674dacbb74a32f5b2c7ebbab508e"
+        },
+        {
+          "path": "extensions/iceberg/CMakeLists.txt",
+          "sha256": "sha256:06c252f06a9293fac3bb037d9209759637953305b866fa565f5fd4c5a0a51c0b",
+          "gitBlob": "c3cd7cb25d630c7abedf04cb102fb6a3da69dcab"
+        },
+        {
+          "path": "extensions/iceberg/Makefile",
+          "sha256": "sha256:204414abd0e2c9339bfec1f69f793f110a8ee13434d1ad1c55cbba7116b93643",
+          "gitBlob": "a6b7b053db64f053b296b8a21c765c9bda7b7410"
+        },
+        {
+          "path": "extensions/iceberg/vcpkg.json",
+          "sha256": "sha256:232322ac9feaed4c9fb5abdc4d4ff1a5ee33edceb0aa9bc6b8643ff158d9e73e",
+          "gitBlob": "d39c888711c2a56252935ca2a55b513da3a11eea"
+        },
+        {
+          "path": "extensions/iceberg/vcpkg_ports/aws-c-io/vcpkg.json",
+          "sha256": "sha256:e4af296db5fdc13215b24578e5892da90b9a6a8b040e8988cab76449a44ff9fd",
+          "gitBlob": "d79d80358d1a0c9699fcd2cb968414bb8db1c6d0"
+        }
+      ]
+    },
+    {
+      "name": "extensions/lance",
+      "repository": "https://github.com/lance-format/lance-duckdb",
+      "sourceRevision": "350060612087e1138ffa1bbb11a535013558241a",
+      "files": [
+        {
+          "path": "extensions/lance/.github/workflows/Distribution.yml",
+          "sha256": "sha256:ab4eff14bb0c2e636213b8dfe656d3b080ce5ede7134a99f7ec741e86d9e7fb0",
+          "gitBlob": "7e444efa127fe358178c3dd49b9911b18537061f"
+        },
+        {
+          "path": "extensions/lance/.gitmodules",
+          "sha256": "sha256:f46278bed2887ff733f4b8174dd17956e4abf021c7a6c57cbc857cb7b299063e",
+          "gitBlob": "a961779c77a99df2317e4525f0197f6b3e4867c0"
+        },
+        {
+          "path": "extensions/lance/CMakeLists.txt",
+          "sha256": "sha256:d3699ed1d9032a24cda8df8ea6eedb1c9ab1bc49b8fc3a106246f1c03269f5b3",
+          "gitBlob": "158d63f59b5529ced9e4d11bb2da251390a146b3"
+        },
+        {
+          "path": "extensions/lance/Cargo.lock",
+          "sha256": "sha256:89c9b4cf6d767ed2c46369bcb495a6df102630ccfe0ee8cf3eadab6f938d418a",
+          "gitBlob": "34d776062f24d5c82446939e43da89c980eeba98"
+        },
+        {
+          "path": "extensions/lance/Cargo.toml",
+          "sha256": "sha256:5ce51b68eb119f2fe1aa68f1166eaab1085a12c8ef5c15c27317ef8284516eb7",
+          "gitBlob": "44a477d0937ce286a784dc04b84449b7801cdb28"
+        },
+        {
+          "path": "extensions/lance/Makefile",
+          "sha256": "sha256:1ea216864aae8a212b702285da76550fa108da4863756793e8129568f5c14120",
+          "gitBlob": "fd7506ac4df888cd3bd68f4141e852cb862dbdde"
+        },
+        {
+          "path": "extensions/lance/vcpkg.json",
+          "sha256": "sha256:eeb793c93fc6ff24076817c5442b6fa875a561d4bb02a2c9c4d51451938edaa1",
+          "gitBlob": "cd7851a2b8ebda98ac3661ec058c96543e574df9"
+        }
+      ]
+    },
+    {
+      "name": "extensions/mysql",
+      "repository": "https://github.com/duckdb/duckdb-mysql",
+      "sourceRevision": "37006e53a58ddc31eeb96ff95c21f3196e27fcf2",
+      "files": [
+        {
+          "path": "extensions/mysql/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:c09120098aeb9c908db957d6b4471a083b85538fd4e4cb43af500e6fd24a6d7b",
+          "gitBlob": "73244602f60d6d3a1ac655866bf45f78079b76d5"
+        },
+        {
+          "path": "extensions/mysql/.gitmodules",
+          "sha256": "sha256:e6e5c4cf5e37767d580728079154a97161b0075e4cfc65144055940c6c4062a6",
+          "gitBlob": "a60386f2512a3462ed7fbd606f39cc178e89cf7e"
+        },
+        {
+          "path": "extensions/mysql/CMakeLists.txt",
+          "sha256": "sha256:2dd923f770d812a9030d51e78eb2f6c7e40b2e068ed50173f63c040a6bd6f8c3",
+          "gitBlob": "02a6321f0926393188f1c9c4ecc70c759398fa3a"
+        },
+        {
+          "path": "extensions/mysql/Makefile",
+          "sha256": "sha256:ebc2453d6e13c295d319838b70844fd74a794608e5a956469462bf50920c38b7",
+          "gitBlob": "f68768e413646b3055e1698445d20e384613addb"
+        },
+        {
+          "path": "extensions/mysql/src/CMakeLists.txt",
+          "sha256": "sha256:99f0291e5196d4b184c0e18cda700a623d843a085217797af930f245f93cff3d",
+          "gitBlob": "32d86fd6ff55eee11b388d92594ccc86338889ac"
+        },
+        {
+          "path": "extensions/mysql/vcpkg.json",
+          "sha256": "sha256:7da0eab35f3854d95782b67fb738074189b9b1c99a44397f0ea328dc8a4641d0",
+          "gitBlob": "a8a85743668e7659a6526e7dbd2063dda139a1ce"
+        },
+        {
+          "path": "extensions/mysql/vcpkg_ports/libmariadb/vcpkg.json",
+          "sha256": "sha256:4987022a2858d17729451eb2591e1ab889b861a8b8aa9c22c49eea813b1d268e",
+          "gitBlob": "014446b63da03e6911596bc2156e7318fd980b64"
+        }
+      ]
+    },
+    {
+      "name": "extensions/postgres",
+      "repository": "https://github.com/duckdb/duckdb-postgres",
+      "sourceRevision": "8f813f9b9c9e52a9074a050a0be60f49160a6baa",
+      "files": [
+        {
+          "path": "extensions/postgres/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:39f514143bd1eed32ed3fd1b08e450d6b661fd797417841bdabfd006602324c0",
+          "gitBlob": "8743340dc764b8c41b16e300aa6d5f1ceaa1d700"
+        },
+        {
+          "path": "extensions/postgres/.gitmodules",
+          "sha256": "sha256:b4dc267744eed95af35bf387944f6555830982906c802f1726839a3ef56ed99d",
+          "gitBlob": "ac125b1d236692fe8b19dd545599e671e4035404"
+        },
+        {
+          "path": "extensions/postgres/CMakeLists.txt",
+          "sha256": "sha256:158d050a3ce2387ebdf887d2970500d0bcd346cac0fc35242a74d4617bbd808f",
+          "gitBlob": "b30ca04a767a29720513f9155d13336329bd5a90"
+        },
+        {
+          "path": "extensions/postgres/Makefile",
+          "sha256": "sha256:db3d7e566277b8f074837474d4925bd7d5617355466f9260226bf3209881732b",
+          "gitBlob": "58d38a78649349087174ffb5be852d0997a8ad2e"
+        },
+        {
+          "path": "extensions/postgres/src/CMakeLists.txt",
+          "sha256": "sha256:14f32b60e22731941032cbf89ba4dfe8f79f643c30939815a2f1b3c3e83fcdb5",
+          "gitBlob": "1dc8d444e9ef54c7baf443a2f7c692c6f12296ce"
+        },
+        {
+          "path": "extensions/postgres/vcpkg.json",
+          "sha256": "sha256:4e0220805f4749e1322157ed986369bf1ceebac0b443edf7a97ade2494fdf117",
+          "gitBlob": "fb16ba635ed9a253edf5b6bb4dee731a8d1e66d3"
+        },
+        {
+          "path": "extensions/postgres/vcpkg_ports/libpq/vcpkg.json",
+          "sha256": "sha256:7d05a42852885c6c235a73e70a247e79f3b3fd36db18ede78a43245b8a176167",
+          "gitBlob": "782747bdaa4b745b7dde25396ee432dfefb39f46"
+        }
+      ]
+    },
+    {
+      "name": "extensions/quack",
+      "repository": "https://github.com/duckdb/duckdb-quack",
+      "sourceRevision": "40de7badae4193c29d9c0834473fb76acc6c51e6",
+      "files": [
+        {
+          "path": "extensions/quack/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:50eee27a08f9b376ebdf010a8490b5052e5b9e3b6ebab4d7c88ff8683f6f607b",
+          "gitBlob": "9009b77bae496e182c9fb6472f50b7b2ace80efd"
+        },
+        {
+          "path": "extensions/quack/.gitmodules",
+          "sha256": "sha256:9e36d1ec63016d45b9a4c0ec2923e242a90e55df327f52bce3d92687fe1ef9d0",
+          "gitBlob": "86e8a7ee5a435b7a5eb58db025a35efb8c1eae20"
+        },
+        {
+          "path": "extensions/quack/CMakeLists.txt",
+          "sha256": "sha256:9fd9c2d21d81b27ff62c832617cc88254fea484863ae1475fb4ab7d0b57fe66a",
+          "gitBlob": "5412cc685de06b2206e0585681ff29f805da3959"
+        },
+        {
+          "path": "extensions/quack/Makefile",
+          "sha256": "sha256:ed121d7626219f4312e0d53c40963389f637096b69d60cb54f5932c74b80af88",
+          "gitBlob": "3f5fd6c998db9a3b532935173f563c9c34edccac"
+        },
+        {
+          "path": "extensions/quack/src/CMakeLists.txt",
+          "sha256": "sha256:6be5ab08023e4aaaa8e3a6ece4ecdf78229e6a4728cfcf2129758339831b1bd9",
+          "gitBlob": "f4aa51a61d51339afa1180ff3eabbedca4342719"
+        },
+        {
+          "path": "extensions/quack/vcpkg.json",
+          "sha256": "sha256:e0f772bee5b293ff7394e3f86933850c173c4a4418afdc737f81d93290355003",
+          "gitBlob": "f8cd3b60e0b10ff5b952f4a4caf4ac9a59b99f5b"
+        }
+      ]
+    },
+    {
+      "name": "extensions/spatial",
+      "repository": "https://github.com/duckdb/duckdb-spatial",
+      "sourceRevision": "28db190f7184bcf61eb01d291e0cba79849bddb6",
+      "files": [
+        {
+          "path": "extensions/spatial/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:e7b66a53b0bff3a821997a552a8e79faae6777994a90ee1105b8a5a2bbbf06ef",
+          "gitBlob": "cb397f60fd0869f5ed9db82d79497c81c07b973e"
+        },
+        {
+          "path": "extensions/spatial/.gitmodules",
+          "sha256": "sha256:bbbd55ee835b0441f17629c9834c98b32e1ab2775ab0f9421997ad9fb2ce4377",
+          "gitBlob": "45589912916b292228790103fac480a0e4201330"
+        },
+        {
+          "path": "extensions/spatial/CMakeLists.txt",
+          "sha256": "sha256:e8f6922036fa2eda9b18d0f712ad30ed203590cf82a924061240fc205fe8c02e",
+          "gitBlob": "93c0fcf391cc7b0cf7b2000974dbac6eed65fc51"
+        },
+        {
+          "path": "extensions/spatial/Makefile",
+          "sha256": "sha256:29cf3ccd521c27cfed8214d6cd66bd122f188657dc5706f9e4f5ef6047a82cac",
+          "gitBlob": "85c97f4c3d520fdaa43042f028a519ab3a9ced84"
+        },
+        {
+          "path": "extensions/spatial/vcpkg.json",
+          "sha256": "sha256:fb0b9cfc3120bf8ae1b45ba3796a191a46224ce0b68a3f77bfa09f3f9f296164",
+          "gitBlob": "50c9a51078171db1e6c44e9c21de3866c829d728"
+        },
+        {
+          "path": "extensions/spatial/vcpkg_ports/gdal/vcpkg.json",
+          "sha256": "sha256:79ffc44fc001da4e2b7ef668e56403e1ecc193f8f7080b0371509aa1bb21cf63",
+          "gitBlob": "b1fdc2a76f58c36996c770116a10c06562af4a07"
+        },
+        {
+          "path": "extensions/spatial/vcpkg_ports/geos/vcpkg.json",
+          "sha256": "sha256:fd761b1421d779225284553777f0a3e4e2f9d82de87944381135f335d2a6e1b2",
+          "gitBlob": "df9de9ce6d30b1ba12ba35eb32d6e9bb1418f549"
+        },
+        {
+          "path": "extensions/spatial/vcpkg_ports/proj/vcpkg.json",
+          "sha256": "sha256:59d151befb0bbee24d0270fa77cbbf42e5735a031e3be575d257a27c1d849aa7",
+          "gitBlob": "b6fca927e41be581025dc770b5eb0a24dc0fa022"
+        },
+        {
+          "path": "extensions/spatial/vcpkg_ports/sqlite3/vcpkg.json",
+          "sha256": "sha256:ce33e92dd7378ecb75948b29472d124551fe92d581164419e120f8cc248d31cd",
+          "gitBlob": "a3d022df9ddbe990b54c4ddd87216b0fd52b8d89"
+        }
+      ]
+    },
+    {
+      "name": "extensions/sqlite",
+      "repository": "https://github.com/duckdb/duckdb-sqlite",
+      "sourceRevision": "494e9feed54c20b6bbfb665baf26864bc7e3b517",
+      "files": [
+        {
+          "path": "extensions/sqlite/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:7e68824fcf45cce9e7e19f8d1aa0d3f019d62ffdf8d3324b9ec8798ed3fcdeb9",
+          "gitBlob": "47719ec3334aca422358f48cae1224fcb487d92a"
+        },
+        {
+          "path": "extensions/sqlite/.gitmodules",
+          "sha256": "sha256:3a1ee1273d696dd4371c5eac9faa974f7f226e5cf80c0ea0b99c45072ed15816",
+          "gitBlob": "dd490ea868ab674dacbb74a32f5b2c7ebbab508e"
+        },
+        {
+          "path": "extensions/sqlite/CMakeLists.txt",
+          "sha256": "sha256:98b2cb8b20007088bf259cf161710f4651be817557f698a3b43ebb3cf03b967b",
+          "gitBlob": "6fc575f1197f280cabcde1d40fc9d906fa571788"
+        },
+        {
+          "path": "extensions/sqlite/Makefile",
+          "sha256": "sha256:db29b04efdbfcabf647b472c8c14cebda401466a8a1fb5c86b06367abc18afd8",
+          "gitBlob": "a082a1bbe9960e2b1314b61b4af5c6a8df28e417"
+        },
+        {
+          "path": "extensions/sqlite/src/CMakeLists.txt",
+          "sha256": "sha256:d871c3823cbe9531a33d471f08109d0270a23045c0c7323583fe321b300ebf84",
+          "gitBlob": "f514eca4c359639a8efd2487251f6fadf39027f3"
+        },
+        {
+          "path": "extensions/sqlite/vcpkg.json",
+          "sha256": "sha256:c24bc40df803ba7aebeb4d55f0d0074c96bd8430d78233432c012c1cefec28e1",
+          "gitBlob": "0b8fa678b22679bb8d9156b42069b44cee07f25d"
+        }
+      ]
+    },
+    {
+      "name": "extensions/vortex",
+      "repository": "https://github.com/vortex-data/duckdb-vortex",
+      "sourceRevision": "275ac230e1d9afd08926b6989ec2467f92fae6e3",
+      "files": [
+        {
+          "path": "extensions/vortex/.github/workflows/MainDistributionPipeline.yml",
+          "sha256": "sha256:53aaf02b59d9db42a0a02e9eab0d61d06d9a9e4a6c28c17e246b38d800f1aec6",
+          "gitBlob": "158ad6a9b9648461795c127e3b558fbadcca19fc"
+        },
+        {
+          "path": "extensions/vortex/.gitmodules",
+          "sha256": "sha256:9929f605911ccd496d7b9ba929f178837f9877e1f61f21a799492825b9d5fb29",
+          "gitBlob": "6c0dc883319f996da74082b188dec8e9a9333734"
+        },
+        {
+          "path": "extensions/vortex/CMakeLists.txt",
+          "sha256": "sha256:355ae76bc9a77a648945fcec7cdada2ca98d61d0ff30c718e3268b0bdfa027a9",
+          "gitBlob": "3b4d297174adf1c7db70a74ef9b68b5c1e49bc62"
+        },
+        {
+          "path": "extensions/vortex/Makefile",
+          "sha256": "sha256:07c5f9fb4a9d7461e9428552df3577b7fe8041c3aad6185cf498cf6fc8fffdfe",
+          "gitBlob": "839418da395af3aeff002c49ae02e8ec6a691659"
+        },
+        {
+          "path": "extensions/vortex/vcpkg.json",
+          "sha256": "sha256:9736ab41765f59e54dd10c6fb56e8205ff8a8ed9e0ac01e5263fb611c7713f3b",
+          "gitBlob": "4208a9853e3322d43c0060e4f2cd72ffb080c0dc"
+        }
+      ]
+    },
+    {
+      "name": "transitives/delta-kernel",
+      "repository": "https://github.com/delta-io/delta-kernel-rs",
+      "sourceRevision": "2cdf7333b8e10fb53c053677cd8b436752220188",
+      "files": [
+        {
+          "path": "transitives/delta-kernel/Cargo.lock",
+          "sha256": "sha256:fa9ca48bf887c7982387c6f4d60b78e0981a36b41c59fa4f745fd0a9a057de36",
+          "gitBlob": "eaafede92fdbec761031647b1727a1c0648a0cf5"
+        },
+        {
+          "path": "transitives/delta-kernel/Cargo.toml",
+          "sha256": "sha256:ea41ab02e515f970026c0b88995141eab3377d3920c090362ef38327d9116af6",
+          "gitBlob": "d020d09797e20ae93b4068251436c5d5a9e5cf41"
+        },
+        {
+          "path": "transitives/delta-kernel/acceptance/Cargo.toml",
+          "sha256": "sha256:aecb8287617d07c52d2d393c12e4cc9d0ec3486f073e9f96449b352dbcf3abee",
+          "gitBlob": "22d066ec478ccef83c42de3d9fc0bf78cc0d7b2a"
+        },
+        {
+          "path": "transitives/delta-kernel/benchmarks/Cargo.toml",
+          "sha256": "sha256:77b5ba863cf46c9b43954e5918d0600e812a4cc7d5b3bfbe060519c5c6bb98a8",
+          "gitBlob": "efe4b509728543f519bc9c79228476eec640bfbe"
+        },
+        {
+          "path": "transitives/delta-kernel/delta-kernel-unity-catalog/Cargo.toml",
+          "sha256": "sha256:62fe528a5aa103061c5122da41a8a3c0d7ef87d31973c040815ce23e66e928a9",
+          "gitBlob": "92eadecd1980cf287fac5d5f096951a5b8aa10d0"
+        },
+        {
+          "path": "transitives/delta-kernel/derive-macros/Cargo.toml",
+          "sha256": "sha256:0b22c37e5b7dabd986988368a3fe006276c474b8912d30ddea8f3da37e2748fe",
+          "gitBlob": "47d8b670afdfebc456d74623add665002f5b5276"
+        },
+        {
+          "path": "transitives/delta-kernel/feature-tests/Cargo.toml",
+          "sha256": "sha256:448a43189ef78a74ed11a0014708be780220e8319cb2d6bfcb9a6cbe987b3963",
+          "gitBlob": "c0b344cc5cd9838210e199ca97251ffb247c1bd8"
+        },
+        {
+          "path": "transitives/delta-kernel/ffi-proc-macros/Cargo.toml",
+          "sha256": "sha256:c7d49517d1dd7fa71b89c78c9336b4ca90a0fb32e896e615180d4173e0449d40",
+          "gitBlob": "5047ce940ca1538ffee324e2603fe7cf123a5dc7"
+        },
+        {
+          "path": "transitives/delta-kernel/ffi/Cargo.toml",
+          "sha256": "sha256:c080f24e5a88b25bc7c170324ee4b8ef5099b6a81603bb1ffb9358320c2f92e2",
+          "gitBlob": "e2cc7849d6d63858883a526fadcebf45db7913fe"
+        },
+        {
+          "path": "transitives/delta-kernel/integration-tests/Cargo.toml",
+          "sha256": "sha256:0a7522f784f57a9dccb84db79f232930e7f3d0dfac80203758b126a404da5122",
+          "gitBlob": "cfd2913ac1969f522fdfd46d938ac6b98d0e06b2"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/Cargo.toml",
+          "sha256": "sha256:b4744a89d7798bebb058fbfea571c6e79360edd69d0d427490673a86ed8b7d7b",
+          "gitBlob": "c6ae84de5914f5501a102d594041b3c28207c5bb"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/examples/checkpoint-table/Cargo.toml",
+          "sha256": "sha256:e170e1a65894ba421ad4fc2a045b8ff1ab0aadd5de5c1d544c6f5b2dc4baa1a1",
+          "gitBlob": "27247fdcae7be660bd9958eb7955bdadfdbd4e3d"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/examples/common/Cargo.toml",
+          "sha256": "sha256:cef7511e24bf23b3b142a20753f1c95edccb638d793edccb08875041eb9261c8",
+          "gitBlob": "a9430c82c6697d3baa06959cd7325a16507a2f0a"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/examples/inspect-table/Cargo.toml",
+          "sha256": "sha256:2e8ed62d520e046cddf1b8c33fb94d54e06e466698142e3408780a23fdb3150b",
+          "gitBlob": "fcd656776baa6d84dad9b2e4f9d5c2d1f757d823"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/examples/read-table-changes/Cargo.toml",
+          "sha256": "sha256:7716201b2b74f0151c4c1f45d33a1bb3cf91c7de4dc4f42990f9fbd75f5b8f7a",
+          "gitBlob": "2085fb2fdbe7a67b46da7288c4c5d2acbfb112c5"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/examples/read-table-multi-threaded/Cargo.toml",
+          "sha256": "sha256:4237e889f58b133c8cb92bbadba65ffec9561ea54cdf2823741deb61117fb196",
+          "gitBlob": "c8417c8c39a85522ed8c26fba9bc8193af717619"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/examples/read-table-single-threaded/Cargo.toml",
+          "sha256": "sha256:796d3df541733298abe3ce13b4607b07c752fa21bf503fdd1d55b2a36c3a08f3",
+          "gitBlob": "7ed754a5c9075791e3f857b64cfdc1ade7213885"
+        },
+        {
+          "path": "transitives/delta-kernel/kernel/examples/write-table/Cargo.toml",
+          "sha256": "sha256:03026a68f2facc38886b3d5bf3cdad50db3e9f0c7f8ee65c8d7ae234f2c06466",
+          "gitBlob": "65ff0be40826b9b8b86d0ba35dcd1f815c77dc38"
+        },
+        {
+          "path": "transitives/delta-kernel/mem-test/Cargo.toml",
+          "sha256": "sha256:e0d9123a89563f0d622bb11f3966bf01076579e1022f13551045f9458029f3d2",
+          "gitBlob": "e587cd4f32e996658daf4551969a058aa518d7a2"
+        },
+        {
+          "path": "transitives/delta-kernel/test-utils/Cargo.toml",
+          "sha256": "sha256:70ba4492a5e52a00985189341f6b02774cb505a703c6d7b7300fac126fac62e3",
+          "gitBlob": "1082b66061f9bcc269cde143a3c6f16b16d36504"
+        },
+        {
+          "path": "transitives/delta-kernel/unity-catalog-delta-client-api/Cargo.toml",
+          "sha256": "sha256:110a591a14f36e376012d731c2aee3a52f7a54dd686c6f58cfa8942de27064a9",
+          "gitBlob": "5f3b8cf49b53e773664a9f7d66f245cbbe94adbc"
+        },
+        {
+          "path": "transitives/delta-kernel/unity-catalog-delta-rest-client/Cargo.toml",
+          "sha256": "sha256:856e1e5aa4f7a7c1d52d63ce298c0261ce405867041620dad6003119fecad528",
+          "gitBlob": "0a6ab988f2ddfdde987585a2a540e3aee0c7aefd"
+        }
+      ]
+    },
+    {
+      "name": "transitives/vortex",
+      "repository": "https://github.com/vortex-data/vortex",
+      "sourceRevision": "7b536257e2653c3bd293e12e51ccbcb445534e60",
+      "files": [
+        {
+          "path": "transitives/vortex/Cargo.lock",
+          "sha256": "sha256:4502cbe4f9611bbbdb4990226937e1d027fad414b533589f9ceb92cb9dd4aeb0",
+          "gitBlob": "fd66ecc567062fe122290bdb541bb3fa4420babe"
+        },
+        {
+          "path": "transitives/vortex/Cargo.toml",
+          "sha256": "sha256:01557610b3876bc104de37be73629942e588b3fd30b29359113a31774d40b9d5",
+          "gitBlob": "a587ef1db161b28dda389442df75f0f01b4a9cc1"
+        },
+        {
+          "path": "transitives/vortex/benchmarks/compress-bench/Cargo.toml",
+          "sha256": "sha256:905bbc3025c84f82a25450be199c46a567f7652734dc6c7a6d0917a7e8b4abbc",
+          "gitBlob": "baff1daad742844a63f7c62bff76ac0d4aa3b13c"
+        },
+        {
+          "path": "transitives/vortex/benchmarks/datafusion-bench/Cargo.toml",
+          "sha256": "sha256:179ed2a40a64dbe9e1bfce1c44a24967d9bf1f8315bf9937413dd1da6433d735",
+          "gitBlob": "d0015dd29952b8c9c49fb07cead849c9641d5a07"
+        },
+        {
+          "path": "transitives/vortex/benchmarks/duckdb-bench/Cargo.toml",
+          "sha256": "sha256:87721fc44b5a5401007d05b3d28bcaa475f7eb785b4446be1fe65faae634d47e",
+          "gitBlob": "b70375cf963b54c5be402523c4390e404e6307f7"
+        },
+        {
+          "path": "transitives/vortex/benchmarks/lance-bench/Cargo.toml",
+          "sha256": "sha256:5c2700f3e65e9c33cb8b911589c4e9a07c7eca498806335a15f5b501b83f5b9a",
+          "gitBlob": "a32b27d97cdb29646da4667b498136f602737a59"
+        },
+        {
+          "path": "transitives/vortex/benchmarks/random-access-bench/Cargo.toml",
+          "sha256": "sha256:0e37c206e1a24170b848f4cbed6de1fe4afbf5a8ee7ac8fae8b3d40c81e96471",
+          "gitBlob": "500db9ec7c45370db9dbf5b48c017fe1e44bc20b"
+        },
+        {
+          "path": "transitives/vortex/encodings/alp/Cargo.toml",
+          "sha256": "sha256:ddec6a5f13a2462fea21c929b471d7001e00091d244211e99e42ff3638d0c0e4",
+          "gitBlob": "13ccc67d63bf862cfc1d7ea951e3a66d700a7ebd"
+        },
+        {
+          "path": "transitives/vortex/encodings/bytebool/Cargo.toml",
+          "sha256": "sha256:ce8bee997f5da95d0d1a862e1f079670edc0b56310d50147858c7c54007fa683",
+          "gitBlob": "bca2ed71aa93aac1918faf24c7012e52cf793730"
+        },
+        {
+          "path": "transitives/vortex/encodings/datetime-parts/Cargo.toml",
+          "sha256": "sha256:b1f2827d5b9690e542c34ef544bb1baa126191cfe69c8d3a9affcd3b83c19b0e",
+          "gitBlob": "52894fc7c07956c7851d1507bb2f0072884add7c"
+        },
+        {
+          "path": "transitives/vortex/encodings/decimal-byte-parts/Cargo.toml",
+          "sha256": "sha256:cbeef5f2f236220463c1c715702b54e85a5d2a30228043e4b4bb1c26e5d3d916",
+          "gitBlob": "4934ec4fa27bcd13433e69c511a7271b122cdcb4"
+        },
+        {
+          "path": "transitives/vortex/encodings/experimental/onpair/Cargo.toml",
+          "sha256": "sha256:046fd0513b43699dee51143fc39ffa4ecb581896a390e708ed910862c3d3b928",
+          "gitBlob": "258568cc75a3e0c0ae112dc1edf51dc37ba16b91"
+        },
+        {
+          "path": "transitives/vortex/encodings/fastlanes/Cargo.toml",
+          "sha256": "sha256:c82475d59e8739b7ec27497143ad52df5c603882a552fcb917ba00158dfcd106",
+          "gitBlob": "e0aa5cbb724d44fdf07fe5cb870d20942e0ce065"
+        },
+        {
+          "path": "transitives/vortex/encodings/fsst/Cargo.toml",
+          "sha256": "sha256:be0d3b6c63e884810541cd5f7d230c44d4f3148f0034489c876544921ded79c3",
+          "gitBlob": "0d722a131d31c1dbac7ea66a2ab809f24703502c"
+        },
+        {
+          "path": "transitives/vortex/encodings/parquet-variant/Cargo.toml",
+          "sha256": "sha256:5ac08ebf2167bc07258e32194cedd50348bebe0ba409c53819c32bfac19e597d",
+          "gitBlob": "6b3900abb275e5b2907b11fc7875344f4ffb4962"
+        },
+        {
+          "path": "transitives/vortex/encodings/pco/Cargo.toml",
+          "sha256": "sha256:e4b1b8bcd58f4a74bed9b04a3bc5a8d7cd17004fc70a142ad901af7e2f87f03d",
+          "gitBlob": "8d560d5f068c448c77aa5947074c86b93cc749c8"
+        },
+        {
+          "path": "transitives/vortex/encodings/runend/Cargo.toml",
+          "sha256": "sha256:5bd1fae0f51511d0bc51ffd9a9a736f0896c206df9786c625484615f677810fb",
+          "gitBlob": "01a5b8d7a3e9d54a7eae81584ff102810c1be2f5"
+        },
+        {
+          "path": "transitives/vortex/encodings/sequence/Cargo.toml",
+          "sha256": "sha256:fa8fa58d0fa670527b19c26dc2efbea07eb67584d8a68b6b81f9b5cb0ac3746e",
+          "gitBlob": "5dd9c5c187d505ba42d273add5f79fee4b7414e1"
+        },
+        {
+          "path": "transitives/vortex/encodings/sparse/Cargo.toml",
+          "sha256": "sha256:d19939e6c34644daa8f881984563a3b82b5111c847d085f698d8fe4c47c364aa",
+          "gitBlob": "acf99a74ccffe216773e5a50672e3c18884487b3"
+        },
+        {
+          "path": "transitives/vortex/encodings/zigzag/Cargo.toml",
+          "sha256": "sha256:1037fc5c27702be1a0023db980362e14a7fcdedf071309cc90d5db09488dcc8d",
+          "gitBlob": "83e6d324ed1a08cb3a129614d927a1f55ed13e28"
+        },
+        {
+          "path": "transitives/vortex/encodings/zstd/Cargo.toml",
+          "sha256": "sha256:9da3bb4411f109ab1b59880789f05559ed4c788fad27efaf2c217289d9098aff",
+          "gitBlob": "4383f765a2fa0f353d9699c3a4bb6b5b254bedee"
+        },
+        {
+          "path": "transitives/vortex/fuzz/Cargo.toml",
+          "sha256": "sha256:b90bb7b3cafd410a225b43ba84c5aa7508aa5f01cc181331ed6afe507e427c21",
+          "gitBlob": "e2d05b706f9680b4bacea69ecb066bd70c1f9a0e"
+        },
+        {
+          "path": "transitives/vortex/vortex-array-macros/Cargo.toml",
+          "sha256": "sha256:60bdcd71148071e1c7cc0f9be3ed5784fa21d514042945d5d3d621711c2d8356",
+          "gitBlob": "3d5ac1d60d86aadb5de3a60b6b9c5d9e59026c82"
+        },
+        {
+          "path": "transitives/vortex/vortex-array/Cargo.toml",
+          "sha256": "sha256:447944698e453f1d4ce60aef64e2de87aa5eb1b64e43739f43be0f7a60d9370b",
+          "gitBlob": "4ec8a83575e837bd3ae74dbc1b9112746baf4849"
+        },
+        {
+          "path": "transitives/vortex/vortex-bench/Cargo.toml",
+          "sha256": "sha256:5c9ad13a8467f41d34bfe0676da50460ade5c08689f2467b5402e5c8e72f3f19",
+          "gitBlob": "3b793c6124a383121e7f0553fe28b16f1e8e17df"
+        },
+        {
+          "path": "transitives/vortex/vortex-btrblocks/Cargo.toml",
+          "sha256": "sha256:71fcbd2764fe77d5316abfd10026b7f81ef4f0ddcbd83e15c3103ce305eae80e",
+          "gitBlob": "34a98f85b7353ae1af3b614adfedf9a8e25ed23b"
+        },
+        {
+          "path": "transitives/vortex/vortex-buffer/Cargo.toml",
+          "sha256": "sha256:d5339eaacf874230fa322a0d5b94dc0ee2172fe89d5e67c7679afe854d322010",
+          "gitBlob": "ae9d7e6cc051545d3c0632eeac2d778025b8badb"
+        },
+        {
+          "path": "transitives/vortex/vortex-compressor/Cargo.toml",
+          "sha256": "sha256:7a7ad33dac21b67800da9df4ce3e100cecdcfe8b91fdc2dc3c9a95bf1b64dc2b",
+          "gitBlob": "2d28d86a5e643a12d00bd6afc0e1ddbc4eea3bb7"
+        },
+        {
+          "path": "transitives/vortex/vortex-cuda/Cargo.toml",
+          "sha256": "sha256:ce7e5edcefad129d4b364252d6284e7ff6a99c4ef82b87d7f4bf935b247ef8a2",
+          "gitBlob": "c4c083b97a31a3268c46810175786a9b97c12fd4"
+        },
+        {
+          "path": "transitives/vortex/vortex-cuda/cub/Cargo.toml",
+          "sha256": "sha256:5f3c15925ebe73f7d7630e26c6a4cfbf86e0791dfc9150862b255beb18afdf5f",
+          "gitBlob": "ed16631856940d4674c22303c27327e78b2671fb"
+        },
+        {
+          "path": "transitives/vortex/vortex-cuda/ffi/Cargo.toml",
+          "sha256": "sha256:8f20406d9a3e5f75e72395842572cbf1eb30fb4bda623abbd77ba0099b716ff7",
+          "gitBlob": "a8ca51ad954001fbd6549590f9754d6d07c49510"
+        },
+        {
+          "path": "transitives/vortex/vortex-cuda/gpu-scan-cli/Cargo.toml",
+          "sha256": "sha256:218f2ec462207f76669ec8d8e9ae3c095a0d13ca3ea32e09cd7acc9a58c39ecf",
+          "gitBlob": "9234d30395205a0b3785a12e36cfed3265ce8052"
+        },
+        {
+          "path": "transitives/vortex/vortex-cuda/macros/Cargo.toml",
+          "sha256": "sha256:25700f5e07c34af06ae718633ff03431928a937de4fbdfed64e8df96cd8ac954",
+          "gitBlob": "33caa5eea25de4bd990237951c91f3518114330b"
+        },
+        {
+          "path": "transitives/vortex/vortex-cuda/nvcomp/Cargo.toml",
+          "sha256": "sha256:8aab2a3e3849ccbaa2bf5fc3880cb281a8ce4f966c8a5a5a79624cddedd629ee",
+          "gitBlob": "5fdd88d4369353aacec3a24dbc3fdc3621cbbc52"
+        },
+        {
+          "path": "transitives/vortex/vortex-cxx/Cargo.toml",
+          "sha256": "sha256:b5348b6ecb605dd872d194d2637a92fa05899e687c7c1b9b764ce7703bd958d1",
+          "gitBlob": "d75f7b74cee7d6473e843b3cb4eebde916452927"
+        },
+        {
+          "path": "transitives/vortex/vortex-datafusion/Cargo.toml",
+          "sha256": "sha256:dbbf14633ca58ee018b49ece03a95bd561f3526495a5e180abdd4080b121fa2b",
+          "gitBlob": "2215bd4db8ef09a4709c8f6d53ee33ccf9cfd2fc"
+        },
+        {
+          "path": "transitives/vortex/vortex-duckdb/Cargo.toml",
+          "sha256": "sha256:7f5ca333e76ab1545025a12b971cc471720386323a1a457d9dbb290b1cdc5a7b",
+          "gitBlob": "7dc239a4b1a0599ce96f99d9950c223f186bef5e"
+        },
+        {
+          "path": "transitives/vortex/vortex-error/Cargo.toml",
+          "sha256": "sha256:4d94c157afe6b8682c39cc393cd8e801a3cb8b7d75b0eec64c82d94b0ceeb3b0",
+          "gitBlob": "fd85dd770dd5960692488f10c671385c86ee15e1"
+        },
+        {
+          "path": "transitives/vortex/vortex-ffi/Cargo.toml",
+          "sha256": "sha256:bc17ca6157e9a6cc0de161fed1502a5993cb399926816def301bfc08f20cb98d",
+          "gitBlob": "6407f97fe46303f6dc9bd6b7f1f0f44392f5e534"
+        },
+        {
+          "path": "transitives/vortex/vortex-file/Cargo.toml",
+          "sha256": "sha256:c6aedbb611cd2e3174c85f7e369d6d99b1d350d2b3a7bc54f2a2fcd07f6e4ac3",
+          "gitBlob": "c4bf980d683deb8dbaa7aa410825fb8de39d1e99"
+        },
+        {
+          "path": "transitives/vortex/vortex-flatbuffers/Cargo.toml",
+          "sha256": "sha256:5a325239f3df8cd7798f754d810cb2042584b250507b851616cc1521335f7bf1",
+          "gitBlob": "3e0bd21acc704d843a24af5998c8c0b257a4c2dd"
+        },
+        {
+          "path": "transitives/vortex/vortex-geo/Cargo.toml",
+          "sha256": "sha256:ab39b814f1f627aa71cc514ec49d3b4fff8881354635cf7bf567454a9d680f49",
+          "gitBlob": "4e76e2eefcb53562c9610d04ea1c5727b924aeee"
+        },
+        {
+          "path": "transitives/vortex/vortex-io/Cargo.toml",
+          "sha256": "sha256:d8b34d5a59dcb1ce30a7c967aeaa9749ddf9ab937295dca6ddc89611e5be7460",
+          "gitBlob": "b3f6448484ab2113f4ca1c9b48af9ae07db3526b"
+        },
+        {
+          "path": "transitives/vortex/vortex-ipc/Cargo.toml",
+          "sha256": "sha256:c1fe4b994e0775cad8d6b2f2bbb7380fd05bfcd236d5c1d831726b0c51c964b2",
+          "gitBlob": "eda6b7bc852cfd4976f042932d3783145e193304"
+        },
+        {
+          "path": "transitives/vortex/vortex-jni/Cargo.toml",
+          "sha256": "sha256:c84ae243d55c7b54d8bf9eb7a79c5ed1c453a012c7a097366ef4701bce830874",
+          "gitBlob": "d5f5cea61aa0d7fa971d7754900f1dafe250ace0"
+        },
+        {
+          "path": "transitives/vortex/vortex-json/Cargo.toml",
+          "sha256": "sha256:76bfb733358aa81234e705dd3062663540b2e1bb7cfaf2992a9dfef1d016ebc4",
+          "gitBlob": "4afd224f6aad5abf1942bda4a2c0b6e6cd448478"
+        },
+        {
+          "path": "transitives/vortex/vortex-layout/Cargo.toml",
+          "sha256": "sha256:226346a37fbe779ee62fd43274a8955c83f02e4a99df06cfcad3f207dcc5144a",
+          "gitBlob": "61b1253ef436445514e4f6be6592fc3ea2b15c34"
+        },
+        {
+          "path": "transitives/vortex/vortex-mask/Cargo.toml",
+          "sha256": "sha256:0c3ecfded5e7bba2fb67187b659746d3592ad5cd79841a53cee866565a2a0d7d",
+          "gitBlob": "7aa5bb2ef8535ff2bcd9ecbb8991a79e18898a12"
+        },
+        {
+          "path": "transitives/vortex/vortex-metrics/Cargo.toml",
+          "sha256": "sha256:6591184d15a8bac44cb0317b443e2b12a3cd745c5abac7c563862f7b0f132c73",
+          "gitBlob": "a9d98eb448c6ee672d3efcf59db99d4aeee301f7"
+        },
+        {
+          "path": "transitives/vortex/vortex-proto/Cargo.toml",
+          "sha256": "sha256:10bd39f0edd362d24c34cd558cf494e8217aee7083a89b21259b290729f834f0",
+          "gitBlob": "e47865ef299d89177aeac44d1b4b25e3d7f8bbf7"
+        },
+        {
+          "path": "transitives/vortex/vortex-python/Cargo.toml",
+          "sha256": "sha256:7d71f8552f4bfd52640de65bf235add4aa38e4f45a163a6ee65257fec06449fc",
+          "gitBlob": "0b648959821da06092b3b57f9dc1f4b9c3111a9a"
+        },
+        {
+          "path": "transitives/vortex/vortex-row/Cargo.toml",
+          "sha256": "sha256:e1a9645cf91c6696405d298c4bd59efaccbbc663f662a3c13dafb54ae24402e2",
+          "gitBlob": "9222c7d6a431ae41952003f3b2edc8c8d1b495df"
+        },
+        {
+          "path": "transitives/vortex/vortex-scan/Cargo.toml",
+          "sha256": "sha256:d484611049b62408e1f6ed668ac77d4f9dc5657afd0a723a30945c7a81598e41",
+          "gitBlob": "e43b8292e2303009dbb8b0b4a9a81789e3a5e912"
+        },
+        {
+          "path": "transitives/vortex/vortex-session/Cargo.toml",
+          "sha256": "sha256:e8589c56788a799350ad5651d040671271524cf70affeec55437cfe4808634d9",
+          "gitBlob": "d4e047223c190e3e6a72a49347c1dfba222c0ffa"
+        },
+        {
+          "path": "transitives/vortex/vortex-sqllogictest/Cargo.toml",
+          "sha256": "sha256:dfe974539d7c0a0e561aeba7f7483c2a2ad77ee473774f27b843a7e9e70c94e4",
+          "gitBlob": "757abb49689020bcef659e2c8801f4d347b8476f"
+        },
+        {
+          "path": "transitives/vortex/vortex-tensor/Cargo.toml",
+          "sha256": "sha256:d5f6c90e8983763a7b55bc0f222853c4ab6c2d50e9042913a18c9411895631d6",
+          "gitBlob": "a293e604b5ba45bec0e23a62709e25ce92ad1b94"
+        },
+        {
+          "path": "transitives/vortex/vortex-test/compat-gen/Cargo.toml",
+          "sha256": "sha256:1ab3aa06438b1da59bd8c383935caea0f1a9f86074f5f20fa0f39639392301c4",
+          "gitBlob": "dd8bec4703aa435c4f1babb30f595b679e60f3e8"
+        },
+        {
+          "path": "transitives/vortex/vortex-test/e2e-cuda/Cargo.toml",
+          "sha256": "sha256:56980b6321e8217cf3b6964c1d61d21836445dd58a2de4fc4494c71c9ffb4f28",
+          "gitBlob": "4ef30925b11e2b72050034c8b57e4bdc2a0ca35c"
+        },
+        {
+          "path": "transitives/vortex/vortex-tui/Cargo.toml",
+          "sha256": "sha256:6b233c069ac208ed846b12236cd50176700028e807b2058b30e6bfd02f8f3cc7",
+          "gitBlob": "33cd1958ba29d4a058e4e773e2613a914c752430"
+        },
+        {
+          "path": "transitives/vortex/vortex-utils/Cargo.toml",
+          "sha256": "sha256:207e3b2001ae1dda269f6f442e7840cbdc04da20c7e0b732f7406006fa03d1aa",
+          "gitBlob": "ca6c639ec0d4cbe387ebf433cbd1dfe7a07ef52c"
+        },
+        {
+          "path": "transitives/vortex/vortex-web/crate/Cargo.toml",
+          "sha256": "sha256:8182aca7876aeb364b62461f67ff085189b52f7693c17b2ac911698fc454fdca",
+          "gitBlob": "1b65fe832eb4246b7dfff2495ceda47a28ead012"
+        },
+        {
+          "path": "transitives/vortex/vortex/Cargo.toml",
+          "sha256": "sha256:e8122422b37004d815f9c73dd61d87ac0829c360d24047cef0a9a8b29fb3b593",
+          "gitBlob": "adaca75632c72b7d7d9d31fcae1567b7b8c1fecc"
+        },
+        {
+          "path": "transitives/vortex/wasm-test/Cargo.toml",
+          "sha256": "sha256:c62ba5ad9f960a1d1d7b2ca0f11d161694cabcc3917dd672f9aea377e3a2c3e7",
+          "gitBlob": "100c15970b05937845e116618eaebd84b663ac32"
+        },
+        {
+          "path": "transitives/vortex/xtask/Cargo.toml",
+          "sha256": "sha256:aebcdf2f7fc2e17e9f180a58ab6fac0bf0e7b4013ae83fe4c32050caa67e286c",
+          "gitBlob": "865d10ac809451c3c2886494627a2fa023042ab0"
+        }
+      ]
+    },
+    {
+      "name": "build/extension-ci-tools",
+      "repository": "https://github.com/duckdb/extension-ci-tools",
+      "sourceRevision": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+      "files": [
+        {
+          "path": "build/extension-ci-tools/.github/workflows/_extension_distribution.yml",
+          "sha256": "sha256:d3c851815b5ef830198fd39712cd222b6cf8efaa93f04336c5c3baab1df89c72",
+          "gitBlob": "5706430fdda5fd5d4b2f5bed87935819e0834616"
+        },
+        {
+          "path": "build/extension-ci-tools/makefiles/duckdb_extension.Makefile",
+          "sha256": "sha256:a2b8755beaf32fcbaedc994fb04d8b14d4cf1c1d10c875b79f792c688e7d9686",
+          "gitBlob": "50b5b3a5e066d78afa16f9987ca045700c082cbd"
+        },
+        {
+          "path": "build/extension-ci-tools/makefiles/vcpkg.Makefile",
+          "sha256": "sha256:95b00ab88301831dc6b6beee9bb874d89a9a1b818ed408994658343bf4ee0a52",
+          "gitBlob": "f6cb6408997d1900138275f523a729965379a27a"
+        }
+      ]
+    },
+    {
+      "name": "engine",
+      "repository": "https://github.com/duckdb/duckdb",
+      "sourceRevision": "08e34c447bae34eaee3723cac61f2878b6bdf787",
+      "files": [
+        {
+          "path": "engine/.github/workflows/BundleStaticLibs.yml",
+          "sha256": "sha256:638a5fe68d9e9915befb19147f679a4aad9c3bf33d05e21facfacdf781d906df",
+          "gitBlob": "ebcea64b6a317fda712b411440d3542a6bb51387"
+        },
+        {
+          "path": "engine/.github/workflows/Extensions.yml",
+          "sha256": "sha256:0fc9bb6bef1b3f24cb2c77965f71629c26e7eee906a289470bdcd05808e1ea5d",
+          "gitBlob": "21359a7a4281494fbdb704a617a41e9e7ae8f364"
+        },
+        {
+          "path": "engine/.github/workflows/_extension_distribution.yml",
+          "sha256": "sha256:68ca7ce93b9c40f794238a837f5bd35e43e9196d1e701a9da33ef025b2c135a8",
+          "gitBlob": "3321ed386af0e13ad144f8512ec03ae63a2b6036"
+        },
+        {
+          "path": "engine/extension/icu/CMakeLists.txt",
+          "sha256": "sha256:8cce9bf7f07946ba66f418a74245edb3e3341bdd4d5aff7cf8c40ccfdca7c376",
+          "gitBlob": "a5bb58a9424f31259685e3ce6a042016a8217214"
+        },
+        {
+          "path": "engine/extension/icu/third_party/icu/common/unicode/uvernum.h",
+          "sha256": "sha256:a0a8c7fa5279826558bd59394f9c96409b435d8cc0f318e9ffc4206c3aa9a61f",
+          "gitBlob": "f5d6497842c5f71d5b5a6c578aed4359836aeb69"
+        },
+        {
+          "path": "engine/scripts/merge_vcpkg_deps.py",
+          "sha256": "sha256:49357e7ed42e9a4c746b39a0733fcbc1882ae46862e90732767db02e20c851c9",
+          "gitBlob": "42a09df6963e1314719c58e26965a3b2ffd66a69"
+        },
+        {
+          "path": "engine/third_party/brotli/common/version.h",
+          "sha256": "sha256:de35074cbc95a26d4cb4588ab4cf5aeae67d5ca5145239ca92065153faeb0efd",
+          "gitBlob": "8098040f646bc5ca13a28888d71e064435f42f5b"
+        },
+        {
+          "path": "engine/third_party/fastpforlib/CMakeLists.txt",
+          "sha256": "sha256:a53bf4ea8614c854cc19c2c4cf76eeefffc560674ea82eec9397936eb50fd186",
+          "gitBlob": "432deb3205711c7dc0f8c6d7374b87183600b7dc"
+        },
+        {
+          "path": "engine/third_party/fmt/CMakeLists.txt",
+          "sha256": "sha256:21eeaa87454a7b9897642806ac88af7bee5edfff353b42ef8a2f3211bdf627d7",
+          "gitBlob": "829bb1d03edae9b3e23180ca6b675fdf3f8e7e23"
+        },
+        {
+          "path": "engine/third_party/fmt/include/fmt/core.h",
+          "sha256": "sha256:d0c645c58476e5b697bed4054e7d3411b8a34a873b4674ce36727a9a60002903",
+          "gitBlob": "ed555c6c7db30d7c47e63402481a1444c3d54adb"
+        },
+        {
+          "path": "engine/third_party/fsst/CMakeLists.txt",
+          "sha256": "sha256:c9993c2316475ea3ab5e75a2cea3eb2b6be92e8838460edb1e686052f523f09d",
+          "gitBlob": "53ca14d170ead7701b33f0f21abdf54bac53991c"
+        },
+        {
+          "path": "engine/third_party/fsst/README.md",
+          "sha256": "sha256:714c32636a58b9d50d02fad5baf8c6701175fa5c75bd24b44142318d82754412",
+          "gitBlob": "67df561f14069a1331d3c321e6edb6facd374aa5"
+        },
+        {
+          "path": "engine/third_party/httplib/httplib.hpp",
+          "sha256": "sha256:6051b1cbeb70b3ea258675a599809387c48328a589b7552eb179d9adfdbc4713",
+          "gitBlob": "7e2b365911aba73dc43f3c6133b26533be9c72b8"
+        },
+        {
+          "path": "engine/third_party/hyperloglog/CMakeLists.txt",
+          "sha256": "sha256:cd8d0f3ea9dd7e2ed4486b5fcf80bb5f96a9ba4ef0b8a51914596d037c041ebd",
+          "gitBlob": "f1e4c98d383855918b6ec8a2e5692144c9f79e2b"
+        },
+        {
+          "path": "engine/third_party/imdb/CMakeLists.txt",
+          "sha256": "sha256:199410ab96b18f9acb7e8e6e36a7375e1fae5dfe33ca7f28144d8fe7c46eafb9",
+          "gitBlob": "5a681f289053302652164a5002eef72b9a2ccd97"
+        },
+        {
+          "path": "engine/third_party/jemalloc/CMakeLists.txt",
+          "sha256": "sha256:334451b87bbebfe117e38e1e892b47dd6c4e65337e7ed69562e33c5bffc99f3a",
+          "gitBlob": "2d8d5c774ab6ec4431d17dcb6f8315aa2ec52084"
+        },
+        {
+          "path": "engine/third_party/jemalloc/include/jemalloc/jemalloc.h",
+          "sha256": "sha256:12384968fe0310361a8493ecab103cd976057479b1ecb1f76508a7f87e742710",
+          "gitBlob": "3e6c661733ac241bc1d1c4df19b3921746988df4"
+        },
+        {
+          "path": "engine/third_party/libpg_query/CMakeLists.txt",
+          "sha256": "sha256:e2114d807d2e9ee3aa702234440392c1fdbdea229ae892b2a0ca769da7073618",
+          "gitBlob": "8020d93395b84eb2b68669a3264537c748f66829"
+        },
+        {
+          "path": "engine/third_party/lz4/lz4.hpp",
+          "sha256": "sha256:e68fc82b365db61443dc49efa04ae89de326c1fa6fb2f9bf3d5bd645f511a9f1",
+          "gitBlob": "dcf1f032cc3877e5305d7200568d1339abd4afda"
+        },
+        {
+          "path": "engine/third_party/mbedtls/CMakeLists.txt",
+          "sha256": "sha256:254fd1914da55a2aac0ea56de66fc507d02d6da3ee2f65a7690ed5b9a7b38562",
+          "gitBlob": "6c82183c9f77494bf048d13323a7ac3b2c5f9a81"
+        },
+        {
+          "path": "engine/third_party/mbedtls/VERSION",
+          "sha256": "sha256:5d4dd3337b8f5d06bdfd8636b6c76d4da145bc92b178cee454ae933c7a6886e2",
+          "gitBlob": "c3f6bdc3de94183519ca377cd54ce03419cba388"
+        },
+        {
+          "path": "engine/third_party/mbedtls/include/CMakeLists.txt",
+          "sha256": "sha256:80f6368af2508ca6c5f4819624696289f1b1fd1bf5b8cf150300ad00edb91a7d",
+          "gitBlob": "e693bc17cc03b8780de7d4c192e4a64e7bd7229a"
+        },
+        {
+          "path": "engine/third_party/miniz/CMakeLists.txt",
+          "sha256": "sha256:c62ecbc4362fe26d22cb724a7de2d630c637ec1f8378f4b15daf1efef1df1e29",
+          "gitBlob": "3d72e498d33861de0b98915f9ce0e81a4bba3883"
+        },
+        {
+          "path": "engine/third_party/miniz/miniz.hpp",
+          "sha256": "sha256:2a755abb3d2defab40ae5f819e102e86186c58922363ff7a4646770b5e8139d7",
+          "gitBlob": "b39eda8b75948901e0020a383c32a9e8a1c333f1"
+        },
+        {
+          "path": "engine/third_party/re2/CMakeLists.txt",
+          "sha256": "sha256:22830da96217103d3973be68a433df763a1e049677665553d7db74aca8285706",
+          "gitBlob": "6e8ce002a5815734962b124f679172486343cb08"
+        },
+        {
+          "path": "engine/third_party/skiplist/CMakeLists.txt",
+          "sha256": "sha256:4f942b5729bc09d7cd40d2f22defc213426782585e0486fa7fa3b9f4528d820f",
+          "gitBlob": "1fa1e839122afc671733ae7c307ed6d72758baec"
+        },
+        {
+          "path": "engine/third_party/snowball/CMakeLists.txt",
+          "sha256": "sha256:23dce3c694b7549fe20fde5761f27abcb9a1caedcc053f50d9d374e42b782826",
+          "gitBlob": "9efa3c9728ece80ca7fcfebb1ceaf5cb5aa7bdda"
+        },
+        {
+          "path": "engine/third_party/utf8proc/CMakeLists.txt",
+          "sha256": "sha256:d57dd2245faf88f057be8d8c474417d8006541a3098832e9c3b007ebc66ad6c0",
+          "gitBlob": "1824f60d0c77070bfb113914fdcdb68d8d47b0a1"
+        },
+        {
+          "path": "engine/third_party/utf8proc/include/utf8proc.hpp",
+          "sha256": "sha256:6c08e5287360acf5eb7278b4109a37c22bea1162279146aeabcacf76db633783",
+          "gitBlob": "5d66c15d3d95c555169b7aa464663ee1df3fed67"
+        },
+        {
+          "path": "engine/third_party/yyjson/CMakeLists.txt",
+          "sha256": "sha256:ec7619304a2eb1928783d54e83305c4501db47d9814ceaed5551ca2a9b8dc388",
+          "gitBlob": "bd9cae5cfd284bb43b08d3a6c57fa9dc23d59213"
+        },
+        {
+          "path": "engine/third_party/yyjson/include/yyjson.hpp",
+          "sha256": "sha256:5123cd31b103ded523bd466dba1f57ea48bc650a206aa5dbc0b3d2e630e3cd8d",
+          "gitBlob": "69898d150249b1fe78be21281e34bfddb7491bac"
+        },
+        {
+          "path": "engine/third_party/zstd/CMakeLists.txt",
+          "sha256": "sha256:3f8d6da91929957461ff92ad9c8537661822eb5eaddcb36f26ed710e12ca890e",
+          "gitBlob": "a983c9e6c388b4684c4e175d5fb89b9de0fc79c1"
+        },
+        {
+          "path": "engine/third_party/zstd/include/zstd.h",
+          "sha256": "sha256:2b5ff3a4355f932581086b1670593dc5dc58ba96cfccd761bdb9dfdb56fa375d",
+          "gitBlob": "8b40c366eb926c44f73007ce53624c0e729fd703"
+        }
+      ]
+    }
+  ],
+  "unresolvedBuildEdges": [
+    {
+      "component": "DuckDB engine",
+      "reason": "vendored-component vulnerability identities and source-specific patch matching not yet complete"
+    },
+    {
+      "component": "all14 extension payloads",
+      "reason": "exact compiled transitive dependency closure not yet bound to pinned payloads for both native architectures"
+    },
+    {
+      "component": "native vulnerability assessment",
+      "reason": "fresh complete-graph scanner and controls have not yet been qualified"
+    }
+  ],
+  "extensionSupplyHashes": {
+    "linux/amd64": "sha256-wLSZ2dQ8nlSxeQkzO18EuPJFLZruPV8g0g3uX6gzanU=",
+    "linux/arm64": "sha256-yvi6Rhmnc63K2eXDqY/UwT++E3EBRD8sRzrIhrQa258="
+  }
+}
