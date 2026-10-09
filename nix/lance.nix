@@ -22,6 +22,11 @@ let
   } ''
     cp -R ${lockedCargoDeps} "$out"
     chmod u+w "$out"
+    # cargoSetupHook copies this renamed vendor output into its build tree.
+    # Let that hook bind the actual copy path instead of the old output name.
+    chmod u+w "$out/.cargo" "$out/.cargo/config.toml"
+    substituteInPlace "$out/.cargo/config.toml" \
+      --replace-fail 'directory = "cargo-vendor-dir"' 'directory = "@vendor@"'
     # Cargo's locked vendor directory contains immutable crate symlinks. Copy
     # only the two patched crates, retaining every other exact locked input.
     for version in 0.37.5 0.38.4; do
