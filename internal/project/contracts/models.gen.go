@@ -46,12 +46,7 @@ type AzureBlobConnection struct {
 
 type BlobPathSourceLocation struct {
 	PathSourceLocationBase
-	Format  string             `json:"format" yaml:"format"`
-	Options *BlobReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
-}
-
-type BlobReaderOptions struct {
-	Compression *string `json:"compression,omitempty" yaml:"compression,omitempty"`
+	Format string `json:"format" yaml:"format"`
 }
 
 type CSVPathSourceLocation struct {
@@ -2096,9 +2091,6 @@ type ReaderDefaults struct {
 	JSON    *JSONReaderOptions    `json:"json,omitempty" yaml:"json,omitempty"`
 	Parquet *ParquetReaderOptions `json:"parquet,omitempty" yaml:"parquet,omitempty"`
 	Excel   *ExcelReaderOptions   `json:"excel,omitempty" yaml:"excel,omitempty"`
-	Text    *TextReaderOptions    `json:"text,omitempty" yaml:"text,omitempty"`
-	Blob    *BlobReaderOptions    `json:"blob,omitempty" yaml:"blob,omitempty"`
-	Vortex  *VortexReaderOptions  `json:"vortex,omitempty" yaml:"vortex,omitempty"`
 	Delta   *DeltaReaderOptions   `json:"delta,omitempty" yaml:"delta,omitempty"`
 	Iceberg *IcebergReaderOptions `json:"iceberg,omitempty" yaml:"iceberg,omitempty"`
 }
@@ -3320,14 +3312,7 @@ type SourceSpec struct {
 
 type TextPathSourceLocation struct {
 	PathSourceLocationBase
-	Format  string             `json:"format" yaml:"format"`
-	Options *TextReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
-}
-
-type TextReaderOptions struct {
-	Delimiter *string `json:"delimiter,omitempty" yaml:"delimiter,omitempty"`
-	Quote     *string `json:"quote,omitempty" yaml:"quote,omitempty"`
-	Header    *bool   `json:"header,omitempty" yaml:"header,omitempty"`
+	Format string `json:"format" yaml:"format"`
 }
 
 type UniqueDatasetCheck struct {
@@ -3341,10 +3326,5 @@ type UniqueDatasetCheck struct {
 
 type VortexPathSourceLocation struct {
 	PathSourceLocationBase
-	Format  string               `json:"format" yaml:"format"`
-	Options *VortexReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
-}
-
-type VortexReaderOptions struct {
-	Version *string `json:"version,omitempty" yaml:"version,omitempty"`
+	Format string `json:"format" yaml:"format"`
 }

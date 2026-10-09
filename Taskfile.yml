@@ -587,7 +587,7 @@ tasks:
       - bun test scripts/performance_comparison_workflow.test.ts
       - node --test deploy/compose/qualification/performance-resources.test.mjs
       - node --test scripts/performance_baseline_review.test.mjs scripts/qualify_performance_reference.test.mjs
-      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs
+      - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs scripts/performance_ci_events.test.mjs
       - bun test scripts/ci_optimization_contract.test.ts
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_test_registration.test.ts && bun scripts/frontend_test_registration.mjs
@@ -600,6 +600,8 @@ tasks:
       - python3 -m unittest discover -s scripts/tests -p test_managed_application_inputs.py
       - python3 -m unittest discover -s deploy/managed/nixos/tests -p 'managed_application*_test.py'
       - python3 -m unittest discover -s scripts/tests -p test_qualification_release.py
+      - python3 -m unittest discover -s scripts/tests -p 'test_performance_*.py'
+      - node --test scripts/performance_build_inputs.test.mjs
       - python3 -m unittest discover -s scripts/tests -p test_ci_sqlc_layer_screen.py
       - python3 -m unittest discover -s scripts/tests -p 'test_ci_sqlc_hosted_*.py'
       - bun test scripts/sqlc_hosted_contract.test.ts
@@ -646,6 +648,7 @@ tasks:
       - bun run typecheck:tests
       - bun run test:production-assets
       - bun run test:movielens-performance-harness
+      - bun test scripts/performance_browser_profile.test.ts
       - bun run test:viewport-qualification-harness
       - bun run test:public-site-smoke
 
