@@ -16,6 +16,11 @@ test('Saved visuals follows the account library, including other conversations a
     await page.reload()
     await chat.getByRole('link', { name: 'Saved visuals', exact: true }).waitFor()
     expect(await chat.evaluate((e: any) => e.visualLibraryState.savedIds)).toEqual([])
+    await chat.evaluate(async (e: any) => { e.savedBuilderHref = '/dashboards/sales/edit'; await e.updateComplete })
+    const preview = await chat.getByRole('button', { name: 'Preview dashboard', exact: true }).boundingBox()
+    const saved = await chat.getByRole('link', { name: 'Saved visuals', exact: true }).boundingBox()
+    expect(saved?.height).toBe(preview?.height)
+    expect(saved?.y).toBe(preview?.y)
     count = 0
     await chat.evaluate((e: any) => {
       const controller = e.shadowRoot.querySelector('lv-agent-visual-library')

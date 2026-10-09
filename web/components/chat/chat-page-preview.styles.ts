@@ -54,7 +54,7 @@ export const chatPagePreviewStyles = css`
     }
     .preview-action {
       display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 7px 12px; min-height: 34px; border: var(--lv-border-default);
+      box-sizing: border-box; padding: 7px 12px; min-height: 34px; border: var(--lv-border-default);
       border-radius: var(--lv-radius-default); background: var(--lv-bg-panel);
       color: var(--lv-fg-default); font: var(--lv-type-body-compact); cursor: pointer; text-decoration: none;
     }
