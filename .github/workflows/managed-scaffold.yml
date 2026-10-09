@@ -53,6 +53,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Exercise container ingress policy in isolated kernel namespaces
         run: sudo unshare --mount --net --fork python3 deploy/managed/nixos/tests/docker_firewall_test.py
+      - name: Exercise durable original PostgreSQL fencing contracts
+        run: python3 deploy/managed/nixos/tests/postgres_fence_test.py
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.31.2/install
@@ -85,7 +87,7 @@ jobs:
           path: ${{ runner.temp }}/kamal-transport/
           if-no-files-found: ignore
           retention-days: 14
-      - name: Exercise managed-host updates and rollback plus network and GRUB reboot checks
+      - name: Exercise managed-host updates, rollback, reboot and coordinated recovery components
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.boot_test }}
         run: nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
   application-template:
