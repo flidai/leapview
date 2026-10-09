@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"regexp"
 	"strconv"
 
 	"github.com/flidai/leapview/internal/analytics/catalogartifact"
+	bootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	"github.com/flidai/leapview/internal/recoveryset"
 	"github.com/jackc/pgx/v5"
 )
@@ -19,6 +21,7 @@ type NativePostgresReadback struct {
 	DuckLakeURL    string
 	RootCA         string
 	Roles          RuntimeRoles
+	Credentials    *ManagedCredentials
 }
 
 type NativePostgresEvidence struct {
@@ -31,6 +34,10 @@ type NativePostgresEvidence struct {
 // configured TLS runtime accounts. It does not inspect fixture tables, select
 // a latest publication, mint credentials, or grant traffic admission.
 func (readback NativePostgresReadback) Verify(ctx context.Context) (NativePostgresEvidence, error) {
+	return readback.verifyWithDial(ctx, nil)
+}
+
+func (readback NativePostgresReadback) verifyWithDial(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error)) (NativePostgresEvidence, error) {
 	if readback.Set.Validate() != nil || !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`).MatchString(readback.MetadataSchema) {
 		return NativePostgresEvidence{}, errors.New("exact valid native recovery set and metadata schema required")
 	}
@@ -46,6 +53,13 @@ func (readback NativePostgresReadback) Verify(ctx context.Context) (NativePostgr
 		if (point.DatabaseRole == recoveryset.DatabaseControl && point.DatabaseIdentity != controlConfig.Database) || (point.DatabaseRole == recoveryset.DatabaseDuckLake && point.DatabaseIdentity != duckConfig.Database) {
 			return NativePostgresEvidence{}, errors.New("runtime database differs from the selected recovery set")
 		}
+	}
+	if dial != nil {
+		controlConfig.DialFunc, duckConfig.DialFunc = dial, dial
+		// The selected staging listener is loopback; preserve the admitted host
+		// only as TLS server name, without resolving the original endpoint.
+		lookup := func(context.Context, string) ([]string, error) { return []string{"127.0.0.1"}, nil }
+		controlConfig.LookupFunc, duckConfig.LookupFunc = lookup, lookup
 	}
 	control, err := pgx.ConnectConfig(ctx, controlConfig)
 	if err != nil {
@@ -93,6 +107,13 @@ func (readback NativePostgresReadback) verifyConnections(ctx context.Context, co
 	}
 	if err := verifyRuntimeConnection(ctx, duck, readback.Roles.DuckLake, readback.Set.Catalog.CatalogDatabase); err != nil {
 		return NativePostgresEvidence{}, err
+	}
+	if readback.Credentials != nil {
+		owner := bootstrappostgres.New(control)
+		instance, err := owner.ExistingInstanceID(ctx)
+		if err != nil || instance != readback.Credentials.InstanceID || VerifyManagedKeyring(ctx, *readback.Credentials, owner) != nil {
+			return NativePostgresEvidence{}, errors.New("restored native instance/customer owner or retained keyring differs")
+		}
 	}
 	// A repeatable read-only transaction prevents publication/registry rows
 	// changing between checks. Physical restore and live admission additionally
