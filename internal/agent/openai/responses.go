@@ -320,11 +320,11 @@ func mergeResponseToolCalls(calls map[int]*openAIResponseFunctionCall, output []
 }
 
 func responseFinishReason(status string, toolCalls int) agentcore.FinishReason {
-	if toolCalls > 0 {
-		return agentcore.FinishReasonToolCalls
-	}
 	if status == "incomplete" {
 		return agentcore.FinishReasonTruncated
+	}
+	if toolCalls > 0 {
+		return agentcore.FinishReasonToolCalls
 	}
 	if status == "completed" {
 		return agentcore.FinishReasonStop
