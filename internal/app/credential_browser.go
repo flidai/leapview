@@ -8,6 +8,14 @@ import (
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 )
 
+func configureConnectionCredentialBrowser(browser *projecthttp.BrowserHandler, config credentialmodule.CredentialDraftAPIGenConfig, target string) {
+	if browser != nil && config.Service != nil && config.Validation != nil && config.Activation != nil {
+		browser.ConnectionCommands.Credentials = credentialmodule.CredentialBrowserBindings()
+		browser.ConnectionCredentials = connectionCredentialBrowser(config, target)
+		browser.ConnectionCredentialError = credentialmodule.CredentialBrowserError
+	}
+}
+
 func connectionCredentialBrowser(config credentialmodule.CredentialDraftAPIGenConfig, target string) projecthttp.ConnectionCredentialCommand {
 	return func(ctx context.Context, actor, project, connection string, command projecthttp.ConnectionCredentialInput) (projecthttp.ConnectionCredentialResult, error) {
 		state, err := credentialmodule.RunCredentialBrowser(ctx, config, actor, project, target, connection, credentialmodule.BrowserInput{
