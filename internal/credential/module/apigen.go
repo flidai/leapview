@@ -90,6 +90,10 @@ func (d credentialDraftAPIGenDispatcher) SaveCredentialDraft(
 	r *http.Request,
 	project, target, connection string,
 ) {
+	d.saveCredentialDraft(w, r, project, target, connection, apigencommand.SurfaceAPI)
+}
+
+func (d credentialDraftAPIGenDispatcher) saveCredentialDraft(w http.ResponseWriter, r *http.Request, project, target, connection string, surface apigencommand.Surface) {
 	w.Header().Set("Cache-Control", "no-store")
 	actor, ok := d.principal(w, r)
 	if !ok {
@@ -102,7 +106,7 @@ func (d credentialDraftAPIGenDispatcher) SaveCredentialDraft(
 	defer clear(fields)
 	resource := d.resource(project, target, connection)
 	invocation := credentialgen.GenSaveCredentialDraftCommandInvocation{
-		Surface: apigencommand.SurfaceAPI, Connection: connection,
+		Surface: surface, Connection: connection,
 		RequestID:     strings.TrimSpace(r.Header.Get("X-Request-ID")),
 		CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")),
 	}

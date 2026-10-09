@@ -34,7 +34,11 @@ func mountFirstSourceCredentialPreparationRoutes(r chi.Router, routes *firstSour
 	if routes == nil || authenticate == nil || protocol == nil {
 		return
 	}
+	mountFirstSourceBrowser(r, routes, authenticate, protocol)
 	for _, endpoint := range []struct{ operation, path, identity string }{
+		{"abortCredentialActivation", "/connections/{connection}/first-source-preparations/{preparation}/abort", "preparation"},
+		{"saveCredentialDraft", "/connections/{connection}/credential-drafts", ""},
+		{"validateCredentialDraft", "/connections/{connection}/credential-drafts/{version}/validate", "version"},
 		{"prepareFirstSourceCredential", "/connections/{connection}/credential-drafts/{version}/prepare-first-source", "version"},
 		{"renewFirstSourceCredentialPreparation", "/connections/{connection}/first-source-preparations/{preparation}/renew", "preparation"},
 	} {
@@ -62,6 +66,10 @@ func mountFirstSourceCredentialPreparationRoutes(r chi.Router, routes *firstSour
 }
 
 func (routes *firstSourcePreparationBrowserRoutes) bindScope(next http.Handler) http.Handler {
+	return routes.bindSelectedScope(next, func(r *http.Request) string { return chi.URLParam(r, "connection") })
+}
+
+func (routes *firstSourcePreparationBrowserRoutes) bindSelectedScope(next http.Handler, connection func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		project, err := routes.project(request.Context())
@@ -69,7 +77,7 @@ func (routes *firstSourcePreparationBrowserRoutes) bindScope(next http.Handler) 
 			apitransport.WriteProblem(w, request, http.StatusServiceUnavailable, "FIRST_SOURCE_PREPARATION_UNAVAILABLE", "First-source preparation is unavailable.", nil)
 			return
 		}
-		resource := credentialmodule.ValidationResource{ScopeKind: "connection", ProjectID: project.String(), TargetID: routes.targetID, Environment: routes.config.Environment, ResourceID: chi.URLParam(request, "connection")}
+		resource := credentialmodule.ValidationResource{ScopeKind: "connection", ProjectID: project.String(), TargetID: routes.targetID, Environment: routes.config.Environment, ResourceID: connection(request)}
 		if resource.Validate() != nil {
 			apitransport.WriteProblem(w, request, http.StatusBadRequest, "INVALID_FIRST_SOURCE_PREPARATION", "First-source preparation request is invalid.", nil)
 			return

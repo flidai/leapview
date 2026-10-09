@@ -57,7 +57,10 @@ func (a *Adapter) EnqueueApprovalActivation(ctx context.Context, tx depauth.Tx, 
 	}
 	intent := jobs.WorkflowIntent{
 		Event: jobs.EventInput{Key: "delivery:approval:activation:" + decision.DecisionID, ResourceKind: "delivery_approval", ResourceID: request.RequestID, EventType: "activation_requested", Data: encoded},
-		Job:   jobs.EnqueueInput{ID: "delivery-approval-activation-" + decision.DecisionID, Kind: "delivery.approval.activate", WorkloadClass: jobpolicy.WorkloadClassControl, PrincipalID: decision.DecidedBy.PrincipalID, PartitionKey: request.TargetID, ResourceKind: "delivery_publication", ResourceID: request.PublicationID, EstimatedMemoryBytes: 1, Payload: encoded},
+		// Activation also reconstructs the sealed runtime. Reserve the same
+		// bounded control budget as candidate preparation, retaining the reviewer
+		// identity through credential draining and runtime installation.
+		Job: jobs.EnqueueInput{ID: "delivery-approval-activation-" + decision.DecisionID, Kind: "delivery.approval.activate", WorkloadClass: jobpolicy.WorkloadClassControl, PrincipalID: decision.DecidedBy.PrincipalID, PartitionKey: request.TargetID, ResourceKind: "delivery_publication", ResourceID: request.PublicationID, EstimatedMemoryBytes: 16 << 20, Payload: encoded},
 	}
 	if err := a.jobs.RecordWorkflow(ctx, tx, intent); err != nil {
 		return err

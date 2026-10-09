@@ -943,6 +943,9 @@ func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, p
 		KeyringPath: cfg.CredentialKeyringFile, BeforeActivationCommit: semanticActivation.ValidatePublication,
 		AuthorizeConnection: accessmodule.ConnectionAuthorizerFromSnapshot(instanceID, authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects),
 	})
+	if credentialRuntime != nil && credentialRuntime.firstPublication != nil {
+		deploymentConfig.CoordinateNativeActivation = credentialRuntime.firstPublication.Execute
+	}
 	if err != nil {
 		return fail(fmt.Errorf("build customer credential lifecycle: %w", err))
 	}

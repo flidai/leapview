@@ -2,14 +2,36 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/flidai/leapview/internal/access"
 	credentialmodule "github.com/flidai/leapview/internal/credential/module"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/jackc/pgx/v5"
 )
 
 type firstSourceCredentialPreparationCommandAdapter struct {
 	service *firstSourceCredentialPreparationService
+}
+
+func (a firstSourceCredentialPreparationCommandAdapter) Describe(ctx context.Context, actor string, resource credentialmodule.ValidationResource) (credentialmodule.FirstSourceBrowserDescription, error) {
+	var result credentialmodule.FirstSourceBrowserDescription
+	if a.service == nil {
+		return result, credentialmodule.ErrValidationUnavailable
+	}
+	err := a.service.authority.WithAuthorization(ctx, actor, resource, access.ActionConnectionManage, func(ctx context.Context, tx pgx.Tx, admission credentialmodule.FirstSourceAdmission) error {
+		endpoint := admission.Intent.Endpoint
+		result = credentialmodule.FirstSourceBrowserDescription{Host: endpoint.Host, Database: endpoint.Database, SourceIdentity: endpoint.SourceIdentity, TargetRevision: 1}
+		target, err := a.service.targets.TargetTx(ctx, tx, resource.TargetID)
+		if errors.Is(err, deploymentpostgres.ErrNotFound) {
+			return nil
+		}
+		if err == nil {
+			result.TargetRevision = target.TargetRevision
+		}
+		return err
+	})
+	return result, err
 }
 
 func (a firstSourceCredentialPreparationCommandAdapter) Authorize(ctx context.Context, actor string, resource credentialmodule.ValidationResource) error {

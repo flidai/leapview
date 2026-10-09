@@ -24,6 +24,7 @@ enum RouteKind {
   chat: "chat",
   connections: "connections",
   connectionAsset: "connection_asset",
+  firstSourceCredentials: "first_source_credentials",
   data: "data",
   admin: "admin",
   login: "login",
@@ -1384,6 +1385,38 @@ model ConnectionCredentialCommandSignal {
 model ConnectionCredentialDraftSignal {
   `versionId`: string;
   `createdAt`: string;
+}
+
+@apigen.contract(#{ kind: "ui-envelope", tags: #["project", "connections", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "first_source_credentials" })
+model FirstSourceCredentialEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "firstSourceCredentials" })
+  `firstSourceCredentials`: FirstSourceCredentialSignal;
+}
+
+model FirstSourceCredentialCommandSignal {
+  `action`: string;
+  `password`: string;
+  `versionId`: string;
+  `receiptId`: string;
+  `operationId`: string;
+  `sourceDigest`: string;
+  `sourceAttestationDigest`: string;
+  `planIdempotencyKey`: string;
+}
+
+model FirstSourceCredentialSignal {
+  `connectionId`: string;
+  `host`: string;
+  `database`: string;
+  `sourceIdentity`: string;
+  `targetRevision`: int64;
+  `command`: FirstSourceCredentialCommandSignal;
+  `drafts`: ConnectionCredentialDraftSignal[];
+  `receiptExpiresAt`: string;
+  `phase`: string;
+  `message`: string;
+  `error`: string;
 }
 
 model ConnectionCredentialSignal {

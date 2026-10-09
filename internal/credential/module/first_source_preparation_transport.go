@@ -37,6 +37,20 @@ func (d credentialDraftAPIGenDispatcher) RenewFirstSourceCredentialPreparation(w
 func DispatchFirstSourcePreparationBrowser(config CredentialDraftAPIGenConfig, operation string, w http.ResponseWriter, r *http.Request, project, target, connection, identity string) bool {
 	d := credentialDraftAPIGenDispatcher{config: config}
 	switch operation {
+	case "abortCredentialActivation":
+		if _, ok := d.firstSourcePrincipal(w, r, d.resource(project, target, connection)); !ok {
+			return true
+		}
+		d.abortCredentialActivation(w, r, project, target, connection, identity, apigencommand.SurfaceUI)
+	case "saveCredentialDraft", "validateCredentialDraft":
+		if _, ok := d.firstSourcePrincipal(w, r, d.resource(project, target, connection)); !ok {
+			return true
+		}
+		if operation == "saveCredentialDraft" {
+			d.saveCredentialDraft(w, r, project, target, connection, apigencommand.SurfaceUI)
+		} else {
+			d.validateCredentialDraft(w, r, project, target, connection, identity, apigencommand.SurfaceUI)
+		}
 	case "prepareFirstSourceCredential":
 		d.prepareFirstSource(w, r, project, target, connection, identity, apigencommand.SurfaceUI)
 	case "renewFirstSourceCredentialPreparation":

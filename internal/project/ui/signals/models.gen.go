@@ -1367,6 +1367,35 @@ type FilterMenuSignal struct {
 	SummaryLabel *string                   `json:"summaryLabel,omitempty" yaml:"summaryLabel,omitempty"`
 }
 
+type FirstSourceCredentialCommandSignal struct {
+	Action                  string `json:"action" yaml:"action"`
+	Password                string `json:"password" yaml:"password"`
+	VersionID               string `json:"versionId" yaml:"versionId"`
+	ReceiptID               string `json:"receiptId" yaml:"receiptId"`
+	OperationID             string `json:"operationId" yaml:"operationId"`
+	SourceDigest            string `json:"sourceDigest" yaml:"sourceDigest"`
+	SourceAttestationDigest string `json:"sourceAttestationDigest" yaml:"sourceAttestationDigest"`
+	PlanIdempotencyKey      string `json:"planIdempotencyKey" yaml:"planIdempotencyKey"`
+}
+
+type FirstSourceCredentialEnvelope struct {
+	FirstSourceCredentials FirstSourceCredentialSignal `json:"firstSourceCredentials" yaml:"firstSourceCredentials"`
+}
+
+type FirstSourceCredentialSignal struct {
+	ConnectionID     string                             `json:"connectionId" yaml:"connectionId"`
+	Host             string                             `json:"host" yaml:"host"`
+	Database         string                             `json:"database" yaml:"database"`
+	SourceIdentity   string                             `json:"sourceIdentity" yaml:"sourceIdentity"`
+	TargetRevision   int64                              `json:"targetRevision" yaml:"targetRevision"`
+	Command          FirstSourceCredentialCommandSignal `json:"command" yaml:"command"`
+	Drafts           []ConnectionCredentialDraftSignal  `json:"drafts" yaml:"drafts"`
+	ReceiptExpiresAt string                             `json:"receiptExpiresAt" yaml:"receiptExpiresAt"`
+	Phase            string                             `json:"phase" yaml:"phase"`
+	Message          string                             `json:"message" yaml:"message"`
+	Error            string                             `json:"error" yaml:"error"`
+}
+
 type ModelFieldDrawerSignal struct {
 	FieldKey string `json:"fieldKey" yaml:"fieldKey"`
 	Open     bool   `json:"open" yaml:"open"`
@@ -1833,18 +1862,19 @@ type ResourceTabSignal struct {
 type RouteKind string
 
 const (
-	RouteKindCatalog           RouteKind = "catalog"
-	RouteKindDashboard         RouteKind = "dashboard"
-	RouteKindDashboardBuilder  RouteKind = "dashboard_builder"
-	RouteKindPipelines         RouteKind = "pipelines"
-	RouteKindPipelineDetail    RouteKind = "pipeline_detail"
-	RouteKindPipelineRunDetail RouteKind = "pipeline_run_detail"
-	RouteKindChat              RouteKind = "chat"
-	RouteKindConnections       RouteKind = "connections"
-	RouteKindConnectionAsset   RouteKind = "connection_asset"
-	RouteKindData              RouteKind = "data"
-	RouteKindAdmin             RouteKind = "admin"
-	RouteKindLogin             RouteKind = "login"
+	RouteKindCatalog                RouteKind = "catalog"
+	RouteKindDashboard              RouteKind = "dashboard"
+	RouteKindDashboardBuilder       RouteKind = "dashboard_builder"
+	RouteKindPipelines              RouteKind = "pipelines"
+	RouteKindPipelineDetail         RouteKind = "pipeline_detail"
+	RouteKindPipelineRunDetail      RouteKind = "pipeline_run_detail"
+	RouteKindChat                   RouteKind = "chat"
+	RouteKindConnections            RouteKind = "connections"
+	RouteKindConnectionAsset        RouteKind = "connection_asset"
+	RouteKindFirstSourceCredentials RouteKind = "first_source_credentials"
+	RouteKindData                   RouteKind = "data"
+	RouteKindAdmin                  RouteKind = "admin"
+	RouteKindLogin                  RouteKind = "login"
 )
 
 type RouteRuntimeSignal struct {
