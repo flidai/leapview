@@ -18,6 +18,7 @@ func completeQualificationLatencyReport() qualificationPerformanceReport {
 		report.Latency[phase.Field] = qualificationDurationSummary{Samples: 1, P50: 3, P95: 3, Max: 3}
 	}
 	report.Reliability.Requests = 1
+	report.Resources = completeQualificationResourceReport(validQualificationPerformancePolicy())
 	return report
 }
 

@@ -502,17 +502,21 @@ func TestQualificationPerformancePolicyAndEvaluationAreOwnedByGo(t *testing.T) {
 			Max:     phase.Budget(policy) + 1,
 		}
 	}
+	report.Resources = completeQualificationResourceReport(policy)
 	report.Reliability.Requests = 100
 	report.Reliability.Errors = 1
-	report.Resources.PeakResidentMemoryBytes =
-		policy.Budgets.PeakResidentMemoryBytes + 1
-	report.Resources.CPUSeconds = policy.Budgets.CPUSecondsMax + 1
+	report.Resources.PeakResidentMemoryBytes = resourceEvidencePointer(policy.Budgets.PeakResidentMemoryBytes + 1)
+	for index := range report.Resources.Measurements {
+		report.Resources.Measurements[index].ResidentMemoryBytes = report.Resources.PeakResidentMemoryBytes
+	}
+	report.Resources.CPUSeconds = resourceEvidencePointer(policy.Budgets.CPUSecondsMax + 1)
+	report.Resources.Measurements[len(report.Resources.Measurements)-1].CPUSeconds = report.Resources.CPUSeconds
 	report.Resources.TemporaryDiskGrowthBytes =
 		policy.Budgets.TemporaryDiskGrowthBytesMax + 1
-	report.Resources.GoroutinesAfter =
-		policy.Budgets.GoroutineGrowthMax + 1
-	report.Resources.PeakOpenConnections =
-		policy.Budgets.OpenConnectionsMax + 1
+	report.Resources.GoroutinesAfter = resourceEvidencePointer(*report.Resources.GoroutinesBefore + policy.Budgets.GoroutineGrowthMax + 1)
+	report.Resources.Measurements[len(report.Resources.Measurements)-1].Goroutines = report.Resources.GoroutinesAfter
+	report.Resources.PeakOpenConnections = resourceEvidencePointer(policy.Budgets.OpenConnectionsMax + 1)
+	report.Resources.Measurements[0].OpenConnections = report.Resources.PeakOpenConnections
 	failures := evaluateQualificationPerformance(report, policy)
 	if got, want := len(failures), 13; got != want {
 		t.Fatalf("performance failures = %d, want %d: %v", got, want, failures)

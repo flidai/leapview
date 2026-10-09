@@ -108,6 +108,21 @@ used in a baseline comparison. An absolute-budget run without a supplied
 baseline leaves `assertions.comparisonTolerance` false; its success is not
 evidence that a regression comparison ran.
 
+Resource evidence uses `resources.schemaVersion: 1`. Unversioned aggregate-only
+reports and unknown resource protocols fail; they are not converted into complete
+evidence. The outer report and performance policy retain their existing version.
+Resource evidence must retain all eight warm-process metric snapshots and a
+before/after pair for every restart-cold load. CPU, resident memory, goroutines
+and connection measurements must be present, finite and nonnegative; resident
+memory and goroutines must be positive. Observed zero CPU and connections are
+valid. CPU counters must not decrease within a process; each deliberately
+restarted cold process has its own pair. Summaries must agree with these
+measurements: peak RSS spans cold and warm loads, CPU is the sum of process
+deltas, and steady-state goroutines and peak connections use the warm process.
+The Go controller supplies disk growth independently. Missing or inconsistent
+candidate or supplied baseline resource evidence fails qualification; this
+validation does not establish independent acceptance of a baseline.
+
 The installed-candidate gate assumes a dedicated Docker runtime with at least
 2 logical CPUs and 4 GiB memory. Its bundled Olist workload contains 24
 synthetic orders. The absolute rc.1 ceilings are:

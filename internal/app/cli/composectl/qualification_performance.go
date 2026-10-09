@@ -62,18 +62,9 @@ type qualificationPerformanceReport struct {
 		Errors   int      `json:"errors"`
 		Failures []string `json:"failures"`
 	} `json:"reliability"`
-	Resources struct {
-		PeakResidentMemoryBytes  int64   `json:"peakResidentMemoryBytes"`
-		CPUSeconds               float64 `json:"cpuSeconds"`
-		TemporaryDiskBeforeBytes int64   `json:"temporaryDiskBeforeBytes"`
-		TemporaryDiskAfterBytes  int64   `json:"temporaryDiskAfterBytes"`
-		TemporaryDiskGrowthBytes int64   `json:"temporaryDiskGrowthBytes"`
-		GoroutinesBefore         int64   `json:"goroutinesBefore"`
-		GoroutinesAfter          int64   `json:"goroutinesAfter"`
-		PeakOpenConnections      int64   `json:"peakOpenConnections"`
-	} `json:"resources"`
-	Samples     json.RawMessage `json:"samples,omitempty"`
-	Concurrency json.RawMessage `json:"concurrency,omitempty"`
+	Resources   qualificationResourceReport `json:"resources"`
+	Samples     json.RawMessage             `json:"samples,omitempty"`
+	Concurrency json.RawMessage             `json:"concurrency,omitempty"`
 	Environment struct {
 		Runtime     string           `json:"runtime"`
 		LogicalCPUs int64            `json:"logicalCPUs"`
@@ -173,6 +164,7 @@ func evaluateQualificationPerformance(
 	policy qualificationPerformancePolicy,
 ) []string {
 	failures := validateQualificationPerformanceLatencies(report, policy)
+	failures = append(failures, validateQualificationResources(report.Resources, policy)...)
 	for _, phase := range qualificationLatencyPhases {
 		actual := report.Latency[phase.Field].P95
 		limit := phase.Budget(policy)
@@ -195,17 +187,17 @@ func evaluateQualificationPerformance(
 		))
 	}
 	resources := report.Resources
-	if resources.PeakResidentMemoryBytes > policy.Budgets.PeakResidentMemoryBytes {
+	if qualificationResourceValue(resources.PeakResidentMemoryBytes) > policy.Budgets.PeakResidentMemoryBytes {
 		failures = append(failures, fmt.Sprintf(
 			"peak resident memory %d bytes exceeds %d bytes",
-			resources.PeakResidentMemoryBytes,
+			qualificationResourceValue(resources.PeakResidentMemoryBytes),
 			policy.Budgets.PeakResidentMemoryBytes,
 		))
 	}
-	if resources.CPUSeconds > policy.Budgets.CPUSecondsMax {
+	if qualificationResourceValue(resources.CPUSeconds) > policy.Budgets.CPUSecondsMax {
 		failures = append(failures, fmt.Sprintf(
 			"CPU consumption %vs exceeds %vs",
-			resources.CPUSeconds, policy.Budgets.CPUSecondsMax,
+			qualificationResourceValue(resources.CPUSeconds), policy.Budgets.CPUSecondsMax,
 		))
 	}
 	if resources.TemporaryDiskGrowthBytes > policy.Budgets.TemporaryDiskGrowthBytesMax {
@@ -215,16 +207,16 @@ func evaluateQualificationPerformance(
 			policy.Budgets.TemporaryDiskGrowthBytesMax,
 		))
 	}
-	if growth := resources.GoroutinesAfter - resources.GoroutinesBefore; growth > policy.Budgets.GoroutineGrowthMax {
+	if growth := qualificationResourceValue(resources.GoroutinesAfter) - qualificationResourceValue(resources.GoroutinesBefore); growth > policy.Budgets.GoroutineGrowthMax {
 		failures = append(failures, fmt.Sprintf(
 			"steady-state goroutine growth %d exceeds %d",
 			growth, policy.Budgets.GoroutineGrowthMax,
 		))
 	}
-	if resources.PeakOpenConnections > policy.Budgets.OpenConnectionsMax {
+	if qualificationResourceValue(resources.PeakOpenConnections) > policy.Budgets.OpenConnectionsMax {
 		failures = append(failures, fmt.Sprintf(
 			"peak open connections %d exceeds %d",
-			resources.PeakOpenConnections,
+			qualificationResourceValue(resources.PeakOpenConnections),
 			policy.Budgets.OpenConnectionsMax,
 		))
 	}
@@ -276,10 +268,10 @@ func compareQualificationPerformance(
 	policy qualificationPerformancePolicy,
 ) []string {
 	failures := qualificationPerformanceComparisonIdentity(candidate, baseline, policy)
-	for _, failure := range validateQualificationPerformanceLatencies(candidate, policy) {
+	for _, failure := range append(validateQualificationPerformanceLatencies(candidate, policy), validateQualificationResources(candidate.Resources, policy)...) {
 		failures = append(failures, "candidate "+failure)
 	}
-	for _, failure := range validateQualificationPerformanceLatencies(baseline, policy) {
+	for _, failure := range append(validateQualificationPerformanceLatencies(baseline, policy), validateQualificationResources(baseline.Resources, policy)...) {
 		failures = append(failures, "baseline "+failure)
 	}
 	if len(failures) > 0 {
