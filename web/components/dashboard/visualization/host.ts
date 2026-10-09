@@ -8,6 +8,7 @@ import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
+import type { VisualFocusPreview } from '../visual-modal-focus'
 import type { ReportTable } from '../table/report-table'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
@@ -63,6 +64,7 @@ export class VisualizationHost extends LitElement {
     const previous = this.envelopeValue
     if (Object.is(previous, value)) return
     this.envelopeValue = value
+    if (this.focusPreview) this.focusPreview.envelope = value
     this.requestUpdate('envelope', previous)
   }
 
@@ -122,6 +124,7 @@ export class VisualizationHost extends LitElement {
   private mountEpoch = 0
   private envelopeAssignmentGeneration = 0
   private pendingEnvelopeValidation?: Promise<void>
+  private focusPreview?: VisualizationHost
   private optionsScrollRoots: Array<Document | ShadowRoot> = []
 
   static styles = [visualActionStyles, visualizationHostStyles]
@@ -262,6 +265,34 @@ export class VisualizationHost extends LitElement {
     await this.ensureMounted()
     await this.waitForApply()
     return this.controller?.snapshot() ?? Promise.reject(new Error('visualization is not mounted'))
+  }
+
+  /** Keep the dashboard tile populated while its live renderer is in focus. */
+  createFocusPreview(): VisualFocusPreview {
+    const preview = this.cloneNode(true) as VisualizationHost
+    preview.removeAttribute('id')
+    preview.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'))
+    preview.setAttribute('data-visual-focus-preview', '')
+    preview.setAttribute('aria-hidden', 'true')
+    preview.inert = true
+    preview.deferMount = false
+    preview.authoring = this.authoring
+    preview.actionsEnabled = this.actionsEnabled
+    preview.exploreHref = this.exploreHref
+    preview.envelope = this.envelope
+    // Rendering a windowed table can request blocks without user input.
+    // Only the live focused renderer may issue commands or resize the tile.
+    for (const name of ['lv-visualization-window-request', 'lv-visualization-size-change', 'lv-visualization-observation']) {
+      preview.addEventListener(name, event => event.stopPropagation())
+    }
+    this.focusPreview = preview
+    return {
+      element: preview,
+      dispose: () => {
+        preview.remove()
+        if (this.focusPreview === preview) this.focusPreview = undefined
+      },
+    }
   }
 
   protected render() {

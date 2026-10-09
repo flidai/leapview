@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
+import { testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
+import { typographyTestTokens } from '../test-typography-tokens'
 import { chromium, expect as browserExpect, type Browser } from '@playwright/test'
 
 let server: Server
@@ -15,6 +17,16 @@ beforeAll(async () => {
     if (url === '/visual-modal-under-test.js') {
       response.setHeader('content-type', 'text/javascript')
       response.end(await readFile(join(root, 'visual-modal-under-test.js'), 'utf8'))
+      return
+    }
+    if (url.startsWith('/host/')) {
+      const hostRoot = join(root, 'visualization-host-test')
+      const file = normalize(join(hostRoot, url.slice('/host/'.length)))
+      if (!file.startsWith(hostRoot + '/')) { response.writeHead(404); response.end(); return }
+      try {
+        response.setHeader('content-type', 'text/javascript')
+        response.end(await readFile(file))
+      } catch { response.writeHead(404); response.end() }
       return
     }
     response.setHeader('content-type', 'text/html')
@@ -71,6 +83,7 @@ async function dispatchVisualAction(page: Awaited<ReturnType<typeof setupPage>>,
     }))
   }, { sourceId, action })
   await page.locator('lv-visual-modal').evaluate((modal: any) => modal.updateComplete)
+  if (action === 'focus' || action === 'show-data') await browserExpect(page.getByRole('dialog')).toBeVisible()
 }
 
 test('focus action moves the live visual into the modal and restores it in place', async () => {
@@ -169,38 +182,6 @@ test('opening another focused source restores the previous element first', async
       secondSlot: 'focus-visual',
       secondInModal: true,
     })
-  } finally {
-    await page.close()
-  }
-})
-
-test('focused tables fit a few rows and cap tall tables at the viewport', async () => {
-  const page = await setupPage()
-  try {
-    await dispatchVisualAction(page, 'second', 'focus')
-    const compactHeight = await page.locator('lv-visual-modal').evaluate((modal: any) => (
-      (modal.shadowRoot as ShadowRoot).querySelector('.focus-dialog')!.getBoundingClientRect().height
-    ))
-    expect(compactHeight).toBeLessThan(500)
-
-    await page.getByRole('button', { name: 'Close visual modal' }).click()
-    await page.evaluate(() => {
-      document.getElementById('second')!.dispatchEvent(new CustomEvent('lv-visual-action', {
-        bubbles: true,
-        composed: true,
-        detail: {
-          action: 'focus', visualType: 'table', visualId: 'second', title: 'Large table',
-          columns: [{ key: 'label', label: 'Label' }], rows: [], selection: [],
-          table: { availableRows: 100, rowHeight: 34 },
-        },
-      }))
-    })
-    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.updateComplete)
-    const tallHeight = await page.locator('lv-visual-modal').evaluate((modal: any) => (
-      (modal.shadowRoot as ShadowRoot).querySelector('.focus-dialog')!.getBoundingClientRect().height
-    ))
-    expect(tallHeight).toBeGreaterThan(compactHeight)
-    expect(tallHeight).toBeLessThanOrEqual(920)
   } finally {
     await page.close()
   }
@@ -588,19 +569,168 @@ test('a previous action timer cannot clear a newer repeated notice', async () =>
   }
 })
 
-test('table focus fits its content and restores chart-sized focus after closing', async () => {
+test('table focus uses the same large viewport as chart focus', async () => {
   const page = await setupPage()
   try {
-    await page.addStyleTag({content: ':root{--base-size-28:28px} #second{display:block;height:300px} #second[slot="focus-visual"]{height:300px}'})
+    await page.addStyleTag({ content: ':root { --base-size-28: 28px; }' })
     await dispatchVisualAction(page, 'second', 'focus')
     const modal = page.locator('lv-visual-modal')
     const dialog = modal.getByRole('dialog')
-    const size = await dialog.boundingBox()
-    expect(size!.height).toBeLessThan(400)
-    expect(size!.height).toBeGreaterThanOrEqual(300)
-    await modal.getByRole('button', {name:'Close visual modal'}).click()
+    const tableBounds = await dialog.boundingBox()
+    expect(tableBounds!.height).toBeGreaterThan(600)
+    expect(tableBounds!.y + tableBounds!.height).toBeLessThanOrEqual(720 - 28)
+    await page.keyboard.press('Escape')
     await dispatchVisualAction(page, 'first', 'focus')
-    expect(await modal.getAttribute('tabular-focus')).toBeNull()
-    expect((await dialog.boundingBox())!.height).toBeGreaterThan(400)
-  } finally {await page.close()}
+    expect((await dialog.boundingBox())!.height).toBe(tableBounds!.height)
+  } finally {
+    await page.close()
+  }
 })
+
+async function setupRenderedPage() {
+  const page = await setupPage()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.addStyleTag({ content: `
+    :root {
+      ${typographyTestTokens}
+      --base-size-28: 28px; --base-size-2: 2px; --base-size-4: 4px;
+      --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px;
+      --base-size-16: 16px; --base-size-24: 24px; --base-size-48: 48px;
+      --lv-space-sm: 8px; --lv-space-md: 12px; --lv-space-lg: 16px;
+      --lv-control-small: 28px; --lv-radius-default: 6px;
+      --control-small-size: 28px; --control-medium-size: 32px;
+      --lv-chart-surface: #1b222a; --lv-bg-overlay: #1b222a;
+      --lv-bg-panel-muted: #222a33; --lv-fg-default: #f0f3f6;
+      --lv-fg-muted: #9ba7b4; --lv-line-default: #3d444d;
+      --lv-border-default: 1px solid #3d444d;
+      --lv-modal-backdrop: rgb(0 0 0 / .4); --zIndex-modal: 200;
+    }
+    #parent { display: grid; gap: 16px; width: 600px; }
+    #parent > lv-visualization-host { height: 280px; }
+  ` })
+  await page.addScriptTag({ type: 'module', url: `${baseURL}/host/visualization-host-under-test.js` })
+  await page.waitForFunction(() => customElements.get('lv-visualization-host'))
+  await page.evaluate(async (envelopes) => {
+    for (const [id, envelope] of [['first', envelopes.orders_chart], ['second', envelopes.orders]] as const) {
+      envelope.status = { kind: 'ready' }
+      envelope.diagnostics = []
+      const host = document.getElementById(id) as any
+      host.envelope = envelope
+      await host.ensureMounted()
+    }
+  }, testVisualizationEnvelopes())
+  return page
+}
+
+test('focused tables fill the dialog and preserve a rendered tile, live state, and updates', async () => {
+  const page = await setupRenderedPage()
+  try {
+    await page.locator('#second').evaluate((host: any) => {
+      (window as any).originalController = host.controller
+      ;(window as any).originalTable = host.shadowRoot.querySelector('lv-report-table')
+    })
+    await dispatchVisualAction(page, 'second', 'focus')
+    const modal = page.locator('lv-visual-modal')
+    const dialogBounds = (await modal.getByRole('dialog').boundingBox())!
+    expect(dialogBounds.height).toBeGreaterThan(800)
+    const table = modal.locator('lv-report-table')
+    const shell = table.locator('.shell')
+    const footer = table.locator('.footer')
+    await browserExpect.poll(async () => (await shell.boundingBox())?.height ?? 0).toBeGreaterThan(800)
+    expect((await footer.boundingBox())!.y).toBeGreaterThan(dialogBounds.y + dialogBounds.height - 80)
+    const preview = page.locator('#parent > [data-visual-focus-preview]')
+    await browserExpect.poll(() => preview.locator('lv-report-table .row:not(.skeleton-row)').count()).toBeGreaterThan(0)
+    expect(await preview.getAttribute('inert')).not.toBeNull()
+    expect(await preview.getAttribute('aria-hidden')).toBe('true')
+    await page.locator('#second').evaluate(async (host: any) => {
+      const envelope = structuredClone(host.envelope)
+      envelope.dataRevision++
+      envelope.dataState.dataRevision++
+      envelope.dataState.blocks.a.rows[0] = ['updated-order']
+      host.envelope = envelope
+      await host.ensureMounted()
+    })
+    await browserExpect.poll(() => preview.locator('lv-report-table .cell-value').first().innerText()).toContain('updated-order')
+    await page.keyboard.press('Escape')
+    expect(await preview.count()).toBe(0)
+    expect(await page.locator('#second').evaluate((host: any) => (
+      host.controller === (window as any).originalController &&
+      host.shadowRoot.querySelector('lv-report-table') === (window as any).originalTable
+    ))).toBe(true)
+    await browserExpect.poll(async () => (await page.locator('#second lv-report-table .shell').boundingBox())?.height ?? 0).toBeLessThan(300)
+  } finally {
+    await page.close()
+  }
+}, 20_000)
+
+test('short tables stay expanded and remain usable when the viewport shrinks', async () => {
+  const page = await setupRenderedPage()
+  try {
+    await page.locator('#second').evaluate(async (host: any) => {
+      const envelope = structuredClone(host.envelope)
+      envelope.dataState.cardinality.count = 5
+      envelope.dataState.availableRows = 5
+      envelope.dataState.blocks.a.rows = envelope.dataState.blocks.a.rows.slice(0, 5)
+      host.envelope = envelope
+      await host.ensureMounted()
+    })
+    await dispatchVisualAction(page, 'second', 'focus')
+    const modal = page.locator('lv-visual-modal')
+    const tableShell = modal.locator('lv-report-table .shell')
+    await browserExpect.poll(async () => (await tableShell.boundingBox())?.height ?? 0).toBeGreaterThan(800)
+    expect(await modal.locator('lv-report-table .row:not(.skeleton-row)').count()).toBe(5)
+    await page.setViewportSize({ width: 844, height: 390 })
+    await browserExpect.poll(async () => (await tableShell.boundingBox())?.height ?? 0).toBeLessThan(340)
+    const bounds = (await modal.getByRole('dialog').boundingBox())!
+    const footer = (await modal.locator('lv-report-table .footer').boundingBox())!
+    expect(bounds.y).toBeGreaterThanOrEqual(28)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(390 - 28)
+    expect(footer.y + footer.height).toBeLessThanOrEqual(bounds.y + bounds.height)
+    await modal.getByRole('button', { name: 'Close visual modal' }).click()
+    expect(await page.locator('#parent > [data-visual-focus-preview]').count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+}, 20_000)
+
+test('focused pie charts keep the original chart rendered and clean up when the modal detaches', async () => {
+  const page = await setupRenderedPage()
+  try {
+    await page.locator('#first').evaluate(async (host: any) => {
+      const envelope = structuredClone(host.envelope)
+      envelope.specRevision = `sha256:${'4'.repeat(64)}`
+      envelope.dataState.specRevision = envelope.specRevision
+      for (const dataset of envelope.dataState.datasets) dataset.specRevision = envelope.specRevision
+      const { x, y, ...base } = envelope.spec
+      envelope.spec = {
+        ...base, kind: 'proportional', mark: 'pie',
+        category: { dataset: 'primary', field: 'label' },
+        value: { dataset: 'primary', field: 'value' },
+        presentation: {
+          legend: 'bottom', labelPosition: 'outside', orientation: 'vertical', rose: false,
+          labelPolicy: { density: 'always', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true },
+        },
+      }
+      host.envelope = envelope
+      await host.ensureMounted()
+    })
+    await dispatchVisualAction(page, 'first', 'focus')
+    const preview = page.locator('#parent > [data-visual-focus-preview]')
+    for (const host of [preview, page.locator('lv-visual-modal #first')]) {
+      await browserExpect.poll(() => host.evaluate(async (element: any) => {
+        await element.ensureMounted()
+        const canvas = element.shadowRoot.querySelector('.renderer canvas') as HTMLCanvasElement | null
+        if (!canvas?.width || !canvas.height) return false
+        const center = canvas.getContext('2d')!.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data
+        return element.envelope.spec.kind === 'proportional' && center[3] > 0
+      })).toBe(true)
+    }
+    expect((await preview.boundingBox())!.height).toBe(280)
+    expect((await page.locator('lv-visual-modal #first').boundingBox())!.height).toBeGreaterThan(800)
+    await page.locator('lv-visual-modal').evaluate(modal => modal.remove())
+    expect(await preview.count()).toBe(0)
+    expect(await page.locator('#parent > #first').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+}, 20_000)
