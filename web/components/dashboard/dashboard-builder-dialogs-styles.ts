@@ -390,8 +390,12 @@ export const dashboardBuilderDialogsStyles = css`
 
     @media (max-width: 960px) {
       .toolbar {
+        position: relative;
         flex-wrap: wrap;
       }
+
+      .dashboard-metadata { position: static; }
+      .dashboard-metadata-form { z-index: 5; right: var(--base-size-8); }
 
       .title-wrap {
         min-width: 10rem;
@@ -585,8 +589,9 @@ export const dashboardBuilderDialogsStyles = css`
       .meta span { min-width: 0; overflow-wrap: anywhere; }
 
       .dashboard-metadata-form {
-        left: 0;
-        right: auto;
+        left: var(--base-size-8);
+        right: var(--base-size-8);
+        width: auto;
       }
     }
 

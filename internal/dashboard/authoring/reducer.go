@@ -1126,6 +1126,7 @@ func updateCanonicalFilter(value *document.DashboardDocument, patch UpdateFilter
 		filter.Required = &required
 		filter.ReaderEditable = &patch.ReaderEditable
 		filter.URLParameter = optionalCanonicalString(patch.URLParameter)
+		migrateCanonicalPageFilterState(value, filter, previousControlType, patch.ControlType)
 		return nil
 	}
 	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)

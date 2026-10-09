@@ -21,3 +21,20 @@ func TestBuilderToolScopeRequiresResolvedBuilderContext(t *testing.T) {
 		t.Fatalf("resolved builder target was not bound: %#v", builder)
 	}
 }
+
+func TestMainChatAuthoringScopeDoesNotLeakToEmbeddedSurfaces(t *testing.T) {
+	base := agent.Scope{MainChatAuthoring: true}
+	if !builderToolScope(base, nil).MainChatAuthoring {
+		t.Fatal("main chat cannot create a private draft")
+	}
+	for _, surface := range []string{"dashboard", "data", "dashboard_builder", "builder"} {
+		got := builderToolScope(base, &agent.TurnContext{Surface: surface, DashboardID: "dashboard-1", DraftID: "draft-1"})
+		if got.MainChatAuthoring {
+			t.Fatalf("embedded surface %s inherited main chat authoring", surface)
+		}
+	}
+	got := builderToolScope(base, &agent.TurnContext{Surface: "builder", DashboardID: "dashboard-1", DraftID: "draft-1"})
+	if got.BuilderDashboardID != "dashboard-1" || got.BuilderDraftID != "draft-1" {
+		t.Fatalf("chat builder context not bound: %#v", got)
+	}
+}

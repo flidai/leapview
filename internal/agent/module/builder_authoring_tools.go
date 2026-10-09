@@ -10,19 +10,28 @@ import (
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
-// V1 authoring is available only from a server-resolved, open Builder draft.
-// The model cannot create, fork, publish, archive, or change visibility.
+// Main chat can author private drafts through the same authorized application
+// facade. Builder edits remain bound to its server-resolved open draft; neither
+// surface exposes lifecycle commands or publication.
 func scopedBuilderAuthoringTools(definitions []agentcore.ToolDefinition, scope agentcap.Scope) []agentcore.ToolDefinition {
+	mainChat := scope.MainChatAuthoring && strings.TrimSpace(scope.PrincipalID) != "" && !scope.Credential.Restricted && scope.Credential.PermissionProfile == "" && scope.Credential.Permissions == nil && scope.BuilderDashboardID == "" && scope.BuilderDraftID == ""
 	selected := definitions[:0:0]
 	for _, definition := range definitions {
 		switch definition.Name {
-		case agenttools.CreateDashboardDraftToolName, agenttools.ForkDashboardToolName,
+		case agenttools.CreateDashboardDraftToolName:
+			if !mainChat {
+				continue
+			}
+		case agenttools.ForkDashboardToolName,
 			agenttools.ExecuteDashboardCommandToolName, agenttools.SetDashboardVisibilityToolName:
 			continue
 		case agenttools.GetDashboardDraftToolName, agenttools.ReadDashboardSourceToolName,
 			agenttools.EditDashboardSourceToolName, agenttools.AddDashboardPageToolName,
 			agenttools.AddDashboardVisualToolName, agenttools.AssignDashboardFieldToolName,
 			agenttools.PreviewDashboardDraftToolName:
+			if mainChat {
+				break
+			}
 			if scope.BuilderDashboardID == "" || scope.BuilderDraftID == "" {
 				continue
 			}

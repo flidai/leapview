@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
@@ -244,13 +243,16 @@ func TestAgentAPIRejectsConcurrentTurnsForConversation(t *testing.T) {
 	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer")
 	token := testAPIToken(t, ctx, store, principal.ID, "agent-test")
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(150 * time.Millisecond)
 		writeRawJSON(t, w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
 	}))
 	defer modelServer.Close()
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	agentService := agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", BaseURL: modelServer.URL, Model: "fake-model"})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+		Auth: auth, Agent: agentService,
+		AgentPersistence: store.fixture.Graph.AgentPersistence,
+		JobModule:        store.fixture.JobsModule,
+	}))
 	conversation, err := agentService.CreateConversation(ctx, agent.Scope{PrincipalID: principal.ID}, "Ask")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -271,14 +273,12 @@ func TestAgentAPIRejectsConcurrentTurnsForConversation(t *testing.T) {
 	}
 	wg.Wait()
 	close(statuses)
-	sawConflict := false
+	counts := map[int]int{}
 	for status := range statuses {
-		if status == http.StatusConflict {
-			sawConflict = true
-		}
+		counts[status]++
 	}
-	if !sawConflict {
-		t.Fatal("concurrent turns did not return a 409 conflict")
+	if counts[http.StatusAccepted] != 1 || counts[http.StatusConflict] != 1 {
+		t.Fatalf("concurrent turn statuses=%v, want one accepted request and one conflict", counts)
 	}
 }
 

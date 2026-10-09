@@ -9,7 +9,7 @@ import (
 
 func TestCompatibleDashboardFilterTargetsUseEveryQueryDataset(t *testing.T) {
 	model := &semanticmodel.Model{Dimensions: map[string]semanticmodel.SemanticDimension{
-		"country": {Bindings: map[string]semanticmodel.DimensionBinding{"sales": {Field: "sales.country"}}},
+		"country": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"sales": {Field: "sales.country"}}},
 	}, Metrics: map[string]semanticmodel.Metric{"revenue": {Dataset: "sales"}, "cash": {Dataset: "cash"}}}
 	query := func(metrics ...string) document.DashboardVisual {
 		selections := []document.DashboardMetricSelection{}
@@ -45,12 +45,27 @@ func TestCompatibleDashboardFilterTargetsUseEveryQueryDataset(t *testing.T) {
 }
 
 func TestCompatibleDashboardFilterTargetsAllowUnfinishedDraft(t *testing.T) {
-	model := &semanticmodel.Model{Dimensions: map[string]semanticmodel.SemanticDimension{"country": {Bindings: map[string]semanticmodel.DimensionBinding{"sales": {Field: "sales.country"}}}}}
+	model := &semanticmodel.Model{Dimensions: map[string]semanticmodel.SemanticDimension{"country": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"sales": {Field: "sales.country"}}}}}
 	doc := document.DashboardDocument{Spec: document.DashboardSpec{
 		Visuals: map[string]document.DashboardVisual{"new": {Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{Type: "aggregate"}}}},
 		Pages:   []document.DashboardPage{{Components: []document.DashboardPageComponent{{Value: &document.VisualDashboardPageComponent{Visual: "new"}}}}},
 	}}
 	if targets, err := CompatibleDashboardFilterTargets(doc, "country", model); err != nil || targets != nil {
 		t.Fatalf("unfinished draft targets=%v error=%v", targets, err)
+	}
+}
+
+func TestCompatibleFilterTargetsRejectUnsupportedValuesEvenBeforeAddingVisuals(t *testing.T) {
+	for _, datatype := range []semanticmodel.LogicalDataType{semanticmodel.DataTypeTime, semanticmodel.DataTypeOpaque} {
+		t.Run(string(datatype), func(t *testing.T) {
+			model := &semanticmodel.Model{Dimensions: map[string]semanticmodel.SemanticDimension{"unsupported": {Type: "timestamp", Datatype: datatype}}}
+			doc := document.DashboardDocument{}
+			if _, err := CompatibleDashboardFilterTargets(doc, "unsupported", model); err == nil {
+				t.Fatal("Add filter advertised an unsupported value type")
+			}
+			if _, err := CanonicalCompatibleFilterVisualTargets(doc, model, "unsupported"); err == nil {
+				t.Fatal("Add slicer advertised an unsupported value type")
+			}
+		})
 	}
 }
