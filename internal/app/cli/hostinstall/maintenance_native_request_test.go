@@ -129,7 +129,7 @@ const nativeApp = "leapview-cfo-leapview-1"
 const nativeCaddy = "leapview-cfo-caddy-1"
 const nativeNetwork = "leapview-cfo_default"
 
-const nativePGImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+const nativePGImage = "public.ecr.aws/docker/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
 
 func TestNativeRequestSeparatelyBindsProtectedWorkflowAndImageRevision(t *testing.T) {
 	r := nativeRequestFixture(t)
