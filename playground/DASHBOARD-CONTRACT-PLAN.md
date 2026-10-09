@@ -142,3 +142,10 @@ The Playground now marks changed source as Edited, derived from exact selected-f
 The original comparison still requires concrete B/C examples, strict prototype schemas, deterministic canonical lowering, equivalent references, qualification against all ten tasks, and a new complete trial/repair protocol before fresh scored runs. Proposed evolution changes still require selected semantics and actual old/new-reader qualification. No scored runs, selected new grammar or query-result evidence are claimed by this follow-up.
 
 Final integration includes main `ee52e4d5feb7f38fd7fdcc76b8d2e3b7191db6f7`. The affected authoring/compiler/agent suites, changed chat/builder browser paths, exact-source evidence and both deterministic evaluation checks pass after refresh. The complete successful local `task ci` run predates this last merge; exact final-head hosted results are separately tracked. No original pilot inputs or outcomes change.
+
+
+## Completed design comparison — 2026-10-09
+
+The user authorized executing the remaining design work and adding it to PR #938. The [completed comparison](dashboard-design-evaluation/comparison/README.md) now qualifies concrete A/B/C prototypes over all 93 deterministic cases and reports 90 distinct fresh-context first attempts: ten tasks × three formats × three repetitions. Each format passed 30/30 real compiler, exact-intent, source-preservation and process/integrity gates. The stopped eleven-attempt infrastructure cohort remains separately preserved; none of its attempts was reused. Three isolated evolution probes passed through the actual compiler adapter. These executed results supersede the earlier statements that the wider comparison remained proposed.
+
+Retain canonical v1: the alternatives showed no correctness advantage and require broader capability coverage and coordinated migration. Experimental codecs and future-reader probes remain offline tooling and tests. This comparison does not execute governed data queries or test a configured live product LLM. Final verification and artifact details accompany the PR; original pilot controls and submissions remain unchanged.

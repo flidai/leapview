@@ -580,6 +580,7 @@ tasks:
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p test_dashboard_design_trials.py
       - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
       - node --test scripts/audit_inventory.test.mjs scripts/controller_catalogs.test.mjs scripts/go_receipt_index.test.mjs scripts/go_receipts.test.mjs

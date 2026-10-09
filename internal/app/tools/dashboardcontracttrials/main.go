@@ -296,7 +296,37 @@ func main() {
 	qualification := flag.Bool("qualify", false, "qualify frozen oracles before trials")
 	corpus := flag.String("qualify-corpus", "", "qualify a separate ten-task canonical corpus manifest; zero agent trials")
 	output := flag.String("output", "", "write scored results JSON")
+	designManifest := flag.String("design-manifest", "", "frozen corpus manifest for grading a lowered experimental source")
+	designTask := flag.String("design-task", "", "corpus task ID")
+	designSource := flag.String("design-source", "", "canonical source root emitted by the candidate lowerer")
 	flag.Parse()
+	if *designManifest != "" || *designTask != "" || *designSource != "" {
+		if *designManifest == "" || *designTask == "" || *designSource == "" || *qualification || *corpus != "" {
+			fmt.Fprintln(os.Stderr, "design grading requires all three design flags and cannot combine modes")
+			os.Exit(1)
+		}
+		report, err := gradeDesignSource(*designManifest, *designTask, *designSource)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		data = append(data, '\n')
+		if *output != "" {
+			err = os.WriteFile(*output, data, 0644)
+		} else {
+			_, err = os.Stdout.Write(data)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *corpus != "" {
 		if *qualification {
 			fmt.Fprintln(os.Stderr, "-qualify and -qualify-corpus are separate modes")
